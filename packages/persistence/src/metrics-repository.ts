@@ -1,0 +1,106 @@
+import { join } from 'node:path';
+import {
+  ModelMetricSchema,
+  type AgentRole,
+  type ModelMetric,
+  type TaskKind,
+} from '@agent-foundry/contracts';
+import type { MetricsRepository } from '@agent-foundry/domain';
+import { atomicWriteJson, readJsonOrNull, safeSegment, withDirectoryLock } from './fs-utils.js';
+
+interface MetricsFile {
+  metrics: Record<string, ModelMetric>;
+}
+
+export class FileMetricsRepository implements MetricsRepository {
+  constructor(private readonly dataDir: string) {}
+
+  async get(modelId: string, taskKind: TaskKind, role: AgentRole): Promise<ModelMetric | null> {
+    const file = await this.read();
+    return file.metrics[this.key(modelId, taskKind, role)] ?? null;
+  }
+
+  async record(input: {
+    modelId: string;
+    taskKind: TaskKind;
+    role: AgentRole;
+    success: boolean;
+    durationMs: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    estimatedCostUsd?: number;
+  }): Promise<void> {
+    await this.mutate(input.modelId, input.taskKind, input.role, (existing, now) => ({
+      modelId: input.modelId,
+      taskKind: input.taskKind,
+      role: input.role,
+      attempts: (existing?.attempts ?? 0) + 1,
+      successes: (existing?.successes ?? 0) + (input.success ? 1 : 0),
+      totalDurationMs: (existing?.totalDurationMs ?? 0) + input.durationMs,
+      totalInputTokens: (existing?.totalInputTokens ?? 0) + (input.inputTokens ?? 0),
+      totalOutputTokens: (existing?.totalOutputTokens ?? 0) + (input.outputTokens ?? 0),
+      totalEstimatedCostUsd:
+        (existing?.totalEstimatedCostUsd ?? 0) + (input.estimatedCostUsd ?? 0),
+      consecutiveFailures: input.success ? 0 : (existing?.consecutiveFailures ?? 0) + 1,
+      qualityEvaluations: existing?.qualityEvaluations ?? 0,
+      qualityApprovals: existing?.qualityApprovals ?? 0,
+      ...(!input.success
+        ? { lastFailureAt: now }
+        : existing?.lastFailureAt
+          ? { lastFailureAt: existing.lastFailureAt }
+          : {}),
+      updatedAt: now,
+    }));
+  }
+
+  async recordQuality(input: {
+    modelId: string;
+    taskKind: TaskKind;
+    role: AgentRole;
+    approved: boolean;
+  }): Promise<void> {
+    await this.mutate(input.modelId, input.taskKind, input.role, (existing, now) => ({
+      modelId: input.modelId,
+      taskKind: input.taskKind,
+      role: input.role,
+      attempts: existing?.attempts ?? 0,
+      successes: existing?.successes ?? 0,
+      totalDurationMs: existing?.totalDurationMs ?? 0,
+      totalInputTokens: existing?.totalInputTokens ?? 0,
+      totalOutputTokens: existing?.totalOutputTokens ?? 0,
+      totalEstimatedCostUsd: existing?.totalEstimatedCostUsd ?? 0,
+      consecutiveFailures: existing?.consecutiveFailures ?? 0,
+      qualityEvaluations: (existing?.qualityEvaluations ?? 0) + 1,
+      qualityApprovals: (existing?.qualityApprovals ?? 0) + (input.approved ? 1 : 0),
+      ...(existing?.lastFailureAt ? { lastFailureAt: existing.lastFailureAt } : {}),
+      updatedAt: now,
+    }));
+  }
+
+  private async mutate(
+    modelId: string,
+    taskKind: TaskKind,
+    role: AgentRole,
+    update: (existing: ModelMetric | null, now: string) => ModelMetric,
+  ): Promise<void> {
+    const path = this.path();
+    await withDirectoryLock(`${path}.lock`, async () => {
+      const file = await this.read();
+      const key = this.key(modelId, taskKind, role);
+      file.metrics[key] = ModelMetricSchema.parse(update(file.metrics[key] ?? null, new Date().toISOString()));
+      await atomicWriteJson(path, file);
+    });
+  }
+
+  private async read(): Promise<MetricsFile> {
+    return (await readJsonOrNull<MetricsFile>(this.path())) ?? { metrics: {} };
+  }
+
+  private path(): string {
+    return join(this.dataDir, 'metrics', 'models.json');
+  }
+
+  private key(modelId: string, taskKind: TaskKind, role: AgentRole): string {
+    return `${safeSegment(modelId)}::${taskKind}::${role}`;
+  }
+}

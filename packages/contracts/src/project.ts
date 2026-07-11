@@ -1,0 +1,108 @@
+import { z } from 'zod';
+import { PathSegmentSchema, ProjectStatusSchema, ProviderSchema } from './primitives.js';
+import { RouteDecisionSchema } from './model.js';
+
+export const ProjectSchema = z.object({
+  id: PathSegmentSchema,
+  name: z.string().min(1),
+  workflowId: PathSegmentSchema,
+  status: ProjectStatusSchema,
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  currentNodeId: PathSegmentSchema.optional(),
+  error: z.string().optional(),
+});
+export type Project = z.infer<typeof ProjectSchema>;
+
+export const ArtifactMetadataSchema = z.object({
+  projectId: PathSegmentSchema,
+  name: PathSegmentSchema,
+  revision: z.number().int().positive(),
+  contentType: z.string(),
+  createdAt: z.string().datetime(),
+  createdBy: z.string(),
+  runId: PathSegmentSchema.optional(),
+  routeDecision: RouteDecisionSchema.optional(),
+  sha256: z.string(),
+});
+export type ArtifactMetadata = z.infer<typeof ArtifactMetadataSchema>;
+
+export const StoredArtifactSchema = z.object({
+  metadata: ArtifactMetadataSchema,
+  content: z.unknown(),
+});
+export type StoredArtifact = z.infer<typeof StoredArtifactSchema>;
+
+export const ProjectEventSchema = z.object({
+  id: PathSegmentSchema,
+  projectId: PathSegmentSchema,
+  type: z.enum([
+    'project.created',
+    'project.queued',
+    'project.started',
+    'project.completed',
+    'project.failed',
+    'node.started',
+    'node.completed',
+    'node.failed',
+    'quality.approved',
+    'quality.repair_requested',
+    'agent.routed',
+    'agent.started',
+    'agent.completed',
+    'agent.failed',
+    'artifact.created',
+    'verification.completed',
+    'git.checkpoint',
+  ]),
+  createdAt: z.string().datetime(),
+  nodeId: PathSegmentSchema.optional(),
+  runId: PathSegmentSchema.optional(),
+  message: z.string(),
+  data: z.record(z.string(), z.unknown()).default({}),
+});
+export type ProjectEvent = z.infer<typeof ProjectEventSchema>;
+
+export const QueueJobSchema = z.object({
+  id: PathSegmentSchema,
+  type: z.literal('run-project'),
+  projectId: PathSegmentSchema,
+  workflowId: PathSegmentSchema,
+  attempts: z.number().int().nonnegative(),
+  maxAttempts: z.number().int().positive(),
+  createdAt: z.string().datetime(),
+  availableAt: z.string().datetime(),
+  lastError: z.string().optional(),
+});
+export type QueueJob = z.infer<typeof QueueJobSchema>;
+
+export const VerificationCommandResultSchema = z.object({
+  name: z.string(),
+  command: z.string(),
+  args: z.array(z.string()),
+  exitCode: z.number().int(),
+  durationMs: z.number().nonnegative(),
+  stdout: z.string(),
+  stderr: z.string(),
+  skipped: z.boolean().default(false),
+  skipReason: z.string().optional(),
+});
+export type VerificationCommandResult = z.infer<typeof VerificationCommandResultSchema>;
+
+export const VerificationReportSchema = z.object({
+  schemaVersion: z.literal('1'),
+  approved: z.boolean(),
+  packageManager: z.enum(['npm', 'pnpm', 'yarn', 'bun', 'unknown']),
+  summary: z.string(),
+  commands: z.array(VerificationCommandResultSchema),
+  createdAt: z.string().datetime(),
+});
+export type VerificationReport = z.infer<typeof VerificationReportSchema>;
+
+export const ExecutorHealthSchema = z.object({
+  provider: ProviderSchema,
+  available: z.boolean(),
+  version: z.string().optional(),
+  message: z.string(),
+});
+export type ExecutorHealth = z.infer<typeof ExecutorHealthSchema>;

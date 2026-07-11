@@ -1,0 +1,280 @@
+schemaVersion: "1"
+id: web-app-v1
+name: Web application delivery pipeline
+description: Plans, reviews, architects, implements, reviews, repairs, verifies, and performs a final release assessment for a web application.
+stack: nextjs
+nodes:
+  - id: plan-gate
+    type: quality-loop
+    title: Product plan quality gate
+    maxIterations: 3
+    setup:
+      id: plan
+      type: agent
+      role: planner
+      taskKind: planning
+      title: Turn the PRD into an executable product and engineering plan
+      instructions: >-
+        Analyze the PRD, identify missing or contradictory requirements, define scope boundaries,
+        user journeys, acceptance criteria, dependencies, milestones, and a dependency-aware task graph.
+        Optimize for a small shippable first version rather than an imaginary perfect platform.
+      inputArtifacts: [prd]
+      outputArtifact: plan.current
+      mutatesWorkspace: false
+      harnessTags: [planning, web]
+      profile:
+        complexity: 4
+        risk: 3
+        preferredTags: [planning, reasoning]
+      maxAttempts: 3
+    check:
+      id: review-plan
+      type: agent
+      role: plan-reviewer
+      taskKind: plan-review
+      title: Pressure-test the product and engineering plan
+      instructions: >-
+        Find gaps, vague acceptance criteria, hidden dependencies, overengineering, sequencing errors,
+        security omissions, and work that cannot be objectively verified. Approve only when the plan is
+        concrete enough for architecture and implementation. Put the verdict in approved.
+      inputArtifacts: [prd, plan.current]
+      outputArtifact: plan.review
+      mutatesWorkspace: false
+      harnessTags: [review, planning]
+      profile:
+        complexity: 4
+        risk: 4
+        preferredTags: [review, reasoning]
+      maxAttempts: 3
+    repair:
+      id: repair-plan
+      type: agent
+      role: planner
+      taskKind: planning
+      title: Repair the plan from review findings
+      instructions: >-
+        Revise the current plan to address every material review finding. Preserve sound decisions,
+        explicitly resolve contradictions, and produce a complete replacement plan.
+      inputArtifacts: [prd, plan.current, plan.review]
+      outputArtifact: plan.current
+      mutatesWorkspace: false
+      harnessTags: [planning, repair]
+      profile:
+        complexity: 4
+        risk: 4
+        preferredTags: [planning, reasoning]
+      maxAttempts: 3
+    approval:
+      artifact: plan.review
+      path: approved
+      equals: true
+
+  - id: architecture-gate
+    type: quality-loop
+    title: Architecture quality gate
+    maxIterations: 3
+    setup:
+      id: architecture
+      type: agent
+      role: architect
+      taskKind: architecture
+      title: Design a modular architecture for the approved plan
+      instructions: >-
+        Produce the system context, boundaries, modules, data model, API contracts, state transitions,
+        security model, observability, deployment shape, testing strategy, and concrete repository layout.
+        Record major choices and rejected alternatives. Keep the architecture proportional to the MVP.
+      inputArtifacts: [prd, plan.current, plan.review]
+      outputArtifact: architecture.current
+      mutatesWorkspace: false
+      harnessTags: [architecture, web, nextjs]
+      profile:
+        complexity: 5
+        risk: 5
+        preferredTags: [architecture, reasoning, long-context]
+      maxAttempts: 3
+    check:
+      id: review-architecture
+      type: agent
+      role: architecture-reviewer
+      taskKind: architecture-review
+      title: Review architecture for correctness and unnecessary complexity
+      instructions: >-
+        Test the design against the PRD and plan. Find coupling, missing boundaries, unsafe trust assumptions,
+        impossible contracts, weak persistence choices, operational blind spots, and needless infrastructure.
+        Approve only if implementation can proceed without architectural guesswork. Put the verdict in approved.
+      inputArtifacts: [prd, plan.current, architecture.current]
+      outputArtifact: architecture.review
+      mutatesWorkspace: false
+      harnessTags: [review, architecture]
+      profile:
+        complexity: 5
+        risk: 5
+        preferredTags: [review, architecture, reasoning]
+      maxAttempts: 3
+    repair:
+      id: repair-architecture
+      type: agent
+      role: architect
+      taskKind: architecture
+      title: Repair the architecture from review findings
+      instructions: >-
+        Produce a complete replacement architecture that addresses every material finding while retaining
+        valid prior decisions. Update contracts, boundaries, risks, and decision rationales as needed.
+      inputArtifacts: [prd, plan.current, architecture.current, architecture.review]
+      outputArtifact: architecture.current
+      mutatesWorkspace: false
+      harnessTags: [architecture, repair]
+      profile:
+        complexity: 5
+        risk: 5
+        preferredTags: [architecture, reasoning]
+      maxAttempts: 3
+    approval:
+      artifact: architecture.review
+      path: approved
+      equals: true
+
+  - id: implementation-gate
+    type: quality-loop
+    title: Implementation quality gate
+    maxIterations: 3
+    setup:
+      id: implement
+      type: agent
+      role: developer
+      taskKind: implementation
+      title: Implement the approved plan and architecture
+      instructions: >-
+        Inspect the workspace, then implement a coherent working vertical slice. Include configuration,
+        migrations or schemas when needed, meaningful tests, error handling, and developer documentation.
+        Run the relevant checks. Do not replace real behavior with placeholders merely to make tests green.
+      inputArtifacts: [prd, plan.current, architecture.current, architecture.review]
+      outputArtifact: implementation.report
+      mutatesWorkspace: true
+      harnessTags: [coding, nextjs, typescript]
+      profile:
+        complexity: 5
+        risk: 4
+        preferredTags: [coding, repository, tool-use]
+      maxAttempts: 3
+    check:
+      id: review-code
+      type: agent
+      role: code-reviewer
+      taskKind: code-review
+      title: Review the implementation against the approved artifacts
+      instructions: >-
+        Inspect the actual diff and repository, not only the implementation report. Check correctness,
+        completeness, security, maintainability, data integrity, tests, failure behavior, and divergence from
+        the approved architecture. Approve only if no material defect remains. Put the verdict in approved.
+      inputArtifacts: [prd, plan.current, architecture.current, implementation.report]
+      outputArtifact: code.review
+      mutatesWorkspace: false
+      harnessTags: [review, coding, security]
+      profile:
+        complexity: 5
+        risk: 5
+        preferredTags: [review, coding, reasoning]
+      maxAttempts: 3
+    repair:
+      id: repair-code
+      type: agent
+      role: fixer
+      taskKind: repair
+      title: Repair implementation defects found in code review
+      instructions: >-
+        Inspect the code and review findings. Fix every material issue, add regression tests where practical,
+        run relevant checks, and report exactly what changed. Do not silence tests or weaken validation.
+      inputArtifacts: [prd, plan.current, architecture.current, implementation.report, code.review]
+      outputArtifact: implementation.report
+      mutatesWorkspace: true
+      harnessTags: [repair, coding, testing]
+      profile:
+        complexity: 5
+        risk: 5
+        preferredTags: [repair, coding, tool-use]
+      maxAttempts: 3
+    approval:
+      artifact: code.review
+      path: approved
+      equals: true
+
+  - id: deterministic-verification
+    type: quality-loop
+    title: Deterministic verification gate
+    maxIterations: 3
+    check:
+      id: verify-workspace
+      type: verify
+      title: Run configured deterministic repository checks
+      outputArtifact: verification.report
+      scripts: [typecheck, lint, test, build]
+      includeGitDiffCheck: true
+    repair:
+      id: repair-verification
+      type: agent
+      role: fixer
+      taskKind: repair
+      title: Repair deterministic verification failures
+      instructions: >-
+        Read the failed command outputs, reproduce the failures, fix their root causes, and rerun the relevant
+        commands. Never remove a meaningful check, reduce test coverage, or paper over a type error.
+      inputArtifacts: [prd, plan.current, architecture.current, code.review, verification.report]
+      outputArtifact: verification.fix
+      mutatesWorkspace: true
+      harnessTags: [repair, testing, coding]
+      profile:
+        complexity: 4
+        risk: 5
+        preferredTags: [repair, coding, tool-use]
+      maxAttempts: 3
+    approval:
+      artifact: verification.report
+      path: approved
+      equals: true
+
+  - id: release-assessment
+    type: quality-loop
+    title: Final release-readiness assessment
+    maxIterations: 2
+    check:
+      id: assess-release
+      type: agent
+      role: tester
+      taskKind: verification
+      title: Perform a final adversarial release assessment
+      instructions: >-
+        Inspect the actual repository and deterministic verification report. Exercise critical paths and failure
+        paths that static checks may miss. Confirm the implementation satisfies the PRD and acceptance criteria.
+        Put the final release verdict in approved and provide concrete evidence for it.
+      inputArtifacts: [prd, plan.current, architecture.current, code.review, verification.report]
+      outputArtifact: release.review
+      mutatesWorkspace: false
+      harnessTags: [testing, release, review]
+      profile:
+        complexity: 4
+        risk: 5
+        preferredTags: [testing, review, reasoning]
+      maxAttempts: 3
+    repair:
+      id: repair-release
+      type: agent
+      role: fixer
+      taskKind: repair
+      title: Repair defects from the final release assessment
+      instructions: >-
+        Fix every reproducible release blocker, add regression coverage, and run the affected deterministic
+        checks. Do not reinterpret requirements merely to avoid the defect.
+      inputArtifacts: [prd, plan.current, architecture.current, verification.report, release.review]
+      outputArtifact: release.fix
+      mutatesWorkspace: true
+      harnessTags: [repair, testing, release]
+      profile:
+        complexity: 4
+        risk: 5
+        preferredTags: [repair, coding, tool-use]
+      maxAttempts: 3
+    approval:
+      artifact: release.review
+      path: approved
+      equals: true

@@ -1,0 +1,131 @@
+# Segurança
+
+## Aviso principal
+
+Este projeto executa ferramentas agentes sobre um workspace e, depois, pode executar scripts criados por elas. Em modo real, isso é execução de código potencialmente não confiável. Não exponha a API para usuários externos sem isolamento, autenticação e políticas de execução.
+
+## Modelo de ameaça
+
+Atacantes ou entradas defeituosas podem tentar:
+
+- injetar instruções no PRD ou em arquivos do repositório;
+- convencer um agente a ler credenciais ou arquivos fora do projeto;
+- produzir scripts de build/test maliciosos;
+- exfiltrar tokens por rede;
+- consumir quota ou CPU indefinidamente;
+- usar symlinks ou caminhos especiais;
+- contaminar artefatos para enganar reviewers posteriores;
+- explorar uma vulnerabilidade da CLI ou de dependências;
+- criar output enorme para esgotar memória ou disco.
+
+## Controles presentes
+
+- Schemas Zod para API, workflows, catálogo, artefatos e persistência.
+- Sanitização de segmentos usados em caminhos.
+- Timeout e limite de output das CLIs.
+- Sandbox e permission mode fornecidos por cada CLI.
+- Workspace separado por projeto.
+- Git checkpoint e rollback para mutações.
+- `.gitignore` para reduzir commits acidentais de segredos.
+- Verificação determinística configurável.
+- Docker em modo mock por padrão, sem montar credenciais do host.
+
+Esses controles reduzem risco. Eles não formam uma barreira forte de isolamento.
+
+## O que não está resolvido
+
+### Isolamento de processo
+
+O worker real roda com as permissões do usuário do host. Um comando permitido pela CLI pode alcançar tudo que esse usuário alcança. O sandbox do fornecedor ajuda, mas não substitui uma fronteira operacional independente.
+
+### Rede
+
+Não há egress policy. Código executado pode tentar acessar a internet ou serviços internos.
+
+### Segredos
+
+Não existe secret broker por job. A CLI autenticada pode ter credenciais persistidas no perfil do usuário. Montar esse perfil em contêineres de jobs amplia o raio de explosão.
+
+### Multi-tenancy
+
+Não há autenticação, autorização, namespaces por tenant, quota ou auditoria de acesso.
+
+### Código gerado
+
+O verifier pode executar `npm test`, `npm run build` e outros scripts. Um `package.json` hostil pode fazer qualquer coisa que o processo permita.
+
+### Prompt injection
+
+O harness manda tratar conteúdo do projeto como dados, mas um LLM pode desobedecer ou interpretar texto hostil como instrução. Prompt injection não é corrigida apenas com um prompt melhor.
+
+## Recomendação para execução real local
+
+- Use uma conta de sistema dedicada.
+- Não coloque chaves de nuvem, SSH ou produção no ambiente do worker.
+- Execute apenas PRDs e repositórios em que você confia.
+- Mantenha `AUTO_INSTALL_DEPENDENCIES=false` até ter sandbox de rede e processo.
+- Revise as políticas de permissão de cada CLI.
+- Limite CPU, memória, tempo, processos e espaço em disco.
+- Faça backup ou trate `DATA_DIR` como descartável.
+
+## Recomendação para produção
+
+Cada job deve rodar em ambiente efêmero:
+
+1. microVM, VM ou sandbox forte por execução;
+2. filesystem novo, sem home do host;
+3. credencial de curta duração e escopo mínimo;
+4. egress deny-by-default com allowlist;
+5. limites de CPU, RAM, pids, tempo e disco;
+6. coleta externa de logs;
+7. destruição completa ao terminar;
+8. artefatos enviados por canal autenticado;
+9. verifier fora do host de controle;
+10. imagem e dependências fixadas por digest.
+
+Contêiner comum melhora empacotamento, mas não deve ser tratado automaticamente como fronteira suficiente contra código hostil.
+
+## Políticas por executor
+
+### Codex
+
+O adapter usa `read-only` para papéis não mutáveis e `workspace-write` para os demais, com aprovação desabilitada no modo não interativo. Isso exige que o workspace e o processo já estejam isolados adequadamente.
+
+### Claude Code
+
+O adapter usa `plan` para leitura e `acceptEdits` para mutação. Comandos shell adicionais podem depender das políticas locais da CLI. Não foi habilitado bypass global de permissões.
+
+### AGY
+
+O adapter ativa sandbox e usa `plan` ou `accept-edits`. Confirme as políticas e a versão instalada no seu ambiente.
+
+## Dados sensíveis nos artefatos
+
+Run records podem incluir:
+
+- prompt compilado;
+- artefatos de entrada;
+- harness selecionado;
+- stdout e stderr;
+- decisões e erros.
+
+Portanto, `DATA_DIR` pode conter dados sensíveis. Não o publique nem o envie integralmente para observabilidade sem redaction.
+
+## Checklist antes de abrir a rede
+
+- autenticação e autorização por rota;
+- TLS;
+- rate limit e quota;
+- CORS restrito;
+- validação de tamanho e tipo de PRD;
+- isolamento efêmero por job;
+- egress control;
+- secret broker;
+- fila com leasing e recovery;
+- cancelamento;
+- retenção e redaction;
+- trilha de auditoria imutável;
+- atualização e pinning de dependências;
+- resposta a incidentes.
+
+Sem esses itens, mantenha o serviço em localhost ou rede privada controlada.

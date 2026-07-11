@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowTask | Status Board</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;700&display=swap"
+rel="stylesheet">
+    <style>
+        :root {
+            --bg: #f8fafc;
+            --card-bg: rgba(255, 255, 255, 0.9);
+            --primary: #6366f1;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg);
+            background-image: radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0, transparent 50%),
+                              radial-gradient(at 100% 100%, rgba(34, 197, 94, 0.15) 0, transparent 50%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            color: var(--text-main);
+            letter-spacing: -1px;
+        }
+
+        /* Input Section */
+        .input-container {
+            max-width: 600px;
+            margin: 0 auto 50px auto;
+            display: flex;
+            gap: 10px;
+            background: var(--card-bg);
+            padding: 8px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+            border: 1px solid rgba(255,255,255,0.8);
+        }
+
+        input {
+            flex: 1;
+            border: none;
+            padding: 12px 20px;
+            font-size: 1rem;
+            outline: none;
+            background: transparent;
+        }
+
+        button#addBtn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.3s;
+        }
+
+        button#addBtn:hover {
+            background: #4f46e5;
+            transform: translateY(-2px);
+        }
+
+        /* Kanban Board Layout */
+        .board {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .column {
+            background: rgba(241, 245, 249, 0.5);
+            padding: 20px;
+            border-radius: 24px;
+            border: 1px solid rgba(0,0,0,0.03);
+            min-height: 500px;
+        }
+
+        .column h2 {
+            font-size: 1.1rem;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-main);
+        }
+
+        /* Column Color Accents */
+        .col-todo h2 { color: var(--danger); }
+        .col-progress h2 { color: var(--warning); }
+        .col-done h2 { color: var(--success); }
+
+        .task-list {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        /* Task Card Styling */
+        .task-card {
+            background: white;
+            padding: 16px;
+            border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+            border: 1px solid #f1f5f9;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            animation: slideIn 0.4s ease forwards;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(15px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .task-card:hover {
+            transform: scale(1.02);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.06);
+        }
+
+        .task-text {
+            font-weight: 500;
+            color: var(--text-main);
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        .card-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        .action-btn {
+            font-size: 0.75rem;
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-next { background: #eef2ff; color: var(--primary); }
+        .btn-delete { background: #fff1f2; color: var(--danger); }
+
+        /* Custom Scrollbar */
+        .column::-webkit-scrollbar { width: 5px; }
+        .column::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>FlowTask</h1>
+    <p style="color: var(--text-muted)">Manage your workflow with ease</p>
+</div>
+
+<div class="input-container">
+    <input type="text" id="todoInput" placeholder="Add a new task to 'To Do'...">
+    <button id="addBtn">Create Task</button>
+</div>
+
+<div class="board">
+    <!-- To Do Column -->
+    <div class="column col-todo">
+        <h2><span>⭕</span> To Do</h2>
+        <div class="task-list" id="todoList"></div>
+    </div>
+
+    <!-- In Progress Column -->
+    <div class="column col-progress">
+        <h2><span>⏳</span> In Progress</h2>
+        <div class="task-list" id="progressList"></div>
+    </div>
+
+    <!-- Completed Column -->
+    <div class="column col-done">
+        <h2><span>✅</span> Completed</h2>
+        <div class="task-list" id="doneList"></div>
+    </div>
+</div>
+
+<script>
+    const input = document.getElementById('todoInput');
+    const addBtn = document.getElementById('addBtn');
+
+    // Data State
+    let tasks = JSON.parse(localStorage.getItem('kanbanTasks')) || [];
+
+    function saveAndRender() {
+        localStorage.setItem('kanbanTasks', JSON.stringify(tasks));
+        renderBoard();
+    }
+
+    function addTask() {
+        const text = input.value.trim();
+        if (!text) return;
+
+        const newTask = {
+            id: Date.now(),
+            text: text,
+            status: 'todo' // Default status
+        };
+
+        tasks.push(newTask);
+        input.value = "";
+        saveAndRender();
+    }
+
+    function moveTask(id, newStatus) {
+        tasks = tasks.map(t => {
+            if (t.id === id) {
+                return { ...t, status: newStatus };
+            }
+            return t;
+        });
+        saveAndRender();
+    }
+
+    function deleteTask(id) {
+        tasks = tasks.filter(t => t.id !== id);
+        saveAndRender();
+    }
+
+    function renderBoard() {
+        const lists = {
+            todo: document.getElementById('todoList'),
+            progress: document.getElementById('progressList'),
+            done: document.getElementById('doneList')
+        };
+
+        // Clear all columns first
+        Object.values(lists).forEach(el => el.innerHTML = "");
+
+        tasks.forEach(task => {
+            const card = document.createElement('div');
+            card.className = 'task-card';
+
+            let actionButtons = '';
+
+            // Logic for dynamic buttons based on status
+            if (task.status === 'todo') {
+                actionButtons = `<button class="action-btn btn-next" onclick="moveTask(${task.id},
+'progress')">Start →</button>`;
+            } else if (task.status === 'progress') {
+                actionButtons = `<button class="action-btn btn-next" onclick="moveTask(${task.id}, 'done')">Finish
+✓</button>`;
+            }
+
+            card.innerHTML = `
+                <span class="task-text">${task.text}</span>
+                <div class="card-actions">
+                    ${actionButtons}
+                    <button class="action-btn btn-delete" onclick="deleteTask(${task.id})">Delete</button>
+                </div>
+            `;
+
+            if (task.status === 'todo') lists.todo.appendChild(card);
+            else if (task.status === 'progress') lists.progress.appendChild(card);
+            else if (task.status === 'done') lists.done.appendChild(card);
+        });
+    }
+
+    // Global functions for onclick handlers
+    window.moveTask = moveTask;
+    window.deleteTask = deleteTask;
+
+    addBtn.onclick = addTask;
+    input.addEventListener('keypress', (e) => { if(e.key === 'Enter') addTask(); });
+
+    // Initial Render
+    renderBoard();
+</script>
+
+</body>
+</html>

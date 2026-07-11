@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "1",
+  "version": "2026.07.11-v1",
+  "fragments": [
+    {
+      "path": "global/operating-principles.md",
+      "priority": 10,
+      "always": true
+    },
+    {
+      "path": "global/artifact-contract.md",
+      "priority": 20,
+      "always": true
+    },
+    {
+      "path": "global/security.md",
+      "priority": 30,
+      "always": true
+    },
+    {
+      "path": "roles/planner.md",
+      "priority": 100,
+      "roles": ["planner"]
+    },
+    {
+      "path": "roles/plan-reviewer.md",
+      "priority": 100,
+      "roles": ["plan-reviewer"]
+    },
+    {
+      "path": "roles/architect.md",
+      "priority": 100,
+      "roles": ["architect"]
+    },
+    {
+      "path": "roles/architecture-reviewer.md",
+      "priority": 100,
+      "roles": ["architecture-reviewer"]
+    },
+    {
+      "path": "roles/developer.md",
+      "priority": 100,
+      "roles": ["developer"]
+    },
+    {
+      "path": "roles/code-reviewer.md",
+      "priority": 100,
+      "roles": ["code-reviewer"]
+    },
+    {
+      "path": "roles/fixer.md",
+      "priority": 100,
+      "roles": ["fixer"]
+    },
+    {
+      "path": "roles/tester.md",
+      "priority": 100,
+      "roles": ["tester"]
+    },
+    {
+      "path": "stacks/nextjs.md",
+      "priority": 200,
+      "stacks": ["nextjs"]
+    },
+    {
+      "path": "standards/typescript.md",
+      "priority": 210,
+      "tags": ["typescript"]
+    },
+    {
+      "path": "quality/testing.md",
+      "priority": 220,
+      "tags": ["testing", "quality"]
+    }
+  ]
+}

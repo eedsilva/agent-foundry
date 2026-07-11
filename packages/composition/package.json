@@ -1,0 +1,29 @@
+{
+  "name": "@agent-foundry/composition",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --clean --sourcemap",
+    "typecheck": "tsc --noEmit"
+  },
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@agent-foundry/domain": "0.1.0",
+    "@agent-foundry/executors": "0.1.0",
+    "@agent-foundry/harness": "0.1.0",
+    "@agent-foundry/model-router": "0.1.0",
+    "@agent-foundry/orchestrator": "0.1.0",
+    "@agent-foundry/persistence": "0.1.0"
+  }
+}

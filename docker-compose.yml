@@ -1,0 +1,49 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run start --workspace @agent-foundry/api
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      DATA_DIR: /app/data
+      HARNESS_DIR: /app/harness
+      WORKFLOWS_DIR: /app/workflows
+      MODEL_CATALOG_PATH: /app/models/catalog.yaml
+      RUN_WORKER_INLINE: "false"
+      EXECUTOR_MODE: mock
+    volumes:
+      - agent_data:/app/data
+    ports:
+      - "4000:4000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run start --workspace @agent-foundry/worker
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /app/data
+      HARNESS_DIR: /app/harness
+      WORKFLOWS_DIR: /app/workflows
+      MODEL_CATALOG_PATH: /app/models/catalog.yaml
+      EXECUTOR_MODE: mock
+    volumes:
+      - agent_data:/app/data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npm run start --workspace @agent-foundry/web
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  agent_data:

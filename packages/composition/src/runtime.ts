@@ -1,0 +1,122 @@
+import {
+  MockAgentExecutor,
+  MockExecutorRegistry,
+  StaticExecutorRegistry,
+  CodexCliExecutor,
+  ClaudeCliExecutor,
+  AgyCliExecutor,
+  WorkspaceVerifier,
+} from '@agent-foundry/executors';
+import { VersionedHarnessRepository } from '@agent-foundry/harness';
+import { ScoreBasedModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
+import {
+  FileArtifactStore,
+  FileEventStore,
+  FileJobQueue,
+  FileMetricsRepository,
+  FileProjectRepository,
+  FileWorkspaceManager,
+  YamlWorkflowRepository,
+} from '@agent-foundry/persistence';
+import { ProjectService, WorkerLoop, WorkflowOrchestrator } from '@agent-foundry/orchestrator';
+import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
+import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
+
+export interface Runtime {
+  config: RuntimeConfig;
+  projects: FileProjectRepository;
+  artifacts: FileArtifactStore;
+  events: FileEventStore;
+  queue: FileJobQueue;
+  metrics: FileMetricsRepository;
+  workflows: YamlWorkflowRepository;
+  harness: VersionedHarnessRepository;
+  workspaces: FileWorkspaceManager;
+  router: ScoreBasedModelRouter;
+  executors: StaticExecutorRegistry | MockExecutorRegistry;
+  verifier: WorkspaceVerifier;
+  projectService: ProjectService;
+  orchestrator: WorkflowOrchestrator;
+  worker: WorkerLoop;
+}
+
+export async function createRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+  config: RuntimeConfig = loadRuntimeConfig(env),
+): Promise<Runtime> {
+  const clock = new SystemClock();
+  const ids = new UlidGenerator();
+  const projects = new FileProjectRepository(config.dataDir);
+  const artifacts = new FileArtifactStore(config.dataDir);
+  const events = new FileEventStore(config.dataDir);
+  const queue = new FileJobQueue(config.dataDir);
+  const metrics = new FileMetricsRepository(config.dataDir);
+  const workflows = new YamlWorkflowRepository(config.workflowsDir);
+  const harness = new VersionedHarnessRepository(config.harnessDir);
+  const workspaces = new FileWorkspaceManager(config.dataDir, {
+    gitAuthorName: config.gitAuthorName,
+    gitAuthorEmail: config.gitAuthorEmail,
+  });
+  const catalog = await loadModelCatalog(config.modelCatalogPath, env);
+  const router = new ScoreBasedModelRouter(catalog, metrics);
+  const executors =
+    config.executorMode === 'mock'
+      ? new MockExecutorRegistry(new MockAgentExecutor())
+      : new StaticExecutorRegistry([
+          new CodexCliExecutor(config.maxCliOutputBytes),
+          new ClaudeCliExecutor(config.maxCliOutputBytes),
+          new AgyCliExecutor(config.maxCliOutputBytes),
+        ]);
+  const verifier = new WorkspaceVerifier({
+    autoInstallDependencies: config.autoInstallDependencies,
+    timeoutMs: config.verificationTimeoutMs,
+    maxOutputBytes: config.maxCliOutputBytes,
+  });
+  const orchestrator = new WorkflowOrchestrator(
+    projects,
+    artifacts,
+    events,
+    workflows,
+    harness,
+    router,
+    metrics,
+    executors,
+    verifier,
+    workspaces,
+    clock,
+    ids,
+    { agentTimeoutMs: config.agentTimeoutMs },
+  );
+  const projectService = new ProjectService(
+    projects,
+    artifacts,
+    events,
+    queue,
+    workflows,
+    workspaces,
+    clock,
+    ids,
+  );
+  const worker = new WorkerLoop(queue, orchestrator, {
+    workerId: config.workerId,
+    pollIntervalMs: config.workerPollIntervalMs,
+  });
+
+  return {
+    config,
+    projects,
+    artifacts,
+    events,
+    queue,
+    metrics,
+    workflows,
+    harness,
+    workspaces,
+    router,
+    executors,
+    verifier,
+    projectService,
+    orchestrator,
+    worker,
+  };
+}

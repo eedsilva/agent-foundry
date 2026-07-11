@@ -1,0 +1,126 @@
+import { z } from 'zod';
+import {
+  AgentRoleSchema,
+  ComplexityLevelSchema,
+  PathSegmentSchema,
+  ProviderSchema,
+  RiskLevelSchema,
+  TaskKindSchema,
+} from './primitives.js';
+
+export const CapabilityScoresSchema = z.object({
+  planning: z.number().min(0).max(1),
+  architecture: z.number().min(0).max(1),
+  coding: z.number().min(0).max(1),
+  review: z.number().min(0).max(1),
+  repair: z.number().min(0).max(1),
+  structuredOutput: z.number().min(0).max(1),
+  speed: z.number().min(0).max(1),
+  costEfficiency: z.number().min(0).max(1),
+  reliability: z.number().min(0).max(1),
+});
+export type CapabilityScores = z.infer<typeof CapabilityScoresSchema>;
+
+export const ModelPricingSchema = z.object({
+  inputUsdPerMillionTokens: z.number().nonnegative(),
+  outputUsdPerMillionTokens: z.number().nonnegative(),
+  cachedInputUsdPerMillionTokens: z.number().nonnegative().optional(),
+});
+export type ModelPricing = z.infer<typeof ModelPricingSchema>;
+
+export const ModelDefinitionSchema = z.object({
+  id: PathSegmentSchema,
+  provider: ProviderSchema.exclude(['mock']),
+  model: z.string(),
+  billingMode: z.enum(['subscription', 'metered', 'unknown']).default('subscription'),
+  pricing: ModelPricingSchema.optional(),
+  enabled: z.boolean().default(true),
+  requireExplicitModel: z.boolean().default(false),
+  maxContextTokens: z.number().int().positive(),
+  canWriteWorkspace: z.boolean().default(true),
+  tags: z.array(z.string()).default([]),
+  capabilities: CapabilityScoresSchema,
+});
+export type ModelDefinition = z.infer<typeof ModelDefinitionSchema>;
+
+export const ModelCatalogSchema = z.object({
+  schemaVersion: z.literal('1'),
+  models: z.array(ModelDefinitionSchema).min(1),
+});
+export type ModelCatalog = z.infer<typeof ModelCatalogSchema>;
+
+export const RoutingPrioritiesSchema = z.object({
+  quality: z.number().min(0).max(1),
+  speed: z.number().min(0).max(1),
+  cost: z.number().min(0).max(1),
+  reliability: z.number().min(0).max(1),
+});
+export type RoutingPriorities = z.infer<typeof RoutingPrioritiesSchema>;
+
+export const TaskProfileSchema = z.object({
+  role: AgentRoleSchema,
+  taskKind: TaskKindSchema,
+  complexity: ComplexityLevelSchema,
+  risk: RiskLevelSchema,
+  estimatedContextTokens: z.number().int().nonnegative(),
+  estimatedOutputTokens: z.number().int().nonnegative(),
+  mutatesWorkspace: z.boolean(),
+  priorities: RoutingPrioritiesSchema,
+  allowedProviders: z.array(ProviderSchema.exclude(['mock'])).optional(),
+  preferredTags: z.array(z.string()).default([]),
+});
+export type TaskProfile = z.infer<typeof TaskProfileSchema>;
+
+export const RouteScoreBreakdownSchema = z.object({
+  capability: z.number(),
+  context: z.number(),
+  speed: z.number(),
+  cost: z.number(),
+  reliability: z.number(),
+  historical: z.number(),
+  tagAffinity: z.number(),
+  estimatedCostUsd: z.number().nonnegative().nullable(),
+  total: z.number(),
+});
+export type RouteScoreBreakdown = z.infer<typeof RouteScoreBreakdownSchema>;
+
+export const RankedModelSchema = z.object({
+  model: ModelDefinitionSchema,
+  score: RouteScoreBreakdownSchema,
+});
+export type RankedModel = z.infer<typeof RankedModelSchema>;
+
+export const RouteDecisionSchema = z.object({
+  routeId: PathSegmentSchema,
+  createdAt: z.string().datetime(),
+  profile: TaskProfileSchema,
+  selected: RankedModelSchema,
+  fallbacks: z.array(RankedModelSchema),
+  executed: RankedModelSchema.optional(),
+  attemptedModelIds: z.array(z.string().min(1)).optional(),
+  rejected: z.array(
+    z.object({
+      modelId: PathSegmentSchema,
+      reason: z.string(),
+    }),
+  ),
+});
+export type RouteDecision = z.infer<typeof RouteDecisionSchema>;
+
+export const ModelMetricSchema = z.object({
+  modelId: PathSegmentSchema,
+  taskKind: TaskKindSchema,
+  role: AgentRoleSchema,
+  attempts: z.number().int().nonnegative(),
+  successes: z.number().int().nonnegative(),
+  totalDurationMs: z.number().nonnegative(),
+  totalInputTokens: z.number().nonnegative(),
+  totalOutputTokens: z.number().nonnegative(),
+  totalEstimatedCostUsd: z.number().nonnegative(),
+  consecutiveFailures: z.number().int().nonnegative(),
+  qualityEvaluations: z.number().int().nonnegative().default(0),
+  qualityApprovals: z.number().int().nonnegative().default(0),
+  lastFailureAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime(),
+});
+export type ModelMetric = z.infer<typeof ModelMetricSchema>;

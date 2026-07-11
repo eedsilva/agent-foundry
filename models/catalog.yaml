@@ -1,0 +1,156 @@
+schemaVersion: '1'
+
+# These capability numbers are routing priors for this application, not vendor benchmarks.
+# Replace them with measurements from your own review/test outcomes.
+models:
+  - id: codex-default
+    provider: codex
+    model: '${CODEX_DEFAULT_MODEL:-}'
+    enabled: true
+    requireExplicitModel: false
+    maxContextTokens: 100000
+    canWriteWorkspace: true
+    tags: [coding, repository, balanced]
+    capabilities:
+      planning: 0.82
+      architecture: 0.84
+      coding: 0.94
+      review: 0.88
+      repair: 0.94
+      structuredOutput: 0.92
+      speed: 0.66
+      costEfficiency: 0.58
+      reliability: 0.90
+
+  - id: codex-fast
+    provider: codex
+    model: '${CODEX_FAST_MODEL:-}'
+    enabled: ${ENABLE_CODEX_FAST:-false}
+    requireExplicitModel: true
+    maxContextTokens: 100000
+    canWriteWorkspace: true
+    tags: [coding, fast, economy]
+    capabilities:
+      planning: 0.68
+      architecture: 0.66
+      coding: 0.82
+      review: 0.74
+      repair: 0.82
+      structuredOutput: 0.86
+      speed: 0.90
+      costEfficiency: 0.86
+      reliability: 0.80
+
+  - id: claude-opus
+    provider: claude
+    model: '${CLAUDE_DEEP_MODEL:-opus}'
+    enabled: true
+    requireExplicitModel: false
+    maxContextTokens: 100000
+    canWriteWorkspace: true
+    tags: [reasoning, planning, architecture, review, quality]
+    capabilities:
+      planning: 0.96
+      architecture: 0.97
+      coding: 0.90
+      review: 0.96
+      repair: 0.91
+      structuredOutput: 0.95
+      speed: 0.40
+      costEfficiency: 0.28
+      reliability: 0.93
+
+  - id: claude-sonnet
+    provider: claude
+    model: '${CLAUDE_BALANCED_MODEL:-sonnet}'
+    enabled: true
+    requireExplicitModel: false
+    maxContextTokens: 100000
+    canWriteWorkspace: true
+    tags: [balanced, planning, coding, review]
+    capabilities:
+      planning: 0.90
+      architecture: 0.91
+      coding: 0.90
+      review: 0.91
+      repair: 0.90
+      structuredOutput: 0.95
+      speed: 0.69
+      costEfficiency: 0.62
+      reliability: 0.91
+
+  - id: claude-haiku
+    provider: claude
+    model: '${CLAUDE_FAST_MODEL:-haiku}'
+    enabled: true
+    requireExplicitModel: false
+    maxContextTokens: 100000
+    canWriteWorkspace: true
+    tags: [fast, economy, triage]
+    capabilities:
+      planning: 0.68
+      architecture: 0.64
+      coding: 0.74
+      review: 0.72
+      repair: 0.73
+      structuredOutput: 0.92
+      speed: 0.96
+      costEfficiency: 0.95
+      reliability: 0.84
+
+  - id: agy-default
+    provider: agy
+    model: '${AGY_DEFAULT_MODEL:-}'
+    enabled: true
+    requireExplicitModel: false
+    maxContextTokens: 100000
+    canWriteWorkspace: true
+    tags: [balanced, coding, multimodal]
+    capabilities:
+      planning: 0.82
+      architecture: 0.81
+      coding: 0.86
+      review: 0.82
+      repair: 0.86
+      structuredOutput: 0.74
+      speed: 0.78
+      costEfficiency: 0.72
+      reliability: 0.84
+
+  - id: agy-fast
+    provider: agy
+    model: '${AGY_FAST_MODEL:-}'
+    enabled: ${ENABLE_AGY_FAST:-false}
+    requireExplicitModel: true
+    maxContextTokens: 100000
+    canWriteWorkspace: true
+    tags: [fast, coding, multimodal, economy]
+    capabilities:
+      planning: 0.76
+      architecture: 0.74
+      coding: 0.82
+      review: 0.77
+      repair: 0.82
+      structuredOutput: 0.70
+      speed: 0.94
+      costEfficiency: 0.91
+      reliability: 0.81
+
+  - id: agy-deep
+    provider: agy
+    model: '${AGY_DEEP_MODEL:-}'
+    enabled: ${ENABLE_AGY_DEEP:-false}
+    requireExplicitModel: true
+    maxContextTokens: 100000
+    canWriteWorkspace: true
+    tags: [reasoning, planning, architecture, coding]
+    capabilities:
+      planning: 0.91
+      architecture: 0.91
+      coding: 0.90
+      review: 0.88
+      repair: 0.90
+      structuredOutput: 0.76
+      speed: 0.55
+      costEfficiency: 0.48
+      reliability: 0.87

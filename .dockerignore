@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/*.tsbuildinfo
+data
+.env
+.env.*
+!.env.example
+.git
+coverage
+*.log
+agent-foundry*.zip

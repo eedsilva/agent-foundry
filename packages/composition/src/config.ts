@@ -1,0 +1,99 @@
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { z } from 'zod';
+
+const booleanFromEnv = z
+  .enum(['true', 'false'])
+  .default('false')
+  .transform((value) => value === 'true');
+
+const ConfigSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  API_HOST: z.string().default('0.0.0.0'),
+  API_PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
+  WEB_ORIGIN: z.string().default('http://localhost:3000'),
+  DATA_DIR: z.string().default('.data'),
+  HARNESS_DIR: z.string().default('harness'),
+  WORKFLOWS_DIR: z.string().default('workflows'),
+  MODEL_CATALOG_PATH: z.string().default('models/catalog.yaml'),
+  EXECUTOR_MODE: z.enum(['real', 'mock']).default('mock'),
+  RUN_WORKER_INLINE: booleanFromEnv,
+  AUTO_INSTALL_DEPENDENCIES: booleanFromEnv,
+  AGENT_TIMEOUT_MS: z.coerce.number().int().positive().default(1_200_000),
+  VERIFICATION_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
+  MAX_CLI_OUTPUT_BYTES: z.coerce.number().int().positive().default(20_000_000),
+  WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(750),
+  WORKER_ID: z.string().default(`worker-${process.pid}`),
+  GIT_AUTHOR_NAME: z.string().default('Agent Foundry'),
+  GIT_AUTHOR_EMAIL: z.string().email().default('agent-foundry@localhost'),
+});
+
+export interface RuntimeConfig {
+  environment: 'development' | 'test' | 'production';
+  rootDir: string;
+  apiHost: string;
+  apiPort: number;
+  webOrigin: string;
+  dataDir: string;
+  harnessDir: string;
+  workflowsDir: string;
+  modelCatalogPath: string;
+  executorMode: 'real' | 'mock';
+  runWorkerInline: boolean;
+  autoInstallDependencies: boolean;
+  agentTimeoutMs: number;
+  verificationTimeoutMs: number;
+  maxCliOutputBytes: number;
+  workerPollIntervalMs: number;
+  workerId: string;
+  gitAuthorName: string;
+  gitAuthorEmail: string;
+}
+
+export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
+  const normalized = {
+    ...env,
+    API_PORT: env.API_PORT ?? env.PORT,
+    WORKER_POLL_INTERVAL_MS: env.WORKER_POLL_INTERVAL_MS ?? env.WORKER_POLL_MS,
+    MAX_CLI_OUTPUT_BYTES: env.MAX_CLI_OUTPUT_BYTES ?? env.MAX_AGENT_OUTPUT_BYTES,
+  };
+  const parsed = ConfigSchema.parse(normalized);
+  const rootDir = findRepoRoot(env.REPO_ROOT ?? env.INIT_CWD ?? process.cwd());
+  return {
+    environment: parsed.NODE_ENV,
+    rootDir,
+    apiHost: parsed.API_HOST,
+    apiPort: parsed.API_PORT,
+    webOrigin: parsed.WEB_ORIGIN,
+    dataDir: resolve(rootDir, parsed.DATA_DIR),
+    harnessDir: resolve(rootDir, parsed.HARNESS_DIR),
+    workflowsDir: resolve(rootDir, parsed.WORKFLOWS_DIR),
+    modelCatalogPath: resolve(rootDir, parsed.MODEL_CATALOG_PATH),
+    executorMode: parsed.EXECUTOR_MODE,
+    runWorkerInline: parsed.RUN_WORKER_INLINE,
+    autoInstallDependencies: parsed.AUTO_INSTALL_DEPENDENCIES,
+    agentTimeoutMs: parsed.AGENT_TIMEOUT_MS,
+    verificationTimeoutMs: parsed.VERIFICATION_TIMEOUT_MS,
+    maxCliOutputBytes: parsed.MAX_CLI_OUTPUT_BYTES,
+    workerPollIntervalMs: parsed.WORKER_POLL_INTERVAL_MS,
+    workerId: parsed.WORKER_ID,
+    gitAuthorName: parsed.GIT_AUTHOR_NAME,
+    gitAuthorEmail: parsed.GIT_AUTHOR_EMAIL,
+  };
+}
+
+function findRepoRoot(start: string): string {
+  let current = resolve(start);
+  while (true) {
+    if (
+      existsSync(resolve(current, 'models/catalog.yaml')) &&
+      existsSync(resolve(current, 'workflows')) &&
+      existsSync(resolve(current, 'harness/manifest.json'))
+    ) {
+      return current;
+    }
+    const parent = dirname(current);
+    if (parent === current) return resolve(start);
+    current = parent;
+  }
+}
