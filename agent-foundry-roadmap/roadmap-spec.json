@@ -1,0 +1,3061 @@
+{
+  "schemaVersion": "1",
+  "repository": "eedsilva/agent-foundry",
+  "generatedAt": "2026-07-11",
+  "target": {
+    "name": "Lovable-class",
+    "definition": [
+      "Construção iterativa por conversa, com modos de planejar e executar.",
+      "Preview navegável, edição visual, histórico e revert.",
+      "Verificação determinística e por browser.",
+      "Backend por projeto com database, auth, storage, functions e secrets.",
+      "GitHub two-way sync, publicação, custom domains e rollback.",
+      "Workspaces, colaboração, quotas, billing e isolamento multi-tenant."
+    ],
+    "references": [
+      "https://docs.lovable.dev/introduction/getting-started",
+      "https://docs.lovable.dev/integrations/cloud",
+      "https://docs.lovable.dev/features/agent-mode",
+      "https://docs.lovable.dev/glossary",
+      "https://docs.lovable.dev/tips-tricks/deployment-hosting-ownership"
+    ]
+  },
+  "labels": [
+    {
+      "name": "kind:roadmap",
+      "color": "5319e7",
+      "description": "Roadmap de produto e sequência de releases"
+    },
+    {
+      "name": "kind:epic",
+      "color": "3e4b9e",
+      "description": "Entrega grande composta por sub-issues"
+    },
+    {
+      "name": "kind:feature",
+      "color": "1d76db",
+      "description": "Capacidade de produto ou comportamento novo"
+    },
+    {
+      "name": "kind:infra",
+      "color": "0e8a16",
+      "description": "Infraestrutura, runtime ou confiabilidade operacional"
+    },
+    {
+      "name": "kind:security",
+      "color": "b60205",
+      "description": "Segurança, isolamento, privacidade ou abuso"
+    },
+    {
+      "name": "kind:test",
+      "color": "fbca04",
+      "description": "Testes, avaliação, benchmark ou quality gate"
+    },
+    {
+      "name": "kind:docs",
+      "color": "0075ca",
+      "description": "Documentação, onboarding ou runbooks"
+    },
+    {
+      "name": "priority:p0",
+      "color": "d73a4a",
+      "description": "Bloqueador da versão ou risco crítico"
+    },
+    {
+      "name": "priority:p1",
+      "color": "fbca04",
+      "description": "Importante para a versão, mas não bloqueia todo o fluxo"
+    },
+    {
+      "name": "priority:p2",
+      "color": "0e8a16",
+      "description": "Pode ser adiado sem quebrar o objetivo principal"
+    },
+    {
+      "name": "area:orchestrator",
+      "color": "c5def5",
+      "description": "Workflow engine, runs, steps e controle de execução"
+    },
+    {
+      "name": "area:executors",
+      "color": "bfdadc",
+      "description": "Codex, Claude, AGY e execução de ferramentas"
+    },
+    {
+      "name": "area:persistence",
+      "color": "d4c5f9",
+      "description": "Repos, artefatos, filas, eventos e bancos"
+    },
+    {
+      "name": "area:api",
+      "color": "bfe5bf",
+      "description": "Contratos e endpoints HTTP"
+    },
+    {
+      "name": "area:web",
+      "color": "fef2c0",
+      "description": "Interface Next.js e experiência do builder"
+    },
+    {
+      "name": "area:preview",
+      "color": "f9d0c4",
+      "description": "Preview, browser automation e publicação"
+    },
+    {
+      "name": "area:sandbox",
+      "color": "e99695",
+      "description": "Isolamento de execução e fronteiras de segurança"
+    },
+    {
+      "name": "area:model-router",
+      "color": "d4a5ff",
+      "description": "Seleção de modelos, métricas e avaliação"
+    },
+    {
+      "name": "area:platform",
+      "color": "a2eeef",
+      "description": "Backend gerenciado, SaaS e control plane"
+    },
+    {
+      "name": "area:integrations",
+      "color": "c2e0c6",
+      "description": "GitHub, deploy providers e conectores externos"
+    }
+  ],
+  "milestones": [
+    {
+      "key": "v0.2",
+      "title": "v0.2 - Reliable Runs",
+      "description": "Execuções reais, canceláveis, retomáveis e auditáveis, com recuperação após falhas.",
+      "objective": "Transformar o MVP batch em um motor confiável. A release valida Codex, Claude e AGY em tarefas reais e torna cada run controlável, retomável e idempotente.",
+      "exitCriteria": [
+        "Existe ao menos um canário reproduzível por provider e um relatório de baseline.",
+        "Runs sobrevivem a crash de worker sem duplicar artefatos ou commits.",
+        "Cancel, pause, resume e retry por step funcionam até o processo da CLI.",
+        "A UI acompanha o workflow em tempo real e permite diagnosticar cada attempt."
+      ],
+      "nonGoals": [
+        "PostgreSQL ou fila distribuída de produção.",
+        "Multi-tenancy e execução de código não confiável.",
+        "Otimização avançada do Model Router."
+      ],
+      "dependsOn": [],
+      "tasks": [
+        {
+          "key": "v02-provider-canaries",
+          "title": "Executar canários reais e congelar o baseline dos três providers",
+          "summary": "O modo mock prova encanamento, não qualidade nem compatibilidade real. Criar uma suíte pequena que rode Codex, Claude e AGY com tarefas de planejamento, implementação e reparo.",
+          "touchpoints": [
+            "packages/executors",
+            "packages/composition",
+            "scripts/doctor.mjs",
+            "docs/VALIDATION.md"
+          ],
+          "acceptance": [
+            "O doctor detecta versão, autenticação e capacidades de cada CLI sem registrar segredos.",
+            "Cada provider executa ao menos um projeto greenfield e uma correção em repositório controlado.",
+            "O resultado normaliza provider, modelo selecionado, modelo executado, duração, usage e erro.",
+            "Provider indisponível gera skip explícito, nunca um falso positivo.",
+            "Um relatório versionado registra resultados, limitações e aliases realmente disponíveis."
+          ],
+          "labels": [
+            "kind:test",
+            "priority:p0",
+            "area:executors",
+            "area:model-router"
+          ],
+          "tests": [
+            "Teste de contrato por CLI com fixture de stdout/stderr.",
+            "Smoke test real opt-in protegido por variável de ambiente."
+          ],
+          "outOfScope": [
+            "Benchmark estatisticamente significativo; isso entra na v0.9."
+          ],
+          "dependsOn": []
+        },
+        {
+          "key": "v02-run-domain",
+          "title": "Introduzir WorkflowRun, StepRun e StepAttempt como entidades persistidas",
+          "summary": "O status agregado em Project é insuficiente para retomar, auditar ou repetir etapas. Criar uma máquina de estados explícita em três níveis.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/domain",
+            "packages/persistence",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "Schemas Zod cobrem Run, StepRun e Attempt, com transições válidas e timestamps.",
+            "Cada attempt registra provider, modelo, checkpoint, erro, usage e artefatos produzidos.",
+            "Project mantém apenas um resumo derivado e o currentRunId.",
+            "Repos de domínio permitem criar, obter, listar e atualizar com controle otimista de versão.",
+            "Dados antigos da v0.1 continuam legíveis ou recebem migração documentada."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:orchestrator",
+            "area:persistence"
+          ],
+          "tests": [
+            "Testes de transição inválida e concorrência de versão."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v02-queue-leases",
+          "title": "Adicionar leases, heartbeats, fencing tokens e recuperação de jobs órfãos",
+          "summary": "Rename atômico evita dupla claim imediata, mas não recupera workers mortos. Implementar semântica de lease na fila de arquivos preservando a porta JobQueue.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/domain",
+            "packages/persistence/src/job-queue.ts",
+            "apps/worker"
+          ],
+          "acceptance": [
+            "Claim cria lease com workerId, heartbeatAt, expiresAt e fencingToken monotônico.",
+            "Worker renova heartbeat enquanto executa e para de escrever ao perder o lease.",
+            "Job expirado volta para pending com evento de recuperação.",
+            "Ack e nack rejeitam fencingToken obsoleto.",
+            "Um reaper recupera itens de processing após crash abrupto."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p0",
+            "area:persistence",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Matar o worker após claim e confirmar recuperação.",
+            "Simular dois workers e provar que token antigo não consegue concluir o job."
+          ],
+          "outOfScope": [
+            "Alta disponibilidade multi-host; o adapter de produção entra na v0.8."
+          ],
+          "dependsOn": [
+            "v02-run-domain"
+          ]
+        },
+        {
+          "key": "v02-cancellation",
+          "title": "Propagar cancelamento até a árvore de processos e restaurar o checkpoint",
+          "summary": "Cancelar não pode ser apenas trocar um status. O AbortSignal precisa atravessar API, orquestrador, executor e processo filho.",
+          "touchpoints": [
+            "packages/domain/src/ports.ts",
+            "packages/executors",
+            "packages/orchestrator",
+            "apps/api"
+          ],
+          "acceptance": [
+            "AgentExecutor.execute recebe AbortSignal.",
+            "POST /runs/:runId/cancel é idempotente e registra cancel_requested e cancelled.",
+            "A CLI recebe encerramento gracioso e depois kill forçado da árvore de processos.",
+            "Step mutável volta ao checkpoint Git quando cancelado antes do commit aprovado.",
+            "Nenhum artifact output é promovido após cancelamento confirmado."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:infra",
+            "priority:p0",
+            "area:orchestrator",
+            "area:executors",
+            "area:api"
+          ],
+          "tests": [
+            "Cancelar durante planner, developer e verifier; validar processo, status, workspace e eventos."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v02-run-domain"
+          ]
+        },
+        {
+          "key": "v02-pause-resume",
+          "title": "Implementar pause e resume seguros em fronteiras de step",
+          "summary": "Pausa deve preservar um estado consistente. Retomada precisa rejeitar mudanças incompatíveis no workflow, harness ou workspace.",
+          "touchpoints": [
+            "packages/orchestrator",
+            "packages/persistence",
+            "apps/api",
+            "apps/web"
+          ],
+          "acceptance": [
+            "POST /runs/:id/pause solicita pausa e ela ocorre somente entre steps ou attempts.",
+            "Resume valida hashes de inputs, workflowVersion, harnessVersion e HEAD do workspace.",
+            "Steps aprovados não são executados novamente.",
+            "Incompatibilidade produz diagnóstico acionável e opção explícita de fork/restart.",
+            "UI mostra paused, ponto de retomada e motivo de bloqueio."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:orchestrator",
+            "area:api",
+            "area:web"
+          ],
+          "tests": [
+            "Pausar, reiniciar API/worker e retomar sem repetir side effects."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v02-run-domain",
+            "v02-queue-leases"
+          ]
+        },
+        {
+          "key": "v02-step-retry",
+          "title": "Permitir retry de um step com invalidação controlada dos descendentes",
+          "summary": "Reenfileirar o projeto inteiro desperdiça quota e pode alterar decisões aprovadas. Adicionar retry dirigido por step e attempt.",
+          "touchpoints": [
+            "packages/orchestrator",
+            "packages/contracts",
+            "apps/api",
+            "apps/web"
+          ],
+          "acceptance": [
+            "POST /runs/:runId/steps/:stepRunId/retry aceita override opcional de provider/model.",
+            "O usuário escolhe preservar ou invalidar outputs downstream.",
+            "Retry cria novo attempt e nunca sobrescreve histórico anterior.",
+            "Steps mutáveis começam de checkpoint conhecido.",
+            "A UI explica quais artifacts e steps serão invalidados antes de executar."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p1",
+            "area:orchestrator",
+            "area:api",
+            "area:web"
+          ],
+          "tests": [
+            "Retry apenas do reviewer e retry do developer com invalidação do verifier."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v02-run-domain"
+          ]
+        },
+        {
+          "key": "v02-idempotency",
+          "title": "Garantir idempotência entre attempts, artefatos, eventos e commits",
+          "summary": "Crashes entre escrita e ack podem repetir side effects. Definir uma chave de idempotência baseada na entrada efetiva do step.",
+          "touchpoints": [
+            "packages/domain",
+            "packages/persistence",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "IdempotencyKey inclui runId, nodeId, iteration, attempt policy e hashes dos inputs.",
+            "Artefato e commit já concluídos são reutilizados quando a mesma chave reaparece.",
+            "Eventos possuem deduplicationKey e append idempotente.",
+            "Outputs parciais nunca são apontados como latest.",
+            "A trilha run -> step -> attempt -> artifact -> commit é consultável."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p0",
+            "area:persistence",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Falha injetada após artifact put, após commit e antes do queue ack."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v02-run-domain"
+          ]
+        },
+        {
+          "key": "v02-sse-timeline",
+          "title": "Transmitir eventos por SSE com replay e timeline visual da execução",
+          "summary": "Polling esconde latência e dificulta diagnóstico. Adicionar um stream ordenado com cursor e uma visualização por run, step e attempt.",
+          "touchpoints": [
+            "packages/domain",
+            "packages/persistence",
+            "apps/api",
+            "apps/web"
+          ],
+          "acceptance": [
+            "GET /projects/:id/events/stream aceita Last-Event-ID ou cursor.",
+            "Reconexão reproduz eventos ausentes sem duplicá-los na UI.",
+            "Timeline mostra status, modelo, duração, fallback, logs resumidos e artifacts.",
+            "Eventos sensíveis passam por redaction antes de persistir ou transmitir.",
+            "O polling atual permanece como fallback temporário."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p1",
+            "area:api",
+            "area:web",
+            "area:persistence"
+          ],
+          "tests": [
+            "Reconexão no meio de uma execução e replay após reinício da API."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v02-run-domain"
+          ]
+        },
+        {
+          "key": "v02-failure-injection",
+          "title": "Criar suíte de failure injection para crash, timeout, rate limit e entrega duplicada",
+          "summary": "Confiabilidade não pode depender de happy path. Automatizar os modos de falha que definem o exit gate da release.",
+          "touchpoints": [
+            "packages/orchestrator",
+            "packages/persistence",
+            "packages/executors",
+            "apps/worker"
+          ],
+          "acceptance": [
+            "Fixtures simulam timeout, saída inválida, rate limit, kill de processo e worker morto.",
+            "Entrega duplicada do mesmo job não duplica artifact ou commit.",
+            "Fallback restaura workspace antes da próxima tentativa.",
+            "Todos os cenários terminam em estado final válido ou retomável.",
+            "A suíte roda no CI sem depender de CLIs reais."
+          ],
+          "labels": [
+            "kind:test",
+            "priority:p0",
+            "area:orchestrator",
+            "area:persistence",
+            "area:executors"
+          ],
+          "tests": [
+            "Matriz de falha por fase: antes/depois de checkpoint, execução, artifact, commit e ack."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v02-queue-leases",
+            "v02-cancellation",
+            "v02-idempotency"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v0.3",
+      "title": "v0.3 - Human Control",
+      "description": "Aprovações humanas, políticas de projeto e limites explícitos de execução.",
+      "objective": "Dar ao usuário autoridade real sobre decisões, custo e risco. Gates humanos passam a ser artefatos versionados, não mensagens efêmeras.",
+      "exitCriteria": [
+        "Workflow suporta approval gates pausáveis e retomáveis.",
+        "Usuário aprova, rejeita ou pede mudanças pela UI com diff e contexto.",
+        "Políticas de stack, providers, dependências e orçamento são aplicadas antes da execução.",
+        "Toda decisão humana possui ator, timestamp, razão e efeito auditável."
+      ],
+      "nonGoals": [
+        "Colaboração multiusuário em tempo real.",
+        "Billing e créditos comerciais."
+      ],
+      "dependsOn": [
+        "v0.2"
+      ],
+      "tasks": [
+        {
+          "key": "v03-approval-domain",
+          "title": "Adicionar approval gates e decisões humanas ao workflow declarativo",
+          "summary": "Criar um novo tipo de node que interrompe o run até uma decisão humana persistida.",
+          "touchpoints": [
+            "packages/contracts/src/workflow.ts",
+            "packages/domain",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "Workflow YAML suporta approval com artifact, ações permitidas e política de timeout.",
+            "ApprovalRequest e ApprovalDecision são imutáveis e ligados ao StepRun.",
+            "Approve avança; reject encerra ou volta para o step configurado; request-changes cria repair input.",
+            "Resume após decisão é idempotente."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:orchestrator",
+            "area:persistence"
+          ],
+          "tests": [
+            "Aprovar, rejeitar e solicitar mudança após reinício do worker."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v03-approval-api-ui",
+          "title": "Construir API e interface de revisão para aprovar, rejeitar e pedir mudanças",
+          "summary": "O usuário precisa ler o artifact, inspecionar diff e entender o impacto antes de decidir.",
+          "touchpoints": [
+            "apps/api",
+            "apps/web",
+            "packages/contracts"
+          ],
+          "acceptance": [
+            "Endpoints listam approvals pendentes e registram uma única decisão válida.",
+            "UI apresenta artifact, decisões relacionadas, diff e checks determinísticos.",
+            "Request changes exige comentário e cria artifact de feedback.",
+            "A ação mostra consequências downstream antes da confirmação.",
+            "Conflito de duas decisões simultâneas retorna 409 com estado atual."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:api",
+            "area:web"
+          ],
+          "tests": [
+            "E2E de aprovação de arquitetura e release."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v03-approval-domain"
+          ]
+        },
+        {
+          "key": "v03-project-policies",
+          "title": "Definir e aplicar ProjectPolicy para stack, providers e dependências",
+          "summary": "Restrições importantes não podem viver apenas no prompt. Modelar políticas duras validadas antes e depois da execução.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/domain",
+            "packages/orchestrator",
+            "packages/model-router",
+            "packages/executors"
+          ],
+          "acceptance": [
+            "Policy suporta requiredStack, forbiddenDependencies, allowedProviders e comandos permitidos.",
+            "Router elimina candidatos proibidos com razão auditável.",
+            "Verifier detecta dependências e alterações que violam a policy.",
+            "Policy tem revisão/versionamento e seu hash é salvo no run.",
+            "Mudança de policy durante run exige fork ou confirmação explícita."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p0",
+            "area:orchestrator",
+            "area:model-router"
+          ],
+          "tests": [
+            "Bloquear provider, pacote proibido e comando fora da allowlist."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v03-budgets-overrides",
+          "title": "Aplicar budgets e overrides explícitos de modelo por run ou step",
+          "summary": "Tempo, attempts e consumo de quota precisam de limites duros. Overrides devem ser visíveis e nunca virar regra oculta.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/model-router",
+            "packages/orchestrator",
+            "apps/api",
+            "apps/web"
+          ],
+          "acceptance": [
+            "Policy suporta maxAttempts, wallClock, estimatedTokens e quota units.",
+            "Run pausa ou falha com razão clara ao atingir limite.",
+            "Usuário pode fixar provider/model para um step ou retry.",
+            "Override registra ator, motivo e impacto estimado.",
+            "UI mostra orçamento consumido e restante por run."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p1",
+            "area:model-router",
+            "area:orchestrator",
+            "area:web"
+          ],
+          "tests": [
+            "Budget esgotado durante quality loop e override de fallback."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v03-audit-feedback",
+          "title": "Persistir feedback humano e identidade do ator na trilha de auditoria",
+          "summary": "Comentários humanos influenciam código e precisam ser reproduzíveis, pesquisáveis e separados de logs do agente.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/persistence",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "ActorRef diferencia user, system, worker e provider.",
+            "Feedback vira artifact com hash, autor, origem e relação com decisão/step.",
+            "Prompts compilados referenciam exatamente quais feedback artifacts foram usados.",
+            "Redaction remove tokens, cookies e padrões de segredo.",
+            "Export de auditoria reconstrói a sequência de decisões."
+          ],
+          "labels": [
+            "kind:infra",
+            "kind:security",
+            "priority:p1",
+            "area:persistence",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Reprodução de um repair a partir de feedback persistido."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v03-policy-e2e",
+          "title": "Cobrir approval gates e políticas com testes end-to-end",
+          "summary": "Fechar a release com cenários que provem controle humano, concorrência e limites.",
+          "touchpoints": [
+            "apps/api",
+            "apps/web",
+            "packages/orchestrator",
+            "packages/persistence"
+          ],
+          "acceptance": [
+            "Teste E2E pausa em arquitetura, recebe request changes e retoma.",
+            "Duas decisões concorrentes não avançam o workflow duas vezes.",
+            "Violação de policy bloqueia release mesmo se reviewer LLM aprovar.",
+            "Budget impede loop infinito e preserva estado retomável.",
+            "Relatório de validação documenta os cenários."
+          ],
+          "labels": [
+            "kind:test",
+            "priority:p0",
+            "area:orchestrator",
+            "area:web"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v03-approval-api-ui",
+            "v03-project-policies",
+            "v03-budgets-overrides"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v0.4",
+      "title": "v0.4 - Existing Repositories",
+      "description": "Importação de repositórios, worktrees isolados e change requests incrementais.",
+      "objective": "Parar de tratar todo pedido como greenfield. O Agent Foundry passa a entender um baseline Git, selecionar contexto e aplicar mudanças incrementais sem corromper o branch original.",
+      "exitCriteria": [
+        "Projeto pode nascer de um repositório Git e commit base explícito.",
+        "Cada run mutável usa branch e worktree próprios.",
+        "Context builder seleciona arquivos por tarefa com orçamento auditável.",
+        "Usuário envia change requests e revisa diff antes de promover."
+      ],
+      "nonGoals": [
+        "Two-way sync contínuo com GitHub.",
+        "Deploy e preview hospedado."
+      ],
+      "dependsOn": [
+        "v0.3"
+      ],
+      "tasks": [
+        {
+          "key": "v04-repository-source",
+          "title": "Modelar RepositorySource e importar um baseline Git de forma segura",
+          "summary": "Adicionar origem local ou URL Git, branch/ref e commit resolvido ao domínio do projeto.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/domain",
+            "packages/persistence",
+            "packages/orchestrator",
+            "apps/api"
+          ],
+          "acceptance": [
+            "Project referencia RepositorySource e immutable baseRevision.",
+            "Import aceita URL HTTPS/SSH permitida e valida tamanho/branch/ref.",
+            "Clone usa diretório temporário e só promove após verificação.",
+            "Symlinks perigosos, submodules e LFS possuem política explícita.",
+            "PRD greenfield continua funcionando sem repository source."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p0",
+            "area:persistence",
+            "area:api"
+          ],
+          "tests": [
+            "Import de repo pequeno, ref inexistente, repo grande e symlink fora da raiz."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v04-git-credentials",
+          "title": "Criar fronteira de credenciais Git sem vazar tokens para agentes",
+          "summary": "O processo de clone/push precisa de credenciais, mas os agentes e scripts do projeto não devem enxergá-las.",
+          "touchpoints": [
+            "packages/domain",
+            "packages/persistence",
+            "packages/composition",
+            "docs/SECURITY.md"
+          ],
+          "acceptance": [
+            "GitCredentialProvider entrega credencial de curta duração apenas ao comando Git autorizado.",
+            "Tokens não entram em URL persistida, prompt, env do agente ou logs.",
+            "Hosts e protocolos passam por allowlist.",
+            "Erros sanitizam username, token e query string.",
+            "Modo local suporta helper do Git e modo hosted suporta broker futuro."
+          ],
+          "labels": [
+            "kind:security",
+            "priority:p0",
+            "area:persistence",
+            "area:integrations"
+          ],
+          "tests": [
+            "Scanner confirma ausência de token em events, artifacts, git config e process env do executor."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v04-repository-source"
+          ]
+        },
+        {
+          "key": "v04-worktrees",
+          "title": "Isolar cada run mutável em branch e Git worktree próprios",
+          "summary": "Execuções concorrentes não podem editar o mesmo diretório. Introduzir lifecycle de worktree por run.",
+          "touchpoints": [
+            "packages/domain/src/ports.ts",
+            "packages/persistence/src/workspace-manager.ts",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "Run cria branch agent/<run-id> a partir do baseRevision.",
+            "WorkspaceManager expõe createWorktree, cleanup, checkpoint, reset e finalCommit.",
+            "Duas runs do mesmo projeto podem executar sem compartilhar arquivos.",
+            "Cleanup não remove branch com mudanças não persistidas sem registrar recovery artifact.",
+            "Commit e diff ficam ligados ao StepAttempt que os produziu."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p0",
+            "area:persistence",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Duas runs paralelas alterando arquivos diferentes e o mesmo arquivo."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v04-repository-source"
+          ]
+        },
+        {
+          "key": "v04-repository-map",
+          "title": "Gerar repository-map com módulos, configs, símbolos e grafo de imports",
+          "summary": "Antes de usar embeddings, construir um mapa determinístico e barato do repositório.",
+          "touchpoints": [
+            "packages/orchestrator",
+            "packages/persistence",
+            "packages/contracts"
+          ],
+          "acceptance": [
+            "Mapa inclui árvore filtrada, package manifests, entrypoints, testes e configs.",
+            "Para TypeScript, extrai exports/imports e relações entre módulos.",
+            "Arquivos binários, gerados e vendor são excluídos por política.",
+            "Mapa é cacheado por commit hash e versionado como artifact.",
+            "Falha de parser degrada para mapa lexical sem abortar o run."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:orchestrator",
+            "area:persistence"
+          ],
+          "tests": [
+            "Monorepo, repo simples e arquivo TypeScript inválido."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v04-repository-source"
+          ]
+        },
+        {
+          "key": "v04-context-selector",
+          "title": "Selecionar contexto por tarefa usando busca lexical, imports e orçamento",
+          "summary": "Enviar o repositório inteiro é caro e piora a precisão. Criar um context builder explicável.",
+          "touchpoints": [
+            "packages/orchestrator",
+            "packages/harness",
+            "packages/contracts"
+          ],
+          "acceptance": [
+            "Seleção combina termos da tarefa, ripgrep, grafo de imports, configs e testes relacionados.",
+            "Cada arquivo recebe score e razão de inclusão.",
+            "Orçamento máximo de bytes/tokens é respeitado.",
+            "Agente pode pedir expansão de contexto com motivo registrado.",
+            "Prompt compilado lista versão e hashes dos arquivos usados."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:orchestrator",
+            "area:model-router"
+          ],
+          "tests": [
+            "Mudança frontend, backend e bug localizado selecionam contextos distintos."
+          ],
+          "outOfScope": [
+            "Vector database global; medir recall antes de adicionar embeddings."
+          ],
+          "dependsOn": [
+            "v04-repository-map"
+          ]
+        },
+        {
+          "key": "v04-change-requests",
+          "title": "Introduzir ChangeRequest e workflow incremental sobre um baseline",
+          "summary": "Uma solicitação curta deve virar nova run ligada ao projeto, sem repetir descoberta e arquitetura inteira quando não necessário.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/orchestrator",
+            "packages/persistence",
+            "workflows",
+            "apps/api"
+          ],
+          "acceptance": [
+            "ChangeRequest registra mensagem, baseRevision, attachments e policies.",
+            "Planner classifica escopo e escolhe workflow incremental proporcional ao risco.",
+            "Artifacts anteriores podem ser reutilizados por hash e compatibilidade.",
+            "Resultado produz branch, diff, checks e release decision.",
+            "Mudança de baseline durante a run gera conflito explícito."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:orchestrator",
+            "area:api"
+          ],
+          "tests": [
+            "Feature pequena, bug fix e refatoração com diferentes planos de execução."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v04-worktrees",
+            "v04-context-selector"
+          ]
+        },
+        {
+          "key": "v04-diff-review",
+          "title": "Adicionar file browser, diff review e promoção do branch na interface",
+          "summary": "O usuário precisa entender o que mudou antes de aceitar um change request.",
+          "touchpoints": [
+            "apps/web",
+            "apps/api",
+            "packages/persistence"
+          ],
+          "acceptance": [
+            "UI mostra arquivos alterados, diff unificado e commits do run.",
+            "Filtros separam generated, tests, config e source.",
+            "Usuário aprova, rejeita ou solicita repair apontando linhas/arquivos.",
+            "Promoção atualiza o baseline apenas após checks e aprovação.",
+            "Conflito de merge é exibido sem sobrescrever o branch base."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p1",
+            "area:web",
+            "area:api",
+            "area:persistence"
+          ],
+          "tests": [
+            "E2E de review, request changes e promoção."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v04-change-requests"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v0.5",
+      "title": "v0.5 - Live Preview",
+      "description": "Preview executável, logs de browser e verificação Playwright reproduzível.",
+      "objective": "Fechar o ciclo entre geração e comportamento visível. Cada run pode subir uma aplicação temporária, testá-la em browser e entregar evidência visual.",
+      "exitCriteria": [
+        "Aplicações suportadas ganham preview URL temporária e lifecycle controlado.",
+        "Playwright valida jornadas e produz screenshots, trace e console.",
+        "A UI alterna desktop/mobile e mostra logs do runtime e do browser.",
+        "Preview quebrado vira input estruturado para repair."
+      ],
+      "nonGoals": [
+        "Publicação permanente e domínio customizado.",
+        "Sandbox multi-tenant forte."
+      ],
+      "dependsOn": [
+        "v0.4"
+      ],
+      "tasks": [
+        {
+          "key": "v05-preview-domain",
+          "title": "Definir PreviewSession e a porta PreviewRunner",
+          "summary": "Separar orchestration do mecanismo usado para instalar, iniciar, sondar e encerrar um preview.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/domain",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "PreviewSession possui status, workspaceRef, URL, processo, health e TTL.",
+            "PreviewRunner expõe prepare, start, health, logs, restart e stop.",
+            "Run e release artifacts referenciam a sessão e sua evidência.",
+            "Stop é idempotente e executado em cancelamento ou expiração."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:preview",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Runner fake cobre startup, unhealthy, restart e timeout."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v05-runtime-detection",
+          "title": "Detectar package manager e comandos de install, build e dev",
+          "summary": "O preview não pode assumir npm e Next.js para sempre. Criar detecção explícita com overrides do workflow.",
+          "touchpoints": [
+            "packages/executors",
+            "packages/orchestrator",
+            "packages/contracts"
+          ],
+          "acceptance": [
+            "Detecção reconhece npm, pnpm, yarn e bun por lockfile.",
+            "Scripts são selecionados por manifest e podem ser sobrescritos por policy.",
+            "Install usa modo reproduzível e falha se lockfile divergir.",
+            "Comandos e versões ficam registrados no PreviewSession.",
+            "Ausência de comando suportado retorna diagnóstico, não shell arbitrário."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p0",
+            "area:preview",
+            "area:executors"
+          ],
+          "tests": [
+            "Fixtures para Next.js, Vite e monorepo npm workspaces."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v05-preview-network",
+          "title": "Descobrir porta e expor preview por reverse proxy com isolamento básico",
+          "summary": "A UI precisa de uma URL estável mesmo que o processo escolha porta dinâmica.",
+          "touchpoints": [
+            "apps/api",
+            "packages/executors",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "Runner reserva ou detecta a porta sem race.",
+            "Proxy usa token opaco por sessão e bloqueia acesso após stop/TTL.",
+            "Headers websocket e HMR funcionam.",
+            "Host header e open redirect são validados.",
+            "Preview não expõe portas internas diretamente."
+          ],
+          "labels": [
+            "kind:infra",
+            "kind:security",
+            "priority:p0",
+            "area:preview",
+            "area:api"
+          ],
+          "tests": [
+            "Duas previews simultâneas, HMR e sessão expirada."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v05-preview-domain",
+            "v05-runtime-detection"
+          ]
+        },
+        {
+          "key": "v05-preview-lifecycle",
+          "title": "Gerenciar health, restart, timeout e coleta de logs do preview",
+          "summary": "Processos de desenvolvimento travam, reiniciam e imprimem erros. Modelar esse lifecycle em vez de tratá-lo como um único spawn.",
+          "touchpoints": [
+            "packages/executors",
+            "packages/orchestrator",
+            "packages/persistence"
+          ],
+          "acceptance": [
+            "Health usa HTTP probe e janela de startup configurável.",
+            "Crash gera evento, captura stdout/stderr e permite restart limitado.",
+            "Logs possuem cursor, truncation e redaction.",
+            "Sessões órfãs são encerradas por reaper.",
+            "Falha de preview alimenta repair com diagnóstico estruturado."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p0",
+            "area:preview",
+            "area:persistence"
+          ],
+          "tests": [
+            "Crash loop, startup lento, porta nunca aberta e log volumoso."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v05-preview-network"
+          ]
+        },
+        {
+          "key": "v05-playwright",
+          "title": "Adicionar BrowserVerifier com Playwright e test plans versionados",
+          "summary": "LLM pode propor jornadas, mas o resultado deve ser executado por uma ferramenta determinística.",
+          "touchpoints": [
+            "packages/domain",
+            "packages/executors",
+            "packages/orchestrator",
+            "workflows"
+          ],
+          "acceptance": [
+            "BrowserTestPlan é artifact validado com steps, locators, assertions e viewport.",
+            "Verifier executa testes contra PreviewSession e retorna evidência por step.",
+            "Console errors, failed requests e uncaught exceptions afetam o verdict.",
+            "Testes gerados não podem acessar hosts fora da policy.",
+            "Repair recebe falha reproduzível e links para artifacts."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "priority:p0",
+            "area:preview",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Jornada CRUD verde e falhas de UI, API e console."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v05-preview-lifecycle"
+          ]
+        },
+        {
+          "key": "v05-preview-artifacts",
+          "title": "Persistir screenshots, trace, vídeo opcional e logs como artifacts",
+          "summary": "Evidência de browser pode ser grande e precisa de retenção e metadados próprios.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/persistence",
+            "packages/executors"
+          ],
+          "acceptance": [
+            "ArtifactStore suporta conteúdo binário ou referência externa sem carregar tudo em memória.",
+            "Screenshot registra viewport, URL, test step e hash.",
+            "Trace e vídeo são opcionais por policy e possuem limite de tamanho.",
+            "UI pode baixar artifacts sem expor path local.",
+            "Retenção local remove blobs expirados sem quebrar metadados do run."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p1",
+            "area:preview",
+            "area:persistence"
+          ],
+          "tests": [
+            "Upload/download, limite de tamanho e cleanup de blob órfão."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v05-playwright"
+          ]
+        },
+        {
+          "key": "v05-preview-ui-e2e",
+          "title": "Construir painel de preview responsivo e fechar golden flow end-to-end",
+          "summary": "Entregar a experiência de acompanhar execução, abrir app, alternar viewport e inspecionar evidências.",
+          "touchpoints": [
+            "apps/web",
+            "apps/api"
+          ],
+          "acceptance": [
+            "Preview abre em painel isolado com desktop, tablet e mobile.",
+            "UI mostra runtime logs, browser console, network failures e test results.",
+            "Refresh/restart não perde o vínculo com a run.",
+            "Golden flow cria change request, sobe preview, roda browser tests e aprova diff.",
+            "Acessibilidade básica do painel passa em axe."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "priority:p0",
+            "area:web",
+            "area:preview"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v05-preview-artifacts"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v0.6",
+      "title": "v0.6 - Conversational Builder",
+      "description": "Chat iterativo, modos Plan/Build, version history e edição visual ligada ao código.",
+      "objective": "Mudar a experiência de PRD batch para um builder iterativo. Conversa, preview e diff passam a compartilhar o mesmo contexto versionado.",
+      "exitCriteria": [
+        "Usuário alterna Plan e Build sem perder contexto.",
+        "Cada mensagem gera uma operação rastreável e pode incluir imagem ou seleção visual.",
+        "Versões podem ser comparadas, revertidas e ramificadas.",
+        "Seleção de componente no preview produz patch de código verificável."
+      ],
+      "nonGoals": [
+        "Editor de código completo no browser.",
+        "Colaboração multiusuário em tempo real."
+      ],
+      "dependsOn": [
+        "v0.5"
+      ],
+      "tasks": [
+        {
+          "key": "v06-conversation-domain",
+          "title": "Modelar Conversation, Message, Attachment e Operation",
+          "summary": "A conversa precisa ser persistente e ligada a runs, change requests, artifacts e versões.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/domain",
+            "packages/persistence",
+            "apps/api"
+          ],
+          "acceptance": [
+            "Message diferencia user, assistant, system e tool com conteúdo estruturado.",
+            "Operation liga uma mensagem ao plan, build, explain, repair ou visual edit executado.",
+            "Attachments têm tipo, hash, tamanho e autorização.",
+            "Paginação e streaming preservam ordem estável.",
+            "Export do projeto inclui a conversa sem segredos."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:api",
+            "area:persistence",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Concorrência de mensagens e retry sem duplicar Operation."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v06-plan-build-modes",
+          "title": "Implementar modos Plan e Build com contratos de saída distintos",
+          "summary": "Planejar e editar código são ações diferentes. O modo deve restringir ferramentas, side effects e artefatos.",
+          "touchpoints": [
+            "packages/orchestrator",
+            "packages/contracts",
+            "workflows",
+            "apps/web"
+          ],
+          "acceptance": [
+            "Plan mode não altera workspace e produz proposta editável.",
+            "Build mode exige plano aprovado ou decisão explícita de execução direta.",
+            "Mode e tool policy entram no TaskProfile e no prompt compilado.",
+            "Transição Plan -> Build preserva referências aos artifacts aprovados.",
+            "UI deixa claro quando haverá alteração de código e consumo de budget."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:orchestrator",
+            "area:web",
+            "area:model-router"
+          ],
+          "tests": [
+            "Mensagem idêntica em Plan e Build gera side effects diferentes."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v06-conversation-domain"
+          ]
+        },
+        {
+          "key": "v06-chat-operations",
+          "title": "Converter mensagens em change requests incrementais e handoffs reproduzíveis",
+          "summary": "O contexto não pode ser uma concatenação infinita do chat. Compilar apenas decisões, versões e mensagens relevantes.",
+          "touchpoints": [
+            "packages/orchestrator",
+            "packages/harness",
+            "packages/persistence"
+          ],
+          "acceptance": [
+            "Message classifier cria Operation e ChangeRequest apropriados.",
+            "Context compiler resume histórico com referências aos artifacts fonte.",
+            "Usuário pode corrigir interpretação antes de Build.",
+            "Cada prompt registra mensagens e knowledge files usados.",
+            "Compaction nunca apaga decisões fixadas ou feedback não resolvido."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:orchestrator",
+            "area:persistence"
+          ],
+          "tests": [
+            "Conversa longa com mudança de requisito e referência a decisão antiga."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v06-plan-build-modes"
+          ]
+        },
+        {
+          "key": "v06-chat-streaming",
+          "title": "Transmitir tokens, tool calls e progresso dos agentes dentro do chat",
+          "summary": "A timeline técnica e a conversa devem se encontrar sem despejar stdout bruto no usuário.",
+          "touchpoints": [
+            "apps/api",
+            "apps/web",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "Stream diferencia assistant delta, status, tool start/end, approval e error.",
+            "Reconexão recupera mensagens e eventos pelo cursor.",
+            "Logs internos ficam recolhidos e redigidos.",
+            "Cancel e pause aparecem como ações contextuais.",
+            "Uma Operation concluída aponta para diff, preview e artifacts."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p1",
+            "area:web",
+            "area:api"
+          ],
+          "tests": [
+            "Desconectar/reconectar durante tool call e fallback."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v06-conversation-domain"
+          ]
+        },
+        {
+          "key": "v06-version-history",
+          "title": "Adicionar version history, compare, revert e branch de uma versão",
+          "summary": "O usuário precisa experimentar sem medo e entender a linhagem das mudanças.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/persistence",
+            "packages/orchestrator",
+            "apps/web"
+          ],
+          "acceptance": [
+            "ProjectVersion aponta para commit, run, artifacts e preview relevante.",
+            "Compare mostra diff e mudanças de schema/config.",
+            "Revert cria nova versão, não reescreve histórico.",
+            "Branch from version cria novo baseline independente.",
+            "Versão protegida não é removida por cleanup."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:persistence",
+            "area:web",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Revert após duas mudanças e branch a partir de versão antiga."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v06-dom-source-map",
+          "title": "Mapear elemento selecionado no preview para componente e origem no código",
+          "summary": "Edição visual só é confiável se a seleção apontar para um conjunto pequeno e explicável de arquivos.",
+          "touchpoints": [
+            "apps/web",
+            "packages/executors",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "Preview injeta metadata não publicada com component/file hints.",
+            "Clique retorna DOM path, bounding box, computed style e candidatos de source.",
+            "Source map não expõe paths fora do workspace.",
+            "Seleção ambígua pede confirmação em vez de editar arquivo arbitrário.",
+            "Framework não suportado degrada para screenshot + descrição."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:web",
+            "area:preview",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Componente simples, wrapper, lista repetida e elemento gerado."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v06-visual-patches",
+          "title": "Aplicar edições visuais como patches estruturados e verificáveis",
+          "summary": "Alterações de texto, spacing, cor e layout precisam de uma representação restrita antes de virar código.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/orchestrator",
+            "packages/executors",
+            "apps/web"
+          ],
+          "acceptance": [
+            "VisualEdit suporta propriedades permitidas, oldValue, newValue e target source.",
+            "Preview mostra alteração temporária antes do commit.",
+            "Agente converte patch para código preservando design tokens quando existentes.",
+            "Build e browser checks rodam antes de promover.",
+            "Propriedades perigosas ou ambíguas exigem fluxo conversacional."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:web",
+            "area:preview",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Editar texto, padding, cor por token e layout responsivo."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v06-dom-source-map",
+            "v06-version-history"
+          ]
+        },
+        {
+          "key": "v06-knowledge-attachments-shell",
+          "title": "Adicionar knowledge files, imagens e shell de três painéis do builder",
+          "summary": "Completar a superfície principal com Chat, Preview e Changes, incluindo contexto persistente do projeto.",
+          "touchpoints": [
+            "apps/web",
+            "apps/api",
+            "packages/harness",
+            "packages/persistence"
+          ],
+          "acceptance": [
+            "Knowledge files podem ser fixados, versionados e removidos com impacto visível.",
+            "Imagem anexada pode ser usada como referência de design ou evidência de bug.",
+            "Layout de três painéis funciona em desktop e colapsa de forma útil no mobile.",
+            "Changes mostra diff, checks, versão e ações de aprovação.",
+            "Golden flow: anexar referência, planejar, construir, editar visualmente, reverter e reconstruir."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "priority:p0",
+            "area:web",
+            "area:persistence"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v06-chat-operations",
+            "v06-chat-streaming",
+            "v06-visual-patches"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v0.7",
+      "title": "v0.7 - Secure Execution",
+      "description": "Control plane separado, sandboxes efêmeros e políticas de recursos, rede e segredos.",
+      "objective": "Parar de executar código gerado com os privilégios do host. Criar uma fronteira operacional concreta antes de aceitar entradas não confiáveis.",
+      "exitCriteria": [
+        "Cada run hosted acontece em sandbox efêmero sem credenciais reutilizáveis.",
+        "Filesystem, processos, CPU, memória, disco e rede possuem limites.",
+        "Secrets entram por broker de curta duração e passam por redaction.",
+        "Threat model e testes adversariais cobrem escape, exfiltração e cleanup."
+      ],
+      "nonGoals": [
+        "Certificação formal ou microVM obrigatória em todos os ambientes.",
+        "Multi-tenancy de produto."
+      ],
+      "dependsOn": [
+        "v0.6"
+      ],
+      "tasks": [
+        {
+          "key": "v07-control-execution-plane",
+          "title": "Separar control plane e execution plane por um protocolo explícito",
+          "summary": "API e orquestrador não devem spawnar CLIs diretamente no mesmo ambiente do produto.",
+          "touchpoints": [
+            "packages/domain",
+            "packages/orchestrator",
+            "packages/composition",
+            "apps/worker"
+          ],
+          "acceptance": [
+            "ExecutionRequest contém workspace snapshot, tools, limits, network policy e secret refs.",
+            "ExecutionResult retorna artifacts, logs, usage e estado final sem paths locais do runner.",
+            "Protocolo é versionado e validado.",
+            "Control plane consegue cancelar e observar uma execução remota.",
+            "Executor local continua disponível apenas para desenvolvimento confiável."
+          ],
+          "labels": [
+            "kind:infra",
+            "kind:security",
+            "priority:p0",
+            "area:sandbox",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Runner fake remoto com disconnect, retry e cancel."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v07-sandbox-runner",
+          "title": "Definir SandboxRunner e lifecycle create, exec, snapshot e destroy",
+          "summary": "Consolidar todo acesso ao ambiente isolado em uma porta pequena e auditável.",
+          "touchpoints": [
+            "packages/domain",
+            "packages/contracts",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "SandboxSpec define image, resources, network, mounts, TTL e user.",
+            "Exec suporta timeout, streaming e AbortSignal.",
+            "Snapshot exporta apenas paths permitidos.",
+            "Destroy é idempotente e chamado mesmo após erro.",
+            "Nenhum agente recebe acesso à API do control plane."
+          ],
+          "labels": [
+            "kind:infra",
+            "kind:security",
+            "priority:p0",
+            "area:sandbox"
+          ],
+          "tests": [
+            "Lifecycle completo e cleanup após exceção em cada fase."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v07-control-execution-plane"
+          ]
+        },
+        {
+          "key": "v07-container-backend",
+          "title": "Implementar backend de sandbox em container rootless",
+          "summary": "Entregar um backend inicial reproduzível para desenvolvimento e beta fechado.",
+          "touchpoints": [
+            "packages/executors",
+            "packages/composition",
+            "Dockerfile",
+            "docker-compose.yml"
+          ],
+          "acceptance": [
+            "Container roda como usuário não-root, sem privileged e com capabilities mínimas.",
+            "Root filesystem é read-only exceto workspace e tmpfs controlados.",
+            "PID, CPU, memória, disco e pids limit são aplicados.",
+            "Imagem base é pinada por digest e gera SBOM.",
+            "Host Docker socket nunca é montado dentro do sandbox."
+          ],
+          "labels": [
+            "kind:infra",
+            "kind:security",
+            "priority:p0",
+            "area:sandbox"
+          ],
+          "tests": [
+            "Verificar limites, usuário, mounts e tentativa de acesso ao host."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v07-sandbox-runner"
+          ]
+        },
+        {
+          "key": "v07-network-policy",
+          "title": "Bloquear rede por padrão e liberar egress por policy",
+          "summary": "Código gerado não pode conversar livremente com a internet ou metadados internos.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/executors",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "Sandbox inicia sem egress salvo allowlist explícita.",
+            "DNS e HTTP passam por proxy/policy observável.",
+            "Metadata endpoints, ranges privados e loopback do host são bloqueados.",
+            "Install dependencies usa modo separado e registrável.",
+            "Browser tests só acessam preview e hosts autorizados."
+          ],
+          "labels": [
+            "kind:security",
+            "priority:p0",
+            "area:sandbox",
+            "area:preview"
+          ],
+          "tests": [
+            "Tentativas de SSRF, DNS rebinding e acesso a IP privado."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v07-container-backend"
+          ]
+        },
+        {
+          "key": "v07-secret-broker",
+          "title": "Entregar secrets efêmeros por broker e redigir saídas",
+          "summary": "Tokens de provider, Git e conectores não podem ficar disponíveis durante toda a run.",
+          "touchpoints": [
+            "packages/domain",
+            "packages/composition",
+            "packages/executors",
+            "packages/persistence"
+          ],
+          "acceptance": [
+            "ExecutionRequest usa SecretRef, nunca valor persistido.",
+            "Broker emite credencial mínima, scoped e com TTL.",
+            "Secret só entra no subprocesso autorizado e não no ambiente global.",
+            "Logs, events e artifacts passam por redaction em múltiplas camadas.",
+            "Revogação ocorre em cancel, timeout e destroy."
+          ],
+          "labels": [
+            "kind:security",
+            "priority:p0",
+            "area:sandbox",
+            "area:integrations"
+          ],
+          "tests": [
+            "Canary secret em stdout, arquivo, URL e exception não aparece fora do sandbox."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v07-sandbox-runner"
+          ]
+        },
+        {
+          "key": "v07-cache-supply-chain",
+          "title": "Criar cache seguro de dependências e controles básicos de supply chain",
+          "summary": "Caches compartilhados podem virar canal de persistência ou contaminação entre runs.",
+          "touchpoints": [
+            "packages/executors",
+            "packages/persistence",
+            "docs/SECURITY.md"
+          ],
+          "acceptance": [
+            "Cache é content-addressed e separado por ecosystem, lockfile e trust level.",
+            "Sandbox recebe cache read-only ou cópia descartável.",
+            "Install exige lockfile e scripts de lifecycle seguem policy.",
+            "SBOM e versões instaladas viram artifacts.",
+            "Poisoned cache pode ser invalidado sem afetar outros projetos."
+          ],
+          "labels": [
+            "kind:security",
+            "kind:infra",
+            "priority:p1",
+            "area:sandbox"
+          ],
+          "tests": [
+            "Package com postinstall proibido e cache alterado entre runs."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v07-threat-model",
+          "title": "Publicar threat model e suíte adversarial de isolamento",
+          "summary": "A release não fecha com uma lista de flags de Docker. Precisamos testar fronteiras e registrar riscos residuais.",
+          "touchpoints": [
+            "docs/SECURITY.md",
+            "packages/executors",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "Threat model cobre prompt injection, escape, exfiltração, fork bomb, disk fill e secret theft.",
+            "Testes tentam acessar host, rede privada, credenciais e artifacts de outro run.",
+            "Reaper remove sandboxes órfãos e mede leaks.",
+            "Riscos não mitigados possuem owner e bloqueio de exposição pública.",
+            "Checklist de produção diferencia container de microVM."
+          ],
+          "labels": [
+            "kind:security",
+            "kind:test",
+            "priority:p0",
+            "area:sandbox"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v07-network-policy",
+            "v07-secret-broker",
+            "v07-cache-supply-chain"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v0.8",
+      "title": "v0.8 - Production Data Plane",
+      "description": "PostgreSQL, object storage, fila durável, observabilidade e recuperação operacional.",
+      "objective": "Trocar adapters locais por uma implementação transacional e distribuível sem contaminar o domínio.",
+      "exitCriteria": [
+        "Metadados críticos vivem em PostgreSQL com migrations e constraints.",
+        "Blobs grandes usam object storage e links assinados.",
+        "Fila possui leases transacionais, backpressure e outbox.",
+        "Tracing conecta request, job, run, step, attempt, provider e deploy."
+      ],
+      "nonGoals": [
+        "Kubernetes como requisito.",
+        "Escala global multi-região."
+      ],
+      "dependsOn": [
+        "v0.7"
+      ],
+      "tasks": [
+        {
+          "key": "v08-postgres",
+          "title": "Implementar schema PostgreSQL e adapters das portas de domínio",
+          "summary": "Persistir projetos, runs, steps, attempts, artifacts metadata, events, policies e conversations com integridade referencial.",
+          "touchpoints": [
+            "packages/persistence",
+            "packages/domain",
+            "packages/contracts",
+            "packages/composition"
+          ],
+          "acceptance": [
+            "Migrations versionadas criam constraints, índices e enums sem depender de sync automático.",
+            "Adapters implementam as mesmas portas usadas pelo modo local.",
+            "Optimistic concurrency impede lost update.",
+            "Queries principais possuem paginação por cursor.",
+            "Testcontainers cobre migrations e comportamento dos repos."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p0",
+            "area:persistence"
+          ],
+          "tests": [
+            "Migration up/down suportada, constraint violations e concorrência."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v08-object-storage",
+          "title": "Mover blobs grandes para object storage com integridade e retenção",
+          "summary": "Screenshots, traces, logs, bundles e snapshots não devem ocupar linhas ou memória da API.",
+          "touchpoints": [
+            "packages/persistence",
+            "packages/domain",
+            "apps/api"
+          ],
+          "acceptance": [
+            "BlobStore suporta put/get/delete, hash, size, content type e encryption metadata.",
+            "Artifact metadata referencia object key imutável.",
+            "Downloads usam URL assinada curta e autorização do projeto.",
+            "Multipart e streaming evitam buffer completo.",
+            "Garbage collector remove blobs não referenciados após grace period."
+          ],
+          "labels": [
+            "kind:infra",
+            "kind:security",
+            "priority:p0",
+            "area:persistence",
+            "area:api"
+          ],
+          "tests": [
+            "Blob grande, hash incorreto, URL expirada e GC."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v08-durable-queue",
+          "title": "Implementar fila de produção com leases, retry e transactional outbox",
+          "summary": "A semântica provada na v0.2 precisa de um adapter multi-worker com transações.",
+          "touchpoints": [
+            "packages/persistence",
+            "packages/domain",
+            "apps/worker"
+          ],
+          "acceptance": [
+            "Enqueue pode ocorrer na mesma transação que cria Project/Run.",
+            "Claim usa locking seguro, lease, heartbeat e fencing token.",
+            "Retry policy diferencia erro transitório, permanente e cancelamento.",
+            "Dead-letter preserva payload e diagnóstico.",
+            "Outbox publica eventos sem dual write."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p0",
+            "area:persistence",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Múltiplos workers, crash, lease expiry e outbox replay."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v08-postgres"
+          ]
+        },
+        {
+          "key": "v08-event-fanout",
+          "title": "Distribuir eventos e SSE sem depender do filesystem local",
+          "summary": "Clientes conectados em réplicas diferentes precisam receber a mesma sequência persistida.",
+          "touchpoints": [
+            "packages/persistence",
+            "apps/api",
+            "packages/domain"
+          ],
+          "acceptance": [
+            "EventStore possui sequence monotônica por project/run.",
+            "Fanout pode usar LISTEN/NOTIFY ou broker sem ser source of truth.",
+            "SSE faz catch-up no banco antes de entrar em live mode.",
+            "Backpressure e clientes lentos têm limites.",
+            "Redaction ocorre antes da persistência."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p1",
+            "area:persistence",
+            "area:api"
+          ],
+          "tests": [
+            "Reconexão em outra réplica e gap entre catch-up e live."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v08-postgres"
+          ]
+        },
+        {
+          "key": "v08-scheduler",
+          "title": "Adicionar scheduler de workers, concorrência e backpressure por recurso",
+          "summary": "Runs competem por providers, CPU, memória e slots de sandbox. Modelar capacidade em vez de apenas consumir fila.",
+          "touchpoints": [
+            "apps/worker",
+            "packages/orchestrator",
+            "packages/persistence",
+            "packages/contracts"
+          ],
+          "acceptance": [
+            "Worker anuncia capabilities e slots disponíveis.",
+            "Scheduler respeita limites por provider, tenant futuro e tipo de workload.",
+            "Rate limit gera reschedule com jitter, não storm de retries.",
+            "Priority não causa starvation indefinida.",
+            "Dashboard expõe queue depth, wait time e utilization."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p0",
+            "area:orchestrator",
+            "area:persistence"
+          ],
+          "tests": [
+            "Saturação de provider, workload pesado e fairness."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v08-durable-queue"
+          ]
+        },
+        {
+          "key": "v08-observability",
+          "title": "Instrumentar logs, métricas e traces com OpenTelemetry",
+          "summary": "Sem correlação ponta a ponta, diagnóstico de agentes e sandboxes vira arqueologia.",
+          "touchpoints": [
+            "apps/api",
+            "apps/worker",
+            "packages/orchestrator",
+            "packages/executors",
+            "packages/persistence"
+          ],
+          "acceptance": [
+            "Trace conecta HTTP request, queue job, run, step, attempt, CLI e preview.",
+            "Métricas incluem latency, success, retries, queue wait, token usage e sandbox utilization.",
+            "Logs são estruturados e carregam correlation IDs.",
+            "PII e secrets são filtrados antes de exportar.",
+            "Sampling preserva erros e runs lentas."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p0",
+            "area:platform"
+          ],
+          "tests": [
+            "Trace golden path e falha com fallback."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v08-ops-migration",
+          "title": "Entregar backup, restore, retenção e migração do storage local",
+          "summary": "A nova persistência só é útil se dados puderem ser recuperados e o MVP puder migrar sem perda silenciosa.",
+          "touchpoints": [
+            "packages/persistence",
+            "scripts",
+            "docs/OPERATIONS.md"
+          ],
+          "acceptance": [
+            "CLI importa data/ local com relatório e idempotência.",
+            "Backup e restore têm runbook testado.",
+            "Retention policy distingue metadados, logs e blobs.",
+            "Chaos test cobre restart de API, worker, banco e object store.",
+            "Load test define baseline de throughput e latência."
+          ],
+          "labels": [
+            "kind:infra",
+            "kind:test",
+            "kind:docs",
+            "priority:p0",
+            "area:persistence",
+            "area:platform"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v08-postgres",
+            "v08-object-storage",
+            "v08-durable-queue",
+            "v08-observability"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v0.9",
+      "title": "v0.9 - Adaptive Routing",
+      "description": "Benchmarks próprios, telemetria normalizada e roteamento com confiança e guardrails.",
+      "objective": "Trocar priors subjetivos por decisões baseadas em evidência do próprio workload, sem entregar o controle a uma caixa-preta prematura.",
+      "exitCriteria": [
+        "Taxonomia diferencia tarefas e riscos relevantes.",
+        "Benchmark reproduzível mede qualidade, tempo e consumo até aprovação.",
+        "Router reporta score, confiança, sample size e razão.",
+        "Exploração é controlada e proibida em tarefas de alto risco."
+      ],
+      "nonGoals": [
+        "Treinar modelo próprio.",
+        "Garantir um modelo globalmente ótimo."
+      ],
+      "dependsOn": [
+        "v0.8"
+      ],
+      "tasks": [
+        {
+          "key": "v09-task-taxonomy",
+          "title": "Expandir TaskKind para uma taxonomia hierárquica e versionada",
+          "summary": "Implementation e repair são categorias largas demais para aprender rotas úteis.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/model-router",
+            "packages/orchestrator",
+            "models/catalog.yaml"
+          ],
+          "acceptance": [
+            "Taxonomia cobre frontend, backend, database, integration, tests e tipos de repair/review.",
+            "TaskProfile registra taxonomyVersion e features extraídas.",
+            "Categorias novas não quebram métricas antigas.",
+            "Workflows podem declarar categoria ou permitir classificação.",
+            "Dashboard agrupa por nível sem perder detalhe."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:model-router",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Migração de métricas da taxonomia v1."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v09-usage-telemetry",
+          "title": "Normalizar tokens, custo, quota e rate limits entre providers",
+          "summary": "Subscriptions e APIs expõem sinais diferentes. Separar custo monetário, consumo de quota e custo de oportunidade.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/executors",
+            "packages/model-router",
+            "packages/persistence"
+          ],
+          "acceptance": [
+            "UsageReport possui input/output/cache tokens, cost, quota units e source quality.",
+            "Dados ausentes ficam unknown, nunca zero inventado.",
+            "Rate limit e reset entram no ProviderHealth.",
+            "Router consegue aplicar budget por unidade disponível.",
+            "UI mostra estimado versus observado."
+          ],
+          "labels": [
+            "kind:infra",
+            "priority:p0",
+            "area:model-router",
+            "area:executors"
+          ],
+          "tests": [
+            "Fixtures de usage parcial para Codex, Claude e AGY."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v09-benchmark-runner",
+          "title": "Criar corpus de tarefas e benchmark runner reproduzível",
+          "summary": "A seleção de modelo precisa de casos representativos e versões fixadas.",
+          "touchpoints": [
+            "benchmarks",
+            "packages/orchestrator",
+            "packages/model-router",
+            "scripts"
+          ],
+          "acceptance": [
+            "Corpus inclui greenfield, existing repo, bug, refactor, review e security-sensitive.",
+            "Cada case fixa input, repo commit, policy, checks e expected signals.",
+            "Runner executa múltiplos modelos com seeds/config documentados.",
+            "Resultados são artifacts e podem ser comparados por commit do Agent Foundry.",
+            "Suite rápida roda no CI; suite cara é manual/cron."
+          ],
+          "labels": [
+            "kind:test",
+            "priority:p0",
+            "area:model-router",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Reexecução do mesmo case produz metadados comparáveis."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v09-task-taxonomy",
+            "v09-usage-telemetry"
+          ]
+        },
+        {
+          "key": "v09-quality-signals",
+          "title": "Combinar checks determinísticos, blind review e feedback humano em quality signals",
+          "summary": "Aprovação do próprio LLM é um sinal fraco. Criar uma camada que preserve fonte e incerteza.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/model-router",
+            "packages/persistence",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "QualityObservation registra evaluator, blind flag, rubric, score e evidence.",
+            "Checks determinísticos têm peso separado de review LLM.",
+            "Reviewer não recebe identidade do modelo produtor quando possível.",
+            "Human edits e regressions pós-merge entram como delayed signals.",
+            "Nenhum score agregado apaga os componentes originais."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "priority:p0",
+            "area:model-router"
+          ],
+          "tests": [
+            "Mesmo output avaliado por verifier, reviewer cego e humano."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v09-confidence-routing",
+          "title": "Adicionar confiança, sample size e calibração à decisão do router",
+          "summary": "Score alto com poucas amostras não é conhecimento. Expor incerteza e fallback conservador.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/model-router"
+          ],
+          "acceptance": [
+            "RouteDecision inclui confidence, sampleSize e intervalo ou proxy de incerteza.",
+            "Priors perdem peso conforme observações confiáveis crescem.",
+            "Cold start usa política conservadora e explicável.",
+            "Calibration report compara confiança prevista com aprovação observada.",
+            "Regras duras continuam precedendo qualquer score."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:model-router"
+          ],
+          "tests": [
+            "Cold start, poucas amostras e histórico conflitante."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v09-quality-signals"
+          ]
+        },
+        {
+          "key": "v09-exploration-health",
+          "title": "Implementar exploração controlada, circuit breakers e provider health",
+          "summary": "Aprender exige explorar, mas não em migrações destrutivas ou quando o provider está degradado.",
+          "touchpoints": [
+            "packages/model-router",
+            "packages/contracts",
+            "packages/executors"
+          ],
+          "acceptance": [
+            "Policy define exploration rate por risco e task kind.",
+            "Tarefas sensíveis nunca exploram automaticamente.",
+            "Circuit breaker considera rate limits, falhas consecutivas e latência.",
+            "Router registra por que explorou ou evitou um candidato.",
+            "Fallback evita provider em estado open até half-open probe."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:infra",
+            "priority:p1",
+            "area:model-router",
+            "area:executors"
+          ],
+          "tests": [
+            "Provider degradado, exploração low-risk e bloqueio high-risk."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v09-confidence-routing",
+            "v09-usage-telemetry"
+          ]
+        },
+        {
+          "key": "v09-router-dashboard",
+          "title": "Construir dashboard de router e registry de experimentos",
+          "summary": "Tornar decisões, regressões e alterações de prompt/harness/model auditáveis para operadores.",
+          "touchpoints": [
+            "apps/web",
+            "apps/api",
+            "packages/model-router",
+            "packages/persistence"
+          ],
+          "acceptance": [
+            "Dashboard filtra por task, provider, model, workflow e versão do harness.",
+            "Mostra time-to-approved, first-pass, repairs, cost/quota e confidence.",
+            "Experimento registra hipótese, variantes, população e stop rule.",
+            "Regression gate compara baseline antes de promover catálogo ou harness.",
+            "Export permite análise externa sem PII."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "priority:p1",
+            "area:model-router",
+            "area:web"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v09-benchmark-runner",
+            "v09-confidence-routing",
+            "v09-exploration-health"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v0.10",
+      "title": "v0.10 - Full-stack App Platform",
+      "description": "Ambientes por projeto com banco, auth, storage, functions, secrets e portabilidade.",
+      "objective": "Entregar o equivalente funcional de um backend gerenciado para os apps produzidos, sem misturar o control plane do Agent Foundry com o runtime do app.",
+      "exitCriteria": [
+        "Projeto pode provisionar ambiente full-stack isolado.",
+        "Agente cria schema, auth, storage e functions com migrations revisáveis.",
+        "Secrets e integrações são scoped por projeto.",
+        "Usuário consegue exportar código e dados sem lock-in obrigatório."
+      ],
+      "nonGoals": [
+        "Escala automática global.",
+        "Compatibilidade com toda stack possível."
+      ],
+      "dependsOn": [
+        "v0.9"
+      ],
+      "tasks": [
+        {
+          "key": "v010-environment-provisioner",
+          "title": "Definir AppEnvironment e a porta EnvironmentProvisioner",
+          "summary": "Modelar lifecycle do runtime do app separado de preview e sandbox de build.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/domain",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "AppEnvironment registra region, status, endpoints, resources e provider refs.",
+            "Provisioner suporta create, inspect, pause, resume, rotate e destroy.",
+            "Ambientes preview e production possuem políticas distintas.",
+            "Operações longas são assíncronas e idempotentes.",
+            "Destroy exige confirmação e backup policy."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:platform",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "Provisioner fake com retry, partial failure e destroy."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v010-database",
+          "title": "Provisionar PostgreSQL por projeto e gerenciar schema por migrations",
+          "summary": "Apps full-stack precisam de banco real, não mocks embutidos no frontend.",
+          "touchpoints": [
+            "packages/platform",
+            "packages/orchestrator",
+            "packages/contracts"
+          ],
+          "acceptance": [
+            "Projeto recebe database isolado ou schema/tenant com boundary documentada.",
+            "Migrations são artifacts revisáveis e aplicadas por job controlado.",
+            "Preview de migration detecta operações destrutivas.",
+            "Rollback/forward-fix policy é explícita.",
+            "Backup e export em formato aberto são suportados."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:infra",
+            "priority:p0",
+            "area:platform"
+          ],
+          "tests": [
+            "Create, alter, destructive gate e restore."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v010-environment-provisioner"
+          ]
+        },
+        {
+          "key": "v010-auth",
+          "title": "Integrar autenticação e gerar fluxos seguros de usuário",
+          "summary": "Login, signup, reset e autorização devem nascer com contratos e políticas verificáveis.",
+          "touchpoints": [
+            "packages/platform",
+            "packages/orchestrator",
+            "workflows",
+            "harness"
+          ],
+          "acceptance": [
+            "Provider abstraction cobre email/password e OAuth inicial.",
+            "Templates geram client, server guards e session handling.",
+            "Roles/claims possuem schema e migrations.",
+            "Secrets e callback URLs são configurados sem entrar no código.",
+            "Browser tests cobrem signup, login, logout e acesso negado."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p0",
+            "area:platform",
+            "area:preview"
+          ],
+          "tests": [
+            "Auth happy path, token expirado e role insuficiente."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v010-environment-provisioner"
+          ]
+        },
+        {
+          "key": "v010-storage",
+          "title": "Provisionar storage de arquivos com policies e uploads seguros",
+          "summary": "Uploads exigem limites, ownership e URLs assinadas, não um bucket público genérico.",
+          "touchpoints": [
+            "packages/platform",
+            "packages/orchestrator",
+            "harness"
+          ],
+          "acceptance": [
+            "Bucket/container é scoped por projeto e ambiente.",
+            "Upload usa size/type policy e URL assinada.",
+            "Ownership e autorização são gerados junto ao schema.",
+            "Malware scanning possui hook e estado quarantine.",
+            "Export e cleanup seguem retention policy."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p1",
+            "area:platform"
+          ],
+          "tests": [
+            "Upload autorizado, oversized, tipo proibido e acesso cruzado."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v010-functions",
+          "title": "Adicionar runtime de serverless/edge functions com deploy versionado",
+          "summary": "Integrações e lógica secreta não podem rodar no browser.",
+          "touchpoints": [
+            "packages/platform",
+            "packages/orchestrator",
+            "packages/executors"
+          ],
+          "acceptance": [
+            "Function artifact inclui source, runtime, env refs e permissions.",
+            "Deploy cria versão imutável e rollback.",
+            "Timeout, memória e egress são limitados.",
+            "Logs e traces aparecem no projeto.",
+            "Verifier chama functions e valida failure paths."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:infra",
+            "priority:p0",
+            "area:platform",
+            "area:sandbox"
+          ],
+          "tests": [
+            "Deploy, invoke, timeout, secret access e rollback."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v010-environment-provisioner"
+          ]
+        },
+        {
+          "key": "v010-app-secrets",
+          "title": "Criar secret store e runtime de conexões por projeto",
+          "summary": "Apps precisam consumir APIs externas sem colar chaves no prompt ou no bundle.",
+          "touchpoints": [
+            "packages/platform",
+            "packages/contracts",
+            "apps/api",
+            "apps/web"
+          ],
+          "acceptance": [
+            "Secrets são write-only na UI e criptografados com envelope encryption.",
+            "Agent vê apenas nome, schema e capability, nunca valor.",
+            "Functions recebem secret refs scoped.",
+            "Rotation e revocation têm audit trail.",
+            "Scanner bloqueia secret em source, artifact e client bundle."
+          ],
+          "labels": [
+            "kind:security",
+            "priority:p0",
+            "area:platform",
+            "area:integrations"
+          ],
+          "tests": [
+            "Leak scanner e rotação sem redeploy completo quando suportado."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v010-data-security",
+          "title": "Verificar RLS, autorização e operações destrutivas antes de release",
+          "summary": "Backend gerado sem segurança de dados é uma armadilha polida.",
+          "touchpoints": [
+            "packages/orchestrator",
+            "packages/platform",
+            "packages/executors",
+            "harness"
+          ],
+          "acceptance": [
+            "Schema e policies passam por static lint e testes de acesso.",
+            "Matriz testa anonymous, owner, member e admin quando aplicável.",
+            "Migration destrutiva exige approval gate.",
+            "Release bloqueia tabela sensível sem policy explícita.",
+            "Findings entram no security artifact com severidade e evidência."
+          ],
+          "labels": [
+            "kind:security",
+            "kind:test",
+            "priority:p0",
+            "area:platform",
+            "area:orchestrator"
+          ],
+          "tests": [
+            "IDOR, missing RLS e privilege escalation em fixture."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v010-database",
+            "v010-auth"
+          ]
+        },
+        {
+          "key": "v010-fullstack-reference",
+          "title": "Entregar workflow e app de referência full-stack com export portátil",
+          "summary": "Fechar a versão com um caso real que use database, auth, storage, function e secret.",
+          "touchpoints": [
+            "workflows",
+            "examples",
+            "apps/web",
+            "docs"
+          ],
+          "acceptance": [
+            "Template de referência cria um SaaS CRUD com auth e papéis.",
+            "Upload usa storage e processamento em function.",
+            "Browser tests cobrem jornadas e autorização.",
+            "Export entrega código, migrations e dump/documentação de dados.",
+            "Runbook mostra como executar fora da plataforma."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "kind:docs",
+            "priority:p0",
+            "area:platform",
+            "area:web"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v010-database",
+            "v010-auth",
+            "v010-storage",
+            "v010-functions",
+            "v010-app-secrets",
+            "v010-data-security"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v0.11",
+      "title": "v0.11 - Publish and Integrations",
+      "description": "Publicação, domínios, GitHub two-way sync e conectores externos.",
+      "objective": "Levar o projeto de preview a produto publicado, preservando propriedade do código e integração com ferramentas externas.",
+      "exitCriteria": [
+        "Versões podem ser promovidas para production e revertidas.",
+        "Custom domain e TLS possuem verificação e status claros.",
+        "GitHub mantém sync bidirecional com política de conflitos.",
+        "Connector SDK suporta pelo menos pagamentos e email como referências."
+      ],
+      "nonGoals": [
+        "Marketplace público de conectores.",
+        "Deploy em qualquer provedor imaginável."
+      ],
+      "dependsOn": [
+        "v0.10"
+      ],
+      "tasks": [
+        {
+          "key": "v011-deployment-domain",
+          "title": "Definir Release, Deployment e a porta DeploymentProvider",
+          "summary": "Publicação precisa ser um domínio próprio, separado de preview e de commit Git.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/domain",
+            "packages/orchestrator"
+          ],
+          "acceptance": [
+            "Release fixa projectVersion, environment, config e artifacts.",
+            "Deployment registra provider, status, URL, logs e health.",
+            "Provider suporta deploy, promote, rollback, inspect e delete.",
+            "Operações são idempotentes por release digest.",
+            "Approval policy decide quem pode publicar production."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:preview",
+            "area:platform"
+          ],
+          "tests": [
+            "Provider fake com deploy, rollback e falha parcial."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v011-publish-domains",
+          "title": "Implementar publish pipeline, custom domains e TLS",
+          "summary": "Usuário precisa publicar com um clique e entender DNS, certificado e saúde da release.",
+          "touchpoints": [
+            "packages/platform",
+            "apps/api",
+            "apps/web"
+          ],
+          "acceptance": [
+            "Preview pode ser promovido ou reconstruído de release imutável.",
+            "Custom domain verifica ownership e configura TLS automático.",
+            "UI mostra DNS records, propagation e certificado.",
+            "Health failure impede promoção ou aciona rollback policy.",
+            "Republish após mudança é explícito e auditável."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:infra",
+            "priority:p0",
+            "area:preview",
+            "area:web"
+          ],
+          "tests": [
+            "Domain verification, TLS pending, deploy unhealthy e rollback."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v011-deployment-domain"
+          ]
+        },
+        {
+          "key": "v011-github-app",
+          "title": "Integrar GitHub App/OAuth com permissões mínimas por repositório",
+          "summary": "Two-way sync não deve depender de PAT pessoal colado no servidor.",
+          "touchpoints": [
+            "packages/integrations",
+            "apps/api",
+            "apps/web",
+            "packages/platform"
+          ],
+          "acceptance": [
+            "Usuário instala GitHub App e escolhe repositórios autorizados.",
+            "Tokens de instalação são curtos, scoped e obtidos sob demanda.",
+            "Webhooks possuem assinatura, replay protection e idempotência.",
+            "Desinstalação revoga acesso e marca conexões afetadas.",
+            "Nenhum token chega ao agente ou app gerado."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p0",
+            "area:integrations"
+          ],
+          "tests": [
+            "Install, webhook inválido, token expiry e uninstall."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v011-github-sync",
+          "title": "Implementar two-way sync, pull requests e resolução de conflitos",
+          "summary": "Código editado fora da plataforma precisa entrar sem apagar mudanças locais ou criar loops de webhook.",
+          "touchpoints": [
+            "packages/integrations",
+            "packages/orchestrator",
+            "packages/persistence",
+            "apps/web"
+          ],
+          "acceptance": [
+            "Projeto pode vincular branch base e branch de trabalho.",
+            "Push da plataforma inclui provenance e não dispara loop infinito.",
+            "Mudança externa cria sync event e novo baseline quando segura.",
+            "Conflito abre fluxo de resolução com diff de três vias.",
+            "Usuário pode criar PR com resumo, checks e links para artifacts."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:integrations",
+            "area:orchestrator",
+            "area:web"
+          ],
+          "tests": [
+            "Push interno, commit externo, conflito e PR."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v011-github-app"
+          ]
+        },
+        {
+          "key": "v011-connector-sdk",
+          "title": "Criar Connector SDK com OAuth, scopes, actions e secret refs",
+          "summary": "Conectores não podem virar prompts ad hoc com credenciais. Definir uma superfície restrita e declarativa.",
+          "touchpoints": [
+            "packages/integrations",
+            "packages/contracts",
+            "packages/platform",
+            "harness"
+          ],
+          "acceptance": [
+            "Manifest declara auth, scopes, actions, schemas e network destinations.",
+            "Agent recebe tools tipadas, não credenciais.",
+            "Actions validam input/output e registram audit trail.",
+            "Conexão pode ser workspace ou project scoped.",
+            "Revogação e erro de consentimento são tratados."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p0",
+            "area:integrations",
+            "area:platform"
+          ],
+          "tests": [
+            "Connector fake OAuth e API key com scopes distintos."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v011-reference-connectors",
+          "title": "Entregar conectores de referência para Stripe e email transacional",
+          "summary": "Pagamentos e email forçam o sistema a lidar com webhooks, secrets, idempotência e ambientes.",
+          "touchpoints": [
+            "packages/integrations",
+            "packages/platform",
+            "workflows",
+            "examples"
+          ],
+          "acceptance": [
+            "Stripe cobre checkout/subscription fixture, webhook verificado e idempotency key.",
+            "Email cobre sender, template e delivery status em provider suportado.",
+            "Test mode e production são separados.",
+            "Generated app não manipula dados de cartão diretamente.",
+            "Golden app usa ambos e passa browser/integration tests."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p1",
+            "area:integrations",
+            "area:platform"
+          ],
+          "tests": [
+            "Webhook replay, assinatura inválida e provider indisponível."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v011-connector-sdk"
+          ]
+        },
+        {
+          "key": "v011-release-ui-e2e",
+          "title": "Construir painel de releases, domains, GitHub e connectors com golden flow",
+          "summary": "Consolidar publicação e integrações em uma experiência legível para não especialistas.",
+          "touchpoints": [
+            "apps/web",
+            "apps/api",
+            "docs"
+          ],
+          "acceptance": [
+            "UI mostra preview, production, histórico, health e rollback.",
+            "GitHub mostra sync status, branch, commits e conflitos.",
+            "Connections mostra scopes, ambiente e último uso.",
+            "Golden flow importa repo, constrói, publica, conecta domínio e abre PR.",
+            "Runbooks cobrem rollback e revogação de conexão."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "kind:docs",
+            "priority:p0",
+            "area:web",
+            "area:integrations"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v011-publish-domains",
+            "v011-github-sync",
+            "v011-reference-connectors"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v0.12",
+      "title": "v0.12 - SaaS and Collaboration",
+      "description": "Autenticação, workspaces, RBAC, colaboração, créditos e billing.",
+      "objective": "Transformar a ferramenta pessoal em plataforma multi-tenant operável, com isolamento de dados, colaboração e modelo econômico explícito.",
+      "exitCriteria": [
+        "Usuários e workspaces possuem RBAC aplicado em todas as portas.",
+        "Quotas e créditos impedem consumo não autorizado.",
+        "Billing e usage ledger reconciliam sem alterar histórico.",
+        "Colaboração, compartilhamento e data rights funcionam por tenant."
+      ],
+      "nonGoals": [
+        "Enterprise SSO completo.",
+        "Marketplace e revenue sharing."
+      ],
+      "dependsOn": [
+        "v0.11"
+      ],
+      "tasks": [
+        {
+          "key": "v012-identity",
+          "title": "Adicionar identidade, sessão e proteção de endpoints",
+          "summary": "Toda ação de produto precisa de actor autenticado e sessão segura.",
+          "touchpoints": [
+            "apps/api",
+            "apps/web",
+            "packages/contracts",
+            "packages/platform"
+          ],
+          "acceptance": [
+            "Signup/login/logout/reset usam provider escolhido e cookies seguros.",
+            "CSRF, session rotation e revocation são tratados.",
+            "API diferencia anonymous, user e service actor.",
+            "Audit events carregam actor e workspace.",
+            "Rate limit protege auth e endpoints caros."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p0",
+            "area:platform",
+            "area:api",
+            "area:web"
+          ],
+          "tests": [
+            "Session fixation, logout, reset e rate limiting."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v012-workspaces-rbac",
+          "title": "Modelar workspaces, memberships e RBAC por projeto",
+          "summary": "ProjectId sozinho não é boundary de autorização.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/domain",
+            "packages/persistence",
+            "apps/api"
+          ],
+          "acceptance": [
+            "Roles mínimas owner, admin, builder e viewer possuem capabilities explícitas.",
+            "Toda query e mutation exige workspace scope.",
+            "Invite, accept, remove e transfer ownership têm audit trail.",
+            "Service jobs preservam tenant context.",
+            "Acesso negado não revela existência do recurso."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p0",
+            "area:platform",
+            "area:persistence"
+          ],
+          "tests": [
+            "Matriz de capabilities e tentativa cross-tenant."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v012-identity"
+          ]
+        },
+        {
+          "key": "v012-tenant-isolation",
+          "title": "Aplicar isolamento de tenant em banco, fila, blobs e sandboxes",
+          "summary": "RBAC na API não basta se adapters ou workers puderem cruzar dados.",
+          "touchpoints": [
+            "packages/persistence",
+            "packages/orchestrator",
+            "packages/executors",
+            "packages/platform"
+          ],
+          "acceptance": [
+            "TenantId participa de chaves, queries, object keys e queue payloads.",
+            "DB usa defense in depth, incluindo RLS quando aplicável.",
+            "Sandbox recebe apenas snapshot e secrets do tenant.",
+            "Logs/traces não misturam atributos sensíveis entre tenants.",
+            "Scanner e testes adversariais tentam acesso cruzado."
+          ],
+          "labels": [
+            "kind:security",
+            "priority:p0",
+            "area:platform",
+            "area:persistence",
+            "area:sandbox"
+          ],
+          "tests": [
+            "Cross-tenant ID enumeration, object key guess e worker payload tampering."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v012-workspaces-rbac"
+          ]
+        },
+        {
+          "key": "v012-collaboration",
+          "title": "Adicionar colaboradores, comentários, presence e atividade",
+          "summary": "A experiência de equipe precisa de coordenação sem permitir duas builds conflitantes silenciosamente.",
+          "touchpoints": [
+            "apps/web",
+            "apps/api",
+            "packages/persistence"
+          ],
+          "acceptance": [
+            "Comentários podem apontar message, artifact, file, line ou visual selection.",
+            "Presence é efêmera e não source of truth.",
+            "Locks/optimistic concurrency evitam decisões e builds incompatíveis.",
+            "Activity feed mostra mudanças relevantes, não cada token do agente.",
+            "Notificações respeitam preferências e role."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p1",
+            "area:web",
+            "area:platform"
+          ],
+          "tests": [
+            "Duas pessoas revisando e uma build concorrente."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v012-workspaces-rbac"
+          ]
+        },
+        {
+          "key": "v012-sharing-templates",
+          "title": "Implementar sharing, remix e templates com proveniência",
+          "summary": "Projetos e templates precisam de regras claras de acesso, secrets e dados antes de serem copiados.",
+          "touchpoints": [
+            "apps/web",
+            "apps/api",
+            "packages/persistence",
+            "packages/platform"
+          ],
+          "acceptance": [
+            "Share pode ser private, workspace, link view-only ou public quando permitido.",
+            "Remix copia código/config permitidos, nunca secrets ou dados privados.",
+            "Template registra versão, licença, source e compatibilidade.",
+            "Usuário vê exatamente o que será copiado.",
+            "Owner pode revogar link compartilhado."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p1",
+            "area:web",
+            "area:platform"
+          ],
+          "tests": [
+            "Remix sem secret, link revogado e template atualizado."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v012-usage-credits",
+          "title": "Criar usage ledger, quotas e créditos por workspace",
+          "summary": "O custo deve ser derivado de eventos imutáveis e reconciliável, não de contadores mutáveis espalhados.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/persistence",
+            "packages/model-router",
+            "packages/platform"
+          ],
+          "acceptance": [
+            "UsageEvent registra source, quantity, unit, run/attempt e idempotency key.",
+            "Credit ledger é append-only com balance derivado.",
+            "Reservation evita iniciar run que não pode concluir dentro da policy.",
+            "Refund/reversal não apaga evento original.",
+            "UI explica consumo por operação e provider."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:infra",
+            "priority:p0",
+            "area:platform",
+            "area:model-router"
+          ],
+          "tests": [
+            "Duplicate usage, reservation timeout e reversal."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v012-billing-connections",
+          "title": "Integrar billing e ownership de secrets/connections por workspace",
+          "summary": "Cobrança, plano e conexões externas precisam acompanhar lifecycle do workspace.",
+          "touchpoints": [
+            "packages/platform",
+            "packages/integrations",
+            "apps/api",
+            "apps/web"
+          ],
+          "acceptance": [
+            "Plan define entitlements, limits e grants sem hardcode na UI.",
+            "Subscription webhooks são verificados e idempotentes.",
+            "Past due aplica grace policy sem destruir projetos.",
+            "Connections têm owner workspace, scopes e offboarding.",
+            "Invoice e usage reconciliation possuem relatório."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "priority:p0",
+            "area:platform",
+            "area:integrations"
+          ],
+          "tests": [
+            "Upgrade, downgrade, webhook replay, past due e workspace deletion."
+          ],
+          "outOfScope": [],
+          "dependsOn": [
+            "v012-usage-credits",
+            "v012-workspaces-rbac"
+          ]
+        },
+        {
+          "key": "v012-governance-e2e",
+          "title": "Entregar audit, abuse controls, data rights e suíte multi-tenant",
+          "summary": "Fechar a plataforma com capacidades mínimas de operação e direitos do usuário.",
+          "touchpoints": [
+            "packages/platform",
+            "apps/api",
+            "apps/web",
+            "docs"
+          ],
+          "acceptance": [
+            "Audit log é filtrável e exportável por workspace.",
+            "Abuse controls cobrem rate limit, project quotas e suspend/resume.",
+            "Export e delete de conta/workspace respeitam retenção legal configurável.",
+            "Multi-tenant E2E prova isolamento, colaboração, billing e offboarding.",
+            "Load test inclui noisy neighbor e quotas."
+          ],
+          "labels": [
+            "kind:security",
+            "kind:test",
+            "kind:docs",
+            "priority:p0",
+            "area:platform"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v012-tenant-isolation",
+            "v012-collaboration",
+            "v012-sharing-templates",
+            "v012-billing-connections"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "v1.0",
+      "title": "v1.0 - Lovable-class Release",
+      "description": "Produto completo de prompt a app full-stack publicado, iterável e colaborativo.",
+      "objective": "Fechar uma experiência Lovable-class: conversar, planejar, construir, editar visualmente, validar, provisionar backend, sincronizar código e publicar sem exigir operação manual do usuário.",
+      "exitCriteria": [
+        "Golden journeys cobrem prompt -> app full-stack -> visual edit -> deploy -> GitHub.",
+        "Feature contract e non-goals estão públicos e verificáveis.",
+        "SLOs, segurança, privacy e suporte possuem gates de lançamento.",
+        "Onboarding leva um usuário novo a um app publicado sem intervenção da equipe."
+      ],
+      "nonGoals": [
+        "Paridade literal com todo recurso atual ou futuro do Lovable.",
+        "Suporte universal a frameworks."
+      ],
+      "dependsOn": [
+        "v0.12"
+      ],
+      "tasks": [
+        {
+          "key": "v100-parity-contract",
+          "title": "Publicar feature contract e matriz Lovable-class",
+          "summary": "Definir o alvo de produto em termos verificáveis, não em semelhança visual ou slogan.",
+          "touchpoints": [
+            "docs",
+            "apps/web",
+            "packages/contracts"
+          ],
+          "acceptance": [
+            "Matriz cobre Chat, Plan/Build, visual edits, history, preview, browser tests, backend, GitHub e publish.",
+            "Cada capability aponta para teste, owner e status.",
+            "Diferenças deliberadas e non-goals são explícitos.",
+            "Critérios usam comportamento observável pelo usuário.",
+            "Release é bloqueada por gaps P0."
+          ],
+          "labels": [
+            "kind:docs",
+            "kind:test",
+            "priority:p0",
+            "area:platform"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v100-onboarding-templates",
+          "title": "Construir onboarding, template gallery e remix guiado",
+          "summary": "A primeira experiência precisa reduzir escolha e levar a um resultado real, não a um dashboard vazio.",
+          "touchpoints": [
+            "apps/web",
+            "examples",
+            "docs"
+          ],
+          "acceptance": [
+            "Usuário pode começar por prompt, PRD, GitHub ou template.",
+            "Templates têm preview, capabilities, stack e custos esperados.",
+            "Onboarding valida provider/connections sem expor complexidade desnecessária.",
+            "Checklist termina em app publicado e compartilhável.",
+            "Abandono e erro possuem recovery path."
+          ],
+          "labels": [
+            "kind:feature",
+            "priority:p0",
+            "area:web",
+            "area:platform"
+          ],
+          "tests": [
+            "Usuário novo completa cada uma das quatro entradas."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v100-builder-polish",
+          "title": "Polir builder, acessibilidade, responsividade e performance percebida",
+          "summary": "A infraestrutura pode funcionar e ainda produzir uma experiência lenta, confusa ou hostil.",
+          "touchpoints": [
+            "apps/web",
+            "apps/api"
+          ],
+          "acceptance": [
+            "Chat, preview e changes têm estados vazios, loading, erro e recovery consistentes.",
+            "Keyboard navigation e WCAG 2.2 AA são verificadas nos fluxos principais.",
+            "Builder funciona em telas menores com degradação planejada.",
+            "Long tasks mostram progresso útil e ações seguras.",
+            "Budgets de performance são definidos e medidos."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "priority:p0",
+            "area:web"
+          ],
+          "tests": [
+            "axe, keyboard-only e Web Vitals nos fluxos golden."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v100-golden-journeys",
+          "title": "Automatizar golden journeys ponta a ponta em ambiente semelhante à produção",
+          "summary": "A release precisa provar o sistema inteiro, não apenas pacotes isolados.",
+          "touchpoints": [
+            "tests/e2e",
+            "apps",
+            "packages",
+            "workflows"
+          ],
+          "acceptance": [
+            "Prompt cria app full-stack com auth, database e storage.",
+            "Usuário faz change request, visual edit e revert.",
+            "Browser tests encontram e reparam uma falha introduzida.",
+            "Projeto sincroniza GitHub, publica custom domain e faz rollback.",
+            "Fluxo de equipe cobre invite, review, credits e audit."
+          ],
+          "labels": [
+            "kind:test",
+            "priority:p0",
+            "area:platform",
+            "area:web",
+            "area:integrations"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v100-parity-contract",
+            "v100-onboarding-templates",
+            "v100-builder-polish"
+          ]
+        },
+        {
+          "key": "v100-reliability-ops",
+          "title": "Definir SLOs, capacity model, runbooks e incident readiness",
+          "summary": "Um builder que funciona só em demos não é um produto.",
+          "touchpoints": [
+            "docs/OPERATIONS.md",
+            "packages/platform",
+            "apps"
+          ],
+          "acceptance": [
+            "SLOs cobrem API, queue wait, run success, preview e deploy.",
+            "Alertas derivam de sintomas de usuário e possuem runbook.",
+            "Capacity model inclui provider quotas, sandboxes e storage.",
+            "Game day testa provider outage, queue backlog, DB failover e bad deploy.",
+            "Status page e comunicação de incidente têm processo."
+          ],
+          "labels": [
+            "kind:infra",
+            "kind:docs",
+            "priority:p0",
+            "area:platform"
+          ],
+          "tests": [
+            "Game day documentado com ações e follow-ups."
+          ],
+          "outOfScope": [],
+          "dependsOn": []
+        },
+        {
+          "key": "v100-security-privacy",
+          "title": "Concluir security review, privacy review e launch threat assessment",
+          "summary": "Antes de abrir o produto, validar isolamento, supply chain, data handling e mecanismos de abuso.",
+          "touchpoints": [
+            "docs/SECURITY.md",
+            "packages",
+            "apps"
+          ],
+          "acceptance": [
+            "Pentest cobre control plane, sandboxes, preview, connectors e tenant isolation.",
+            "Dependências, images e artifacts possuem scanning e response policy.",
+            "Data inventory, retention, export e deletion são verificados.",
+            "Critical/high findings bloqueiam release ou têm risk acceptance explícito.",
+            "Security contact e vulnerability disclosure estão publicados."
+          ],
+          "labels": [
+            "kind:security",
+            "kind:test",
+            "priority:p0",
+            "area:platform",
+            "area:sandbox"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v100-golden-journeys"
+          ]
+        },
+        {
+          "key": "v100-launch",
+          "title": "Fechar pricing UX, documentação, migração e automação de release",
+          "summary": "O lançamento precisa ser repetível e honesto sobre limites, custos e ownership.",
+          "touchpoints": [
+            "apps/web",
+            "docs",
+            ".github/workflows",
+            "scripts"
+          ],
+          "acceptance": [
+            "Pricing/credits explicam unidade, estimativa e overage antes da ação.",
+            "Docs cobrem quickstart, builder, backend, GitHub, deploy, segurança e troubleshooting.",
+            "Projetos locais v0.x possuem caminho de migração.",
+            "Release pipeline gera changelog, tag, artifacts, rollback plan e smoke tests.",
+            "Launch checklist exige todos os gates P0 e assinatura dos responsáveis."
+          ],
+          "labels": [
+            "kind:docs",
+            "kind:feature",
+            "priority:p0",
+            "area:platform",
+            "area:web"
+          ],
+          "tests": [],
+          "outOfScope": [],
+          "dependsOn": [
+            "v100-reliability-ops",
+            "v100-security-privacy"
+          ]
+        }
+      ]
+    }
+  ]
+}
