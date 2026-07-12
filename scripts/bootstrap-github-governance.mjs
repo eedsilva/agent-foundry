@@ -225,7 +225,7 @@ async function ensureProject(
 
   if (!opts.skipViews) {
     const createdViews = await ensureProjectViews(client, {
-      userId: viewer.id,
+      owner: spec.owner,
       projectNumber: project.number,
       projectId: project.node_id,
       desiredViews: spec.views,
@@ -236,14 +236,17 @@ async function ensureProject(
   const itemChanges = await reconcileProjectItems(client, {
     projectOwner: spec.owner,
     projectNumber: project.number,
+    projectId: project.node_id,
     repositoryOwner: ownerName,
     repositoryName: repoName,
     fieldsByName,
     desiredRecords,
     roadmapState,
   });
-  for (const change of itemChanges)
+  for (const change of itemChanges) {
     if (change.type === 'added') console.log(`project item + #${change.issueNumber}`);
+    if (change.type === 'reused') console.log(`project item = #${change.issueNumber} (já existia)`);
+  }
 }
 
 async function ensureRuleset(client, ownerName, repoName, config, opts) {
