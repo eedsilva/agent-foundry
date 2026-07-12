@@ -1,0 +1,50 @@
+name: Bug report
+about: Reporte um comportamento reproduzível que viola um contrato existente.
+title: '[Bug] '
+labels:
+  - kind:bug
+  - priority:p1
+body:
+  - type: markdown
+    attributes:
+      value: 'Não esconda tentativas falhas do agente. Elas são evidência do produto.'
+  - type: input
+    id: revision
+    attributes:
+      label: Revisão e deployment profile
+      placeholder: commit SHA; mock-local, real-local-trusted, isolated-preview ou hosted-multi-tenant
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Comportamento observado
+      description: Inclua resultado, logs redigidos e artefatos relevantes.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamento esperado
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reprodução mínima
+      description: Passos, PRD/change request, workflow, provider/model e tentativa quando aplicável.
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Maior risco
+      options:
+        - Sem impacto de segurança ou dados conhecido
+        - Perda ou corrupção de dados
+        - Execução/processo/filesystem
+        - Rede ou exfiltração
+        - Secrets ou credenciais
+        - Isolamento entre usuários/tenants
+    validations:
+      required: true

@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 
@@ -9,7 +10,7 @@ const booleanFromEnv = z
 
 const ConfigSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  API_HOST: z.string().default('0.0.0.0'),
+  API_HOST: z.string().default('127.0.0.1'),
   API_PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
   WEB_ORIGIN: z.string().default('http://localhost:3000'),
   DATA_DIR: z.string().default('.data'),
@@ -19,6 +20,7 @@ const ConfigSchema = z.object({
   EXECUTOR_MODE: z.enum(['real', 'mock']).default('mock'),
   RUN_WORKER_INLINE: booleanFromEnv,
   AUTO_INSTALL_DEPENDENCIES: booleanFromEnv,
+  ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: booleanFromEnv,
   AGENT_TIMEOUT_MS: z.coerce.number().int().positive().default(1_200_000),
   VERIFICATION_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
   MAX_CLI_OUTPUT_BYTES: z.coerce.number().int().positive().default(20_000_000),
@@ -41,6 +43,7 @@ export interface RuntimeConfig {
   executorMode: 'real' | 'mock';
   runWorkerInline: boolean;
   autoInstallDependencies: boolean;
+  allowUnsafeRemoteRealExecution: boolean;
   agentTimeoutMs: number;
   verificationTimeoutMs: number;
   maxCliOutputBytes: number;
@@ -59,6 +62,15 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   };
   const parsed = ConfigSchema.parse(normalized);
   const rootDir = findRepoRoot(env.REPO_ROOT ?? env.INIT_CWD ?? process.cwd());
+  if (
+    parsed.EXECUTOR_MODE === 'real' &&
+    !isLoopbackHost(parsed.API_HOST) &&
+    !parsed.ALLOW_UNSAFE_REMOTE_REAL_EXECUTION
+  ) {
+    throw new Error(
+      'Refusing to expose real CLI execution on a non-loopback API host. Keep API_HOST on 127.0.0.1/localhost or explicitly set ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true after accepting the host-level risk.',
+    );
+  }
   return {
     environment: parsed.NODE_ENV,
     rootDir,
@@ -72,6 +84,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     executorMode: parsed.EXECUTOR_MODE,
     runWorkerInline: parsed.RUN_WORKER_INLINE,
     autoInstallDependencies: parsed.AUTO_INSTALL_DEPENDENCIES,
+    allowUnsafeRemoteRealExecution: parsed.ALLOW_UNSAFE_REMOTE_REAL_EXECUTION,
     agentTimeoutMs: parsed.AGENT_TIMEOUT_MS,
     verificationTimeoutMs: parsed.VERIFICATION_TIMEOUT_MS,
     maxCliOutputBytes: parsed.MAX_CLI_OUTPUT_BYTES,
@@ -96,4 +109,13 @@ function findRepoRoot(start: string): string {
     if (parent === current) return resolve(start);
     current = parent;
   }
+}
+
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, '$1');
+  if (normalized === 'localhost' || normalized === '::1') return true;
+  return isIP(normalized) === 4 && normalized.startsWith('127.');
 }

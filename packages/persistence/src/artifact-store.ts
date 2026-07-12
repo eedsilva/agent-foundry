@@ -102,7 +102,10 @@ export class FileArtifactStore implements ArtifactStore {
 
   async listMetadata(projectId: string, name?: string): Promise<ArtifactMetadata[]> {
     const index = await this.readIndex(projectId);
-    if (name) return (index.artifacts[safeSegment(name)] ?? []).map((item) => ArtifactMetadataSchema.parse(item));
+    if (name)
+      return (index.artifacts[safeSegment(name)] ?? []).map((item) =>
+        ArtifactMetadataSchema.parse(item),
+      );
     return Object.values(index.artifacts)
       .flat()
       .map((item) => ArtifactMetadataSchema.parse(item))

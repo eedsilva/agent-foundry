@@ -29,9 +29,7 @@ export class FileProjectRepository implements ProjectRepository {
     await ensureDir(root);
     const entries = await readdir(root, { withFileTypes: true });
     const projects = await Promise.all(
-      entries
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => this.get(entry.name)),
+      entries.filter((entry) => entry.isDirectory()).map((entry) => this.get(entry.name)),
     );
 
     return projects

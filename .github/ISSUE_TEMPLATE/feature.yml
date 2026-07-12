@@ -1,0 +1,41 @@
+name: Feature proposal
+about: Proponha um resultado de produto, não apenas uma tecnologia.
+title: '[Feature] '
+labels:
+  - kind:feature
+  - priority:p2
+body:
+  - type: textarea
+    id: job
+    attributes:
+      label: Job do usuário
+      description: Quem precisa fazer o quê, e por que o fluxo atual é insuficiente?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Resultado observável
+      description: Defina um comportamento falsificável.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas mais simples
+      description: Inclua processo manual, configuração, adaptação de feature existente ou não fazer agora.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidência e métrica
+      description: Como saberemos que valeu a complexidade?
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+    validations:
+      required: true

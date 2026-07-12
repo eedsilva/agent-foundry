@@ -1,0 +1,614 @@
+{
+  "schemaVersion": "1.0.0",
+  "repository": "eedsilva/agent-foundry",
+  "appliedSpecVersion": "1.0.0-legacy",
+  "note": "Seeded from the verified first roadmap import. Live body drift is checked before reconciliation.",
+  "issues": {
+    "roadmap": {
+      "number": 1,
+      "title": "[Roadmap] Agent Foundry → Lovable-class v1.0",
+      "lastAppliedBodySha256": "037daa3c35f96fa197a40c3099cea7387e05eb25d023255b0767a6935db352e4",
+      "legacyBodySha256": "037daa3c35f96fa197a40c3099cea7387e05eb25d023255b0767a6935db352e4"
+    },
+    "epic-v0.2": {
+      "number": 2,
+      "title": "[Epic v0.2] Reliable Runs",
+      "lastAppliedBodySha256": "c46059d6c91e06ffae7f2b1a577ebacbc51670d1d02427ea49766ff2a873f818",
+      "legacyBodySha256": "c46059d6c91e06ffae7f2b1a577ebacbc51670d1d02427ea49766ff2a873f818"
+    },
+    "v02-provider-canaries": {
+      "number": 3,
+      "title": "[v0.2] Executar canários reais e congelar o baseline dos três providers",
+      "lastAppliedBodySha256": "a93a7c45e7bf32f02295a5c8ffbc2611b2309101558e941f3ec6de7d03575fc0",
+      "legacyBodySha256": "a93a7c45e7bf32f02295a5c8ffbc2611b2309101558e941f3ec6de7d03575fc0"
+    },
+    "v02-run-domain": {
+      "number": 4,
+      "title": "[v0.2] Introduzir WorkflowRun, StepRun e StepAttempt como entidades persistidas",
+      "lastAppliedBodySha256": "0b602d62df1828f25af5df8a2db8e5b51e232683567d73fb8a86b5f959e1d145",
+      "legacyBodySha256": "0b602d62df1828f25af5df8a2db8e5b51e232683567d73fb8a86b5f959e1d145"
+    },
+    "v02-queue-leases": {
+      "number": 5,
+      "title": "[v0.2] Adicionar leases, heartbeats, fencing tokens e recuperação de jobs órfãos",
+      "lastAppliedBodySha256": "616e7630b6886b05eeb39c89a2dccdff1595e75d8ffc1e1a947c076ffcf01f20",
+      "legacyBodySha256": "616e7630b6886b05eeb39c89a2dccdff1595e75d8ffc1e1a947c076ffcf01f20"
+    },
+    "v02-cancellation": {
+      "number": 6,
+      "title": "[v0.2] Propagar cancelamento até a árvore de processos e restaurar o checkpoint",
+      "lastAppliedBodySha256": "8c8fa27e522ff60e1fbb66b7f4dbf9733f3200a3c9adc6fda7b868a9c63c2e95",
+      "legacyBodySha256": "8c8fa27e522ff60e1fbb66b7f4dbf9733f3200a3c9adc6fda7b868a9c63c2e95"
+    },
+    "v02-pause-resume": {
+      "number": 7,
+      "title": "[v0.2] Implementar pause e resume seguros em fronteiras de step",
+      "lastAppliedBodySha256": "27b2410bbf81c442fd74679e15aea0188481c7620abd44358e4cf94065bbbd77",
+      "legacyBodySha256": "27b2410bbf81c442fd74679e15aea0188481c7620abd44358e4cf94065bbbd77"
+    },
+    "v02-step-retry": {
+      "number": 8,
+      "title": "[v0.2] Permitir retry de um step com invalidação controlada dos descendentes",
+      "lastAppliedBodySha256": "9a40ecfa24286c0fb4f777dea8910900e4401981572b25fad00580d6a12f8f5b",
+      "legacyBodySha256": "9a40ecfa24286c0fb4f777dea8910900e4401981572b25fad00580d6a12f8f5b"
+    },
+    "v02-idempotency": {
+      "number": 9,
+      "title": "[v0.2] Garantir idempotência entre attempts, artefatos, eventos e commits",
+      "lastAppliedBodySha256": "1757f47edf94c5ba829a011069efb413322167f163e63ac77d77c8dcd9d92e64",
+      "legacyBodySha256": "1757f47edf94c5ba829a011069efb413322167f163e63ac77d77c8dcd9d92e64"
+    },
+    "v02-sse-timeline": {
+      "number": 10,
+      "title": "[v0.2] Transmitir eventos por SSE com replay e timeline visual da execução",
+      "lastAppliedBodySha256": "a4ef1460f5bcdaa07818632ae66ee4711a1443e17256e477ee0c6b52c27861fe",
+      "legacyBodySha256": "a4ef1460f5bcdaa07818632ae66ee4711a1443e17256e477ee0c6b52c27861fe"
+    },
+    "v02-failure-injection": {
+      "number": 11,
+      "title": "[v0.2] Criar suíte de failure injection para crash, timeout, rate limit e entrega duplicada",
+      "lastAppliedBodySha256": "827a8431e7ec64d61b0a5c051052184289264c81224612332cb5ff06c3d4570b",
+      "legacyBodySha256": "827a8431e7ec64d61b0a5c051052184289264c81224612332cb5ff06c3d4570b"
+    },
+    "epic-v0.3": {
+      "number": 12,
+      "title": "[Epic v0.3] Human Control",
+      "lastAppliedBodySha256": "e6d953841528c788a97421f8e44ae1787cc7dabf291ecd96c5aa76672bc30fd7",
+      "legacyBodySha256": "e6d953841528c788a97421f8e44ae1787cc7dabf291ecd96c5aa76672bc30fd7"
+    },
+    "v03-approval-domain": {
+      "number": 13,
+      "title": "[v0.3] Adicionar approval gates e decisões humanas ao workflow declarativo",
+      "lastAppliedBodySha256": "54a8e2003b113adc90aa3014e23dc3e062a82588122ea7ef448d2857ce4cbac0",
+      "legacyBodySha256": "54a8e2003b113adc90aa3014e23dc3e062a82588122ea7ef448d2857ce4cbac0"
+    },
+    "v03-approval-api-ui": {
+      "number": 14,
+      "title": "[v0.3] Construir API e interface de revisão para aprovar, rejeitar e pedir mudanças",
+      "lastAppliedBodySha256": "8dffe05425369a1df0f5eccf2777a165aaf17cc8672d128fb20fcc221d1e4899",
+      "legacyBodySha256": "8dffe05425369a1df0f5eccf2777a165aaf17cc8672d128fb20fcc221d1e4899"
+    },
+    "v03-project-policies": {
+      "number": 15,
+      "title": "[v0.3] Definir e aplicar ProjectPolicy para stack, providers e dependências",
+      "lastAppliedBodySha256": "ad19d5d7c431f37407e6a88fbbd52ff59a6183d0615496db1bf9219aff16f7d0",
+      "legacyBodySha256": "ad19d5d7c431f37407e6a88fbbd52ff59a6183d0615496db1bf9219aff16f7d0"
+    },
+    "v03-budgets-overrides": {
+      "number": 16,
+      "title": "[v0.3] Aplicar budgets e overrides explícitos de modelo por run ou step",
+      "lastAppliedBodySha256": "415a79b35fac2945d1bc302b2734aaaaaf0388f6a7bee0e75c5eb05687b9aaa1",
+      "legacyBodySha256": "415a79b35fac2945d1bc302b2734aaaaaf0388f6a7bee0e75c5eb05687b9aaa1"
+    },
+    "v03-audit-feedback": {
+      "number": 17,
+      "title": "[v0.3] Persistir feedback humano e identidade do ator na trilha de auditoria",
+      "lastAppliedBodySha256": "55163b594317887112ac1ef2adc2f1b288d6a05cea8b5c16d891189e53ef5db3",
+      "legacyBodySha256": "55163b594317887112ac1ef2adc2f1b288d6a05cea8b5c16d891189e53ef5db3"
+    },
+    "v03-policy-e2e": {
+      "number": 18,
+      "title": "[v0.3] Cobrir approval gates e políticas com testes end-to-end",
+      "lastAppliedBodySha256": "c7daed0e364810517ad22f6d988ef935d02f58b56a9bf96b939bd4369972c2d8",
+      "legacyBodySha256": "c7daed0e364810517ad22f6d988ef935d02f58b56a9bf96b939bd4369972c2d8"
+    },
+    "epic-v0.4": {
+      "number": 19,
+      "title": "[Epic v0.4] Existing Repositories",
+      "lastAppliedBodySha256": "5b3b11d6b02b84e30c4493544e97d1b1296d123b8209f280b889bdab154692c4",
+      "legacyBodySha256": "5b3b11d6b02b84e30c4493544e97d1b1296d123b8209f280b889bdab154692c4"
+    },
+    "v04-repository-source": {
+      "number": 20,
+      "title": "[v0.4] Modelar RepositorySource e importar um baseline Git de forma segura",
+      "lastAppliedBodySha256": "72d498a6d53301868c02b1ff6578d76acc848740b3474cfd8a55e9015b5a78ea",
+      "legacyBodySha256": "72d498a6d53301868c02b1ff6578d76acc848740b3474cfd8a55e9015b5a78ea"
+    },
+    "v04-git-credentials": {
+      "number": 21,
+      "title": "[v0.4] Criar fronteira de credenciais Git sem vazar tokens para agentes",
+      "lastAppliedBodySha256": "33925775426a6ddc5a45f0cd1ff4967c87fd82ba2581ed080703ae9e098586a5",
+      "legacyBodySha256": "33925775426a6ddc5a45f0cd1ff4967c87fd82ba2581ed080703ae9e098586a5"
+    },
+    "v04-worktrees": {
+      "number": 22,
+      "title": "[v0.4] Isolar cada run mutável em branch e Git worktree próprios",
+      "lastAppliedBodySha256": "44e108006ba02ae80d6e88e3fd217ebde6379498b79ee7e6cd84a83f6d5b9f3b",
+      "legacyBodySha256": "44e108006ba02ae80d6e88e3fd217ebde6379498b79ee7e6cd84a83f6d5b9f3b"
+    },
+    "v04-repository-map": {
+      "number": 23,
+      "title": "[v0.4] Gerar repository-map com módulos, configs, símbolos e grafo de imports",
+      "lastAppliedBodySha256": "c329a0c267a5be7482ea1c32b94b559c76dfe596a44f7cbcfcc50fffbe9a627c",
+      "legacyBodySha256": "c329a0c267a5be7482ea1c32b94b559c76dfe596a44f7cbcfcc50fffbe9a627c"
+    },
+    "v04-context-selector": {
+      "number": 24,
+      "title": "[v0.4] Selecionar contexto por tarefa usando busca lexical, imports e orçamento",
+      "lastAppliedBodySha256": "6f72b51b6c1c2b657359567dc0c5a817f8c1805766452ee6ec35b2abd5771c76",
+      "legacyBodySha256": "6f72b51b6c1c2b657359567dc0c5a817f8c1805766452ee6ec35b2abd5771c76"
+    },
+    "v04-change-requests": {
+      "number": 25,
+      "title": "[v0.4] Introduzir ChangeRequest e workflow incremental sobre um baseline",
+      "lastAppliedBodySha256": "48383dabe70fa84b613d83c36e98797e033451516e27e8d19c73553497f8c89b",
+      "legacyBodySha256": "48383dabe70fa84b613d83c36e98797e033451516e27e8d19c73553497f8c89b"
+    },
+    "v04-diff-review": {
+      "number": 26,
+      "title": "[v0.4] Adicionar file browser, diff review e promoção do branch na interface",
+      "lastAppliedBodySha256": "be1c339fd2eea26205df8a75f8740aacccc71ee6d97fbf2b2f162657ede6e2b2",
+      "legacyBodySha256": "be1c339fd2eea26205df8a75f8740aacccc71ee6d97fbf2b2f162657ede6e2b2"
+    },
+    "epic-v0.5": {
+      "number": 27,
+      "title": "[Epic v0.5] Live Preview",
+      "lastAppliedBodySha256": "efda5a50f86f4f38670fb14fe8ec21946c763f8f2dcff079ec80e167c820f2db",
+      "legacyBodySha256": "efda5a50f86f4f38670fb14fe8ec21946c763f8f2dcff079ec80e167c820f2db"
+    },
+    "v05-preview-domain": {
+      "number": 28,
+      "title": "[v0.5] Definir PreviewSession e a porta PreviewRunner",
+      "lastAppliedBodySha256": "c4bb8275b08730d67e0e0ec9247daa1e3648032c820d68ed845a2980a1de3300",
+      "legacyBodySha256": "c4bb8275b08730d67e0e0ec9247daa1e3648032c820d68ed845a2980a1de3300"
+    },
+    "v05-runtime-detection": {
+      "number": 29,
+      "title": "[v0.5] Detectar package manager e comandos de install, build e dev",
+      "lastAppliedBodySha256": "723a807e95dfe2b18195f5889bff2b9c3c634ed3491cfb6bdfe2af1ac15389f3",
+      "legacyBodySha256": "723a807e95dfe2b18195f5889bff2b9c3c634ed3491cfb6bdfe2af1ac15389f3"
+    },
+    "v05-preview-network": {
+      "number": 30,
+      "title": "[v0.5] Descobrir porta e expor preview por reverse proxy com isolamento básico",
+      "lastAppliedBodySha256": "339360e0e4165f5a16a536d279408d705fc299edb2e4a118ad7f910e80581629",
+      "legacyBodySha256": "339360e0e4165f5a16a536d279408d705fc299edb2e4a118ad7f910e80581629"
+    },
+    "v05-preview-lifecycle": {
+      "number": 31,
+      "title": "[v0.5] Gerenciar health, restart, timeout e coleta de logs do preview",
+      "lastAppliedBodySha256": "eb0ee85437dabeb8ade6ee6b7ac970bd476fba7cc845e3e4a931ab8cc0faccde",
+      "legacyBodySha256": "eb0ee85437dabeb8ade6ee6b7ac970bd476fba7cc845e3e4a931ab8cc0faccde"
+    },
+    "v05-playwright": {
+      "number": 32,
+      "title": "[v0.5] Adicionar BrowserVerifier com Playwright e test plans versionados",
+      "lastAppliedBodySha256": "d144c76381f36271c7990c2f2841b9bea922dd1729dd4bc01c6a3f4b6f31349f",
+      "legacyBodySha256": "d144c76381f36271c7990c2f2841b9bea922dd1729dd4bc01c6a3f4b6f31349f"
+    },
+    "v05-preview-artifacts": {
+      "number": 33,
+      "title": "[v0.5] Persistir screenshots, trace, vídeo opcional e logs como artifacts",
+      "lastAppliedBodySha256": "b25380c0c50bed3869aa2da949483a6b987c8e709515b4a433f0e523cb4fa06c",
+      "legacyBodySha256": "b25380c0c50bed3869aa2da949483a6b987c8e709515b4a433f0e523cb4fa06c"
+    },
+    "v05-preview-ui-e2e": {
+      "number": 34,
+      "title": "[v0.5] Construir painel de preview responsivo e fechar golden flow end-to-end",
+      "lastAppliedBodySha256": "72f4d1d97e6c9df8cc09dbe0a637d8cd9851cb1a29218b414b5892b69f438c90",
+      "legacyBodySha256": "72f4d1d97e6c9df8cc09dbe0a637d8cd9851cb1a29218b414b5892b69f438c90"
+    },
+    "epic-v0.6": {
+      "number": 35,
+      "title": "[Epic v0.6] Conversational Builder",
+      "lastAppliedBodySha256": "12ff8cbba486e7f861a7355595c5a304629887a17309dbc9fddb692945d2fe84",
+      "legacyBodySha256": "12ff8cbba486e7f861a7355595c5a304629887a17309dbc9fddb692945d2fe84"
+    },
+    "v06-conversation-domain": {
+      "number": 36,
+      "title": "[v0.6] Modelar Conversation, Message, Attachment e Operation",
+      "lastAppliedBodySha256": "65e8be970594002e3e7e0aafa96194a11da5f330fbdf961cc8681d4b5295d41a",
+      "legacyBodySha256": "65e8be970594002e3e7e0aafa96194a11da5f330fbdf961cc8681d4b5295d41a"
+    },
+    "v06-plan-build-modes": {
+      "number": 37,
+      "title": "[v0.6] Implementar modos Plan e Build com contratos de saída distintos",
+      "lastAppliedBodySha256": "7290bb051b51d71ab3a587a648b26f108110ee92d5570f1262823a82710c1373",
+      "legacyBodySha256": "7290bb051b51d71ab3a587a648b26f108110ee92d5570f1262823a82710c1373"
+    },
+    "v06-chat-operations": {
+      "number": 38,
+      "title": "[v0.6] Converter mensagens em change requests incrementais e handoffs reproduzíveis",
+      "lastAppliedBodySha256": "cdd4ad613751ccd81d0cc912ea25f8bcae3d4321471fb156b1cee451b8247d10",
+      "legacyBodySha256": "cdd4ad613751ccd81d0cc912ea25f8bcae3d4321471fb156b1cee451b8247d10"
+    },
+    "v06-chat-streaming": {
+      "number": 39,
+      "title": "[v0.6] Transmitir tokens, tool calls e progresso dos agentes dentro do chat",
+      "lastAppliedBodySha256": "83a93d677c6fa60226df9da6405fcfbf305e3704be09eb17a7b590f683ecf189",
+      "legacyBodySha256": "83a93d677c6fa60226df9da6405fcfbf305e3704be09eb17a7b590f683ecf189"
+    },
+    "v06-version-history": {
+      "number": 40,
+      "title": "[v0.6] Adicionar version history, compare, revert e branch de uma versão",
+      "lastAppliedBodySha256": "de44ea411ec971571a142f05ce2c5d04676e890771db0bccda74dd69b8ea78de",
+      "legacyBodySha256": "de44ea411ec971571a142f05ce2c5d04676e890771db0bccda74dd69b8ea78de"
+    },
+    "v06-dom-source-map": {
+      "number": 41,
+      "title": "[v0.6] Mapear elemento selecionado no preview para componente e origem no código",
+      "lastAppliedBodySha256": "4236544de7bf8cb61eafe2807aa3915ea4964d391c8a26da9348f039c8b24475",
+      "legacyBodySha256": "4236544de7bf8cb61eafe2807aa3915ea4964d391c8a26da9348f039c8b24475"
+    },
+    "v06-visual-patches": {
+      "number": 42,
+      "title": "[v0.6] Aplicar edições visuais como patches estruturados e verificáveis",
+      "lastAppliedBodySha256": "0f21127cf91d34732105b70eed95d1d3a9976fc51d53198736a190a8de4a4ce6",
+      "legacyBodySha256": "0f21127cf91d34732105b70eed95d1d3a9976fc51d53198736a190a8de4a4ce6"
+    },
+    "v06-knowledge-attachments-shell": {
+      "number": 43,
+      "title": "[v0.6] Adicionar knowledge files, imagens e shell de três painéis do builder",
+      "lastAppliedBodySha256": "12fb0089428c59952cb59f1c436b03788deb71d6c829d321d53343ce6229a383",
+      "legacyBodySha256": "12fb0089428c59952cb59f1c436b03788deb71d6c829d321d53343ce6229a383"
+    },
+    "epic-v0.7": {
+      "number": 44,
+      "title": "[Epic v0.7] Secure Execution",
+      "lastAppliedBodySha256": "54701922adf38cdc394c8a2312a1146679a90288fd361b5302292b5d00d13a58",
+      "legacyBodySha256": "54701922adf38cdc394c8a2312a1146679a90288fd361b5302292b5d00d13a58"
+    },
+    "v07-control-execution-plane": {
+      "number": 45,
+      "title": "[v0.7] Separar control plane e execution plane por um protocolo explícito",
+      "lastAppliedBodySha256": "9a66bff0d4c6f19a804bb6a5b2b225d7e39743156cd26146fd62750a34e6c79b",
+      "legacyBodySha256": "9a66bff0d4c6f19a804bb6a5b2b225d7e39743156cd26146fd62750a34e6c79b"
+    },
+    "v07-sandbox-runner": {
+      "number": 46,
+      "title": "[v0.7] Definir SandboxRunner e lifecycle create, exec, snapshot e destroy",
+      "lastAppliedBodySha256": "87688014dee1df3dd43060c8e033d82c4b95027faf7f6d22cbf8713083d4191f",
+      "legacyBodySha256": "87688014dee1df3dd43060c8e033d82c4b95027faf7f6d22cbf8713083d4191f"
+    },
+    "v07-container-backend": {
+      "number": 47,
+      "title": "[v0.7] Implementar backend de sandbox em container rootless",
+      "lastAppliedBodySha256": "b4e6aa6cb957aadadcef6ab37c857951e8cc72f8e531dcf24008840df8cac7da",
+      "legacyBodySha256": "b4e6aa6cb957aadadcef6ab37c857951e8cc72f8e531dcf24008840df8cac7da"
+    },
+    "v07-network-policy": {
+      "number": 48,
+      "title": "[v0.7] Bloquear rede por padrão e liberar egress por policy",
+      "lastAppliedBodySha256": "98b3cf444d02f1f779f7b182056b6018b65b60006372dc0463e9e32dac8a3e86",
+      "legacyBodySha256": "98b3cf444d02f1f779f7b182056b6018b65b60006372dc0463e9e32dac8a3e86"
+    },
+    "v07-secret-broker": {
+      "number": 49,
+      "title": "[v0.7] Entregar secrets efêmeros por broker e redigir saídas",
+      "lastAppliedBodySha256": "6ee366a0ce2e2173e71ce995220e54535bfaf2dece692caa2a5fc78325fcef8a",
+      "legacyBodySha256": "6ee366a0ce2e2173e71ce995220e54535bfaf2dece692caa2a5fc78325fcef8a"
+    },
+    "v07-cache-supply-chain": {
+      "number": 50,
+      "title": "[v0.7] Criar cache seguro de dependências e controles básicos de supply chain",
+      "lastAppliedBodySha256": "7eb8a1393d0b6e25e2e3b2a3ad3c0622afffab7cff52efd5cf0639d4ba39e487",
+      "legacyBodySha256": "7eb8a1393d0b6e25e2e3b2a3ad3c0622afffab7cff52efd5cf0639d4ba39e487"
+    },
+    "v07-threat-model": {
+      "number": 51,
+      "title": "[v0.7] Publicar threat model e suíte adversarial de isolamento",
+      "lastAppliedBodySha256": "2e761fd78278719674e756f8ccedef0403e8a397f16acb265de91030db5d0c76",
+      "legacyBodySha256": "2e761fd78278719674e756f8ccedef0403e8a397f16acb265de91030db5d0c76"
+    },
+    "epic-v0.8": {
+      "number": 52,
+      "title": "[Epic v0.8] Production Data Plane",
+      "lastAppliedBodySha256": "3441fc040eba13e6f33aa5f5cccbe9582cda046439c9f0bf63660cadb8512b98",
+      "legacyBodySha256": "3441fc040eba13e6f33aa5f5cccbe9582cda046439c9f0bf63660cadb8512b98"
+    },
+    "v08-postgres": {
+      "number": 53,
+      "title": "[v0.8] Implementar schema PostgreSQL e adapters das portas de domínio",
+      "lastAppliedBodySha256": "456fc2dd00b5be7fa5f2ef6f47e06b2a99ac6e881a437677cae1c14a491b9bad",
+      "legacyBodySha256": "456fc2dd00b5be7fa5f2ef6f47e06b2a99ac6e881a437677cae1c14a491b9bad"
+    },
+    "v08-object-storage": {
+      "number": 54,
+      "title": "[v0.8] Mover blobs grandes para object storage com integridade e retenção",
+      "lastAppliedBodySha256": "d337abcfddcfcd81165b60689c9b92bdf9ce866693010b9f3124534ef4a1839c",
+      "legacyBodySha256": "d337abcfddcfcd81165b60689c9b92bdf9ce866693010b9f3124534ef4a1839c"
+    },
+    "v08-durable-queue": {
+      "number": 55,
+      "title": "[v0.8] Implementar fila de produção com leases, retry e transactional outbox",
+      "lastAppliedBodySha256": "e6850fc1a76a911baa4bf95765150520f318e76635b4cead22668b710aa260c6",
+      "legacyBodySha256": "e6850fc1a76a911baa4bf95765150520f318e76635b4cead22668b710aa260c6"
+    },
+    "v08-event-fanout": {
+      "number": 56,
+      "title": "[v0.8] Distribuir eventos e SSE sem depender do filesystem local",
+      "lastAppliedBodySha256": "de819965bbb4247ab640176bb4a1c639d31fa0cb59785c05d8ec8623681a7ecc",
+      "legacyBodySha256": "de819965bbb4247ab640176bb4a1c639d31fa0cb59785c05d8ec8623681a7ecc"
+    },
+    "v08-scheduler": {
+      "number": 57,
+      "title": "[v0.8] Adicionar scheduler de workers, concorrência e backpressure por recurso",
+      "lastAppliedBodySha256": "c35216c7d04a40c62b37ce151b06102215605b863f53d4cc9d7e46b5d9e90938",
+      "legacyBodySha256": "c35216c7d04a40c62b37ce151b06102215605b863f53d4cc9d7e46b5d9e90938"
+    },
+    "v08-observability": {
+      "number": 58,
+      "title": "[v0.8] Instrumentar logs, métricas e traces com OpenTelemetry",
+      "lastAppliedBodySha256": "e74222d5004564d73d5adf8b2324a80c44a8bd8946e82bed32f2d562db77daa0",
+      "legacyBodySha256": "e74222d5004564d73d5adf8b2324a80c44a8bd8946e82bed32f2d562db77daa0"
+    },
+    "v08-ops-migration": {
+      "number": 59,
+      "title": "[v0.8] Entregar backup, restore, retenção e migração do storage local",
+      "lastAppliedBodySha256": "0fcd83fa890f1645345cf0f34f957c32ee28549d86c00ce36609006f471822db",
+      "legacyBodySha256": "0fcd83fa890f1645345cf0f34f957c32ee28549d86c00ce36609006f471822db"
+    },
+    "epic-v0.9": {
+      "number": 60,
+      "title": "[Epic v0.9] Adaptive Routing",
+      "lastAppliedBodySha256": "6c93bc361efd3112f19d9434ac0a06ccd31b64a3e9453627fcdf7a4cf2a0d7fa",
+      "legacyBodySha256": "6c93bc361efd3112f19d9434ac0a06ccd31b64a3e9453627fcdf7a4cf2a0d7fa"
+    },
+    "v09-task-taxonomy": {
+      "number": 61,
+      "title": "[v0.9] Expandir TaskKind para uma taxonomia hierárquica e versionada",
+      "lastAppliedBodySha256": "a86671492454b93ba3f61e605d92149a924282166a369555089b654b1c3ff95f",
+      "legacyBodySha256": "a86671492454b93ba3f61e605d92149a924282166a369555089b654b1c3ff95f"
+    },
+    "v09-usage-telemetry": {
+      "number": 62,
+      "title": "[v0.9] Normalizar tokens, custo, quota e rate limits entre providers",
+      "lastAppliedBodySha256": "1581c62d47653837f0480b671677c6429622a82ea933a4af6e31dfe26544f40b",
+      "legacyBodySha256": "1581c62d47653837f0480b671677c6429622a82ea933a4af6e31dfe26544f40b"
+    },
+    "v09-benchmark-runner": {
+      "number": 63,
+      "title": "[v0.9] Criar corpus de tarefas e benchmark runner reproduzível",
+      "lastAppliedBodySha256": "5039c03fedff92017902f48a9145bb5dc58f08e001329d65a0c368c5b58dfeb5",
+      "legacyBodySha256": "5039c03fedff92017902f48a9145bb5dc58f08e001329d65a0c368c5b58dfeb5"
+    },
+    "v09-quality-signals": {
+      "number": 64,
+      "title": "[v0.9] Combinar checks determinísticos, blind review e feedback humano em quality signals",
+      "lastAppliedBodySha256": "62ce9d8ef29fe10e8995cdfef1ab51479d5c5064e7136e86104311f80d28c6bb",
+      "legacyBodySha256": "62ce9d8ef29fe10e8995cdfef1ab51479d5c5064e7136e86104311f80d28c6bb"
+    },
+    "v09-confidence-routing": {
+      "number": 65,
+      "title": "[v0.9] Adicionar confiança, sample size e calibração à decisão do router",
+      "lastAppliedBodySha256": "b9f8825c52b073453720b92a95e065a1af697f5ca5acef07204ce16028796adb",
+      "legacyBodySha256": "b9f8825c52b073453720b92a95e065a1af697f5ca5acef07204ce16028796adb"
+    },
+    "v09-exploration-health": {
+      "number": 66,
+      "title": "[v0.9] Implementar exploração controlada, circuit breakers e provider health",
+      "lastAppliedBodySha256": "4350a1df9b031c910f9fc555cce7298d8e7e39c08545ef1b692efffdcd333326",
+      "legacyBodySha256": "4350a1df9b031c910f9fc555cce7298d8e7e39c08545ef1b692efffdcd333326"
+    },
+    "v09-router-dashboard": {
+      "number": 67,
+      "title": "[v0.9] Construir dashboard de router e registry de experimentos",
+      "lastAppliedBodySha256": "5ba3d4183a965a0e04ec1b2a300e1e9c2bfcb9151987db651ddcb99260b72324",
+      "legacyBodySha256": "5ba3d4183a965a0e04ec1b2a300e1e9c2bfcb9151987db651ddcb99260b72324"
+    },
+    "epic-v0.10": {
+      "number": 68,
+      "title": "[Epic v0.10] Full-stack App Platform",
+      "lastAppliedBodySha256": "cdae96148349e88f268c16d0f6de1aa481e83bb6c402371687e106f7175dcb1f",
+      "legacyBodySha256": "cdae96148349e88f268c16d0f6de1aa481e83bb6c402371687e106f7175dcb1f"
+    },
+    "v010-environment-provisioner": {
+      "number": 69,
+      "title": "[v0.10] Definir AppEnvironment e a porta EnvironmentProvisioner",
+      "lastAppliedBodySha256": "e9bb99bc7bc0e4df061a62ec76d0a49d20747d32f6b35559dc91e13fb989568b",
+      "legacyBodySha256": "e9bb99bc7bc0e4df061a62ec76d0a49d20747d32f6b35559dc91e13fb989568b"
+    },
+    "v010-database": {
+      "number": 70,
+      "title": "[v0.10] Provisionar PostgreSQL por projeto e gerenciar schema por migrations",
+      "lastAppliedBodySha256": "62656044c22a78e6462f2aba74f05366e2707d24f024b3b7a1f284212cae488b",
+      "legacyBodySha256": "62656044c22a78e6462f2aba74f05366e2707d24f024b3b7a1f284212cae488b"
+    },
+    "v010-auth": {
+      "number": 71,
+      "title": "[v0.10] Integrar autenticação e gerar fluxos seguros de usuário",
+      "lastAppliedBodySha256": "7a6e6294e54ff10ee318ce6ae25abcd42ae1fe4e939d77f0b490f2531ab6e07d",
+      "legacyBodySha256": "7a6e6294e54ff10ee318ce6ae25abcd42ae1fe4e939d77f0b490f2531ab6e07d"
+    },
+    "v010-storage": {
+      "number": 72,
+      "title": "[v0.10] Provisionar storage de arquivos com policies e uploads seguros",
+      "lastAppliedBodySha256": "e280b2afe953eb8324897cd8740c03264c8b7b598e4c3c78635931f8719689be",
+      "legacyBodySha256": "e280b2afe953eb8324897cd8740c03264c8b7b598e4c3c78635931f8719689be"
+    },
+    "v010-functions": {
+      "number": 73,
+      "title": "[v0.10] Adicionar runtime de serverless/edge functions com deploy versionado",
+      "lastAppliedBodySha256": "86238e4745c9292deff86c4dba80d5a837e02f3627eeb1f23cbbd1d24201aead",
+      "legacyBodySha256": "86238e4745c9292deff86c4dba80d5a837e02f3627eeb1f23cbbd1d24201aead"
+    },
+    "v010-app-secrets": {
+      "number": 74,
+      "title": "[v0.10] Criar secret store e runtime de conexões por projeto",
+      "lastAppliedBodySha256": "53e19b7192fc877271aa8e66d8f3d2265ad068d2685b6a44b44d040db52a933d",
+      "legacyBodySha256": "53e19b7192fc877271aa8e66d8f3d2265ad068d2685b6a44b44d040db52a933d"
+    },
+    "v010-data-security": {
+      "number": 75,
+      "title": "[v0.10] Verificar RLS, autorização e operações destrutivas antes de release",
+      "lastAppliedBodySha256": "2867b420ec72bca987c135eb152dbb5e73d43dcbcae2a74f32a826637ef171c1",
+      "legacyBodySha256": "2867b420ec72bca987c135eb152dbb5e73d43dcbcae2a74f32a826637ef171c1"
+    },
+    "v010-fullstack-reference": {
+      "number": 76,
+      "title": "[v0.10] Entregar workflow e app de referência full-stack com export portátil",
+      "lastAppliedBodySha256": "b73a924d673fb035047ded50e03d78a7d6189ec07f19c349904bbe2268df27eb",
+      "legacyBodySha256": "b73a924d673fb035047ded50e03d78a7d6189ec07f19c349904bbe2268df27eb"
+    },
+    "epic-v0.11": {
+      "number": 77,
+      "title": "[Epic v0.11] Publish and Integrations",
+      "lastAppliedBodySha256": "c94e5247e7bc14fecda79cee6efdb155a61f3bb6855faf65f0ad8ab1caedee33",
+      "legacyBodySha256": "c94e5247e7bc14fecda79cee6efdb155a61f3bb6855faf65f0ad8ab1caedee33"
+    },
+    "v011-deployment-domain": {
+      "number": 78,
+      "title": "[v0.11] Definir Release, Deployment e a porta DeploymentProvider",
+      "lastAppliedBodySha256": "49aeced34422d2bccdcb963ce4ef7904ba0f977288fbe2f49ca49f16294377ba",
+      "legacyBodySha256": "49aeced34422d2bccdcb963ce4ef7904ba0f977288fbe2f49ca49f16294377ba"
+    },
+    "v011-publish-domains": {
+      "number": 79,
+      "title": "[v0.11] Implementar publish pipeline, custom domains e TLS",
+      "lastAppliedBodySha256": "f166c23fbae0c55024e4ce129b8a94e0875010cd0db9acfb93e58bbec39574b9",
+      "legacyBodySha256": "f166c23fbae0c55024e4ce129b8a94e0875010cd0db9acfb93e58bbec39574b9"
+    },
+    "v011-github-app": {
+      "number": 80,
+      "title": "[v0.11] Integrar GitHub App/OAuth com permissões mínimas por repositório",
+      "lastAppliedBodySha256": "e70f2eae3485d98647564caba96a7f3c549ccb56024b7c84fe3ac19ed8ce82b9",
+      "legacyBodySha256": "e70f2eae3485d98647564caba96a7f3c549ccb56024b7c84fe3ac19ed8ce82b9"
+    },
+    "v011-github-sync": {
+      "number": 81,
+      "title": "[v0.11] Implementar two-way sync, pull requests e resolução de conflitos",
+      "lastAppliedBodySha256": "3b123c9d3f150128c7a1a5cb64eef1a5e763726cd38b1000f9ee02d5f3f0cbe1",
+      "legacyBodySha256": "3b123c9d3f150128c7a1a5cb64eef1a5e763726cd38b1000f9ee02d5f3f0cbe1"
+    },
+    "v011-connector-sdk": {
+      "number": 82,
+      "title": "[v0.11] Criar Connector SDK com OAuth, scopes, actions e secret refs",
+      "lastAppliedBodySha256": "2bf4b7506b319610a98e93f5ec0b0ea0e57d67537897dd153e3bb06481483a97",
+      "legacyBodySha256": "2bf4b7506b319610a98e93f5ec0b0ea0e57d67537897dd153e3bb06481483a97"
+    },
+    "v011-reference-connectors": {
+      "number": 83,
+      "title": "[v0.11] Entregar conectores de referência para Stripe e email transacional",
+      "lastAppliedBodySha256": "09d1bed3bf0ceacd40c7c9b286930c88038622fb75d6088a60e28675b59fab17",
+      "legacyBodySha256": "09d1bed3bf0ceacd40c7c9b286930c88038622fb75d6088a60e28675b59fab17"
+    },
+    "v011-release-ui-e2e": {
+      "number": 84,
+      "title": "[v0.11] Construir painel de releases, domains, GitHub e connectors com golden flow",
+      "lastAppliedBodySha256": "0e6b12309aca258fe8cc7441818c903d53170813c96945e2749d08a2f2d0763c",
+      "legacyBodySha256": "0e6b12309aca258fe8cc7441818c903d53170813c96945e2749d08a2f2d0763c"
+    },
+    "epic-v0.12": {
+      "number": 85,
+      "title": "[Epic v0.12] SaaS and Collaboration",
+      "lastAppliedBodySha256": "7a8a3edc6061dc860e12b2049be2e20552e7699264fa3a49066f5c6219ebd1e1",
+      "legacyBodySha256": "7a8a3edc6061dc860e12b2049be2e20552e7699264fa3a49066f5c6219ebd1e1"
+    },
+    "v012-identity": {
+      "number": 86,
+      "title": "[v0.12] Adicionar identidade, sessão e proteção de endpoints",
+      "lastAppliedBodySha256": "659253ee76b98c87e148bc44af4b77277f5c03de7bd899f3ee27c8f049977aae",
+      "legacyBodySha256": "659253ee76b98c87e148bc44af4b77277f5c03de7bd899f3ee27c8f049977aae"
+    },
+    "v012-workspaces-rbac": {
+      "number": 87,
+      "title": "[v0.12] Modelar workspaces, memberships e RBAC por projeto",
+      "lastAppliedBodySha256": "c3ef14e4802a309198de250ee070979b0b24c93244a118a42456a7ff3b1233d1",
+      "legacyBodySha256": "c3ef14e4802a309198de250ee070979b0b24c93244a118a42456a7ff3b1233d1"
+    },
+    "v012-tenant-isolation": {
+      "number": 88,
+      "title": "[v0.12] Aplicar isolamento de tenant em banco, fila, blobs e sandboxes",
+      "lastAppliedBodySha256": "43bee37ff5646112ecf12fcfd8336e7950e8cbe8b722cdd3c1d9c15eedf44c27",
+      "legacyBodySha256": "43bee37ff5646112ecf12fcfd8336e7950e8cbe8b722cdd3c1d9c15eedf44c27"
+    },
+    "v012-collaboration": {
+      "number": 89,
+      "title": "[v0.12] Adicionar colaboradores, comentários, presence e atividade",
+      "lastAppliedBodySha256": "05073dca0d1671164cb4f94165909a899c7d1b615ad65053efe12d3fe49ed5fa",
+      "legacyBodySha256": "05073dca0d1671164cb4f94165909a899c7d1b615ad65053efe12d3fe49ed5fa"
+    },
+    "v012-sharing-templates": {
+      "number": 90,
+      "title": "[v0.12] Implementar sharing, remix e templates com proveniência",
+      "lastAppliedBodySha256": "64a84d6e3f7c60a15e1add412ee04704e68a360b33dd4002d273eb86dd13bf63",
+      "legacyBodySha256": "64a84d6e3f7c60a15e1add412ee04704e68a360b33dd4002d273eb86dd13bf63"
+    },
+    "v012-usage-credits": {
+      "number": 91,
+      "title": "[v0.12] Criar usage ledger, quotas e créditos por workspace",
+      "lastAppliedBodySha256": "c0c220e07d742383135a5a638f5d0a21720bcf8e325a2c692ab8f7fe321b37b4",
+      "legacyBodySha256": "c0c220e07d742383135a5a638f5d0a21720bcf8e325a2c692ab8f7fe321b37b4"
+    },
+    "v012-billing-connections": {
+      "number": 92,
+      "title": "[v0.12] Integrar billing e ownership de secrets/connections por workspace",
+      "lastAppliedBodySha256": "32debd05e0a12fa60f82b063a7f4f94923a5d8de791e3d71f723e04601a0fd1c",
+      "legacyBodySha256": "32debd05e0a12fa60f82b063a7f4f94923a5d8de791e3d71f723e04601a0fd1c"
+    },
+    "v012-governance-e2e": {
+      "number": 93,
+      "title": "[v0.12] Entregar audit, abuse controls, data rights e suíte multi-tenant",
+      "lastAppliedBodySha256": "ad575e4e7c1d0b72f0d43d15e6ce5bf79291477dfaff072a3eca2dad002c5981",
+      "legacyBodySha256": "ad575e4e7c1d0b72f0d43d15e6ce5bf79291477dfaff072a3eca2dad002c5981"
+    },
+    "epic-v1.0": {
+      "number": 94,
+      "title": "[Epic v1.0] Lovable-class Release",
+      "lastAppliedBodySha256": "65757bb458bbfc320e863a28e6955aa9635506fc186a1a9c64a941d4d6f24e16",
+      "legacyBodySha256": "65757bb458bbfc320e863a28e6955aa9635506fc186a1a9c64a941d4d6f24e16"
+    },
+    "v100-parity-contract": {
+      "number": 95,
+      "title": "[v1.0] Publicar feature contract e matriz Lovable-class",
+      "lastAppliedBodySha256": "ad805189bf8698aeb63ae8ebd910abb9186748228c357dd5477700ab94671d57",
+      "legacyBodySha256": "ad805189bf8698aeb63ae8ebd910abb9186748228c357dd5477700ab94671d57"
+    },
+    "v100-onboarding-templates": {
+      "number": 96,
+      "title": "[v1.0] Construir onboarding, template gallery e remix guiado",
+      "lastAppliedBodySha256": "7494bdc1cfe970316e3639a80910f23af0c2159d8e1ff30d7dcddf688adfdca3",
+      "legacyBodySha256": "7494bdc1cfe970316e3639a80910f23af0c2159d8e1ff30d7dcddf688adfdca3"
+    },
+    "v100-builder-polish": {
+      "number": 97,
+      "title": "[v1.0] Polir builder, acessibilidade, responsividade e performance percebida",
+      "lastAppliedBodySha256": "7e2d967ac20779b00d89bc7b0e1952fdc0baccca6eb45dd835145ebd6c5f7f46",
+      "legacyBodySha256": "7e2d967ac20779b00d89bc7b0e1952fdc0baccca6eb45dd835145ebd6c5f7f46"
+    },
+    "v100-golden-journeys": {
+      "number": 98,
+      "title": "[v1.0] Automatizar golden journeys ponta a ponta em ambiente semelhante à produção",
+      "lastAppliedBodySha256": "027961eef476a15c3848c6f4690895c13c6048ab53226e2ec35a008769b568a1",
+      "legacyBodySha256": "027961eef476a15c3848c6f4690895c13c6048ab53226e2ec35a008769b568a1"
+    },
+    "v100-reliability-ops": {
+      "number": 99,
+      "title": "[v1.0] Definir SLOs, capacity model, runbooks e incident readiness",
+      "lastAppliedBodySha256": "d401853aac19439b1467c50621312c5bddbe39c06f8900c98d0a566e41817af1",
+      "legacyBodySha256": "d401853aac19439b1467c50621312c5bddbe39c06f8900c98d0a566e41817af1"
+    },
+    "v100-security-privacy": {
+      "number": 100,
+      "title": "[v1.0] Concluir security review, privacy review e launch threat assessment",
+      "lastAppliedBodySha256": "6c4e842fb32c35a68eef3b58531e0567776cce1dd3388c581fb8ecf52fed3eba",
+      "legacyBodySha256": "6c4e842fb32c35a68eef3b58531e0567776cce1dd3388c581fb8ecf52fed3eba"
+    },
+    "v100-launch": {
+      "number": 101,
+      "title": "[v1.0] Fechar pricing UX, documentação, migração e automação de release",
+      "lastAppliedBodySha256": "711c4170c21436a402ce2378a33af1735ad1de5a45fe7e1c77f3566d23d16c67",
+      "legacyBodySha256": "711c4170c21436a402ce2378a33af1735ad1de5a45fe7e1c77f3566d23d16c67"
+    }
+  }
+}

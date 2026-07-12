@@ -64,26 +64,26 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         ...(invocation.environment ? { env: cleanEnvironment(invocation.environment) } : {}),
       });
     } catch (error) {
-      throw new ExecutionError(`${this.provider} CLI could not be executed: ${errorMessage(error)}`, {
-        provider: this.provider,
-        model: request.model,
-        cause: error,
-      });
+      throw new ExecutionError(
+        `${this.provider} CLI could not be executed: ${errorMessage(error)}`,
+        {
+          provider: this.provider,
+          model: request.model,
+          cause: error,
+        },
+      );
     }
 
     const stdout = outputText(result.stdout);
     const stderr = outputText(result.stderr);
     if (result.exitCode !== 0) {
-      throw new ExecutionError(
-        `${this.provider} CLI exited with code ${String(result.exitCode)}`,
-        {
-          provider: this.provider,
-          model: request.model,
-          ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
-          stdout: stdout.slice(0, 20_000),
-          stderr: stderr.slice(0, 20_000),
-        },
-      );
+      throw new ExecutionError(`${this.provider} CLI exited with code ${String(result.exitCode)}`, {
+        provider: this.provider,
+        model: request.model,
+        ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+        stdout: stdout.slice(0, 20_000),
+        stderr: stderr.slice(0, 20_000),
+      });
     }
 
     const response = await this.responseText(invocation, stdout);
@@ -137,6 +137,8 @@ function outputText(value: unknown): string {
 
 function cleanEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined),
+    Object.entries(environment).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
   );
 }

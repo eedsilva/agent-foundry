@@ -1,0 +1,16 @@
+changelog:
+  categories:
+    - title: Features
+      labels: [kind:feature]
+    - title: Reliability and infrastructure
+      labels: [kind:infra]
+    - title: Security
+      labels: [kind:security]
+    - title: Fixes
+      labels: [kind:bug]
+    - title: Other changes
+      labels: ['*']
+  exclude:
+    labels:
+      - kind:roadmap
+      - kind:epic

@@ -96,11 +96,21 @@ export default function HomePage() {
           </div>
           <label>
             Nome do projeto
-            <input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              maxLength={120}
+              required
+            />
           </label>
           <label>
             PRD
-            <textarea value={prd} onChange={(event) => setPrd(event.target.value)} minLength={50} required />
+            <textarea
+              value={prd}
+              onChange={(event) => setPrd(event.target.value)}
+              minLength={50}
+              required
+            />
           </label>
           {error ? <p className="errorBox">{error}</p> : null}
           <button className="primaryButton" disabled={submitting}>
@@ -130,8 +140,9 @@ export default function HomePage() {
             ))}
           </ol>
           <p className="finePrint">
-            O router escolhe modelo por tarefa, risco, contexto, custo, velocidade, confiabilidade e histórico.
-            Fallback sem rollback é só corrupção com boa publicidade, então cada tentativa mutável usa Git.
+            O router escolhe modelo por tarefa, risco, contexto, custo, velocidade, confiabilidade e
+            histórico. Fallback sem rollback é só corrupção com boa publicidade, então cada
+            tentativa mutável usa Git.
           </p>
         </aside>
       </section>

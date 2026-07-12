@@ -10,6 +10,12 @@ import { NotFoundError } from '@agent-foundry/domain';
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
 
 const runtime = await createRuntime();
+if (runtime.config.executorMode === 'real' && runtime.config.allowUnsafeRemoteRealExecution) {
+  console.warn(
+    'SECURITY WARNING: real CLI execution is exposed on a non-loopback host with an explicit unsafe override.',
+  );
+}
+
 const app = Fastify({
   logger: {
     level: process.env.LOG_LEVEL ?? 'info',

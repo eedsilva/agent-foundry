@@ -9,8 +9,8 @@ export default defineConfig({
     environment: 'node',
     testTimeout: 30_000,
     coverage: {
-      reporter: ['text', 'json', 'html']
-    }
+      reporter: ['text', 'json', 'html'],
+    },
   },
   resolve: {
     alias: {
@@ -21,7 +21,7 @@ export default defineConfig({
       '@agent-foundry/model-router': `${root}packages/model-router/src/index.ts`,
       '@agent-foundry/executors': `${root}packages/executors/src/index.ts`,
       '@agent-foundry/orchestrator': `${root}packages/orchestrator/src/index.ts`,
-      '@agent-foundry/composition': `${root}packages/composition/src/index.ts`
-    }
-  }
+      '@agent-foundry/composition': `${root}packages/composition/src/index.ts`,
+    },
+  },
 });

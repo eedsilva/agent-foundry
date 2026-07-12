@@ -344,3 +344,19 @@ Não comece por vinte agentes. Comece medindo se planner, developer, reviewer e 
 ## Licença
 
 MIT. Consulte [LICENSE](LICENSE).
+
+## Delivery governance
+
+The versioned roadmap lives in [`planning/roadmap-spec.json`](planning/roadmap-spec.json). Personal Builder v1 and Hosted Platform v2 have separate critical paths; hosted multi-tenancy and billing do not block the personal product.
+
+```bash
+npm run roadmap:check
+npm run github:roadmap:dry-run
+npm run github:governance:dry-run
+```
+
+See [`planning/APPLY.md`](planning/APPLY.md), [`docs/PRODUCT_CONTRACT.md`](docs/PRODUCT_CONTRACT.md), and [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## Real-execution network guard
+
+The API now defaults to `127.0.0.1`. When `EXECUTOR_MODE=real`, binding to a non-loopback host fails closed. `ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true` bypasses that check but does not add a sandbox, authentication, egress control, or secret isolation. Until Safe Runtime Foundation is complete, real execution is supported only for a trusted local operator.

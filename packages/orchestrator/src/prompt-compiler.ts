@@ -15,9 +15,12 @@ export function compileRequestMarkdown(input: {
   const artifactSections = input.artifacts.length
     ? input.artifacts
         .map(
-          (artifact) => `### ${artifact.metadata.name} · revision ${artifact.metadata.revision}\n\n` +
+          (artifact) =>
+            `### ${artifact.metadata.name} · revision ${artifact.metadata.revision}\n\n` +
             `Created by: ${artifact.metadata.createdBy}\n\n` +
-            '```json\n' + stableJson(artifact.content) + '\n```',
+            '```json\n' +
+            stableJson(artifact.content) +
+            '\n```',
         )
         .join('\n\n')
     : '_No input artifacts were requested for this step._';

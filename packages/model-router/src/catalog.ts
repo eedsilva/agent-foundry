@@ -1,6 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import YAML from 'yaml';
-import { ModelCatalogSchema, type ModelCatalog, type ModelDefinition } from '@agent-foundry/contracts';
+import {
+  ModelCatalogSchema,
+  type ModelCatalog,
+  type ModelDefinition,
+} from '@agent-foundry/contracts';
 
 export async function loadModelCatalog(
   path: string,
@@ -16,8 +20,11 @@ export async function loadModelCatalog(
 }
 
 export function interpolateEnvironment(raw: string, env: NodeJS.ProcessEnv): string {
-  return raw.replace(/\$\{([A-Z0-9_]+)(?::-(.*?))?\}/g, (_match, name: string, fallback?: string) => {
-    const value = env[name];
-    return value !== undefined && value !== '' ? value : (fallback ?? '');
-  });
+  return raw.replace(
+    /\$\{([A-Z0-9_]+)(?::-(.*?))?\}/g,
+    (_match, name: string, fallback?: string) => {
+      const value = env[name];
+      return value !== undefined && value !== '' ? value : (fallback ?? '');
+    },
+  );
 }
