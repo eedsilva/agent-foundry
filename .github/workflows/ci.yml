@@ -19,10 +19,25 @@ defaults:
 
 env:
   CI: 'true'
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
 
 jobs:
+  preflight:
+    name: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Reject private registry URLs in package-lock.json
+        run: |
+          if grep -nE 'applied-caas-gateway|internal\.api\.openai\.org|artifactory/api/npm/npm-public' package-lock.json; then
+            echo '::error::package-lock.json contains a private registry URL. Regenerate or normalize the lockfile before running CI.'
+            exit 1
+          fi
+
   format:
     name: format
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -36,6 +51,7 @@ jobs:
 
   lint:
     name: lint
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -49,6 +65,7 @@ jobs:
 
   architecture:
     name: architecture
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -62,6 +79,7 @@ jobs:
 
   roadmap:
     name: roadmap
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -75,6 +93,7 @@ jobs:
 
   typecheck:
     name: typecheck
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -88,6 +107,7 @@ jobs:
 
   test:
     name: test
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -101,6 +121,7 @@ jobs:
 
   build:
     name: build
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
