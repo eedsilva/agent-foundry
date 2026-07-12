@@ -78,17 +78,18 @@ export async function ensureProjectFields(
 
 export async function ensureProjectViews(
   client,
-  { userId, projectNumber, projectId, desiredViews },
+  { owner, projectNumber, projectId, desiredViews },
 ) {
   const result = await client.graphql(
     `query($id:ID!){node(id:$id){... on ProjectV2{views(first:100){nodes{name}}}}}`,
     { id: projectId },
   );
   const existing = new Set(result.node?.views?.nodes?.map((view) => view.name) ?? []);
+  const endpoint = `/users/${encodeURIComponent(owner)}/projectsV2/${projectNumber}/views`;
   const created = [];
   for (const view of desiredViews) {
     if (existing.has(view.name)) continue;
-    await client.request(`/users/${userId}/projectsV2/${projectNumber}/views`, {
+    await client.request(endpoint, {
       method: 'POST',
       body: { name: view.name, layout: view.layout, filter: view.filter },
     });
@@ -105,11 +106,38 @@ export function projectItemValues(item) {
   return values;
 }
 
+export function projectItemIssueNumber(item) {
+  const value = Number(item?.content?.number);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+export function isDuplicateProjectItemError(error) {
+  return /\b422\b.*content already exists in this project/i.test(String(error?.message ?? error));
+}
+
+async function getExistingProjectItem(
+  client,
+  { projectId, contentId, itemsEndpoint, fieldsQuery },
+) {
+  const result = await client.graphql(
+    `mutation($projectId:ID!,$contentId:ID!){addProjectV2ItemById(input:{projectId:$projectId,contentId:$contentId}){item{id fullDatabaseId}}}`,
+    { projectId, contentId },
+  );
+  const itemId = result.addProjectV2ItemById?.item?.fullDatabaseId;
+  if (!itemId)
+    throw new Error(
+      'GitHub informou que o conteúdo já existe no Project, mas não retornou fullDatabaseId para recuperá-lo.',
+    );
+  const item = await client.request(`${itemsEndpoint}/${encodeURIComponent(itemId)}${fieldsQuery}`);
+  return { ...item, id: itemId };
+}
+
 export async function reconcileProjectItems(
   client,
   {
     projectOwner,
     projectNumber,
+    projectId,
     repositoryOwner,
     repositoryName,
     fieldsByName,
@@ -122,26 +150,45 @@ export async function reconcileProjectItems(
   const itemsEndpoint = `/users/${encodeURIComponent(projectOwner)}/projectsV2/${projectNumber}/items`;
   const items = await client.paginate(`${itemsEndpoint}${fieldsQuery}`);
   const itemByIssueNumber = new Map(
-    items.filter((item) => item.content?.number).map((item) => [item.content.number, item]),
+    items.flatMap((item) => {
+      const issueNumber = projectItemIssueNumber(item);
+      return issueNumber ? [[issueNumber, item]] : [];
+    }),
   );
   const changes = [];
 
   for (const record of desiredRecords) {
-    const issueNumber = roadmapState.issues?.[record.key]?.number;
-    if (!issueNumber) continue;
+    const issueNumber = Number(roadmapState.issues?.[record.key]?.number);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) continue;
     let item = itemByIssueNumber.get(issueNumber);
     let newItem = false;
     if (!item) {
       const issue = await client.request(
         `/repos/${repositoryOwner}/${repositoryName}/issues/${issueNumber}`,
       );
-      item = await client.request(itemsEndpoint, {
-        method: 'POST',
-        body: { type: 'Issue', id: issue.id },
-      });
-      newItem = true;
+      try {
+        item = await client.request(itemsEndpoint, {
+          method: 'POST',
+          body: { type: 'Issue', id: issue.id },
+        });
+        newItem = true;
+        changes.push({ type: 'added', issueNumber });
+      } catch (error) {
+        if (!isDuplicateProjectItemError(error)) throw error;
+        if (!projectId || !issue.node_id)
+          throw new Error(
+            `A issue #${issueNumber} já existe no Project, mas projectId/node_id estão ausentes para recuperá-la.`,
+            { cause: error },
+          );
+        item = await getExistingProjectItem(client, {
+          projectId,
+          contentId: issue.node_id,
+          itemsEndpoint,
+          fieldsQuery,
+        });
+        changes.push({ type: 'reused', issueNumber });
+      }
       itemByIssueNumber.set(issueNumber, item);
-      changes.push({ type: 'added', issueNumber });
     }
     const updates = fieldValueUpdates(fieldsByName, projectItemValues(item), record.projectValues, {
       newItem,

@@ -1,0 +1,60 @@
+diff --git a/scripts/bootstrap-github-governance.mjs b/scripts/bootstrap-github-governance.mjs
+index 11adb0a..d99faee 100755
+--- a/scripts/bootstrap-github-governance.mjs
++++ b/scripts/bootstrap-github-governance.mjs
+@@ -225,7 +225,7 @@ async function ensureProject(
+ 
+   if (!opts.skipViews) {
+     const createdViews = await ensureProjectViews(client, {
+-      userId: viewer.id,
++      owner: spec.owner,
+       projectNumber: project.number,
+       projectId: project.node_id,
+       desiredViews: spec.views,
+diff --git a/scripts/lib/github-governance.mjs b/scripts/lib/github-governance.mjs
+index 2fb631c..43fedaa 100644
+--- a/scripts/lib/github-governance.mjs
++++ b/scripts/lib/github-governance.mjs
+@@ -78,17 +78,18 @@ export async function ensureProjectFields(
+ 
+ export async function ensureProjectViews(
+   client,
+-  { userId, projectNumber, projectId, desiredViews },
++  { owner, projectNumber, projectId, desiredViews },
+ ) {
+   const result = await client.graphql(
+     `query($id:ID!){node(id:$id){... on ProjectV2{views(first:100){nodes{name}}}}}`,
+     { id: projectId },
+   );
+   const existing = new Set(result.node?.views?.nodes?.map((view) => view.name) ?? []);
++  const endpoint = `/users/${encodeURIComponent(owner)}/projectsV2/${projectNumber}/views`;
+   const created = [];
+   for (const view of desiredViews) {
+     if (existing.has(view.name)) continue;
+-    await client.request(`/users/${userId}/projectsV2/${projectNumber}/views`, {
++    await client.request(endpoint, {
+       method: 'POST',
+       body: { name: view.name, layout: view.layout, filter: view.filter },
+     });
+diff --git a/scripts/lib/github-governance.test.mjs b/scripts/lib/github-governance.test.mjs
+index 137dc27..74386da 100644
+--- a/scripts/lib/github-governance.test.mjs
++++ b/scripts/lib/github-governance.test.mjs
+@@ -126,7 +126,7 @@ test('cria somente views ausentes', async () => {
+     graphql: [{ node: { views: { nodes: [{ name: 'Now' }] } } }],
+   });
+   const created = await ensureProjectViews(client, {
+-    userId: 42,
++    owner: 'eedsilva',
+     projectNumber: 7,
+     projectId: 'P_1',
+     desiredViews: [
+@@ -138,7 +138,7 @@ test('cria somente views ausentes', async () => {
+   const write = client.calls.find((call) => call.kind === 'request');
+   assert.deepEqual(write, {
+     kind: 'request',
+-    endpoint: '/users/42/projectsV2/7/views',
++    endpoint: '/users/eedsilva/projectsV2/7/views',
+     options: {
+       method: 'POST',
+       body: { name: 'Next', layout: 'table', filter: 'Commitment:Next' },

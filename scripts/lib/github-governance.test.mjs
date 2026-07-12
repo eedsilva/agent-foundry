@@ -16,7 +16,9 @@ function fakeClient({ responses = new Map(), paginated = new Map(), graphql = []
     async request(endpoint, options = {}) {
       calls.push({ kind: 'request', endpoint, options });
       const key = `${options.method ?? 'GET'} ${endpoint}`;
-      return structuredClone(responses.get(key) ?? responses.get(endpoint) ?? {});
+      const response = responses.get(key) ?? responses.get(endpoint) ?? {};
+      if (response instanceof Error) throw response;
+      return structuredClone(response);
     },
     async paginate(endpoint) {
       calls.push({ kind: 'paginate', endpoint });
@@ -126,7 +128,7 @@ test('cria somente views ausentes', async () => {
     graphql: [{ node: { views: { nodes: [{ name: 'Now' }] } } }],
   });
   const created = await ensureProjectViews(client, {
-    userId: 42,
+    owner: 'eedsilva',
     projectNumber: 7,
     projectId: 'P_1',
     desiredViews: [
@@ -138,7 +140,7 @@ test('cria somente views ausentes', async () => {
   const write = client.calls.find((call) => call.kind === 'request');
   assert.deepEqual(write, {
     kind: 'request',
-    endpoint: '/users/42/projectsV2/7/views',
+    endpoint: '/users/eedsilva/projectsV2/7/views',
     options: {
       method: 'POST',
       body: { name: 'Next', layout: 'table', filter: 'Commitment:Next' },
@@ -146,7 +148,7 @@ test('cria somente views ausentes', async () => {
   });
 });
 
-test('lista Project items com IDs reais de fields e preserva Status humano', async () => {
+test('normaliza o número da issue, usa IDs reais de fields e preserva Status humano', async () => {
   const fieldsByName = new Map([
     [
       'Status',
@@ -172,7 +174,7 @@ test('lista Project items com IDs reais de fields e preserva Status humano', asy
         [
           {
             id: 70,
-            content: { number: 1 },
+            content: { number: '1' },
             fields: [
               { name: 'Status', value: { name: { raw: 'In Progress' } } },
               { name: 'Target', value: { name: { raw: 'Hosted v2' } } },
@@ -189,6 +191,7 @@ test('lista Project items com IDs reais de fields e preserva Status humano', asy
   const changes = await reconcileProjectItems(client, {
     projectOwner: 'eedsilva',
     projectNumber: 7,
+    projectId: 'P_1',
     repositoryOwner: 'eedsilva',
     repositoryName: 'agent-foundry',
     fieldsByName,
@@ -196,7 +199,7 @@ test('lista Project items com IDs reais de fields e preserva Status humano', asy
       { key: 'one', projectValues: { Status: 'Inbox', Target: 'Personal v1' } },
       { key: 'two', projectValues: { Status: 'Inbox', Target: 'Personal v1' } },
     ],
-    roadmapState: { issues: { one: { number: 1 }, two: { number: 2 } } },
+    roadmapState: { issues: { one: { number: '1' }, two: { number: '2' } } },
   });
   assert.deepEqual(changes, [
     { type: 'updated', issueNumber: 1, fields: 1 },
@@ -211,4 +214,55 @@ test('lista Project items com IDs reais de fields e preserva Status humano', asy
     (call) => call.endpoint.endsWith('/items/70') && call.options.method === 'PATCH',
   );
   assert.deepEqual(firstPatch.options.body.fields, [{ id: 11, value: 'pv1' }]);
+});
+
+test('recupera item existente quando o REST responde 422 de conteúdo duplicado', async () => {
+  const fieldsByName = new Map([
+    [
+      'Target',
+      { id: 10, data_type: 'single_select', options: [{ id: 'pv1', name: 'Personal v1' }] },
+    ],
+  ]);
+  const listEndpoint = '/users/eedsilva/projectsV2/7/items?fields=10';
+  const itemsEndpoint = '/users/eedsilva/projectsV2/7/items';
+  const duplicate = new Error(
+    'POST /users/eedsilva/projectsV2/7/items: 422 Content already exists in this project',
+  );
+  const client = fakeClient({
+    paginated: new Map([[listEndpoint, []]]),
+    responses: new Map([
+      ['/repos/eedsilva/agent-foundry/issues/1', { id: 101, node_id: 'I_1', number: 1 }],
+      [`POST ${itemsEndpoint}`, duplicate],
+      [`${itemsEndpoint}/70?fields=10`, { id: 70, content: { number: 1 }, fields: [] }],
+    ]),
+    graphql: [
+      {
+        addProjectV2ItemById: {
+          item: { id: 'PVTI_1', fullDatabaseId: '70' },
+        },
+      },
+    ],
+  });
+
+  const changes = await reconcileProjectItems(client, {
+    projectOwner: 'eedsilva',
+    projectNumber: 7,
+    projectId: 'P_1',
+    repositoryOwner: 'eedsilva',
+    repositoryName: 'agent-foundry',
+    fieldsByName,
+    desiredRecords: [{ key: 'one', projectValues: { Target: 'Personal v1' } }],
+    roadmapState: { issues: { one: { number: 1 } } },
+  });
+
+  assert.deepEqual(changes, [
+    { type: 'reused', issueNumber: 1 },
+    { type: 'updated', issueNumber: 1, fields: 1 },
+  ]);
+  const mutation = client.calls.find((call) => call.kind === 'graphql');
+  assert.deepEqual(mutation.variables, { projectId: 'P_1', contentId: 'I_1' });
+  const patch = client.calls.find(
+    (call) => call.endpoint === `${itemsEndpoint}/70` && call.options.method === 'PATCH',
+  );
+  assert.deepEqual(patch.options.body.fields, [{ id: 10, value: 'pv1' }]);
 });
