@@ -231,15 +231,9 @@ test('recupera item existente quando o REST responde 422 de conteúdo duplicado'
   const client = fakeClient({
     paginated: new Map([[listEndpoint, []]]),
     responses: new Map([
-      [
-        '/repos/eedsilva/agent-foundry/issues/1',
-        { id: 101, node_id: 'I_1', number: 1 },
-      ],
+      ['/repos/eedsilva/agent-foundry/issues/1', { id: 101, node_id: 'I_1', number: 1 }],
       [`POST ${itemsEndpoint}`, duplicate],
-      [
-        `${itemsEndpoint}/70?fields=10`,
-        { id: 70, content: { number: 1 }, fields: [] },
-      ],
+      [`${itemsEndpoint}/70?fields=10`, { id: 70, content: { number: 1 }, fields: [] }],
     ]),
     graphql: [
       {

@@ -112,9 +112,7 @@ export function projectItemIssueNumber(item) {
 }
 
 export function isDuplicateProjectItemError(error) {
-  return /\b422\b.*content already exists in this project/i.test(
-    String(error?.message ?? error),
-  );
+  return /\b422\b.*content already exists in this project/i.test(String(error?.message ?? error));
 }
 
 async function getExistingProjectItem(
@@ -130,9 +128,7 @@ async function getExistingProjectItem(
     throw new Error(
       'GitHub informou que o conteúdo já existe no Project, mas não retornou fullDatabaseId para recuperá-lo.',
     );
-  const item = await client.request(
-    `${itemsEndpoint}/${encodeURIComponent(itemId)}${fieldsQuery}`,
-  );
+  const item = await client.request(`${itemsEndpoint}/${encodeURIComponent(itemId)}${fieldsQuery}`);
   return { ...item, id: itemId };
 }
 
