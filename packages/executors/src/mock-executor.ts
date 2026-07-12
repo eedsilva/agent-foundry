@@ -63,7 +63,7 @@ export class MockAgentExecutor implements AgentExecutor {
     await writeFile(
       join(request.cwd, 'src', 'index.js'),
       [
-        "export function createProject(input) {",
+        'export function createProject(input) {',
         "  if (!input?.name || !input?.prd) throw new Error('name and prd are required');",
         "  return { ...input, status: 'queued' };",
         '}',

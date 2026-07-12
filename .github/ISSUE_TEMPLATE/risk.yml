@@ -1,0 +1,47 @@
+name: Risk entry
+about: Registre um risco técnico, operacional, de provider, segurança ou produto.
+title: '[Risk] '
+labels:
+  - kind:risk
+  - track:safety
+  - priority:p1
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Cenário de risco
+      description: Causa, evento e consequência.
+    validations:
+      required: true
+  - type: dropdown
+    id: probability
+    attributes:
+      label: Probabilidade
+      options: [Low, Medium, High]
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impacto
+      options: [Low, Medium, High, Critical]
+    validations:
+      required: true
+  - type: textarea
+    id: trigger
+    attributes:
+      label: Trigger observável
+    validations:
+      required: true
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Mitigação e owner
+    validations:
+      required: true
+  - type: textarea
+    id: contingency
+    attributes:
+      label: Contingência
+    validations:
+      required: true

@@ -1,0 +1,39 @@
+name: Architecture decision
+about: Proponha uma decisão estrutural com alternativas, consequências e rollback.
+title: '[Architecture] '
+labels:
+  - kind:architecture
+  - priority:p1
+body:
+  - type: textarea
+    id: forces
+    attributes:
+      label: Contexto e forças
+      description: Restrições, evidência, escala real, segurança, compatibilidade e reversibilidade.
+    validations:
+      required: true
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decisão proposta
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+      description: Não use uma única alternativa de palha.
+    validations:
+      required: true
+  - type: textarea
+    id: consequences
+    attributes:
+      label: Consequências e failure modes
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validação, migração e rollback
+    validations:
+      required: true

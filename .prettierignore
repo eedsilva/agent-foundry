@@ -1,0 +1,8 @@
+node_modules
+dist
+.next
+coverage
+data
+apps/web/next-env.d.ts
+planning/ROADMAP.md
+*.tsbuildinfo

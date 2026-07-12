@@ -25,5 +25,8 @@
     "@agent-foundry/model-router": "0.1.0",
     "@agent-foundry/orchestrator": "0.1.0",
     "@agent-foundry/persistence": "0.1.0"
+  },
+  "devDependencies": {
+    "@agent-foundry/contracts": "0.1.0"
   }
 }

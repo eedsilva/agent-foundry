@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Vulnerabilidade de segurança
+    url: https://github.com/eedsilva/agent-foundry/security/advisories/new
+    about: Use um advisory privado para execução arbitrária, credenciais, sandbox, isolamento ou dados sensíveis.
+  - name: Roadmap e planejamento
+    url: https://github.com/eedsilva/agent-foundry/issues/1
+    about: Consulte a issue raiz e as epics antes de abrir escopo duplicado.

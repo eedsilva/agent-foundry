@@ -9,7 +9,6 @@ import type {
   RankedModel,
   RouteDecision,
   StoredArtifact,
-  VerificationReport,
   VerifyStep,
   WorkflowDefinition,
   WorkflowNode,

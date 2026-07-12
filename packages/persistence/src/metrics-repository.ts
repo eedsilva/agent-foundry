@@ -39,8 +39,7 @@ export class FileMetricsRepository implements MetricsRepository {
       totalDurationMs: (existing?.totalDurationMs ?? 0) + input.durationMs,
       totalInputTokens: (existing?.totalInputTokens ?? 0) + (input.inputTokens ?? 0),
       totalOutputTokens: (existing?.totalOutputTokens ?? 0) + (input.outputTokens ?? 0),
-      totalEstimatedCostUsd:
-        (existing?.totalEstimatedCostUsd ?? 0) + (input.estimatedCostUsd ?? 0),
+      totalEstimatedCostUsd: (existing?.totalEstimatedCostUsd ?? 0) + (input.estimatedCostUsd ?? 0),
       consecutiveFailures: input.success ? 0 : (existing?.consecutiveFailures ?? 0) + 1,
       qualityEvaluations: existing?.qualityEvaluations ?? 0,
       qualityApprovals: existing?.qualityApprovals ?? 0,
@@ -87,7 +86,9 @@ export class FileMetricsRepository implements MetricsRepository {
     await withDirectoryLock(`${path}.lock`, async () => {
       const file = await this.read();
       const key = this.key(modelId, taskKind, role);
-      file.metrics[key] = ModelMetricSchema.parse(update(file.metrics[key] ?? null, new Date().toISOString()));
+      file.metrics[key] = ModelMetricSchema.parse(
+        update(file.metrics[key] ?? null, new Date().toISOString()),
+      );
       await atomicWriteJson(path, file);
     });
   }

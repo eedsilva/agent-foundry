@@ -30,7 +30,17 @@ export class FileWorkspaceManager implements WorkspaceManager {
     if (!(await exists(gitignore))) {
       await atomicWriteText(
         gitignore,
-        ['node_modules/', '.next/', 'dist/', 'coverage/', '.env*', '!.env.example', '.orchestrator/', '*.log', ''].join('\n'),
+        [
+          'node_modules/',
+          '.next/',
+          'dist/',
+          'coverage/',
+          '.env*',
+          '!.env.example',
+          '.orchestrator/',
+          '*.log',
+          '',
+        ].join('\n'),
       );
     }
   }
@@ -74,9 +84,13 @@ export class FileWorkspaceManager implements WorkspaceManager {
     const head = await execa('git', ['rev-parse', '--verify', 'HEAD'], { cwd, reject: false });
     if (head.exitCode !== 0) {
       await execa('git', ['add', '-A'], { cwd });
-      await execa('git', ['commit', '--allow-empty', '-m', 'chore: initialize generated workspace'], {
-        cwd,
-      });
+      await execa(
+        'git',
+        ['commit', '--allow-empty', '-m', 'chore: initialize generated workspace'],
+        {
+          cwd,
+        },
+      );
     }
   }
 

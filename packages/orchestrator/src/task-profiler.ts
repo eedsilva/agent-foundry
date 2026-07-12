@@ -2,7 +2,10 @@ import type { AgentStep, StoredArtifact, TaskProfile } from '@agent-foundry/cont
 import type { HarnessSelection } from '@agent-foundry/domain';
 import { estimateTokens, stableJson } from '@agent-foundry/domain';
 
-const DEFAULTS: Record<AgentStep['taskKind'], Pick<TaskProfile, 'complexity' | 'risk' | 'priorities' | 'preferredTags'>> = {
+const DEFAULTS: Record<
+  AgentStep['taskKind'],
+  Pick<TaskProfile, 'complexity' | 'risk' | 'priorities' | 'preferredTags'>
+> = {
   planning: {
     complexity: 4,
     risk: 3,
@@ -83,11 +86,13 @@ export function buildTaskProfile(input: {
     ...(input.step.profile.allowedProviders
       ? { allowedProviders: input.step.profile.allowedProviders }
       : {}),
-    preferredTags: [...new Set([
-      ...defaults.preferredTags,
-      ...(input.step.profile.preferredTags ?? []),
-      ...input.step.harnessTags,
-    ])],
+    preferredTags: [
+      ...new Set([
+        ...defaults.preferredTags,
+        ...(input.step.profile.preferredTags ?? []),
+        ...input.step.harnessTags,
+      ]),
+    ],
   };
 }
 

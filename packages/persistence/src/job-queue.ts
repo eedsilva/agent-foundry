@@ -82,9 +82,6 @@ export class FileJobQueue implements JobQueue {
   }
 
   private processingPath(jobId: string, workerId: string): string {
-    return join(
-      this.dir('processing'),
-      `${safeSegment(jobId)}.${safeSegment(workerId)}.json`,
-    );
+    return join(this.dir('processing'), `${safeSegment(jobId)}.${safeSegment(workerId)}.json`);
   }
 }

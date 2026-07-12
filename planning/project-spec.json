@@ -1,0 +1,303 @@
+{
+  "schemaVersion": "1.0.0",
+  "repository": "eedsilva/agent-foundry",
+  "owner": "eedsilva",
+  "title": "Agent Foundry Delivery",
+  "shortDescription": "Execution board for the Personal Builder v1 and Hosted Platform v2 tracks.",
+  "readme": "# Agent Foundry Delivery\n\nGenerated from `planning/roadmap-spec.json`. Milestones answer which release owns an item. Project fields answer what is active, risky, blocked, or supported by evidence.\n\n## Operating rules\n\n- Maximum two items in **In Progress**.\n- **P0** means an active release blocker or critical safety/data risk.\n- An item moves to **Done** only after the repository Definition of Done is satisfied.\n- Hosted v2 work does not block Personal Builder v1 unless an explicit dependency says so.\n",
+  "public": true,
+  "fields": [
+    {
+      "name": "Status",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Inbox",
+          "color": "GRAY",
+          "description": "Not triaged"
+        },
+        {
+          "name": "Ready",
+          "color": "BLUE",
+          "description": "Ready to start"
+        },
+        {
+          "name": "In Progress",
+          "color": "YELLOW",
+          "description": "Actively being implemented; WIP limit 2"
+        },
+        {
+          "name": "In Review",
+          "color": "PURPLE",
+          "description": "Pull request or human review in progress"
+        },
+        {
+          "name": "Blocked",
+          "color": "RED",
+          "description": "Cannot advance without a named unblocker"
+        },
+        {
+          "name": "Done",
+          "color": "GREEN",
+          "description": "Definition of Done and evidence satisfied"
+        }
+      ]
+    },
+    {
+      "name": "Commitment",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Now",
+          "color": "RED",
+          "description": "Active commitment"
+        },
+        {
+          "name": "Next",
+          "color": "YELLOW",
+          "description": "Next after active work"
+        },
+        {
+          "name": "Candidate",
+          "color": "BLUE",
+          "description": "Candidate scope, subject to evidence"
+        },
+        {
+          "name": "Exploratory",
+          "color": "GRAY",
+          "description": "Future hypothesis, not a commitment"
+        }
+      ]
+    },
+    {
+      "name": "Size",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "XS",
+          "color": "GRAY",
+          "description": "Hours"
+        },
+        {
+          "name": "S",
+          "color": "GREEN",
+          "description": "Up to roughly one focused day"
+        },
+        {
+          "name": "M",
+          "color": "BLUE",
+          "description": "Several focused days"
+        },
+        {
+          "name": "L",
+          "color": "YELLOW",
+          "description": "Needs decomposition before commitment"
+        },
+        {
+          "name": "XL",
+          "color": "RED",
+          "description": "Must be decomposed before Ready"
+        }
+      ]
+    },
+    {
+      "name": "Risk",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Low",
+          "color": "GREEN",
+          "description": "Contained and reversible"
+        },
+        {
+          "name": "Medium",
+          "color": "BLUE",
+          "description": "Meaningful trade-offs or migration"
+        },
+        {
+          "name": "High",
+          "color": "YELLOW",
+          "description": "Cross-cutting, irreversible, or operationally risky"
+        },
+        {
+          "name": "Critical",
+          "color": "RED",
+          "description": "Security, data, isolation, or launch-critical risk"
+        }
+      ]
+    },
+    {
+      "name": "Confidence",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Low",
+          "color": "RED",
+          "description": "Assumptions dominate evidence"
+        },
+        {
+          "name": "Medium",
+          "color": "YELLOW",
+          "description": "Some evidence; material uncertainty remains"
+        },
+        {
+          "name": "High",
+          "color": "GREEN",
+          "description": "Validated by tests, experiments, or production evidence"
+        }
+      ]
+    },
+    {
+      "name": "Track",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Core",
+          "color": "BLUE",
+          "description": "Workflow engine and delivery fundamentals"
+        },
+        {
+          "name": "UX",
+          "color": "PINK",
+          "description": "Builder, conversation, preview, and visual editing"
+        },
+        {
+          "name": "Safety",
+          "color": "RED",
+          "description": "Sandboxing, secrets, network, and threat controls"
+        },
+        {
+          "name": "Integrations",
+          "color": "GREEN",
+          "description": "Backend, GitHub, deploy, and connectors"
+        },
+        {
+          "name": "Research",
+          "color": "PURPLE",
+          "description": "Benchmarking and model routing"
+        },
+        {
+          "name": "Hosted",
+          "color": "GRAY",
+          "description": "Production data plane and SaaS operations"
+        }
+      ]
+    },
+    {
+      "name": "Target",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "Personal v1",
+          "color": "BLUE",
+          "description": "Required for Personal Builder v1"
+        },
+        {
+          "name": "Hosted v2",
+          "color": "GRAY",
+          "description": "Required for Hosted Platform v2"
+        },
+        {
+          "name": "Shared",
+          "color": "PURPLE",
+          "description": "Benefits both targets"
+        }
+      ]
+    },
+    {
+      "name": "Priority",
+      "type": "SINGLE_SELECT",
+      "options": [
+        {
+          "name": "P0",
+          "color": "RED",
+          "description": "Active release blocker or critical safety/data risk"
+        },
+        {
+          "name": "P1",
+          "color": "YELLOW",
+          "description": "Required for the release outcome"
+        },
+        {
+          "name": "P2",
+          "color": "GREEN",
+          "description": "Important but deferrable"
+        },
+        {
+          "name": "P3",
+          "color": "GRAY",
+          "description": "Opportunity or refinement"
+        }
+      ]
+    },
+    {
+      "name": "Evidence",
+      "type": "TEXT"
+    }
+  ],
+  "views": [
+    {
+      "name": "Now",
+      "layout": "board",
+      "filter": "Commitment:Now -Status:Done"
+    },
+    {
+      "name": "Next",
+      "layout": "table",
+      "filter": "Commitment:Next -Status:Done"
+    },
+    {
+      "name": "Roadmap",
+      "layout": "roadmap",
+      "filter": "is:open"
+    },
+    {
+      "name": "Blocked",
+      "layout": "table",
+      "filter": "Status:Blocked"
+    },
+    {
+      "name": "High Risk",
+      "layout": "table",
+      "filter": "Risk:High,Critical -Status:Done"
+    },
+    {
+      "name": "Epics",
+      "layout": "table",
+      "filter": "label:kind:epic"
+    },
+    {
+      "name": "Personal v1",
+      "layout": "table",
+      "filter": "Target:\"Personal v1\" -Status:Done"
+    },
+    {
+      "name": "Hosted v2",
+      "layout": "table",
+      "filter": "Target:\"Hosted v2\" -Status:Done"
+    },
+    {
+      "name": "Research",
+      "layout": "table",
+      "filter": "Track:Research -Status:Done"
+    }
+  ],
+  "defaults": {
+    "roadmap": {
+      "Status": "Inbox",
+      "Confidence": "Medium",
+      "Risk": "High"
+    },
+    "epic": {
+      "Status": "Inbox",
+      "Confidence": "Low"
+    },
+    "task": {
+      "Status": "Inbox",
+      "Confidence": "Low"
+    }
+  },
+  "wipLimits": {
+    "In Progress": 2
+  }
+}

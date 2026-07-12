@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    labels:
+      - kind:dependency
+      - priority:p2
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      development-tooling:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+      production-patches:
+        dependency-type: production
+        update-types:
+          - patch

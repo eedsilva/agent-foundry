@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0.0",
+  "repository": "eedsilva/agent-foundry",
+  "ruleset": {
+    "name": "Agent Foundry main protection",
+    "target": "branch",
+    "enforcement": "active",
+    "include": ["~DEFAULT_BRANCH"],
+    "requiredStatusChecks": [
+      "format",
+      "lint",
+      "architecture",
+      "roadmap",
+      "typecheck",
+      "test",
+      "build",
+      "dependency-review"
+    ],
+    "pullRequest": {
+      "requiredApprovingReviewCount": 0,
+      "dismissStaleReviewsOnPush": false,
+      "requireCodeOwnerReview": false,
+      "requireLastPushApproval": false,
+      "requiredReviewThreadResolution": true,
+      "allowedMergeMethods": ["squash", "rebase"]
+    },
+    "requiredLinearHistory": true,
+    "blockDeletion": true,
+    "blockForcePush": true
+  },
+  "release": {
+    "tag": "v0.1.0",
+    "name": "Agent Foundry v0.1.0 baseline",
+    "bodyPath": "docs/releases/v0.1.0.md",
+    "prerelease": true,
+    "draft": false,
+    "target": "92b071ceb3365cb74d954cc67c496e3e5ecc9e6a"
+  },
+  "repositorySettings": {
+    "allowSquashMerge": true,
+    "allowRebaseMerge": true,
+    "allowMergeCommit": false,
+    "deleteBranchOnMerge": true
+  },
+  "security": {
+    "enableVulnerabilityAlerts": true,
+    "enableAutomatedSecurityFixes": true
+  }
+}
