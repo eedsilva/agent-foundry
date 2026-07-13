@@ -104,7 +104,7 @@ describe('mock runtime', () => {
       artifact.metadata.name.startsWith('run-'),
     );
     expect(runArtifact?.content).toMatchObject({
-      harness: { version: '2026.07.11-v1' },
+      harness: { version: '2026.07.12-v2' },
     });
 
     const generatedPackage = JSON.parse(
