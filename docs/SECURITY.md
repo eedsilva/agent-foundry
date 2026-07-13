@@ -129,3 +129,15 @@ Portanto, `DATA_DIR` pode conter dados sensíveis. Não o publique nem o envie i
 - resposta a incidentes.
 
 Sem esses itens, mantenha o serviço em localhost ou rede privada controlada.
+
+## Decisões de segurança do Personal Builder v1
+
+O control plane permanece em loopback no macOS. Publicar um app no VPS não autoriza publicar a API do Agent Foundry.
+
+V1 usa `.env` local por decisão de simplicidade. Esses arquivos são acessíveis ao usuário do host e, portanto, não são um secret broker. Eles precisam estar fora do Git, dos prompts, dos artifacts, das screenshots e dos logs. Scanners devem bloquear promoção quando um valor conhecido aparece no source ou bundle.
+
+SSH do VPS é uma capability do deployer e não uma ferramenta disponível aos agentes. O agente produz um `ReleasePlan`; código determinístico valida e executa os comandos permitidos.
+
+Cada app publicado usa rede, volumes, credenciais e Compose project próprios. Isso reduz colisão acidental, mas não equivale a isolamento multi-tenant. O VPS continua sendo um host confiável do operador.
+
+Rollback automático é limitado ao app. Database restore exige escolha explícita de backup, confirmação humana e registro de auditoria. Destructive migrations sem backup verificado são bloqueadas.

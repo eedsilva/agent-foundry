@@ -1,10 +1,12 @@
 # Agent Foundry
 
-Um monorepo TypeScript para transformar um PRD em um workflow auditável de agentes de software.
+Um monorepo TypeScript para construir uma alternativa pessoal e self-hosted ao Lovable: ideia em chat, pipeline multiagente auditável, app full-stack local, preview verificado e publicação no VPS do operador.
 
-O sistema recebe um PRD pela interface web, persiste um projeto, enfileira uma execução e conduz uma sequência declarativa de planejamento, revisão, arquitetura, implementação, reparo e verificação. Cada etapa produz artefatos revisionados, decisões, eventos, métricas e checkpoints Git. O executor pode ser Codex CLI, Claude Code CLI ou AGY, a CLI do Google Antigravity.
+O baseline atual recebe um PRD pela interface web, persiste um projeto, enfileira uma execução e conduz uma sequência declarativa de planejamento, revisão, arquitetura, implementação, reparo e verificação. A evolução até Personal Builder v1 troca a entrada principal por chat e fecha o ciclo com Next.js, Tailwind, shadcn/ui, Supabase Docker isolado, edição visual, Git local e deploy SSH/Compose/Caddy em VPS existente.
 
 > **Estado:** MVP executável. O modo `mock` roda o fluxo inteiro sem CLIs externas. O modo `real` usa suas sessões autenticadas das três CLIs.
+
+> **Alvo Personal v1:** operador único em macOS; projetos greenfield; serviços locais; VPS Ubuntu LTS existente; sem Vercel, Supabase Cloud ou Agent Foundry público. Veja [docs/PRODUCT_CONTRACT.md](docs/PRODUCT_CONTRACT.md), [docs/PERSONAL_V1.md](docs/PERSONAL_V1.md) e [docs/PERSONAL_V1_TRACEABILITY.md](docs/PERSONAL_V1_TRACEABILITY.md).
 
 ## O que está incluído
 
@@ -308,16 +310,16 @@ Este MVP ainda não é uma plataforma multi-tenant segura nem um scheduler distr
 
 Antes de expor isso publicamente, leia [docs/SECURITY.md](docs/SECURITY.md) e [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
-## Próximos passos de produção
+## Caminho até Personal Builder v1
 
-A evolução com maior retorno costuma ser:
+A entrega segue o golden path do Issue Radar:
 
-1. Isolar cada workspace em microVM ou sandbox efêmero sem credenciais reutilizáveis.
-2. Trocar a fila em arquivos por Postgres + leasing ou um broker durável.
-3. Adicionar autenticação, tenancy, quotas e políticas por projeto.
-4. Guardar logs e métricas em um backend consultável.
-5. Criar benchmark próprio com tarefas reais e avaliação cega.
-6. Implementar recuperação idempotente de jobs e cancelamento cooperativo.
+1. Tornar runs retomáveis, canceláveis, idempotentes e observáveis.
+2. Introduzir approvals de risco e sandbox para verifier/preview.
+3. Entregar chat, preview, visual edit, versions e failed drafts.
+4. Gerar o golden stack Next.js + Tailwind + shadcn/ui + Supabase Docker.
+5. Publicar por SSH em VPS existente com Compose, Caddy e backup para o Mac.
+6. Passar a golden journey completa do Issue Radar e o security review do operador local.
 7. Adicionar streaming de eventos por SSE ou WebSocket.
 8. Criar políticas de seleção de contexto para evitar prompts inchados.
 

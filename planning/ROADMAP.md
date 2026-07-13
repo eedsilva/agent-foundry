@@ -2,15 +2,15 @@
 
 > Gerado de `planning/roadmap-spec.json`. Não edite manualmente.
 
-Spec: **2.0.0** · Milestones: **15** · Tasks: **109** · Managed issues: **125**
+Spec: **2.0.0** · Milestones: **16** · Tasks: **114** · Managed issues: **131**
 
 ## Targets
 
 ### Personal Builder v1
 
-Transformar um PRD ou change request em uma mudança auditável, executável, revisável e publicável sem exigir uma plataforma SaaS própria.
+Transformar uma ideia em um app web greenfield, autenticado, full-stack, verificado e publicado no VPS do próprio operador, sem depender de uma plataforma SaaS.
 
-North star: **Percentual de change requests aceitos sem edição manual de código.**
+North star: **Percentual de operações greenfield e incrementais aceitas sem edição manual de código.**
 
 ### Hosted Platform v2
 
@@ -27,23 +27,28 @@ flowchart LR
   m_foundation --> m_v0_2
   m_v0_3["v0.3 - Human Control"]
   m_v0_2 --> m_v0_3
-  m_v0_4["v0.4 - Existing Repositories"]
-  m_v0_3 --> m_v0_4
+  m_v0_4["v0.4 - Existing Repositories (Post-v1)"]
+  m_v1_0 --> m_v0_4
+  m_personal_v3["Personal Evolution 3 - Windows"]
+  m_v0_4 --> m_personal_v3
   m_v0_4_5["v0.4.5 - Safe Runtime Foundation"]
   m_v0_2 --> m_v0_4_5
   m_v0_5["v0.5 - Live Preview"]
-  m_v0_4 --> m_v0_5
+  m_v0_2 --> m_v0_5
   m_v0_4_5 --> m_v0_5
   m_v0_6["v0.6 - Conversational Builder"]
+  m_v0_3 --> m_v0_6
   m_v0_5 --> m_v0_6
-  m_v0_10["v0.10 - Full-stack App Platform"]
-  m_v0_4 --> m_v0_10
+  m_v0_10["v0.10 - Local Full-stack App Platform"]
+  m_v0_6 --> m_v0_10
   m_v0_4_5 --> m_v0_10
-  m_v0_11["v0.11 - Publish and Integrations"]
+  m_v0_11["v0.11 - Self-hosted Publish"]
   m_v0_10 --> m_v0_11
   m_v0_4_5 --> m_v0_11
   m_v1_0["v1.0 - Personal Builder"]
   m_v0_6 --> m_v1_0
+  m_v0_10 --> m_v1_0
+  m_v0_11 --> m_v1_0
   m_v0_4_5 --> m_v1_0
   m_v0_7["v0.7 - Secure Execution"]
   m_v0_4_5 --> m_v0_7
@@ -138,20 +143,22 @@ Aprovações humanas, políticas de projeto e limites explícitos de execução.
 - **v03-approval-domain** · P1 · Adicionar approval gates e decisões humanas ao workflow declarativo
 - **v03-approval-api-ui** · P1 · Construir API e interface de revisão para aprovar, rejeitar e pedir mudanças
 - **v03-project-policies** · P1 · Definir e aplicar ProjectPolicy para stack, providers e dependências
-- **v03-budgets-overrides** · P1 · Aplicar budgets e overrides explícitos de modelo por run ou step
+- **v03-budgets-overrides** · P1 · Aplicar emergency ceiling e overrides explícitos de modelo por run ou step
 - **v03-audit-feedback** · P1 · Persistir feedback humano e identidade do ator na trilha de auditoria
 - **v03-policy-e2e** · P1 · Cobrir approval gates e políticas com testes end-to-end
 
-### v0.4 - Existing Repositories
+### v0.4 - Existing Repositories (Post-v1)
 
-**Track:** Core · **Target:** Personal v1 · **Commitment:** Candidate · **Risk:** High
+**Track:** Core · **Target:** Shared · **Commitment:** Exploratory · **Risk:** High
 
-Importação de repositórios, worktrees isolados e change requests incrementais.
+Evolução pós-v1 com Linux, editor de código no browser e importação de repositórios existentes.
 
-**Objective:** Parar de tratar todo pedido como greenfield. O Agent Foundry passa a entender um baseline Git, selecionar contexto e aplicar mudanças incrementais sem corromper o branch original.
+**Objective:** Expandir o builder greenfield provado sem colocar compatibilidade arbitrária no caminho crítico do Personal v1.
 
 **Exit criteria**
 
+- [ ] Control plane funciona em macOS e Linux.
+- [ ] Builder oferece editor de código no browser ligado ao Git local.
 - [ ] Projeto pode nascer de um repositório Git e commit base explícito.
 - [ ] Cada run mutável usa branch e worktree próprios.
 - [ ] Context builder seleciona arquivos por tarefa com orçamento auditável.
@@ -166,6 +173,26 @@ Importação de repositórios, worktrees isolados e change requests incrementais
 - **v04-context-selector** · P1 · Selecionar contexto por tarefa usando busca lexical, imports e orçamento
 - **v04-change-requests** · P1 · Introduzir ChangeRequest e workflow incremental sobre um baseline
 - **v04-diff-review** · P1 · Adicionar file browser, diff review e promoção do branch na interface
+- **v04-linux-control-plane** · P2 · Suportar control plane do builder em Linux
+- **v04-browser-code-editor** · P2 · Adicionar file explorer e editor de código no browser
+
+### Personal Evolution 3 - Windows
+
+**Track:** Core · **Target:** Shared · **Commitment:** Exploratory · **Risk:** High
+
+Expandir o control plane pessoal para Windows após macOS e Linux estarem provados.
+
+**Objective:** Entregar paridade funcional do golden journey em Windows sem degradar as plataformas existentes.
+
+**Exit criteria**
+
+- [ ] Doctor, CLIs, Docker, sandbox, preview, Git e SSH deploy funcionam no Windows suportado.
+- [ ] Issue Radar passa no Windows a partir de instalação limpa.
+- [ ] Path, process, shell, permission e filesystem semantics possuem testes dedicados.
+
+**Tasks**
+
+- **personal-v3-windows-control-plane** · P2 · Suportar control plane completo em Windows
 
 ### v0.4.5 - Safe Runtime Foundation
 
@@ -239,77 +266,82 @@ Chat iterativo, modos Plan/Build, version history e edição visual ligada ao c�
 - **v06-chat-operations** · P1 · Converter mensagens em change requests incrementais e handoffs reproduzíveis
 - **v06-chat-streaming** · P1 · Transmitir tokens, tool calls e progresso dos agentes dentro do chat
 - **v06-version-history** · P1 · Adicionar version history, compare, revert e branch de uma versão
+- **v06-failed-drafts** · P1 · Preservar operações não aprovadas em draft branches
 - **v06-dom-source-map** · P1 · Mapear elemento selecionado no preview para componente e origem no código
 - **v06-visual-patches** · P1 · Aplicar edições visuais como patches estruturados e verificáveis
 - **v06-knowledge-attachments-shell** · P1 · Adicionar knowledge files, imagens e shell de três painéis do builder
 
-### v0.10 - Full-stack App Platform
+### v0.10 - Local Full-stack App Platform
 
 **Track:** Integrations · **Target:** Personal v1 · **Commitment:** Candidate · **Risk:** High
 
-Ambientes por projeto com banco, auth, storage, functions, secrets e portabilidade.
+Next.js e Supabase Docker isolados por projeto, com auth, RLS, database, storage, functions e .env.
 
-**Objective:** Entregar o equivalente funcional de um backend gerenciado para os apps produzidos, sem misturar o control plane do Agent Foundry com o runtime do app.
+**Objective:** Entregar o golden stack full-stack self-hosted do Personal v1 sem Vercel, Supabase Cloud ou abstrações de provider prematuras.
 
 **Exit criteria**
 
-- [ ] Projeto pode provisionar ambiente full-stack isolado.
-- [ ] Agente cria schema, auth, storage e functions com migrations revisáveis.
-- [ ] Secrets e integrações são scoped por projeto.
-- [ ] Usuário consegue exportar código e dados sem lock-in obrigatório.
+- [ ] Cada projeto inicializa Compose e Supabase local isolados.
+- [ ] Todo app nasce com auth email/senha, sessão, rotas protegidas e RLS baseline.
+- [ ] Agente cria schema, storage e functions com migrations revisáveis e forward-only.
+- [ ] .env não entra em Git, prompts, artifacts, screenshots ou logs.
+- [ ] Issue Radar passa CRUD, attachment e matriz negativa de autorização.
 
 **Tasks**
 
-- **v010-environment-provisioner** · P1 · Definir AppEnvironment e a porta EnvironmentProvisioner
-- **v010-database** · P1 · Provisionar PostgreSQL por projeto e gerenciar schema por migrations
-- **v010-auth** · P1 · Integrar autenticação e gerar fluxos seguros de usuário
-- **v010-storage** · P1 · Provisionar storage de arquivos com policies e uploads seguros
-- **v010-functions** · P1 · Adicionar runtime de serverless/edge functions com deploy versionado
-- **v010-app-secrets** · P1 · Criar secret store e runtime de conexões por projeto
+- **v010-environment-provisioner** · P1 · Implementar runtime Supabase Docker isolado por projeto
+- **v010-database** · P1 · Gerenciar Postgres local por migrations forward-only
+- **v010-auth** · P1 · Gerar auth email/senha e RLS baseline em todo projeto
+- **v010-storage** · P1 · Provisionar Supabase Storage local com policies e uploads seguros
+- **v010-functions** · P1 · Adicionar Supabase Functions locais com deploy versionado
+- **v010-app-secrets** · P1 · Gerenciar secrets do app em arquivos .env locais
 - **v010-data-security** · P1 · Verificar RLS, autorização e operações destrutivas antes de release
-- **v010-fullstack-reference** · P1 · Entregar workflow e app de referência full-stack com export portátil
+- **v010-fullstack-reference** · P1 · Entregar Issue Radar como app de referência full-stack local
 
-### v0.11 - Publish and Integrations
+### v0.11 - Self-hosted Publish
 
 **Track:** Integrations · **Target:** Personal v1 · **Commitment:** Candidate · **Risk:** High
 
-Publicação, domínios, GitHub two-way sync e conectores externos.
+Publicação por SSH em VPS existente com Compose, Caddy, backup para Mac e GitHub opcional.
 
-**Objective:** Levar o projeto de preview a produto publicado, preservando propriedade do código e integração com ferramentas externas.
+**Objective:** Levar o app local a um VPS controlado pelo operador sem Vercel, cloud provisioning ou database rollback implícito.
 
 **Exit criteria**
 
-- [ ] Versões podem ser promovidas para production e revertidas.
-- [ ] Custom domain e TLS possuem verificação e status claros.
-- [ ] GitHub mantém sync bidirecional com política de conflitos.
-- [ ] Connector SDK suporta pelo menos email transacional como referência.
+- [ ] Issue Radar publica em Ubuntu LTS existente por SSH e Compose isolado.
+- [ ] Host/port funciona imediatamente; domínio manual recebe validação e TLS automático por Caddy.
+- [ ] Backup agendado fica no VPS e uma cópia verificada chega ao Mac.
+- [ ] Rollback restaura app/config anteriores sem executar down migration.
+- [ ] GitHub é integração opcional e Git local continua source of truth.
 
 **Tasks**
 
-- **v011-deployment-domain** · P1 · Definir Release, Deployment e a porta DeploymentProvider
-- **v011-publish-domains** · P1 · Implementar publish pipeline, custom domains e TLS
-- **v011-github-app** · P1 · Integrar GitHub App/OAuth com permissões mínimas por repositório
-- **v011-github-sync** · P1 · Implementar two-way sync, pull requests e resolução de conflitos
-- **v011-connector-sdk** · P1 · Criar Connector SDK com OAuth, scopes, actions e secret refs
-- **v011-reference-connectors** · P1 · Entregar conector de referência de email transacional
-- **v011-release-ui-e2e** · P1 · Construir painel de releases, domains, GitHub e connectors com golden flow
+- **v011-deployment-domain** · P1 · Definir Release e deploy SSH/Compose com rollback somente do app
+- **v011-publish-domains** · P1 · Publicar por SSH com Compose, host/porta e Caddy TLS opcional
+- **v011-github-app** · P1 · Adicionar conexão GitHub opcional sobre o repositório Git local
+- **v011-github-sync** · P1 · Implementar push, pull e pull requests opcionais
+- **v011-connector-sdk** · P1 · Validar e preparar VPS Ubuntu/Debian existente
+- **v011-reference-connectors** · P1 · Agendar backup no VPS e copiar snapshot verificado para o Mac
+- **v011-release-ui-e2e** · P1 · Construir painel de releases, VPS, backups e GitHub opcional
 
 ### v1.0 - Personal Builder
 
 **Track:** UX · **Target:** Personal v1 · **Commitment:** Candidate · **Risk:** Critical
 
-Release pessoal Lovable-class: intenção até preview, feedback e GitHub, para um operador local confiável, sem depender do SaaS multi-tenant.
+Release pessoal Lovable-class completa: chat até app full-stack local, edição visual, verificação e publicação no VPS próprio.
 
 **Objective:** Entregar a experiência de builder pessoal completa e verificável antes de escalar para Hosted Platform.
 
 **Exit criteria**
 
-- [ ] Golden journeys cobrem prompt -> app -> preview -> visual edit -> revert -> GitHub.
-- [ ] Feature contract pessoal e non-goals estão documentados no Product Contract.
-- [ ] Security e privacy review cobrem o uso pessoal confiável (loopback, operador único).
+- [ ] Issue Radar cobre ideia -> pipeline completo -> app full-stack -> preview -> visual edit -> revert -> VPS.
+- [ ] Cada requisito Personal v1 mapeia para milestone, task, aceite e evidência live.
+- [ ] Backup existe no VPS e no Mac; application rollback não executa database rollback.
+- [ ] Security e privacy review cobrem macOS loopback, .env, sandbox e SSH para operador único.
 
 **Tasks**
 
+- **v100-feature-traceability** · P1 · Validar traceability completa do contrato Personal v1
 - **v100-builder-polish** · P1 · Polir builder, acessibilidade, responsividade e performance percebida
 - **v100-golden-journeys** · P1 · Automatizar golden journeys ponta a ponta em ambiente semelhante à produção
 - **v100-security-privacy** · P1 · Concluir security review e threat assessment do builder pessoal

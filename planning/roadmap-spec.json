@@ -3,14 +3,14 @@
   "repository": "eedsilva/agent-foundry",
   "generatedAt": "2026-07-11",
   "target": {
-    "name": "Lovable-class",
+    "name": "Personal Lovable-class builder",
     "definition": [
-      "Construção iterativa por conversa, com modos de planejar e executar.",
-      "Preview navegável, edição visual, histórico e revert.",
-      "Verificação determinística e por browser.",
-      "Backend por projeto com database, auth, storage, functions e secrets.",
-      "GitHub two-way sync, publicação, custom domains e rollback.",
-      "Workspaces, colaboração, quotas, billing e isolamento multi-tenant."
+      "Criação greenfield iterativa por conversa, com pipeline multiagente completo.",
+      "Preview navegável, edição visual por prompt e controles diretos, histórico e revert.",
+      "Verificação determinística e por browser antes de promover cada versão.",
+      "Next.js, Tailwind, shadcn/ui e Supabase Docker isolado por projeto.",
+      "Git local como fonte de verdade e GitHub opcional.",
+      "Publicação por SSH em VPS existente com Compose, Caddy, backup e rollback do app."
     ],
     "references": [
       "https://docs.lovable.dev/introduction/getting-started",
@@ -22,23 +22,27 @@
   },
   "targets": {
     "personal-v1": {
-      "promise": "Transformar um PRD ou change request em uma mudança auditável, executável, revisável e publicável sem exigir uma plataforma SaaS própria.",
+      "promise": "Transformar uma ideia em um app web greenfield, autenticado, full-stack, verificado e publicado no VPS do próprio operador, sem depender de uma plataforma SaaS.",
       "definition": [
-        "Começar por prompt, PRD, template ou repositório existente.",
-        "Planejar, implementar, revisar, reparar e verificar por runs e artifacts persistidos.",
-        "Mostrar preview executável e browser verification em sandbox.",
-        "Iterar por conversa, feedback visual, history e diff.",
-        "Produzir mudança no GitHub e publicação com rollback.",
-        "Usar backend full-stack portátil por adapters gerenciados."
+        "Começar por chat e imagem de referência opcional; PRD é artifact, não pré-requisito.",
+        "Executar planner, reviewers, architect, developer, verifiers e repair loops em todo build.",
+        "Gerar Next.js, TypeScript, Tailwind e shadcn/ui com Supabase Docker isolado.",
+        "Incluir auth email/senha, RLS, database, storage, functions e secrets em .env.",
+        "Iterar por conversa, seleção visual, controles diretos, preview, history e diff.",
+        "Versionar no Git local e publicar por SSH/Compose/Caddy em VPS existente.",
+        "Agendar backup no VPS, copiar para o Mac e permitir rollback somente do app."
       ],
       "nonGoals": [
         "Multi-tenancy e billing.",
         "Colaboração em tempo real.",
-        "Marketplace.",
-        "Kubernetes.",
-        "Fine-tuning ou modelo próprio."
+        "Importar repositório existente.",
+        "Vercel, Supabase Cloud ou provisionamento do VPS.",
+        "OAuth, SMTP e password reset self-service.",
+        "Editor de código no browser e geração de imagens.",
+        "Rollback automático de database e alteração automática de DNS.",
+        "Mais de uma stack de app gerado."
       ],
-      "northStarMetric": "Percentual de change requests aceitos sem edição manual de código."
+      "northStarMetric": "Percentual de operações greenfield e incrementais aceitas sem edição manual de código."
     },
     "hosted-v2": {
       "promise": "Operar o builder como serviço multiusuário com isolamento, governança, billing, colaboração e SLOs.",
@@ -57,12 +61,123 @@
     }
   },
   "principles": [
+    "Issue Radar é o golden app; cada milestone precisa deixá-lo observavelmente mais completo.",
+    "Toda promessa de Personal v1 aponta para milestone, task, aceite e evidência.",
     "Dependências representam bloqueios técnicos reais, não apenas ordem desejada.",
     "P0 é reservado a bloqueador da release ativa ou risco crítico de segurança/dados.",
     "Código gerado não executa fora de uma fronteira compatível com o deployment profile.",
     "Checks determinísticos prevalecem quando uma propriedade pode ser verificada por código.",
     "Estado humano operacional não é sobrescrito por reconciliação de metadata.",
-    "Datas permanecem vazias até existir capacidade e velocidade observadas."
+    "Datas permanecem vazias até existir capacidade e velocidade observadas.",
+    "Git local e serviços self-hosted são defaults; integrações remotas são opcionais."
+  ],
+  "personalV1Requirements": [
+    {
+      "id": "PV1-CHAT",
+      "statement": "Chat-first greenfield creation with full multi-agent pipeline and adaptive routing.",
+      "milestones": ["v0.2", "v0.3", "v0.6"],
+      "tasks": [
+        "v02-provider-canaries",
+        "v03-approval-domain",
+        "v06-plan-build-modes",
+        "v06-chat-operations"
+      ],
+      "evidence": "Issue Radar begins from a short idea and records every role, route, gate and artifact."
+    },
+    {
+      "id": "PV1-CONTROL",
+      "statement": "Normal changes are autonomous; destructive migrations, production deploy and production secret changes require approval, with an emergency ceiling and manual cancel.",
+      "milestones": ["v0.3", "v0.6"],
+      "tasks": ["v03-approval-domain", "v03-budgets-overrides", "v06-failed-drafts"],
+      "evidence": "Issue Radar proves autonomous normal edit, approval for each risky action, manual cancel and emergency-ceiling draft preservation."
+    },
+    {
+      "id": "PV1-PREVIEW",
+      "statement": "Sandboxed local preview with deterministic and browser verification.",
+      "milestones": ["v0.4.5", "v0.5"],
+      "tasks": ["v045-sandbox-runner-seam", "v05-playwright", "v05-preview-ui-e2e"],
+      "evidence": "Issue Radar preview, screenshots, trace and a browser-detected repair pass."
+    },
+    {
+      "id": "PV1-VISUAL",
+      "statement": "Reference images, element-aware prompts and direct visual controls produce verified source patches.",
+      "milestones": ["v0.6"],
+      "tasks": ["v06-dom-source-map", "v06-visual-patches", "v06-knowledge-attachments-shell"],
+      "evidence": "Issue Radar visual edit changes source, passes checks and can be reverted."
+    },
+    {
+      "id": "PV1-GIT",
+      "statement": "Local Git is authoritative; each successful operation creates one version and failures remain on draft branches.",
+      "milestones": ["v0.2", "v0.6"],
+      "tasks": ["v02-idempotency", "v06-version-history", "v06-failed-drafts"],
+      "evidence": "Issue Radar commit/version lineage and failed draft recovery test."
+    },
+    {
+      "id": "PV1-SOURCE",
+      "statement": "Projects are greenfield local repositories, open in a desktop editor, and use GitHub only as an optional remote.",
+      "milestones": ["v0.6", "v0.11"],
+      "tasks": [
+        "v06-version-history",
+        "v06-knowledge-attachments-shell",
+        "v011-github-app",
+        "v011-github-sync"
+      ],
+      "evidence": "Issue Radar builds offline, opens locally, versions without GitHub, then optionally pushes, pulls and opens a PR."
+    },
+    {
+      "id": "PV1-FULLSTACK",
+      "statement": "Every project has an isolated Supabase Docker stack and default email/password auth with RLS.",
+      "milestones": ["v0.10"],
+      "tasks": [
+        "v010-environment-provisioner",
+        "v010-database",
+        "v010-auth",
+        "v010-storage",
+        "v010-functions",
+        "v010-data-security"
+      ],
+      "evidence": "Issue Radar clean initialization, auth, CRUD, attachment and negative RLS journeys."
+    },
+    {
+      "id": "PV1-DEPLOY",
+      "statement": "Publish to an existing Ubuntu LTS VPS through SSH, Compose and Caddy.",
+      "milestones": ["v0.11"],
+      "tasks": ["v011-deployment-domain", "v011-publish-domains", "v011-release-ui-e2e"],
+      "evidence": "Issue Radar deploys to a clean VPS, passes health and supports host/port plus optional TLS domain."
+    },
+    {
+      "id": "PV1-BACKUP",
+      "statement": "Scheduled backups remain on the VPS and are copied to the Mac; restore is explicit.",
+      "milestones": ["v0.11"],
+      "tasks": ["v011-reference-connectors", "v011-release-ui-e2e"],
+      "evidence": "Verified backup artifact on VPS and Mac plus an approved restore drill."
+    },
+    {
+      "id": "PV1-ROLLBACK",
+      "statement": "Application rollback never implies automatic database rollback.",
+      "milestones": ["v0.10", "v0.11", "v1.0"],
+      "tasks": ["v010-database", "v011-deployment-domain", "v100-golden-journeys"],
+      "evidence": "Prior app version redeploys against the forward schema without down migration."
+    },
+    {
+      "id": "PV1-HOST",
+      "statement": "Agent Foundry runs on macOS loopback for one trusted operator and keeps .env and SSH credentials outside agent context.",
+      "milestones": ["foundation", "v0.4.5", "v0.10", "v1.0"],
+      "tasks": [
+        "foundation-risk-profiles",
+        "v045-host-isolation",
+        "v010-app-secrets",
+        "v100-security-privacy"
+      ],
+      "evidence": "Clean macOS canary proves loopback fail-closed, secret redaction, isolated execution and scoped deploy capability."
+    },
+    {
+      "id": "PV1-RELEASE",
+      "statement": "Issue Radar proves the complete contract from clean macOS and Ubuntu LTS environments.",
+      "milestones": ["v1.0"],
+      "tasks": ["v100-feature-traceability", "v100-golden-journeys", "v100-security-privacy"],
+      "evidence": "Traceability is complete, golden suite passes and no unaccepted critical/high finding remains."
+    }
   ],
   "roadmap": {
     "title": "[Roadmap] Agent Foundry → Personal Builder v1 + Hosted Platform v2",
@@ -833,8 +948,8 @@
         },
         {
           "key": "v03-budgets-overrides",
-          "title": "Aplicar budgets e overrides explícitos de modelo por run ou step",
-          "summary": "Tempo, attempts e consumo de quota precisam de limites duros. Overrides devem ser visíveis e nunca virar regra oculta.",
+          "title": "Aplicar emergency ceiling e overrides explícitos de modelo por run ou step",
+          "summary": "Personal v1 não possui budget normal, mas precisa interromper loops patológicos e permitir intervenção explícita no router.",
           "touchpoints": [
             "packages/contracts",
             "packages/model-router",
@@ -843,11 +958,12 @@
             "apps/web"
           ],
           "acceptance": [
-            "Policy suporta maxAttempts, wallClock, estimatedTokens e quota units.",
-            "Run pausa ou falha com razão clara ao atingir limite.",
+            "Run não possui budget normal de attempts, tokens ou custo.",
+            "Emergency ceiling interrompe após quatro horas ou dez repair cycles consecutivos.",
+            "Manual cancellation permanece disponível em qualquer step.",
+            "Atingir o ceiling preserva último estado verificado e abre draft branch.",
             "Usuário pode fixar provider/model para um step ou retry.",
-            "Override registra ator, motivo e impacto estimado.",
-            "UI mostra orçamento consumido e restante por run."
+            "Override registra ator, motivo e impacto estimado."
           ],
           "labels": [
             "kind:feature",
@@ -856,7 +972,9 @@
             "area:web",
             "priority:p1"
           ],
-          "tests": ["Budget esgotado durante quality loop e override de fallback."],
+          "tests": [
+            "Ceiling por tempo, ceiling por repair sem progresso, cancel e override de fallback."
+          ],
           "outOfScope": [],
           "dependsOn": []
         },
@@ -908,17 +1026,19 @@
     },
     {
       "key": "v0.4",
-      "title": "v0.4 - Existing Repositories",
-      "description": "Importação de repositórios, worktrees isolados e change requests incrementais.",
-      "objective": "Parar de tratar todo pedido como greenfield. O Agent Foundry passa a entender um baseline Git, selecionar contexto e aplicar mudanças incrementais sem corromper o branch original.",
+      "title": "v0.4 - Existing Repositories (Post-v1)",
+      "description": "Evolução pós-v1 com Linux, editor de código no browser e importação de repositórios existentes.",
+      "objective": "Expandir o builder greenfield provado sem colocar compatibilidade arbitrária no caminho crítico do Personal v1.",
       "exitCriteria": [
+        "Control plane funciona em macOS e Linux.",
+        "Builder oferece editor de código no browser ligado ao Git local.",
         "Projeto pode nascer de um repositório Git e commit base explícito.",
         "Cada run mutável usa branch e worktree próprios.",
         "Context builder seleciona arquivos por tarefa com orçamento auditável.",
         "Usuário envia change requests e revisa diff antes de promover."
       ],
-      "nonGoals": ["Two-way sync contínuo com GitHub.", "Deploy e preview hospedado."],
-      "dependsOn": ["v0.3"],
+      "nonGoals": ["Bloquear Personal v1.", "Suporte Windows; entra na evolução pessoal seguinte."],
+      "dependsOn": ["v1.0"],
       "tasks": [
         {
           "key": "v04-repository-source",
@@ -1067,11 +1187,79 @@
           "tests": ["E2E de review, request changes e promoção."],
           "outOfScope": [],
           "dependsOn": ["v04-change-requests"]
+        },
+        {
+          "key": "v04-linux-control-plane",
+          "title": "Suportar control plane do builder em Linux",
+          "summary": "A primeira evolução pessoal amplia o host do builder sem mudar o contrato dos apps gerados.",
+          "touchpoints": ["packages/composition", "scripts", "docs", ".github/workflows"],
+          "acceptance": [
+            "Instalação, doctor, CLIs, Docker, sandbox, preview e deploy funcionam em Linux suportado.",
+            "Diferenças de filesystem, process tree, key paths e Docker são cobertas por adapter ou policy.",
+            "Golden journey roda em macOS e Linux.",
+            "Docs declaram distribuições e versões verificadas."
+          ],
+          "labels": ["kind:infra", "kind:test", "area:delivery", "priority:p2"],
+          "tests": ["Matriz CI/canário macOS e Linux para doctor e Issue Radar."],
+          "outOfScope": ["Suporte Windows."],
+          "dependsOn": []
+        },
+        {
+          "key": "v04-browser-code-editor",
+          "title": "Adicionar file explorer e editor de código no browser",
+          "summary": "Após o v1 provar chat e edição visual, o builder pode oferecer edição manual sem abandonar Git e os quality gates.",
+          "touchpoints": ["apps/web", "apps/api", "packages/persistence", "packages/orchestrator"],
+          "acceptance": [
+            "Explorer respeita raiz do workspace e ignora secrets e generated blobs.",
+            "Editor suporta TypeScript, TSX, CSS, JSON, diff e search.",
+            "Save cria working change ligado à Operation, não commit silencioso.",
+            "Usuário pode enviar edição manual ao pipeline completo.",
+            "Conflito com mudança do agente é detectado por version/hash."
+          ],
+          "labels": ["kind:feature", "area:web", "area:persistence", "priority:p2"],
+          "tests": ["Edit, search, secret exclusion, stale save, diff e pipeline verification."],
+          "outOfScope": ["Substituir IDE desktop em todos os recursos."],
+          "dependsOn": ["v04-diff-review"]
         }
       ],
       "track": "Core",
-      "target": "Personal v1",
-      "commitment": "Candidate",
+      "target": "Shared",
+      "commitment": "Exploratory",
+      "risk": "High"
+    },
+    {
+      "key": "personal-v3",
+      "title": "Personal Evolution 3 - Windows",
+      "description": "Expandir o control plane pessoal para Windows após macOS e Linux estarem provados.",
+      "objective": "Entregar paridade funcional do golden journey em Windows sem degradar as plataformas existentes.",
+      "exitCriteria": [
+        "Doctor, CLIs, Docker, sandbox, preview, Git e SSH deploy funcionam no Windows suportado.",
+        "Issue Radar passa no Windows a partir de instalação limpa.",
+        "Path, process, shell, permission e filesystem semantics possuem testes dedicados."
+      ],
+      "nonGoals": ["Bloquear Personal v1 ou a evolução Linux/browser editor."],
+      "dependsOn": ["v0.4"],
+      "tasks": [
+        {
+          "key": "personal-v3-windows-control-plane",
+          "title": "Suportar control plane completo em Windows",
+          "summary": "Adicionar Windows como terceira plataforma do builder pessoal com o mesmo contrato observável.",
+          "touchpoints": ["packages", "apps", "scripts", "docs", ".github/workflows"],
+          "acceptance": [
+            "Instalação e doctor validam Node, Git, Docker, CLIs e SSH no Windows suportado.",
+            "Process cancellation, paths, worktrees, sandbox e Compose possuem comportamento equivalente.",
+            "Issue Radar passa de chat a deploy em uma instalação limpa.",
+            "Regressões em macOS e Linux continuam bloqueadas pela matriz."
+          ],
+          "labels": ["kind:infra", "kind:test", "area:delivery", "priority:p2"],
+          "tests": ["Matriz macOS, Linux e Windows com golden journey e failure canaries."],
+          "outOfScope": ["Suporte a versões Windows fora da matriz publicada."],
+          "dependsOn": []
+        }
+      ],
+      "track": "Core",
+      "target": "Shared",
+      "commitment": "Exploratory",
       "risk": "High"
     },
     {
@@ -1238,7 +1426,7 @@
         "Preview quebrado vira input estruturado para repair."
       ],
       "nonGoals": ["Publicação permanente e domínio customizado.", "Sandbox multi-tenant forte."],
-      "dependsOn": ["v0.4", "v0.4.5"],
+      "dependsOn": ["v0.2", "v0.4.5"],
       "tasks": [
         {
           "key": "v05-preview-domain",
@@ -1390,7 +1578,7 @@
         "Editor de código completo no browser.",
         "Colaboração multiusuário em tempo real."
       ],
-      "dependsOn": ["v0.5"],
+      "dependsOn": ["v0.3", "v0.5"],
       "tasks": [
         {
           "key": "v06-conversation-domain",
@@ -1489,6 +1677,8 @@
           ],
           "acceptance": [
             "ProjectVersion aponta para commit, run, artifacts e preview relevante.",
+            "Cada Operation aprovada cria exatamente um commit no histórico principal.",
+            "Attempts e repairs ficam em artifacts e não poluem o histórico principal.",
             "Compare mostra diff e mudanças de schema/config.",
             "Revert cria nova versão, não reescreve histórico.",
             "Branch from version cria novo baseline independente.",
@@ -1504,6 +1694,35 @@
           "tests": ["Revert após duas mudanças e branch a partir de versão antiga."],
           "outOfScope": [],
           "dependsOn": []
+        },
+        {
+          "key": "v06-failed-drafts",
+          "title": "Preservar operações não aprovadas em draft branches",
+          "summary": "Falha após repair loops não pode substituir a última versão boa nem apagar evidência útil.",
+          "touchpoints": [
+            "packages/contracts",
+            "packages/persistence",
+            "packages/orchestrator",
+            "apps/web"
+          ],
+          "acceptance": [
+            "Operação que atinge emergency ceiling mantém a versão verificada ativa.",
+            "Último workspace da falha é preservado em branch draft/<operation-id>.",
+            "UI permite inspecionar diff, artifacts e causa de parada.",
+            "Retry pode escolher novo prompt ou override de modelo sem alterar o draft original.",
+            "Discard remove o draft somente após confirmação e mantém audit record."
+          ],
+          "labels": [
+            "kind:feature",
+            "kind:infra",
+            "area:orchestrator",
+            "area:persistence",
+            "area:web",
+            "priority:p1"
+          ],
+          "tests": ["Ceiling por tempo, ceiling por repair, retry do draft e discard confirmado."],
+          "outOfScope": ["Promover automaticamente resultado não aprovado."],
+          "dependsOn": ["v06-version-history"]
         },
         {
           "key": "v06-dom-source-map",
@@ -1540,6 +1759,7 @@
           ],
           "acceptance": [
             "VisualEdit suporta propriedades permitidas, oldValue, newValue e target source.",
+            "Controles diretos cobrem texto, cor, spacing, typography, layout e design tokens.",
             "Preview mostra alteração temporária antes do commit.",
             "Agente converte patch para código preservando design tokens quando existentes.",
             "Build e browser checks rodam antes de promover.",
@@ -1564,8 +1784,10 @@
           "acceptance": [
             "Knowledge files podem ser fixados, versionados e removidos com impacto visível.",
             "Imagem anexada pode ser usada como referência de design ou evidência de bug.",
+            "V1 não oferece geração ou edição de imagens raster.",
             "Layout de três painéis funciona em desktop e colapsa de forma útil no mobile.",
             "Changes mostra diff, checks, versão e ações de aprovação.",
+            "UI mostra o path do repositório local e oferece Open in editor.",
             "Golden flow: anexar referência, planejar, construir, editar visualmente, reverter e reconstruir."
           ],
           "labels": ["kind:feature", "kind:test", "area:web", "area:persistence", "priority:p1"],
@@ -1581,63 +1803,69 @@
     },
     {
       "key": "v0.10",
-      "title": "v0.10 - Full-stack App Platform",
-      "description": "Ambientes por projeto com banco, auth, storage, functions, secrets e portabilidade.",
-      "objective": "Entregar o equivalente funcional de um backend gerenciado para os apps produzidos, sem misturar o control plane do Agent Foundry com o runtime do app.",
+      "title": "v0.10 - Local Full-stack App Platform",
+      "description": "Next.js e Supabase Docker isolados por projeto, com auth, RLS, database, storage, functions e .env.",
+      "objective": "Entregar o golden stack full-stack self-hosted do Personal v1 sem Vercel, Supabase Cloud ou abstrações de provider prematuras.",
       "exitCriteria": [
-        "Projeto pode provisionar ambiente full-stack isolado.",
-        "Agente cria schema, auth, storage e functions com migrations revisáveis.",
-        "Secrets e integrações são scoped por projeto.",
-        "Usuário consegue exportar código e dados sem lock-in obrigatório."
+        "Cada projeto inicializa Compose e Supabase local isolados.",
+        "Todo app nasce com auth email/senha, sessão, rotas protegidas e RLS baseline.",
+        "Agente cria schema, storage e functions com migrations revisáveis e forward-only.",
+        ".env não entra em Git, prompts, artifacts, screenshots ou logs.",
+        "Issue Radar passa CRUD, attachment e matriz negativa de autorização."
       ],
-      "nonGoals": ["Escala automática global.", "Compatibilidade com toda stack possível."],
-      "dependsOn": ["v0.4", "v0.4.5"],
+      "nonGoals": [
+        "Supabase Cloud ou outro backend provider.",
+        "OAuth, magic link, SMTP ou password reset self-service.",
+        "Mais de uma stack de app gerado."
+      ],
+      "dependsOn": ["v0.6", "v0.4.5"],
       "tasks": [
         {
           "key": "v010-environment-provisioner",
-          "title": "Definir AppEnvironment e a porta EnvironmentProvisioner",
-          "summary": "Modelar lifecycle do runtime do app separado de preview e sandbox de build.",
+          "title": "Implementar runtime Supabase Docker isolado por projeto",
+          "summary": "Cada app greenfield precisa de um Compose project local reproduzível, isolado e controlável pelo builder.",
           "touchpoints": ["packages/contracts", "packages/domain", "packages/orchestrator"],
           "acceptance": [
-            "AppEnvironment registra region, status, endpoints, resources e provider refs.",
-            "Provisioner suporta create, inspect, pause, resume, rotate e destroy.",
-            "Ambientes preview e production possuem políticas distintas.",
-            "Operações longas são assíncronas e idempotentes.",
-            "Destroy exige confirmação e backup policy."
+            "AppEnvironment registra Compose name, ports, network, volumes, endpoints e health.",
+            "Lifecycle suporta initialize, start, stop, inspect, migrate, seed, health e cleanup.",
+            "Dois projetos não compartilham rede, database, auth secrets ou volumes.",
+            "Operações são idempotentes e falha parcial produz diagnóstico recuperável.",
+            "Reset ou cleanup destrutivo exige confirmação e backup recente."
           ],
           "labels": ["kind:feature", "area:platform", "area:orchestrator", "priority:p1"],
-          "tests": ["Provisioner fake com retry, partial failure e destroy."],
+          "tests": ["Dois projects simultâneos, restart, partial failure, reset gate e cleanup."],
           "outOfScope": [],
           "dependsOn": []
         },
         {
           "key": "v010-database",
-          "title": "Provisionar PostgreSQL por projeto e gerenciar schema por migrations",
+          "title": "Gerenciar Postgres local por migrations forward-only",
           "summary": "Apps full-stack precisam de banco real, não mocks embutidos no frontend.",
           "touchpoints": ["packages/platform", "packages/orchestrator", "packages/contracts"],
           "acceptance": [
-            "Projeto recebe database isolado ou schema/tenant com boundary documentada.",
+            "Projeto recebe Postgres isolado dentro de seu Supabase Compose.",
             "Migrations são artifacts revisáveis e aplicadas por job controlado.",
             "Preview de migration detecta operações destrutivas.",
-            "Rollback/forward-fix policy é explícita.",
-            "Backup e export em formato aberto são suportados."
+            "Migration destrutiva exige approval e backup verificado.",
+            "Application rollback nunca executa down migration.",
+            "Falha de compatibilidade exige roll-forward do app ou restore explícito."
           ],
           "labels": ["kind:feature", "kind:infra", "area:platform", "priority:p1"],
-          "tests": ["Create, alter, destructive gate e restore."],
+          "tests": ["Create, alter, destructive gate e app rollback contra schema forward."],
           "outOfScope": [],
           "dependsOn": ["v010-environment-provisioner"]
         },
         {
           "key": "v010-auth",
-          "title": "Integrar autenticação e gerar fluxos seguros de usuário",
-          "summary": "Login, signup, reset e autorização devem nascer com contratos e políticas verificáveis.",
+          "title": "Gerar auth email/senha e RLS baseline em todo projeto",
+          "summary": "Todo app v1 nasce autenticado sem depender de OAuth, SMTP ou serviços externos.",
           "touchpoints": ["packages/platform", "packages/orchestrator", "workflows", "harness"],
           "acceptance": [
-            "Provider abstraction cobre email/password e OAuth inicial.",
-            "Templates geram client, server guards e session handling.",
-            "Roles/claims possuem schema e migrations.",
-            "Secrets e callback URLs são configurados sem entrar no código.",
-            "Browser tests cobrem signup, login, logout e acesso negado."
+            "Template inclui signup, login, logout, sessão e rotas protegidas.",
+            "Email/senha é o único método v1.",
+            "Password reset é operação manual do admin e não aparece como self-service.",
+            "RLS baseline protege tabelas do projeto por owner quando aplicável.",
+            "Browser tests cobrem signup, login, logout, sessão expirada e acesso negado."
           ],
           "labels": [
             "kind:feature",
@@ -1646,17 +1874,17 @@
             "area:preview",
             "priority:p1"
           ],
-          "tests": ["Auth happy path, token expirado e role insuficiente."],
+          "tests": ["Signup, login, logout, sessão expirada, admin reset e acesso negado."],
           "outOfScope": [],
           "dependsOn": ["v010-environment-provisioner"]
         },
         {
           "key": "v010-storage",
-          "title": "Provisionar storage de arquivos com policies e uploads seguros",
+          "title": "Provisionar Supabase Storage local com policies e uploads seguros",
           "summary": "Uploads exigem limites, ownership e URLs assinadas, não um bucket público genérico.",
           "touchpoints": ["packages/platform", "packages/orchestrator", "harness"],
           "acceptance": [
-            "Bucket/container é scoped por projeto e ambiente.",
+            "Bucket local é scoped pelo Compose project e ambiente.",
             "Upload usa size/type policy e URL assinada.",
             "Ownership e autorização são gerados junto ao schema.",
             "Malware scanning possui hook e estado quarantine.",
@@ -1669,7 +1897,7 @@
         },
         {
           "key": "v010-functions",
-          "title": "Adicionar runtime de serverless/edge functions com deploy versionado",
+          "title": "Adicionar Supabase Functions locais com deploy versionado",
           "summary": "Integrações e lógica secreta não podem rodar no browser.",
           "touchpoints": ["packages/platform", "packages/orchestrator", "packages/executors"],
           "acceptance": [
@@ -1686,18 +1914,18 @@
         },
         {
           "key": "v010-app-secrets",
-          "title": "Criar secret store e runtime de conexões por projeto",
-          "summary": "Apps precisam consumir APIs externas sem colar chaves no prompt ou no bundle.",
+          "title": "Gerenciar secrets do app em arquivos .env locais",
+          "summary": "V1 escolhe .env por simplicidade, com exclusão e scanning rigorosos em vez de um secret broker.",
           "touchpoints": ["packages/platform", "packages/contracts", "apps/api", "apps/web"],
           "acceptance": [
-            "Secrets são write-only na UI e criptografados com envelope encryption.",
-            "Agent vê apenas nome, schema e capability, nunca valor.",
-            "Functions recebem secret refs scoped.",
-            "Rotation e revocation têm audit trail.",
+            ".env local e production ficam fora do Git por template e check.",
+            "Valores não entram em prompt, artifact, screenshot, event ou log.",
+            "Agent recebe apenas nomes e capabilities, nunca o conteúdo do .env.",
+            "Deploy injeta .env por capability determinística fora do sandbox do agente.",
             "Scanner bloqueia secret em source, artifact e client bundle."
           ],
           "labels": ["kind:security", "area:platform", "area:integrations", "priority:p1"],
-          "tests": ["Leak scanner e rotação sem redeploy completo quando suportado."],
+          "tests": ["Leak scanner em Git, prompt, artifact, screenshot, log e client bundle."],
           "outOfScope": [],
           "dependsOn": []
         },
@@ -1731,15 +1959,15 @@
         },
         {
           "key": "v010-fullstack-reference",
-          "title": "Entregar workflow e app de referência full-stack com export portátil",
-          "summary": "Fechar a versão com um caso real que use database, auth, storage, function e secret.",
+          "title": "Entregar Issue Radar como app de referência full-stack local",
+          "summary": "Fechar a milestone com o golden app real, não com fixtures isoladas.",
           "touchpoints": ["workflows", "examples", "apps/web", "docs"],
           "acceptance": [
-            "Template de referência cria um SaaS CRUD com auth e papéis.",
-            "Upload usa storage e processamento em function.",
-            "Browser tests cobrem jornadas e autorização.",
-            "Export entrega código, migrations e dump/documentação de dados.",
-            "Runbook mostra como executar fora da plataforma."
+            "Issue Radar nasce por chat com Next.js, Tailwind, shadcn/ui e Supabase local.",
+            "Auth email/senha protege CRUD, filtros e dashboard.",
+            "Attachment usa Storage e policy RLS.",
+            "Browser tests cobrem jornadas positivas e acesso cruzado negado.",
+            "Código, migrations e comandos de Compose são exportáveis e documentados."
           ],
           "labels": [
             "kind:feature",
@@ -1768,29 +1996,36 @@
     },
     {
       "key": "v0.11",
-      "title": "v0.11 - Publish and Integrations",
-      "description": "Publicação, domínios, GitHub two-way sync e conectores externos.",
-      "objective": "Levar o projeto de preview a produto publicado, preservando propriedade do código e integração com ferramentas externas.",
+      "title": "v0.11 - Self-hosted Publish",
+      "description": "Publicação por SSH em VPS existente com Compose, Caddy, backup para Mac e GitHub opcional.",
+      "objective": "Levar o app local a um VPS controlado pelo operador sem Vercel, cloud provisioning ou database rollback implícito.",
       "exitCriteria": [
-        "Versões podem ser promovidas para production e revertidas.",
-        "Custom domain e TLS possuem verificação e status claros.",
-        "GitHub mantém sync bidirecional com política de conflitos.",
-        "Connector SDK suporta pelo menos email transacional como referência."
+        "Issue Radar publica em Ubuntu LTS existente por SSH e Compose isolado.",
+        "Host/port funciona imediatamente; domínio manual recebe validação e TLS automático por Caddy.",
+        "Backup agendado fica no VPS e uma cópia verificada chega ao Mac.",
+        "Rollback restaura app/config anteriores sem executar down migration.",
+        "GitHub é integração opcional e Git local continua source of truth."
       ],
-      "nonGoals": ["Marketplace público de conectores.", "Deploy em qualquer provedor imaginável."],
+      "nonGoals": [
+        "Vercel ou provisionamento do VPS.",
+        "Alterar DNS automaticamente.",
+        "Rollback automático de database.",
+        "Connector SDK, email transacional ou GitHub obrigatório."
+      ],
       "dependsOn": ["v0.10", "v0.4.5"],
       "tasks": [
         {
           "key": "v011-deployment-domain",
-          "title": "Definir Release, Deployment e a porta DeploymentProvider",
-          "summary": "Publicação precisa ser um domínio próprio, separado de preview e de commit Git.",
+          "title": "Definir Release e deploy SSH/Compose com rollback somente do app",
+          "summary": "Publicação precisa fixar a versão do app e declarar que database não participa do rollback automático.",
           "touchpoints": ["packages/contracts", "packages/domain", "packages/orchestrator"],
           "acceptance": [
             "Release fixa projectVersion, environment, config e artifacts.",
-            "Deployment registra provider, status, URL, logs e health.",
-            "Provider suporta deploy, promote, rollback, inspect e delete.",
+            "Deployment registra host SSH, Compose project, app image, URL, logs, health e schema version.",
+            "Provider v1 suporta deploy, promote, app rollback, inspect e delete em VPS existente.",
             "Operações são idempotentes por release digest.",
-            "Approval policy decide quem pode publicar production."
+            "Deploy production sempre exige approval.",
+            "Rollback não executa down migration nem restore de dados."
           ],
           "labels": ["kind:feature", "area:preview", "area:platform", "priority:p1"],
           "tests": ["Provider fake com deploy, rollback e falha parcial."],
@@ -1799,42 +2034,45 @@
         },
         {
           "key": "v011-publish-domains",
-          "title": "Implementar publish pipeline, custom domains e TLS",
-          "summary": "Usuário precisa publicar com um clique e entender DNS, certificado e saúde da release.",
+          "title": "Publicar por SSH com Compose, host/porta e Caddy TLS opcional",
+          "summary": "O golden path usa VPS existente e DNS manual, sem Vercel ou APIs de cloud provider.",
           "touchpoints": ["packages/platform", "apps/api", "apps/web"],
           "acceptance": [
-            "Preview pode ser promovido ou reconstruído de release imutável.",
-            "Custom domain verifica ownership e configura TLS automático.",
-            "UI mostra DNS records, propagation e certificado.",
+            "Release é reconstruída no VPS a partir de artifact imutável.",
+            "Endpoint host/porta funciona antes de configurar domínio.",
+            "Domínio é opcional e DNS é criado manualmente pelo usuário.",
+            "Após resolver, Caddy recebe config e certificado TLS automático.",
             "Health failure impede promoção ou aciona rollback policy.",
-            "Republish após mudança é explícito e auditável."
+            "Republish e rollback do app são explícitos e auditáveis."
           ],
           "labels": ["kind:feature", "kind:infra", "area:preview", "area:web", "priority:p1"],
-          "tests": ["Domain verification, TLS pending, deploy unhealthy e rollback."],
+          "tests": [
+            "Host/porta, DNS ausente, TLS pending, deploy unhealthy e app rollback sem down migration."
+          ],
           "outOfScope": [],
           "dependsOn": ["v011-deployment-domain"]
         },
         {
           "key": "v011-github-app",
-          "title": "Integrar GitHub App/OAuth com permissões mínimas por repositório",
-          "summary": "Two-way sync não deve depender de PAT pessoal colado no servidor.",
+          "title": "Adicionar conexão GitHub opcional sobre o repositório Git local",
+          "summary": "GitHub adiciona remote, mas nunca vira requisito ou source of truth do Personal v1.",
           "touchpoints": ["packages/integrations", "apps/api", "apps/web", "packages/platform"],
           "acceptance": [
-            "Usuário instala GitHub App e escolhe repositórios autorizados.",
-            "Tokens de instalação são curtos, scoped e obtidos sob demanda.",
-            "Webhooks possuem assinatura, replay protection e idempotência.",
-            "Desinstalação revoga acesso e marca conexões afetadas.",
-            "Nenhum token chega ao agente ou app gerado."
+            "Projeto funciona integralmente sem GitHub ou internet.",
+            "Usuário pode adicionar ou remover remote GitHub autenticado localmente.",
+            "Credencial não entra em prompt, artifact, URL persistida ou env do agente.",
+            "Falha do GitHub não bloqueia build, version, revert ou deploy.",
+            "UI distingue estado local do estado do remote."
           ],
           "labels": ["kind:feature", "kind:security", "area:integrations", "priority:p1"],
-          "tests": ["Install, webhook inválido, token expiry e uninstall."],
+          "tests": ["Sem remote, remote offline, auth expirada e remoção do remote."],
           "outOfScope": [],
           "dependsOn": []
         },
         {
           "key": "v011-github-sync",
-          "title": "Implementar two-way sync, pull requests e resolução de conflitos",
-          "summary": "Código editado fora da plataforma precisa entrar sem apagar mudanças locais ou criar loops de webhook.",
+          "title": "Implementar push, pull e pull requests opcionais",
+          "summary": "O owner pode usar GitHub sem converter Personal v1 em sync obrigatório.",
           "touchpoints": [
             "packages/integrations",
             "packages/orchestrator",
@@ -1842,11 +2080,11 @@
             "apps/web"
           ],
           "acceptance": [
-            "Projeto pode vincular branch base e branch de trabalho.",
-            "Push da plataforma inclui provenance e não dispara loop infinito.",
-            "Mudança externa cria sync event e novo baseline quando segura.",
+            "Push publica versões locais escolhidas pelo owner.",
+            "Pull exige árvore limpa ou abre conflito explícito.",
             "Conflito abre fluxo de resolução com diff de três vias.",
-            "Usuário pode criar PR com resumo, checks e links para artifacts."
+            "Usuário pode criar PR com resumo, checks e links para artifacts.",
+            "Nenhuma operação GitHub é acionada automaticamente por build local."
           ],
           "labels": [
             "kind:feature",
@@ -1855,14 +2093,14 @@
             "area:web",
             "priority:p1"
           ],
-          "tests": ["Push interno, commit externo, conflito e PR."],
+          "tests": ["Push, pull clean, conflito, remote offline e PR."],
           "outOfScope": [],
           "dependsOn": ["v011-github-app"]
         },
         {
           "key": "v011-connector-sdk",
-          "title": "Criar Connector SDK com OAuth, scopes, actions e secret refs",
-          "summary": "Conectores não podem virar prompts ad hoc com credenciais. Definir uma superfície restrita e declarativa.",
+          "title": "Validar e preparar VPS Ubuntu/Debian existente",
+          "summary": "SSH deploy precisa provar identidade, capacidade e pré-requisitos antes de alterar o host.",
           "touchpoints": [
             "packages/integrations",
             "packages/contracts",
@@ -1870,11 +2108,11 @@
             "harness"
           ],
           "acceptance": [
-            "Manifest declara auth, scopes, actions, schemas e network destinations.",
-            "Agent recebe tools tipadas, não credenciais.",
-            "Actions validam input/output e registram audit trail.",
-            "Conexão pode ser workspace ou project scoped.",
-            "Revogação e erro de consentimento são tratados."
+            "VPS já existe e o fingerprint SSH é confirmado e pinado.",
+            "Ubuntu LTS é golden; Debian incompatível falha com diagnóstico.",
+            "Preflight verifica Docker, Compose, Caddy, portas, disco, memória, clock e permissões.",
+            "Bootstrap executa somente operações allowlisted e idempotentes.",
+            "SSH key e .env não chegam aos agentes ou ao app gerado."
           ],
           "labels": [
             "kind:feature",
@@ -1883,19 +2121,23 @@
             "area:platform",
             "priority:p1"
           ],
-          "tests": ["Connector fake OAuth e API key com scopes distintos."],
+          "tests": [
+            "Ubuntu limpo, Debian compatível, fingerprint divergente, disco insuficiente e retry."
+          ],
           "outOfScope": [],
           "dependsOn": []
         },
         {
           "key": "v011-reference-connectors",
-          "title": "Entregar conector de referência de email transacional",
-          "summary": "Email transacional força o sistema a lidar com webhooks, secrets, idempotência e ambientes.",
+          "title": "Agendar backup no VPS e copiar snapshot verificado para o Mac",
+          "summary": "Backup no mesmo host não cobre perda do VPS; v1 precisa de cópia off-host sem restore automático.",
           "touchpoints": ["packages/integrations", "packages/platform", "workflows", "examples"],
           "acceptance": [
-            "Email cobre sender, template e delivery status em provider suportado.",
-            "Test mode e production são separados.",
-            "Golden app usa o conector e passa browser/integration tests."
+            "Scheduler cria dump do Postgres e cópia do storage por app.",
+            "Backup registra release, schema version, hash e verificação.",
+            "Retenção no VPS é configurada e observável.",
+            "Cópia autenticada chega ao diretório local do projeto no Mac.",
+            "Restore exige seleção e approval e nunca ocorre durante app rollback."
           ],
           "labels": [
             "kind:feature",
@@ -1904,23 +2146,23 @@
             "area:platform",
             "priority:p1"
           ],
-          "tests": ["Webhook replay, assinatura inválida e provider indisponível."],
-          "outOfScope": [
-            "Conector de pagamentos (Stripe) — removido do escopo; adicionar quando houver necessidade real."
+          "tests": [
+            "Backup, hash divergente, transferência interrompida, retenção e restore drill aprovado."
           ],
-          "dependsOn": ["v011-connector-sdk"]
+          "outOfScope": ["Backup cloud gerenciado e restore automático."],
+          "dependsOn": ["v011-connector-sdk", "v011-deployment-domain"]
         },
         {
           "key": "v011-release-ui-e2e",
-          "title": "Construir painel de releases, domains, GitHub e connectors com golden flow",
-          "summary": "Consolidar publicação e integrações em uma experiência legível para não especialistas.",
+          "title": "Construir painel de releases, VPS, backups e GitHub opcional",
+          "summary": "Consolidar deploy self-hosted e recovery em uma experiência auditável do owner.",
           "touchpoints": ["apps/web", "apps/api", "docs"],
           "acceptance": [
-            "UI mostra preview, production, histórico, health e rollback.",
-            "GitHub mostra sync status, branch, commits e conflitos.",
-            "Connections mostra scopes, ambiente e último uso.",
-            "Golden flow importa repo, constrói, publica, conecta domínio e abre PR.",
-            "Runbooks cobrem rollback e revogação de conexão."
+            "UI mostra preview, production, Compose health, histórico e app rollback.",
+            "VPS mostra preflight, host/port, domínio manual, TLS e capacidade.",
+            "Backup mostra último sucesso no VPS e no Mac e oferece restore aprovado.",
+            "GitHub opcional mostra remote, push/pull e PR sem bloquear operação local.",
+            "Golden flow publica Issue Radar, configura domínio opcional, copia backup e reverte somente o app."
           ],
           "labels": [
             "kind:feature",
@@ -1943,23 +2185,50 @@
     {
       "key": "v1.0",
       "title": "v1.0 - Personal Builder",
-      "description": "Release pessoal Lovable-class: intenção até preview, feedback e GitHub, para um operador local confiável, sem depender do SaaS multi-tenant.",
+      "description": "Release pessoal Lovable-class completa: chat até app full-stack local, edição visual, verificação e publicação no VPS próprio.",
       "objective": "Entregar a experiência de builder pessoal completa e verificável antes de escalar para Hosted Platform.",
       "exitCriteria": [
-        "Golden journeys cobrem prompt -> app -> preview -> visual edit -> revert -> GitHub.",
-        "Feature contract pessoal e non-goals estão documentados no Product Contract.",
-        "Security e privacy review cobrem o uso pessoal confiável (loopback, operador único)."
+        "Issue Radar cobre ideia -> pipeline completo -> app full-stack -> preview -> visual edit -> revert -> VPS.",
+        "Cada requisito Personal v1 mapeia para milestone, task, aceite e evidência live.",
+        "Backup existe no VPS e no Mac; application rollback não executa database rollback.",
+        "Security e privacy review cobrem macOS loopback, .env, sandbox e SSH para operador único."
       ],
       "nonGoals": [
         "Paridade literal com todo recurso atual ou futuro do Lovable.",
         "Suporte universal a frameworks.",
+        "Importar repositório existente.",
         "Multi-tenancy, billing ou colaboração em tempo real.",
-        "Adaptive routing aprendido como requisito de lançamento.",
-        "Pricing, onboarding para novos usuários, SLOs e capacity model (movidos para Hosted v2).",
-        "Full-stack provisionado (v0.10) e publish/conectores (v0.11) como bloqueadores de release; são incrementos pós-v1."
+        "Vercel, Supabase Cloud, OAuth, SMTP e cloud provisioning.",
+        "Editor de código no browser e suporte Linux/Windows.",
+        "Geração de imagens e rollback automático de database."
       ],
-      "dependsOn": ["v0.6", "v0.4.5"],
+      "dependsOn": ["v0.6", "v0.10", "v0.11", "v0.4.5"],
       "tasks": [
+        {
+          "key": "v100-feature-traceability",
+          "title": "Validar traceability completa do contrato Personal v1",
+          "summary": "A release não pode depender de slogans; cada requisito precisa de owner, issue, aceite e evidência verificável.",
+          "touchpoints": [
+            "docs/PRODUCT_CONTRACT.md",
+            "docs/PERSONAL_V1.md",
+            "docs/PERSONAL_V1_TRACEABILITY.md",
+            "planning/roadmap-spec.json",
+            "scripts/lib/roadmap.mjs"
+          ],
+          "acceptance": [
+            "Todo personalV1Requirement referencia milestones e tasks existentes.",
+            "Toda requirement possui evidência observável do Issue Radar ou non-goal explícito.",
+            "Validador falha para referência ausente, milestone fora do caminho v1 ou evidence vazia.",
+            "Documento de traceability aponta para issue live e status sem substituir a spec.",
+            "Cobertura estrutural é 100%; confiança de planejamento pode ser declarada >=95% com riscos residuais listados."
+          ],
+          "labels": ["kind:test", "kind:docs", "area:product", "priority:p1"],
+          "tests": [
+            "Fixtures com task ausente, evidence vazia e requisito fora do caminho crítico."
+          ],
+          "outOfScope": ["Tratar coverage de planejamento como garantia de implementação."],
+          "dependsOn": []
+        },
         {
           "key": "v100-builder-polish",
           "title": "Polir builder, acessibilidade, responsividade e performance percebida",
@@ -1983,19 +2252,23 @@
           "summary": "A release precisa provar o sistema inteiro, não apenas pacotes isolados.",
           "touchpoints": ["tests/e2e", "apps", "packages", "workflows"],
           "acceptance": [
-            "Prompt cria app funcional com preview ao vivo.",
-            "Usuário faz change request, visual edit e revert.",
-            "Browser tests encontram e reparam uma falha introduzida.",
-            "Projeto sincroniza com GitHub e recupera uma versão anterior."
+            "Ideia curta cria Issue Radar com auth email/senha, CRUD, filtros, metrics, attachment e RLS.",
+            "Todo build executa pipeline completo com router adaptativo e artifacts de cada gate.",
+            "Preview local usa Supabase Docker e browser tests encontram e reparam falha introduzida.",
+            "Usuário aplica referência visual, prompt em elemento, controle direto e revert.",
+            "Cada operação aprovada cria um commit; falha preserva draft branch.",
+            "Issue Radar publica por SSH/Compose em Ubuntu LTS com host/porta e domínio TLS opcional.",
+            "Backup verificado existe no VPS e no Mac.",
+            "Application rollback restaura app/config sem down migration."
           ],
           "labels": ["kind:test", "area:platform", "area:web", "area:integrations", "priority:p1"],
-          "tests": [],
+          "tests": ["Golden journey completo em macOS limpo e VPS Ubuntu LTS limpo."],
           "outOfScope": [
-            "App full-stack provisionado (auth, database, storage) — v0.10.",
-            "Custom domain e publish — v0.11.",
-            "Fluxos de equipe, credits e audit multiusuário — Hosted v2."
+            "Importar repositório existente.",
+            "Vercel, Supabase Cloud, OAuth, SMTP, cloud provisioning e database rollback.",
+            "Fluxos de equipe, credits e audit multiusuário."
           ],
-          "dependsOn": ["v100-builder-polish"]
+          "dependsOn": ["v100-feature-traceability", "v100-builder-polish"]
         },
         {
           "key": "v100-security-privacy",
@@ -2003,9 +2276,10 @@
           "summary": "Antes de fechar a v1, validar isolamento, supply chain e data handling para o operador local confiável.",
           "touchpoints": ["docs/SECURITY.md", "packages", "apps"],
           "acceptance": [
-            "Threat model cobre control plane, sandbox, preview e prompt injection via PRD.",
+            "Threat model cobre control plane loopback, sandbox, preview, .env, SSH e prompt injection.",
             "Dependências e artifacts possuem scanning e response policy.",
             "Data handling do workspace (secrets, tokens, credenciais de CLI) é revisado.",
+            "Backup, restore aprovado e app-only rollback possuem análise negativa.",
             "Critical/high findings bloqueiam release ou têm risk acceptance explícito."
           ],
           "labels": ["kind:security", "kind:test", "area:platform", "area:sandbox", "priority:p1"],

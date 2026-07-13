@@ -1,6 +1,6 @@
 # ADR 0006: Use portable managed-backend adapters for Personal v1
 
-- Status: Accepted
+- Status: Superseded by ADR 0007
 - Date: 2026-07-11
 - Owners: Integrations
 

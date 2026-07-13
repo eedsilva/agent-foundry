@@ -4,7 +4,7 @@ Generated on 2026-07-11 for `eedsilva/agent-foundry`.
 
 ## Status
 
-**Applied.** The migration was applied to GitHub on 2026-07-12; `planning/github-state.json` (`appliedAt`) records the reconciliation of all 129 managed issues, including the 28 new ones. The rest of this report is the point-in-time migration record from generation on 2026-07-11.
+**Applied and subsequently evolved.** The original migration was applied on 2026-07-12. The Personal Builder contract was aligned again on 2026-07-12 around a full greenfield golden path: local Supabase Docker, visual editing, VPS self-hosting, backup and app-only rollback. `planning/github-state.json` records the latest live reconciliation. Historical counts below describe the original Delivery Foundation migration and are not current roadmap totals.
 
 The public repository baseline used for the migration is commit:
 
@@ -27,7 +27,7 @@ At inspection time, the published backlog had 101 issues. `planning/github-state
 - Removes the legacy top-level `agent-foundry-roadmap/` bootstrap package so the repository has one roadmap source and one reconciler.
 - Reduces P0 inflation and validates that future/experimental work cannot be P0.
 
-### Managed backlog after reconciliation
+### Original managed backlog after Delivery Foundation reconciliation
 
 | Measure                 | Value |
 | ----------------------- | ----: |
