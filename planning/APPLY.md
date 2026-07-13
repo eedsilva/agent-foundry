@@ -11,8 +11,8 @@ npm run github:governance:dry-run
 Apply in this order:
 
 ```bash
-# Creates 28 new managed issues and 3 milestones, migrates labels/titles/bodies,
-# restores hierarchy, and replaces only managed stale blockers.
+# Reconciles managed labels/milestones/issues with the spec. The first apply
+# (2026-07-12) created 28 new issues and 3 milestones; re-runs apply only diffs.
 npm run github:roadmap:apply
 
 # Creates/reconciles Project, fields, views, items, repository settings,

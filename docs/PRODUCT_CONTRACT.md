@@ -2,9 +2,9 @@
 
 ## Personal Builder v1
 
-**Primary user:** a software engineer who wants to turn requirements into auditable repository changes without delegating the repository blindly to one model.
+**Primary user:** a solo developer who wants to turn an idea or PRD into a working, verified web application — and evolve it through auditable repository changes — without delegating the repository blindly to one model.
 
-**Primary job:** receive a PRD or change request and produce an executable, reviewable, explainable, and publishable change.
+**Primary job:** receive an idea, PRD, or change request and produce a working application change that is executable, reviewable, explainable, and publishable.
 
 **Promise:**
 
@@ -21,11 +21,13 @@ prompt / PRD / existing repository
 
 **Differentiation:** provider-independent execution, persistent artifacts, recovery, model-routing evidence, deterministic gates, and human control.
 
-**North-star metric:** percentage of change requests accepted without manual code edits.
+**North-star metric:** percentage of requests — new app or change request — that reach a working, verified result without manual code edits.
 
 Supporting metrics include time to accepted change, human intervention minutes, first-pass success, repair loops, rollback rate, unrecovered failures, quota consumption, and regressions after merge.
 
-**Non-goals for Personal v1:** multi-tenancy, billing, real-time collaboration, marketplace, Kubernetes, fine-tuning, a proprietary model, and an internally hosted replacement for every managed backend.
+**Non-goals for Personal v1:** multi-tenancy, billing, real-time collaboration, marketplace, Kubernetes, fine-tuning, a proprietary model, an internally hosted replacement for every managed backend, pricing UX, new-user onboarding, and SLO/capacity/incident operations (those belong to Hosted v2).
+
+**Personal v1 finish line:** v1.0 ships when a trusted local operator goes end to end from prompt → generated app → live preview → conversational iteration (plan/build, visual edit, revert) → GitHub, i.e. milestone v0.6 plus the v1.0 hardening tasks. Full-stack provisioning (v0.10) and publish/integrations (v0.11) are post-v1 increments, not launch blockers.
 
 ## Hosted Platform v2
 

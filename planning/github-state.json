@@ -2,12 +2,12 @@
   "schemaVersion": "1.0.0",
   "repository": "eedsilva/agent-foundry",
   "appliedSpecVersion": "2.0.0",
-  "note": "Seeded from the verified first roadmap import. Live body drift is checked before reconciliation.",
+  "note": "Reconciliation state after the 2026-07-12 apply: managed keys mapped to issue numbers with last-applied body hashes. Live body drift is checked before reconciliation.",
   "issues": {
     "roadmap": {
       "number": 1,
-      "title": "[Roadmap] Agent Foundry → Personal Builder v1 + Hosted Platform v2",
-      "lastAppliedBodySha256": "0e8b2891646f07c3bdfffdb0d954f112783ddf2ab8a6c380333afb1ac036097d",
+      "title": "[Roadmap] Agent Foundry \u2192 Personal Builder v1 + Hosted Platform v2",
+      "lastAppliedBodySha256": "f82f8522ca7d62cf19a38cf191ed123feb5476126a630c238e717b1c847aea7f",
       "legacyBodySha256": "037daa3c35f96fa197a40c3099cea7387e05eb25d023255b0767a6935db352e4"
     },
     "epic-v0.2": {
@@ -18,7 +18,7 @@
     },
     "v02-provider-canaries": {
       "number": 3,
-      "title": "[v0.2] Executar canários reais e congelar o baseline dos três providers",
+      "title": "[v0.2] Executar can\u00e1rios reais e congelar o baseline dos tr\u00eas providers",
       "lastAppliedBodySha256": "0f26ab1908781e2e07d2023cc181380027c18946d4f4bef2f49ba8b8780da535",
       "legacyBodySha256": "a93a7c45e7bf32f02295a5c8ffbc2611b2309101558e941f3ec6de7d03575fc0"
     },
@@ -30,13 +30,13 @@
     },
     "v02-queue-leases": {
       "number": 5,
-      "title": "[v0.2] Adicionar leases, heartbeats, fencing tokens e recuperação de jobs órfãos",
+      "title": "[v0.2] Adicionar leases, heartbeats, fencing tokens e recupera\u00e7\u00e3o de jobs \u00f3rf\u00e3os",
       "lastAppliedBodySha256": "ba7ba9af8ab51130b5fb67ce069e2241386c5460956837ccfccd93500b8b6a6a",
       "legacyBodySha256": "616e7630b6886b05eeb39c89a2dccdff1595e75d8ffc1e1a947c076ffcf01f20"
     },
     "v02-cancellation": {
       "number": 6,
-      "title": "[v0.2] Propagar cancelamento até a árvore de processos e restaurar o checkpoint",
+      "title": "[v0.2] Propagar cancelamento at\u00e9 a \u00e1rvore de processos e restaurar o checkpoint",
       "lastAppliedBodySha256": "daa956d27feba2745f5c6673fb0c10d6a1e52b667a325bbd56a097c21387cba4",
       "legacyBodySha256": "8c8fa27e522ff60e1fbb66b7f4dbf9733f3200a3c9adc6fda7b868a9c63c2e95"
     },
@@ -48,25 +48,25 @@
     },
     "v02-step-retry": {
       "number": 8,
-      "title": "[v0.2] Permitir retry de um step com invalidação controlada dos descendentes",
+      "title": "[v0.2] Permitir retry de um step com invalida\u00e7\u00e3o controlada dos descendentes",
       "lastAppliedBodySha256": "7bf747eb7911633121067288b3a7237dffcbfc5240141d9e2bb3a5232f2afeed",
       "legacyBodySha256": "9a40ecfa24286c0fb4f777dea8910900e4401981572b25fad00580d6a12f8f5b"
     },
     "v02-idempotency": {
       "number": 9,
-      "title": "[v0.2] Garantir idempotência entre attempts, artefatos, eventos e commits",
+      "title": "[v0.2] Garantir idempot\u00eancia entre attempts, artefatos, eventos e commits",
       "lastAppliedBodySha256": "0e977562a60a4035e5b400a8794069476407e3559da4555306c8ed58010f7d83",
       "legacyBodySha256": "1757f47edf94c5ba829a011069efb413322167f163e63ac77d77c8dcd9d92e64"
     },
     "v02-sse-timeline": {
       "number": 10,
-      "title": "[v0.2] Transmitir eventos por SSE com replay e timeline visual da execução",
+      "title": "[v0.2] Transmitir eventos por SSE com replay e timeline visual da execu\u00e7\u00e3o",
       "lastAppliedBodySha256": "3ff6daba6e1e40d5e3ff5dd1f9325516484c83c227b0a147cfcddcc2d23f35b6",
       "legacyBodySha256": "a4ef1460f5bcdaa07818632ae66ee4711a1443e17256e477ee0c6b52c27861fe"
     },
     "v02-failure-injection": {
       "number": 11,
-      "title": "[v0.2] Criar suíte de failure injection para crash, timeout, rate limit e entrega duplicada",
+      "title": "[v0.2] Criar su\u00edte de failure injection para crash, timeout, rate limit e entrega duplicada",
       "lastAppliedBodySha256": "9b98f27e2533fab50d73bd5340cdad91db578a6b0d397a317c05be759e03c7bf",
       "legacyBodySha256": "827a8431e7ec64d61b0a5c051052184289264c81224612332cb5ff06c3d4570b"
     },
@@ -78,25 +78,25 @@
     },
     "v03-approval-domain": {
       "number": 13,
-      "title": "[v0.3] Adicionar approval gates e decisões humanas ao workflow declarativo",
+      "title": "[v0.3] Adicionar approval gates e decis\u00f5es humanas ao workflow declarativo",
       "lastAppliedBodySha256": "079fb6bfe3fcce8a2e8e4e06b82aa3027616addb6e0c1954cecb24174c2b9d00",
       "legacyBodySha256": "54a8e2003b113adc90aa3014e23dc3e062a82588122ea7ef448d2857ce4cbac0"
     },
     "v03-approval-api-ui": {
       "number": 14,
-      "title": "[v0.3] Construir API e interface de revisão para aprovar, rejeitar e pedir mudanças",
+      "title": "[v0.3] Construir API e interface de revis\u00e3o para aprovar, rejeitar e pedir mudan\u00e7as",
       "lastAppliedBodySha256": "32f99e294b501102180271eecd40b0b7d4efce9f40c5738d1efbf838d0cfd497",
       "legacyBodySha256": "8dffe05425369a1df0f5eccf2777a165aaf17cc8672d128fb20fcc221d1e4899"
     },
     "v03-project-policies": {
       "number": 15,
-      "title": "[v0.3] Definir e aplicar ProjectPolicy para stack, providers e dependências",
+      "title": "[v0.3] Definir e aplicar ProjectPolicy para stack, providers e depend\u00eancias",
       "lastAppliedBodySha256": "3829774f7a12dce4ae6c41690e5a1536f43064091a49afe45e86fd074d3e1fe9",
       "legacyBodySha256": "ad19d5d7c431f37407e6a88fbbd52ff59a6183d0615496db1bf9219aff16f7d0"
     },
     "v03-budgets-overrides": {
       "number": 16,
-      "title": "[v0.3] Aplicar budgets e overrides explícitos de modelo por run ou step",
+      "title": "[v0.3] Aplicar budgets e overrides expl\u00edcitos de modelo por run ou step",
       "lastAppliedBodySha256": "e710037b03d34aea4a7ca3bb39cc025e00fcdfe810d91f3f8eb8e557237bc3a7",
       "legacyBodySha256": "415a79b35fac2945d1bc302b2734aaaaaf0388f6a7bee0e75c5eb05687b9aaa1"
     },
@@ -108,7 +108,7 @@
     },
     "v03-policy-e2e": {
       "number": 18,
-      "title": "[v0.3] Cobrir approval gates e políticas com testes end-to-end",
+      "title": "[v0.3] Cobrir approval gates e pol\u00edticas com testes end-to-end",
       "lastAppliedBodySha256": "c96700cb41ec7d196e27f771da650669de0bc3331cfdb6293fa72738a2679bcb",
       "legacyBodySha256": "c7daed0e364810517ad22f6d988ef935d02f58b56a9bf96b939bd4369972c2d8"
     },
@@ -132,19 +132,19 @@
     },
     "v04-worktrees": {
       "number": 22,
-      "title": "[v0.4] Isolar cada run mutável em branch e Git worktree próprios",
+      "title": "[v0.4] Isolar cada run mut\u00e1vel em branch e Git worktree pr\u00f3prios",
       "lastAppliedBodySha256": "756c995d9c00d5c345b4243f7d2b6ee45439eef382896beeddcbfce7c2de3827",
       "legacyBodySha256": "44e108006ba02ae80d6e88e3fd217ebde6379498b79ee7e6cd84a83f6d5b9f3b"
     },
     "v04-repository-map": {
       "number": 23,
-      "title": "[v0.4] Gerar repository-map com módulos, configs, símbolos e grafo de imports",
+      "title": "[v0.4] Gerar repository-map com m\u00f3dulos, configs, s\u00edmbolos e grafo de imports",
       "lastAppliedBodySha256": "0dc040b93f10e13003e0d06b289f409e69bd9aedbd2fcd7f371150cfb6fde065",
       "legacyBodySha256": "c329a0c267a5be7482ea1c32b94b559c76dfe596a44f7cbcfcc50fffbe9a627c"
     },
     "v04-context-selector": {
       "number": 24,
-      "title": "[v0.4] Selecionar contexto por tarefa usando busca lexical, imports e orçamento",
+      "title": "[v0.4] Selecionar contexto por tarefa usando busca lexical, imports e or\u00e7amento",
       "lastAppliedBodySha256": "fd51b8c2d8987c66c85670ac564a86d29a9ae152ace7fc1bb68a4f8201eaac76",
       "legacyBodySha256": "6f72b51b6c1c2b657359567dc0c5a817f8c1805766452ee6ec35b2abd5771c76"
     },
@@ -156,7 +156,7 @@
     },
     "v04-diff-review": {
       "number": 26,
-      "title": "[v0.4] Adicionar file browser, diff review e promoção do branch na interface",
+      "title": "[v0.4] Adicionar file browser, diff review e promo\u00e7\u00e3o do branch na interface",
       "lastAppliedBodySha256": "e6bdd5d9b3fc2ffa5708e1902f8e572e2eba360d43a4fb7a2e6f0152efd48aee",
       "legacyBodySha256": "be1c339fd2eea26205df8a75f8740aacccc71ee6d97fbf2b2f162657ede6e2b2"
     },
@@ -180,7 +180,7 @@
     },
     "v05-preview-network": {
       "number": 30,
-      "title": "[v0.5] Descobrir porta e expor preview por reverse proxy com isolamento básico",
+      "title": "[v0.5] Descobrir porta e expor preview por reverse proxy com isolamento b\u00e1sico",
       "lastAppliedBodySha256": "20b1568fbb9d590df07c657bb163750ad39574f7d796a42d27a2e7ff4b084565",
       "legacyBodySha256": "339360e0e4165f5a16a536d279408d705fc299edb2e4a118ad7f910e80581629"
     },
@@ -198,7 +198,7 @@
     },
     "v05-preview-artifacts": {
       "number": 33,
-      "title": "[v0.5] Persistir screenshots, trace, vídeo opcional e logs como artifacts",
+      "title": "[v0.5] Persistir screenshots, trace, v\u00eddeo opcional e logs como artifacts",
       "lastAppliedBodySha256": "a171488225eecfe129459dba1077d1482c2a469e611a8792e73912f489067d27",
       "legacyBodySha256": "b25380c0c50bed3869aa2da949483a6b987c8e709515b4a433f0e523cb4fa06c"
     },
@@ -222,13 +222,13 @@
     },
     "v06-plan-build-modes": {
       "number": 37,
-      "title": "[v0.6] Implementar modos Plan e Build com contratos de saída distintos",
+      "title": "[v0.6] Implementar modos Plan e Build com contratos de sa\u00edda distintos",
       "lastAppliedBodySha256": "d80a7c9fe78a571b4c78fd2c8b882e78a6f9f3459eb6449b352abd6b89d1114a",
       "legacyBodySha256": "7290bb051b51d71ab3a587a648b26f108110ee92d5570f1262823a82710c1373"
     },
     "v06-chat-operations": {
       "number": 38,
-      "title": "[v0.6] Converter mensagens em change requests incrementais e handoffs reproduzíveis",
+      "title": "[v0.6] Converter mensagens em change requests incrementais e handoffs reproduz\u00edveis",
       "lastAppliedBodySha256": "1af9bce6d8bfc10e62e03fe8d09f062a9047189b221affa4eb43e4dcb53c8912",
       "legacyBodySha256": "cdd4ad613751ccd81d0cc912ea25f8bcae3d4321471fb156b1cee451b8247d10"
     },
@@ -240,25 +240,25 @@
     },
     "v06-version-history": {
       "number": 40,
-      "title": "[v0.6] Adicionar version history, compare, revert e branch de uma versão",
+      "title": "[v0.6] Adicionar version history, compare, revert e branch de uma vers\u00e3o",
       "lastAppliedBodySha256": "c565070e40b4f0730452f18c1325452457559b3e38ed8dac28822ec6db781d9e",
       "legacyBodySha256": "de44ea411ec971571a142f05ce2c5d04676e890771db0bccda74dd69b8ea78de"
     },
     "v06-dom-source-map": {
       "number": 41,
-      "title": "[v0.6] Mapear elemento selecionado no preview para componente e origem no código",
+      "title": "[v0.6] Mapear elemento selecionado no preview para componente e origem no c\u00f3digo",
       "lastAppliedBodySha256": "e36c8e349f72e5ec0cbdd81a57892211f908e7b857bfac3930d20425d1e3085d",
       "legacyBodySha256": "4236544de7bf8cb61eafe2807aa3915ea4964d391c8a26da9348f039c8b24475"
     },
     "v06-visual-patches": {
       "number": 42,
-      "title": "[v0.6] Aplicar edições visuais como patches estruturados e verificáveis",
+      "title": "[v0.6] Aplicar edi\u00e7\u00f5es visuais como patches estruturados e verific\u00e1veis",
       "lastAppliedBodySha256": "0cd445566068963d89da249a70f8ef289ca78fd818b0d872b474c2bf194a2573",
       "legacyBodySha256": "0f21127cf91d34732105b70eed95d1d3a9976fc51d53198736a190a8de4a4ce6"
     },
     "v06-knowledge-attachments-shell": {
       "number": 43,
-      "title": "[v0.6] Adicionar knowledge files, imagens e shell de três painéis do builder",
+      "title": "[v0.6] Adicionar knowledge files, imagens e shell de tr\u00eas pain\u00e9is do builder",
       "lastAppliedBodySha256": "e984834b9838a38897d584d341fcaa807a3340369360e02d32fa24a2283feb45",
       "legacyBodySha256": "12fb0089428c59952cb59f1c436b03788deb71d6c829d321d53343ce6229a383"
     },
@@ -270,7 +270,7 @@
     },
     "v07-control-execution-plane": {
       "number": 45,
-      "title": "[v0.7] Separar control plane e execution plane por um protocolo explícito",
+      "title": "[v0.7] Separar control plane e execution plane por um protocolo expl\u00edcito",
       "lastAppliedBodySha256": "fbb20437347cc6702a515378581b5ea6110568ef1861acb962a0fe32c530cf28",
       "legacyBodySha256": "9a66bff0d4c6f19a804bb6a5b2b225d7e39743156cd26146fd62750a34e6c79b"
     },
@@ -288,25 +288,25 @@
     },
     "v07-network-policy": {
       "number": 48,
-      "title": "[v0.7] Bloquear rede por padrão e liberar egress por policy",
+      "title": "[v0.7] Bloquear rede por padr\u00e3o e liberar egress por policy",
       "lastAppliedBodySha256": "ceb8ddc739fdd76fe270c5706578c08224d50f01cd21228e5bbe8b201d7bad29",
       "legacyBodySha256": "98b3cf444d02f1f779f7b182056b6018b65b60006372dc0463e9e32dac8a3e86"
     },
     "v07-secret-broker": {
       "number": 49,
-      "title": "[v0.7] Entregar secrets efêmeros por broker e redigir saídas",
+      "title": "[v0.7] Entregar secrets ef\u00eameros por broker e redigir sa\u00eddas",
       "lastAppliedBodySha256": "f4ca7f51f297307d3af58fc1d71add687dfd1f361580c76d2fc72ddf1521fecb",
       "legacyBodySha256": "6ee366a0ce2e2173e71ce995220e54535bfaf2dece692caa2a5fc78325fcef8a"
     },
     "v07-cache-supply-chain": {
       "number": 50,
-      "title": "[v0.7] Criar cache seguro de dependências e controles básicos de supply chain",
+      "title": "[v0.7] Criar cache seguro de depend\u00eancias e controles b\u00e1sicos de supply chain",
       "lastAppliedBodySha256": "ff4af14082c54956ad2fade5f4d1d24b1cdf9671952be20577cb9d2d1c4f7282",
       "legacyBodySha256": "7eb8a1393d0b6e25e2e3b2a3ad3c0622afffab7cff52efd5cf0639d4ba39e487"
     },
     "v07-threat-model": {
       "number": 51,
-      "title": "[v0.7] Publicar threat model e suíte adversarial de isolamento",
+      "title": "[v0.7] Publicar threat model e su\u00edte adversarial de isolamento",
       "lastAppliedBodySha256": "dfad97583380c1f45c3476c8bffb66d075c30f2b651f6d34b442c577c6df6003",
       "legacyBodySha256": "2e761fd78278719674e756f8ccedef0403e8a397f16acb265de91030db5d0c76"
     },
@@ -318,19 +318,19 @@
     },
     "v08-postgres": {
       "number": 53,
-      "title": "[v0.8] Implementar schema PostgreSQL e adapters das portas de domínio",
+      "title": "[v0.8] Implementar schema PostgreSQL e adapters das portas de dom\u00ednio",
       "lastAppliedBodySha256": "d85aef8ab2e1fcdcda403f3520d6dbbda54ecd84832b1c6e9c07d80b0b853296",
       "legacyBodySha256": "456fc2dd00b5be7fa5f2ef6f47e06b2a99ac6e881a437677cae1c14a491b9bad"
     },
     "v08-object-storage": {
       "number": 54,
-      "title": "[v0.8] Mover blobs grandes para object storage com integridade e retenção",
+      "title": "[v0.8] Mover blobs grandes para object storage com integridade e reten\u00e7\u00e3o",
       "lastAppliedBodySha256": "f6321faf6ad6ea8a18e8f3e4e17cd1d16c74d4976a24691b638dc525c9b12b7c",
       "legacyBodySha256": "d337abcfddcfcd81165b60689c9b92bdf9ce866693010b9f3124534ef4a1839c"
     },
     "v08-durable-queue": {
       "number": 55,
-      "title": "[v0.8] Implementar fila de produção com leases, retry e transactional outbox",
+      "title": "[v0.8] Implementar fila de produ\u00e7\u00e3o com leases, retry e transactional outbox",
       "lastAppliedBodySha256": "78fbe590b42d31e0b7153fc955f72ea3947f2400f4c2d84a5f74941f28e1e7d0",
       "legacyBodySha256": "e6850fc1a76a911baa4bf95765150520f318e76635b4cead22668b710aa260c6"
     },
@@ -342,19 +342,19 @@
     },
     "v08-scheduler": {
       "number": 57,
-      "title": "[v0.8] Adicionar scheduler de workers, concorrência e backpressure por recurso",
+      "title": "[v0.8] Adicionar scheduler de workers, concorr\u00eancia e backpressure por recurso",
       "lastAppliedBodySha256": "0bc71a4a5de9b96fd2f74ffef4001daf1f4fc59c440c09acf569b5331d11932c",
       "legacyBodySha256": "c35216c7d04a40c62b37ce151b06102215605b863f53d4cc9d7e46b5d9e90938"
     },
     "v08-observability": {
       "number": 58,
-      "title": "[v0.8] Instrumentar logs, métricas e traces com OpenTelemetry",
+      "title": "[v0.8] Instrumentar logs, m\u00e9tricas e traces com OpenTelemetry",
       "lastAppliedBodySha256": "8833c29de159cb798f09ddafa1d17f5cf8395b6be422f35e45f30e8092d8167f",
       "legacyBodySha256": "e74222d5004564d73d5adf8b2324a80c44a8bd8946e82bed32f2d562db77daa0"
     },
     "v08-ops-migration": {
       "number": 59,
-      "title": "[v0.8] Entregar backup, restore, retenção e migração do storage local",
+      "title": "[v0.8] Entregar backup, restore, reten\u00e7\u00e3o e migra\u00e7\u00e3o do storage local",
       "lastAppliedBodySha256": "4d93e26a30b72662908b9ba970ef3cdcf17831c81dffa2cbf914daa22fb2b723",
       "legacyBodySha256": "0fcd83fa890f1645345cf0f34f957c32ee28549d86c00ce36609006f471822db"
     },
@@ -366,7 +366,7 @@
     },
     "v09-task-taxonomy": {
       "number": 61,
-      "title": "[v0.9] Expandir TaskKind para uma taxonomia hierárquica e versionada",
+      "title": "[v0.9] Expandir TaskKind para uma taxonomia hier\u00e1rquica e versionada",
       "lastAppliedBodySha256": "e61b683438a0b19c31bcad6e96bbeebd2b07fd63c41a0510899b965608e7dfdc",
       "legacyBodySha256": "a86671492454b93ba3f61e605d92149a924282166a369555089b654b1c3ff95f"
     },
@@ -378,25 +378,25 @@
     },
     "v09-benchmark-runner": {
       "number": 63,
-      "title": "[v0.9] Criar corpus de tarefas e benchmark runner reproduzível",
+      "title": "[v0.9] Criar corpus de tarefas e benchmark runner reproduz\u00edvel",
       "lastAppliedBodySha256": "f50b5c7f04abca591b17addd78254667084aa77fe944205dd021c119c6ade1b2",
       "legacyBodySha256": "5039c03fedff92017902f48a9145bb5dc58f08e001329d65a0c368c5b58dfeb5"
     },
     "v09-quality-signals": {
       "number": 64,
-      "title": "[v0.9] Combinar checks determinísticos, blind review e feedback humano em quality signals",
+      "title": "[v0.9] Combinar checks determin\u00edsticos, blind review e feedback humano em quality signals",
       "lastAppliedBodySha256": "0ea9010cc62b7561068fb13b8068659254ae367d35dd45dbc362201a5fda9ae7",
       "legacyBodySha256": "62ce9d8ef29fe10e8995cdfef1ab51479d5c5064e7136e86104311f80d28c6bb"
     },
     "v09-confidence-routing": {
       "number": 65,
-      "title": "[v0.9] Adicionar confiança, sample size e calibração à decisão do router",
+      "title": "[v0.9] Adicionar confian\u00e7a, sample size e calibra\u00e7\u00e3o \u00e0 decis\u00e3o do router",
       "lastAppliedBodySha256": "15fddb45c68b934a75de404e235d1d6c81fd5a206369e7f694486b4943e869a3",
       "legacyBodySha256": "b9f8825c52b073453720b92a95e065a1af697f5ca5acef07204ce16028796adb"
     },
     "v09-exploration-health": {
       "number": 66,
-      "title": "[v0.9] Implementar exploração controlada, circuit breakers e provider health",
+      "title": "[v0.9] Implementar explora\u00e7\u00e3o controlada, circuit breakers e provider health",
       "lastAppliedBodySha256": "2714ce4baebacfc24141d2e20ba437195f5c99087c80bcf3ff4dc068501074ad",
       "legacyBodySha256": "4350a1df9b031c910f9fc555cce7298d8e7e39c08545ef1b692efffdcd333326"
     },
@@ -426,7 +426,7 @@
     },
     "v010-auth": {
       "number": 71,
-      "title": "[v0.10] Integrar autenticação e gerar fluxos seguros de usuário",
+      "title": "[v0.10] Integrar autentica\u00e7\u00e3o e gerar fluxos seguros de usu\u00e1rio",
       "lastAppliedBodySha256": "520565ab394f2499396024007dcd894301c16d97c805b4f25d1b8c88ea7c751b",
       "legacyBodySha256": "7a6e6294e54ff10ee318ce6ae25abcd42ae1fe4e939d77f0b490f2531ab6e07d"
     },
@@ -444,26 +444,26 @@
     },
     "v010-app-secrets": {
       "number": 74,
-      "title": "[v0.10] Criar secret store e runtime de conexões por projeto",
+      "title": "[v0.10] Criar secret store e runtime de conex\u00f5es por projeto",
       "lastAppliedBodySha256": "be84dd78d536cbdaa78f0ceb0c40e4db4b2c104c40505909b2ca8caa239245e7",
       "legacyBodySha256": "53e19b7192fc877271aa8e66d8f3d2265ad068d2685b6a44b44d040db52a933d"
     },
     "v010-data-security": {
       "number": 75,
-      "title": "[v0.10] Verificar RLS, autorização e operações destrutivas antes de release",
+      "title": "[v0.10] Verificar RLS, autoriza\u00e7\u00e3o e opera\u00e7\u00f5es destrutivas antes de release",
       "lastAppliedBodySha256": "fb05746b69fbe92670fde5fb9c66e65942bea501487503a8959a9c932221f563",
       "legacyBodySha256": "2867b420ec72bca987c135eb152dbb5e73d43dcbcae2a74f32a826637ef171c1"
     },
     "v010-fullstack-reference": {
       "number": 76,
-      "title": "[v0.10] Entregar workflow e app de referência full-stack com export portátil",
+      "title": "[v0.10] Entregar workflow e app de refer\u00eancia full-stack com export port\u00e1til",
       "lastAppliedBodySha256": "6ebb68a0b56a28b52706fc52df203f3335564052bab173bb1b98112ec3276834",
       "legacyBodySha256": "b73a924d673fb035047ded50e03d78a7d6189ec07f19c349904bbe2268df27eb"
     },
     "epic-v0.11": {
       "number": 77,
       "title": "[Epic v0.11] Publish and Integrations",
-      "lastAppliedBodySha256": "a8b8f042aeeddcbb8ed4c9df552d83ae73da3ddac2bbb5604d26bffbe7129118",
+      "lastAppliedBodySha256": "fbb2bd6b9c932428f22e8dbbcd73ef6ece071f2961fda315fbd56351ca03a4ea",
       "legacyBodySha256": "c94e5247e7bc14fecda79cee6efdb155a61f3bb6855faf65f0ad8ab1caedee33"
     },
     "v011-deployment-domain": {
@@ -480,13 +480,13 @@
     },
     "v011-github-app": {
       "number": 80,
-      "title": "[v0.11] Integrar GitHub App/OAuth com permissões mínimas por repositório",
+      "title": "[v0.11] Integrar GitHub App/OAuth com permiss\u00f5es m\u00ednimas por reposit\u00f3rio",
       "lastAppliedBodySha256": "d08f50584a787ea9b09ecf54fda90fdea903845466fabe14ccbeb9a99a009b0a",
       "legacyBodySha256": "e70f2eae3485d98647564caba96a7f3c549ccb56024b7c84fe3ac19ed8ce82b9"
     },
     "v011-github-sync": {
       "number": 81,
-      "title": "[v0.11] Implementar two-way sync, pull requests e resolução de conflitos",
+      "title": "[v0.11] Implementar two-way sync, pull requests e resolu\u00e7\u00e3o de conflitos",
       "lastAppliedBodySha256": "a14d3ea1b073606e3ec195017f15e572d56804cd190ebcb210348b9094a543cd",
       "legacyBodySha256": "3b123c9d3f150128c7a1a5cb64eef1a5e763726cd38b1000f9ee02d5f3f0cbe1"
     },
@@ -498,8 +498,8 @@
     },
     "v011-reference-connectors": {
       "number": 83,
-      "title": "[v0.11] Entregar conectores de referência para Stripe e email transacional",
-      "lastAppliedBodySha256": "c22046c9edf9e4c9a96cc568dc6a06b552515283867843405f9aaa154d1e167d",
+      "title": "[v0.11] Entregar conector de refer\u00eancia de email transacional",
+      "lastAppliedBodySha256": "4f40c8c3df5316c5e70a1e78edb65fe0e34957a95d59eef401e0304671998d02",
       "legacyBodySha256": "09d1bed3bf0ceacd40c7c9b286930c88038622fb75d6088a60e28675b59fab17"
     },
     "v011-release-ui-e2e": {
@@ -516,7 +516,7 @@
     },
     "v012-identity": {
       "number": 86,
-      "title": "[v0.12] Adicionar identidade, sessão e proteção de endpoints",
+      "title": "[v0.12] Adicionar identidade, sess\u00e3o e prote\u00e7\u00e3o de endpoints",
       "lastAppliedBodySha256": "ddd8917e436a88a35e5e31535c7d4e7f84f6cafc0168f96a9062acf1f3fb0b94",
       "legacyBodySha256": "659253ee76b98c87e148bc44af4b77277f5c03de7bd899f3ee27c8f049977aae"
     },
@@ -534,19 +534,19 @@
     },
     "v012-collaboration": {
       "number": 89,
-      "title": "[v0.12] Adicionar colaboradores, comentários, presence e atividade",
+      "title": "[v0.12] Adicionar colaboradores, coment\u00e1rios, presence e atividade",
       "lastAppliedBodySha256": "35ea207831b1299ef0bb59995ed7ebdc4b04e6632e28fb580ca073cf9c8cdb63",
       "legacyBodySha256": "05073dca0d1671164cb4f94165909a899c7d1b615ad65053efe12d3fe49ed5fa"
     },
     "v012-sharing-templates": {
       "number": 90,
-      "title": "[v0.12] Implementar sharing, remix e templates com proveniência",
+      "title": "[v0.12] Implementar sharing, remix e templates com proveni\u00eancia",
       "lastAppliedBodySha256": "ead86e0fe6d578a29b146aa0d756335813c958322ba3d917b3dcbed9a4010af7",
       "legacyBodySha256": "64a84d6e3f7c60a15e1add412ee04704e68a360b33dd4002d273eb86dd13bf63"
     },
     "v012-usage-credits": {
       "number": 91,
-      "title": "[v0.12] Criar usage ledger, quotas e créditos por workspace",
+      "title": "[v0.12] Criar usage ledger, quotas e cr\u00e9ditos por workspace",
       "lastAppliedBodySha256": "27bd23178245f2de2f58cb77e384867a372633f6fa067b039f5bf91bcd17416d",
       "legacyBodySha256": "c0c220e07d742383135a5a638f5d0a21720bcf8e325a2c692ab8f7fe321b37b4"
     },
@@ -558,27 +558,15 @@
     },
     "v012-governance-e2e": {
       "number": 93,
-      "title": "[v0.12] Entregar audit, abuse controls, data rights e suíte multi-tenant",
+      "title": "[v0.12] Entregar audit, abuse controls, data rights e su\u00edte multi-tenant",
       "lastAppliedBodySha256": "66f57a33680f683dd1a84a0d77ee37f4ed2c336b833a18bf615b30e3cb2674a3",
       "legacyBodySha256": "ad575e4e7c1d0b72f0d43d15e6ce5bf79291477dfaff072a3eca2dad002c5981"
     },
     "epic-v1.0": {
       "number": 94,
       "title": "[Epic v1.0] Personal Builder",
-      "lastAppliedBodySha256": "0ca2f2176f40343fce7565204530e8a31990b89c6bf0c3c03b99ab63eab4ba07",
+      "lastAppliedBodySha256": "7c90c83c209f93c56f790cda566e0c2c433514a19a7c4b898970fd30fd8b931a",
       "legacyBodySha256": "65757bb458bbfc320e863a28e6955aa9635506fc186a1a9c64a941d4d6f24e16"
-    },
-    "v100-parity-contract": {
-      "number": 95,
-      "title": "[v1.0] Publicar feature contract e matriz Lovable-class",
-      "lastAppliedBodySha256": "5d98f70e359a170c14cacd65046502ede078ca708c5eb373c2c50639dbd01fc4",
-      "legacyBodySha256": "ad805189bf8698aeb63ae8ebd910abb9186748228c357dd5477700ab94671d57"
-    },
-    "v100-onboarding-templates": {
-      "number": 96,
-      "title": "[v1.0] Construir onboarding, template gallery e remix guiado",
-      "lastAppliedBodySha256": "3e5866624db55d43ff5694375e2d384df97b33ecc31064911d00b73709d09be0",
-      "legacyBodySha256": "7494bdc1cfe970316e3639a80910f23af0c2159d8e1ff30d7dcddf688adfdca3"
     },
     "v100-builder-polish": {
       "number": 97,
@@ -588,27 +576,15 @@
     },
     "v100-golden-journeys": {
       "number": 98,
-      "title": "[v1.0] Automatizar golden journeys ponta a ponta em ambiente semelhante à produção",
-      "lastAppliedBodySha256": "54a4d0aa9c9a44d2896f89b3b1aa5e6e3058db184684d5c0ad258c9da87d4c6d",
+      "title": "[v1.0] Automatizar golden journeys ponta a ponta em ambiente semelhante \u00e0 produ\u00e7\u00e3o",
+      "lastAppliedBodySha256": "c64e88f67be0cfa1c8f0be49df3d4b3b23c18f0c58139e8017d9d373ed179e34",
       "legacyBodySha256": "027961eef476a15c3848c6f4690895c13c6048ab53226e2ec35a008769b568a1"
-    },
-    "v100-reliability-ops": {
-      "number": 99,
-      "title": "[v1.0] Definir SLOs, capacity model, runbooks e incident readiness",
-      "lastAppliedBodySha256": "b6fe09e10fac1d94f2d86739279f5cb1bf11b2c02961bad981ca66630b4c870c",
-      "legacyBodySha256": "d401853aac19439b1467c50621312c5bddbe39c06f8900c98d0a566e41817af1"
     },
     "v100-security-privacy": {
       "number": 100,
-      "title": "[v1.0] Concluir security review, privacy review e launch threat assessment",
-      "lastAppliedBodySha256": "8e1d8ee8b4ca4cae27a7dfe05a6f624063b87dd3d9140bfdb870098a6e1ef089",
+      "title": "[v1.0] Concluir security review e threat assessment do builder pessoal",
+      "lastAppliedBodySha256": "3d6199616ec72e93e0721d67913207b2c9042c38780d9b055a8949e3f0346050",
       "legacyBodySha256": "6c4e842fb32c35a68eef3b58531e0567776cce1dd3388c581fb8ecf52fed3eba"
-    },
-    "v100-launch": {
-      "number": 101,
-      "title": "[v1.0] Fechar pricing UX, documentação, migração e automação de release",
-      "lastAppliedBodySha256": "c6f7f5ee20a4f7b615904fb25f3187f66d7f103cd946f53f1c50f9ff1b28a1e4",
-      "legacyBodySha256": "711c4170c21436a402ce2378a33af1735ad1de5a45fe7e1c77f3566d23d16c67"
     },
     "epic-foundation": {
       "number": 107,
@@ -627,12 +603,12 @@
     },
     "foundation-delivery-contract": {
       "number": 110,
-      "title": "[foundation] Definir Definition of Ready, Definition of Done e contrato de evidência",
+      "title": "[foundation] Definir Definition of Ready, Definition of Done e contrato de evid\u00eancia",
       "lastAppliedBodySha256": "26c501e763bdc14d105fb690def5e88ff750b9551656c65ffb24f14b30e0e924"
     },
     "foundation-repo-templates": {
       "number": 111,
-      "title": "[foundation] Adicionar Issue Forms, PR template e guia de contribuição",
+      "title": "[foundation] Adicionar Issue Forms, PR template e guia de contribui\u00e7\u00e3o",
       "lastAppliedBodySha256": "74d697d0067e0bd1b521627527df51ae756907637bef17605171fb6e42730116"
     },
     "foundation-adrs-boundaries": {
@@ -647,17 +623,17 @@
     },
     "foundation-repo-security": {
       "number": 114,
-      "title": "[foundation] Configurar ruleset, dependency review e atualização segura de dependências",
+      "title": "[foundation] Configurar ruleset, dependency review e atualiza\u00e7\u00e3o segura de depend\u00eancias",
       "lastAppliedBodySha256": "134bf0c688f453a5ae4495dc9e9f3d942102815c8f8a5c125f7eaf8e70656e89"
     },
     "foundation-baseline-release": {
       "number": 115,
-      "title": "[foundation] Publicar a baseline reproduzível v0.1.0",
+      "title": "[foundation] Publicar a baseline reproduz\u00edvel v0.1.0",
       "lastAppliedBodySha256": "faccc0319892e18a5fbc50355f4f5adce249102ea4f8c5d30fc8ad3de68fcb22"
     },
     "foundation-product-contract": {
       "number": 116,
-      "title": "[foundation] Separar Personal Builder v1 de Hosted Platform v2 e definir métricas",
+      "title": "[foundation] Separar Personal Builder v1 de Hosted Platform v2 e definir m\u00e9tricas",
       "lastAppliedBodySha256": "81951ff08943589ec860f7f60cebab470a51d2b4ed3e19ae43de02b76cc297d8"
     },
     "foundation-risk-profiles": {
@@ -667,7 +643,7 @@
     },
     "v02-dogfood": {
       "number": 118,
-      "title": "[v0.2] Usar Agent Foundry para implementar tarefas reais da própria v0.2",
+      "title": "[v0.2] Usar Agent Foundry para implementar tarefas reais da pr\u00f3pria v0.2",
       "lastAppliedBodySha256": "e37f40477348a14c8febec97ac6d52c734c06787c4e2483147423d41ff121494"
     },
     "epic-v0.4.5": {
@@ -682,7 +658,7 @@
     },
     "v045-rootless-container": {
       "number": 121,
-      "title": "[v0.4.5] Executar jobs em container rootless e efêmero",
+      "title": "[v0.4.5] Executar jobs em container rootless e ef\u00eamero",
       "lastAppliedBodySha256": "33b3efb635f40cecb69fa2e9e8948e522f1f1fd04d5cea9aab8aa41d1af1fa1e"
     },
     "v045-host-isolation": {
@@ -692,12 +668,12 @@
     },
     "v045-resource-limits": {
       "number": 123,
-      "title": "[v0.4.5] Aplicar limites de CPU, memória, PIDs, disco e tempo",
+      "title": "[v0.4.5] Aplicar limites de CPU, mem\u00f3ria, PIDs, disco e tempo",
       "lastAppliedBodySha256": "3c4fd7e059f4f810e7249e689519d76f4ff38c4e9dd0bafc86e74bf7d7ec4121"
     },
     "v045-egress-policy": {
       "number": 124,
-      "title": "[v0.4.5] Bloquear egress por padrão durante verifier e preview",
+      "title": "[v0.4.5] Bloquear egress por padr\u00e3o durante verifier e preview",
       "lastAppliedBodySha256": "2a49d74d2946c83c3b2a9fc8eab1a718a02b63f35dec760608a5bb63dd0b112f"
     },
     "v045-artifact-boundary": {
@@ -707,7 +683,7 @@
     },
     "v045-adversarial-canaries": {
       "number": 126,
-      "title": "[v0.4.5] Criar canários adversariais para filesystem, rede e processos",
+      "title": "[v0.4.5] Criar can\u00e1rios adversariais para filesystem, rede e processos",
       "lastAppliedBodySha256": "cd646b3feb043c54780a101e06dc802cf8ce4f3c403e2d90e8e6c1a6e5338c5b"
     },
     "epic-v2.0": {
@@ -722,7 +698,7 @@
     },
     "v200-multitenant-journeys": {
       "number": 129,
-      "title": "[v2.0] Automatizar golden journeys multi-tenant e de colaboração",
+      "title": "[v2.0] Automatizar golden journeys multi-tenant e de colabora\u00e7\u00e3o",
       "lastAppliedBodySha256": "14e5b443eb0dc923d7d393ba6689a774a84b2c84a0e9cb3f6bbe9abe1c6b8149"
     },
     "v200-abuse-security": {
@@ -732,17 +708,17 @@
     },
     "v200-billing-reconciliation": {
       "number": 131,
-      "title": "[v2.0] Validar ledger, billing e reconciliação financeira ponta a ponta",
+      "title": "[v2.0] Validar ledger, billing e reconcilia\u00e7\u00e3o financeira ponta a ponta",
       "lastAppliedBodySha256": "8b5d218ce1aff18f617a93cb47d08bc8f2bcb9eac3d70a2b534d8ecacc4f3765"
     },
     "v200-slo-capacity": {
       "number": 132,
-      "title": "[v2.0] Validar SLOs, capacity model e recuperação do serviço hospedado",
+      "title": "[v2.0] Validar SLOs, capacity model e recupera\u00e7\u00e3o do servi\u00e7o hospedado",
       "lastAppliedBodySha256": "4f658ec9a66314a2c9ea4665bc9a4fb88478f1d4041e0619d31318e030a5365d"
     },
     "v200-migration-support": {
       "number": 133,
-      "title": "[v2.0] Entregar migração do Personal Builder e suporte operacional inicial",
+      "title": "[v2.0] Entregar migra\u00e7\u00e3o do Personal Builder e suporte operacional inicial",
       "lastAppliedBodySha256": "99f42d1b46e75b83aff106fbceddf528356af9c97aec2c04872eb51105782d88"
     },
     "v200-launch-gates": {
@@ -751,5 +727,5 @@
       "lastAppliedBodySha256": "ae4066ba13ead9732e9ff84bfb7f12f0518e3537d96d1159b9a7937f4ebe7021"
     }
   },
-  "appliedAt": "2026-07-12T00:26:46.522Z"
+  "appliedAt": "2026-07-13T00:48:27.030Z"
 }

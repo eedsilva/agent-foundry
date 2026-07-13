@@ -11,7 +11,7 @@ const project = JSON.parse(await readFile(resolve(root, 'planning/project-spec.j
 test('roadmap vigente é válido e reproduzível', () => {
   const result = validateRoadmap(spec, project);
   assert.deepEqual(result.errors, []);
-  assert.equal(issueRecords(spec, project).length, 129);
+  assert.equal(issueRecords(spec, project).length, 125);
   assert.equal(renderRoadmapMarkdown(spec), renderRoadmapMarkdown(structuredClone(spec)));
 });
 

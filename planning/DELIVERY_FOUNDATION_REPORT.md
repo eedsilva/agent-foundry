@@ -4,7 +4,7 @@ Generated on 2026-07-11 for `eedsilva/agent-foundry`.
 
 ## Status
 
-This branch contains the complete, versioned migration. It has **not** mutated GitHub from the generation environment because no authenticated GitHub write session or `gh` CLI was available there.
+**Applied.** The migration was applied to GitHub on 2026-07-12; `planning/github-state.json` (`appliedAt`) records the reconciliation of all 129 managed issues, including the 28 new ones. The rest of this report is the point-in-time migration record from generation on 2026-07-11.
 
 The public repository baseline used for the migration is commit:
 
@@ -92,6 +92,8 @@ npm audit --omit=dev: 0 vulnerabilities
 npm audit: 0 vulnerabilities
 git diff --check
 ```
+
+The check-context count above is the number of job contexts defined across the CI workflows at generation time; the ruleset intentionally requires only 8 of them (scheduled security-audit jobs are not required checks).
 
 Dry-run results:
 
