@@ -47,8 +47,17 @@ describe('CLI executor contracts', () => {
     expect(invocation.command).toBe('codex');
     expect(invocation.input).toBe('Open the request file.');
     expect(invocation.args).toContain('workspace-write');
+    expect(invocation.args).not.toContain('--ask-for-approval');
     expect(invocation.args).not.toContain('--model');
     expect(invocation.outputFile).toContain('codex.final.json');
+  });
+
+  it('requests configured-session metadata only for explicit Codex evidence runs', async () => {
+    const invocation = await new InspectableCodexExecutor(1_000_000, true).inspect(request());
+
+    expect(invocation.environment).toEqual({
+      RUST_LOG: 'codex_core::session::session=debug',
+    });
   });
 
   it('uses plan permission mode and structured JSON for read-only Claude runs', async () => {
@@ -56,6 +65,11 @@ describe('CLI executor contracts', () => {
       request({ provider: 'claude', model: 'sonnet', mutatesWorkspace: false }),
     );
     expect(invocation.command).toBe('claude');
+    expect(invocation.args).not.toContain('--bare');
+    expect(invocation.args).toContain('--safe-mode');
+    expect(invocation.args).toContain('--verbose');
+    expect(invocation.args).toContain('stream-json');
+    expect(invocation.args).toEqual(expect.arrayContaining(['--prompt-suggestions', 'false']));
     expect(invocation.args).toContain('plan');
     expect(invocation.args).toContain('--json-schema');
     expect(invocation.args).toContain('sonnet');
@@ -79,6 +93,22 @@ describe('CLI executor contracts', () => {
         '--print',
         'Open the request file.',
       ]),
+    );
+  });
+
+  it('routes AGY provider metadata to its per-run file only for explicit evidence runs', async () => {
+    const invocation = await new InspectableAgyExecutor(1_000_000, true).inspect(
+      request({ provider: 'agy', model: 'Gemini 3.5 Flash (Medium)' }),
+    );
+
+    expect(invocation.args).toEqual(
+      expect.arrayContaining([
+        '--log-file',
+        '/tmp/workspace/.orchestrator/runs/01KX9B14GCCJ4R93SD739PHBW4/agy.metadata.log',
+      ]),
+    );
+    expect(invocation.metadataFile).toBe(
+      '/tmp/workspace/.orchestrator/runs/01KX9B14GCCJ4R93SD739PHBW4/agy.metadata.log',
     );
   });
 });

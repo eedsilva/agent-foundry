@@ -265,9 +265,9 @@ function createProductionProviderCanaryDependencies(
   env: NodeJS.ProcessEnv,
 ): ProviderCanaryDependencies {
   const executors = {
-    codex: new CodexCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
+    codex: new CodexCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, true),
     claude: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
-    agy: new AgyCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
+    agy: new AgyCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, true),
   };
 
   return {

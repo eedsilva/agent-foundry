@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","model":"claude-sonnet-5","permissionMode":"plan","claude_code_version":"2.1.207"}
+{"type":"assistant","message":{"model":"claude-sonnet-5","usage":{"input_tokens":120,"output_tokens":45}}}
+{"type":"result","subtype":"success","is_error":false,"structured_output":{"schemaVersion":"1","status":"completed","summary":"Claude stream fixture completed.","data":{},"decisions":[],"assumptions":[],"risks":[],"nextActions":[]},"usage":{"input_tokens":120,"cache_read_input_tokens":70,"output_tokens":45},"total_cost_usd":0.018,"modelUsage":{"claude-haiku-4-5-20251001":{"inputTokens":10,"outputTokens":2},"claude-sonnet-5":{"inputTokens":120,"outputTokens":45}}}

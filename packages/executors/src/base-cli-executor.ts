@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, open, rm } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { execa } from 'execa';
 import type {
@@ -16,6 +16,7 @@ export interface CliInvocation {
   args: string[];
   input?: string;
   outputFile?: string;
+  metadataFile?: string;
   environment?: NodeJS.ProcessEnv;
 }
 
@@ -24,6 +25,14 @@ interface CliResult {
   stderr?: unknown;
   exitCode?: number;
 }
+
+interface CliSubprocess extends PromiseLike<CliResult> {
+  kill?(signal?: NodeJS.Signals): boolean;
+  stdout?: { destroy(): void } | null;
+  stderr?: { destroy(): void } | null;
+}
+
+const HARD_TIMEOUT_GRACE_MS = 5_000;
 
 export abstract class BaseCliExecutor implements AgentExecutor {
   abstract readonly provider: Provider;
@@ -49,10 +58,24 @@ export abstract class BaseCliExecutor implements AgentExecutor {
   async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
     const startedAt = Date.now();
     const invocation = await this.invocation(request);
+    try {
+      return await this.executeInvocation(request, invocation, startedAt);
+    } finally {
+      if (invocation.metadataFile) {
+        await rm(invocation.metadataFile, { force: true });
+      }
+    }
+  }
+
+  private async executeInvocation(
+    request: AgentExecutionRequest,
+    invocation: CliInvocation,
+    startedAt: number,
+  ): Promise<AgentExecutionResult> {
     let result: CliResult;
 
     try {
-      result = await execa(invocation.command, invocation.args, {
+      const subprocess = execa(invocation.command, invocation.args, {
         cwd: request.cwd,
         timeout: request.timeoutMs,
         maxBuffer: this.maxOutputBytes,
@@ -62,7 +85,8 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         encoding: 'utf8',
         ...(invocation.input !== undefined ? { input: invocation.input } : {}),
         ...(invocation.environment ? { env: cleanEnvironment(invocation.environment) } : {}),
-      });
+      }) as unknown as CliSubprocess;
+      result = await waitForCliResult(subprocess, request.timeoutMs + HARD_TIMEOUT_GRACE_MS);
     } catch (error) {
       throw new ExecutionError(
         `${this.provider} CLI could not be executed: ${errorMessage(error)}`,
@@ -89,7 +113,10 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     const response = await this.responseText(invocation, stdout);
     const output = parseAgentArtifact(response);
     const usage = extractUsage(stdout);
-    const executedModel = extractExecutedModel(stdout);
+    const metadata = invocation.metadataFile
+      ? await readBoundedFile(invocation.metadataFile, this.maxOutputBytes)
+      : '';
+    const executedModel = extractExecutedModel(`${stdout}\n${stderr}\n${metadata}`);
 
     return {
       runId: request.runId,
@@ -128,6 +155,46 @@ export abstract class BaseCliExecutor implements AgentExecutor {
       };
     }
   }
+}
+
+async function readBoundedFile(path: string, maxBytes: number): Promise<string> {
+  try {
+    const file = await open(path, 'r');
+    try {
+      const buffer = Buffer.alloc(Math.max(1, maxBytes));
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      return buffer.subarray(0, bytesRead).toString('utf8');
+    } finally {
+      await file.close();
+    }
+  } catch {
+    return '';
+  }
+}
+
+function waitForCliResult(subprocess: CliSubprocess, hardTimeoutMs: number): Promise<CliResult> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(() => {
+      finish(() => {
+        subprocess.kill?.('SIGKILL');
+        subprocess.stdout?.destroy();
+        subprocess.stderr?.destroy();
+        reject(new Error(`CLI exceeded its ${String(hardTimeoutMs)}ms hard deadline.`));
+      });
+    }, hardTimeoutMs);
+
+    Promise.resolve(subprocess).then(
+      (result) => finish(() => resolve(result)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+  });
 }
 
 function outputText(value: unknown): string {

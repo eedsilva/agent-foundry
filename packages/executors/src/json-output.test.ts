@@ -21,10 +21,13 @@ describe('provider output fixtures', () => {
   it.each([
     'codex.success.stdout.jsonl',
     'codex.success.stderr.txt',
+    'codex.configured.stderr.txt',
     'claude.success.stdout.json',
+    'claude.stream.success.stdout.jsonl',
     'claude.success.stderr.txt',
     'agy.success.stdout.json',
     'agy.success.stderr.txt',
+    'agy.configured.stderr.txt',
     'codex.malformed.stdout.txt',
     'codex.malformed.stderr.txt',
     'agy.failed.stdout.json',
@@ -47,6 +50,7 @@ describe('parseAgentArtifact', () => {
   it.each([
     ['codex.success.stdout.jsonl', 'Codex fixture completed.'],
     ['claude.success.stdout.json', 'Claude fixture completed.'],
+    ['claude.stream.success.stdout.jsonl', 'Claude stream fixture completed.'],
     ['agy.success.stdout.json', 'AGY fixture completed.'],
   ])('parses the scrubbed provider fixture %s', (name, summary) => {
     expect(parseAgentArtifact(fixture(name)).summary).toBe(summary);
@@ -136,6 +140,15 @@ describe('extractUsage', () => {
       },
     ],
     ['agy.success.stdout.json', { inputTokens: 90, outputTokens: 30 }],
+    [
+      'claude.stream.success.stdout.jsonl',
+      {
+        inputTokens: 120,
+        outputTokens: 45,
+        cachedInputTokens: 70,
+        estimatedCostUsd: 0.018,
+      },
+    ],
   ])('extracts usage from the scrubbed provider fixture %s', (name, expected) => {
     expect(extractUsage(fixture(name))).toEqual(expected);
   });
@@ -144,8 +157,11 @@ describe('extractUsage', () => {
 describe('extractExecutedModel', () => {
   it.each([
     ['codex.success.stdout.jsonl', 'gpt-5.3-codex'],
+    ['codex.configured.stderr.txt', 'gpt-5.6-sol'],
     ['claude.success.stdout.json', 'claude-sonnet-4-20250514'],
     ['agy.success.stdout.json', 'gemini-2.5-pro'],
+    ['agy.configured.stderr.txt', 'Gemini 3.5 Flash (Medium)'],
+    ['claude.stream.success.stdout.jsonl', 'claude-sonnet-5'],
   ])('extracts the executed model from the scrubbed provider fixture %s', (name, expected) => {
     expect(extractExecutedModel(fixture(name))).toBe(expected);
   });
@@ -184,6 +200,56 @@ describe('extractExecutedModel', () => {
             'claude-opus-4-20250514': { outputTokens: 5 },
           },
         }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('uses one Claude system init model as the primary model despite auxiliary usage', () => {
+    expect(
+      extractExecutedModel(
+        [
+          JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-sonnet-5' }),
+          JSON.stringify({
+            type: 'result',
+            modelUsage: {
+              'claude-haiku-4-5-20251001': { inputTokens: 10 },
+              'claude-sonnet-5': { outputTokens: 5 },
+            },
+          }),
+        ].join('\n'),
+      ),
+    ).toBe('claude-sonnet-5');
+  });
+
+  it('returns no model when Claude system init events disagree', () => {
+    expect(
+      extractExecutedModel(
+        [
+          JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-sonnet-5' }),
+          JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-opus-4-6' }),
+        ].join('\n'),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('returns no model when Codex configured-session records disagree', () => {
+    expect(
+      extractExecutedModel(
+        [
+          'Configuring session: model=gpt-5.6-sol; provider=ModelProviderInfo',
+          'Configuring session: model=gpt-5.5-codex; provider=ModelProviderInfo',
+        ].join('\n'),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('returns no model when AGY backend-override metadata disagrees', () => {
+    expect(
+      extractExecutedModel(
+        [
+          'Propagating selected model override to backend: label="Gemini 3.5 Flash (Medium)"',
+          'Propagating selected model override to backend: label="Gemini 3.1 Pro (High)"',
+        ].join('\n'),
       ),
     ).toBeUndefined();
   });

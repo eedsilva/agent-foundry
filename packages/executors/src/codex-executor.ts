@@ -6,6 +6,13 @@ export class CodexCliExecutor extends BaseCliExecutor {
   readonly provider = 'codex' as const;
   protected readonly command = 'codex';
 
+  constructor(
+    maxOutputBytes: number,
+    private readonly reportConfiguredModel = false,
+  ) {
+    super(maxOutputBytes);
+  }
+
   protected async invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
     const runDir = join(request.cwd, '.orchestrator', 'runs', request.runId);
     const schemaPath = join(runDir, 'output.schema.json');
@@ -18,8 +25,6 @@ export class CodexCliExecutor extends BaseCliExecutor {
       'never',
       '--sandbox',
       request.mutatesWorkspace ? 'workspace-write' : 'read-only',
-      '--ask-for-approval',
-      'never',
       '--skip-git-repo-check',
       '--output-schema',
       schemaPath,
@@ -34,6 +39,9 @@ export class CodexCliExecutor extends BaseCliExecutor {
       args,
       input: request.prompt,
       outputFile,
+      ...(this.reportConfiguredModel
+        ? { environment: { RUST_LOG: 'codex_core::session::session=debug' } }
+        : {}),
     };
   }
 }

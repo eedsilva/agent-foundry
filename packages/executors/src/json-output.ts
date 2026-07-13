@@ -81,7 +81,35 @@ export function extractUsage(raw: string):
 }
 
 export function extractExecutedModel(raw: string): string | undefined {
+  const codexConfiguredModels = new Set(
+    [...raw.matchAll(/Configuring session:\s+model=([^;\r\n]+);\s+provider=ModelProviderInfo/g)]
+      .map((match) => match[1]?.trim())
+      .filter((model): model is string => Boolean(model)),
+  );
+  if (codexConfiguredModels.size === 1) return codexConfiguredModels.values().next().value;
+  if (codexConfiguredModels.size > 1) return undefined;
+
+  const agyBackendModels = new Set(
+    [...raw.matchAll(/Propagating selected model override to backend:\s+label="([^"\r\n]+)"/g)]
+      .map((match) => match[1]?.trim())
+      .filter((model): model is string => Boolean(model)),
+  );
+  if (agyBackendModels.size === 1) return agyBackendModels.values().next().value;
+  if (agyBackendModels.size > 1) return undefined;
+
   const documents = providerDocuments(raw);
+  const claudePrimaryModels = new Set<string>();
+  for (const document of documents) {
+    if (document === null || typeof document !== 'object' || Array.isArray(document)) continue;
+    const record = document as Record<string, unknown>;
+    if (record.type === 'system' && record.subtype === 'init') {
+      const model = stringFrom(record, ['model']);
+      if (model) claudePrimaryModels.add(model);
+    }
+  }
+  if (claudePrimaryModels.size === 1) return claudePrimaryModels.values().next().value;
+  if (claudePrimaryModels.size > 1) return undefined;
+
   const metadataRecords = documents.flatMap(providerMetadataRecords);
   const concreteModels = new Set<string>();
 
