@@ -22,6 +22,11 @@ const PROVIDERS = ['codex', 'claude', 'agy'] as const;
 const SCENARIOS = ['planning', 'greenfield', 'repair'] as const;
 const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
+const REQUIRED_VERIFICATION_NAMES: Readonly<Record<CanaryScenario, readonly string[]>> = {
+  planning: ['no-diff'],
+  greenfield: ['node-test', 'git-diff-check', 'allowed-files'],
+  repair: ['node-test', 'git-diff-check', 'allowed-files'],
+};
 
 export class CanaryOptInError extends Error {
   constructor() {
@@ -60,7 +65,7 @@ export async function runProviderCanaries(
 
   const rootDir = options.rootDir ?? process.cwd();
   const now = options.now ?? (() => new Date());
-  const models = options.models ?? modelsFromEnvironment(env);
+  const models = normalizeSelectedModels(options.models ?? modelsFromEnvironment(env));
   const dependencies =
     options.dependencies ?? createProductionProviderCanaryDependencies(rootDir, env);
   const loadedProbes = (await dependencies.loadProbes()).map((probe) =>
@@ -138,6 +143,11 @@ export async function freezeProviderCanaryReport(
   if (!report.runs.every((run) => run.executedModel)) {
     throw new Error('Provider canary freeze requires a known executed model for every run.');
   }
+  if (!report.runs.every(hasExactPassingVerification)) {
+    throw new Error(
+      'Provider canary freeze requires exact passing scenario-specific verification checks.',
+    );
+  }
 
   const actualMatrix = new Set(report.runs.map((run) => `${run.provider}:${run.scenario}`));
   const requiredMatrix = new Set(
@@ -158,9 +168,9 @@ export function modelsFromEnvironment(
   env: NodeJS.ProcessEnv,
 ): Record<ProviderCanaryProvider, string> {
   return {
-    codex: env.CODEX_CANARY_MODEL ?? env.CODEX_DEFAULT_MODEL ?? 'gpt-5.3-codex',
-    claude: env.CLAUDE_CANARY_MODEL ?? env.CLAUDE_BALANCED_MODEL ?? 'sonnet',
-    agy: env.AGY_CANARY_MODEL ?? env.AGY_DEFAULT_MODEL ?? 'pro',
+    codex: firstNonBlank(env.CODEX_CANARY_MODEL, env.CODEX_DEFAULT_MODEL) ?? 'gpt-5.3-codex',
+    claude: firstNonBlank(env.CLAUDE_CANARY_MODEL, env.CLAUDE_BALANCED_MODEL) ?? 'sonnet',
+    agy: firstNonBlank(env.AGY_CANARY_MODEL, env.AGY_DEFAULT_MODEL) ?? 'pro',
   };
 }
 
@@ -393,15 +403,44 @@ async function verifyScenario(
     ['--test'],
     'node --test failed.',
   );
-  const diffCheck = await commandVerification(
+  const diffCheck = await gitDiffCheckVerification(workspacePath);
+  const allowedFiles = await allowedFileVerification(workspacePath, scenario);
+  return [nodeTest, diffCheck, allowedFiles];
+}
+
+async function gitDiffCheckVerification(workspacePath: string): Promise<CanaryVerificationResult> {
+  try {
+    const intentToAdd = await execa('git', ['add', '--intent-to-add', '--all'], {
+      cwd: workspacePath,
+      reject: false,
+      encoding: 'utf8',
+    });
+    if (intentToAdd.exitCode !== 0) {
+      return {
+        name: 'git-diff-check',
+        passed: false,
+        exitCode: intentToAdd.exitCode ?? 1,
+        durationMs: 0,
+        message: 'git diff --check failed.',
+      };
+    }
+  } catch {
+    return {
+      name: 'git-diff-check',
+      passed: false,
+      exitCode: 1,
+      durationMs: 0,
+      message: 'git diff --check failed.',
+    };
+  }
+
+  return commandVerification(
     'git-diff-check',
     workspacePath,
     'git',
     ['diff', '--check'],
     'git diff --check failed.',
   );
-  const allowedFiles = await allowedFileVerification(workspacePath, scenario);
-  return [nodeTest, diffCheck, allowedFiles];
 }
 
 async function commandVerification(
@@ -505,4 +544,33 @@ function missingProbe(provider: ProviderCanaryProvider): ProviderProbe {
     capabilities: { nonInteractive: false, modelSelection: false, sandbox: false },
     message: `${provider} did not return a readiness probe.`,
   };
+}
+
+function normalizeSelectedModels(
+  models: Record<ProviderCanaryProvider, string>,
+): Record<ProviderCanaryProvider, string> {
+  return Object.fromEntries(
+    PROVIDERS.map((provider) => {
+      const model = models[provider].trim();
+      if (!model) throw new Error(`${provider} requires a non-blank model selection.`);
+      return [provider, model];
+    }),
+  ) as Record<ProviderCanaryProvider, string>;
+}
+
+function firstNonBlank(...values: Array<string | undefined>): string | undefined {
+  return values.map((value) => value?.trim()).find((value): value is string => Boolean(value));
+}
+
+function hasExactPassingVerification(run: ProviderCanaryRun): boolean {
+  const required = REQUIRED_VERIFICATION_NAMES[run.scenario];
+  if (run.verification.length !== required.length) return false;
+  const byName = new Map(run.verification.map((check) => [check.name, check]));
+  return (
+    byName.size === required.length &&
+    required.every((name) => {
+      const check = byName.get(name);
+      return check?.passed === true && (check.exitCode === undefined || check.exitCode === 0);
+    })
+  );
 }

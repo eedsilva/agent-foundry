@@ -11,6 +11,7 @@ import {
 import {
   CanaryOptInError,
   freezeProviderCanaryReport,
+  modelsFromEnvironment,
   runProviderCanaries,
   type ProviderCanaryDependencies,
 } from './provider-canary.js';
@@ -37,6 +38,44 @@ describe('provider canary runner', () => {
     ).rejects.toBeInstanceOf(CanaryOptInError);
     expect(probed).toBe(false);
     expect(invoked).toBe(false);
+  });
+
+  it('rejects an explicitly blank selected model before probing or invoking providers', async () => {
+    let probed = false;
+    let invoked = false;
+    const dependencies: ProviderCanaryDependencies = {
+      async loadProbes() {
+        probed = true;
+        return readyProbes();
+      },
+      async execute(_provider, request) {
+        invoked = true;
+        return successfulResult(request);
+      },
+    };
+
+    await expect(
+      runProviderCanaries({
+        env: optedInEnvironment(),
+        dependencies,
+        models: { ...selectedModels(), codex: '   ' },
+      }),
+    ).rejects.toThrow(/non-blank model/i);
+    expect(probed).toBe(false);
+    expect(invoked).toBe(false);
+  });
+
+  it('falls back from blank model environment values to explicit non-blank selections', () => {
+    expect(
+      modelsFromEnvironment({
+        CODEX_CANARY_MODEL: '   ',
+        CODEX_DEFAULT_MODEL: '\t',
+        CLAUDE_CANARY_MODEL: '',
+        CLAUDE_BALANCED_MODEL: '  ',
+        AGY_CANARY_MODEL: '\n',
+        AGY_DEFAULT_MODEL: '',
+      }),
+    ).toEqual({ codex: 'gpt-5.3-codex', claude: 'sonnet', agy: 'pro' });
   });
 
   it('records an explicit skipped run for every scenario of an unavailable provider', async () => {
@@ -172,6 +211,31 @@ describe('provider canary runner', () => {
         passed: false,
         message: 'Workspace changes did not match the scenario allowlist.',
       }),
+    );
+  });
+
+  it('fails greenfield directly through git diff --check on trailing whitespace', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        if (request.stepId.endsWith('greenfield')) {
+          await writeFile(
+            join(request.cwd, 'src', 'greeting.js'),
+            'export function greeting(name) { return `Hello, ${name}!`; }  \n',
+          );
+        }
+        return successfulResult(request);
+      }),
+    });
+
+    const greenfield = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'greenfield',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(greenfield?.verification).toContainEqual(
+      expect.objectContaining({ name: 'git-diff-check', passed: false }),
     );
   });
 
@@ -311,6 +375,57 @@ describe('provider canary freeze', () => {
         target,
       ),
     ).rejects.toThrow(/executed model/i);
+  });
+
+  it('refuses reports without exact passing scenario-specific verification checks', async () => {
+    const outcome = await successfulOutcome();
+    const target = join(process.cwd(), '.data', 'provider-canaries', 'freeze-test.json');
+    const replaceVerification = (
+      scenario: 'planning' | 'greenfield' | 'repair',
+      verification: (typeof outcome.report.runs)[number]['verification'],
+    ) => ({
+      ...outcome.report,
+      runs: outcome.report.runs.map((run) =>
+        run.provider === 'codex' && run.scenario === scenario ? { ...run, verification } : run,
+      ),
+    });
+
+    await expect(
+      freezeProviderCanaryReport(replaceVerification('planning', []), target),
+    ).rejects.toThrow(/verification/i);
+    await expect(
+      freezeProviderCanaryReport(
+        replaceVerification('planning', [
+          outcome.report.runs.find((run) => run.scenario === 'planning')!.verification[0]!,
+          { name: 'node-test', passed: true, exitCode: 0, durationMs: 1 },
+        ]),
+        target,
+      ),
+    ).rejects.toThrow(/verification/i);
+    await expect(
+      freezeProviderCanaryReport(
+        replaceVerification(
+          'greenfield',
+          outcome.report.runs
+            .find((run) => run.scenario === 'greenfield')!
+            .verification.filter((check) => check.name !== 'allowed-files'),
+        ),
+        target,
+      ),
+    ).rejects.toThrow(/verification/i);
+    await expect(
+      freezeProviderCanaryReport(
+        replaceVerification(
+          'repair',
+          outcome.report.runs
+            .find((run) => run.scenario === 'repair')!
+            .verification.map((check) =>
+              check.name === 'git-diff-check' ? { ...check, passed: false } : check,
+            ),
+        ),
+        target,
+      ),
+    ).rejects.toThrow(/verification/i);
   });
 
   it('freezes a strict complete nine-run matrix', async () => {
