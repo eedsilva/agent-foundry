@@ -36,9 +36,11 @@ const probes = [
       sandbox: ['--sandbox'],
     },
     authenticationStatus(result) {
-      const output = combinedOutput(result);
-      if (/not logged in/i.test(output)) return false;
-      if (result.status === 0 && /logged in/i.test(output)) return true;
+      const output = combinedOutput(result).trim();
+      if (/^Not logged in\.?$/i.test(output)) return false;
+      if (result.status === 0 && /^Logged in(?: using (?:ChatGPT|an API key))?\.?$/i.test(output)) {
+        return true;
+      }
       return null;
     },
   }),
@@ -77,9 +79,11 @@ const probes = [
       sandbox: ['--sandbox', '--mode'],
     },
     authenticationStatus(result) {
-      const output = combinedOutput(result);
-      if (/\b(?:not authenticated|authentication required)\b/i.test(output)) return false;
-      if (result.status === 0 && /\([^()\s]+\)\s*$/m.test(output)) return true;
+      const output = combinedOutput(result).trim();
+      if (/^(?:Not authenticated|Authentication required)(?:: [^\r\n]+)?\.?$/i.test(output)) {
+        return false;
+      }
+      if (result.status === 0 && isAgyModelList(output)) return true;
       return null;
     },
   }),
@@ -190,6 +194,16 @@ function probeResult(definition, result) {
 
 function emptyCapabilities() {
   return { nonInteractive: false, modelSelection: false, sandbox: false };
+}
+
+function isAgyModelList(output) {
+  const lines = output.split(/\r?\n/).map((line) => line.trim());
+  return (
+    lines.length > 0 &&
+    lines.every((line) =>
+      /^(?=[^()]*\d)[0-9A-Za-z][0-9A-Za-z ._+:/-]* \([0-9A-Za-z][0-9A-Za-z._-]*\)$/.test(line),
+    )
+  );
 }
 
 function run(command, args) {

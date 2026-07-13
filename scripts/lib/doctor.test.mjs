@@ -193,6 +193,20 @@ test('fails closed on successful but malformed authentication responses', async 
   assert.doesNotMatch(result.stdout + result.stderr, /codex-secret-user|claude-secret@test/);
 });
 
+test('rejects deceptive successful Codex and AGY authentication near-matches', async (t) => {
+  const providers = structuredClone(readyFixtures);
+  providers.codex.auth = { stdout: 'Unable to determine whether user is logged in\n' };
+  providers.agy.auth = { stdout: 'Provider unavailable (offline)\n' };
+  const fixture = await createFixture(t, providers);
+  const result = runDoctor(fixture, ['--json']);
+
+  assert.equal(result.status, 1);
+  const probes = JSON.parse(result.stdout).probes;
+  assert.equal(probes.find(({ provider }) => provider === 'codex').status, 'incompatible');
+  assert.equal(probes.find(({ provider }) => provider === 'agy').status, 'incompatible');
+  assert.doesNotMatch(result.stdout + result.stderr, /Unable to determine|Provider unavailable/);
+});
+
 test('classifies unrecognized nonzero authentication failures as incompatible', async (t) => {
   const providers = structuredClone(readyFixtures);
   providers.codex.auth = { status: 2, stderr: 'unknown subcommand for codex-private-user\n' };
