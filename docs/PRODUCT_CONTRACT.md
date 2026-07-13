@@ -82,6 +82,8 @@ Every generated project is an ordinary local Git repository and can be opened in
 
 - The next personal release adds Linux control-plane support, a built-in browser code editor and existing-repository workflows.
 - A later personal release adds Windows control-plane support.
+- Deepen the coding harness with per-task-kind implementation guidance and per-provider authorship rules, driven by evidence observed in real runs (canaries, dogfooding and v0.9 routing signals), not written speculatively.
+- Add open-source model executors through the existing provider port and model catalog, competing on measured routing evidence.
 
 ## Hosted Platform v2
 
