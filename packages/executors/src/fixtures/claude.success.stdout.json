@@ -1,0 +1,10 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "{\"schemaVersion\":\"1\",\"status\":\"completed\",\"summary\":\"Claude fixture completed.\",\"data\":{},\"decisions\":[],\"assumptions\":[],\"risks\":[],\"nextActions\":[]}",
+  "session_id": "session_scrubbed",
+  "total_cost_usd": 0.018,
+  "usage": { "input_tokens": 120, "cache_read_input_tokens": 70, "output_tokens": 45 },
+  "modelUsage": { "claude-sonnet-4-20250514": { "inputTokens": 120, "outputTokens": 45 } }
+}

@@ -8,6 +8,11 @@ export function parseAgentArtifact(raw: string): AgentArtifact {
   const direct = tryParse(cleaned);
   if (direct !== null) candidates.push(direct);
 
+  for (const line of cleaned.split(/\r?\n/)) {
+    const parsed = tryParse(line.trim());
+    if (parsed !== null) candidates.push(parsed);
+  }
+
   for (const block of extractCodeBlocks(cleaned)) {
     const parsed = tryParse(block);
     if (parsed !== null) candidates.push(parsed);
@@ -75,6 +80,45 @@ export function extractUsage(raw: string):
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
+export function extractExecutedModel(raw: string): string | undefined {
+  const documents = providerDocuments(raw);
+
+  // Claude reports concrete model IDs as keys in modelUsage. Prefer that over a
+  // top-level alias if both are present.
+  for (const document of documents) {
+    for (const record of walkRecords(document)) {
+      const modelUsage = record.modelUsage ?? record.model_usage;
+      if (modelUsage !== null && typeof modelUsage === 'object' && !Array.isArray(modelUsage)) {
+        const models = Object.keys(modelUsage).filter((model) => model.trim().length > 0);
+        if (models.length === 1) return models[0]?.trim();
+      }
+    }
+  }
+
+  const explicitModels = new Set<string>();
+  const directModels = new Set<string>();
+  for (const document of documents) {
+    for (const record of walkRecords(document)) {
+      const explicit = stringFrom(record, [
+        'executed_model',
+        'executedModel',
+        'model_name',
+        'modelName',
+        'model_id',
+        'modelId',
+      ]);
+      if (explicit !== undefined) explicitModels.add(explicit);
+
+      const direct = stringFrom(record, ['model']);
+      if (direct !== undefined && isProviderMetadataRecord(record)) directModels.add(direct);
+    }
+  }
+
+  if (explicitModels.size === 1) return explicitModels.values().next().value;
+  if (explicitModels.size > 1) return undefined;
+  return directModels.size === 1 ? directModels.values().next().value : undefined;
+}
+
 interface UsageAccumulator {
   inputTokens?: number;
   outputTokens?: number;
@@ -136,30 +180,50 @@ function* walkRecords(value: unknown, depth = 0): Generator<Record<string, unkno
   }
 }
 
-function unwrapCandidate(candidate: unknown): unknown[] {
-  if (typeof candidate !== 'object' || candidate === null) return [candidate];
-  const object = candidate as Record<string, unknown>;
-  const values: unknown[] = [candidate];
+function* unwrapCandidate(candidate: unknown, depth = 0): Generator<unknown> {
+  if (depth > 8) return;
+  yield candidate;
 
-  for (const key of [
-    'structured_output',
-    'structuredOutput',
-    'output',
-    'response',
-    'result',
-    'message',
-  ]) {
-    const value = object[key];
-    if (value !== undefined) {
-      values.push(value);
-      if (typeof value === 'string') {
-        const parsed = tryParse(value.trim());
-        if (parsed !== null) values.push(parsed);
-        values.push(...extractJsonObjects(value));
-      }
-    }
+  if (typeof candidate === 'string') {
+    const parsed = tryParse(candidate.trim());
+    if (parsed !== null) yield* unwrapCandidate(parsed, depth + 1);
+    return;
   }
-  return values;
+  if (candidate === null || typeof candidate !== 'object') return;
+  if (Array.isArray(candidate)) {
+    for (const item of candidate.slice(0, 1_000)) yield* unwrapCandidate(item, depth + 1);
+    return;
+  }
+
+  for (const value of Object.values(candidate).slice(0, 1_000)) {
+    yield* unwrapCandidate(value, depth + 1);
+  }
+}
+
+function providerDocuments(raw: string): unknown[] {
+  const cleaned = stripAnsi(raw).trim();
+  if (!cleaned) return [];
+
+  const documents: unknown[] = [];
+  const whole = tryParse(cleaned);
+  if (whole !== null) documents.push(whole);
+  for (const line of cleaned.split(/\r?\n/)) {
+    const parsed = tryParse(line.trim());
+    if (parsed !== null) documents.push(parsed);
+  }
+  if (documents.length === 0) documents.push(...extractJsonObjects(cleaned));
+  return documents;
+}
+
+function isProviderMetadataRecord(record: Record<string, unknown>): boolean {
+  return (
+    typeof record.type === 'string' ||
+    typeof record.event === 'string' ||
+    typeof record.provider === 'string' ||
+    record.usage !== undefined ||
+    record.modelUsage !== undefined ||
+    record.model_usage !== undefined
+  );
 }
 
 function tryParse(value: string): unknown | null {
@@ -203,6 +267,14 @@ function numberFrom(record: Record<string, unknown>, keys: string[]): number | u
       const parsed = Number(value);
       if (Number.isFinite(parsed) && parsed >= 0) return parsed;
     }
+  }
+  return undefined;
+}
+
+function stringFrom(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return undefined;
 }

@@ -9,7 +9,7 @@ import type {
 } from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
 import { ExecutionError, errorMessage } from '@agent-foundry/domain';
-import { extractUsage, parseAgentArtifact } from './json-output.js';
+import { extractExecutedModel, extractUsage, parseAgentArtifact } from './json-output.js';
 
 export interface CliInvocation {
   command: string;
@@ -89,6 +89,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     const response = await this.responseText(invocation, stdout);
     const output = parseAgentArtifact(response);
     const usage = extractUsage(stdout);
+    const executedModel = extractExecutedModel(stdout);
 
     return {
       runId: request.runId,
@@ -99,6 +100,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
       stdout,
       stderr,
       output,
+      ...(executedModel ? { executedModel } : {}),
       ...(usage ? { usage } : {}),
     };
   }

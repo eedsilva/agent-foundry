@@ -83,6 +83,7 @@ export const AgentExecutionResultSchema = z.object({
   runId: z.string(),
   provider: ProviderSchema,
   model: z.string(),
+  executedModel: z.string().min(1).optional(),
   exitCode: z.number().int(),
   durationMs: z.number().nonnegative(),
   stdout: z.string(),

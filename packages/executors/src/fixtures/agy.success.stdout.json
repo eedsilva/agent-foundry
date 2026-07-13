@@ -1,0 +1,15 @@
+{
+  "type": "result",
+  "model": "gemini-2.5-pro",
+  "output": {
+    "schemaVersion": "1",
+    "status": "completed",
+    "summary": "AGY fixture completed.",
+    "data": {},
+    "decisions": [],
+    "assumptions": [],
+    "risks": [],
+    "nextActions": []
+  },
+  "usage": { "prompt_tokens": 90, "completion_tokens": 30 }
+}
