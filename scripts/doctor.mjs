@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 const root = process.cwd();
 const env = { ...readDotEnv(resolve(root, '.env')), ...process.env };
@@ -9,9 +9,19 @@ const realMode = executorMode === 'real';
 const checks = [
   commandCheck('node', ['--version'], true, { minimumVersion: '22.0.0' }),
   commandCheck('git', ['--version'], true),
-  fileCheck('harness manifest', resolve(root, env.HARNESS_DIR ?? 'harness', 'manifest.json'), true),
-  fileCheck('workflow directory', resolve(root, env.WORKFLOWS_DIR ?? 'workflows'), true),
-  fileCheck('model catalog', resolve(root, env.MODEL_CATALOG_PATH ?? 'models/catalog.yaml'), true),
+  fileCheck(
+    'harness manifest',
+    resolve(root, env.HARNESS_DIR ?? 'harness', 'manifest.json'),
+    true,
+    root,
+  ),
+  fileCheck('workflow directory', resolve(root, env.WORKFLOWS_DIR ?? 'workflows'), true, root),
+  fileCheck(
+    'model catalog',
+    resolve(root, env.MODEL_CATALOG_PATH ?? 'models/catalog.yaml'),
+    true,
+    root,
+  ),
 ];
 const probes = [
   providerProbe({
@@ -25,9 +35,10 @@ const probes = [
       modelSelection: ['--model'],
       sandbox: ['--sandbox'],
     },
-    authenticationStatus(output) {
+    authenticationStatus(result) {
+      const output = combinedOutput(result);
       if (/not logged in/i.test(output)) return false;
-      if (/logged in/i.test(output)) return true;
+      if (result.status === 0 && /logged in/i.test(output)) return true;
       return null;
     },
   }),
@@ -42,10 +53,12 @@ const probes = [
       modelSelection: ['--model'],
       sandbox: ['--permission-mode'],
     },
-    authenticationStatus(output) {
+    authenticationStatus(result) {
       try {
-        const { loggedIn } = JSON.parse(output);
-        return typeof loggedIn === 'boolean' ? loggedIn : null;
+        const { loggedIn } = JSON.parse(result.stdout ?? '');
+        if (loggedIn === false) return false;
+        if (loggedIn === true && result.status === 0) return true;
+        return null;
       } catch {
         return null;
       }
@@ -63,8 +76,11 @@ const probes = [
       modelSelection: ['--model'],
       sandbox: ['--sandbox', '--mode'],
     },
-    authenticationStatus(output) {
-      return /\([^()\s]+\)\s*$/m.test(output) ? true : null;
+    authenticationStatus(result) {
+      const output = combinedOutput(result);
+      if (/\b(?:not authenticated|authentication required)\b/i.test(output)) return false;
+      if (result.status === 0 && /\([^()\s]+\)\s*$/m.test(output)) return true;
+      return null;
     },
   }),
 ];
@@ -73,7 +89,7 @@ const providerFailures = realMode ? probes.filter((probe) => probe.status !== 'r
 const failures = [...checks.filter((check) => check.required && !check.ok), ...providerFailures];
 
 if (process.argv.slice(2).includes('--json')) {
-  console.log(JSON.stringify({ executorMode, checks, probes }, null, 2));
+  console.log(JSON.stringify({ executorMode, checks: jsonChecks(checks), probes }, null, 2));
 } else {
   console.log(`Agent Foundry doctor · executor mode: ${executorMode}\n`);
   for (const check of checks) {
@@ -110,10 +126,11 @@ function providerProbe(definition) {
   const version = extractVersion(combinedOutput(versionResult));
   const helpResult = run(definition.provider, definition.helpArgs);
   const help = combinedOutput(helpResult);
+  const optionTokens = new Set(help.match(/--[0-9A-Za-z][0-9A-Za-z-]*/g) ?? []);
   const capabilities = Object.fromEntries(
     Object.entries(definition.flags).map(([capability, flags]) => [
       capability,
-      helpResult.status === 0 && flags.every((flag) => help.includes(flag)),
+      helpResult.status === 0 && flags.every((flag) => optionTokens.has(flag)),
     ]),
   );
   if (!version) {
@@ -141,8 +158,7 @@ function providerProbe(definition) {
   }
 
   const authResult = run(definition.provider, definition.authArgs);
-  const authenticationStatus =
-    authResult.status === 0 ? definition.authenticationStatus(combinedOutput(authResult)) : false;
+  const authenticationStatus = definition.authenticationStatus(authResult);
   if (authenticationStatus === false) {
     return probeResult(definition, {
       status: 'unauthenticated',
@@ -226,19 +242,65 @@ function extractVersion(output) {
 }
 
 function compareVersions(left, right) {
-  const normalize = (value) => value.split(/[+-]/, 1)[0].split('.').map(Number);
-  const a = normalize(left);
-  const b = normalize(right);
-  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
-    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+  const a = parseVersion(left);
+  const b = parseVersion(right);
+  for (let index = 0; index < Math.max(a.core.length, b.core.length); index += 1) {
+    const difference = (a.core[index] ?? 0) - (b.core[index] ?? 0);
     if (difference !== 0) return difference;
+  }
+
+  if (a.prerelease.length === 0 && b.prerelease.length === 0) return 0;
+  if (a.prerelease.length === 0) return 1;
+  if (b.prerelease.length === 0) return -1;
+  for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
+    const leftIdentifier = a.prerelease[index];
+    const rightIdentifier = b.prerelease[index];
+    if (leftIdentifier === undefined) return -1;
+    if (rightIdentifier === undefined) return 1;
+    if (leftIdentifier === rightIdentifier) continue;
+    const leftNumeric = /^\d+$/.test(leftIdentifier);
+    const rightNumeric = /^\d+$/.test(rightIdentifier);
+    if (leftNumeric && rightNumeric) return Number(leftIdentifier) - Number(rightIdentifier);
+    if (leftNumeric) return -1;
+    if (rightNumeric) return 1;
+    return leftIdentifier.localeCompare(rightIdentifier);
   }
   return 0;
 }
 
-function fileCheck(name, path, required) {
+function parseVersion(value) {
+  const withoutBuild = value.split('+', 1)[0];
+  const separator = withoutBuild.indexOf('-');
+  const core = separator === -1 ? withoutBuild : withoutBuild.slice(0, separator);
+  const prerelease = separator === -1 ? [] : withoutBuild.slice(separator + 1).split('.');
+  return { core: core.split('.').map(Number), prerelease };
+}
+
+function fileCheck(name, path, required, workspaceRoot) {
   const ok = existsSync(path);
-  return { name, ok, required, message: ok ? path : `missing: ${path}` };
+  const safePath = relativeCheckPath(workspaceRoot, path);
+  return {
+    name,
+    ok,
+    required,
+    message: ok ? path : `missing: ${path}`,
+    jsonMessage: ok ? safePath : `missing: ${safePath}`,
+  };
+}
+
+function relativeCheckPath(workspaceRoot, path) {
+  const relativePath = relative(workspaceRoot, path);
+  if (isAbsolute(relativePath) || relativePath === '..' || relativePath.startsWith(`..${sep}`)) {
+    return '[outside workspace]';
+  }
+  return relativePath || '.';
+}
+
+function jsonChecks(input) {
+  return input.map(({ jsonMessage, ...check }) => ({
+    ...check,
+    message: jsonMessage ?? check.message,
+  }));
 }
 
 function readDotEnv(path) {

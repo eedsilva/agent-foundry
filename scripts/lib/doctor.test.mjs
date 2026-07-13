@@ -51,6 +51,12 @@ test('prints ready provider probes as contract-shaped JSON without raw authentic
     'version',
   ]);
   assert.doesNotMatch(result.stdout, /private@example\.test|private-org|Logged in using ChatGPT/);
+  assert.deepEqual(
+    output.checks.slice(2).map(({ message }) => message),
+    ['harness/manifest.json', 'workflows', 'models/catalog.yaml'],
+  );
+  assert.equal(result.stdout.includes(fixture.root), false);
+  assert.doesNotMatch(result.stdout, /private-user/);
 });
 
 test('classifies missing provider CLIs as unavailable', async (t) => {
@@ -77,7 +83,7 @@ test('classifies providers with absent sessions as unauthenticated', async (t) =
   const providers = structuredClone(readyFixtures);
   providers.codex.auth = { stderr: 'Not logged in\n' };
   providers.claude.auth = { stdout: JSON.stringify({ loggedIn: false, email: 'secret@test' }) };
-  providers.agy.auth = { status: 1, stderr: 'authenticate private-user first\n' };
+  providers.agy.auth = { status: 1, stderr: 'Not authenticated: private-user\n' };
   const fixture = await createFixture(t, providers);
   const result = runDoctor(fixture, ['--json']);
 
@@ -120,6 +126,31 @@ test('reports individual incompatible capabilities when required flags disappear
   });
 });
 
+test('requires exact help option tokens instead of accepting longer prefix collisions', async (t) => {
+  const providers = structuredClone(readyFixtures);
+  providers.codex.help.stdout = '--json-lines --model-directory --sandbox-policy\n';
+  providers.claude.help.stdout =
+    '--print-timeout --output-formatting --model-directory --permission-mode-name\n';
+  providers.agy.help.stderr = '--print-timeout --model-directory --sandbox-policy --mode-name\n';
+  const fixture = await createFixture(t, providers);
+  const result = runDoctor(fixture, ['--json']);
+
+  assert.equal(result.status, 1);
+  const { probes } = JSON.parse(result.stdout);
+  assert.deepEqual(
+    probes.map(({ status }) => status),
+    ['incompatible', 'incompatible', 'incompatible'],
+  );
+  assert.deepEqual(
+    probes.map(({ capabilities }) => capabilities),
+    ['codex', 'claude', 'agy'].map(() => ({
+      nonInteractive: false,
+      modelSelection: false,
+      sandbox: false,
+    })),
+  );
+});
+
 test('rejects AGY versions older than 1.1.1', async (t) => {
   const providers = structuredClone(readyFixtures);
   providers.agy.version.stdout = 'agy version 1.1.0\n';
@@ -131,6 +162,19 @@ test('rejects AGY versions older than 1.1.1', async (t) => {
   assert.equal(probe.status, 'incompatible');
   assert.equal(probe.version, '1.1.0');
   assert.equal(probe.message, 'AGY 1.1.0 is too old; 1.1.1+ is required.');
+});
+
+test('rejects an AGY prerelease at the stable 1.1.1 boundary', async (t) => {
+  const providers = structuredClone(readyFixtures);
+  providers.agy.version.stdout = 'agy version 1.1.1-beta.1\n';
+  const fixture = await createFixture(t, providers);
+  const result = runDoctor(fixture, ['--json']);
+
+  assert.equal(result.status, 1);
+  const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'agy');
+  assert.equal(probe.status, 'incompatible');
+  assert.equal(probe.version, '1.1.1-beta.1');
+  assert.equal(probe.message, 'AGY 1.1.1-beta.1 is too old; 1.1.1+ is required.');
 });
 
 test('fails closed on successful but malformed authentication responses', async (t) => {
@@ -149,6 +193,46 @@ test('fails closed on successful but malformed authentication responses', async 
   assert.doesNotMatch(result.stdout + result.stderr, /codex-secret-user|claude-secret@test/);
 });
 
+test('classifies unrecognized nonzero authentication failures as incompatible', async (t) => {
+  const providers = structuredClone(readyFixtures);
+  providers.codex.auth = { status: 2, stderr: 'unknown subcommand for codex-private-user\n' };
+  providers.claude.auth = { status: 2, stderr: 'unknown subcommand for claude-private-user\n' };
+  providers.agy.auth = { status: 2, stderr: 'unknown subcommand for agy-private-user\n' };
+  const fixture = await createFixture(t, providers);
+  const result = runDoctor(fixture, ['--json']);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(
+    JSON.parse(result.stdout).probes.map(({ status }) => status),
+    ['incompatible', 'incompatible', 'incompatible'],
+  );
+  assert.doesNotMatch(result.stdout + result.stderr, /private-user|unknown subcommand/);
+});
+
+test('classifies signaled authentication probe crashes as incompatible', async (t) => {
+  const providers = structuredClone(readyFixtures);
+  providers.claude.auth = { signal: 'SIGTERM' };
+  const fixture = await createFixture(t, providers);
+  const result = runDoctor(fixture, ['--json']);
+
+  assert.equal(result.status, 1);
+  const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'claude');
+  assert.equal(probe.status, 'incompatible');
+  assert.equal(probe.message, 'Claude returned an unrecognized authentication response.');
+});
+
+test('classifies timed-out authentication probes as incompatible', async (t) => {
+  const providers = structuredClone(readyFixtures);
+  providers.codex.auth = { hang: true };
+  const fixture = await createFixture(t, providers);
+  const result = runDoctor(fixture, ['--json']);
+
+  assert.equal(result.status, 1);
+  const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'codex');
+  assert.equal(probe.status, 'incompatible');
+  assert.equal(probe.message, 'Codex returned an unrecognized authentication response.');
+});
+
 test('keeps human mock mode non-provider checks and makes missing providers optional', async (t) => {
   const fixture = await createFixture(t, {});
   const result = runDoctor(fixture, [], { EXECUTOR_MODE: 'mock' });
@@ -160,8 +244,24 @@ test('keeps human mock mode non-provider checks and makes missing providers opti
   assert.match(result.stdout, /✓ harness manifest/);
   assert.match(result.stdout, /✓ workflow directory/);
   assert.match(result.stdout, /✓ model catalog/);
+  assert.match(result.stdout, new RegExp(escapeRegExp(fixture.root)));
   assert.match(result.stdout, /· codex\s+Codex CLI is unavailable\./);
   assert.match(result.stdout, /Environment is ready\./);
+});
+
+test('redacts existing and missing filesystem paths from JSON checks', async (t) => {
+  const fixture = await createFixture(t, readyFixtures);
+  await rm(join(fixture.root, 'models', 'catalog.yaml'));
+  const result = runDoctor(fixture, ['--json']);
+
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(
+    output.checks.slice(2).map(({ message }) => message),
+    ['harness/manifest.json', 'workflows', 'missing: models/catalog.yaml'],
+  );
+  assert.equal(result.stdout.includes(fixture.root), false);
+  assert.doesNotMatch(result.stdout, /private-user/);
 });
 
 test('prints sanitized human provider status without auth payloads or identities', async (t) => {
@@ -206,7 +306,7 @@ function readyProbe(provider, version, message) {
 }
 
 async function createFixture(t, providers) {
-  const root = await mkdtemp(join(tmpdir(), 'agent-foundry-doctor-'));
+  const root = await mkdtemp(join(tmpdir(), 'agent-foundry-doctor-private-user-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const bin = join(root, 'bin');
   await mkdir(bin);
@@ -237,7 +337,11 @@ else process.exit(97);
 const response = fixture?.[command] ?? { status: 1 };
 if (response.stdout) process.stdout.write(response.stdout);
 if (response.stderr) process.stderr.write(response.stderr);
-process.exit(response.status ?? 0);
+if (response.signal) {
+  process.kill(process.pid, response.signal);
+  setInterval(() => {}, 1_000);
+} else if (response.hang) setInterval(() => {}, 1_000);
+else process.exit(response.status ?? 0);
 `;
   for (const provider of Object.keys(providers)) {
     const path = join(bin, provider);
@@ -260,4 +364,8 @@ function runDoctor(fixture, args = [], extraEnv = {}) {
       ...extraEnv,
     },
   });
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
