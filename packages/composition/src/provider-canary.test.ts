@@ -1,0 +1,412 @@
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import {
+  ProviderCanaryReportSchema,
+  type AgentExecutionRequest,
+  type AgentExecutionResult,
+  type ProviderCanaryProvider,
+  type ProviderProbe,
+} from '@agent-foundry/contracts';
+import {
+  CanaryOptInError,
+  freezeProviderCanaryReport,
+  runProviderCanaries,
+  type ProviderCanaryDependencies,
+} from './provider-canary.js';
+
+const providers = ['codex', 'claude', 'agy'] as const;
+
+describe('provider canary runner', () => {
+  it('refuses before probing or invoking a provider without the explicit opt-in', async () => {
+    let probed = false;
+    let invoked = false;
+    const dependencies: ProviderCanaryDependencies = {
+      async loadProbes() {
+        probed = true;
+        return readyProbes();
+      },
+      async execute(_provider, request) {
+        invoked = true;
+        return successfulResult(request);
+      },
+    };
+
+    await expect(
+      runProviderCanaries({ env: {}, dependencies, models: selectedModels() }),
+    ).rejects.toBeInstanceOf(CanaryOptInError);
+    expect(probed).toBe(false);
+    expect(invoked).toBe(false);
+  });
+
+  it('records an explicit skipped run for every scenario of an unavailable provider', async () => {
+    let invoked = false;
+    const unavailable = readyProbes().map((probe) => ({
+      ...probe,
+      status: 'unavailable' as const,
+      message: `${probe.provider} CLI is unavailable.`,
+    }));
+
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: {
+        async loadProbes() {
+          return unavailable;
+        },
+        async execute(_provider, request) {
+          invoked = true;
+          return successfulResult(request);
+        },
+      },
+    });
+
+    expect(invoked).toBe(false);
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.report.runs).toHaveLength(9);
+    expect(outcome.report.runs.every((run) => run.status === 'skipped')).toBe(true);
+    expect(outcome.report.runs.every((run) => run.skipReason?.includes('unavailable'))).toBe(true);
+  });
+
+  it('runs the nine provider/scenario pairs serially in isolated temporary repositories', async () => {
+    const workspaces: string[] = [];
+    let active = 0;
+    let maximumActive = 0;
+    const dependencies = fakeDependencies(async (_provider, request) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      workspaces.push(request.cwd);
+      await applySuccessfulMutation(request);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      active -= 1;
+      return successfulResult(request);
+    });
+
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies,
+    });
+
+    expect(outcome.exitCode).toBe(0);
+    expect(outcome.report.runs).toHaveLength(9);
+    expect(outcome.report.runs.every((run) => run.status === 'passed')).toBe(true);
+    expect(maximumActive).toBe(1);
+    expect(new Set(workspaces).size).toBe(9);
+    expect(outcome.report.runs.map(({ provider, scenario }) => `${provider}:${scenario}`)).toEqual(
+      providers.flatMap((provider) =>
+        ['planning', 'greenfield', 'repair'].map((scenario) => `${provider}:${scenario}`),
+      ),
+    );
+    await expectAllRemoved(workspaces);
+  });
+
+  it('fails planning when the provider changes the repository', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        if (request.stepId.endsWith('planning')) {
+          await writeFile(join(request.cwd, 'README.md'), 'changed by planning\n');
+        } else {
+          await applySuccessfulMutation(request);
+        }
+        return successfulResult(request);
+      }),
+    });
+
+    const planning = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'planning',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(planning?.status).toBe('failed');
+    expect(planning?.verification).toEqual([
+      expect.objectContaining({ name: 'no-diff', passed: false }),
+    ]);
+    expect(planning?.error).toEqual(
+      expect.objectContaining({ kind: 'verification', code: 'VERIFICATION_FAILED' }),
+    );
+  });
+
+  it('fails a mutating scenario when node --test fails', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        if (!request.stepId.endsWith('greenfield')) await applySuccessfulMutation(request);
+        return successfulResult(request);
+      }),
+    });
+
+    const greenfield = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'greenfield',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(greenfield?.status).toBe('failed');
+    expect(greenfield?.verification).toContainEqual(
+      expect.objectContaining({ name: 'node-test', passed: false }),
+    );
+  });
+
+  it('fails a mutating scenario when a provider edits a file outside the allowlist', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        if (request.stepId.endsWith('repair')) {
+          await writeFile(join(request.cwd, 'README.md'), 'forbidden edit\n');
+        }
+        return successfulResult(request);
+      }),
+    });
+
+    const repair = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'repair',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(repair?.status).toBe('failed');
+    expect(repair?.verification).toContainEqual(
+      expect.objectContaining({
+        name: 'allowed-files',
+        passed: false,
+        message: 'Workspace changes did not match the scenario allowlist.',
+      }),
+    );
+  });
+
+  it('validates the normalized report and never leaks provider output, errors, or temp paths', async () => {
+    const workspaces: string[] = [];
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        workspaces.push(request.cwd);
+        if (request.stepId === 'codex-planning') {
+          throw new Error(`secret stderr in ${request.cwd}`);
+        }
+        await applySuccessfulMutation(request);
+        return {
+          ...successfulResult(request),
+          stdout: `raw stdout from ${request.cwd}`,
+          stderr: 'raw stderr with private-user',
+        };
+      }),
+    });
+
+    expect(ProviderCanaryReportSchema.safeParse(outcome.report).success).toBe(true);
+    const serialized = JSON.stringify(outcome.report);
+    expect(serialized).not.toContain('raw stdout');
+    expect(serialized).not.toContain('raw stderr');
+    expect(serialized).not.toContain('private-user');
+    expect(serialized).not.toContain('secret stderr');
+    for (const workspace of workspaces) expect(serialized).not.toContain(workspace);
+    expect(outcome.report.runs[0]?.error).toEqual({
+      kind: 'execution',
+      code: 'EXECUTION_FAILED',
+      message: 'Provider execution failed.',
+    });
+    await expectAllRemoved(workspaces);
+  });
+
+  it('removes temporary repositories after both successful and failed executions', async () => {
+    const workspaces: string[] = [];
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        workspaces.push(request.cwd);
+        if (request.stepId.endsWith('repair')) throw new Error('boom');
+        await applySuccessfulMutation(request);
+        return successfulResult(request);
+      }),
+    });
+
+    expect(outcome.exitCode).toBe(1);
+    expect(workspaces).toHaveLength(9);
+    await expectAllRemoved(workspaces);
+  });
+
+  it('fails the run and process outcome when executed-model metadata is unknown', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        const result = successfulResult(request);
+        if (request.stepId === 'claude-repair') delete result.executedModel;
+        return result;
+      }),
+    });
+
+    const unknown = outcome.report.runs.find(
+      (run) => run.provider === 'claude' && run.scenario === 'repair',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(unknown?.status).toBe('failed');
+    expect(unknown?.error).toEqual({
+      kind: 'artifact',
+      code: 'UNKNOWN_EXECUTED_MODEL',
+      message: 'Provider metadata did not identify one executed model.',
+    });
+  });
+
+  it('fails closed when the provider artifact is not completed', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        const result = successfulResult(request);
+        if (request.stepId === 'agy-planning') result.output.status = 'blocked';
+        return result;
+      }),
+    });
+
+    const blocked = outcome.report.runs.find(
+      (run) => run.provider === 'agy' && run.scenario === 'planning',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(blocked?.status).toBe('failed');
+    expect(blocked?.error).toEqual({
+      kind: 'artifact',
+      code: 'ARTIFACT_NOT_COMPLETED',
+      message: 'Provider did not return a completed artifact.',
+    });
+  });
+});
+
+describe('provider canary freeze', () => {
+  it('refuses any report without exactly nine passing runs and known executed models', async () => {
+    const outcome = await successfulOutcome();
+    const target = join(process.cwd(), '.data', 'provider-canaries', 'freeze-test.json');
+
+    await expect(
+      freezeProviderCanaryReport(
+        { ...outcome.report, runs: outcome.report.runs.slice(0, 8) },
+        target,
+      ),
+    ).rejects.toThrow(/exactly nine/i);
+    await expect(
+      freezeProviderCanaryReport(
+        {
+          ...outcome.report,
+          runs: outcome.report.runs.map((run, index) =>
+            index === 0 ? { ...run, status: 'failed' as const } : run,
+          ),
+        },
+        target,
+      ),
+    ).rejects.toThrow(/passing/i);
+    await expect(
+      freezeProviderCanaryReport(
+        {
+          ...outcome.report,
+          runs: outcome.report.runs.map((run, index) => {
+            if (index !== 0) return run;
+            const { executedModel: _executedModel, ...unknownModel } = run;
+            return unknownModel;
+          }),
+        },
+        target,
+      ),
+    ).rejects.toThrow(/executed model/i);
+  });
+
+  it('freezes a strict complete nine-run matrix', async () => {
+    const outcome = await successfulOutcome();
+    const target = join(process.cwd(), '.data', 'provider-canaries', 'freeze-test.json');
+    await freezeProviderCanaryReport(outcome.report, target);
+
+    const frozen = JSON.parse(await readFile(target, 'utf8')) as unknown;
+    expect(frozen).toEqual(outcome.report);
+    expect(ProviderCanaryReportSchema.safeParse(frozen).success).toBe(true);
+  });
+});
+
+function fakeDependencies(
+  execute: (
+    provider: ProviderCanaryProvider,
+    request: AgentExecutionRequest,
+  ) => Promise<AgentExecutionResult>,
+): ProviderCanaryDependencies {
+  return {
+    async loadProbes() {
+      return readyProbes();
+    },
+    execute,
+  };
+}
+
+function readyProbes(): ProviderProbe[] {
+  return providers.map((provider) => ({
+    provider,
+    status: 'ready',
+    version: '1.2.3',
+    capabilities: { nonInteractive: true, modelSelection: true, sandbox: true },
+    message: `${provider} is ready.`,
+  }));
+}
+
+function selectedModels(): Record<ProviderCanaryProvider, string> {
+  return { codex: 'codex-model', claude: 'claude-model', agy: 'agy-model' };
+}
+
+function optedInEnvironment(): NodeJS.ProcessEnv {
+  return { RUN_REAL_PROVIDER_CANARIES: 'true' };
+}
+
+function successfulResult(request: AgentExecutionRequest): AgentExecutionResult {
+  return {
+    runId: request.runId,
+    provider: request.provider,
+    model: request.model,
+    executedModel: `${request.provider}-executed-model`,
+    exitCode: 0,
+    durationMs: 12,
+    stdout: '',
+    stderr: '',
+    output: {
+      schemaVersion: '1',
+      status: 'completed',
+      summary: 'Canary completed.',
+      data: {},
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      nextActions: [],
+    },
+    usage: { inputTokens: 10, outputTokens: 4 },
+  };
+}
+
+async function applySuccessfulMutation(request: AgentExecutionRequest): Promise<void> {
+  if (request.stepId.endsWith('greenfield')) {
+    await mkdir(join(request.cwd, 'src'), { recursive: true });
+    await writeFile(
+      join(request.cwd, 'src', 'greeting.js'),
+      'export function greeting(name) { return `Hello, ${name}!`; }\n',
+    );
+  }
+  if (request.stepId.endsWith('repair')) {
+    await writeFile(
+      join(request.cwd, 'src', 'sum.js'),
+      'export function sum(left, right) { return left + right; }\n',
+    );
+  }
+}
+
+async function expectAllRemoved(paths: string[]): Promise<void> {
+  for (const path of paths) await expect(access(path)).rejects.toThrow();
+}
+
+async function successfulOutcome() {
+  return runProviderCanaries({
+    env: optedInEnvironment(),
+    models: selectedModels(),
+    dependencies: fakeDependencies(async (_provider, request) => {
+      await applySuccessfulMutation(request);
+      return successfulResult(request);
+    }),
+  });
+}
