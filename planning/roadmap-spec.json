@@ -398,6 +398,26 @@
       "name": "commitment:exploratory",
       "color": "6e7781",
       "description": "Hipótese futura, não compromisso de entrega"
+    },
+    {
+      "name": "model:claude-fable-5",
+      "color": "b63a1e",
+      "description": "Recomendado implementar com Claude Fable 5 (correção sob falha, concorrência, segurança)"
+    },
+    {
+      "name": "model:claude-sonnet-5",
+      "color": "d9822b",
+      "description": "Recomendado implementar com Claude Sonnet 5 (feature e teste padrão)"
+    },
+    {
+      "name": "model:claude-haiku-4-5",
+      "color": "e8c547",
+      "description": "Recomendado implementar com Claude Haiku 4.5 (trabalho mecânico, docs, processo)"
+    },
+    {
+      "name": "model:gpt-5.6-sol",
+      "color": "10a37f",
+      "description": "Alternativa OpenAI: GPT-5.6 Sol via Codex CLI com reasoning high"
     }
   ],
   "milestones": [
@@ -435,7 +455,13 @@
             "O reconciliador possui dry-run, apply, reconcile e proteção contra edição manual inesperada.",
             "Parent/sub-issue e blocked-by são reconciliados somente no escopo gerenciado."
           ],
-          "labels": ["kind:process", "area:delivery", "priority:p0"],
+          "labels": [
+            "kind:process",
+            "area:delivery",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Fixtures cobrem ciclos, referências quebradas e render determinístico."],
           "outOfScope": ["Usar o body de uma issue como banco primário."],
           "dependsOn": []
@@ -455,7 +481,13 @@
             "Status, Size, Confidence e Evidence existentes são preservados em reconciliações.",
             "A política operacional limita In Progress a dois itens."
           ],
-          "labels": ["kind:process", "area:delivery", "priority:p0"],
+          "labels": [
+            "kind:process",
+            "area:delivery",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Testes provam que campos operacionais não voltam silenciosamente para Inbox."],
           "outOfScope": ["Criar um Project por milestone."],
           "dependsOn": ["foundation-roadmap-source"]
@@ -474,7 +506,13 @@
             "Done exige PR ligado, checks, evidência, documentação e recuperação proporcional ao risco.",
             "O template de PR coleta risco, segurança, migração e rollback."
           ],
-          "labels": ["kind:process", "area:delivery", "priority:p0"],
+          "labels": [
+            "kind:process",
+            "area:delivery",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Revisão manual de uma issue e um PR canário contra os contratos."],
           "outOfScope": ["Criar burocracia sem informação operacional."],
           "dependsOn": []
@@ -495,7 +533,13 @@
             "Vulnerabilidades apontam para security advisory privado.",
             "A configuração é validada no CI."
           ],
-          "labels": ["kind:process", "area:delivery", "priority:p0"],
+          "labels": [
+            "kind:process",
+            "area:delivery",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [
             "Validador rejeita chave de Issue Form inválida, label ausente e check inexistente."
           ],
@@ -517,7 +561,13 @@
             "O check detecta dependência interna não declarada, import proibido, bypass de entrypoint e ciclos.",
             "As aplicações compõem; domínio e contratos não dependem de infraestrutura."
           ],
-          "labels": ["kind:architecture", "area:delivery", "priority:p0"],
+          "labels": [
+            "kind:architecture",
+            "area:delivery",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Fixtures cobrem imports estáticos, dinâmicos, require, ciclos e violações."],
           "outOfScope": ["Introduzir um framework de arquitetura externo sem necessidade."],
           "dependsOn": []
@@ -533,7 +583,13 @@
             "Concurrency cancela execuções obsoletas da mesma ref.",
             "npm run check reproduz os gates localmente."
           ],
-          "labels": ["kind:infra", "area:delivery", "priority:p0"],
+          "labels": [
+            "kind:infra",
+            "area:delivery",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [
             "A configuração do GitHub valida que todo check exigido corresponde a um job real."
           ],
@@ -557,7 +613,13 @@
             "Dependabot e vulnerability alerts são habilitados.",
             "Um ruleset novo nasce disabled e só é ativado por flag explícita depois que os checks existem."
           ],
-          "labels": ["kind:security", "area:delivery", "priority:p0"],
+          "labels": [
+            "kind:security",
+            "area:delivery",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Testes validam payload, checks obrigatórios e ativação explícita."],
           "outOfScope": ["Ativar proteção antes do merge que cria os próprios checks."],
           "dependsOn": ["foundation-ci"]
@@ -576,7 +638,13 @@
             "A tag aponta para o SHA exato 92b071ceb3365cb74d954cc67c496e3e5ecc9e6a.",
             "O script verifica o commit e nunca move uma tag existente."
           ],
-          "labels": ["kind:release", "area:delivery", "priority:p1"],
+          "labels": [
+            "kind:release",
+            "area:delivery",
+            "priority:p1",
+            "model:claude-haiku-4-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Dry-run não publica release; publicação exige flag e SHA explícitos."],
           "outOfScope": ["Chamar a baseline de produção."],
           "dependsOn": []
@@ -592,7 +660,13 @@
             "Adaptive Routing é pesquisa paralela, não gate de produto.",
             "Métricas medem aceitação e intervenção humana, não volume de tokens ou linhas geradas."
           ],
-          "labels": ["kind:process", "area:product", "priority:p1"],
+          "labels": [
+            "kind:process",
+            "area:product",
+            "priority:p1",
+            "model:claude-haiku-4-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Validador rejeita dependência de Personal v1 em milestone Hosted v2."],
           "outOfScope": ["Definir datas sem capacidade observada."],
           "dependsOn": ["foundation-roadmap-source"]
@@ -614,7 +688,13 @@
             "O override gera warning e não é descrito como autenticação ou sandbox.",
             "Riscos iniciais cobrem secrets, prompt injection, providers, fallback mutável e artifacts."
           ],
-          "labels": ["kind:risk", "area:delivery", "priority:p1"],
+          "labels": [
+            "kind:risk",
+            "area:delivery",
+            "priority:p1",
+            "model:claude-haiku-4-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Testes cobrem loopback, bind remoto recusado e override explícito."],
           "outOfScope": ["Tratar Docker permissivo como fronteira suficiente."],
           "dependsOn": []
@@ -660,7 +740,14 @@
             "Provider indisponível gera skip explícito, nunca um falso positivo.",
             "Um relatório versionado registra resultados, limitações e aliases realmente disponíveis."
           ],
-          "labels": ["kind:test", "area:executors", "area:model-router", "priority:p0"],
+          "labels": [
+            "kind:test",
+            "area:executors",
+            "area:model-router",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [
             "Teste de contrato por CLI com fixture de stdout/stderr.",
             "Smoke test real opt-in protegido por variável de ambiente."
@@ -685,7 +772,14 @@
             "Repos de domínio permitem criar, obter, listar e atualizar com controle otimista de versão.",
             "Dados antigos da v0.1 continuam legíveis ou recebem migração documentada."
           ],
-          "labels": ["kind:feature", "area:orchestrator", "area:persistence", "priority:p0"],
+          "labels": [
+            "kind:feature",
+            "area:orchestrator",
+            "area:persistence",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Testes de transição inválida e concorrência de versão."],
           "outOfScope": [],
           "dependsOn": []
@@ -707,7 +801,14 @@
             "Ack e nack rejeitam fencingToken obsoleto.",
             "Um reaper recupera itens de processing após crash abrupto."
           ],
-          "labels": ["kind:infra", "area:persistence", "area:orchestrator", "priority:p0"],
+          "labels": [
+            "kind:infra",
+            "area:persistence",
+            "area:orchestrator",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [
             "Matar o worker após claim e confirmar recuperação.",
             "Simular dois workers e provar que token antigo não consegue concluir o job."
@@ -738,7 +839,9 @@
             "area:orchestrator",
             "area:executors",
             "area:api",
-            "priority:p0"
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": [
             "Cancelar durante planner, developer e verifier; validar processo, status, workspace e eventos."
@@ -758,7 +861,15 @@
             "Incompatibilidade produz diagnóstico acionável e opção explícita de fork/restart.",
             "UI mostra paused, ponto de retomada e motivo de bloqueio."
           ],
-          "labels": ["kind:feature", "area:orchestrator", "area:api", "area:web", "priority:p0"],
+          "labels": [
+            "kind:feature",
+            "area:orchestrator",
+            "area:api",
+            "area:web",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Pausar, reiniciar API/worker e retomar sem repetir side effects."],
           "outOfScope": [],
           "dependsOn": ["v02-run-domain", "v02-queue-leases"]
@@ -775,7 +886,15 @@
             "Steps mutáveis começam de checkpoint conhecido.",
             "A UI explica quais artifacts e steps serão invalidados antes de executar."
           ],
-          "labels": ["kind:feature", "area:orchestrator", "area:api", "area:web", "priority:p0"],
+          "labels": [
+            "kind:feature",
+            "area:orchestrator",
+            "area:api",
+            "area:web",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Retry apenas do reviewer e retry do developer com invalidação do verifier."],
           "outOfScope": [],
           "dependsOn": ["v02-run-domain"]
@@ -792,7 +911,14 @@
             "Outputs parciais nunca são apontados como latest.",
             "A trilha run -> step -> attempt -> artifact -> commit é consultável."
           ],
-          "labels": ["kind:infra", "area:persistence", "area:orchestrator", "priority:p0"],
+          "labels": [
+            "kind:infra",
+            "area:persistence",
+            "area:orchestrator",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Falha injetada após artifact put, após commit e antes do queue ack."],
           "outOfScope": [],
           "dependsOn": ["v02-run-domain"]
@@ -809,7 +935,15 @@
             "Eventos sensíveis passam por redaction antes de persistir ou transmitir.",
             "O polling atual permanece como fallback temporário."
           ],
-          "labels": ["kind:feature", "area:api", "area:web", "area:persistence", "priority:p0"],
+          "labels": [
+            "kind:feature",
+            "area:api",
+            "area:web",
+            "area:persistence",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Reconexão no meio de uma execução e replay após reinício da API."],
           "outOfScope": [],
           "dependsOn": ["v02-run-domain"]
@@ -836,7 +970,9 @@
             "area:orchestrator",
             "area:persistence",
             "area:executors",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": [
             "Matriz de falha por fase: antes/depois de checkpoint, execução, artifact, commit e ack."
@@ -855,7 +991,13 @@
             "Falhas viram fixtures, métricas ou issues; não são apagadas do relato.",
             "O resultado alimenta uma baseline antes de qualquer adaptive routing."
           ],
-          "labels": ["kind:experiment", "area:model-router", "priority:p1"],
+          "labels": [
+            "kind:experiment",
+            "area:model-router",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Reexecutar ao menos uma falha após a correção e comparar evidência."],
           "outOfScope": ["Usar dogfooding como desculpa para aceitar mudanças sem review."],
           "dependsOn": ["v02-provider-canaries"]
@@ -895,7 +1037,14 @@
             "Approve avança; reject encerra ou volta para o step configurado; request-changes cria repair input.",
             "Resume após decisão é idempotente."
           ],
-          "labels": ["kind:feature", "area:orchestrator", "area:persistence", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:orchestrator",
+            "area:persistence",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Aprovar, rejeitar e solicitar mudança após reinício do worker."],
           "outOfScope": [],
           "dependsOn": []
@@ -912,7 +1061,14 @@
             "A ação mostra consequências downstream antes da confirmação.",
             "Conflito de duas decisões simultâneas retorna 409 com estado atual."
           ],
-          "labels": ["kind:feature", "area:api", "area:web", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:api",
+            "area:web",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["E2E de aprovação de arquitetura e release."],
           "outOfScope": [],
           "dependsOn": ["v03-approval-domain"]
@@ -940,7 +1096,9 @@
             "kind:security",
             "area:orchestrator",
             "area:model-router",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Bloquear provider, pacote proibido e comando fora da allowlist."],
           "outOfScope": [],
@@ -970,7 +1128,9 @@
             "area:model-router",
             "area:orchestrator",
             "area:web",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": [
             "Ceiling por tempo, ceiling por repair sem progresso, cancel e override de fallback."
@@ -995,7 +1155,9 @@
             "kind:security",
             "area:persistence",
             "area:orchestrator",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Reprodução de um repair a partir de feedback persistido."],
           "outOfScope": [],
@@ -1013,7 +1175,14 @@
             "Budget impede loop infinito e preserva estado retomável.",
             "Relatório de validação documenta os cenários."
           ],
-          "labels": ["kind:test", "area:orchestrator", "area:web", "priority:p1"],
+          "labels": [
+            "kind:test",
+            "area:orchestrator",
+            "area:web",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [],
           "outOfScope": [],
           "dependsOn": ["v03-approval-api-ui", "v03-project-policies", "v03-budgets-overrides"]
@@ -1063,7 +1232,9 @@
             "kind:security",
             "area:persistence",
             "area:api",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Import de repo pequeno, ref inexistente, repo grande e symlink fora da raiz."],
           "outOfScope": [],
@@ -1086,7 +1257,14 @@
             "Erros sanitizam username, token e query string.",
             "Modo local suporta helper do Git e modo hosted suporta broker futuro."
           ],
-          "labels": ["kind:security", "area:persistence", "area:integrations", "priority:p1"],
+          "labels": [
+            "kind:security",
+            "area:persistence",
+            "area:integrations",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [
             "Scanner confirma ausência de token em events, artifacts, git config e process env do executor."
           ],
@@ -1109,7 +1287,14 @@
             "Cleanup não remove branch com mudanças não persistidas sem registrar recovery artifact.",
             "Commit e diff ficam ligados ao StepAttempt que os produziu."
           ],
-          "labels": ["kind:infra", "area:persistence", "area:orchestrator", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "area:persistence",
+            "area:orchestrator",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Duas runs paralelas alterando arquivos diferentes e o mesmo arquivo."],
           "outOfScope": [],
           "dependsOn": ["v04-repository-source"]
@@ -1126,7 +1311,14 @@
             "Mapa é cacheado por commit hash e versionado como artifact.",
             "Falha de parser degrada para mapa lexical sem abortar o run."
           ],
-          "labels": ["kind:feature", "area:orchestrator", "area:persistence", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:orchestrator",
+            "area:persistence",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Monorepo, repo simples e arquivo TypeScript inválido."],
           "outOfScope": [],
           "dependsOn": ["v04-repository-source"]
@@ -1143,7 +1335,14 @@
             "Agente pode pedir expansão de contexto com motivo registrado.",
             "Prompt compilado lista versão e hashes dos arquivos usados."
           ],
-          "labels": ["kind:feature", "area:orchestrator", "area:model-router", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:orchestrator",
+            "area:model-router",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Mudança frontend, backend e bug localizado selecionam contextos distintos."],
           "outOfScope": ["Vector database global; medir recall antes de adicionar embeddings."],
           "dependsOn": ["v04-repository-map"]
@@ -1166,7 +1365,14 @@
             "Resultado produz branch, diff, checks e release decision.",
             "Mudança de baseline durante a run gera conflito explícito."
           ],
-          "labels": ["kind:feature", "area:orchestrator", "area:api", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:orchestrator",
+            "area:api",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Feature pequena, bug fix e refatoração com diferentes planos de execução."],
           "outOfScope": [],
           "dependsOn": ["v04-worktrees", "v04-context-selector"]
@@ -1183,7 +1389,15 @@
             "Promoção atualiza o baseline apenas após checks e aprovação.",
             "Conflito de merge é exibido sem sobrescrever o branch base."
           ],
-          "labels": ["kind:feature", "area:web", "area:api", "area:persistence", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:web",
+            "area:api",
+            "area:persistence",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["E2E de review, request changes e promoção."],
           "outOfScope": [],
           "dependsOn": ["v04-change-requests"]
@@ -1199,7 +1413,14 @@
             "Golden journey roda em macOS e Linux.",
             "Docs declaram distribuições e versões verificadas."
           ],
-          "labels": ["kind:infra", "kind:test", "area:delivery", "priority:p2"],
+          "labels": [
+            "kind:infra",
+            "kind:test",
+            "area:delivery",
+            "priority:p2",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Matriz CI/canário macOS e Linux para doctor e Issue Radar."],
           "outOfScope": ["Suporte Windows."],
           "dependsOn": []
@@ -1216,7 +1437,14 @@
             "Usuário pode enviar edição manual ao pipeline completo.",
             "Conflito com mudança do agente é detectado por version/hash."
           ],
-          "labels": ["kind:feature", "area:web", "area:persistence", "priority:p2"],
+          "labels": [
+            "kind:feature",
+            "area:web",
+            "area:persistence",
+            "priority:p2",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Edit, search, secret exclusion, stale save, diff e pipeline verification."],
           "outOfScope": ["Substituir IDE desktop em todos os recursos."],
           "dependsOn": ["v04-diff-review"]
@@ -1251,7 +1479,14 @@
             "Issue Radar passa de chat a deploy em uma instalação limpa.",
             "Regressões em macOS e Linux continuam bloqueadas pela matriz."
           ],
-          "labels": ["kind:infra", "kind:test", "area:delivery", "priority:p2"],
+          "labels": [
+            "kind:infra",
+            "kind:test",
+            "area:delivery",
+            "priority:p2",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Matriz macOS, Linux e Windows com golden journey e failure canaries."],
           "outOfScope": ["Suporte a versões Windows fora da matriz publicada."],
           "dependsOn": []
@@ -1295,7 +1530,13 @@
             "Verifier e preview não possuem caminho direto para child_process no host.",
             "A especificação da execução inclui mounts, rede, recursos, timeout e artifacts de saída."
           ],
-          "labels": ["kind:architecture", "area:sandbox", "priority:p0"],
+          "labels": [
+            "kind:architecture",
+            "area:sandbox",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Testes de contrato usam um fake sandbox e provam propagação de cancelamento."],
           "outOfScope": ["Escolher microVM versus container definitivo."],
           "dependsOn": []
@@ -1311,7 +1552,13 @@
             "O container é destruído em sucesso, falha e cancelamento.",
             "Docker socket não é montado."
           ],
-          "labels": ["kind:security", "area:sandbox", "priority:p0"],
+          "labels": [
+            "kind:security",
+            "area:sandbox",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Canário tenta elevar privilégio e acessar o runtime socket."],
           "outOfScope": ["Declarar container como isolamento perfeito."],
           "dependsOn": ["v045-sandbox-runner-seam"]
@@ -1331,7 +1578,13 @@
             "Credenciais necessárias são allowlisted e efêmeras.",
             "Artifacts passam por redaction antes de sair."
           ],
-          "labels": ["kind:security", "area:sandbox", "priority:p0"],
+          "labels": [
+            "kind:security",
+            "area:sandbox",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Canários procuram paths e variáveis conhecidas de credentials."],
           "outOfScope": ["Secret broker multi-tenant completo."],
           "dependsOn": ["v045-rootless-container"]
@@ -1347,7 +1600,13 @@
             "Logs distinguem timeout, OOM, PID e quota de disco.",
             "Cleanup ocorre após limite."
           ],
-          "labels": ["kind:security", "area:sandbox", "priority:p0"],
+          "labels": [
+            "kind:security",
+            "area:sandbox",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Canários provocam cada limite sem afetar o host."],
           "outOfScope": ["Capacity planning de Hosted v2."],
           "dependsOn": ["v045-rootless-container"]
@@ -1363,7 +1622,13 @@
             "DNS e conexões recusadas geram eventos úteis.",
             "Instalação de dependências usa fase separada e política explícita."
           ],
-          "labels": ["kind:security", "area:sandbox", "priority:p0"],
+          "labels": [
+            "kind:security",
+            "area:sandbox",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Canário tenta DNS, HTTP e conexão raw para destino não permitido."],
           "outOfScope": ["Proxy corporativo completo."],
           "dependsOn": ["v045-sandbox-runner-seam"]
@@ -1379,7 +1644,13 @@
             "Logs têm limites, truncation markers e redaction.",
             "Hashes ligam artifacts à tentativa e ao sandbox."
           ],
-          "labels": ["kind:security", "area:sandbox", "priority:p0"],
+          "labels": [
+            "kind:security",
+            "area:sandbox",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [
             "Fixtures cobrem symlink escape, traversal, oversized output e secret redaction."
           ],
@@ -1397,7 +1668,13 @@
             "Resultados registram plataforma e backend de sandbox.",
             "O profile isolated-preview só é habilitado após a suíte passar."
           ],
-          "labels": ["kind:test", "area:sandbox", "priority:p0"],
+          "labels": [
+            "kind:test",
+            "area:sandbox",
+            "priority:p0",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Executar a suíte em CI compatível e em um host canário dedicado."],
           "outOfScope": ["Pentest completo de Hosted v2."],
           "dependsOn": [
@@ -1439,7 +1716,14 @@
             "Run e release artifacts referenciam a sessão e sua evidência.",
             "Stop é idempotente e executado em cancelamento ou expiração."
           ],
-          "labels": ["kind:feature", "area:preview", "area:orchestrator", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:preview",
+            "area:orchestrator",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Runner fake cobre startup, unhealthy, restart e timeout."],
           "outOfScope": [],
           "dependsOn": []
@@ -1456,7 +1740,14 @@
             "Comandos e versões ficam registrados no PreviewSession.",
             "Ausência de comando suportado retorna diagnóstico, não shell arbitrário."
           ],
-          "labels": ["kind:infra", "area:preview", "area:executors", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "area:preview",
+            "area:executors",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Fixtures para Next.js, Vite e monorepo npm workspaces."],
           "outOfScope": [],
           "dependsOn": []
@@ -1473,7 +1764,15 @@
             "Host header e open redirect são validados.",
             "Preview não expõe portas internas diretamente."
           ],
-          "labels": ["kind:infra", "kind:security", "area:preview", "area:api", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "kind:security",
+            "area:preview",
+            "area:api",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Duas previews simultâneas, HMR e sessão expirada."],
           "outOfScope": [],
           "dependsOn": ["v05-preview-domain", "v05-runtime-detection"]
@@ -1490,7 +1789,14 @@
             "Sessões órfãs são encerradas por reaper.",
             "Falha de preview alimenta repair com diagnóstico estruturado."
           ],
-          "labels": ["kind:infra", "area:preview", "area:persistence", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "area:preview",
+            "area:persistence",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Crash loop, startup lento, porta nunca aberta e log volumoso."],
           "outOfScope": [],
           "dependsOn": ["v05-preview-network"]
@@ -1517,7 +1823,9 @@
             "kind:test",
             "area:preview",
             "area:orchestrator",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Jornada CRUD verde e falhas de UI, API e console."],
           "outOfScope": [],
@@ -1535,7 +1843,14 @@
             "UI pode baixar artifacts sem expor path local.",
             "Retenção local remove blobs expirados sem quebrar metadados do run."
           ],
-          "labels": ["kind:infra", "area:preview", "area:persistence", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "area:preview",
+            "area:persistence",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Upload/download, limite de tamanho e cleanup de blob órfão."],
           "outOfScope": [],
           "dependsOn": ["v05-playwright"]
@@ -1552,7 +1867,15 @@
             "Golden flow cria change request, sobe preview, roda browser tests e aprova diff.",
             "Acessibilidade básica do painel passa em axe."
           ],
-          "labels": ["kind:feature", "kind:test", "area:web", "area:preview", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "area:web",
+            "area:preview",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [],
           "outOfScope": [],
           "dependsOn": ["v05-preview-artifacts"]
@@ -1602,7 +1925,9 @@
             "area:api",
             "area:persistence",
             "area:orchestrator",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Concorrência de mensagens e retry sem duplicar Operation."],
           "outOfScope": [],
@@ -1625,7 +1950,9 @@
             "area:orchestrator",
             "area:web",
             "area:model-router",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Mensagem idêntica em Plan e Build gera side effects diferentes."],
           "outOfScope": [],
@@ -1643,7 +1970,14 @@
             "Cada prompt registra mensagens e knowledge files usados.",
             "Compaction nunca apaga decisões fixadas ou feedback não resolvido."
           ],
-          "labels": ["kind:feature", "area:orchestrator", "area:persistence", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:orchestrator",
+            "area:persistence",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Conversa longa com mudança de requisito e referência a decisão antiga."],
           "outOfScope": [],
           "dependsOn": ["v06-plan-build-modes"]
@@ -1660,7 +1994,14 @@
             "Cancel e pause aparecem como ações contextuais.",
             "Uma Operation concluída aponta para diff, preview e artifacts."
           ],
-          "labels": ["kind:feature", "area:web", "area:api", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:web",
+            "area:api",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Desconectar/reconectar durante tool call e fallback."],
           "outOfScope": [],
           "dependsOn": ["v06-conversation-domain"]
@@ -1689,7 +2030,9 @@
             "area:persistence",
             "area:web",
             "area:orchestrator",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Revert após duas mudanças e branch a partir de versão antiga."],
           "outOfScope": [],
@@ -1718,7 +2061,9 @@
             "area:orchestrator",
             "area:persistence",
             "area:web",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Ceiling por tempo, ceiling por repair, retry do draft e discard confirmado."],
           "outOfScope": ["Promover automaticamente resultado não aprovado."],
@@ -1741,7 +2086,9 @@
             "area:web",
             "area:preview",
             "area:orchestrator",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Componente simples, wrapper, lista repetida e elemento gerado."],
           "outOfScope": [],
@@ -1770,7 +2117,9 @@
             "area:web",
             "area:preview",
             "area:orchestrator",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Editar texto, padding, cor por token e layout responsivo."],
           "outOfScope": [],
@@ -1790,7 +2139,15 @@
             "UI mostra o path do repositório local e oferece Open in editor.",
             "Golden flow: anexar referência, planejar, construir, editar visualmente, reverter e reconstruir."
           ],
-          "labels": ["kind:feature", "kind:test", "area:web", "area:persistence", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "area:web",
+            "area:persistence",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [],
           "outOfScope": [],
           "dependsOn": ["v06-chat-operations", "v06-chat-streaming", "v06-visual-patches"]
@@ -1832,7 +2189,14 @@
             "Operações são idempotentes e falha parcial produz diagnóstico recuperável.",
             "Reset ou cleanup destrutivo exige confirmação e backup recente."
           ],
-          "labels": ["kind:feature", "area:platform", "area:orchestrator", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:platform",
+            "area:orchestrator",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Dois projects simultâneos, restart, partial failure, reset gate e cleanup."],
           "outOfScope": [],
           "dependsOn": []
@@ -1850,7 +2214,14 @@
             "Application rollback nunca executa down migration.",
             "Falha de compatibilidade exige roll-forward do app ou restore explícito."
           ],
-          "labels": ["kind:feature", "kind:infra", "area:platform", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "kind:infra",
+            "area:platform",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Create, alter, destructive gate e app rollback contra schema forward."],
           "outOfScope": [],
           "dependsOn": ["v010-environment-provisioner"]
@@ -1872,7 +2243,9 @@
             "kind:security",
             "area:platform",
             "area:preview",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Signup, login, logout, sessão expirada, admin reset e acesso negado."],
           "outOfScope": [],
@@ -1890,7 +2263,14 @@
             "Malware scanning possui hook e estado quarantine.",
             "Export e cleanup seguem retention policy."
           ],
-          "labels": ["kind:feature", "kind:security", "area:platform", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "area:platform",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Upload autorizado, oversized, tipo proibido e acesso cruzado."],
           "outOfScope": [],
           "dependsOn": []
@@ -1907,7 +2287,15 @@
             "Logs e traces aparecem no projeto.",
             "Verifier chama functions e valida failure paths."
           ],
-          "labels": ["kind:feature", "kind:infra", "area:platform", "area:sandbox", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "kind:infra",
+            "area:platform",
+            "area:sandbox",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Deploy, invoke, timeout, secret access e rollback."],
           "outOfScope": [],
           "dependsOn": ["v010-environment-provisioner"]
@@ -1924,7 +2312,14 @@
             "Deploy injeta .env por capability determinística fora do sandbox do agente.",
             "Scanner bloqueia secret em source, artifact e client bundle."
           ],
-          "labels": ["kind:security", "area:platform", "area:integrations", "priority:p1"],
+          "labels": [
+            "kind:security",
+            "area:platform",
+            "area:integrations",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Leak scanner em Git, prompt, artifact, screenshot, log e client bundle."],
           "outOfScope": [],
           "dependsOn": []
@@ -1951,7 +2346,9 @@
             "kind:test",
             "area:platform",
             "area:orchestrator",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["IDOR, missing RLS e privilege escalation em fixture."],
           "outOfScope": [],
@@ -1975,7 +2372,9 @@
             "kind:docs",
             "area:platform",
             "area:web",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-haiku-4-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": [],
           "outOfScope": [],
@@ -2027,7 +2426,14 @@
             "Deploy production sempre exige approval.",
             "Rollback não executa down migration nem restore de dados."
           ],
-          "labels": ["kind:feature", "area:preview", "area:platform", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:preview",
+            "area:platform",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Provider fake com deploy, rollback e falha parcial."],
           "outOfScope": [],
           "dependsOn": []
@@ -2045,7 +2451,15 @@
             "Health failure impede promoção ou aciona rollback policy.",
             "Republish e rollback do app são explícitos e auditáveis."
           ],
-          "labels": ["kind:feature", "kind:infra", "area:preview", "area:web", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "kind:infra",
+            "area:preview",
+            "area:web",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [
             "Host/porta, DNS ausente, TLS pending, deploy unhealthy e app rollback sem down migration."
           ],
@@ -2064,7 +2478,14 @@
             "Falha do GitHub não bloqueia build, version, revert ou deploy.",
             "UI distingue estado local do estado do remote."
           ],
-          "labels": ["kind:feature", "kind:security", "area:integrations", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "area:integrations",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Sem remote, remote offline, auth expirada e remoção do remote."],
           "outOfScope": [],
           "dependsOn": []
@@ -2091,7 +2512,9 @@
             "area:integrations",
             "area:orchestrator",
             "area:web",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Push, pull clean, conflito, remote offline e PR."],
           "outOfScope": [],
@@ -2119,7 +2542,9 @@
             "kind:security",
             "area:integrations",
             "area:platform",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": [
             "Ubuntu limpo, Debian compatível, fingerprint divergente, disco insuficiente e retry."
@@ -2144,7 +2569,9 @@
             "kind:security",
             "area:integrations",
             "area:platform",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": [
             "Backup, hash divergente, transferência interrompida, retenção e restore drill aprovado."
@@ -2170,7 +2597,9 @@
             "kind:docs",
             "area:web",
             "area:integrations",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-haiku-4-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": [],
           "outOfScope": [],
@@ -2222,7 +2651,14 @@
             "Documento de traceability aponta para issue live e status sem substituir a spec.",
             "Cobertura estrutural é 100%; confiança de planejamento pode ser declarada >=95% com riscos residuais listados."
           ],
-          "labels": ["kind:test", "kind:docs", "area:product", "priority:p1"],
+          "labels": [
+            "kind:test",
+            "kind:docs",
+            "area:product",
+            "priority:p1",
+            "model:claude-haiku-4-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [
             "Fixtures com task ausente, evidence vazia e requisito fora do caminho crítico."
           ],
@@ -2241,7 +2677,14 @@
             "Long tasks mostram progresso útil e ações seguras.",
             "Budgets de performance são definidos e medidos."
           ],
-          "labels": ["kind:feature", "kind:test", "area:web", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "area:web",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["axe, keyboard-only e Web Vitals nos fluxos golden."],
           "outOfScope": [],
           "dependsOn": []
@@ -2261,7 +2704,15 @@
             "Backup verificado existe no VPS e no Mac.",
             "Application rollback restaura app/config sem down migration."
           ],
-          "labels": ["kind:test", "area:platform", "area:web", "area:integrations", "priority:p1"],
+          "labels": [
+            "kind:test",
+            "area:platform",
+            "area:web",
+            "area:integrations",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Golden journey completo em macOS limpo e VPS Ubuntu LTS limpo."],
           "outOfScope": [
             "Importar repositório existente.",
@@ -2282,7 +2733,15 @@
             "Backup, restore aprovado e app-only rollback possuem análise negativa.",
             "Critical/high findings bloqueiam release ou têm risk acceptance explícito."
           ],
-          "labels": ["kind:security", "kind:test", "area:platform", "area:sandbox", "priority:p1"],
+          "labels": [
+            "kind:security",
+            "kind:test",
+            "area:platform",
+            "area:sandbox",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [],
           "outOfScope": [
             "Pentest de tenant isolation, abuse controls e vulnerability disclosure pública — Hosted v2."
@@ -2334,7 +2793,9 @@
             "kind:security",
             "area:sandbox",
             "area:orchestrator",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Runner fake remoto com disconnect, retry e cancel."],
           "outOfScope": [],
@@ -2352,7 +2813,14 @@
             "Destroy é idempotente e chamado mesmo após erro.",
             "Nenhum agente recebe acesso à API do control plane."
           ],
-          "labels": ["kind:infra", "kind:security", "area:sandbox", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "kind:security",
+            "area:sandbox",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Lifecycle completo e cleanup após exceção em cada fase."],
           "outOfScope": [],
           "dependsOn": ["v07-control-execution-plane"]
@@ -2374,7 +2842,14 @@
             "Imagem base é pinada por digest e gera SBOM.",
             "Host Docker socket nunca é montado dentro do sandbox."
           ],
-          "labels": ["kind:infra", "kind:security", "area:sandbox", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "kind:security",
+            "area:sandbox",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Verificar limites, usuário, mounts e tentativa de acesso ao host."],
           "outOfScope": [],
           "dependsOn": ["v07-sandbox-runner"]
@@ -2391,7 +2866,14 @@
             "Install dependencies usa modo separado e registrável.",
             "Browser tests só acessam preview e hosts autorizados."
           ],
-          "labels": ["kind:security", "area:sandbox", "area:preview", "priority:p1"],
+          "labels": [
+            "kind:security",
+            "area:sandbox",
+            "area:preview",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Tentativas de SSRF, DNS rebinding e acesso a IP privado."],
           "outOfScope": [],
           "dependsOn": ["v07-container-backend"]
@@ -2413,7 +2895,14 @@
             "Logs, events e artifacts passam por redaction em múltiplas camadas.",
             "Revogação ocorre em cancel, timeout e destroy."
           ],
-          "labels": ["kind:security", "area:sandbox", "area:integrations", "priority:p1"],
+          "labels": [
+            "kind:security",
+            "area:sandbox",
+            "area:integrations",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [
             "Canary secret em stdout, arquivo, URL e exception não aparece fora do sandbox."
           ],
@@ -2432,7 +2921,14 @@
             "SBOM e versões instaladas viram artifacts.",
             "Poisoned cache pode ser invalidado sem afetar outros projetos."
           ],
-          "labels": ["kind:security", "kind:infra", "area:sandbox", "priority:p1"],
+          "labels": [
+            "kind:security",
+            "kind:infra",
+            "area:sandbox",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Package com postinstall proibido e cache alterado entre runs."],
           "outOfScope": [],
           "dependsOn": []
@@ -2449,7 +2945,14 @@
             "Riscos não mitigados possuem owner e bloqueio de exposição pública.",
             "Checklist de produção diferencia container de microVM."
           ],
-          "labels": ["kind:security", "kind:test", "area:sandbox", "priority:p1"],
+          "labels": [
+            "kind:security",
+            "kind:test",
+            "area:sandbox",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [],
           "outOfScope": [],
           "dependsOn": ["v07-network-policy", "v07-secret-broker", "v07-cache-supply-chain"]
@@ -2491,7 +2994,13 @@
             "Queries principais possuem paginação por cursor.",
             "Testcontainers cobre migrations e comportamento dos repos."
           ],
-          "labels": ["kind:infra", "area:persistence", "priority:p2"],
+          "labels": [
+            "kind:infra",
+            "area:persistence",
+            "priority:p2",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Migration up/down suportada, constraint violations e concorrência."],
           "outOfScope": [],
           "dependsOn": []
@@ -2508,7 +3017,15 @@
             "Multipart e streaming evitam buffer completo.",
             "Garbage collector remove blobs não referenciados após grace period."
           ],
-          "labels": ["kind:infra", "kind:security", "area:persistence", "area:api", "priority:p2"],
+          "labels": [
+            "kind:infra",
+            "kind:security",
+            "area:persistence",
+            "area:api",
+            "priority:p2",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Blob grande, hash incorreto, URL expirada e GC."],
           "outOfScope": [],
           "dependsOn": []
@@ -2525,7 +3042,14 @@
             "Dead-letter preserva payload e diagnóstico.",
             "Outbox publica eventos sem dual write."
           ],
-          "labels": ["kind:infra", "area:persistence", "area:orchestrator", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "area:persistence",
+            "area:orchestrator",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Múltiplos workers, crash, lease expiry e outbox replay."],
           "outOfScope": [],
           "dependsOn": ["v08-postgres"]
@@ -2542,7 +3066,14 @@
             "Backpressure e clientes lentos têm limites.",
             "Redaction ocorre antes da persistência."
           ],
-          "labels": ["kind:infra", "area:persistence", "area:api", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "area:persistence",
+            "area:api",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Reconexão em outra réplica e gap entre catch-up e live."],
           "outOfScope": [],
           "dependsOn": ["v08-postgres"]
@@ -2564,7 +3095,14 @@
             "Priority não causa starvation indefinida.",
             "Dashboard expõe queue depth, wait time e utilization."
           ],
-          "labels": ["kind:infra", "area:orchestrator", "area:persistence", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "area:orchestrator",
+            "area:persistence",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Saturação de provider, workload pesado e fairness."],
           "outOfScope": [],
           "dependsOn": ["v08-durable-queue"]
@@ -2587,7 +3125,13 @@
             "PII e secrets são filtrados antes de exportar.",
             "Sampling preserva erros e runs lentas."
           ],
-          "labels": ["kind:infra", "area:platform", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "area:platform",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Trace golden path e falha com fallback."],
           "outOfScope": [],
           "dependsOn": []
@@ -2610,7 +3154,9 @@
             "kind:docs",
             "area:persistence",
             "area:platform",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-haiku-4-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": [],
           "outOfScope": [],
@@ -2659,7 +3205,9 @@
             "area:platform",
             "area:api",
             "area:web",
-            "priority:p2"
+            "priority:p2",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Session fixation, logout, reset e rate limiting."],
           "outOfScope": [],
@@ -2687,7 +3235,9 @@
             "kind:security",
             "area:platform",
             "area:persistence",
-            "priority:p2"
+            "priority:p2",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Matriz de capabilities e tentativa cross-tenant."],
           "outOfScope": [],
@@ -2715,7 +3265,9 @@
             "area:platform",
             "area:persistence",
             "area:sandbox",
-            "priority:p2"
+            "priority:p2",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Cross-tenant ID enumeration, object key guess e worker payload tampering."],
           "outOfScope": [],
@@ -2733,7 +3285,14 @@
             "Activity feed mostra mudanças relevantes, não cada token do agente.",
             "Notificações respeitam preferências e role."
           ],
-          "labels": ["kind:feature", "area:web", "area:platform", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:web",
+            "area:platform",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Duas pessoas revisando e uma build concorrente."],
           "outOfScope": [],
           "dependsOn": ["v012-workspaces-rbac"]
@@ -2750,7 +3309,15 @@
             "Usuário vê exatamente o que será copiado.",
             "Owner pode revogar link compartilhado."
           ],
-          "labels": ["kind:feature", "kind:security", "area:web", "area:platform", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "kind:security",
+            "area:web",
+            "area:platform",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Remix sem secret, link revogado e template atualizado."],
           "outOfScope": [],
           "dependsOn": []
@@ -2777,7 +3344,9 @@
             "kind:infra",
             "area:platform",
             "area:model-router",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Duplicate usage, reservation timeout e reversal."],
           "outOfScope": [],
@@ -2800,7 +3369,9 @@
             "kind:security",
             "area:platform",
             "area:integrations",
-            "priority:p1"
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Upgrade, downgrade, webhook replay, past due e workspace deletion."],
           "outOfScope": [],
@@ -2818,7 +3389,15 @@
             "Multi-tenant E2E prova isolamento, colaboração, billing e offboarding.",
             "Load test inclui noisy neighbor e quotas."
           ],
-          "labels": ["kind:security", "kind:test", "kind:docs", "area:platform", "priority:p1"],
+          "labels": [
+            "kind:security",
+            "kind:test",
+            "kind:docs",
+            "area:platform",
+            "priority:p1",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [],
           "outOfScope": [],
           "dependsOn": [
@@ -2862,7 +3441,13 @@
             "Non-goals e limites de suporte estão publicados.",
             "Migração do Personal Builder está descrita."
           ],
-          "labels": ["kind:docs", "area:platform", "priority:p2"],
+          "labels": [
+            "kind:docs",
+            "area:platform",
+            "priority:p2",
+            "model:claude-haiku-4-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Revisão dos golden journeys e dos contratos de suporte."],
           "outOfScope": ["Marketplace ou enterprise features não validadas."],
           "dependsOn": []
@@ -2877,7 +3462,13 @@
             "Testes negativos provam ausência de cross-tenant access.",
             "Fixtures são destruídas após execução."
           ],
-          "labels": ["kind:test", "area:platform", "priority:p2"],
+          "labels": [
+            "kind:test",
+            "area:platform",
+            "priority:p2",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Suite E2E multi-tenant com falhas induzidas."],
           "outOfScope": ["Escala de enterprise não contratada."],
           "dependsOn": ["v200-hosted-contract"]
@@ -2893,7 +3484,13 @@
             "Runbooks de containment, credential rotation e disclosure foram exercitados.",
             "Launch blockers críticos estão fechados."
           ],
-          "labels": ["kind:security", "area:platform", "priority:p2"],
+          "labels": [
+            "kind:security",
+            "area:platform",
+            "priority:p2",
+            "model:claude-fable-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Tabletop e canários de incidente produzem evidência."],
           "outOfScope": ["Prometer segurança absoluta."],
           "dependsOn": ["v200-hosted-contract"]
@@ -2909,7 +3506,13 @@
             "Disputas e falhas de webhook têm recovery.",
             "Limites impedem gasto não autorizado."
           ],
-          "labels": ["kind:test", "area:platform", "priority:p2"],
+          "labels": [
+            "kind:test",
+            "area:platform",
+            "priority:p2",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Fixtures de duplicate delivery, partial failure e replay."],
           "outOfScope": ["Otimização fiscal ou múltiplas moedas sem demanda."],
           "dependsOn": []
@@ -2925,7 +3528,13 @@
             "Backups e restore são exercitados.",
             "On-call e escalation têm owners."
           ],
-          "labels": ["kind:infra", "area:platform", "priority:p1"],
+          "labels": [
+            "kind:infra",
+            "area:platform",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Load, chaos e disaster-recovery drills."],
           "outOfScope": ["Otimização para escala hipotética sem dados."],
           "dependsOn": []
@@ -2941,7 +3550,13 @@
             "Dados locais podem permanecer locais quando o usuário não migra.",
             "Runbook de suporte cobre os primeiros modos de falha."
           ],
-          "labels": ["kind:feature", "area:platform", "priority:p1"],
+          "labels": [
+            "kind:feature",
+            "area:platform",
+            "priority:p1",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Migração canário de fixtures reais e rollback."],
           "outOfScope": ["Migração automática sem consentimento."],
           "dependsOn": []
@@ -2957,7 +3572,13 @@
             "SLO, billing, incident response e suporte têm evidência.",
             "Go/no-go registra decisão e owners."
           ],
-          "labels": ["kind:release", "area:platform", "priority:p1"],
+          "labels": [
+            "kind:release",
+            "area:platform",
+            "priority:p1",
+            "model:claude-haiku-4-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Dry-run completo de lançamento e rollback."],
           "outOfScope": ["Declarar sucesso apenas porque todas as issues fecharam."],
           "dependsOn": [
@@ -3005,7 +3626,14 @@
             "Workflows podem declarar categoria ou permitir classificação.",
             "Dashboard agrupa por nível sem perder detalhe."
           ],
-          "labels": ["kind:feature", "area:model-router", "area:orchestrator", "priority:p2"],
+          "labels": [
+            "kind:feature",
+            "area:model-router",
+            "area:orchestrator",
+            "priority:p2",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Migração de métricas da taxonomia v1."],
           "outOfScope": [],
           "dependsOn": []
@@ -3027,7 +3655,14 @@
             "Router consegue aplicar budget por unidade disponível.",
             "UI mostra estimado versus observado."
           ],
-          "labels": ["kind:infra", "area:model-router", "area:executors", "priority:p2"],
+          "labels": [
+            "kind:infra",
+            "area:model-router",
+            "area:executors",
+            "priority:p2",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Fixtures de usage parcial para Codex, Claude e AGY."],
           "outOfScope": [],
           "dependsOn": []
@@ -3049,7 +3684,14 @@
             "Resultados são artifacts e podem ser comparados por commit do Agent Foundry.",
             "Suite rápida roda no CI; suite cara é manual/cron."
           ],
-          "labels": ["kind:test", "area:model-router", "area:orchestrator", "priority:p2"],
+          "labels": [
+            "kind:test",
+            "area:model-router",
+            "area:orchestrator",
+            "priority:p2",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Reexecução do mesmo case produz metadados comparáveis."],
           "outOfScope": [],
           "dependsOn": ["v09-task-taxonomy", "v09-usage-telemetry"]
@@ -3071,7 +3713,14 @@
             "Human edits e regressions pós-merge entram como delayed signals.",
             "Nenhum score agregado apaga os componentes originais."
           ],
-          "labels": ["kind:feature", "kind:test", "area:model-router", "priority:p2"],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "area:model-router",
+            "priority:p2",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Mesmo output avaliado por verifier, reviewer cego e humano."],
           "outOfScope": [],
           "dependsOn": []
@@ -3088,7 +3737,13 @@
             "Calibration report compara confiança prevista com aprovação observada.",
             "Regras duras continuam precedendo qualquer score."
           ],
-          "labels": ["kind:feature", "area:model-router", "priority:p3"],
+          "labels": [
+            "kind:feature",
+            "area:model-router",
+            "priority:p3",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": ["Cold start, poucas amostras e histórico conflitante."],
           "outOfScope": [],
           "dependsOn": ["v09-quality-signals"]
@@ -3110,7 +3765,9 @@
             "kind:infra",
             "area:model-router",
             "area:executors",
-            "priority:p3"
+            "priority:p3",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
           ],
           "tests": ["Provider degradado, exploração low-risk e bloqueio high-risk."],
           "outOfScope": [],
@@ -3128,7 +3785,15 @@
             "Regression gate compara baseline antes de promover catálogo ou harness.",
             "Export permite análise externa sem PII."
           ],
-          "labels": ["kind:feature", "kind:test", "area:model-router", "area:web", "priority:p3"],
+          "labels": [
+            "kind:feature",
+            "kind:test",
+            "area:model-router",
+            "area:web",
+            "priority:p3",
+            "model:claude-sonnet-5",
+            "model:gpt-5.6-sol"
+          ],
           "tests": [],
           "outOfScope": [],
           "dependsOn": ["v09-benchmark-runner", "v09-confidence-routing", "v09-exploration-health"]
