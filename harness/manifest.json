@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "version": "2026.07.11-v1",
+  "version": "2026.07.12-v2",
   "fragments": [
     {
       "path": "global/operating-principles.md",
@@ -71,6 +71,11 @@
       "path": "quality/testing.md",
       "priority": 220,
       "tags": ["testing", "quality"]
+    },
+    {
+      "path": "quality/design.md",
+      "priority": 230,
+      "stacks": ["nextjs"]
     }
   ]
 }
