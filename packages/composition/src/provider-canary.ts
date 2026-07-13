@@ -20,7 +20,7 @@ import { PROVIDER_CANARY_FIXTURES } from './provider-canary-fixtures.js';
 
 const PROVIDERS = ['codex', 'claude', 'agy'] as const;
 const SCENARIOS = ['planning', 'greenfield', 'repair'] as const;
-const DEFAULT_TIMEOUT_MS = 180_000;
+const DEFAULT_TIMEOUT_MS = 600_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
 const BASELINE_STEM = 'v0.2-provider-canaries';
 const REQUIRED_VERIFICATION_NAMES: Readonly<Record<CanaryScenario, readonly string[]>> = {

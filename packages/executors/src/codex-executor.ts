@@ -15,7 +15,6 @@ export class CodexCliExecutor extends BaseCliExecutor {
 
   protected async invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
     const runDir = join(request.cwd, '.orchestrator', 'runs', request.runId);
-    const schemaPath = join(runDir, 'output.schema.json');
     const outputFile = join(runDir, 'codex.final.json');
     const args = [
       'exec',
@@ -26,8 +25,6 @@ export class CodexCliExecutor extends BaseCliExecutor {
       '--sandbox',
       request.mutatesWorkspace ? 'workspace-write' : 'read-only',
       '--skip-git-repo-check',
-      '--output-schema',
-      schemaPath,
       '--output-last-message',
       outputFile,
     ];

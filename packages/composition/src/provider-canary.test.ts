@@ -110,12 +110,14 @@ describe('provider canary runner', () => {
 
   it('runs the nine provider/scenario pairs serially in isolated temporary repositories', async () => {
     const workspaces: string[] = [];
+    const timeouts: number[] = [];
     let active = 0;
     let maximumActive = 0;
     const dependencies = fakeDependencies(async (_provider, request) => {
       active += 1;
       maximumActive = Math.max(maximumActive, active);
       workspaces.push(request.cwd);
+      timeouts.push(request.timeoutMs);
       await applySuccessfulMutation(request);
       await new Promise((resolve) => setTimeout(resolve, 2));
       active -= 1;
@@ -133,6 +135,7 @@ describe('provider canary runner', () => {
     expect(outcome.report.runs.every((run) => run.status === 'passed')).toBe(true);
     expect(maximumActive).toBe(1);
     expect(new Set(workspaces).size).toBe(9);
+    expect(new Set(timeouts)).toEqual(new Set([600_000]));
     expect(outcome.report.runs.map(({ provider, scenario }) => `${provider}:${scenario}`)).toEqual(
       providers.flatMap((provider) =>
         ['planning', 'greenfield', 'repair'].map((scenario) => `${provider}:${scenario}`),

@@ -48,6 +48,7 @@ describe('CLI executor contracts', () => {
     expect(invocation.input).toBe('Open the request file.');
     expect(invocation.args).toContain('workspace-write');
     expect(invocation.args).not.toContain('--ask-for-approval');
+    expect(invocation.args).not.toContain('--output-schema');
     expect(invocation.args).not.toContain('--model');
     expect(invocation.outputFile).toContain('codex.final.json');
   });
