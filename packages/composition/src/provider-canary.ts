@@ -458,7 +458,7 @@ async function createExecutionRequest(
     taskKind,
     provider,
     model,
-    prompt: `${fixture.prompt}\n\nRun node --test when the scenario permits edits. Your final response must be one JSON object matching the supplied output schema, with no Markdown fence or surrounding prose.`,
+    prompt: `${fixture.prompt}\n\nYour final response must be one JSON object matching the supplied output schema, with no Markdown fence or surrounding prose.`,
     cwd,
     mutatesWorkspace: fixture.mutatesWorkspace,
     timeoutMs,
