@@ -82,36 +82,37 @@ export function extractUsage(raw: string):
 
 export function extractExecutedModel(raw: string): string | undefined {
   const documents = providerDocuments(raw);
+  const metadataRecords = documents.flatMap(providerMetadataRecords);
+  const concreteModels = new Set<string>();
 
-  // Claude reports concrete model IDs as keys in modelUsage. Prefer that over a
-  // top-level alias if both are present.
-  for (const document of documents) {
-    for (const record of walkRecords(document)) {
-      const modelUsage = record.modelUsage ?? record.model_usage;
-      if (modelUsage !== null && typeof modelUsage === 'object' && !Array.isArray(modelUsage)) {
-        const models = Object.keys(modelUsage).filter((model) => model.trim().length > 0);
-        if (models.length === 1) return models[0]?.trim();
+  // Claude reports concrete model IDs as keys in modelUsage. Aggregate every
+  // provider envelope before deciding so conflicting documents fail closed.
+  for (const record of metadataRecords) {
+    const modelUsage = record.modelUsage ?? record.model_usage;
+    if (modelUsage !== null && typeof modelUsage === 'object' && !Array.isArray(modelUsage)) {
+      for (const model of Object.keys(modelUsage)) {
+        if (model.trim()) concreteModels.add(model.trim());
       }
     }
   }
+  if (concreteModels.size === 1) return concreteModels.values().next().value;
+  if (concreteModels.size > 1) return undefined;
 
   const explicitModels = new Set<string>();
   const directModels = new Set<string>();
-  for (const document of documents) {
-    for (const record of walkRecords(document)) {
-      const explicit = stringFrom(record, [
-        'executed_model',
-        'executedModel',
-        'model_name',
-        'modelName',
-        'model_id',
-        'modelId',
-      ]);
-      if (explicit !== undefined) explicitModels.add(explicit);
+  for (const record of metadataRecords) {
+    const explicit = stringFrom(record, [
+      'executed_model',
+      'executedModel',
+      'model_name',
+      'modelName',
+      'model_id',
+      'modelId',
+    ]);
+    if (explicit !== undefined) explicitModels.add(explicit);
 
-      const direct = stringFrom(record, ['model']);
-      if (direct !== undefined && isProviderMetadataRecord(record)) directModels.add(direct);
-    }
+    const direct = stringFrom(record, ['model']);
+    if (direct !== undefined) directModels.add(direct);
   }
 
   if (explicitModels.size === 1) return explicitModels.values().next().value;
@@ -215,15 +216,19 @@ function providerDocuments(raw: string): unknown[] {
   return documents;
 }
 
-function isProviderMetadataRecord(record: Record<string, unknown>): boolean {
-  return (
-    typeof record.type === 'string' ||
-    typeof record.event === 'string' ||
-    typeof record.provider === 'string' ||
-    record.usage !== undefined ||
-    record.modelUsage !== undefined ||
-    record.model_usage !== undefined
-  );
+function providerMetadataRecords(document: unknown): Record<string, unknown>[] {
+  if (Array.isArray(document)) return document.flatMap(providerMetadataRecords);
+  if (document === null || typeof document !== 'object') return [];
+
+  const envelope = document as Record<string, unknown>;
+  const records = [envelope];
+  for (const key of ['metadata', 'response_metadata', 'responseMetadata']) {
+    const value = envelope[key];
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      records.push(value as Record<string, unknown>);
+    }
+  }
+  return records;
 }
 
 function tryParse(value: string): unknown | null {

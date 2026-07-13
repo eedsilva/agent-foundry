@@ -30,7 +30,9 @@ describe('provider output fixtures', () => {
     'agy.failed.stdout.json',
     'agy.failed.stderr.txt',
   ])('keeps %s scrubbed of identities, credentials, and machine paths', (name) => {
-    expect(fixture(name)).not.toMatch(/\/Users\/|Bearer\s|sk-[a-zA-Z0-9]|[\w.+-]+@[\w.-]+/);
+    expect(fixture(name)).not.toMatch(
+      /\/Users\/|\/home\/|\/tmp\/|[A-Za-z]:\\Users\\|Bearer\s|sk-[a-zA-Z0-9]|ghp_|github_pat_|AKIA[A-Z0-9]{16}|[A-Z_][A-Z0-9_]*=\S+|[\w.+-]+@[\w.-]+/,
+    );
   });
 });
 
@@ -154,4 +156,79 @@ describe('extractExecutedModel', () => {
       expect(extractExecutedModel(fixture(name))).toBeUndefined();
     },
   );
+
+  it('returns no model when singleton Claude modelUsage records disagree across documents', () => {
+    const raw = [
+      JSON.stringify({
+        type: 'result',
+        model: 'sonnet',
+        modelUsage: { 'claude-sonnet-4-20250514': { inputTokens: 10 } },
+      }),
+      JSON.stringify({
+        type: 'result',
+        modelUsage: { 'claude-opus-4-20250514': { outputTokens: 5 } },
+      }),
+    ].join('\n');
+
+    expect(extractExecutedModel(raw)).toBeUndefined();
+  });
+
+  it('does not fall back to a top-level alias when Claude modelUsage is ambiguous', () => {
+    expect(
+      extractExecutedModel(
+        JSON.stringify({
+          type: 'result',
+          model: 'sonnet',
+          modelUsage: {
+            'claude-sonnet-4-20250514': { inputTokens: 10 },
+            'claude-opus-4-20250514': { outputTokens: 5 },
+          },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('deduplicates one concrete Claude model across documents', () => {
+    const raw = [
+      JSON.stringify({
+        type: 'result',
+        modelUsage: { 'claude-sonnet-4-20250514': { inputTokens: 10 } },
+      }),
+      JSON.stringify({
+        type: 'result',
+        modelUsage: { 'claude-sonnet-4-20250514': { outputTokens: 5 } },
+      }),
+    ].join('\n');
+
+    expect(extractExecutedModel(raw)).toBe('claude-sonnet-4-20250514');
+  });
+
+  it('ignores artifact model data when provider metadata identifies the executed model', () => {
+    expect(
+      extractExecutedModel(
+        JSON.stringify({
+          type: 'result',
+          model: 'gpt-5.3-codex',
+          output: {
+            ...artifact,
+            data: { type: 'model-config', model: 'artifact-model' },
+          },
+        }),
+      ),
+    ).toBe('gpt-5.3-codex');
+  });
+
+  it('does not manufacture executed-model metadata from artifact content', () => {
+    expect(
+      extractExecutedModel(
+        JSON.stringify({
+          type: 'result',
+          output: {
+            ...artifact,
+            data: { type: 'model-config', model: 'artifact-model' },
+          },
+        }),
+      ),
+    ).toBeUndefined();
+  });
 });
