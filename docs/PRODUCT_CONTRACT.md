@@ -31,7 +31,7 @@ V1 ships only when the Issue Radar golden application proves, end to end:
 
 - chat-first creation from a short idea;
 - the full planner/reviewer/architect/developer/reviewer/verifier/release pipeline;
-- adaptive routing across Codex, Claude and AGY;
+- evidence-based model routing across Codex, Claude and AGY (the existing router; learned adaptive routing remains exploratory v0.9);
 - a generated Next.js, TypeScript, Tailwind CSS and shadcn/ui repository;
 - an isolated local Supabase Docker stack;
 - default email/password authentication, protected routes, sessions and baseline RLS;

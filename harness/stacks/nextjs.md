@@ -16,10 +16,11 @@ Unless the approved architecture says otherwise:
 Standing choices for generated apps. The PRD or approved architecture may override them; record any override as a decision.
 
 - Package manager: pnpm.
-- Backend: Supabase for database, auth, and storage (`@supabase/supabase-js` + `@supabase/ssr`). Enable Row Level Security on every table holding user data.
-- Every app ships with Supabase auth wired end to end: sign-in flow, protected routes, and session handling.
+- Backend: the project's own isolated local Supabase Docker stack (`@supabase/supabase-js` + `@supabase/ssr`), per ADR 0007. Never point a generated app at Supabase Cloud or another project's stack. Enable Row Level Security on every table holding user data.
+- Every app ships with Supabase auth wired end to end: sign-in flow, protected routes, and session handling. Email/password only — no OAuth, magic links, or SMTP; password reset is an administrator operation.
+- Secrets and credentials live in local `.env` files: git-ignored and never echoed into source, prompts, artifacts, screenshots, or logs.
 - UI: Tailwind CSS + shadcn/ui components.
 - Structure: minimal feature folders — `app/` for routes, `features/<name>/` for feature logic and components, `lib/` for shared domain code. No extra layering until the app demonstrably needs it.
-- Deployment target: Docker on the owner's server. Include a multi-stage `Dockerfile` using Next.js standalone output and a `docker-compose.yml`.
+- Deployment target: Docker Compose on the owner's existing VPS behind Caddy, per ADR 0008. Include a multi-stage `Dockerfile` using Next.js standalone output and a `docker-compose.yml`.
 - Dependencies: well-known, actively maintained libraries are fine when they save real time; pin versions.
 - Language: code, comments, and docs in English; user-facing copy follows the PRD's language.
