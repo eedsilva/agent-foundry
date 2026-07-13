@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execa } from 'execa';
@@ -22,6 +22,7 @@ const PROVIDERS = ['codex', 'claude', 'agy'] as const;
 const SCENARIOS = ['planning', 'greenfield', 'repair'] as const;
 const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
+const BASELINE_STEM = 'v0.2-provider-canaries';
 const REQUIRED_VERIFICATION_NAMES: Readonly<Record<CanaryScenario, readonly string[]>> = {
   planning: ['no-diff'],
   greenfield: ['node-test', 'git-diff-check', 'allowed-files'],
@@ -131,7 +132,7 @@ export async function runProviderCanaries(
 
 export async function freezeProviderCanaryReport(
   input: ProviderCanaryReport,
-  targetPath: string,
+  rootDir: string,
 ): Promise<void> {
   const report = ProviderCanaryReportSchema.parse(input);
   if (report.runs.length !== 9) {
@@ -160,8 +161,93 @@ export async function freezeProviderCanaryReport(
     throw new Error('Provider canary freeze requires one run for every provider/scenario pair.');
   }
 
-  await mkdir(dirname(targetPath), { recursive: true });
-  await writeFile(targetPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'w' });
+  const baselineDirectory = join(rootDir, 'docs', 'baselines');
+  const jsonPath = join(baselineDirectory, `${BASELINE_STEM}.json`);
+  const markdownPath = join(baselineDirectory, `${BASELINE_STEM}.md`);
+  const temporarySuffix = `.${process.pid}-${Date.now()}.tmp`;
+  const temporaryJsonPath = `${jsonPath}${temporarySuffix}`;
+  const temporaryMarkdownPath = `${markdownPath}${temporarySuffix}`;
+
+  await mkdir(baselineDirectory, { recursive: true });
+  try {
+    await Promise.all([
+      writeFile(temporaryJsonPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' }),
+      writeFile(temporaryMarkdownPath, renderProviderCanaryMarkdown(report), { flag: 'wx' }),
+    ]);
+    await rename(temporaryJsonPath, jsonPath);
+    await rename(temporaryMarkdownPath, markdownPath);
+  } finally {
+    await Promise.all([
+      rm(temporaryJsonPath, { force: true }),
+      rm(temporaryMarkdownPath, { force: true }),
+    ]);
+  }
+}
+
+function renderProviderCanaryMarkdown(report: ProviderCanaryReport): string {
+  const providerNames: Record<ProviderCanaryProvider, string> = {
+    codex: 'Codex',
+    claude: 'Claude',
+    agy: 'AGY',
+  };
+  const lines = [
+    '# v0.2 real provider canary baseline',
+    '',
+    `Frozen at ${report.createdAt}. The machine-readable source of truth is \`${BASELINE_STEM}.json\`.`,
+    '',
+    '## CLI readiness',
+    '',
+    '| Provider | CLI version | Status |',
+    '| --- | --- | --- |',
+    ...report.probes.map(
+      (probe) =>
+        `| ${providerNames[probe.provider]} | ${markdownCell(probe.version ?? 'Unknown')} | ${titleCase(probe.status)} |`,
+    ),
+    '',
+    '## Results',
+    '',
+    '| Provider | Scenario | Selected model | Executed model | Status | Duration (ms) | Usage | Verification |',
+    '| --- | --- | --- | --- | --- | ---: | --- | --- |',
+    ...report.runs.map(
+      (run) =>
+        `| ${run.provider} | ${run.scenario} | ${markdownCell(run.model)} | ${markdownCell(run.executedModel ?? 'Unknown')} | ${titleCase(run.status)} | ${run.durationMs} | ${markdownCell(formatUsage(run.usage))} | ${markdownCell(run.verification.map((check) => `${check.name}: ${check.passed ? 'pass' : 'fail'}`).join(', ') || 'None')} |`,
+    ),
+    '',
+    '## Confirmed model aliases',
+    '',
+    '| Provider | Alias | Selected model |',
+    '| --- | --- | --- |',
+    ...report.aliases.map(
+      (alias) =>
+        `| ${alias.provider} | ${markdownCell(alias.alias)} | ${markdownCell(alias.model)} |`,
+    ),
+    '',
+    '## Limitations',
+    '',
+    ...report.limitations.map((limitation) => `- ${limitation}`),
+    '',
+    'Raw provider output, authentication responses, identities, credentials, session identifiers, and machine-specific temporary paths are intentionally excluded.',
+    '',
+  ];
+  return lines.join('\n');
+}
+
+function formatUsage(usage: ProviderCanaryRun['usage']): string {
+  if (!usage) return 'Not reported';
+  const parts: string[] = [];
+  if (usage.inputTokens !== undefined) parts.push(`input ${usage.inputTokens}`);
+  if (usage.outputTokens !== undefined) parts.push(`output ${usage.outputTokens}`);
+  if (usage.cachedInputTokens !== undefined) parts.push(`cached ${usage.cachedInputTokens}`);
+  if (usage.estimatedCostUsd !== undefined) parts.push(`cost USD ${usage.estimatedCostUsd}`);
+  return parts.join(', ') || 'Not reported';
+}
+
+function markdownCell(value: string): string {
+  return value.replaceAll('|', '\\|').replaceAll(/\r?\n/g, ' ');
+}
+
+function titleCase(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
 
 export function modelsFromEnvironment(

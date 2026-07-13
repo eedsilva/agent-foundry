@@ -1,4 +1,5 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -343,43 +344,53 @@ describe('provider canary runner', () => {
 describe('provider canary freeze', () => {
   it('refuses any report without exactly nine passing runs and known executed models', async () => {
     const outcome = await successfulOutcome();
-    const target = join(process.cwd(), '.data', 'provider-canaries', 'freeze-test.json');
+    const root = await mkdtemp(join(tmpdir(), 'agent-foundry-freeze-test-'));
 
-    await expect(
-      freezeProviderCanaryReport(
-        { ...outcome.report, runs: outcome.report.runs.slice(0, 8) },
-        target,
-      ),
-    ).rejects.toThrow(/exactly nine/i);
-    await expect(
-      freezeProviderCanaryReport(
-        {
-          ...outcome.report,
-          runs: outcome.report.runs.map((run, index) =>
-            index === 0 ? { ...run, status: 'failed' as const } : run,
-          ),
-        },
-        target,
-      ),
-    ).rejects.toThrow(/passing/i);
-    await expect(
-      freezeProviderCanaryReport(
-        {
-          ...outcome.report,
-          runs: outcome.report.runs.map((run, index) => {
-            if (index !== 0) return run;
-            const { executedModel: _executedModel, ...unknownModel } = run;
-            return unknownModel;
-          }),
-        },
-        target,
-      ),
-    ).rejects.toThrow(/executed model/i);
+    try {
+      await expect(
+        freezeProviderCanaryReport(
+          { ...outcome.report, runs: outcome.report.runs.slice(0, 8) },
+          root,
+        ),
+      ).rejects.toThrow(/exactly nine/i);
+      await expect(
+        freezeProviderCanaryReport(
+          {
+            ...outcome.report,
+            runs: outcome.report.runs.map((run, index) =>
+              index === 0 ? { ...run, status: 'failed' as const } : run,
+            ),
+          },
+          root,
+        ),
+      ).rejects.toThrow(/passing/i);
+      await expect(
+        freezeProviderCanaryReport(
+          {
+            ...outcome.report,
+            runs: outcome.report.runs.map((run, index) => {
+              if (index !== 0) return run;
+              const { executedModel: _executedModel, ...unknownModel } = run;
+              return unknownModel;
+            }),
+          },
+          root,
+        ),
+      ).rejects.toThrow(/executed model/i);
+      await expect(
+        access(join(root, 'docs', 'baselines', 'v0.2-provider-canaries.json')),
+      ).rejects.toThrow();
+      await expect(
+        access(join(root, 'docs', 'baselines', 'v0.2-provider-canaries.md')),
+      ).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('refuses reports without exact passing scenario-specific verification checks', async () => {
     const outcome = await successfulOutcome();
-    const target = join(process.cwd(), '.data', 'provider-canaries', 'freeze-test.json');
+    const root = await mkdtemp(join(tmpdir(), 'agent-foundry-freeze-test-'));
     const replaceVerification = (
       scenario: 'planning' | 'greenfield' | 'repair',
       verification: (typeof outcome.report.runs)[number]['verification'],
@@ -391,7 +402,7 @@ describe('provider canary freeze', () => {
     });
 
     await expect(
-      freezeProviderCanaryReport(replaceVerification('planning', []), target),
+      freezeProviderCanaryReport(replaceVerification('planning', []), root),
     ).rejects.toThrow(/verification/i);
     await expect(
       freezeProviderCanaryReport(
@@ -399,7 +410,7 @@ describe('provider canary freeze', () => {
           outcome.report.runs.find((run) => run.scenario === 'planning')!.verification[0]!,
           { name: 'node-test', passed: true, exitCode: 0, durationMs: 1 },
         ]),
-        target,
+        root,
       ),
     ).rejects.toThrow(/verification/i);
     await expect(
@@ -410,7 +421,7 @@ describe('provider canary freeze', () => {
             .find((run) => run.scenario === 'greenfield')!
             .verification.filter((check) => check.name !== 'allowed-files'),
         ),
-        target,
+        root,
       ),
     ).rejects.toThrow(/verification/i);
     await expect(
@@ -423,19 +434,31 @@ describe('provider canary freeze', () => {
               check.name === 'git-diff-check' ? { ...check, passed: false } : check,
             ),
         ),
-        target,
+        root,
       ),
     ).rejects.toThrow(/verification/i);
   });
 
   it('freezes a strict complete nine-run matrix', async () => {
     const outcome = await successfulOutcome();
-    const target = join(process.cwd(), '.data', 'provider-canaries', 'freeze-test.json');
-    await freezeProviderCanaryReport(outcome.report, target);
+    const root = await mkdtemp(join(tmpdir(), 'agent-foundry-freeze-test-'));
+    await freezeProviderCanaryReport(outcome.report, root);
 
-    const frozen = JSON.parse(await readFile(target, 'utf8')) as unknown;
+    const baselineDir = join(root, 'docs', 'baselines');
+    const frozen = JSON.parse(
+      await readFile(join(baselineDir, 'v0.2-provider-canaries.json'), 'utf8'),
+    ) as unknown;
+    const markdown = await readFile(join(baselineDir, 'v0.2-provider-canaries.md'), 'utf8');
     expect(frozen).toEqual(outcome.report);
     expect(ProviderCanaryReportSchema.safeParse(frozen).success).toBe(true);
+    expect(markdown).toContain('# v0.2 real provider canary baseline');
+    expect(markdown).toContain('| Codex | 1.2.3 | Ready |');
+    expect(markdown).toContain(
+      '| codex | planning | codex-model | codex-executed-model | Passed |',
+    );
+    expect(markdown).toContain('## Confirmed model aliases');
+    expect(markdown).toContain('| codex | canary | codex-model |');
+    expect(markdown).toContain('## Limitations');
   });
 });
 
