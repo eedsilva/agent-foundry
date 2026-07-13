@@ -11,8 +11,19 @@ const project = JSON.parse(await readFile(resolve(root, 'planning/project-spec.j
 test('roadmap vigente é válido e reproduzível', () => {
   const result = validateRoadmap(spec, project);
   assert.deepEqual(result.errors, []);
-  assert.equal(issueRecords(spec, project).length, 125);
+  assert.equal(issueRecords(spec, project).length, 131);
   assert.equal(renderRoadmapMarkdown(spec), renderRoadmapMarkdown(structuredClone(spec)));
+});
+
+test('traceability Personal v1 rejeita references e evidence incompletas', () => {
+  const clone = structuredClone(spec);
+  clone.personalV1Requirements[0].tasks.push('missing-task');
+  clone.personalV1Requirements[1].evidence = '';
+  clone.personalV1Requirements[2].milestones.push('v0.8');
+  const result = validateRoadmap(clone, project);
+  assert.ok(result.errors.some((error) => error.includes('task inexistente')));
+  assert.ok(result.errors.some((error) => error.includes('precisa de evidence')));
+  assert.ok(result.errors.some((error) => error.includes('fora do caminho Personal v1')));
 });
 
 test('detecta ciclos e dependências inexistentes', () => {

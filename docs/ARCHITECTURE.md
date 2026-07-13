@@ -2,13 +2,14 @@
 
 ## Objetivo
 
-O Agent Foundry separa cinco preocupações que frequentemente aparecem misturadas em produtos de geração de software:
+O Agent Foundry separa seis preocupações que frequentemente aparecem misturadas em produtos de geração de software:
 
 1. **Produto e transporte:** UI e API.
 2. **Estado e entrega:** projeto, fila, eventos e artefatos.
 3. **Workflow:** ordem, gates, reparos e limites.
 4. **Inteligência:** harness, task profiling e model routing.
 5. **Execução:** CLIs, workspace, Git e verificações determinísticas.
+6. **Runtime do app:** Supabase local por projeto, preview e publicação Compose no VPS do operador.
 
 A regra central é simples: **agentes não fazem handoff por memória implícita**. Eles leem artefatos persistidos e produzem novos artefatos validados.
 
@@ -84,6 +85,36 @@ Coordena tudo. O motor:
 ### `packages/composition`
 
 Composition root. Converte ambiente em configuração e conecta implementações concretas às portas.
+
+## Arquitetura-alvo do Personal Builder v1
+
+O control plane continua local e loopback. Cada projeto greenfield ganha um repositório Git e um runtime Docker Compose isolados. O runtime do app não compartilha banco, auth, storage, rede ou volumes com outro projeto.
+
+```mermaid
+flowchart LR
+  U["Operador no macOS"] --> B["Builder local: Chat / Preview / Changes"]
+  B --> O["Orquestrador e pipeline completo"]
+  O --> C["Codex / Claude / AGY"]
+  O --> G["Repositório Git do projeto"]
+  O --> S["Sandbox de build, verifier e preview"]
+  G --> L["Compose local: Next.js + Supabase"]
+  S --> L
+  O --> D["Deployer SSH"]
+  D --> V["VPS: Compose isolado + Caddy"]
+  V --> K["Backups no VPS"]
+  K --> M["Cópia no Mac"]
+```
+
+### Fronteiras novas
+
+- `GeneratedProjectRuntime` controla o Compose local, migrations, seed e health.
+- `PreviewRunner` e `BrowserVerifier` executam apenas através de `SandboxRunner`.
+- `DeploymentProvider` v1 possui uma única implementação: SSH + Docker Compose em VPS existente.
+- `BackupProvider` agenda backup no VPS, verifica integridade e copia para o Mac.
+- `ProjectVersion` liga operação, commit, artefatos, preview e release.
+- `.env` é entrada confiável do operador e nunca conteúdo de agente.
+
+O rollback de release aponta para uma versão anterior do app e de sua configuração. Ele não reverte schema nem dados. Migrations destrutivas exigem approval e plano de forward fix.
 
 ## Fluxo detalhado
 

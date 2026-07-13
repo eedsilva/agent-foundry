@@ -90,6 +90,53 @@ export function validateRoadmap(spec, projectSpec) {
     }
   }
 
+  const taskMilestone = new Map();
+  for (const milestone of spec.milestones ?? []) {
+    for (const task of milestone.tasks ?? []) taskMilestone.set(task.key, milestone.key);
+  }
+  const requirementIds = new Set();
+  const v1Closure = new Set();
+  const collectMilestoneClosure = (key) => {
+    if (v1Closure.has(key)) return;
+    const current = (spec.milestones ?? []).find((milestone) => milestone.key === key);
+    if (!current) return;
+    v1Closure.add(key);
+    for (const dependency of current.dependsOn ?? []) collectMilestoneClosure(dependency);
+  };
+  collectMilestoneClosure('v1.0');
+  for (const requirement of spec.personalV1Requirements ?? []) {
+    if (!requirement.id) errors.push('Personal v1 requirement sem id.');
+    if (requirementIds.has(requirement.id))
+      errors.push(`Personal v1 requirement duplicada: ${requirement.id}`);
+    requirementIds.add(requirement.id);
+    if (!requirement.statement?.trim())
+      errors.push(`${requirement.id ?? 'requirement'} precisa de statement.`);
+    if (!requirement.evidence?.trim())
+      errors.push(`${requirement.id ?? 'requirement'} precisa de evidence.`);
+    if (!requirement.milestones?.length)
+      errors.push(`${requirement.id ?? 'requirement'} precisa de milestone.`);
+    if (!requirement.tasks?.length)
+      errors.push(`${requirement.id ?? 'requirement'} precisa de task.`);
+    for (const milestoneKey of requirement.milestones ?? []) {
+      if (!milestoneKeys.has(milestoneKey))
+        errors.push(`${requirement.id} referencia milestone inexistente: ${milestoneKey}`);
+      else if (!v1Closure.has(milestoneKey))
+        errors.push(
+          `${requirement.id} referencia milestone fora do caminho Personal v1: ${milestoneKey}`,
+        );
+    }
+    for (const taskKey of requirement.tasks ?? []) {
+      if (!taskKeys.has(taskKey)) {
+        errors.push(`${requirement.id} referencia task inexistente: ${taskKey}`);
+        continue;
+      }
+      if (!(requirement.milestones ?? []).includes(taskMilestone.get(taskKey)))
+        errors.push(`${requirement.id} não inclui a milestone da task ${taskKey}.`);
+    }
+  }
+  if (!(spec.personalV1Requirements ?? []).length)
+    errors.push('personalV1Requirements precisa cobrir o contrato Personal v1.');
+
   for (const milestone of spec.milestones ?? []) {
     for (const dependency of milestone.dependsOn ?? []) {
       if (!milestoneKeys.has(dependency))
