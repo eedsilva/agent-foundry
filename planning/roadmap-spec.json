@@ -1775,7 +1775,7 @@
         "Versões podem ser promovidas para production e revertidas.",
         "Custom domain e TLS possuem verificação e status claros.",
         "GitHub mantém sync bidirecional com política de conflitos.",
-        "Connector SDK suporta pelo menos pagamentos e email como referências."
+        "Connector SDK suporta pelo menos email transacional como referência."
       ],
       "nonGoals": ["Marketplace público de conectores.", "Deploy em qualquer provedor imaginável."],
       "dependsOn": ["v0.10", "v0.4.5"],
@@ -1889,15 +1889,13 @@
         },
         {
           "key": "v011-reference-connectors",
-          "title": "Entregar conectores de referência para Stripe e email transacional",
-          "summary": "Pagamentos e email forçam o sistema a lidar com webhooks, secrets, idempotência e ambientes.",
+          "title": "Entregar conector de referência de email transacional",
+          "summary": "Email transacional força o sistema a lidar com webhooks, secrets, idempotência e ambientes.",
           "touchpoints": ["packages/integrations", "packages/platform", "workflows", "examples"],
           "acceptance": [
-            "Stripe cobre checkout/subscription fixture, webhook verificado e idempotency key.",
             "Email cobre sender, template e delivery status em provider suportado.",
             "Test mode e production são separados.",
-            "Generated app não manipula dados de cartão diretamente.",
-            "Golden app usa ambos e passa browser/integration tests."
+            "Golden app usa o conector e passa browser/integration tests."
           ],
           "labels": [
             "kind:feature",
@@ -1907,7 +1905,9 @@
             "priority:p1"
           ],
           "tests": ["Webhook replay, assinatura inválida e provider indisponível."],
-          "outOfScope": [],
+          "outOfScope": [
+            "Conector de pagamentos (Stripe) — removido do escopo; adicionar quando houver necessidade real."
+          ],
           "dependsOn": ["v011-connector-sdk"]
         },
         {
@@ -1943,56 +1943,23 @@
     {
       "key": "v1.0",
       "title": "v1.0 - Personal Builder",
-      "description": "Release pessoal Lovable-class: intenção até preview, feedback, GitHub e publicação, sem depender do SaaS multi-tenant.",
+      "description": "Release pessoal Lovable-class: intenção até preview, feedback e GitHub, para um operador local confiável, sem depender do SaaS multi-tenant.",
       "objective": "Entregar a experiência de builder pessoal completa e verificável antes de escalar para Hosted Platform.",
       "exitCriteria": [
-        "Golden journeys cobrem prompt -> app full-stack -> visual edit -> deploy -> GitHub.",
-        "Feature contract e non-goals estão públicos e verificáveis.",
-        "SLOs, segurança, privacy e suporte possuem gates de lançamento.",
-        "Onboarding leva um usuário novo a um app publicado sem intervenção da equipe."
+        "Golden journeys cobrem prompt -> app -> preview -> visual edit -> revert -> GitHub.",
+        "Feature contract pessoal e non-goals estão documentados no Product Contract.",
+        "Security e privacy review cobrem o uso pessoal confiável (loopback, operador único)."
       ],
       "nonGoals": [
         "Paridade literal com todo recurso atual ou futuro do Lovable.",
         "Suporte universal a frameworks.",
         "Multi-tenancy, billing ou colaboração em tempo real.",
-        "Adaptive routing aprendido como requisito de lançamento."
+        "Adaptive routing aprendido como requisito de lançamento.",
+        "Pricing, onboarding para novos usuários, SLOs e capacity model (movidos para Hosted v2).",
+        "Full-stack provisionado (v0.10) e publish/conectores (v0.11) como bloqueadores de release; são incrementos pós-v1."
       ],
-      "dependsOn": ["v0.6", "v0.10", "v0.11", "v0.4.5"],
+      "dependsOn": ["v0.6", "v0.4.5"],
       "tasks": [
-        {
-          "key": "v100-parity-contract",
-          "title": "Publicar feature contract e matriz Lovable-class",
-          "summary": "Definir o alvo de produto em termos verificáveis, não em semelhança visual ou slogan.",
-          "touchpoints": ["docs", "apps/web", "packages/contracts"],
-          "acceptance": [
-            "Matriz cobre Chat, Plan/Build, visual edits, history, preview, browser tests, backend, GitHub e publish.",
-            "Cada capability aponta para teste, owner e status.",
-            "Diferenças deliberadas e non-goals são explícitos.",
-            "Critérios usam comportamento observável pelo usuário.",
-            "Release é bloqueada por gaps P0."
-          ],
-          "labels": ["kind:docs", "kind:test", "area:platform", "priority:p1"],
-          "tests": [],
-          "outOfScope": [],
-          "dependsOn": []
-        },
-        {
-          "key": "v100-onboarding-templates",
-          "title": "Construir onboarding, template gallery e remix guiado",
-          "summary": "A primeira experiência precisa reduzir escolha e levar a um resultado real, não a um dashboard vazio.",
-          "touchpoints": ["apps/web", "examples", "docs"],
-          "acceptance": [
-            "Usuário pode começar por prompt, PRD, GitHub ou template.",
-            "Templates têm preview, capabilities, stack e custos esperados.",
-            "Onboarding valida provider/connections sem expor complexidade desnecessária.",
-            "Checklist termina em app publicado e compartilhável.",
-            "Abandono e erro possuem recovery path."
-          ],
-          "labels": ["kind:feature", "area:web", "area:platform", "priority:p1"],
-          "tests": ["Usuário novo completa cada uma das quatro entradas."],
-          "outOfScope": [],
-          "dependsOn": []
-        },
         {
           "key": "v100-builder-polish",
           "title": "Polir builder, acessibilidade, responsividade e performance percebida",
@@ -2016,67 +1983,37 @@
           "summary": "A release precisa provar o sistema inteiro, não apenas pacotes isolados.",
           "touchpoints": ["tests/e2e", "apps", "packages", "workflows"],
           "acceptance": [
-            "Prompt cria app full-stack com auth, database e storage.",
+            "Prompt cria app funcional com preview ao vivo.",
             "Usuário faz change request, visual edit e revert.",
             "Browser tests encontram e reparam uma falha introduzida.",
-            "Projeto sincroniza GitHub, publica custom domain e faz rollback.",
-            "Fluxo de equipe cobre invite, review, credits e audit."
+            "Projeto sincroniza com GitHub e recupera uma versão anterior."
           ],
           "labels": ["kind:test", "area:platform", "area:web", "area:integrations", "priority:p1"],
           "tests": [],
-          "outOfScope": [],
-          "dependsOn": ["v100-parity-contract", "v100-onboarding-templates", "v100-builder-polish"]
-        },
-        {
-          "key": "v100-reliability-ops",
-          "title": "Definir SLOs, capacity model, runbooks e incident readiness",
-          "summary": "Um builder que funciona só em demos não é um produto.",
-          "touchpoints": ["docs/OPERATIONS.md", "packages/platform", "apps"],
-          "acceptance": [
-            "SLOs cobrem API, queue wait, run success, preview e deploy.",
-            "Alertas derivam de sintomas de usuário e possuem runbook.",
-            "Capacity model inclui provider quotas, sandboxes e storage.",
-            "Game day testa provider outage, queue backlog, DB failover e bad deploy.",
-            "Status page e comunicação de incidente têm processo."
+          "outOfScope": [
+            "App full-stack provisionado (auth, database, storage) — v0.10.",
+            "Custom domain e publish — v0.11.",
+            "Fluxos de equipe, credits e audit multiusuário — Hosted v2."
           ],
-          "labels": ["kind:infra", "kind:docs", "area:platform", "priority:p1"],
-          "tests": ["Game day documentado com ações e follow-ups."],
-          "outOfScope": [],
-          "dependsOn": []
+          "dependsOn": ["v100-builder-polish"]
         },
         {
           "key": "v100-security-privacy",
-          "title": "Concluir security review, privacy review e launch threat assessment",
-          "summary": "Antes de abrir o produto, validar isolamento, supply chain, data handling e mecanismos de abuso.",
+          "title": "Concluir security review e threat assessment do builder pessoal",
+          "summary": "Antes de fechar a v1, validar isolamento, supply chain e data handling para o operador local confiável.",
           "touchpoints": ["docs/SECURITY.md", "packages", "apps"],
           "acceptance": [
-            "Pentest cobre control plane, sandboxes, preview, connectors e tenant isolation.",
-            "Dependências, images e artifacts possuem scanning e response policy.",
-            "Data inventory, retention, export e deletion são verificados.",
-            "Critical/high findings bloqueiam release ou têm risk acceptance explícito.",
-            "Security contact e vulnerability disclosure estão publicados."
+            "Threat model cobre control plane, sandbox, preview e prompt injection via PRD.",
+            "Dependências e artifacts possuem scanning e response policy.",
+            "Data handling do workspace (secrets, tokens, credenciais de CLI) é revisado.",
+            "Critical/high findings bloqueiam release ou têm risk acceptance explícito."
           ],
           "labels": ["kind:security", "kind:test", "area:platform", "area:sandbox", "priority:p1"],
           "tests": [],
-          "outOfScope": [],
-          "dependsOn": ["v100-golden-journeys"]
-        },
-        {
-          "key": "v100-launch",
-          "title": "Fechar pricing UX, documentação, migração e automação de release",
-          "summary": "O lançamento precisa ser repetível e honesto sobre limites, custos e ownership.",
-          "touchpoints": ["apps/web", "docs", ".github/workflows", "scripts"],
-          "acceptance": [
-            "Pricing/credits explicam unidade, estimativa e overage antes da ação.",
-            "Docs cobrem quickstart, builder, backend, GitHub, deploy, segurança e troubleshooting.",
-            "Projetos locais v0.x possuem caminho de migração.",
-            "Release pipeline gera changelog, tag, artifacts, rollback plan e smoke tests.",
-            "Launch checklist exige todos os gates P0 e assinatura dos responsáveis."
+          "outOfScope": [
+            "Pentest de tenant isolation, abuse controls e vulnerability disclosure pública — Hosted v2."
           ],
-          "labels": ["kind:docs", "kind:feature", "area:platform", "area:web", "priority:p1"],
-          "tests": [],
-          "outOfScope": [],
-          "dependsOn": ["v100-reliability-ops", "v100-security-privacy"]
+          "dependsOn": ["v100-golden-journeys"]
         }
       ],
       "track": "UX",

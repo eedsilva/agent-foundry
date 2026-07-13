@@ -2,7 +2,7 @@
   "schemaVersion": "1.0.0",
   "repository": "eedsilva/agent-foundry",
   "appliedSpecVersion": "2.0.0",
-  "note": "Seeded from the verified first roadmap import. Live body drift is checked before reconciliation.",
+  "note": "Reconciliation state after the 2026-07-12 apply: managed keys mapped to issue numbers with last-applied body hashes. Live body drift is checked before reconciliation.",
   "issues": {
     "roadmap": {
       "number": 1,

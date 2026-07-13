@@ -2,7 +2,7 @@
 
 > Gerado de `planning/roadmap-spec.json`. Não edite manualmente.
 
-Spec: **2.0.0** · Milestones: **15** · Tasks: **113** · Managed issues: **129**
+Spec: **2.0.0** · Milestones: **15** · Tasks: **109** · Managed issues: **125**
 
 ## Targets
 
@@ -44,8 +44,6 @@ flowchart LR
   m_v0_4_5 --> m_v0_11
   m_v1_0["v1.0 - Personal Builder"]
   m_v0_6 --> m_v1_0
-  m_v0_10 --> m_v1_0
-  m_v0_11 --> m_v1_0
   m_v0_4_5 --> m_v1_0
   m_v0_7["v0.7 - Secure Execution"]
   m_v0_4_5 --> m_v0_7
@@ -284,7 +282,7 @@ Publicação, domínios, GitHub two-way sync e conectores externos.
 - [ ] Versões podem ser promovidas para production e revertidas.
 - [ ] Custom domain e TLS possuem verificação e status claros.
 - [ ] GitHub mantém sync bidirecional com política de conflitos.
-- [ ] Connector SDK suporta pelo menos pagamentos e email como referências.
+- [ ] Connector SDK suporta pelo menos email transacional como referência.
 
 **Tasks**
 
@@ -293,33 +291,28 @@ Publicação, domínios, GitHub two-way sync e conectores externos.
 - **v011-github-app** · P1 · Integrar GitHub App/OAuth com permissões mínimas por repositório
 - **v011-github-sync** · P1 · Implementar two-way sync, pull requests e resolução de conflitos
 - **v011-connector-sdk** · P1 · Criar Connector SDK com OAuth, scopes, actions e secret refs
-- **v011-reference-connectors** · P1 · Entregar conectores de referência para Stripe e email transacional
+- **v011-reference-connectors** · P1 · Entregar conector de referência de email transacional
 - **v011-release-ui-e2e** · P1 · Construir painel de releases, domains, GitHub e connectors com golden flow
 
 ### v1.0 - Personal Builder
 
 **Track:** UX · **Target:** Personal v1 · **Commitment:** Candidate · **Risk:** Critical
 
-Release pessoal Lovable-class: intenção até preview, feedback, GitHub e publicação, sem depender do SaaS multi-tenant.
+Release pessoal Lovable-class: intenção até preview, feedback e GitHub, para um operador local confiável, sem depender do SaaS multi-tenant.
 
 **Objective:** Entregar a experiência de builder pessoal completa e verificável antes de escalar para Hosted Platform.
 
 **Exit criteria**
 
-- [ ] Golden journeys cobrem prompt -> app full-stack -> visual edit -> deploy -> GitHub.
-- [ ] Feature contract e non-goals estão públicos e verificáveis.
-- [ ] SLOs, segurança, privacy e suporte possuem gates de lançamento.
-- [ ] Onboarding leva um usuário novo a um app publicado sem intervenção da equipe.
+- [ ] Golden journeys cobrem prompt -> app -> preview -> visual edit -> revert -> GitHub.
+- [ ] Feature contract pessoal e non-goals estão documentados no Product Contract.
+- [ ] Security e privacy review cobrem o uso pessoal confiável (loopback, operador único).
 
 **Tasks**
 
-- **v100-parity-contract** · P1 · Publicar feature contract e matriz Lovable-class
-- **v100-onboarding-templates** · P1 · Construir onboarding, template gallery e remix guiado
 - **v100-builder-polish** · P1 · Polir builder, acessibilidade, responsividade e performance percebida
 - **v100-golden-journeys** · P1 · Automatizar golden journeys ponta a ponta em ambiente semelhante à produção
-- **v100-reliability-ops** · P1 · Definir SLOs, capacity model, runbooks e incident readiness
-- **v100-security-privacy** · P1 · Concluir security review, privacy review e launch threat assessment
-- **v100-launch** · P1 · Fechar pricing UX, documentação, migração e automação de release
+- **v100-security-privacy** · P1 · Concluir security review e threat assessment do builder pessoal
 
 ### v0.7 - Secure Execution
 
