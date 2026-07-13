@@ -4,7 +4,7 @@ Generated on 2026-07-11 for `eedsilva/agent-foundry`.
 
 ## Status
 
-**Applied and subsequently evolved.** The original migration was applied on 2026-07-12. The Personal Builder contract was aligned again on 2026-07-12 around a full greenfield golden path: local Supabase Docker, visual editing, VPS self-hosting, backup and app-only rollback. `planning/github-state.json` records the latest live reconciliation. Historical counts below describe the original Delivery Foundation migration and are not current roadmap totals.
+**Applied and subsequently evolved.** The original migration was applied on 2026-07-12. The Personal Builder contract was aligned again on 2026-07-13 around a full greenfield golden path: local Supabase Docker, visual editing, VPS self-hosting, backup and app-only rollback. `planning/github-state.json` records the latest live reconciliation. Historical counts below describe the original Delivery Foundation migration and are not current roadmap totals.
 
 The public repository baseline used for the migration is commit:
 

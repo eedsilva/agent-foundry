@@ -27,7 +27,7 @@ The final attempt to query npm's remote audit endpoint failed because DNS resolu
 
 Docker Compose configuration is included, but Docker was not installed in the validation environment, so the image itself was not built here.
 
-## Personal Builder v1 roadmap alignment — 2026-07-12
+## Personal Builder v1 roadmap alignment — 2026-07-13
 
 The approved Personal Builder contract was encoded in repository documentation, `planning/roadmap-spec.json`, rendered planning output and live GitHub issues.
 
