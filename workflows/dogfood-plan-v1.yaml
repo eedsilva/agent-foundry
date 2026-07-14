@@ -1,0 +1,70 @@
+schemaVersion: '1'
+id: dogfood-plan-v1
+name: Dogfood planning task pipeline
+description: >-
+  Analyzes the seeded repository against the PRD and produces a planning artifact without
+  mutating the workspace.
+stack: dogfood
+nodes:
+  - id: plan-gate
+    type: quality-loop
+    title: Product plan quality gate
+    maxIterations: 2
+    setup:
+      id: plan
+      type: agent
+      role: planner
+      taskKind: planning
+      title: Analyze the repository and produce the plan described in the PRD
+      instructions: >-
+        Inspect the repository files named in the PRD, then produce exactly the planning artifact
+        the PRD asks for. This task is analysis only; do not modify any files.
+      inputArtifacts: [prd]
+      outputArtifact: plan.current
+      mutatesWorkspace: false
+      harnessTags: [planning]
+      profile:
+        complexity: 3
+        risk: 2
+        preferredTags: [planning, reasoning]
+      maxAttempts: 3
+    check:
+      id: review-plan
+      type: agent
+      role: plan-reviewer
+      taskKind: plan-review
+      title: Pressure-test the plan against the PRD
+      instructions: >-
+        Find gaps, missed cases, and unsupported claims against the actual repository. Approve
+        only when the plan fully satisfies the PRD's request. Put the verdict in approved.
+      inputArtifacts: [prd, plan.current]
+      outputArtifact: plan.review
+      mutatesWorkspace: false
+      harnessTags: [review, planning]
+      profile:
+        complexity: 3
+        risk: 3
+        preferredTags: [review, reasoning]
+      maxAttempts: 3
+    repair:
+      id: repair-plan
+      type: agent
+      role: planner
+      taskKind: planning
+      title: Repair the plan from review findings
+      instructions: >-
+        Revise the plan to address every material review finding. Produce a complete replacement
+        plan. Do not modify any files.
+      inputArtifacts: [prd, plan.current, plan.review]
+      outputArtifact: plan.current
+      mutatesWorkspace: false
+      harnessTags: [planning, repair]
+      profile:
+        complexity: 3
+        risk: 3
+        preferredTags: [planning, reasoning]
+      maxAttempts: 3
+    approval:
+      artifact: plan.review
+      path: approved
+      equals: true

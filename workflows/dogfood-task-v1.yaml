@@ -1,0 +1,106 @@
+schemaVersion: '1'
+id: dogfood-task-v1
+name: Dogfood implementation task pipeline
+description: >-
+  Implements a single scoped v0.2 dogfood task inside a seeded repository workspace, reviews the
+  change against the PRD, repairs defects, then runs the task's deterministic verification script.
+stack: dogfood
+nodes:
+  - id: implementation-gate
+    type: quality-loop
+    title: Implementation quality gate
+    maxIterations: 2
+    setup:
+      id: implement
+      type: agent
+      role: developer
+      taskKind: implementation
+      title: Implement the task described in the PRD
+      instructions: >-
+        Inspect the seeded workspace, then implement exactly what the PRD asks for. Touch only the
+        files the PRD's allowlist permits, keep any seeded tests intact, and do not invent scope
+        beyond the PRD's stated deliverable.
+      inputArtifacts: [prd]
+      outputArtifact: implementation.report
+      mutatesWorkspace: true
+      harnessTags: [coding, typescript]
+      profile:
+        complexity: 3
+        risk: 3
+        preferredTags: [coding, repository, tool-use]
+      maxAttempts: 3
+    check:
+      id: review-code
+      type: agent
+      role: code-reviewer
+      taskKind: code-review
+      title: Review the implementation against the PRD
+      instructions: >-
+        Inspect the actual diff and repository, not only the implementation report. Confirm the
+        change satisfies the PRD, stays within the PRD's allowlist, and does not weaken or delete
+        seeded tests. Approve only if no material defect remains. Put the verdict in approved.
+      inputArtifacts: [prd, implementation.report]
+      outputArtifact: code.review
+      mutatesWorkspace: false
+      harnessTags: [review, coding]
+      profile:
+        complexity: 3
+        risk: 4
+        preferredTags: [review, coding, reasoning]
+      maxAttempts: 3
+    repair:
+      id: repair-code
+      type: agent
+      role: fixer
+      taskKind: repair
+      title: Repair implementation defects found in code review
+      instructions: >-
+        Inspect the code and review findings. Fix every material issue while staying inside the
+        PRD's allowlist. Do not silence tests or weaken validation.
+      inputArtifacts: [prd, implementation.report, code.review]
+      outputArtifact: implementation.report
+      mutatesWorkspace: true
+      harnessTags: [repair, coding, testing]
+      profile:
+        complexity: 3
+        risk: 4
+        preferredTags: [repair, coding, tool-use]
+      maxAttempts: 3
+    approval:
+      artifact: code.review
+      path: approved
+      equals: true
+
+  - id: deterministic-verification
+    type: quality-loop
+    title: Deterministic verification gate
+    maxIterations: 2
+    check:
+      id: verify-workspace
+      type: verify
+      title: Run the task's deterministic verification script
+      outputArtifact: verification.report
+      scripts: ['dogfood:verify']
+      includeGitDiffCheck: true
+    repair:
+      id: repair-verification
+      type: agent
+      role: fixer
+      taskKind: repair
+      title: Repair deterministic verification failures
+      instructions: >-
+        Read the failed command output, reproduce the failure, fix its root cause while staying
+        inside the PRD's allowlist, and rerun the verification script.
+      inputArtifacts: [prd, code.review, verification.report]
+      outputArtifact: verification.fix
+      mutatesWorkspace: true
+      harnessTags: [repair, testing, coding]
+      profile:
+        complexity: 3
+        risk: 4
+        preferredTags: [repair, coding, tool-use]
+      maxAttempts: 3
+    approval:
+      artifact: verification.report
+      path: approved
+      equals: true
