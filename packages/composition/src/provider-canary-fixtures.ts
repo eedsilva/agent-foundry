@@ -41,6 +41,7 @@ export const PROVIDER_CANARY_FIXTURES: Readonly<Record<CanaryScenario, ProviderC
       'package.json': packageJson,
       'README.md':
         '# Greeting function\n\nImplement src/greeting.js. Do not change any other project file.\n',
+      'src/.gitkeep': '',
       'test/greeting.test.js':
         "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { greeting } from '../src/greeting.js';\n\ntest('greets a supplied name', () => {\n  assert.equal(greeting('Ada'), 'Hello, Ada!');\n});\n",
     },

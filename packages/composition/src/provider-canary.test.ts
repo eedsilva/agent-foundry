@@ -120,6 +120,9 @@ describe('provider canary runner', () => {
       workspaces.push(request.cwd);
       timeouts.push(request.timeoutMs);
       prompts.push(request.prompt);
+      if (request.stepId.endsWith('greenfield')) {
+        await access(join(request.cwd, 'src'));
+      }
       await applySuccessfulMutation(request);
       await new Promise((resolve) => setTimeout(resolve, 2));
       active -= 1;
