@@ -61,6 +61,7 @@ export interface ArtifactStore {
     stepRunId?: string;
     attemptId?: string;
     routeDecision?: RouteDecision;
+    idempotencyKey?: string;
   }): Promise<StoredArtifact>;
   getLatest(projectId: string, name: string): Promise<StoredArtifact | null>;
   getRevision(projectId: string, name: string, revision: number): Promise<StoredArtifact | null>;
@@ -109,6 +110,7 @@ export interface HarnessRepository {
     stack: string;
     tags: string[];
   }): Promise<HarnessSelection>;
+  version(): Promise<string>;
 }
 
 export interface ModelRouter {
@@ -190,6 +192,7 @@ export interface WorkspaceManager {
   checkpoint(projectId: string, label: string): Promise<string>;
   rollback(projectId: string, ref: string): Promise<void>;
   commit(projectId: string, message: string): Promise<string | null>;
+  head(projectId: string): Promise<string | null>;
 }
 
 export interface Clock {

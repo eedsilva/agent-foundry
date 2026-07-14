@@ -133,6 +133,12 @@ export class FileWorkspaceManager implements WorkspaceManager {
     return head.stdout.trim();
   }
 
+  async head(projectId: string): Promise<string | null> {
+    const cwd = this.workspacePath(projectId);
+    const head = await execa('git', ['rev-parse', '--verify', 'HEAD'], { cwd, reject: false });
+    return head.exitCode === 0 ? head.stdout.trim() : null;
+  }
+
   async readPrd(projectId: string): Promise<string> {
     return readFile(join(this.workspacePath(projectId), 'PRD.md'), 'utf8');
   }

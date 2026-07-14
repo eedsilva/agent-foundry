@@ -4,8 +4,17 @@ import Fastify from 'fastify';
 import { config as loadDotEnv } from 'dotenv';
 import { z } from 'zod';
 import { createRuntime } from '@agent-foundry/composition';
-import { CreateProjectRequestSchema, PathSegmentSchema } from '@agent-foundry/contracts';
-import { InvalidStateTransitionError, NotFoundError } from '@agent-foundry/domain';
+import {
+  CreateProjectRequestSchema,
+  PathSegmentSchema,
+  RetryStepRequestSchema,
+} from '@agent-foundry/contracts';
+import {
+  InvalidStateTransitionError,
+  NotFoundError,
+  ResumeBlockedError,
+  ValidationError,
+} from '@agent-foundry/domain';
 
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
 
@@ -38,6 +47,17 @@ app.setErrorHandler((error, _request, reply) => {
   }
   if (error instanceof NotFoundError) {
     return reply.status(404).send({ error: error.name, message: error.message });
+  }
+  if (error instanceof ValidationError) {
+    return reply.status(400).send({ error: error.name, message: error.message });
+  }
+  if (error instanceof ResumeBlockedError) {
+    return reply.status(409).send({
+      error: error.name,
+      message: error.message,
+      diagnostics: error.diagnostics,
+      options: { restart: `POST /projects/:projectId/retry` },
+    });
   }
   if (error instanceof InvalidStateTransitionError) {
     return reply.status(409).send({ error: error.name, message: error.message });
@@ -93,6 +113,39 @@ app.get('/projects/:projectId/artifacts/:name', async (request) => {
 app.post('/runs/:runId/cancel', async (request, reply) => {
   const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
   const run = await runtime.projectService.cancelRun(runId);
+  return reply.status(202).send({ run });
+});
+
+app.get('/runs/:runId', async (request) => {
+  const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+  return runtime.projectService.getRunDetail(runId);
+});
+
+app.post('/runs/:runId/pause', async (request, reply) => {
+  const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+  const run = await runtime.projectService.pauseRun(runId);
+  return reply.status(202).send({ run });
+});
+
+app.post('/runs/:runId/resume', async (request, reply) => {
+  const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+  const run = await runtime.projectService.resumeRun(runId);
+  return reply.status(202).send({ run });
+});
+
+app.get('/runs/:runId/steps/:stepRunId/retry-plan', async (request) => {
+  const { runId, stepRunId } = z
+    .object({ runId: PathSegmentSchema, stepRunId: PathSegmentSchema })
+    .parse(request.params);
+  return runtime.projectService.retryPlan(runId, stepRunId);
+});
+
+app.post('/runs/:runId/steps/:stepRunId/retry', async (request, reply) => {
+  const { runId, stepRunId } = z
+    .object({ runId: PathSegmentSchema, stepRunId: PathSegmentSchema })
+    .parse(request.params);
+  const input = RetryStepRequestSchema.parse(request.body);
+  const run = await runtime.projectService.retryStep(runId, stepRunId, input);
   return reply.status(202).send({ run });
 });
 

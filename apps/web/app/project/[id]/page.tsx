@@ -1,14 +1,35 @@
 'use client';
 
 import { use, useEffect, useMemo, useState } from 'react';
-import type { ProjectDetailResponse, StoredArtifact } from '@agent-foundry/contracts';
-import { getProject, retryProject } from '../../../lib/api';
+import type {
+  ProjectDetailResponse,
+  ResumeBlockedResponse,
+  RetryPlanResponse,
+  RunDetailResponse,
+  StepRun,
+  StoredArtifact,
+} from '@agent-foundry/contracts';
+import {
+  getProject,
+  getRetryPlan,
+  getRunDetail,
+  pauseRun,
+  resumeRun,
+  retryProject,
+  retryStep,
+} from '../../../lib/api';
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [detail, setDetail] = useState<ProjectDetailResponse | null>(null);
+  const [runDetail, setRunDetail] = useState<RunDetailResponse | null>(null);
   const [selected, setSelected] = useState<StoredArtifact | null>(null);
+  const [retryPlan, setRetryPlan] = useState<{ step: StepRun; plan: RetryPlanResponse } | null>(
+    null,
+  );
+  const [resumeBlocked, setResumeBlocked] = useState<ResumeBlockedResponse | null>(null);
   const [error, setError] = useState('');
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -18,6 +39,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         const next = await getProject(id);
         if (!active) return;
         setDetail(next);
+        if (next.project.currentRunId) {
+          const run = await getRunDetail(next.project.currentRunId);
+          if (!active) return;
+          setRunDetail(run);
+        }
         setError('');
         if (next.project.status === 'queued' || next.project.status === 'running') {
           timer = setTimeout(poll, 1_500);
@@ -31,7 +57,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       active = false;
       if (timer) clearTimeout(timer);
     };
-  }, [id]);
+  }, [id, refreshTick]);
 
   const routes = useMemo(
     () =>
@@ -44,14 +70,65 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     [detail],
   );
 
+  const run = runDetail?.run;
+  const refresh = () => setRefreshTick((tick) => tick + 1);
+
   async function retry() {
     try {
       await retryProject(id);
-      setDetail(await getProject(id));
+      setResumeBlocked(null);
+      refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }
+
+  async function pause() {
+    if (!run) return;
+    try {
+      await pauseRun(run.id);
+      refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function resume() {
+    if (!run) return;
+    try {
+      setResumeBlocked(null);
+      const result = await resumeRun(run.id);
+      if (result.blocked) {
+        setResumeBlocked(result.blocked);
+        return;
+      }
+      refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function openRetryPlan(step: StepRun) {
+    if (!run) return;
+    try {
+      setRetryPlan({ step, plan: await getRetryPlan(run.id, step.id) });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function confirmRetry(mode: 'preserve' | 'invalidate') {
+    if (!run || !retryPlan) return;
+    try {
+      await retryStep(run.id, retryPlan.step.id, { mode });
+      setRetryPlan(null);
+      refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  const runIsTerminal = run?.status === 'completed' || run?.status === 'failed';
 
   if (!detail) {
     return <div className="shell loadingState">{error || 'Carregando execução…'}</div>;
@@ -71,6 +148,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         <div className="projectStatusBlock">
           <span className={`pill large ${detail.project.status}`}>{detail.project.status}</span>
           <time>Atualizado {new Date(detail.project.updatedAt).toLocaleString('pt-BR')}</time>
+          {run?.status === 'running' ? (
+            <button className="secondaryButton" onClick={() => void pause()}>
+              Pausar
+            </button>
+          ) : null}
+          {run?.status === 'pause_requested' ? (
+            <span className="hint">pausando no próximo step…</span>
+          ) : null}
+          {run?.status === 'paused' ? (
+            <button className="secondaryButton" onClick={() => void resume()}>
+              Retomar
+            </button>
+          ) : null}
           {detail.project.status === 'failed' ? (
             <button className="secondaryButton" onClick={() => void retry()}>
               Tentar novamente
@@ -81,6 +171,37 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
       {detail.project.error ? <p className="errorBox">{detail.project.error}</p> : null}
       {error ? <p className="errorBox">{error}</p> : null}
+
+      {run?.status === 'paused' ? (
+        <section className="panel">
+          <div className="panelHeader">
+            <h2>Execução pausada</h2>
+            <span className="hint">run {run.id}</span>
+          </div>
+          <p>
+            Ponto de retomada: <code>{run.pause?.resumeNodeId ?? 'próximo step pendente'}</code>
+          </p>
+          {resumeBlocked ? (
+            <div>
+              <p className="errorBox">
+                Retomada bloqueada: o estado mudou desde a pausa. Reexecute o projeto para usar o
+                estado atual.
+              </p>
+              <ul>
+                {resumeBlocked.diagnostics.map((item) => (
+                  <li key={item.field}>
+                    <code>{item.field}</code>: esperado <code>{item.expected.slice(0, 12)}</code>,
+                    atual <code>{item.actual.slice(0, 12)}</code>
+                  </li>
+                ))}
+              </ul>
+              <button className="secondaryButton" onClick={() => void retry()}>
+                Reiniciar do zero
+              </button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="dashboardGrid">
         <div className="panel">
@@ -128,6 +249,41 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           </div>
         </div>
       </section>
+
+      {runDetail && runDetail.steps.length > 0 ? (
+        <section className="panel">
+          <div className="panelHeader">
+            <h2>Steps da execução</h2>
+            <span className="hint">
+              {runDetail.steps.length} step runs · run {runDetail.run.id}
+            </span>
+          </div>
+          <div className="artifactList">
+            {runDetail.steps.map(({ step, attempts }) => (
+              <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={{ flex: 1 }}>
+                  <strong>{step.stepId}</strong>
+                  <small>
+                    {' '}
+                    {step.nodeId}
+                    {step.iteration ? ` · iteração ${step.iteration}` : ''} · {attempts.length}{' '}
+                    attempt(s)
+                    {step.invalidatedAt ? ` · invalidado (${step.invalidationReason})` : ''}
+                  </small>
+                </span>
+                <span className={`pill ${step.status}`}>{step.status}</span>
+                {runIsTerminal &&
+                !step.invalidatedAt &&
+                (step.status === 'completed' || step.status === 'failed') ? (
+                  <button className="secondaryButton" onClick={() => void openRetryPlan(step)}>
+                    Reexecutar
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="panel routesPanel">
         <div className="panelHeader">
@@ -194,6 +350,58 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           ) : null}
         </div>
       </section>
+
+      {retryPlan ? (
+        <div className="modalBackdrop" onClick={() => setRetryPlan(null)} role="presentation">
+          <section className="artifactModal" onClick={(event) => event.stopPropagation()}>
+            <div className="panelHeader">
+              <div>
+                <p className="eyebrow">REEXECUTAR STEP</p>
+                <h2>{retryPlan.step.stepId}</h2>
+              </div>
+              <button className="iconButton" onClick={() => setRetryPlan(null)}>
+                ×
+              </button>
+            </div>
+            {retryPlan.plan.downstream.length > 0 ? (
+              <div>
+                <p>
+                  Invalidar downstream reexecuta {retryPlan.plan.downstream.length} step(s) e gera
+                  novas revisões destes artifacts (o histórico anterior é preservado):
+                </p>
+                <ul>
+                  {retryPlan.plan.downstream.map((step) => (
+                    <li key={step.id}>
+                      <code>{step.stepId}</code> ({step.status})
+                    </li>
+                  ))}
+                </ul>
+                <p>
+                  Artifacts afetados:{' '}
+                  {retryPlan.plan.artifacts.length > 0 ? (
+                    <code>{retryPlan.plan.artifacts.join(', ')}</code>
+                  ) : (
+                    'nenhum'
+                  )}
+                </p>
+                <p>Preservar downstream reexecuta apenas este step e mantém os outputs atuais.</p>
+              </div>
+            ) : (
+              <p>Nenhum step downstream: apenas este step será reexecutado.</p>
+            )}
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+              <button className="secondaryButton" onClick={() => void confirmRetry('preserve')}>
+                Reexecutar preservando downstream
+              </button>
+              {retryPlan.plan.downstream.length > 0 ? (
+                <button className="secondaryButton" onClick={() => void confirmRetry('invalidate')}>
+                  Reexecutar invalidando downstream
+                </button>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {selected ? (
         <div className="modalBackdrop" onClick={() => setSelected(null)} role="presentation">
