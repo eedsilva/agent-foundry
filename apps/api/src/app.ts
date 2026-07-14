@@ -121,6 +121,16 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     });
     raw.write(': connected\n\n');
 
+    let poll: NodeJS.Timeout | undefined;
+    let heartbeat: NodeJS.Timeout | undefined;
+    const cleanup = (): void => {
+      if (poll) clearInterval(poll);
+      if (heartbeat) clearInterval(heartbeat);
+      raw.end();
+    };
+    // Register before the first await so a disconnect during that await still fires cleanup.
+    request.raw.on('close', cleanup);
+
     let sending = false;
     const send = async (): Promise<void> => {
       if (sending) return;
@@ -128,6 +138,7 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
       try {
         const batch = await runtime.events.list(projectId, 500, lastId);
         for (const event of batch) {
+          if (raw.writableEnded) break;
           raw.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
           lastId = event.id;
         }
@@ -135,17 +146,19 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
         sending = false;
       }
     };
-    await send();
-    // ponytail: 1s file-tail poll; swap for an in-process bus + fs notification if latency ever matters
-    const poll = setInterval(() => void send().catch(() => undefined), 1_000);
-    const heartbeat = setInterval(() => raw.write(': ping\n\n'), 15_000);
-    poll.unref?.();
-    heartbeat.unref?.();
-    request.raw.on('close', () => {
-      clearInterval(poll);
-      clearInterval(heartbeat);
-      raw.end();
-    });
+    try {
+      await send();
+    } catch {
+      cleanup();
+      return;
+    }
+    if (!raw.writableEnded) {
+      // ponytail: 1s file-tail poll; swap for an in-process bus + fs notification if latency ever matters
+      poll = setInterval(() => void send().catch(() => undefined), 1_000);
+      heartbeat = setInterval(() => raw.write(': ping\n\n'), 15_000);
+      poll.unref?.();
+      heartbeat.unref?.();
+    }
   });
 
   app.post('/runs/:runId/cancel', async (request, reply) => {
