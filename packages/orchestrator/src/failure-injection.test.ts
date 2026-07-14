@@ -379,3 +379,27 @@ describe('Group C: phase crash matrix + replay', () => {
     expect(second.executor.started('implement')).toBe(0);
   });
 });
+
+describe('Group D: duplicate delivery idempotency', () => {
+  it('duplicate delivery of the same job does not duplicate artifact or commit', async () => {
+    const harness = makeHarness();
+    await completeRun(harness);
+
+    const before = {
+      implementations: harness.artifacts.named('implementation').length,
+      commits: harness.workspaces.commits.length,
+      implementStarts: harness.executor.started('implement'),
+      events: harness.events.events.length,
+    };
+
+    // Redelivery: the same runId is handed to runProject again.
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect(harness.artifacts.named('implementation')).toHaveLength(before.implementations);
+    expect(harness.artifacts.named('implementation')).toHaveLength(1);
+    expect(harness.workspaces.commits).toHaveLength(before.commits);
+    expect(harness.executor.started('implement')).toBe(before.implementStarts);
+    // Deduped events: the redelivery adds nothing.
+    expect(harness.events.events.length).toBe(before.events);
+  });
+});

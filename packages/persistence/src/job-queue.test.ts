@@ -183,4 +183,44 @@ describe('FileJobQueue lease semantics', () => {
     clock.advanceMs(60_000);
     expect(await queue.claim('worker-a')).toBeNull(); // failed, not pending
   });
+
+  it('dead worker: expired lease is reaped and redelivery completes the run exactly once', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue({ ...baseJob(), runId: 'run-1' });
+
+    // Delivering the same runId twice must execute the underlying run once:
+    // the effect is idempotent, mirroring the orchestrator's terminal-run guard.
+    const executions: string[] = [];
+    const runOnce = (runId: string): void => {
+      if (!executions.includes(runId)) executions.push(runId);
+    };
+
+    // worker-a claims and runs the job, then dies before acking (no heartbeat).
+    const workerA = (await queue.claim('worker-a'))!;
+    runOnce(workerA.runId!);
+
+    // Past the lease, the reaper returns the job to pending.
+    clock.advanceMs(60_001);
+    const [recovered] = await queue.reapExpired();
+    expect(recovered?.runId).toBe('run-1');
+
+    // worker-b reclaims (fresh fencing token), re-runs the idempotent job, acks.
+    const workerB = (await queue.claim('worker-b'))!;
+    expect(workerB.lease?.fencingToken).toBe(2);
+    runOnce(workerB.runId!);
+    await queue.ack(workerB, 'worker-b');
+
+    // The run executed exactly once despite the redelivery.
+    expect(executions).toEqual(['run-1']);
+
+    // The job completed exactly once: nothing left to claim or reap.
+    expect(await queue.claim('worker-c')).toBeNull();
+    expect(await queue.reapExpired()).toHaveLength(0);
+
+    // The dead worker's stale copy can neither heartbeat nor ack.
+    await expect(queue.heartbeat(workerA, 'worker-a')).rejects.toThrow(LeaseLostError);
+    await expect(queue.ack(workerA, 'worker-a')).rejects.toThrow(LeaseLostError);
+  });
 });
