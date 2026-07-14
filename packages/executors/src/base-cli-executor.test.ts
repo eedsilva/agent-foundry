@@ -50,6 +50,8 @@ const completedArtifact = {
 
 const request: AgentExecutionRequest = {
   runId: 'run-1',
+  stepRunId: 'step-run-1',
+  attemptId: 'attempt-1',
   projectId: 'project-1',
   stepId: 'implement',
   role: 'developer',

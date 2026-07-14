@@ -4,6 +4,7 @@ import type {
   ProjectDetailResponse,
   ProjectEvent,
   QueueJob,
+  WorkflowRun,
 } from '@agent-foundry/contracts';
 import type {
   ArtifactStore,
@@ -13,6 +14,7 @@ import type {
   JobQueue,
   ProjectRepository,
   WorkspaceManager,
+  WorkflowRunRepository,
   WorkflowRepository,
 } from '@agent-foundry/domain';
 import { NotFoundError } from '@agent-foundry/domain';
@@ -20,6 +22,7 @@ import { NotFoundError } from '@agent-foundry/domain';
 export class ProjectService {
   constructor(
     private readonly projects: ProjectRepository,
+    private readonly runs: WorkflowRunRepository,
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
     private readonly queue: JobQueue,
@@ -32,11 +35,24 @@ export class ProjectService {
   async create(input: CreateProjectRequest): Promise<Project> {
     await this.workflows.get(input.workflowId);
     const now = this.clock.now().toISOString();
+    const projectId = this.ids.next();
+    const runId = this.ids.next();
     const project: Project = {
-      id: this.ids.next(),
+      id: projectId,
       name: input.name,
       workflowId: input.workflowId,
       status: 'queued',
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      currentRunId: runId,
+    };
+    const run: WorkflowRun = {
+      id: runId,
+      projectId,
+      workflowId: input.workflowId,
+      status: 'queued',
+      version: 1,
       createdAt: now,
       updatedAt: now,
     };
@@ -44,6 +60,7 @@ export class ProjectService {
     await this.workspaces.ensure(project.id);
     await this.workspaces.writePrd(project.id, input.prd);
     await this.projects.create(project);
+    await this.runs.create(run);
     await this.artifacts.put({
       projectId: project.id,
       name: 'prd',
@@ -58,6 +75,7 @@ export class ProjectService {
       type: 'run-project',
       projectId: project.id,
       workflowId: project.workflowId,
+      runId,
       attempts: 0,
       maxAttempts: 1,
       createdAt: now,
@@ -94,26 +112,39 @@ export class ProjectService {
     const project = await this.requireProject(projectId);
     if (project.status === 'running') return project;
     const now = this.clock.now().toISOString();
+    const runId = this.ids.next();
+    const run: WorkflowRun = {
+      id: runId,
+      projectId,
+      workflowId: project.workflowId,
+      status: 'queued',
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await this.runs.create(run);
     const updated: Project = {
       ...project,
       status: 'queued',
       updatedAt: now,
-      ...(project.currentNodeId ? { currentNodeId: project.currentNodeId } : {}),
+      currentRunId: runId,
     };
+    delete updated.currentNodeId;
     delete updated.error;
-    await this.projects.update(updated);
+    const saved = await this.projects.update(updated, project.version);
     await this.queue.enqueue({
       id: this.ids.next(),
       type: 'run-project',
       projectId,
       workflowId: project.workflowId,
+      runId,
       attempts: 0,
       maxAttempts: 1,
       createdAt: now,
       availableAt: now,
     });
     await this.appendEvent(projectId, 'project.queued', 'Project manually re-queued.');
-    return updated;
+    return saved;
   }
 
   private async requireProject(projectId: string): Promise<Project> {

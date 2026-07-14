@@ -7,11 +7,15 @@ import type {
   ProjectEvent,
   QualityLoopStep,
   RankedModel,
+  RunError,
   RouteDecision,
+  StepAttempt,
+  StepRun,
   StoredArtifact,
   VerifyStep,
   WorkflowDefinition,
   WorkflowNode,
+  WorkflowRun,
 } from '@agent-foundry/contracts';
 import { AGENT_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
 import type {
@@ -25,7 +29,10 @@ import type {
   MetricsRepository,
   ModelRouter,
   ProjectRepository,
+  StepAttemptRepository,
+  StepRunRepository,
   VerificationService,
+  WorkflowRunRepository,
   WorkflowRepository,
   WorkspaceManager,
 } from '@agent-foundry/domain';
@@ -35,6 +42,9 @@ import {
   QualityGateError,
   errorMessage,
   getValueAtPath,
+  transitionStepAttempt,
+  transitionStepRun,
+  transitionWorkflowRun,
 } from '@agent-foundry/domain';
 import { buildTaskProfile } from './task-profiler.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
@@ -47,6 +57,8 @@ interface DecisionLogEntry {
   recordedAt: string;
   stepId: string;
   runId: string;
+  stepRunId: string;
+  attemptId: string;
   role: string;
   decision: AgentArtifact['decisions'][number];
 }
@@ -54,6 +66,9 @@ interface DecisionLogEntry {
 export class WorkflowOrchestrator {
   constructor(
     private readonly projects: ProjectRepository,
+    private readonly runs: WorkflowRunRepository,
+    private readonly stepRuns: StepRunRepository,
+    private readonly stepAttempts: StepAttemptRepository,
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
     private readonly workflows: WorkflowRepository,
@@ -68,34 +83,61 @@ export class WorkflowOrchestrator {
     private readonly options: OrchestratorOptions,
   ) {}
 
-  async runProject(projectId: string, workflowId?: string): Promise<void> {
-    const existing = await this.projects.get(projectId);
-    if (!existing) throw new NotFoundError(`Project ${projectId} not found`);
-    const workflow = await this.workflows.get(workflowId ?? existing.workflowId);
-    let project = await this.updateProject(existing, { status: 'running', error: undefined });
-    await this.emit(projectId, 'project.started', `Workflow ${workflow.id} started.`);
+  async runProject(projectId: string, workflowId?: string, requestedRunId?: string): Promise<void> {
+    const project = await this.projects.get(projectId);
+    if (!project) throw new NotFoundError(`Project ${projectId} not found`);
+    const workflow = await this.workflows.get(workflowId ?? project.workflowId);
+    let run = requestedRunId ? await this.runs.get(requestedRunId) : null;
+    if (!run) run = await this.createLegacyCompatibleRun(project, workflow.id, requestedRunId);
+    if (run.projectId !== projectId || run.workflowId !== workflow.id) {
+      throw new ExecutionError(
+        `Run ${run.id} does not belong to project/workflow ${projectId}/${workflow.id}`,
+      );
+    }
+    run = await this.runs.update(
+      transitionWorkflowRun(run, 'running', this.clock.now()),
+      run.version,
+    );
+    await this.syncProjectSummary(run);
+    await this.emit(projectId, 'project.started', `Workflow ${workflow.id} started.`, {
+      runId: run.id,
+    });
 
     try {
       await this.workspaces.ensureGit(projectId);
       for (const node of workflow.nodes) {
-        project = await this.updateProject(project, { currentNodeId: node.id });
-        await this.emit(projectId, 'node.started', node.title, { nodeId: node.id });
-        await this.executeNode(project, workflow, node);
-        await this.emit(projectId, 'node.completed', node.title, { nodeId: node.id });
+        await this.emit(projectId, 'node.started', node.title, {
+          nodeId: node.id,
+          runId: run.id,
+        });
+        await this.executeNode(project, workflow, node, run.id);
+        await this.emit(projectId, 'node.completed', node.title, {
+          nodeId: node.id,
+          runId: run.id,
+        });
       }
-      project = await this.updateProject(project, {
-        status: 'completed',
-        currentNodeId: undefined,
-        error: undefined,
+      const latest = await this.requireRun(run.id);
+      run = await this.runs.update(
+        transitionWorkflowRun(latest, 'completed', this.clock.now()),
+        latest.version,
+      );
+      await this.syncProjectSummary(run);
+      await this.emit(projectId, 'project.completed', `Workflow ${workflow.id} completed.`, {
+        runId: run.id,
       });
-      await this.emit(projectId, 'project.completed', `Workflow ${workflow.id} completed.`);
     } catch (error) {
-      await this.updateProject(project, {
-        status: 'failed',
-        error: errorMessage(error),
-      });
+      const latest = await this.requireRun(run.id);
+      if (latest.status === 'running') {
+        run = await this.runs.update(
+          transitionWorkflowRun(latest, 'failed', this.clock.now(), { error: runError(error) }),
+          latest.version,
+        );
+      } else {
+        run = latest;
+      }
+      await this.syncProjectSummary(run);
       await this.emit(projectId, 'project.failed', errorMessage(error), {
-        ...(project.currentNodeId ? { nodeId: project.currentNodeId } : {}),
+        runId: run.id,
       });
       throw error;
     }
@@ -105,29 +147,40 @@ export class WorkflowOrchestrator {
     project: Project,
     workflow: WorkflowDefinition,
     node: WorkflowNode,
+    runId: string,
   ): Promise<StoredArtifact> {
-    if (node.type === 'quality-loop') return this.executeQualityLoop(project, workflow, node);
-    return this.executeStep(project, workflow, node);
+    if (node.type === 'quality-loop')
+      return this.executeQualityLoop(project, workflow, node, runId);
+    return this.executeStep(project, workflow, node, runId, node.id);
   }
 
   private async executeQualityLoop(
     project: Project,
     workflow: WorkflowDefinition,
     node: QualityLoopStep,
+    runId: string,
   ): Promise<StoredArtifact> {
     let qualitySubject: StoredArtifact | null = null;
     if (node.setup) {
-      const setupArtifact = await this.executeStep(project, workflow, node.setup);
+      const setupArtifact = await this.executeStep(
+        project,
+        workflow,
+        node.setup,
+        runId,
+        node.id,
+        1,
+      );
       if (node.setup.type === 'agent') qualitySubject = setupArtifact;
     }
 
     let latest: StoredArtifact | null = null;
     for (let iteration = 1; iteration <= node.maxIterations; iteration += 1) {
-      latest = await this.executeStep(project, workflow, node.check);
+      latest = await this.executeStep(project, workflow, node.check, runId, node.id, iteration);
       const approved = await this.conditionApproved(project.id, node);
       if (qualitySubject) await this.recordQualityOutcome(qualitySubject, approved);
       if (approved) {
         await this.emit(project.id, 'quality.approved', `${node.title} approved.`, {
+          runId,
           nodeId: node.id,
           data: { iteration },
         });
@@ -136,10 +189,18 @@ export class WorkflowOrchestrator {
 
       if (iteration >= node.maxIterations) break;
       await this.emit(project.id, 'quality.repair_requested', `${node.title} requires repair.`, {
+        runId,
         nodeId: node.id,
         data: { iteration },
       });
-      qualitySubject = await this.executeAgentStep(project, workflow, node.repair, iteration);
+      qualitySubject = await this.executeStep(
+        project,
+        workflow,
+        node.repair,
+        runId,
+        node.id,
+        iteration,
+      );
     }
 
     throw new QualityGateError(
@@ -158,39 +219,138 @@ export class WorkflowOrchestrator {
     project: Project,
     workflow: WorkflowDefinition,
     step: ExecutableStep,
+    runId: string,
+    nodeId: string,
+    iteration?: number,
   ): Promise<StoredArtifact> {
-    return step.type === 'agent'
-      ? this.executeAgentStep(project, workflow, step)
-      : this.executeVerifyStep(project, step);
+    const timestamp = this.clock.now().toISOString();
+    let stepRun: StepRun = {
+      id: this.ids.next(),
+      runId,
+      nodeId,
+      stepId: step.id,
+      stepType: step.type,
+      ...(iteration ? { iteration } : {}),
+      status: 'pending',
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    await this.stepRuns.create(stepRun);
+    stepRun = await this.stepRuns.update(
+      transitionStepRun(stepRun, 'running', this.clock.now()),
+      stepRun.version,
+    );
+    await this.setCurrentStep(runId, stepRun, nodeId);
+
+    try {
+      const artifact =
+        step.type === 'agent'
+          ? await this.executeAgentStep(project, workflow, step, runId, stepRun, iteration)
+          : await this.executeVerifyStep(project, workflow, step, runId, stepRun, iteration);
+      stepRun = await this.stepRuns.update(
+        transitionStepRun(stepRun, 'completed', this.clock.now()),
+        stepRun.version,
+      );
+      await this.clearCurrentStep(runId);
+      return artifact;
+    } catch (error) {
+      if (stepRun.status === 'running') {
+        await this.stepRuns.update(
+          transitionStepRun(stepRun, 'failed', this.clock.now(), { error: runError(error) }),
+          stepRun.version,
+        );
+      }
+      await this.syncProjectSummary(await this.requireRun(runId), nodeId);
+      throw error;
+    }
   }
 
-  private async executeVerifyStep(project: Project, step: VerifyStep): Promise<StoredArtifact> {
-    const report = await this.verifier.verify({
-      workspacePath: this.workspaces.workspacePath(project.id),
-      scripts: step.scripts,
-      includeGitDiffCheck: step.includeGitDiffCheck,
-    });
-    const artifact = await this.artifacts.put({
-      projectId: project.id,
-      name: step.outputArtifact,
-      content: report,
-      createdBy: `verifier:${step.id}`,
-    });
-    await this.emit(project.id, 'verification.completed', report.summary, {
-      nodeId: step.id,
-      data: { approved: report.approved },
-    });
-    await this.emitArtifactCreated(project.id, artifact, step.id);
-    return artifact;
+  private async executeVerifyStep(
+    project: Project,
+    workflow: WorkflowDefinition,
+    step: VerifyStep,
+    runId: string,
+    stepRun: StepRun,
+    iteration?: number,
+  ): Promise<StoredArtifact> {
+    const timestamp = this.clock.now().toISOString();
+    let attempt: StepAttempt = {
+      id: this.ids.next(),
+      runId,
+      stepRunId: stepRun.id,
+      sequence: 1,
+      executorKind: 'verification',
+      provider: 'internal',
+      model: 'workspace-verifier',
+      context: {
+        projectId: project.id,
+        workflowId: workflow.id,
+        nodeId: stepRun.nodeId,
+        stepId: step.id,
+        ...(iteration ? { iteration } : {}),
+      },
+      status: 'running',
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      startedAt: timestamp,
+      inputArtifacts: [],
+      outputArtifacts: [],
+    };
+    await this.stepAttempts.create(attempt);
+    const startedAt = Date.now();
+    try {
+      const report = await this.verifier.verify({
+        workspacePath: this.workspaces.workspacePath(project.id),
+        scripts: step.scripts,
+        includeGitDiffCheck: step.includeGitDiffCheck,
+      });
+      const artifact = await this.artifacts.put({
+        projectId: project.id,
+        name: step.outputArtifact,
+        content: report,
+        createdBy: `verifier:${step.id}`,
+        runId,
+        stepRunId: stepRun.id,
+        attemptId: attempt.id,
+      });
+      attempt = await this.stepAttempts.update(
+        transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
+          durationMs: Date.now() - startedAt,
+          outputArtifacts: [artifactReference(artifact)],
+        }),
+        attempt.version,
+      );
+      await this.emit(project.id, 'verification.completed', report.summary, {
+        nodeId: step.id,
+        runId,
+        data: { approved: report.approved, attemptId: attempt.id },
+      });
+      await this.emitArtifactCreated(project.id, artifact, step.id, runId);
+      return artifact;
+    } catch (error) {
+      if (attempt.status === 'running') {
+        await this.stepAttempts.update(
+          transitionStepAttempt(attempt, 'failed', this.clock.now(), {
+            durationMs: Date.now() - startedAt,
+            error: runError(error),
+          }),
+          attempt.version,
+        );
+      }
+      throw error;
+    }
   }
 
   private async executeAgentStep(
     project: Project,
     workflow: WorkflowDefinition,
     step: AgentStep,
+    runId: string,
+    stepRun: StepRun,
     loopIteration?: number,
   ): Promise<StoredArtifact> {
-    const runId = this.ids.next();
     const inputArtifacts = await this.loadInputArtifacts(project.id, step.inputArtifacts);
     const harness = await this.harness.select({
       role: step.role,
@@ -200,23 +360,6 @@ export class WorkflowOrchestrator {
     });
     const profile = buildTaskProfile({ step, harness, artifacts: inputArtifacts });
     const route = await this.router.route(profile);
-    const requestMarkdown = compileRequestMarkdown({
-      projectId: project.id,
-      runId,
-      workflowId: workflow.id,
-      stack: workflow.stack,
-      step,
-      harness,
-      artifacts: inputArtifacts,
-      workspacePath: this.workspaces.workspacePath(project.id),
-    });
-    await this.workspaces.writeRunContext({
-      projectId: project.id,
-      runId,
-      requestMarkdown,
-      outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
-    });
-
     await this.emit(
       project.id,
       'agent.routed',
@@ -257,9 +400,69 @@ export class WorkflowOrchestrator {
       if (!candidate) continue;
       if (checkpoint && index > 0) await this.workspaces.rollback(project.id, checkpoint);
 
+      const timestamp = this.clock.now().toISOString();
+      let attempt: StepAttempt = {
+        id: this.ids.next(),
+        runId,
+        stepRunId: stepRun.id,
+        sequence: index + 1,
+        executorKind: 'agent',
+        provider: candidate.model.provider,
+        model: candidate.model.model || candidate.model.id,
+        modelId: candidate.model.id,
+        status: 'running',
+        version: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        startedAt: timestamp,
+        ...(checkpoint ? { checkpoint } : {}),
+        routeDecision: route,
+        harness: {
+          version: harness.version,
+          files: harness.files.map((file) => ({ path: file.path, priority: file.priority })),
+        },
+        context: {
+          projectId: project.id,
+          workflowId: workflow.id,
+          nodeId: stepRun.nodeId,
+          stepId: step.id,
+          ...(loopIteration ? { iteration: loopIteration } : {}),
+        },
+        inputArtifacts: inputArtifacts.map(artifactReference),
+        outputArtifacts: [],
+      };
+      await this.stepAttempts.create(attempt);
+      let requestMarkdown = '';
       const attemptStartedAt = Date.now();
       try {
-        const result = await this.executeCandidate(project, step, runId, candidate);
+        requestMarkdown = compileRequestMarkdown({
+          projectId: project.id,
+          runId,
+          stepRunId: stepRun.id,
+          attemptId: attempt.id,
+          workflowId: workflow.id,
+          stack: workflow.stack,
+          step,
+          harness,
+          artifacts: inputArtifacts,
+          workspacePath: this.workspaces.workspacePath(project.id),
+        });
+        await this.workspaces.writeRunContext({
+          projectId: project.id,
+          runId,
+          stepRunId: stepRun.id,
+          attemptId: attempt.id,
+          requestMarkdown,
+          outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+        });
+        const result = await this.executeCandidate(
+          project,
+          step,
+          runId,
+          stepRun.id,
+          attempt.id,
+          candidate,
+        );
         if (step.mutatesWorkspace) {
           await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`);
         }
@@ -274,19 +477,33 @@ export class WorkflowOrchestrator {
           content: result.output,
           createdBy: `${step.role}:${candidate.model.provider}/${candidate.model.model || 'default'}`,
           runId,
+          stepRunId: stepRun.id,
+          attemptId: attempt.id,
           routeDecision: executionRoute,
         });
-        await this.persistRunRecord(
+        const auditArtifact = await this.persistRunRecord(
           project.id,
           step,
           result,
           candidate.model.id,
           runId,
+          stepRun.id,
+          attempt.id,
           requestMarkdown,
           harness,
           inputArtifacts,
         );
-        await this.appendDecisions(project.id, step, result.output, runId);
+        attempt = await this.stepAttempts.update(
+          transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
+            durationMs: result.durationMs,
+            ...(result.executedModel ? { executedModel: result.executedModel } : {}),
+            ...(result.usage ? { usage: result.usage } : {}),
+            routeDecision: executionRoute,
+            outputArtifacts: [artifactReference(artifact), artifactReference(auditArtifact)],
+          }),
+          attempt.version,
+        );
+        await this.appendDecisions(project.id, step, result.output, runId, stepRun.id, attempt.id);
         await this.emitArtifactCreated(project.id, artifact, step.id, runId);
         await this.emit(project.id, 'agent.completed', result.output.summary, {
           nodeId: step.id,
@@ -296,11 +513,43 @@ export class WorkflowOrchestrator {
             provider: candidate.model.provider,
             durationMs: result.durationMs,
             status: result.output.status,
+            attemptId: attempt.id,
           },
         });
         return artifact;
       } catch (error) {
+        if (attempt.status !== 'running') throw error;
         lastError = error;
+        let failureArtifact: StoredArtifact | undefined;
+        let failureRecordError: unknown;
+        try {
+          failureArtifact = await this.persistFailureRecord(
+            project.id,
+            step,
+            runId,
+            stepRun.id,
+            attempt.id,
+            index + 1,
+            candidate.model.id,
+            candidate.model.provider,
+            error,
+            Date.now() - attemptStartedAt,
+            requestMarkdown,
+            harness,
+            inputArtifacts,
+          );
+        } catch (recordError) {
+          failureRecordError = recordError;
+        }
+        attempt = await this.stepAttempts.update(
+          transitionStepAttempt(attempt, 'failed', this.clock.now(), {
+            durationMs: Date.now() - attemptStartedAt,
+            error: runError(error),
+            ...(failureArtifact ? { outputArtifacts: [artifactReference(failureArtifact)] } : {}),
+          }),
+          attempt.version,
+        );
+        if (failureRecordError) throw failureRecordError;
         await this.metrics.record({
           modelId: candidate.model.id,
           taskKind: step.taskKind,
@@ -308,16 +557,6 @@ export class WorkflowOrchestrator {
           success: false,
           durationMs: Date.now() - attemptStartedAt,
         });
-        await this.persistFailureRecord(
-          project.id,
-          step,
-          runId,
-          index + 1,
-          candidate.model.id,
-          candidate.model.provider,
-          error,
-          Date.now() - attemptStartedAt,
-        );
         await this.emit(project.id, 'agent.failed', errorMessage(error), {
           nodeId: step.id,
           runId,
@@ -325,6 +564,7 @@ export class WorkflowOrchestrator {
             modelId: candidate.model.id,
             provider: candidate.model.provider,
             attempt: index + 1,
+            attemptId: attempt.id,
           },
         });
       }
@@ -340,23 +580,27 @@ export class WorkflowOrchestrator {
     project: Project,
     step: AgentStep,
     runId: string,
+    stepRunId: string,
+    attemptId: string,
     candidate: RankedModel,
   ): Promise<AgentExecutionResult> {
     await this.emit(project.id, 'agent.started', `${step.id} started on ${candidate.model.id}.`, {
       nodeId: step.id,
       runId,
-      data: { modelId: candidate.model.id, provider: candidate.model.provider },
+      data: { modelId: candidate.model.id, provider: candidate.model.provider, attemptId },
     });
     const executor = this.executors.get(candidate.model.provider);
     const result = await executor.execute({
       runId,
+      stepRunId,
+      attemptId,
       projectId: project.id,
       stepId: step.id,
       role: step.role,
       taskKind: step.taskKind,
       provider: candidate.model.provider,
       model: candidate.model.model,
-      prompt: compileCliPrompt(runId),
+      prompt: compileCliPrompt(runId, stepRunId, attemptId),
       cwd: this.workspaces.workspacePath(project.id),
       mutatesWorkspace: step.mutatesWorkspace,
       timeoutMs: this.options.agentTimeoutMs,
@@ -405,6 +649,8 @@ export class WorkflowOrchestrator {
     step: AgentStep,
     output: AgentArtifact,
     runId: string,
+    stepRunId: string,
+    attemptId: string,
   ): Promise<void> {
     if (output.decisions.length === 0) return;
     const existing = await this.artifacts.getLatest(projectId, 'decision-log');
@@ -415,6 +661,8 @@ export class WorkflowOrchestrator {
         recordedAt: this.clock.now().toISOString(),
         stepId: step.id,
         runId,
+        stepRunId,
+        attemptId,
         role: step.role,
         decision,
       })),
@@ -425,6 +673,8 @@ export class WorkflowOrchestrator {
       content: { schemaVersion: '1', entries },
       createdBy: `orchestrator:${step.id}`,
       runId,
+      stepRunId,
+      attemptId,
     });
     await this.emitArtifactCreated(projectId, artifact, step.id, runId);
   }
@@ -435,13 +685,15 @@ export class WorkflowOrchestrator {
     result: AgentExecutionResult,
     modelId: string,
     runId: string,
+    stepRunId: string,
+    attemptId: string,
     requestMarkdown: string,
     harness: HarnessSelection,
     inputArtifacts: StoredArtifact[],
-  ): Promise<void> {
-    await this.artifacts.put({
+  ): Promise<StoredArtifact> {
+    return this.artifacts.put({
       projectId,
-      name: `run-${runId}`,
+      name: `run-${attemptId}`,
       content: {
         schemaVersion: '1',
         stepId: step.id,
@@ -472,6 +724,8 @@ export class WorkflowOrchestrator {
       },
       createdBy: 'orchestrator',
       runId,
+      stepRunId,
+      attemptId,
     });
   }
 
@@ -479,16 +733,21 @@ export class WorkflowOrchestrator {
     projectId: string,
     step: AgentStep,
     runId: string,
+    stepRunId: string,
+    attemptId: string,
     attempt: number,
     modelId: string,
     provider: string,
     error: unknown,
     durationMs: number,
-  ): Promise<void> {
+    requestMarkdown: string,
+    harness: HarnessSelection,
+    inputArtifacts: StoredArtifact[],
+  ): Promise<StoredArtifact> {
     const details = error instanceof ExecutionError ? error.details : {};
-    await this.artifacts.put({
+    return this.artifacts.put({
       projectId,
-      name: `run-${runId}-failure-${attempt}`,
+      name: `run-${attemptId}-failure`,
       content: {
         schemaVersion: '1',
         stepId: step.id,
@@ -500,11 +759,23 @@ export class WorkflowOrchestrator {
         durationMs,
         error: errorMessage(error),
         exitCode: details.exitCode ?? null,
+        inputs: inputArtifacts.map(artifactReference),
+        harness: {
+          version: harness.version,
+          files: harness.files.map((file) => ({
+            path: file.path,
+            priority: file.priority,
+            content: file.content,
+          })),
+        },
+        requestMarkdown: requestMarkdown.slice(0, 50_000),
         stdout: details.stdout?.slice(0, 50_000) ?? '',
         stderr: details.stderr?.slice(0, 50_000) ?? '',
       },
       createdBy: 'orchestrator',
       runId,
+      stepRunId,
+      attemptId,
     });
   }
 
@@ -530,29 +801,81 @@ export class WorkflowOrchestrator {
     );
   }
 
-  private async updateProject(
+  private async createLegacyCompatibleRun(
     project: Project,
-    patch: {
-      status?: Project['status'];
-      currentNodeId?: string | undefined;
-      error?: string | undefined;
-    },
-  ): Promise<Project> {
+    workflowId: string,
+    requestedRunId?: string,
+  ): Promise<WorkflowRun> {
+    const timestamp = this.clock.now().toISOString();
+    const run: WorkflowRun = {
+      id: requestedRunId ?? this.ids.next(),
+      projectId: project.id,
+      workflowId,
+      status: 'queued',
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    await this.runs.create(run);
     const updated: Project = {
       ...project,
-      ...(patch.status ? { status: patch.status } : {}),
-      updatedAt: this.clock.now().toISOString(),
+      status: 'queued',
+      currentRunId: run.id,
+      updatedAt: timestamp,
     };
-    if ('currentNodeId' in patch) {
-      if (patch.currentNodeId === undefined) delete updated.currentNodeId;
-      else updated.currentNodeId = patch.currentNodeId;
-    }
-    if ('error' in patch) {
-      if (patch.error === undefined) delete updated.error;
-      else updated.error = patch.error;
-    }
-    await this.projects.update(updated);
-    return updated;
+    delete updated.currentNodeId;
+    delete updated.error;
+    await this.projects.update(updated, project.version);
+    return run;
+  }
+
+  private async requireRun(runId: string): Promise<WorkflowRun> {
+    const run = await this.runs.get(runId);
+    if (!run) throw new NotFoundError(`Workflow run ${runId} not found`);
+    return run;
+  }
+
+  private async setCurrentStep(runId: string, step: StepRun, nodeId: string): Promise<void> {
+    const run = await this.requireRun(runId);
+    const updated = await this.runs.update(
+      {
+        ...run,
+        currentStepRunId: step.id,
+        updatedAt: this.clock.now().toISOString(),
+      },
+      run.version,
+    );
+    await this.syncProjectSummary(updated, nodeId);
+  }
+
+  private async clearCurrentStep(runId: string): Promise<void> {
+    const run = await this.requireRun(runId);
+    const updated: WorkflowRun = { ...run, updatedAt: this.clock.now().toISOString() };
+    delete updated.currentStepRunId;
+    const saved = await this.runs.update(updated, run.version);
+    await this.syncProjectSummary(saved);
+  }
+
+  private async syncProjectSummary(run: WorkflowRun, nodeId?: string): Promise<Project> {
+    const project = await this.projects.get(run.projectId);
+    if (!project) throw new NotFoundError(`Project ${run.projectId} not found`);
+    let currentNodeId = nodeId;
+    const currentStep = run.currentStepRunId
+      ? await this.stepRuns.get(run.id, run.currentStepRunId)
+      : null;
+    if (!currentNodeId) currentNodeId = currentStep?.nodeId;
+    const summaryError = run.error?.message ?? currentStep?.error?.message;
+    const updated: Project = {
+      ...project,
+      status: projectStatusForRun(run),
+      currentRunId: run.id,
+      updatedAt: this.clock.now().toISOString(),
+      ...(currentNodeId ? { currentNodeId } : {}),
+      ...(summaryError ? { error: summaryError } : {}),
+    };
+    if (!currentNodeId) delete updated.currentNodeId;
+    if (!summaryError) delete updated.error;
+    return this.projects.update(updated, project.version);
   }
 
   private async emit(
@@ -576,6 +899,37 @@ export class WorkflowOrchestrator {
       data: options.data ?? {},
     });
   }
+}
+
+function artifactReference(artifact: StoredArtifact) {
+  return {
+    name: artifact.metadata.name,
+    revision: artifact.metadata.revision,
+    sha256: artifact.metadata.sha256,
+  };
+}
+
+function runError(error: unknown): RunError {
+  const details = error instanceof ExecutionError ? error.details : {};
+  const code =
+    error instanceof Error && 'code' in error && typeof error.code === 'string'
+      ? error.code
+      : undefined;
+  return {
+    name: error instanceof Error ? error.name : 'Error',
+    message: errorMessage(error),
+    ...(code ? { code } : {}),
+    ...(details.exitCode !== undefined ? { exitCode: details.exitCode } : {}),
+  };
+}
+
+function projectStatusForRun(run: WorkflowRun): Project['status'] {
+  if (run.status === 'queued') return 'queued';
+  if (run.status === 'paused') return 'paused';
+  if (run.status === 'completed') return 'completed';
+  if (run.status === 'failed') return 'failed';
+  if (run.status === 'cancelled') return 'cancelled';
+  return 'running';
 }
 
 function isDecisionLog(

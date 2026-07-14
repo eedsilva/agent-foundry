@@ -28,6 +28,8 @@ class InspectableAgyExecutor extends AgyCliExecutor {
 function request(overrides: Partial<AgentExecutionRequest> = {}): AgentExecutionRequest {
   return {
     runId: '01KX9B14GCCJ4R93SD739PHBW4',
+    stepRunId: '01KX9B14GCCJ4R93SD739PHBW6',
+    attemptId: '01KX9B14GCCJ4R93SD739PHBW7',
     projectId: '01KX9B14GCCJ4R93SD739PHBW5',
     stepId: 'implement',
     role: 'developer',

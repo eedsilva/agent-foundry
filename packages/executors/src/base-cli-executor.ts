@@ -131,6 +131,8 @@ export abstract class BaseCliExecutor implements AgentExecutor {
 
     return {
       runId: request.runId,
+      stepRunId: request.stepRunId,
+      attemptId: request.attemptId,
       provider: this.provider,
       model: request.model,
       exitCode: result.exitCode ?? 0,
