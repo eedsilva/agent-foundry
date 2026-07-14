@@ -92,6 +92,7 @@ describe('CLI executor contracts', () => {
       request({ provider: 'agy', model: 'example-agy-model', timeoutMs: 90_000 }),
     );
     expect(invocation.command).toBe('agy');
+    expect(invocation.args).toContain('--new-project');
     expect(invocation.args).toEqual(
       expect.arrayContaining([
         '--sandbox',

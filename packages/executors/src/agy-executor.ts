@@ -24,6 +24,7 @@ export class AgyCliExecutor extends BaseCliExecutor {
       'agy.metadata.log',
     );
     const args = [
+      '--new-project',
       '--sandbox',
       ...(this.reportConfiguredModel ? ['--log-file', metadataFile] : []),
       '--mode',
