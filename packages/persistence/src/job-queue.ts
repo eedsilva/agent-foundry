@@ -1,11 +1,27 @@
 import { readdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { QueueJobSchema, type QueueJob } from '@agent-foundry/contracts';
-import type { JobQueue } from '@agent-foundry/domain';
-import { atomicWriteJson, ensureDir, readJson, safeSegment } from './fs-utils.js';
+import { LeaseLostError, type Clock, type JobQueue } from '@agent-foundry/domain';
+import { atomicWriteJson, ensureDir, readJson, readJsonOrNull, safeSegment } from './fs-utils.js';
+
+const SYSTEM_CLOCK: Clock = { now: () => new Date() };
+
+export interface FileJobQueueOptions {
+  leaseMs?: number;
+  clock?: Clock;
+}
 
 export class FileJobQueue implements JobQueue {
-  constructor(private readonly dataDir: string) {}
+  private readonly leaseMs: number;
+  private readonly clock: Clock;
+
+  constructor(
+    private readonly dataDir: string,
+    options: FileJobQueueOptions = {},
+  ) {
+    this.leaseMs = options.leaseMs ?? 60_000;
+    this.clock = options.clock ?? SYSTEM_CLOCK;
+  }
 
   async enqueue(job: QueueJob): Promise<void> {
     const parsed = QueueJobSchema.parse(job);
@@ -30,11 +46,13 @@ export class FileJobQueue implements JobQueue {
 
       try {
         const job = QueueJobSchema.parse(await readJson<unknown>(to));
-        if (new Date(job.availableAt).getTime() > Date.now()) {
+        if (new Date(job.availableAt).getTime() > this.clock.now().getTime()) {
           await rename(to, from);
           continue;
         }
-        return job;
+        const leased = this.grantLease(job, workerId);
+        await atomicWriteJson(to, leased);
+        return leased;
       } catch (error) {
         await rm(to, { force: true });
         throw error;
@@ -44,25 +62,44 @@ export class FileJobQueue implements JobQueue {
     return null;
   }
 
+  async heartbeat(job: QueueJob, workerId: string): Promise<QueueJob> {
+    const current = await this.readLeasedJob(job.id, workerId);
+    this.assertFencingToken(current, job, workerId);
+    const now = this.clock.now();
+    const renewed = QueueJobSchema.parse({
+      ...current,
+      lease: {
+        ...current.lease,
+        heartbeatAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + this.leaseMs).toISOString(),
+      },
+    });
+    await atomicWriteJson(this.processingPath(job.id, workerId), renewed);
+    return renewed;
+  }
+
   async ack(job: QueueJob, workerId: string): Promise<void> {
+    const current = await this.readLeasedJob(job.id, workerId);
+    this.assertFencingToken(current, job, workerId);
     const from = this.processingPath(job.id, workerId);
     const completed = this.dir('completed');
     await ensureDir(completed);
-    try {
-      await rename(from, join(completed, `${safeSegment(job.id)}.json`));
-    } catch {
-      await rm(from, { force: true });
-    }
+    await rename(from, join(completed, `${safeSegment(job.id)}.json`));
   }
 
   async nack(job: QueueJob, workerId: string, error: Error): Promise<void> {
+    const current = await this.readLeasedJob(job.id, workerId);
+    this.assertFencingToken(current, job, workerId);
     const from = this.processingPath(job.id, workerId);
-    const attempts = job.attempts + 1;
+    const attempts = current.attempts + 1;
     const updated = QueueJobSchema.parse({
-      ...job,
+      ...current,
       attempts,
       lastError: error.message,
-      availableAt: new Date(Date.now() + Math.min(30_000, 1_000 * 2 ** attempts)).toISOString(),
+      availableAt: new Date(
+        this.clock.now().getTime() + Math.min(30_000, 1_000 * 2 ** attempts),
+      ).toISOString(),
+      lease: undefined,
     });
 
     if (attempts >= job.maxAttempts) {
@@ -73,8 +110,76 @@ export class FileJobQueue implements JobQueue {
       return;
     }
 
+    await ensureDir(this.dir('pending'));
     await atomicWriteJson(join(this.dir('pending'), `${safeSegment(job.id)}.json`), updated);
     await rm(from, { force: true });
+  }
+
+  /**
+   * Recovers processing entries whose lease has expired — the surviving
+   * evidence of a crashed or hung worker, since a healthy worker keeps
+   * renewing its lease via heartbeat. Returns the jobs it recovered so a
+   * caller (e.g. a reaper loop) can log or emit an event per job.
+   */
+  async reapExpired(): Promise<QueueJob[]> {
+    const processing = this.dir('processing');
+    await ensureDir(processing);
+    const entries = (await readdir(processing)).filter((name) => name.endsWith('.json'));
+    const now = this.clock.now().getTime();
+    const recovered: QueueJob[] = [];
+
+    for (const entry of entries) {
+      const from = join(processing, entry);
+      let job: QueueJob;
+      try {
+        job = QueueJobSchema.parse(await readJson<unknown>(from));
+      } catch {
+        await rm(from, { force: true });
+        continue;
+      }
+
+      const expiresAt = job.lease ? new Date(job.lease.expiresAt).getTime() : 0;
+      if (expiresAt > now) continue;
+
+      const recoveredJob = QueueJobSchema.parse({ ...job, lease: undefined });
+      await ensureDir(this.dir('pending'));
+      await atomicWriteJson(join(this.dir('pending'), `${safeSegment(job.id)}.json`), recoveredJob);
+      await rm(from, { force: true });
+      recovered.push(recoveredJob);
+    }
+
+    return recovered;
+  }
+
+  private grantLease(job: QueueJob, workerId: string): QueueJob {
+    const now = this.clock.now();
+    const leaseEpoch = job.leaseEpoch + 1;
+    return QueueJobSchema.parse({
+      ...job,
+      leaseEpoch,
+      lease: {
+        workerId,
+        fencingToken: leaseEpoch,
+        heartbeatAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + this.leaseMs).toISOString(),
+      },
+    });
+  }
+
+  private async readLeasedJob(jobId: string, workerId: string): Promise<QueueJob> {
+    const current = await readJsonOrNull<unknown>(this.processingPath(jobId, workerId));
+    if (!current) throw new LeaseLostError(jobId, workerId);
+    return QueueJobSchema.parse(current);
+  }
+
+  private assertFencingToken(current: QueueJob, expected: QueueJob, workerId: string): void {
+    if (
+      !current.lease ||
+      current.lease.workerId !== workerId ||
+      current.lease.fencingToken !== expected.lease?.fencingToken
+    ) {
+      throw new LeaseLostError(expected.id, workerId);
+    }
   }
 
   private dir(name: 'pending' | 'processing' | 'completed' | 'failed'): string {

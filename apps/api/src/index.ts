@@ -98,12 +98,16 @@ if (runtime.config.runWorkerInline) {
   void runtime.worker.start(abortController.signal).catch((error: unknown) => {
     app.log.error(error, 'Inline worker stopped unexpectedly');
   });
+  void runtime.leaseReaper.start(abortController.signal).catch((error: unknown) => {
+    app.log.error(error, 'Inline lease reaper stopped unexpectedly');
+  });
 }
 
 const shutdown = async (signal: string): Promise<void> => {
   app.log.info({ signal }, 'Shutting down');
   abortController.abort();
   runtime.worker.stop();
+  runtime.leaseReaper.stop();
   await app.close();
   process.exit(0);
 };

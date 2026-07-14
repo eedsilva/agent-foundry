@@ -51,6 +51,17 @@ export class InvalidStateTransitionError extends Error {
   }
 }
 
+export class LeaseLostError extends Error {
+  override readonly name = 'LeaseLostError';
+
+  constructor(
+    readonly jobId: string,
+    readonly workerId: string,
+  ) {
+    super(`Worker ${workerId} no longer holds the lease for job ${jobId}`);
+  }
+}
+
 export class VersionConflictError extends Error {
   override readonly name = 'VersionConflictError';
 

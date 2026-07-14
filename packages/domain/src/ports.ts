@@ -73,11 +73,18 @@ export interface EventStore {
   list(projectId: string, limit?: number): Promise<ProjectEvent[]>;
 }
 
+/**
+ * Claim grants a lease with a monotonic fencingToken. heartbeat, ack, and nack
+ * all validate that token against the on-disk lease and throw LeaseLostError
+ * when it is stale — reclaimed by reapExpired or claimed by another worker.
+ */
 export interface JobQueue {
   enqueue(job: QueueJob): Promise<void>;
   claim(workerId: string): Promise<QueueJob | null>;
+  heartbeat(job: QueueJob, workerId: string): Promise<QueueJob>;
   ack(job: QueueJob, workerId: string): Promise<void>;
   nack(job: QueueJob, workerId: string, error: Error): Promise<void>;
+  reapExpired(): Promise<QueueJob[]>;
 }
 
 export interface WorkflowRepository {

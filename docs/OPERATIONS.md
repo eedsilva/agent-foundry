@@ -85,7 +85,9 @@ queue/completed
 queue/failed
 ```
 
-Um crash entre `claim` e `ack/nack` pode deixar job em `processing`. O MVP não possui lease expiry. Para recuperar manualmente com todos os workers parados:
+Um crash entre `claim` e `ack/nack` deixa o job em `processing`, mas agora com lease: `claim` grava `workerId`, `heartbeatAt`, `expiresAt` e um `fencingToken` monotônico no próprio job. O worker renova o heartbeat periodicamente (`QUEUE_HEARTBEAT_INTERVAL_MS`) enquanto o `WorkflowRun` executa. Um `QueueLeaseReaper` roda em paralelo (`QUEUE_REAP_INTERVAL_MS`) e devolve para `pending` qualquer job cuja lease expirou (`QUEUE_LEASE_MS`) sem renovação, emitindo um evento `queue.job_recovered` no projeto. `ack` e `nack` rejeitam um `fencingToken` obsoleto, então um worker que perdeu a lease não consegue mais concluir o job depois que outro worker o reclamou.
+
+Isso cobre o caso de crash abrupto (processo morto, host reiniciado) sem intervenção manual. Recovery manual continua necessário apenas se o reaper estiver parado (nenhum worker e nenhuma API com `RUN_WORKER_INLINE=true` em execução) ou para investigar um job preso por outro motivo:
 
 1. inspecione o arquivo em `processing`;
 2. remova o sufixo do worker do nome;
@@ -98,10 +100,8 @@ Faça isso apenas depois de confirmar que nenhum worker ainda executa o job. Cas
 
 A retomada completa ainda não é idempotente. Reexecutar um projeto cria um novo `WorkflowRun`, preservando runs, steps e attempts anteriores, mas ainda pode criar novas revisões e commits. O Git reduz corrupção, mas não garante exactly-once.
 
-Uma evolução robusta deve incluir:
+Lease com expiração e fencing token na fila já existem (seção anterior). Uma evolução robusta ainda deve incluir:
 
-- lease com expiração;
-- fencing token;
 - chave idempotente por step e iteração;
 - chave de deduplicação para o status já persistido de cada step/attempt;
 - resume a partir do último checkpoint aprovado;

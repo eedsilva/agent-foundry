@@ -58,6 +58,7 @@ export const ProjectEventSchema = z.object({
     'artifact.created',
     'verification.completed',
     'git.checkpoint',
+    'queue.job_recovered',
   ]),
   createdAt: z.string().datetime(),
   nodeId: PathSegmentSchema.optional(),
@@ -66,6 +67,16 @@ export const ProjectEventSchema = z.object({
   data: z.record(z.string(), z.unknown()).default({}),
 });
 export type ProjectEvent = z.infer<typeof ProjectEventSchema>;
+
+export const QueueLeaseSchema = z
+  .object({
+    workerId: PathSegmentSchema,
+    fencingToken: z.number().int().positive(),
+    heartbeatAt: z.string().datetime(),
+    expiresAt: z.string().datetime(),
+  })
+  .strict();
+export type QueueLease = z.infer<typeof QueueLeaseSchema>;
 
 export const QueueJobSchema = z.object({
   id: PathSegmentSchema,
@@ -78,6 +89,8 @@ export const QueueJobSchema = z.object({
   createdAt: z.string().datetime(),
   availableAt: z.string().datetime(),
   lastError: z.string().optional(),
+  leaseEpoch: z.number().int().nonnegative().default(0),
+  lease: QueueLeaseSchema.optional(),
 });
 export type QueueJob = z.infer<typeof QueueJobSchema>;
 
