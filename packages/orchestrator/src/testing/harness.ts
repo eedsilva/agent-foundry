@@ -564,10 +564,23 @@ export function makeStores(): Stores {
   };
 }
 
-export function makeHarness(behaviors: Record<string, StepBehavior> = {}, existing?: Stores) {
+export function makeHarness(
+  behaviors: Record<string, StepBehavior> = {},
+  existing?: Stores,
+  opts: { fallback?: boolean } = {},
+) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
   const executor = new ControllableExecutor(behaviors, stores.workspaces);
+  // Fallback recovery needs the mutating step to offer a second candidate.
+  const workflow: WorkflowDefinition = opts.fallback
+    ? WorkflowDefinitionSchema.parse({
+        ...WORKFLOW,
+        nodes: WORKFLOW.nodes.map((node) =>
+          node.id === 'implement' ? { ...node, maxAttempts: 2 } : node,
+        ),
+      })
+    : WORKFLOW;
   const verifier: VerificationService = {
     verify: () =>
       Promise.resolve({
@@ -580,8 +593,8 @@ export function makeHarness(behaviors: Record<string, StepBehavior> = {}, existi
       } satisfies VerificationReport),
   };
   const workflows: WorkflowRepository = {
-    get: () => Promise.resolve(WORKFLOW),
-    list: () => Promise.resolve([WORKFLOW]),
+    get: () => Promise.resolve(workflow),
+    list: () => Promise.resolve([workflow]),
   };
   const harness: HarnessRepository = {
     select: () =>
@@ -609,15 +622,36 @@ export function makeHarness(behaviors: Record<string, StepBehavior> = {}, existi
               total: 3,
             },
           },
-          fallbacks: [],
+          fallbacks: opts.fallback
+            ? [
+                {
+                  model: MODELS[1]!,
+                  score: {
+                    capability: 0.5,
+                    context: 0.5,
+                    speed: 0.5,
+                    cost: 0.5,
+                    reliability: 0.5,
+                    historical: 0.5,
+                    tagAffinity: 0,
+                    estimatedCostUsd: null,
+                    total: 3,
+                  },
+                },
+              ]
+            : [],
           rejected: [],
         }),
       ),
     catalog: () => Promise.resolve(MODELS),
   };
+  const metricsRecords: Parameters<MetricsRepository['record']>[0][] = [];
   const metrics: MetricsRepository = {
     get: () => Promise.resolve(null),
-    record: () => Promise.resolve(),
+    record: (input) => {
+      metricsRecords.push(input);
+      return Promise.resolve();
+    },
     recordQuality: () => Promise.resolve(),
   };
   const registry: ExecutorRegistry = {
@@ -669,7 +703,7 @@ export function makeHarness(behaviors: Record<string, StepBehavior> = {}, existi
     stores.clock,
     ids,
   );
-  return { ...stores, ids, executor, orchestrator, service, enqueued };
+  return { ...stores, ids, executor, orchestrator, service, enqueued, metricsRecords };
 }
 
 export type Harness = ReturnType<typeof makeHarness>;
