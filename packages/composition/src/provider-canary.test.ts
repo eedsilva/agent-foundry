@@ -143,6 +143,16 @@ describe('provider canary runner', () => {
     expect(new Set(timeouts)).toEqual(new Set([600_000]));
     expect(prompts).toHaveLength(9);
     expect(prompts.every((prompt) => !/run node --test/i.test(prompt))).toBe(true);
+    expect(
+      prompts
+        .filter((prompt) => prompt.includes('src/greeting.js'))
+        .every((prompt) => prompt.includes('export function greeting(name)')),
+    ).toBe(true);
+    expect(
+      prompts
+        .filter((prompt) => prompt.includes('sum.js'))
+        .every((prompt) => prompt.includes('return left + right')),
+    ).toBe(true);
     expect(outcome.report.runs.map(({ provider, scenario }) => `${provider}:${scenario}`)).toEqual(
       providers.flatMap((provider) =>
         ['planning', 'greenfield', 'repair'].map((scenario) => `${provider}:${scenario}`),

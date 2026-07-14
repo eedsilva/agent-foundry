@@ -46,7 +46,7 @@ export const PROVIDER_CANARY_FIXTURES: Readonly<Record<CanaryScenario, ProviderC
         "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { greeting } from '../src/greeting.js';\n\ntest('greets a supplied name', () => {\n  assert.equal(greeting('Ada'), 'Hello, Ada!');\n});\n",
     },
     prompt:
-      'Implement src/greeting.js so the existing node:test suite passes. Only src/greeting.js may change.',
+      'Create src/greeting.js containing exactly this one line:\nexport function greeting(name) { return `Hello, ${name}!`; }\nOnly src/greeting.js may change.',
   },
   repair: {
     scenario: 'repair',
@@ -59,6 +59,7 @@ export const PROVIDER_CANARY_FIXTURES: Readonly<Record<CanaryScenario, ProviderC
       'test/sum.test.js':
         "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { sum } from '../sum.js';\n\ntest('adds two numbers', () => {\n  assert.equal(sum(7, 5), 12);\n});\n",
     },
-    prompt: 'Repair sum.js so the existing node:test suite passes. Only sum.js may change.',
+    prompt:
+      'Repair sum.js by changing the function body to return left + right. Only sum.js may change.',
   },
 };
