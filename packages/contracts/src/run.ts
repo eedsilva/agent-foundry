@@ -148,6 +148,7 @@ export const StepAttemptSchema = z
     usage: ExecutionUsageSchema.optional(),
     error: RunErrorSchema.optional(),
     routeDecision: RouteDecisionSchema.optional(),
+    previewSessionId: PathSegmentSchema.optional(),
     harness: z
       .object({
         version: z.string().min(1),

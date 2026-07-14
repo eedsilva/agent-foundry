@@ -43,7 +43,7 @@ export class InvalidStateTransitionError extends Error {
   override readonly name = 'InvalidStateTransitionError';
 
   constructor(
-    readonly entity: 'workflow-run' | 'step-run' | 'step-attempt',
+    readonly entity: 'workflow-run' | 'step-run' | 'step-attempt' | 'preview-session',
     readonly from: string,
     readonly to: string,
   ) {
