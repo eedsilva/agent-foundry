@@ -92,9 +92,22 @@ describe('CLI executor contracts', () => {
         '--model',
         'example-agy-model',
         '--print',
-        'Open the request file.',
       ]),
     );
+    expect(invocation.args.at(-1)).toBe(
+      'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
+    );
+  });
+
+  it('refuses an AGY output schema that exceeds the bounded prompt contract', async () => {
+    await expect(
+      new InspectableAgyExecutor(1_000_000).inspect(
+        request({
+          provider: 'agy',
+          outputSchema: { description: 'x'.repeat(32_768) },
+        }),
+      ),
+    ).rejects.toThrow(/output schema exceeds/i);
   });
 
   it('routes AGY provider metadata to its per-run file only for explicit evidence runs', async () => {
