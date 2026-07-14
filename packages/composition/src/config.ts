@@ -25,6 +25,7 @@ const ConfigSchema = z.object({
   VERIFICATION_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
   MAX_CLI_OUTPUT_BYTES: z.coerce.number().int().positive().default(20_000_000),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(750),
+  CANCEL_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(500),
   WORKER_ID: z.string().default(`worker-${process.pid}`),
   QUEUE_LEASE_MS: z.coerce.number().int().positive().default(60_000),
   QUEUE_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
@@ -51,6 +52,7 @@ export interface RuntimeConfig {
   verificationTimeoutMs: number;
   maxCliOutputBytes: number;
   workerPollIntervalMs: number;
+  cancelPollIntervalMs: number;
   workerId: string;
   queueLeaseMs: number;
   queueHeartbeatIntervalMs: number;
@@ -95,6 +97,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     verificationTimeoutMs: parsed.VERIFICATION_TIMEOUT_MS,
     maxCliOutputBytes: parsed.MAX_CLI_OUTPUT_BYTES,
     workerPollIntervalMs: parsed.WORKER_POLL_INTERVAL_MS,
+    cancelPollIntervalMs: parsed.CANCEL_POLL_INTERVAL_MS,
     workerId: parsed.WORKER_ID,
     queueLeaseMs: parsed.QUEUE_LEASE_MS,
     queueHeartbeatIntervalMs: parsed.QUEUE_HEARTBEAT_INTERVAL_MS,

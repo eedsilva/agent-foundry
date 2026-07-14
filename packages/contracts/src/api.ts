@@ -7,6 +7,7 @@ import {
 } from './project.js';
 import { ModelDefinitionSchema } from './model.js';
 import { PathSegmentSchema } from './primitives.js';
+import { WorkflowRunSchema } from './run.js';
 
 export const CreateProjectRequestSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -26,6 +27,11 @@ export const ProjectDetailResponseSchema = z.object({
   events: z.array(ProjectEventSchema),
 });
 export type ProjectDetailResponse = z.infer<typeof ProjectDetailResponseSchema>;
+
+export const CancelRunResponseSchema = z.object({
+  run: WorkflowRunSchema,
+});
+export type CancelRunResponse = z.infer<typeof CancelRunResponseSchema>;
 
 export const RuntimeInfoResponseSchema = z.object({
   executorMode: z.enum(['real', 'mock']),

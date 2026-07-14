@@ -17,7 +17,7 @@ import type {
   WorkflowRunRepository,
   WorkflowRepository,
 } from '@agent-foundry/domain';
-import { NotFoundError } from '@agent-foundry/domain';
+import { NotFoundError, VersionConflictError, transitionWorkflowRun } from '@agent-foundry/domain';
 
 export class ProjectService {
   constructor(
@@ -149,6 +149,30 @@ export class ProjectService {
     return saved;
   }
 
+  async cancelRun(runId: string): Promise<WorkflowRun> {
+    for (let retry = 0; ; retry += 1) {
+      const run = await this.runs.get(runId);
+      if (!run) throw new NotFoundError(`Workflow run ${runId} not found`);
+      // Idempotent: repeating a cancel is a no-op and emits no duplicate event.
+      if (run.status === 'cancel_requested' || run.status === 'cancelled') return run;
+      try {
+        const updated = await this.runs.update(
+          transitionWorkflowRun(run, 'cancel_requested', this.clock.now()),
+          run.version,
+        );
+        await this.appendEvent(
+          run.projectId,
+          'run.cancel_requested',
+          'Cancellation requested.',
+          runId,
+        );
+        return updated;
+      } catch (error) {
+        if (!(error instanceof VersionConflictError) || retry >= 2) throw error;
+      }
+    }
+  }
+
   private async requireProject(projectId: string): Promise<Project> {
     const project = await this.projects.get(projectId);
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
@@ -159,12 +183,14 @@ export class ProjectService {
     projectId: string,
     type: ProjectEvent['type'],
     message: string,
+    runId?: string,
   ): Promise<void> {
     await this.events.append({
       id: this.ids.next(),
       projectId,
       type,
       createdAt: this.clock.now().toISOString(),
+      ...(runId ? { runId } : {}),
       message,
       data: {},
     });

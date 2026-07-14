@@ -5,7 +5,7 @@ import { config as loadDotEnv } from 'dotenv';
 import { z } from 'zod';
 import { createRuntime } from '@agent-foundry/composition';
 import { CreateProjectRequestSchema, PathSegmentSchema } from '@agent-foundry/contracts';
-import { NotFoundError } from '@agent-foundry/domain';
+import { InvalidStateTransitionError, NotFoundError } from '@agent-foundry/domain';
 
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
 
@@ -38,6 +38,9 @@ app.setErrorHandler((error, _request, reply) => {
   }
   if (error instanceof NotFoundError) {
     return reply.status(404).send({ error: error.name, message: error.message });
+  }
+  if (error instanceof InvalidStateTransitionError) {
+    return reply.status(409).send({ error: error.name, message: error.message });
   }
   app.log.error(error);
   const name = error instanceof Error ? error.name : 'InternalServerError';
@@ -85,6 +88,12 @@ app.get('/projects/:projectId/artifacts/:name', async (request) => {
     .object({ revision: z.coerce.number().int().positive().optional() })
     .parse(request.query);
   return runtime.projectService.getArtifact(projectId, name, revision);
+});
+
+app.post('/runs/:runId/cancel', async (request, reply) => {
+  const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+  const run = await runtime.projectService.cancelRun(runId);
+  return reply.status(202).send({ run });
 });
 
 app.post('/projects/:projectId/retry', async (request, reply) => {

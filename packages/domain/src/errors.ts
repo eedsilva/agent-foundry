@@ -76,3 +76,11 @@ export class VersionConflictError extends Error {
     );
   }
 }
+
+export class RunCancelledError extends Error {
+  override readonly name = 'RunCancelledError';
+
+  constructor(readonly runId?: string) {
+    super(runId ? `Workflow run ${runId} was cancelled.` : 'Execution was cancelled.');
+  }
+}

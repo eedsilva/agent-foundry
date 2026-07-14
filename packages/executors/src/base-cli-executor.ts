@@ -8,7 +8,7 @@ import type {
   Provider,
 } from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
-import { ExecutionError, errorMessage } from '@agent-foundry/domain';
+import { ExecutionError, RunCancelledError, errorMessage } from '@agent-foundry/domain';
 import { extractExecutedModel, extractUsage, parseAgentArtifact } from './json-output.js';
 
 export interface CliInvocation {
@@ -29,6 +29,7 @@ interface CliResult {
 }
 
 interface CliSubprocess extends PromiseLike<CliResult> {
+  pid?: number;
   kill?(signal?: NodeJS.Signals): boolean;
   stdout?: { destroy(): void } | null;
   stderr?: { destroy(): void } | null;
@@ -40,7 +41,10 @@ export abstract class BaseCliExecutor implements AgentExecutor {
   abstract readonly provider: Provider;
   protected abstract readonly command: string;
 
-  constructor(private readonly maxOutputBytes: number) {}
+  constructor(
+    private readonly maxOutputBytes: number,
+    private readonly killGraceMs = HARD_TIMEOUT_GRACE_MS,
+  ) {}
 
   protected abstract invocation(request: AgentExecutionRequest): Promise<CliInvocation>;
 
@@ -57,11 +61,15 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     return stdout;
   }
 
-  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+  async execute(
+    request: AgentExecutionRequest,
+    signal?: AbortSignal,
+  ): Promise<AgentExecutionResult> {
+    if (signal?.aborted) throw new RunCancelledError(request.runId);
     const startedAt = Date.now();
     const invocation = await this.invocation(request);
     try {
-      return await this.executeInvocation(request, invocation, startedAt);
+      return await this.executeInvocation(request, invocation, startedAt, signal);
     } finally {
       const directories = new Set(
         [invocation.outputDirectory, invocation.metadataDirectory].filter((path): path is string =>
@@ -82,8 +90,11 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     request: AgentExecutionRequest,
     invocation: CliInvocation,
     startedAt: number,
+    signal?: AbortSignal,
   ): Promise<AgentExecutionResult> {
     let result: CliResult;
+    let graceTimer: NodeJS.Timeout | undefined;
+    let onAbort: (() => void) | undefined;
 
     try {
       const subprocess = execa(invocation.command, invocation.args, {
@@ -94,11 +105,23 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         all: false,
         windowsHide: true,
         encoding: 'utf8',
+        // Own process group on POSIX so cancellation can terminate the whole CLI tree.
+        detached: process.platform !== 'win32',
         ...(invocation.input !== undefined ? { input: invocation.input } : {}),
         ...(invocation.environment ? { env: cleanEnvironment(invocation.environment) } : {}),
       }) as unknown as CliSubprocess;
+      if (signal) {
+        onAbort = () => {
+          killProcessTree(subprocess, 'SIGTERM');
+          graceTimer = setTimeout(() => killProcessTree(subprocess, 'SIGKILL'), this.killGraceMs);
+          graceTimer.unref?.();
+        };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }
       result = await waitForCliResult(subprocess, request.timeoutMs + HARD_TIMEOUT_GRACE_MS);
     } catch (error) {
+      if (signal?.aborted) throw new RunCancelledError(request.runId);
       throw new ExecutionError(
         `${this.provider} CLI could not be executed: ${errorMessage(error)}`,
         {
@@ -107,8 +130,12 @@ export abstract class BaseCliExecutor implements AgentExecutor {
           cause: error,
         },
       );
+    } finally {
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+      if (graceTimer) clearTimeout(graceTimer);
     }
 
+    if (signal?.aborted) throw new RunCancelledError(request.runId);
     const stdout = outputText(result.stdout);
     const stderr = outputText(result.stderr);
     if (result.exitCode !== 0) {
@@ -196,7 +223,7 @@ function waitForCliResult(subprocess: CliSubprocess, hardTimeoutMs: number): Pro
     };
     const timer = setTimeout(() => {
       finish(() => {
-        subprocess.kill?.('SIGKILL');
+        killProcessTree(subprocess, 'SIGKILL');
         subprocess.stdout?.destroy();
         subprocess.stderr?.destroy();
         reject(new Error(`CLI exceeded its ${String(hardTimeoutMs)}ms hard deadline.`));
@@ -208,6 +235,18 @@ function waitForCliResult(subprocess: CliSubprocess, hardTimeoutMs: number): Pro
       (error: unknown) => finish(() => reject(error)),
     );
   });
+}
+
+function killProcessTree(subprocess: CliSubprocess, signal: NodeJS.Signals): void {
+  if (subprocess.pid !== undefined && process.platform !== 'win32') {
+    try {
+      process.kill(-subprocess.pid, signal);
+      return;
+    } catch {
+      // Group already gone or the child is not a group leader; fall back to a direct kill.
+    }
+  }
+  subprocess.kill?.(signal);
 }
 
 function outputText(value: unknown): string {

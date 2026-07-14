@@ -138,7 +138,7 @@ export interface MetricsRepository {
 
 export interface AgentExecutor {
   readonly provider: string;
-  execute(request: AgentExecutionRequest): Promise<AgentExecutionResult>;
+  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult>;
   health(): Promise<ExecutorHealth>;
 }
 
@@ -163,11 +163,14 @@ export interface PreviewRunner {
 }
 
 export interface VerificationService {
-  verify(input: {
-    workspacePath: string;
-    scripts: string[];
-    includeGitDiffCheck: boolean;
-  }): Promise<VerificationReport>;
+  verify(
+    input: {
+      workspacePath: string;
+      scripts: string[];
+      includeGitDiffCheck: boolean;
+    },
+    signal?: AbortSignal,
+  ): Promise<VerificationReport>;
 }
 
 export interface WorkspaceManager {
