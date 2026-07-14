@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "createdAt": "2026-07-14T04:10:27.524Z",
+  "createdAt": "2026-07-14T04:45:24.118Z",
   "probes": [
     {
       "provider": "codex",
@@ -43,18 +43,18 @@
       "model": "gpt-5.6-sol",
       "executedModel": "gpt-5.6-sol",
       "status": "passed",
-      "durationMs": 88563,
+      "durationMs": 67665,
       "usage": {
-        "inputTokens": 97307,
-        "outputTokens": 1973,
-        "cachedInputTokens": 78848
+        "inputTokens": 149035,
+        "outputTokens": 2047,
+        "cachedInputTokens": 128512
       },
       "verification": [
         {
           "name": "no-diff",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 69
+          "durationMs": 103
         }
       ]
     },
@@ -64,30 +64,30 @@
       "model": "gpt-5.6-sol",
       "executedModel": "gpt-5.6-sol",
       "status": "passed",
-      "durationMs": 48751,
+      "durationMs": 18676,
       "usage": {
-        "inputTokens": 176847,
-        "outputTokens": 1829,
-        "cachedInputTokens": 141568
+        "inputTokens": 85263,
+        "outputTokens": 528,
+        "cachedInputTokens": 70656
       },
       "verification": [
         {
           "name": "node-test",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 132
+          "durationMs": 96
         },
         {
           "name": "git-diff-check",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 31
+          "durationMs": 17
         },
         {
           "name": "allowed-files",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 55
+          "durationMs": 90
         }
       ]
     },
@@ -97,18 +97,18 @@
       "model": "gpt-5.6-sol",
       "executedModel": "gpt-5.6-sol",
       "status": "passed",
-      "durationMs": 32430,
+      "durationMs": 21629,
       "usage": {
-        "inputTokens": 110043,
-        "outputTokens": 1203,
-        "cachedInputTokens": 93952
+        "inputTokens": 106794,
+        "outputTokens": 638,
+        "cachedInputTokens": 91904
       },
       "verification": [
         {
           "name": "node-test",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 137
+          "durationMs": 104
         },
         {
           "name": "git-diff-check",
@@ -120,7 +120,7 @@
           "name": "allowed-files",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 27
+          "durationMs": 74
         }
       ]
     },
@@ -130,19 +130,19 @@
       "model": "sonnet",
       "executedModel": "claude-sonnet-5",
       "status": "passed",
-      "durationMs": 58731,
+      "durationMs": 72760,
       "usage": {
-        "inputTokens": 572,
-        "outputTokens": 4575,
-        "cachedInputTokens": 146292,
-        "estimatedCostUsd": 0.1653386
+        "inputTokens": 6,
+        "outputTokens": 6014,
+        "cachedInputTokens": 85125,
+        "estimatedCostUsd": 0.17082949999999997
       },
       "verification": [
         {
           "name": "no-diff",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 29
+          "durationMs": 73
         }
       ]
     },
@@ -152,19 +152,97 @@
       "model": "sonnet",
       "executedModel": "claude-sonnet-5",
       "status": "passed",
-      "durationMs": 16927,
+      "durationMs": 16459,
       "usage": {
-        "inputTokens": 581,
-        "outputTokens": 658,
-        "cachedInputTokens": 80374,
-        "estimatedCostUsd": 0.06594920000000001
+        "inputTokens": 6,
+        "outputTokens": 594,
+        "cachedInputTokens": 80246,
+        "estimatedCostUsd": 0.0640208
       },
       "verification": [
         {
           "name": "node-test",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 110
+          "durationMs": 104
+        },
+        {
+          "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 24
+        },
+        {
+          "name": "allowed-files",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 98
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "scenario": "repair",
+      "model": "sonnet",
+      "executedModel": "claude-sonnet-5",
+      "status": "passed",
+      "durationMs": 20628,
+      "usage": {
+        "inputTokens": 8,
+        "outputTokens": 755,
+        "cachedInputTokens": 108545,
+        "estimatedCostUsd": 0.07536549999999999
+      },
+      "verification": [
+        {
+          "name": "node-test",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 106
+        },
+        {
+          "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 33
+        },
+        {
+          "name": "allowed-files",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 90
+        }
+      ]
+    },
+    {
+      "provider": "agy",
+      "scenario": "planning",
+      "model": "Gemini 3.1 Pro (Low)",
+      "executedModel": "Gemini 3.1 Pro (Low)",
+      "status": "passed",
+      "durationMs": 97414,
+      "verification": [
+        {
+          "name": "no-diff",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 92
+        }
+      ]
+    },
+    {
+      "provider": "agy",
+      "scenario": "greenfield",
+      "model": "Gemini 3.1 Pro (Low)",
+      "executedModel": "Gemini 3.1 Pro (Low)",
+      "status": "passed",
+      "durationMs": 13406,
+      "verification": [
+        {
+          "name": "node-test",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 122
         },
         {
           "name": "git-diff-check",
@@ -176,85 +254,7 @@
           "name": "allowed-files",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 20
-        }
-      ]
-    },
-    {
-      "provider": "claude",
-      "scenario": "repair",
-      "model": "sonnet",
-      "executedModel": "claude-sonnet-5",
-      "status": "passed",
-      "durationMs": 18119,
-      "usage": {
-        "inputTokens": 563,
-        "outputTokens": 727,
-        "cachedInputTokens": 108577,
-        "estimatedCostUsd": 0.0750291
-      },
-      "verification": [
-        {
-          "name": "node-test",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 119
-        },
-        {
-          "name": "git-diff-check",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 37
-        },
-        {
-          "name": "allowed-files",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 29
-        }
-      ]
-    },
-    {
-      "provider": "agy",
-      "scenario": "planning",
-      "model": "Gemini 3.1 Pro (Low)",
-      "executedModel": "Gemini 3.1 Pro (Low)",
-      "status": "passed",
-      "durationMs": 22322,
-      "verification": [
-        {
-          "name": "no-diff",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 28
-        }
-      ]
-    },
-    {
-      "provider": "agy",
-      "scenario": "greenfield",
-      "model": "Gemini 3.1 Pro (Low)",
-      "executedModel": "Gemini 3.1 Pro (Low)",
-      "status": "passed",
-      "durationMs": 15065,
-      "verification": [
-        {
-          "name": "node-test",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 143
-        },
-        {
-          "name": "git-diff-check",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 24
-        },
-        {
-          "name": "allowed-files",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 20
+          "durationMs": 106
         }
       ]
     },
@@ -264,25 +264,25 @@
       "model": "Gemini 3.1 Pro (Low)",
       "executedModel": "Gemini 3.1 Pro (Low)",
       "status": "passed",
-      "durationMs": 25994,
+      "durationMs": 67737,
       "verification": [
         {
           "name": "node-test",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 112
+          "durationMs": 100
         },
         {
           "name": "git-diff-check",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 22
+          "durationMs": 20
         },
         {
           "name": "allowed-files",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 24
+          "durationMs": 83
         }
       ]
     }
