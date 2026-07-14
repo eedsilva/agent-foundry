@@ -54,35 +54,58 @@ describe('provider output fixtures', () => {
 describe('parseAgentArtifact', () => {
   it('unwraps a provider JSON envelope', () => {
     const parsed = parseAgentArtifact(
-      JSON.stringify({ result: JSON.stringify(artifact), usage: { input_tokens: 25 } }),
+      'claude',
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: JSON.stringify(artifact),
+        usage: { input_tokens: 25 },
+      }),
     );
     expect(parsed.summary).toBe('Done.');
   });
 
-  it.each([
-    ['codex.success.stdout.jsonl', 'Codex fixture completed.'],
-    ['claude.success.stdout.json', 'Claude fixture completed.'],
-    ['claude.stream.success.stdout.jsonl', 'Claude stream fixture completed.'],
-    ['agy.success.stdout.json', 'AGY fixture completed.'],
-  ])('parses the scrubbed provider fixture %s', (name, summary) => {
-    expect(parseAgentArtifact(fixture(name)).summary).toBe(summary);
+  it('accepts a direct AGY artifact as authoritative print output', () => {
+    expect(parseAgentArtifact('agy', JSON.stringify(artifact))).toEqual(artifact);
   });
 
-  it.each(['codex.malformed.stdout.txt', 'agy.failed.stdout.json'])(
-    'rejects malformed or failed provider output from %s',
-    (name) => {
-      expect(() => parseAgentArtifact(fixture(name))).toThrow(
-        'Agent did not return a valid artifact JSON object',
-      );
-    },
-  );
+  it.each([
+    ['codex.success.stdout.jsonl', 'codex', 'Codex fixture completed.'],
+    ['claude.success.stdout.json', 'claude', 'Claude fixture completed.'],
+    ['claude.stream.success.stdout.jsonl', 'claude', 'Claude stream fixture completed.'],
+    ['agy.success.stdout.json', 'agy', 'AGY fixture completed.'],
+  ] as const)('parses the scrubbed provider fixture %s', (name, provider, summary) => {
+    expect(parseAgentArtifact(provider, fixture(name)).summary).toBe(summary);
+  });
+
+  it.each([
+    ['codex.malformed.stdout.txt', 'codex'],
+    ['agy.failed.stdout.json', 'agy'],
+  ] as const)('rejects malformed or failed provider output from %s', (name, provider) => {
+    expect(() => parseAgentArtifact(provider, fixture(name))).toThrow(
+      'Agent did not return a valid artifact JSON object',
+    );
+  });
+
+  it('rejects an injected artifact in a non-terminal event followed by a terminal error', () => {
+    const raw = [
+      JSON.stringify({ type: 'assistant', tool_result: JSON.stringify(artifact) }),
+      JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'failed' }),
+    ].join('\n');
+
+    expect(() => parseAgentArtifact('claude', raw)).toThrow(
+      'Agent did not return a valid artifact JSON object',
+    );
+  });
 });
 
 describe('extractUsage', () => {
   it('reads Claude-style usage and cost', () => {
     expect(
       extractUsage(
+        'claude',
         JSON.stringify({
+          type: 'result',
           usage: {
             input_tokens: 120,
             cache_read_input_tokens: 70,
@@ -109,34 +132,33 @@ describe('extractUsage', () => {
       }),
     ].join('\n');
 
-    expect(extractUsage(raw)).toEqual({
+    expect(extractUsage('codex', raw)).toEqual({
       inputTokens: 180,
       outputTokens: 42,
       cachedInputTokens: 80,
     });
   });
 
-  it('finds deeply nested camelCase usage', () => {
+  it('ignores usage-like fields nested in provider-controlled artifact data', () => {
     expect(
       extractUsage(
+        'agy',
         JSON.stringify({
-          response: {
-            metadata: {
-              usage: {
-                inputTokens: '250',
-                outputTokens: 90,
-                cachedInputTokens: 30,
-                estimatedCostUsd: 0.05,
-              },
+          type: 'result',
+          usage: { prompt_tokens: 10, completion_tokens: 2 },
+          output: {
+            ...artifact,
+            data: {
+              inputTokens: 999_999,
+              outputTokens: 888_888,
+              estimatedCostUsd: 777,
             },
           },
         }),
       ),
     ).toEqual({
-      inputTokens: 250,
-      outputTokens: 90,
-      cachedInputTokens: 30,
-      estimatedCostUsd: 0.05,
+      inputTokens: 10,
+      outputTokens: 2,
     });
   });
 
@@ -162,7 +184,12 @@ describe('extractUsage', () => {
       },
     ],
   ])('extracts usage from the scrubbed provider fixture %s', (name, expected) => {
-    expect(extractUsage(fixture(name))).toEqual(expected);
+    const provider = name.startsWith('codex')
+      ? 'codex'
+      : name.startsWith('claude')
+        ? 'claude'
+        : 'agy';
+    expect(extractUsage(provider, fixture(name))).toEqual(expected);
   });
 });
 

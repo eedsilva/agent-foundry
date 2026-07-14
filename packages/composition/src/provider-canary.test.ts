@@ -1,4 +1,13 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  truncate,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -283,6 +292,161 @@ describe('provider canary runner', () => {
     expect(outcome.exitCode).toBe(1);
     expect(repair?.verification).toContainEqual(
       expect.objectContaining({ name: 'allowed-files', passed: false }),
+    );
+  });
+
+  it('fails when assume-unchanged hides a forbidden tracked-file edit', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        if (request.stepId.endsWith('repair')) {
+          await writeFile(join(request.cwd, 'README.md'), 'hidden forbidden edit\n');
+          await execa('git', ['update-index', '--assume-unchanged', 'README.md'], {
+            cwd: request.cwd,
+          });
+        }
+        return successfulResult(request);
+      }),
+    });
+
+    const repair = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'repair',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(repair?.verification).toContainEqual(
+      expect.objectContaining({ name: 'allowed-files', passed: false }),
+    );
+  });
+
+  it('fails when skip-worktree hides a forbidden tracked-file edit', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        if (request.stepId.endsWith('repair')) {
+          await execa('git', ['update-index', '--skip-worktree', 'README.md'], {
+            cwd: request.cwd,
+          });
+          await writeFile(join(request.cwd, 'README.md'), 'hidden forbidden edit\n');
+        }
+        return successfulResult(request);
+      }),
+    });
+
+    const repair = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'repair',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(repair?.verification).toContainEqual(
+      expect.objectContaining({ name: 'allowed-files', passed: false }),
+    );
+  });
+
+  it('fails when the index retains a forbidden staged edit hidden by a restored worktree', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        if (request.stepId.endsWith('repair')) {
+          const original = await readFile(join(request.cwd, 'README.md'), 'utf8');
+          await writeFile(join(request.cwd, 'README.md'), 'forbidden staged edit\n');
+          await execa('git', ['add', 'README.md'], { cwd: request.cwd });
+          await writeFile(join(request.cwd, 'README.md'), original);
+        }
+        return successfulResult(request);
+      }),
+    });
+
+    const repair = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'repair',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(repair?.verification).toContainEqual(
+      expect.objectContaining({ name: 'allowed-files', passed: false }),
+    );
+  });
+
+  it('fails when repository-local excludes conceal a forbidden file', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        if (request.stepId.endsWith('repair')) {
+          await writeFile(join(request.cwd, '.git', 'info', 'exclude'), 'concealed.txt\n');
+          await writeFile(join(request.cwd, 'concealed.txt'), 'forbidden\n');
+        }
+        return successfulResult(request);
+      }),
+    });
+
+    const repair = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'repair',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(repair?.verification).toContainEqual(
+      expect.objectContaining({ name: 'allowed-files', passed: false }),
+    );
+  });
+
+  it('does not erase a provider-created file that uses a former runner-owned path', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (provider, request) => {
+        await applySuccessfulMutation(request);
+        if (provider !== 'codex' && request.stepId.endsWith('repair')) {
+          const runDirectory = join(request.cwd, '.orchestrator', 'runs', request.runId);
+          await mkdir(runDirectory, { recursive: true });
+          await writeFile(join(runDirectory, 'codex.final.json'), 'forbidden\n');
+        }
+        return successfulResult(request);
+      }),
+    });
+
+    expect(outcome.exitCode).toBe(1);
+    for (const provider of ['claude', 'agy'] as const) {
+      const repair = outcome.report.runs.find(
+        (run) => run.provider === provider && run.scenario === 'repair',
+      );
+      expect(repair?.verification).toContainEqual(
+        expect.objectContaining({ name: 'allowed-files', passed: false }),
+      );
+    }
+  });
+
+  it('rejects a huge unexpected file before executing fixture tests or reading its contents', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        if (request.stepId.endsWith('repair')) {
+          const hugePath = join(request.cwd, 'huge-forbidden.bin');
+          await writeFile(hugePath, 'x');
+          await truncate(hugePath, 1024 * 1024 * 1024);
+        }
+        return successfulResult(request);
+      }),
+    });
+
+    const repair = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'repair',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(repair?.verification).toContainEqual(
+      expect.objectContaining({ name: 'allowed-files', passed: false }),
+    );
+    expect(repair?.verification).toContainEqual(
+      expect.objectContaining({
+        name: 'node-test',
+        passed: false,
+        durationMs: 0,
+      }),
     );
   });
 
@@ -620,6 +784,65 @@ describe('provider canary freeze', () => {
       expect(markdown).toContain('## Confirmed model aliases');
       expect(markdown).toContain('| codex | codex-model | codex-executed-model |');
       expect(markdown).toContain('## Limitations');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('restores both previous baseline files when the second publish fails', async () => {
+    const outcome = await successfulOutcome();
+    const root = await mkdtemp(join(tmpdir(), 'agent-foundry-freeze-test-'));
+    try {
+      await freezeProviderCanaryReport(outcome.report, root);
+      const baselineDir = join(root, 'docs', 'baselines');
+      const jsonPath = join(baselineDir, 'v0.2-provider-canaries.json');
+      const markdownPath = join(baselineDir, 'v0.2-provider-canaries.md');
+      const previousJson = await readFile(jsonPath, 'utf8');
+      const previousMarkdown = await readFile(markdownPath, 'utf8');
+      const updated = { ...outcome.report, createdAt: '2026-07-15T00:00:00.000Z' };
+
+      await expect(
+        freezeProviderCanaryReport(updated, root, {
+          async rename(source, destination) {
+            if (String(source).endsWith('.tmp') && String(destination).endsWith('.md')) {
+              throw new Error('simulated second publish failure');
+            }
+            await rename(source, destination);
+          },
+        }),
+      ).rejects.toThrow(/simulated second publish failure/);
+
+      expect(await readFile(jsonPath, 'utf8')).toBe(previousJson);
+      expect(await readFile(markdownPath, 'utf8')).toBe(previousMarkdown);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the published pair consistent when backup cleanup fails', async () => {
+    const outcome = await successfulOutcome();
+    const root = await mkdtemp(join(tmpdir(), 'agent-foundry-freeze-test-'));
+    try {
+      await freezeProviderCanaryReport(outcome.report, root);
+      const updated = { ...outcome.report, createdAt: '2026-07-15T00:00:00.000Z' };
+      await expect(
+        freezeProviderCanaryReport(updated, root, {
+          async rm(path, options) {
+            if (String(path).endsWith('.backup') && String(path).includes('.json.')) {
+              throw new Error('simulated backup cleanup failure');
+            }
+            await rm(path, options);
+          },
+        }),
+      ).rejects.toThrow(/backup cleanup failed/i);
+
+      const baselineDir = join(root, 'docs', 'baselines');
+      const json = JSON.parse(
+        await readFile(join(baselineDir, 'v0.2-provider-canaries.json'), 'utf8'),
+      ) as { createdAt: string };
+      const markdown = await readFile(join(baselineDir, 'v0.2-provider-canaries.md'), 'utf8');
+      expect(json.createdAt).toBe(updated.createdAt);
+      expect(markdown).toContain(updated.createdAt);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

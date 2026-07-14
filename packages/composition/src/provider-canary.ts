@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execa } from 'execa';
@@ -22,6 +22,8 @@ const PROVIDERS = ['codex', 'claude', 'agy'] as const;
 const SCENARIOS = ['planning', 'greenfield', 'repair'] as const;
 const DEFAULT_TIMEOUT_MS = 600_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
+const MAX_FIXTURE_FILE_BYTES = 64 * 1024;
+const MAX_FIXTURE_TOTAL_BYTES = 256 * 1024;
 const BASELINE_STEM = 'v0.2-provider-canaries';
 const REQUIRED_VERIFICATION_NAMES: Readonly<Record<CanaryScenario, readonly string[]>> = {
   planning: ['no-diff'],
@@ -134,6 +136,7 @@ export async function runProviderCanaries(
 export async function freezeProviderCanaryReport(
   input: ProviderCanaryReport,
   rootDir: string,
+  options: { rename?: typeof rename; rm?: typeof rm } = {},
 ): Promise<void> {
   const report = ProviderCanaryReportSchema.parse(input);
   if (report.runs.length !== 9) {
@@ -189,6 +192,14 @@ export async function freezeProviderCanaryReport(
   const temporarySuffix = `.${process.pid}-${Date.now()}.tmp`;
   const temporaryJsonPath = `${jsonPath}${temporarySuffix}`;
   const temporaryMarkdownPath = `${markdownPath}${temporarySuffix}`;
+  const backupJsonPath = `${jsonPath}${temporarySuffix}.backup`;
+  const backupMarkdownPath = `${markdownPath}${temporarySuffix}.backup`;
+  const renameFile = options.rename ?? rename;
+  const removeFile = options.rm ?? rm;
+  let jsonBackedUp = false;
+  let markdownBackedUp = false;
+  let jsonPublished = false;
+  let markdownPublished = false;
 
   await mkdir(baselineDirectory, { recursive: true });
   try {
@@ -196,13 +207,57 @@ export async function freezeProviderCanaryReport(
       writeFile(temporaryJsonPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' }),
       writeFile(temporaryMarkdownPath, renderProviderCanaryMarkdown(report), { flag: 'wx' }),
     ]);
-    await rename(temporaryJsonPath, jsonPath);
-    await rename(temporaryMarkdownPath, markdownPath);
+    jsonBackedUp = await renameIfPresent(jsonPath, backupJsonPath, renameFile);
+    markdownBackedUp = await renameIfPresent(markdownPath, backupMarkdownPath, renameFile);
+    await renameFile(temporaryJsonPath, jsonPath);
+    jsonPublished = true;
+    await renameFile(temporaryMarkdownPath, markdownPath);
+    markdownPublished = true;
+  } catch (error) {
+    try {
+      if (jsonPublished) await removeFile(jsonPath, { force: true, recursive: true });
+      if (markdownPublished) await removeFile(markdownPath, { force: true, recursive: true });
+      if (jsonBackedUp) await renameFile(backupJsonPath, jsonPath);
+      if (markdownBackedUp) await renameFile(backupMarkdownPath, markdownPath);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        'Provider canary freeze failed and its baseline pair could not be restored.',
+      );
+    }
+    throw error;
   } finally {
     await Promise.all([
-      rm(temporaryJsonPath, { force: true }),
-      rm(temporaryMarkdownPath, { force: true }),
+      removeFile(temporaryJsonPath, { force: true }),
+      removeFile(temporaryMarkdownPath, { force: true }),
     ]);
+  }
+  const cleanup = await Promise.allSettled([
+    removeFile(backupJsonPath, { force: true, recursive: true }),
+    removeFile(backupMarkdownPath, { force: true, recursive: true }),
+  ]);
+  const cleanupFailures = cleanup.filter(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(
+      cleanupFailures.map((result) => result.reason),
+      'Provider canary baseline pair was published but backup cleanup failed.',
+    );
+  }
+}
+
+async function renameIfPresent(
+  source: string,
+  destination: string,
+  renameFile: typeof rename,
+): Promise<boolean> {
+  try {
+    await renameFile(source, destination);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
   }
 }
 
@@ -343,11 +398,11 @@ async function executeCanaryScenario(input: {
       workspacePath,
     );
     const result = await input.dependencies.execute(input.provider, request);
-    await removeRunnerOwnedFiles(request);
     verification = await verifyScenario(
       workspacePath,
       input.scenario,
       fixtureWorkspace.baselineCommit,
+      fixtureWorkspace.baselineExclude,
     );
 
     if (!result.executedModel) {
@@ -434,7 +489,7 @@ async function executeCanaryScenario(input: {
 
 async function createFixtureWorkspace(
   scenario: CanaryScenario,
-): Promise<{ path: string; baselineCommit: string }> {
+): Promise<{ path: string; baselineCommit: string; baselineExclude: string }> {
   const workspacePath = await mkdtemp(join(tmpdir(), 'agent-foundry-provider-canary-'));
   try {
     const fixture = PROVIDER_CANARY_FIXTURES[scenario];
@@ -465,7 +520,8 @@ async function createFixtureWorkspace(
     if (baseline.exitCode !== 0 || !baseline.stdout.trim()) {
       throw new Error('Temporary fixture repository baseline could not be resolved.');
     }
-    return { path: workspacePath, baselineCommit: baseline.stdout.trim() };
+    const baselineExclude = await readFile(join(workspacePath, '.git', 'info', 'exclude'), 'utf8');
+    return { path: workspacePath, baselineCommit: baseline.stdout.trim(), baselineExclude };
   } catch (error) {
     await rm(workspacePath, { recursive: true, force: true });
     throw error;
@@ -480,12 +536,6 @@ async function createExecutionRequest(
   cwd: string,
 ): Promise<AgentExecutionRequest> {
   const runId = `${provider}-${scenario}`;
-  const runDirectory = join(cwd, '.orchestrator', 'runs', runId);
-  await mkdir(runDirectory, { recursive: true });
-  await writeFile(
-    join(runDirectory, 'output.schema.json'),
-    `${JSON.stringify(AGENT_ARTIFACT_JSON_SCHEMA, null, 2)}\n`,
-  );
   const fixture = PROVIDER_CANARY_FIXTURES[scenario];
   const role = scenario === 'planning' ? 'planner' : scenario === 'repair' ? 'fixer' : 'developer';
   const taskKind = scenario === 'greenfield' ? 'implementation' : scenario;
@@ -510,47 +560,65 @@ async function verifyScenario(
   workspacePath: string,
   scenario: CanaryScenario,
   baselineCommit: string,
+  baselineExclude: string,
 ): Promise<CanaryVerificationResult[]> {
   if (scenario === 'planning') {
-    const result = await noDiffVerification(workspacePath, baselineCommit);
+    const result = await noDiffVerification(
+      workspacePath,
+      scenario,
+      baselineCommit,
+      baselineExclude,
+    );
     return [result];
   }
 
-  const nodeTest = await commandVerification(
-    'node-test',
+  const allowedFiles = await allowedFileVerification(
     workspacePath,
-    process.execPath,
-    ['--test'],
-    'node --test failed.',
+    scenario,
+    baselineCommit,
+    baselineExclude,
   );
-  const diffCheck = await gitDiffCheckVerification(workspacePath, baselineCommit);
-  const allowedFiles = await allowedFileVerification(workspacePath, scenario, baselineCommit);
+  const nodeTest: CanaryVerificationResult = allowedFiles.passed
+    ? await commandVerification(
+        'node-test',
+        workspacePath,
+        process.execPath,
+        ['--test'],
+        'node --test failed.',
+      )
+    : {
+        name: 'node-test',
+        passed: false,
+        exitCode: 1,
+        durationMs: 0,
+        message: 'node --test was not run because workspace pre-verification failed.',
+      };
+  const diffCheck: CanaryVerificationResult = allowedFiles.passed
+    ? await gitDiffCheckVerification(workspacePath, baselineCommit)
+    : {
+        name: 'git-diff-check',
+        passed: false,
+        exitCode: 1,
+        durationMs: 0,
+        message: 'git diff --check was not run because workspace pre-verification failed.',
+      };
   return [nodeTest, diffCheck, allowedFiles];
 }
 
 async function noDiffVerification(
   workspacePath: string,
+  scenario: CanaryScenario,
   baselineCommit: string,
+  baselineExclude: string,
 ): Promise<CanaryVerificationResult> {
   const startedAt = Date.now();
   try {
-    const [head, status] = await Promise.all([
-      execa('git', ['rev-parse', 'HEAD'], {
-        cwd: workspacePath,
-        reject: false,
-        encoding: 'utf8',
-      }),
-      execa('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
-        cwd: workspacePath,
-        reject: false,
-        encoding: 'utf8',
-      }),
-    ]);
-    const passed =
-      head.exitCode === 0 &&
-      head.stdout.trim() === baselineCommit &&
-      status.exitCode === 0 &&
-      status.stdout.length === 0;
+    const passed = await workspaceMatchesFixture(
+      workspacePath,
+      scenario,
+      baselineCommit,
+      baselineExclude,
+    );
     return {
       name: 'no-diff',
       passed,
@@ -648,30 +716,16 @@ async function allowedFileVerification(
   workspacePath: string,
   scenario: Exclude<CanaryScenario, 'planning'>,
   baselineCommit: string,
+  baselineExclude: string,
 ): Promise<CanaryVerificationResult> {
   const startedAt = Date.now();
   try {
-    const [head, result] = await Promise.all([
-      execa('git', ['rev-parse', 'HEAD'], {
-        cwd: workspacePath,
-        reject: false,
-        encoding: 'utf8',
-      }),
-      execa('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
-        cwd: workspacePath,
-        reject: false,
-        encoding: 'utf8',
-      }),
-    ]);
-    const changedFiles = changedFilesFromPorcelain(result.stdout);
-    const allowed = [...PROVIDER_CANARY_FIXTURES[scenario].allowedFiles];
-    const passed =
-      head.exitCode === 0 &&
-      head.stdout.trim() === baselineCommit &&
-      result.exitCode === 0 &&
-      changedFiles !== undefined &&
-      changedFiles.length === allowed.length &&
-      allowed.every((path) => changedFiles.includes(path));
+    const passed = await workspaceMatchesFixture(
+      workspacePath,
+      scenario,
+      baselineCommit,
+      baselineExclude,
+    );
     return {
       name: 'allowed-files',
       passed,
@@ -690,31 +744,100 @@ async function allowedFileVerification(
   }
 }
 
-function changedFilesFromPorcelain(output: string): string[] | undefined {
-  const entries = output.split('\0');
-  if (entries.at(-1) === '') entries.pop();
-  const paths: string[] = [];
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    if (!entry || entry.length < 4 || entry[2] !== ' ') return undefined;
-    const status = entry.slice(0, 2);
-    paths.push(entry.slice(3));
-    if (status.includes('R') || status.includes('C')) {
-      const source = entries[index + 1];
-      if (!source) return undefined;
-      paths.push(source);
-      index += 1;
+async function workspaceMatchesFixture(
+  workspacePath: string,
+  scenario: CanaryScenario,
+  baselineCommit: string,
+  baselineExclude: string,
+): Promise<boolean> {
+  const fixture = PROVIDER_CANARY_FIXTURES[scenario];
+  const [head, indexEntries, currentExclude, entries] = await Promise.all([
+    execa('git', ['rev-parse', 'HEAD'], {
+      cwd: workspacePath,
+      reject: false,
+      encoding: 'utf8',
+    }),
+    execa('git', ['ls-files', '-v', '-z'], {
+      cwd: workspacePath,
+      reject: false,
+      encoding: 'utf8',
+    }),
+    readFile(join(workspacePath, '.git', 'info', 'exclude'), 'utf8'),
+    collectWorkspaceEntries(workspacePath),
+  ]);
+  if (
+    head.exitCode !== 0 ||
+    head.stdout.trim() !== baselineCommit ||
+    indexEntries.exitCode !== 0 ||
+    currentExclude !== baselineExclude
+  ) {
+    return false;
+  }
+
+  const trackedEntries = indexEntries.stdout.split('\0').filter(Boolean);
+  const expectedPaths = new Set([...Object.keys(fixture.files), ...fixture.allowedFiles]);
+  if (
+    trackedEntries.some((entry) => !entry.startsWith('H ') || !expectedPaths.has(entry.slice(2))) ||
+    Object.keys(fixture.files).some(
+      (path) => !trackedEntries.some((entry) => entry.slice(2) === path),
+    )
+  ) {
+    return false;
+  }
+  for (const [path, content] of Object.entries(fixture.files)) {
+    if (fixture.allowedFiles.includes(path)) continue;
+    const indexed = await execa('git', ['show', `:${path}`], {
+      cwd: workspacePath,
+      reject: false,
+      encoding: 'utf8',
+      stripFinalNewline: false,
+    });
+    if (indexed.exitCode !== 0 || indexed.stdout !== content) return false;
+  }
+
+  if (
+    entries.size !== expectedPaths.size ||
+    [...entries.keys()].some((path) => !expectedPaths.has(path))
+  ) {
+    return false;
+  }
+  let totalBytes = 0;
+  for (const path of expectedPaths) {
+    const entry = entries.get(path);
+    if (!entry || entry.type !== 'file') return false;
+    totalBytes += entry.size;
+    if (entry.size > MAX_FIXTURE_FILE_BYTES || totalBytes > MAX_FIXTURE_TOTAL_BYTES) return false;
+    if (
+      !fixture.allowedFiles.includes(path) &&
+      (await readFile(join(workspacePath, path), 'utf8')) !== fixture.files[path]
+    ) {
+      return false;
     }
   }
-  return [...new Set(paths)];
+  return true;
 }
 
-async function removeRunnerOwnedFiles(request: AgentExecutionRequest): Promise<void> {
-  const runDirectory = join(request.cwd, '.orchestrator', 'runs', request.runId);
-  await Promise.all([
-    rm(join(runDirectory, 'output.schema.json'), { force: true }),
-    rm(join(runDirectory, 'codex.final.json'), { force: true }),
-  ]);
+async function collectWorkspaceEntries(
+  root: string,
+  relativeDirectory = '',
+): Promise<Map<string, { type: 'file' | 'other'; size: number }>> {
+  const entries = new Map<string, { type: 'file' | 'other'; size: number }>();
+  const directory = join(root, relativeDirectory);
+  for (const name of await readdir(directory)) {
+    if (!relativeDirectory && name === '.git') continue;
+    const relativePath = relativeDirectory ? join(relativeDirectory, name) : name;
+    const absolutePath = join(root, relativePath);
+    const status = await lstat(absolutePath);
+    if (status.isDirectory()) {
+      const children = await collectWorkspaceEntries(root, relativePath);
+      for (const [path, entry] of children) entries.set(path, entry);
+    } else if (status.isFile()) {
+      entries.set(relativePath, { type: 'file', size: status.size });
+    } else {
+      entries.set(relativePath, { type: 'other', size: status.size });
+    }
+  }
+  return entries;
 }
 
 async function runWorkspaceCommand(cwd: string, command: string, args: string[]): Promise<void> {

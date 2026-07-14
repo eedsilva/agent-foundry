@@ -23,6 +23,7 @@ export class AgyCliExecutor extends BaseCliExecutor {
 
   protected async invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
     const seconds = Math.max(30, Math.ceil(request.timeoutMs / 1000));
+    const prompt = promptWithOutputSchema(request, 'AGY');
     const metadataDirectory = this.options.reportConfiguredModel
       ? await mkdtemp(join(tmpdir(), 'agent-foundry-agy-metadata-'))
       : undefined;
@@ -39,7 +40,7 @@ export class AgyCliExecutor extends BaseCliExecutor {
       `${seconds}s`,
     ];
     if (request.model.trim()) args.push('--model', request.model);
-    args.push('--print', promptWithOutputSchema(request, 'AGY'));
+    args.push('--print', prompt);
 
     return {
       command: this.command,

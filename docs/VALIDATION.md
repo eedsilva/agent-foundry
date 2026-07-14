@@ -1,6 +1,6 @@
 # Validation record
 
-Latest validation date: 2026-07-13.
+Latest validation date: 2026-07-14.
 
 This repository was validated from a clean dependency installation using the public npm registry.
 
@@ -27,7 +27,7 @@ The final attempt to query npm's remote audit endpoint failed because DNS resolu
 
 Docker Compose configuration is included, but Docker was not installed in the validation environment, so the image itself was not built here.
 
-## Real provider canary baseline — 2026-07-13
+## Real provider canary baseline — 2026-07-14
 
 The versioned v0.2 baseline invoked Codex, Claude Code and AGY independently for planning, greenfield implementation and repository repair. All nine runs passed. Planning produced no diff; every mutation scenario passed `node --test`, `git diff --check` and its exact file allowlist.
 

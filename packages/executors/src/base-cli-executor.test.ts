@@ -29,7 +29,24 @@ class FixtureExecutor extends BaseCliExecutor {
       ...(this.metadataDirectory ? { metadataDirectory: this.metadataDirectory } : {}),
     };
   }
+
+  protected override async responseText(): Promise<string> {
+    return this.provider === 'codex'
+      ? JSON.stringify(completedArtifact)
+      : JSON.stringify({ type: 'result', output: completedArtifact });
+  }
 }
+
+const completedArtifact = {
+  schemaVersion: '1',
+  status: 'completed',
+  summary: 'Done.',
+  data: {},
+  decisions: [],
+  assumptions: [],
+  risks: [],
+  nextActions: [],
+};
 
 const request: AgentExecutionRequest = {
   runId: 'run-1',
@@ -52,18 +69,7 @@ describe('BaseCliExecutor metadata', () => {
       stderr:
         'DEBUG session_init: Configuring session: model=gpt-5.3-codex; provider=ModelProviderInfo',
       stdout: JSON.stringify({
-        type: 'result',
-        model: 'gpt-5.3-codex',
-        output: {
-          schemaVersion: '1',
-          status: 'completed',
-          summary: 'Done.',
-          data: {},
-          decisions: [],
-          assumptions: [],
-          risks: [],
-          nextActions: [],
-        },
+        type: 'turn.completed',
         usage: { input_tokens: 20, output_tokens: 5 },
       }),
     });

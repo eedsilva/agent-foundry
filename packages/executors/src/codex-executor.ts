@@ -1,3 +1,5 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
@@ -15,8 +17,9 @@ export class CodexCliExecutor extends BaseCliExecutor {
   }
 
   protected async invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
-    const runDir = join(request.cwd, '.orchestrator', 'runs', request.runId);
-    const outputFile = join(runDir, 'codex.final.json');
+    const input = promptWithOutputSchema(request, 'Codex');
+    const outputDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-codex-output-'));
+    const outputFile = join(outputDirectory, 'codex.final.json');
     const args = [
       'exec',
       '--json',
@@ -35,8 +38,9 @@ export class CodexCliExecutor extends BaseCliExecutor {
     return {
       command: this.command,
       args,
-      input: promptWithOutputSchema(request, 'Codex'),
+      input,
       outputFile,
+      outputDirectory,
       ...(this.reportConfiguredModel
         ? { environment: { RUST_LOG: 'codex_core::session::session=debug' } }
         : {}),

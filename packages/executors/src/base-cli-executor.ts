@@ -16,6 +16,7 @@ export interface CliInvocation {
   args: string[];
   input?: string;
   outputFile?: string;
+  outputDirectory?: string;
   metadataFile?: string;
   metadataDirectory?: string;
   environment?: NodeJS.ProcessEnv;
@@ -62,9 +63,16 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     try {
       return await this.executeInvocation(request, invocation, startedAt);
     } finally {
-      if (invocation.metadataDirectory) {
-        await rm(invocation.metadataDirectory, { force: true, recursive: true });
-      } else if (invocation.metadataFile) {
+      const directories = new Set(
+        [invocation.outputDirectory, invocation.metadataDirectory].filter((path): path is string =>
+          Boolean(path),
+        ),
+      );
+      await Promise.all([...directories].map((path) => rm(path, { force: true, recursive: true })));
+      if (invocation.outputFile && !invocation.outputDirectory) {
+        await rm(invocation.outputFile, { force: true });
+      }
+      if (invocation.metadataFile && !invocation.metadataDirectory) {
         await rm(invocation.metadataFile, { force: true });
       }
     }
@@ -114,8 +122,8 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     }
 
     const response = await this.responseText(invocation, stdout);
-    const output = parseAgentArtifact(response);
-    const usage = extractUsage(stdout);
+    const output = parseAgentArtifact(this.provider, response);
+    const usage = extractUsage(this.provider, stdout);
     const metadata = invocation.metadataFile
       ? await readBoundedFile(invocation.metadataFile, this.maxOutputBytes)
       : '';

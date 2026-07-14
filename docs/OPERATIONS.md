@@ -31,6 +31,8 @@ Codex e Claude expõem status de autenticação dedicado. O AGY 1.1.2 não expõ
 
 O canary real exige opt-in explícito, executa planejamento, implementação greenfield e reparo em um repositório Git temporário independente para cada provider, e falha se houver skip, modelo executado desconhecido ou verificação incompleta:
 
+A verificação compara diretamente os arquivos com o fixture imutável e também rejeita alterações no `HEAD`, flags de índice do Git e exclusões locais; os arquivos de controle do runner ficam fora do repositório entregue ao provider.
+
 ```bash
 CODEX_CANARY_MODEL="gpt-5.6-sol" \
 CLAUDE_CANARY_MODEL="sonnet" \

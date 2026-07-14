@@ -1,39 +1,68 @@
 import { AgentArtifactSchema, type AgentArtifact, type Provider } from '@agent-foundry/contracts';
 import { ExecutionError } from '@agent-foundry/domain';
 
-export function parseAgentArtifact(raw: string): AgentArtifact {
-  const cleaned = stripAnsi(raw).trim();
-  const candidates: unknown[] = [];
+export function parseAgentArtifact(provider: Provider, raw: string): AgentArtifact {
+  const candidates = authoritativeArtifactCandidates(provider, raw);
+  const artifacts = candidates.flatMap((candidate) => {
+    const parsed = typeof candidate === 'string' ? tryParse(candidate.trim()) : candidate;
+    const result = AgentArtifactSchema.safeParse(parsed);
+    return result.success ? [result.data] : [];
+  });
 
-  const direct = tryParse(cleaned);
-  if (direct !== null) candidates.push(direct);
-
-  for (const line of cleaned.split(/\r?\n/)) {
-    const parsed = tryParse(line.trim());
-    if (parsed !== null) candidates.push(parsed);
-  }
-
-  for (const block of extractCodeBlocks(cleaned)) {
-    const parsed = tryParse(block);
-    if (parsed !== null) candidates.push(parsed);
-  }
-
-  const embedded = extractJsonObjects(cleaned);
-  candidates.push(...embedded);
-
-  for (const candidate of candidates) {
-    for (const unwrapped of unwrapCandidate(candidate)) {
-      const result = AgentArtifactSchema.safeParse(unwrapped);
-      if (result.success) return result.data;
-    }
-  }
+  if (artifacts.length === 1) return artifacts[0]!;
 
   throw new ExecutionError('Agent did not return a valid artifact JSON object', {
     stdout: raw.slice(0, 20_000),
   });
 }
 
-export function extractUsage(raw: string):
+function authoritativeArtifactCandidates(provider: Provider, raw: string): unknown[] {
+  const cleaned = stripAnsi(raw).trim();
+  const whole = tryParse(cleaned);
+  if (
+    (provider === 'codex' || provider === 'agy') &&
+    AgentArtifactSchema.safeParse(whole).success
+  ) {
+    return [whole];
+  }
+
+  const documents = providerDocuments(cleaned);
+  if (provider === 'codex') {
+    const messages = documents.flatMap((document) => {
+      if (document === null || typeof document !== 'object' || Array.isArray(document)) return [];
+      const record = document as Record<string, unknown>;
+      const item = record.item;
+      if (
+        record.type !== 'item.completed' ||
+        item === null ||
+        typeof item !== 'object' ||
+        Array.isArray(item)
+      ) {
+        return [];
+      }
+      const itemRecord = item as Record<string, unknown>;
+      return itemRecord.type === 'agent_message' ? [itemRecord.text] : [];
+    });
+    return messages.length > 0 ? [messages.at(-1)] : [];
+  }
+
+  const results = documents.filter(
+    (document): document is Record<string, unknown> =>
+      document !== null &&
+      typeof document === 'object' &&
+      !Array.isArray(document) &&
+      (document as Record<string, unknown>).type === 'result',
+  );
+  const terminal = results.at(-1);
+  if (!terminal || terminal.is_error === true || terminal.subtype === 'error') return [];
+  if (provider === 'claude') return [terminal.structured_output ?? terminal.result];
+  return [terminal.output ?? terminal.result];
+}
+
+export function extractUsage(
+  provider: Provider,
+  raw: string,
+):
   | {
       inputTokens?: number;
       outputTokens?: number;
@@ -59,9 +88,7 @@ export function extractUsage(raw: string):
   if (documents.length === 0) documents.push(...extractJsonObjects(cleaned));
 
   const accumulator: UsageAccumulator = {};
-  for (const document of documents) {
-    for (const record of walkRecords(document)) collectUsage(record, accumulator);
-  }
+  for (const document of documents) collectProviderUsage(provider, document, accumulator);
 
   const output: {
     inputTokens?: number;
@@ -155,6 +182,27 @@ interface UsageAccumulator {
   estimatedCostUsd?: number;
 }
 
+function collectProviderUsage(
+  provider: Provider,
+  document: unknown,
+  accumulator: UsageAccumulator,
+): void {
+  if (document === null || typeof document !== 'object' || Array.isArray(document)) return;
+  const record = document as Record<string, unknown>;
+  const type = typeof record.type === 'string' ? record.type : '';
+  const recognized =
+    (provider === 'codex' && (type === 'turn.completed' || type === 'token_count')) ||
+    (provider === 'claude' && type === 'result') ||
+    (provider === 'agy' && type === 'result');
+  if (!recognized) return;
+
+  const usage = record.usage;
+  if (usage !== null && typeof usage === 'object' && !Array.isArray(usage)) {
+    collectUsage(usage as Record<string, unknown>, accumulator);
+  }
+  if (provider === 'claude') collectUsage(record, accumulator);
+}
+
 function collectUsage(record: Record<string, unknown>, accumulator: UsageAccumulator): void {
   const input = numberFrom(record, [
     'input_tokens',
@@ -195,40 +243,6 @@ function collectUsage(record: Record<string, unknown>, accumulator: UsageAccumul
   }
 }
 
-function* walkRecords(value: unknown, depth = 0): Generator<Record<string, unknown>> {
-  if (depth > 8 || value === null || typeof value !== 'object') return;
-  if (Array.isArray(value)) {
-    for (const item of value.slice(0, 1_000)) yield* walkRecords(item, depth + 1);
-    return;
-  }
-
-  const record = value as Record<string, unknown>;
-  yield record;
-  for (const child of Object.values(record).slice(0, 1_000)) {
-    yield* walkRecords(child, depth + 1);
-  }
-}
-
-function* unwrapCandidate(candidate: unknown, depth = 0): Generator<unknown> {
-  if (depth > 8) return;
-  yield candidate;
-
-  if (typeof candidate === 'string') {
-    const parsed = tryParse(candidate.trim());
-    if (parsed !== null) yield* unwrapCandidate(parsed, depth + 1);
-    return;
-  }
-  if (candidate === null || typeof candidate !== 'object') return;
-  if (Array.isArray(candidate)) {
-    for (const item of candidate.slice(0, 1_000)) yield* unwrapCandidate(item, depth + 1);
-    return;
-  }
-
-  for (const value of Object.values(candidate).slice(0, 1_000)) {
-    yield* unwrapCandidate(value, depth + 1);
-  }
-}
-
 function providerDocuments(raw: string): unknown[] {
   const cleaned = stripAnsi(raw).trim();
   if (!cleaned) return [];
@@ -251,12 +265,6 @@ function tryParse(value: string): unknown | null {
   } catch {
     return null;
   }
-}
-
-function extractCodeBlocks(value: string): string[] {
-  return [...value.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map(
-    (match) => match[1]?.trim() ?? '',
-  );
 }
 
 function extractJsonObjects(value: string): unknown[] {
