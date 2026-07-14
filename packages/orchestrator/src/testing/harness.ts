@@ -19,6 +19,7 @@ import {
   type WorkflowRun,
 } from '@agent-foundry/contracts';
 import {
+  ExecutionError,
   SystemClock,
   VersionConflictError,
   type AgentExecutor,
@@ -354,6 +355,9 @@ export class FakeWorkspaces implements WorkspaceManager {
   readonly rollbacks: string[] = [];
   current = 'initial-head';
   dirty = false;
+  onBeforeCheckpoint?: (() => void) | undefined;
+  onAfterCheckpoint?: (() => void) | undefined;
+  onBeforeCommit?: (() => void) | undefined;
   onAfterCommit?: (() => void) | undefined;
   private counter = 0;
   constructor(private readonly power: PowerSwitch) {}
@@ -378,11 +382,13 @@ export class FakeWorkspaces implements WorkspaceManager {
   }
   checkpoint(): Promise<string> {
     checkPower(this.power);
+    this.onBeforeCheckpoint?.();
     if (this.dirty) {
       this.current = this.nextSha();
       this.dirty = false;
     }
     this.checkpoints.push(this.current);
+    this.onAfterCheckpoint?.();
     return Promise.resolve(this.current);
   }
   rollback(_projectId: string, ref: string): Promise<void> {
@@ -395,6 +401,7 @@ export class FakeWorkspaces implements WorkspaceManager {
   commit(): Promise<string | null> {
     checkPower(this.power);
     if (!this.dirty) return Promise.resolve(null);
+    this.onBeforeCommit?.();
     this.current = this.nextSha();
     this.dirty = false;
     this.commits.push(this.current);
@@ -413,29 +420,79 @@ export class FakeWorkspaces implements WorkspaceManager {
   }
 }
 
-export type ExecutorBehavior = 'instant' | 'gated';
+export type StepBehavior =
+  | 'instant'
+  | 'gated'
+  | { kind: 'fail-once'; error: () => Error }
+  | { kind: 'fail-always'; error: () => Error }
+  | { kind: 'hang-until-abort' };
+
+/** Mirrors execa's own timeout message, wrapped the way base-cli-executor reports a hard deadline. */
+export function timeoutError(): ExecutionError {
+  return new ExecutionError('Command timed out after 300000 milliseconds: codex ...', {
+    provider: 'mock',
+    stderr: '',
+  });
+}
+
+/** Mirrors base-cli-executor.ts:141-149 — a nonzero exit whose stderr carries the provider's rate-limit text. */
+export function rateLimitError(): ExecutionError {
+  return new ExecutionError('CLI exited with a failure status', {
+    exitCode: 1,
+    stderr: '429 Too Many Requests: rate limit reached',
+  });
+}
+
+/** Mirrors json-output.ts:4-17 — stdout that never parsed into a valid agent artifact. */
+export function invalidOutputError(): ExecutionError {
+  return new ExecutionError('Agent did not return a valid artifact JSON object', {
+    stdout: 'not json at all',
+  });
+}
 
 export class ControllableExecutor implements AgentExecutor {
   readonly provider = 'codex';
   readonly startCounts = new Map<string, number>();
   private readonly gates = new Map<string, () => void>();
   constructor(
-    private readonly behaviors: Record<string, ExecutorBehavior>,
+    private readonly behaviors: Record<string, StepBehavior>,
     private readonly workspaces: FakeWorkspaces,
   ) {}
 
-  execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
-    this.startCounts.set(request.stepId, (this.startCounts.get(request.stepId) ?? 0) + 1);
-    const finish = (): AgentExecutionResult => {
+  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult> {
+    const count = (this.startCounts.get(request.stepId) ?? 0) + 1;
+    this.startCounts.set(request.stepId, count);
+    const behavior = this.behaviors[request.stepId] ?? 'instant';
+    // Simulates a CLI that writes to the workspace before it reports success or failure.
+    const touch = (): void => {
       if (request.mutatesWorkspace) this.workspaces.touch();
-      return this.result(request);
     };
-    if ((this.behaviors[request.stepId] ?? 'instant') === 'instant') {
-      return Promise.resolve(finish());
+
+    if (behavior === 'instant') {
+      touch();
+      return Promise.resolve(this.result(request));
     }
-    return new Promise((resolve) => {
-      this.gates.set(request.stepId, () => resolve(finish()));
-    });
+    if (behavior === 'gated') {
+      return new Promise((resolve) => {
+        this.gates.set(request.stepId, () => {
+          touch();
+          resolve(this.result(request));
+        });
+      });
+    }
+    if (behavior.kind === 'hang-until-abort') {
+      return new Promise((_resolve, reject) => {
+        if (signal?.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    }
+    const shouldFail = behavior.kind === 'fail-always' || count === 1;
+    touch();
+    if (shouldFail) return Promise.reject(behavior.error());
+    return Promise.resolve(this.result(request));
   }
 
   release(stepId: string): void {
@@ -507,7 +564,7 @@ export function makeStores(): Stores {
   };
 }
 
-export function makeHarness(behaviors: Record<string, ExecutorBehavior> = {}, existing?: Stores) {
+export function makeHarness(behaviors: Record<string, StepBehavior> = {}, existing?: Stores) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
   const executor = new ControllableExecutor(behaviors, stores.workspaces);
