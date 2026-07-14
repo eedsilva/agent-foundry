@@ -1,0 +1,311 @@
+{
+  "schemaVersion": "1",
+  "createdAt": "2026-07-14T03:33:38.053Z",
+  "probes": [
+    {
+      "provider": "codex",
+      "status": "ready",
+      "version": "0.144.1",
+      "capabilities": {
+        "nonInteractive": true,
+        "modelSelection": true,
+        "sandbox": true
+      },
+      "message": "Codex is ready."
+    },
+    {
+      "provider": "claude",
+      "status": "ready",
+      "version": "2.1.208",
+      "capabilities": {
+        "nonInteractive": true,
+        "modelSelection": true,
+        "sandbox": true
+      },
+      "message": "Claude is ready."
+    },
+    {
+      "provider": "agy",
+      "status": "ready",
+      "version": "1.1.2",
+      "capabilities": {
+        "nonInteractive": true,
+        "modelSelection": true,
+        "sandbox": true
+      },
+      "message": "AGY is ready."
+    }
+  ],
+  "runs": [
+    {
+      "provider": "codex",
+      "scenario": "planning",
+      "model": "gpt-5.6-sol",
+      "executedModel": "gpt-5.6-sol",
+      "status": "passed",
+      "durationMs": 91044,
+      "usage": {
+        "inputTokens": 222665,
+        "outputTokens": 2981,
+        "cachedInputTokens": 179200
+      },
+      "verification": [
+        {
+          "name": "no-diff",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 37
+        }
+      ]
+    },
+    {
+      "provider": "codex",
+      "scenario": "greenfield",
+      "model": "gpt-5.6-sol",
+      "executedModel": "gpt-5.6-sol",
+      "status": "passed",
+      "durationMs": 25933,
+      "usage": {
+        "inputTokens": 85453,
+        "outputTokens": 591,
+        "cachedInputTokens": 60416
+      },
+      "verification": [
+        {
+          "name": "node-test",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 126
+        },
+        {
+          "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 27
+        },
+        {
+          "name": "allowed-files",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 21
+        }
+      ]
+    },
+    {
+      "provider": "codex",
+      "scenario": "repair",
+      "model": "gpt-5.6-sol",
+      "executedModel": "gpt-5.6-sol",
+      "status": "passed",
+      "durationMs": 19693,
+      "usage": {
+        "inputTokens": 84927,
+        "outputTokens": 547,
+        "cachedInputTokens": 70656
+      },
+      "verification": [
+        {
+          "name": "node-test",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 108
+        },
+        {
+          "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 19
+        },
+        {
+          "name": "allowed-files",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 21
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "scenario": "planning",
+      "model": "sonnet",
+      "executedModel": "claude-sonnet-5",
+      "status": "passed",
+      "durationMs": 90234,
+      "usage": {
+        "inputTokens": 572,
+        "outputTokens": 7516,
+        "cachedInputTokens": 129836,
+        "estimatedCostUsd": 0.36148279999999994
+      },
+      "verification": [
+        {
+          "name": "no-diff",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 42
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "scenario": "greenfield",
+      "model": "sonnet",
+      "executedModel": "claude-sonnet-5",
+      "status": "passed",
+      "durationMs": 17641,
+      "usage": {
+        "inputTokens": 581,
+        "outputTokens": 656,
+        "cachedInputTokens": 80179,
+        "estimatedCostUsd": 0.0648897
+      },
+      "verification": [
+        {
+          "name": "node-test",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 117
+        },
+        {
+          "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 20
+        },
+        {
+          "name": "allowed-files",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 30
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "scenario": "repair",
+      "model": "sonnet",
+      "executedModel": "claude-sonnet-5",
+      "status": "passed",
+      "durationMs": 22580,
+      "usage": {
+        "inputTokens": 563,
+        "outputTokens": 837,
+        "cachedInputTokens": 137238,
+        "estimatedCostUsd": 0.0859164
+      },
+      "verification": [
+        {
+          "name": "node-test",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 117
+        },
+        {
+          "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 21
+        },
+        {
+          "name": "allowed-files",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 28
+        }
+      ]
+    },
+    {
+      "provider": "agy",
+      "scenario": "planning",
+      "model": "Gemini 3.1 Pro (Low)",
+      "executedModel": "Gemini 3.1 Pro (Low)",
+      "status": "passed",
+      "durationMs": 22980,
+      "verification": [
+        {
+          "name": "no-diff",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 43
+        }
+      ]
+    },
+    {
+      "provider": "agy",
+      "scenario": "greenfield",
+      "model": "Gemini 3.1 Pro (Low)",
+      "executedModel": "Gemini 3.1 Pro (Low)",
+      "status": "passed",
+      "durationMs": 13093,
+      "verification": [
+        {
+          "name": "node-test",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 119
+        },
+        {
+          "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 19
+        },
+        {
+          "name": "allowed-files",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 22
+        }
+      ]
+    },
+    {
+      "provider": "agy",
+      "scenario": "repair",
+      "model": "Gemini 3.1 Pro (Low)",
+      "executedModel": "Gemini 3.1 Pro (Low)",
+      "status": "passed",
+      "durationMs": 22881,
+      "verification": [
+        {
+          "name": "node-test",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 129
+        },
+        {
+          "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 25
+        },
+        {
+          "name": "allowed-files",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 28
+        }
+      ]
+    }
+  ],
+  "aliases": [
+    {
+      "provider": "codex",
+      "alias": "canary",
+      "model": "gpt-5.6-sol"
+    },
+    {
+      "provider": "claude",
+      "alias": "canary",
+      "model": "sonnet"
+    },
+    {
+      "provider": "agy",
+      "alias": "canary",
+      "model": "Gemini 3.1 Pro (Low)"
+    }
+  ],
+  "limitations": [
+    "Each provider and scenario is executed once in a dependency-free temporary repository.",
+    "Executed models are recorded only when recognized provider metadata reports them."
+  ]
+}
