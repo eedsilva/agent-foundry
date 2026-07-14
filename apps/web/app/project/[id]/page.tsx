@@ -3,6 +3,7 @@
 import { use, useEffect, useMemo, useState } from 'react';
 import type {
   ProjectDetailResponse,
+  ProjectEvent,
   ResumeBlockedResponse,
   RetryPlanResponse,
   RunDetailResponse,
@@ -10,6 +11,7 @@ import type {
   StoredArtifact,
 } from '@agent-foundry/contracts';
 import {
+  eventStreamUrl,
   getProject,
   getRetryPlan,
   getRunDetail,
@@ -18,6 +20,24 @@ import {
   retryProject,
   retryStep,
 } from '../../../lib/api';
+import { mergeEvents } from '../../../lib/events';
+
+const PROJECT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+function eventBadges(event: ProjectEvent): string[] {
+  const data = event.data;
+  const badges: string[] = [];
+  if (typeof data.modelId === 'string') badges.push(data.modelId);
+  if (typeof data.provider === 'string') badges.push(data.provider);
+  if (typeof data.durationMs === 'number') badges.push(`${Math.round(data.durationMs / 1000)}s`);
+  if (Array.isArray(data.fallbacks) && data.fallbacks.length > 0) {
+    badges.push(`fallbacks: ${data.fallbacks.join(', ')}`);
+  }
+  if (typeof data.name === 'string' && typeof data.revision === 'number') {
+    badges.push(`${data.name} r${data.revision}`);
+  }
+  return badges;
+}
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -30,6 +50,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [resumeBlocked, setResumeBlocked] = useState<ResumeBlockedResponse | null>(null);
   const [error, setError] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
+  const [events, setEvents] = useState<ProjectEvent[]>([]);
+  const [live, setLive] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -39,6 +61,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         const next = await getProject(id);
         if (!active) return;
         setDetail(next);
+        setEvents((current) => mergeEvents(current, next.events));
         if (next.project.currentRunId) {
           const run = await getRunDetail(next.project.currentRunId);
           if (!active) return;
@@ -58,6 +81,22 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       if (timer) clearTimeout(timer);
     };
   }, [id, refreshTick]);
+
+  const projectTerminal = detail ? PROJECT_TERMINAL_STATUSES.has(detail.project.status) : false;
+
+  useEffect(() => {
+    if (projectTerminal) return;
+    const source = new EventSource(eventStreamUrl(id));
+    source.onopen = () => setLive(true);
+    source.onmessage = (message) => {
+      setEvents((current) => mergeEvents(current, [JSON.parse(message.data) as ProjectEvent]));
+    };
+    source.onerror = () => setLive(false);
+    return () => {
+      source.close();
+      setLive(false);
+    };
+  }, [id, projectTerminal]);
 
   const routes = useMemo(
     () =>
@@ -207,27 +246,38 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         <div className="panel">
           <div className="panelHeader">
             <h2>Linha do tempo</h2>
-            <span className="hint">{detail.events.length} eventos</span>
+            <div>
+              <span className="pill">{live ? 'ao vivo' : 'polling'}</span>
+              <span className="hint">{events.length} eventos</span>
+            </div>
           </div>
           <div className="timeline">
-            {[...detail.events].reverse().map((event) => (
-              <article key={event.id}>
-                <span className="timelineDot" />
-                <div>
-                  <div className="eventMeta">
-                    <code>{event.type}</code>
-                    <time>{new Date(event.createdAt).toLocaleTimeString('pt-BR')}</time>
+            {[...events].reverse().map((event) => {
+              const badges = eventBadges(event);
+              return (
+                <article key={event.id}>
+                  <span className="timelineDot" />
+                  <div>
+                    <div className="eventMeta">
+                      <span>
+                        <code>{event.type}</code>
+                        {badges.map((badge) => (
+                          <small key={badge}> · {badge}</small>
+                        ))}
+                      </span>
+                      <time>{new Date(event.createdAt).toLocaleTimeString('pt-BR')}</time>
+                    </div>
+                    <p>{event.message}</p>
+                    {event.nodeId ? (
+                      <small>
+                        {event.nodeId}
+                        {event.runId ? ` · ${event.runId}` : ''}
+                      </small>
+                    ) : null}
                   </div>
-                  <p>{event.message}</p>
-                  {event.nodeId ? (
-                    <small>
-                      {event.nodeId}
-                      {event.runId ? ` · ${event.runId}` : ''}
-                    </small>
-                  ) : null}
-                </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
         </div>
 
@@ -260,25 +310,51 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           </div>
           <div className="artifactList">
             {runDetail.steps.map(({ step, attempts }) => (
-              <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <span style={{ flex: 1 }}>
-                  <strong>{step.stepId}</strong>
-                  <small>
-                    {' '}
-                    {step.nodeId}
-                    {step.iteration ? ` · iteração ${step.iteration}` : ''} · {attempts.length}{' '}
-                    attempt(s)
-                    {step.invalidatedAt ? ` · invalidado (${step.invalidationReason})` : ''}
-                  </small>
-                </span>
-                <span className={`pill ${step.status}`}>{step.status}</span>
-                {runIsTerminal &&
-                !step.invalidatedAt &&
-                (step.status === 'completed' || step.status === 'failed') ? (
-                  <button className="secondaryButton" onClick={() => void openRetryPlan(step)}>
-                    Reexecutar
-                  </button>
-                ) : null}
+              <div key={step.id}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ flex: 1 }}>
+                    <strong>{step.stepId}</strong>
+                    <small>
+                      {' '}
+                      {step.nodeId}
+                      {step.iteration ? ` · iteração ${step.iteration}` : ''} · {attempts.length}{' '}
+                      attempt(s)
+                      {step.invalidatedAt ? ` · invalidado (${step.invalidationReason})` : ''}
+                    </small>
+                  </span>
+                  <span className={`pill ${step.status}`}>{step.status}</span>
+                  {runIsTerminal &&
+                  !step.invalidatedAt &&
+                  (step.status === 'completed' || step.status === 'failed') ? (
+                    <button className="secondaryButton" onClick={() => void openRetryPlan(step)}>
+                      Reexecutar
+                    </button>
+                  ) : null}
+                </div>
+                {attempts.map((attempt) => {
+                  const usedFallback = Boolean(
+                    attempt.routeDecision?.executed &&
+                    attempt.routeDecision.executed.model.id !==
+                      attempt.routeDecision.selected.model.id,
+                  );
+                  return (
+                    <div key={attempt.id} style={{ paddingLeft: '1.5rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <small style={{ flex: 1 }}>
+                          #{attempt.sequence} · {attempt.model} → {attempt.executedModel ?? '—'}
+                          {attempt.durationMs !== undefined
+                            ? ` · ${Math.round(attempt.durationMs / 1000)}s`
+                            : ''}
+                          {usedFallback ? ' · fallback' : ''}
+                        </small>
+                        <span className={`pill ${attempt.status}`}>{attempt.status}</span>
+                      </div>
+                      {attempt.status === 'failed' && attempt.error ? (
+                        <small>{attempt.error.message}</small>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             ))}
           </div>
