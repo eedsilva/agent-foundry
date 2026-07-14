@@ -6,6 +6,8 @@ import type {
   ExecutorHealth,
   ModelDefinition,
   ModelMetric,
+  PreviewHealth,
+  PreviewSession,
   Project,
   ProjectEvent,
   QueueJob,
@@ -136,6 +138,21 @@ export interface AgentExecutor {
 export interface ExecutorRegistry {
   get(provider: string): AgentExecutor;
   health(): Promise<ExecutorHealth[]>;
+}
+
+/**
+ * Mechanism boundary for previews. The orchestrator owns PreviewSession state;
+ * a runner only installs, serves, probes, and terminates one workspace preview.
+ * Every method returns the updated session; stop must be idempotent so
+ * cancellation and TTL expiry can always invoke it.
+ */
+export interface PreviewRunner {
+  prepare(session: PreviewSession): Promise<PreviewSession>;
+  start(session: PreviewSession): Promise<PreviewSession>;
+  health(session: PreviewSession): Promise<PreviewHealth>;
+  logs(session: PreviewSession, options?: { tailLines?: number }): Promise<string>;
+  restart(session: PreviewSession): Promise<PreviewSession>;
+  stop(session: PreviewSession): Promise<PreviewSession>;
 }
 
 export interface VerificationService {
