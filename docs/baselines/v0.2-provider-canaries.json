@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "createdAt": "2026-07-14T03:33:38.053Z",
+  "createdAt": "2026-07-14T04:10:27.524Z",
   "probes": [
     {
       "provider": "codex",
@@ -43,18 +43,18 @@
       "model": "gpt-5.6-sol",
       "executedModel": "gpt-5.6-sol",
       "status": "passed",
-      "durationMs": 91044,
+      "durationMs": 88563,
       "usage": {
-        "inputTokens": 222665,
-        "outputTokens": 2981,
-        "cachedInputTokens": 179200
+        "inputTokens": 97307,
+        "outputTokens": 1973,
+        "cachedInputTokens": 78848
       },
       "verification": [
         {
           "name": "no-diff",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 37
+          "durationMs": 69
         }
       ]
     },
@@ -64,63 +64,63 @@
       "model": "gpt-5.6-sol",
       "executedModel": "gpt-5.6-sol",
       "status": "passed",
-      "durationMs": 25933,
+      "durationMs": 48751,
       "usage": {
-        "inputTokens": 85453,
-        "outputTokens": 591,
-        "cachedInputTokens": 60416
+        "inputTokens": 176847,
+        "outputTokens": 1829,
+        "cachedInputTokens": 141568
       },
       "verification": [
         {
           "name": "node-test",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 126
+          "durationMs": 132
         },
         {
           "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 31
+        },
+        {
+          "name": "allowed-files",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 55
+        }
+      ]
+    },
+    {
+      "provider": "codex",
+      "scenario": "repair",
+      "model": "gpt-5.6-sol",
+      "executedModel": "gpt-5.6-sol",
+      "status": "passed",
+      "durationMs": 32430,
+      "usage": {
+        "inputTokens": 110043,
+        "outputTokens": 1203,
+        "cachedInputTokens": 93952
+      },
+      "verification": [
+        {
+          "name": "node-test",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 137
+        },
+        {
+          "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 22
+        },
+        {
+          "name": "allowed-files",
           "passed": true,
           "exitCode": 0,
           "durationMs": 27
-        },
-        {
-          "name": "allowed-files",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 21
-        }
-      ]
-    },
-    {
-      "provider": "codex",
-      "scenario": "repair",
-      "model": "gpt-5.6-sol",
-      "executedModel": "gpt-5.6-sol",
-      "status": "passed",
-      "durationMs": 19693,
-      "usage": {
-        "inputTokens": 84927,
-        "outputTokens": 547,
-        "cachedInputTokens": 70656
-      },
-      "verification": [
-        {
-          "name": "node-test",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 108
-        },
-        {
-          "name": "git-diff-check",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 19
-        },
-        {
-          "name": "allowed-files",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 21
         }
       ]
     },
@@ -130,19 +130,19 @@
       "model": "sonnet",
       "executedModel": "claude-sonnet-5",
       "status": "passed",
-      "durationMs": 90234,
+      "durationMs": 58731,
       "usage": {
         "inputTokens": 572,
-        "outputTokens": 7516,
-        "cachedInputTokens": 129836,
-        "estimatedCostUsd": 0.36148279999999994
+        "outputTokens": 4575,
+        "cachedInputTokens": 146292,
+        "estimatedCostUsd": 0.1653386
       },
       "verification": [
         {
           "name": "no-diff",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 42
+          "durationMs": 29
         }
       ]
     },
@@ -152,31 +152,31 @@
       "model": "sonnet",
       "executedModel": "claude-sonnet-5",
       "status": "passed",
-      "durationMs": 17641,
+      "durationMs": 16927,
       "usage": {
         "inputTokens": 581,
-        "outputTokens": 656,
-        "cachedInputTokens": 80179,
-        "estimatedCostUsd": 0.0648897
+        "outputTokens": 658,
+        "cachedInputTokens": 80374,
+        "estimatedCostUsd": 0.06594920000000001
       },
       "verification": [
         {
           "name": "node-test",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 117
+          "durationMs": 110
         },
         {
           "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 26
+        },
+        {
+          "name": "allowed-files",
           "passed": true,
           "exitCode": 0,
           "durationMs": 20
-        },
-        {
-          "name": "allowed-files",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 30
         }
       ]
     },
@@ -186,57 +186,13 @@
       "model": "sonnet",
       "executedModel": "claude-sonnet-5",
       "status": "passed",
-      "durationMs": 22580,
+      "durationMs": 18119,
       "usage": {
         "inputTokens": 563,
-        "outputTokens": 837,
-        "cachedInputTokens": 137238,
-        "estimatedCostUsd": 0.0859164
+        "outputTokens": 727,
+        "cachedInputTokens": 108577,
+        "estimatedCostUsd": 0.0750291
       },
-      "verification": [
-        {
-          "name": "node-test",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 117
-        },
-        {
-          "name": "git-diff-check",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 21
-        },
-        {
-          "name": "allowed-files",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 28
-        }
-      ]
-    },
-    {
-      "provider": "agy",
-      "scenario": "planning",
-      "model": "Gemini 3.1 Pro (Low)",
-      "executedModel": "Gemini 3.1 Pro (Low)",
-      "status": "passed",
-      "durationMs": 22980,
-      "verification": [
-        {
-          "name": "no-diff",
-          "passed": true,
-          "exitCode": 0,
-          "durationMs": 43
-        }
-      ]
-    },
-    {
-      "provider": "agy",
-      "scenario": "greenfield",
-      "model": "Gemini 3.1 Pro (Low)",
-      "executedModel": "Gemini 3.1 Pro (Low)",
-      "status": "passed",
-      "durationMs": 13093,
       "verification": [
         {
           "name": "node-test",
@@ -248,13 +204,57 @@
           "name": "git-diff-check",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 19
+          "durationMs": 37
         },
         {
           "name": "allowed-files",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 22
+          "durationMs": 29
+        }
+      ]
+    },
+    {
+      "provider": "agy",
+      "scenario": "planning",
+      "model": "Gemini 3.1 Pro (Low)",
+      "executedModel": "Gemini 3.1 Pro (Low)",
+      "status": "passed",
+      "durationMs": 22322,
+      "verification": [
+        {
+          "name": "no-diff",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 28
+        }
+      ]
+    },
+    {
+      "provider": "agy",
+      "scenario": "greenfield",
+      "model": "Gemini 3.1 Pro (Low)",
+      "executedModel": "Gemini 3.1 Pro (Low)",
+      "status": "passed",
+      "durationMs": 15065,
+      "verification": [
+        {
+          "name": "node-test",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 143
+        },
+        {
+          "name": "git-diff-check",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 24
+        },
+        {
+          "name": "allowed-files",
+          "passed": true,
+          "exitCode": 0,
+          "durationMs": 20
         }
       ]
     },
@@ -264,25 +264,25 @@
       "model": "Gemini 3.1 Pro (Low)",
       "executedModel": "Gemini 3.1 Pro (Low)",
       "status": "passed",
-      "durationMs": 22881,
+      "durationMs": 25994,
       "verification": [
         {
           "name": "node-test",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 129
+          "durationMs": 112
         },
         {
           "name": "git-diff-check",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 25
+          "durationMs": 22
         },
         {
           "name": "allowed-files",
           "passed": true,
           "exitCode": 0,
-          "durationMs": 28
+          "durationMs": 24
         }
       ]
     }
@@ -290,17 +290,17 @@
   "aliases": [
     {
       "provider": "codex",
-      "alias": "canary",
+      "alias": "gpt-5.6-sol",
       "model": "gpt-5.6-sol"
     },
     {
       "provider": "claude",
-      "alias": "canary",
-      "model": "sonnet"
+      "alias": "sonnet",
+      "model": "claude-sonnet-5"
     },
     {
       "provider": "agy",
-      "alias": "canary",
+      "alias": "Gemini 3.1 Pro (Low)",
       "model": "Gemini 3.1 Pro (Low)"
     }
   ],
