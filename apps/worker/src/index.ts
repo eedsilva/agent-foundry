@@ -1,13 +1,15 @@
 import { resolve } from 'node:path';
 import { config as loadDotEnv } from 'dotenv';
+import pino from 'pino';
 import { createRuntime } from '@agent-foundry/composition';
 
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
+const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 const runtime = await createRuntime();
 const abortController = new AbortController();
 
 const shutdown = (signal: string): void => {
-  console.info(`[worker] received ${signal}; stopping`);
+  logger.info({ signal }, 'Received shutdown signal; stopping');
   abortController.abort();
   runtime.worker.stop();
   runtime.leaseReaper.stop();
@@ -15,10 +17,11 @@ const shutdown = (signal: string): void => {
 process.once('SIGINT', () => shutdown('SIGINT'));
 process.once('SIGTERM', () => shutdown('SIGTERM'));
 
-console.info(
-  `[worker] ${runtime.config.workerId} started in ${runtime.config.executorMode} mode; data=${runtime.config.dataDir}`,
+logger.info(
+  { workerId: runtime.config.workerId, executorMode: runtime.config.executorMode },
+  `Worker started; data=${runtime.config.dataDir}`,
 );
 void runtime.leaseReaper.start(abortController.signal).catch((error: unknown) => {
-  console.error('[worker] lease reaper stopped unexpectedly', error);
+  logger.error(error, 'Lease reaper stopped unexpectedly');
 });
 await runtime.worker.start(abortController.signal);
