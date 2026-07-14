@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AgentRoleSchema, JsonValueSchema, ProviderSchema, TaskKindSchema } from './primitives.js';
+import { ExecutionUsageSchema } from './run.js';
 
 export const DecisionSchema = z.object({
   title: z.string().min(1),
@@ -65,6 +66,8 @@ export const AGENT_ARTIFACT_JSON_SCHEMA = {
 
 export const AgentExecutionRequestSchema = z.object({
   runId: z.string().min(1),
+  stepRunId: z.string().min(1),
+  attemptId: z.string().min(1),
   projectId: z.string().min(1),
   stepId: z.string().min(1),
   role: AgentRoleSchema,
@@ -81,6 +84,8 @@ export type AgentExecutionRequest = z.infer<typeof AgentExecutionRequestSchema>;
 
 export const AgentExecutionResultSchema = z.object({
   runId: z.string(),
+  stepRunId: z.string().optional(),
+  attemptId: z.string().optional(),
   provider: ProviderSchema,
   model: z.string(),
   executedModel: z.string().min(1).optional(),
@@ -89,13 +94,6 @@ export const AgentExecutionResultSchema = z.object({
   stdout: z.string(),
   stderr: z.string(),
   output: AgentArtifactSchema,
-  usage: z
-    .object({
-      inputTokens: z.number().nonnegative().optional(),
-      outputTokens: z.number().nonnegative().optional(),
-      cachedInputTokens: z.number().nonnegative().optional(),
-      estimatedCostUsd: z.number().nonnegative().optional(),
-    })
-    .optional(),
+  usage: ExecutionUsageSchema.optional(),
 });
 export type AgentExecutionResult = z.infer<typeof AgentExecutionResultSchema>;

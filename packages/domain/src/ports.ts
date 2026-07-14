@@ -11,17 +11,41 @@ import type {
   QueueJob,
   RouteDecision,
   StoredArtifact,
+  StepAttempt,
+  StepRun,
   TaskKind,
   TaskProfile,
   VerificationReport,
   WorkflowDefinition,
+  WorkflowRun,
 } from '@agent-foundry/contracts';
 
 export interface ProjectRepository {
   create(project: Project): Promise<void>;
   get(projectId: string): Promise<Project | null>;
-  update(project: Project): Promise<void>;
+  update(project: Project, expectedVersion: number): Promise<Project>;
   list(limit?: number): Promise<Project[]>;
+}
+
+export interface WorkflowRunRepository {
+  create(run: WorkflowRun): Promise<void>;
+  get(runId: string): Promise<WorkflowRun | null>;
+  list(projectId: string, limit?: number): Promise<WorkflowRun[]>;
+  update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun>;
+}
+
+export interface StepRunRepository {
+  create(step: StepRun): Promise<void>;
+  get(runId: string, stepRunId: string): Promise<StepRun | null>;
+  list(runId: string): Promise<StepRun[]>;
+  update(step: StepRun, expectedVersion: number): Promise<StepRun>;
+}
+
+export interface StepAttemptRepository {
+  create(attempt: StepAttempt): Promise<void>;
+  get(runId: string, stepRunId: string, attemptId: string): Promise<StepAttempt | null>;
+  list(runId: string, stepRunId: string): Promise<StepAttempt[]>;
+  update(attempt: StepAttempt, expectedVersion: number): Promise<StepAttempt>;
 }
 
 export interface ArtifactStore {
@@ -32,6 +56,8 @@ export interface ArtifactStore {
     contentType?: string;
     createdBy: string;
     runId?: string;
+    stepRunId?: string;
+    attemptId?: string;
     routeDecision?: RouteDecision;
   }): Promise<StoredArtifact>;
   getLatest(projectId: string, name: string): Promise<StoredArtifact | null>;
@@ -128,6 +154,8 @@ export interface WorkspaceManager {
   writeRunContext(input: {
     projectId: string;
     runId: string;
+    stepRunId: string;
+    attemptId: string;
     requestMarkdown: string;
     outputSchema: Record<string, unknown>;
   }): Promise<{ requestPath: string; schemaPath: string }>;

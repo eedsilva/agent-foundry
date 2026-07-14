@@ -7,8 +7,10 @@ export const ProjectSchema = z.object({
   name: z.string().min(1),
   workflowId: PathSegmentSchema,
   status: ProjectStatusSchema,
+  version: z.number().int().positive().default(1),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  currentRunId: PathSegmentSchema.optional(),
   currentNodeId: PathSegmentSchema.optional(),
   error: z.string().optional(),
 });
@@ -22,6 +24,8 @@ export const ArtifactMetadataSchema = z.object({
   createdAt: z.string().datetime(),
   createdBy: z.string(),
   runId: PathSegmentSchema.optional(),
+  stepRunId: PathSegmentSchema.optional(),
+  attemptId: PathSegmentSchema.optional(),
   routeDecision: RouteDecisionSchema.optional(),
   sha256: z.string(),
 });
@@ -68,6 +72,7 @@ export const QueueJobSchema = z.object({
   type: z.literal('run-project'),
   projectId: PathSegmentSchema,
   workflowId: PathSegmentSchema,
+  runId: PathSegmentSchema.optional(),
   attempts: z.number().int().nonnegative(),
   maxAttempts: z.number().int().positive(),
   createdAt: z.string().datetime(),
