@@ -230,6 +230,11 @@ Por padrão, tudo fica em `DATA_DIR`:
 data/
   metrics/models.json
   queue/{pending,processing,completed,failed}/
+  runs/<run-id>/
+    run.json
+    steps/<step-run-id>/
+      step.json
+      attempts/<attempt-id>.json
   projects/<project-id>/
     project.json
     events.jsonl
@@ -239,10 +244,12 @@ data/
     workspace/
       PRD.md
       .git/
-      .orchestrator/runs/<run-id>/
+      .orchestrator/runs/<run-id>/steps/<step-run-id>/attempts/<attempt-id>/
 ```
 
-Artefatos são imutáveis por revisão e incluem hash SHA-256. O índice só aponta para revisões já gravadas.
+Runs, steps e attempts usam versões monotônicas e compare-and-swap para rejeitar escritores
+obsoletos. `project.json` mantém somente um resumo compatível derivado do run atual. Artefatos são
+imutáveis por revisão e incluem hash SHA-256; o índice só aponta para revisões já gravadas.
 
 ## API
 

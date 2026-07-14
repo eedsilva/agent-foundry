@@ -75,3 +75,20 @@ The approved Personal Builder contract was encoded in repository documentation, 
 ### Confidence statement
 
 Planning coverage is above the requested 95% threshold because every normative capability group has structural issue coverage and named release evidence; the current structural coverage is 12/12. This is not a guarantee of implementation success. Delivery confidence must be earned incrementally by closing issues with the required evidence and finally passing the complete Issue Radar journey on clean macOS and Ubuntu LTS environments.
+
+## Persisted workflow run domain — 2026-07-14
+
+Issue #4 was validated from the isolated `agent/issue-4-workflow-run-domain` worktree after a clean `npm ci`. The final implementation persists independently versioned workflow runs, step runs, and attempts; exercises v0.1 project/job reads; and verifies successful, fallback, verifier, and coordinated-failure paths in the mock runtime.
+
+Each required command was run separately against the final implementation:
+
+- `npm run format:check` passed.
+- `npm run lint` passed with zero warnings.
+- `npm run architecture:check` passed for 11 workspaces and both architecture tests.
+- `npm run roadmap:check` passed for 16 milestones, 114 tasks, 131 managed issues, eight roadmap/governance tests, GitHub configuration, and rendered-roadmap synchronization.
+- `npm run typecheck` passed.
+- `npm test` passed 16 Vitest files with 149 tests and 42 Node script tests.
+- `npm run build` passed all eight packages, the API, the worker, and the Next.js production build.
+- `git diff --check` passed.
+
+Focused run-domain coverage includes seven contract tests, seven state-transition tests, six filesystem persistence/concurrency tests, and four mock-runtime integration tests. These verify timestamp and terminal-error invariants, every illegal state transition, compare-and-swap conflicts, legacy reads, attempt metadata/artifact linkage, fallback ordering, nested request context, and closure of the attempt/step/run hierarchy on failure.

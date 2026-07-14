@@ -19,8 +19,11 @@ export class MockAgentExecutor implements AgentExecutor {
 
     return {
       runId: request.runId,
+      stepRunId: request.stepRunId,
+      attemptId: request.attemptId,
       provider: 'mock',
       model: `mock:${request.provider}/${request.model || 'default'}`,
+      executedModel: `mock:${request.provider}/${request.model || 'default'}`,
       exitCode: 0,
       durationMs: Date.now() - startedAt,
       stdout,

@@ -30,6 +30,8 @@ export class FileArtifactStore implements ArtifactStore {
     contentType?: string;
     createdBy: string;
     runId?: string;
+    stepRunId?: string;
+    attemptId?: string;
     routeDecision?: RouteDecision;
   }): Promise<StoredArtifact> {
     const projectId = safeSegment(input.projectId);
@@ -52,6 +54,8 @@ export class FileArtifactStore implements ArtifactStore {
         createdAt: new Date().toISOString(),
         createdBy: input.createdBy,
         ...(input.runId ? { runId: input.runId } : {}),
+        ...(input.stepRunId ? { stepRunId: input.stepRunId } : {}),
+        ...(input.attemptId ? { attemptId: input.attemptId } : {}),
         ...(input.routeDecision ? { routeDecision: input.routeDecision } : {}),
         sha256: sha256(serialized),
       });

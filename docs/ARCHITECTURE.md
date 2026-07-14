@@ -40,6 +40,7 @@ Portas para repositórios, fila, router, executores, verifier e workspace. Não 
 Implementações locais:
 
 - projeto em JSON;
+- runs, steps e attempts versionados em uma hierarquia própria;
 - eventos em JSONL;
 - artefatos revisionados com SHA-256;
 - fila por diretórios e rename atômico;
@@ -77,7 +78,7 @@ Coordena tudo. O motor:
 - grava contexto de run;
 - cria checkpoint Git;
 - executa candidato e fallbacks;
-- persiste artefato, run record e decisões;
+- persiste `WorkflowRun`, `StepRun`, `StepAttempt`, artefato, audit record e decisões;
 - coleta métricas;
 - avalia quality loops;
 - avança o estado do projeto.
@@ -126,6 +127,7 @@ sequenceDiagram
     participant Q as JobQueue
     participant W as Worker
     participant O as Orchestrator
+    participant S as Run stores
     participant H as Harness
     participant R as ModelRouter
     participant E as Executor
@@ -136,30 +138,36 @@ sequenceDiagram
     API->>PS: create(input)
     PS->>G: ensure + write PRD.md
     PS->>A: put(prd)
-    PS->>Q: enqueue(run-project)
+    PS->>S: create WorkflowRun queued
+    PS->>Q: enqueue(run-project + runId)
     API-->>UI: 202 Project
 
     W->>Q: claim(workerId)
     Q-->>W: job
-    W->>O: runProject(projectId)
+    W->>O: runProject(projectId, runId)
+    O->>S: WorkflowRun queued -> running
 
     loop workflow nodes
+      O->>S: create/start StepRun
       O->>A: load input artifacts
       O->>H: select(role, task, stack, tags)
       O->>R: route(TaskProfile)
       R-->>O: selected + fallbacks + scores
-      O->>G: write run context
       opt workspace mutation
         O->>G: checkpoint
       end
-      O->>E: execute(request)
+      O->>S: create StepAttempt running
+      O->>G: write run/step/attempt context
+      O->>E: execute(runId, stepRunId, attemptId)
       alt success
         E-->>O: validated AgentArtifact + usage
+        O->>G: commit
         O->>A: put(output revision)
         O->>A: put(run audit)
-        O->>G: commit
+        O->>S: attempt/step -> succeeded/completed
       else failure
         O->>G: rollback checkpoint
+        O->>S: attempt -> failed
         O->>E: execute(next candidate)
       end
     end
@@ -168,14 +176,22 @@ sequenceDiagram
     W->>Q: ack(job)
 ```
 
-## Máquina de estados do projeto
+## Máquinas de estado de execução
 
 ```text
-queued -> running -> completed
-                  -> failed -> queued (retry)
+WorkflowRun: queued -> running -> completed | failed
+                         |-> pause_requested -> paused -> running
+                         |-> cancel_requested -> cancelled
+
+StepRun: pending -> running -> completed | failed | cancelled
+              |-> skipped | cancelled
+
+StepAttempt: running -> succeeded | failed | cancelled
 ```
 
-O campo `currentNodeId` indica o nó atual. Eventos detalhados registram transições menores, mas não são usados como única fonte de estado.
+`WorkflowRun`, `StepRun` e `StepAttempt` são a fonte de verdade. `Project.currentRunId`, `status`, `currentNodeId` e `error` são somente um resumo derivado para compatibilidade da API e da UI. Cada entidade possui `version`; updates usam compare-and-swap e rejeitam uma versão esperada obsoleta.
+
+No filesystem, o estado fica em `DATA_DIR/runs/<runId>/run.json`, com steps em `steps/<stepRunId>/step.json` e attempts em `steps/<stepRunId>/attempts/<attemptId>.json`. Contextos de executor usam a mesma identidade em `.orchestrator/runs/<runId>/steps/<stepRunId>/attempts/<attemptId>/`, evitando que attempts sobrescrevam requests anteriores.
 
 ## Artefatos como protocolo de handoff
 
@@ -215,6 +231,7 @@ A aprovação do reviewer também vira feedback de qualidade para o modelo que p
 
 - Escritas usam arquivo temporário + rename.
 - Índices de artefatos e métricas usam lock de diretório.
+- Projetos, runs, steps e attempts usam lock por entidade e controle otimista de versão.
 - A fila reivindica jobs por rename de `pending` para `processing`.
 - Git fornece checkpoint e rollback para tentativas mutáveis.
 

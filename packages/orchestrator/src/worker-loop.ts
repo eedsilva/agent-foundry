@@ -21,7 +21,7 @@ export class WorkerLoop {
     if (!job) return false;
 
     try {
-      await this.orchestrator.runProject(job.projectId, job.workflowId);
+      await this.orchestrator.runProject(job.projectId, job.workflowId, job.runId);
       await this.queue.ack(job, this.options.workerId);
     } catch (error) {
       await this.queue.nack(

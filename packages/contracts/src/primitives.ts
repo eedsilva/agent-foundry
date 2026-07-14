@@ -38,6 +38,7 @@ export type TaskKind = z.infer<typeof TaskKindSchema>;
 export const ProjectStatusSchema = z.enum([
   'queued',
   'running',
+  'paused',
   'completed',
   'failed',
   'cancelled',

@@ -884,6 +884,8 @@ function optedInEnvironment(): NodeJS.ProcessEnv {
 function successfulResult(request: AgentExecutionRequest): AgentExecutionResult {
   return {
     runId: request.runId,
+    stepRunId: request.stepRunId,
+    attemptId: request.attemptId,
     provider: request.provider,
     model: request.model,
     executedModel: `${request.provider}-executed-model`,

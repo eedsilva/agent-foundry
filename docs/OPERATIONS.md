@@ -96,14 +96,14 @@ Faça isso apenas depois de confirmar que nenhum worker ainda executa o job. Cas
 
 ## Idempotência
 
-A retomada completa ainda não é idempotente. Reexecutar um projeto pode criar novas revisões e commits. O Git reduz corrupção, mas não garante exactly-once.
+A retomada completa ainda não é idempotente. Reexecutar um projeto cria um novo `WorkflowRun`, preservando runs, steps e attempts anteriores, mas ainda pode criar novas revisões e commits. O Git reduz corrupção, mas não garante exactly-once.
 
 Uma evolução robusta deve incluir:
 
 - lease com expiração;
 - fencing token;
 - chave idempotente por step e iteração;
-- status persistido de cada node;
+- chave de deduplicação para o status já persistido de cada step/attempt;
 - resume a partir do último checkpoint aprovado;
 - side effects externos com deduplicação.
 
@@ -112,7 +112,8 @@ Uma evolução robusta deve incluir:
 Hoje existem três trilhas:
 
 - `events.jsonl` para linha do tempo;
-- artefatos `run.*` para auditoria detalhada;
+- `DATA_DIR/runs/` para estado consultável e versionado de run, step e attempt;
+- artefatos `run-*` para contexto, harness e diagnósticos detalhados de cada attempt;
 - `metrics/models.json` para roteamento.
 
 Para produção, exporte eventos estruturados para um backend de logs e métricas, mas aplique redaction antes de enviar prompts e stdout.
@@ -199,9 +200,19 @@ O MVP não cancela processos ativos. A implementação correta precisa:
 - evento e artefato de cancelamento;
 - limpeza segura do job.
 
+## Compatibilidade v0.1, migração e rollback
+
+Não existe migração destrutiva nem backfill best-effort. Ao ler um `project.json` v0.1 sem `version`, o repositório assume versão `1`; `currentRunId` continua opcional. Jobs antigos sem `runId` também permanecem válidos: o worker cria o `WorkflowRun` antes de executar. Eventos e artefatos `run-*` existentes continuam acessíveis pelos caminhos e APIs atuais, mas não são convertidos retroativamente em `StepRun` ou `StepAttempt` porque essa relação não pode ser reconstruída sem inventar dados.
+
+Resultados antigos de executor sem `stepRunId` e `attemptId` continuam válidos na leitura. Requests novos exigem as três identidades e todos os executores nativos as devolvem; o orquestrador usa a identidade persistida do attempt, não tenta inferir relações ausentes em resultados legados.
+
+Antes do upgrade, faça snapshot de `DATA_DIR`. Um rollback de código não apaga `DATA_DIR/runs/`, e a versão v0.1 ignora essa árvore, mas um worker antigo pode regravar `project.json` sem `version` e `currentRunId`. Portanto, pare os workers antes de rollback, preserve o snapshot e evite alternar versões enquanto houver jobs em `processing`.
+
+`StepAttempt.error` guarda somente nome, mensagem, código e exit code. stdout/stderr permanecem limitados aos audit artifacts locais já existentes; esses artifacts podem conter resposta do provider e devem ficar protegidos junto com `DATA_DIR`, fora de logs públicos e descrições de issue/PR.
+
 ## Backup
 
-Em uso local, faça snapshot de `DATA_DIR`. Para restore, preserve permissões e `.git` dos workspaces. O arquivo `artifacts/index.json` pode ser reconstruído a partir das revisões, mas o MVP não inclui ferramenta automática para isso.
+Em uso local, faça snapshot de todo `DATA_DIR`, incluindo `runs/`. Para restore, preserve permissões e `.git` dos workspaces. O arquivo `artifacts/index.json` pode ser reconstruído a partir das revisões, mas o MVP não inclui ferramenta automática para isso.
 
 ## Operação do Personal Builder v1
 

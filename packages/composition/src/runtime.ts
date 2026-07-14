@@ -15,6 +15,9 @@ import {
   FileJobQueue,
   FileMetricsRepository,
   FileProjectRepository,
+  FileStepAttemptRepository,
+  FileStepRunRepository,
+  FileWorkflowRunRepository,
   FileWorkspaceManager,
   YamlWorkflowRepository,
 } from '@agent-foundry/persistence';
@@ -25,6 +28,9 @@ import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
 export interface Runtime {
   config: RuntimeConfig;
   projects: FileProjectRepository;
+  runs: FileWorkflowRunRepository;
+  stepRuns: FileStepRunRepository;
+  stepAttempts: FileStepAttemptRepository;
   artifacts: FileArtifactStore;
   events: FileEventStore;
   queue: FileJobQueue;
@@ -47,6 +53,9 @@ export async function createRuntime(
   const clock = new SystemClock();
   const ids = new UlidGenerator();
   const projects = new FileProjectRepository(config.dataDir);
+  const runs = new FileWorkflowRunRepository(config.dataDir);
+  const stepRuns = new FileStepRunRepository(config.dataDir);
+  const stepAttempts = new FileStepAttemptRepository(config.dataDir);
   const artifacts = new FileArtifactStore(config.dataDir);
   const events = new FileEventStore(config.dataDir);
   const queue = new FileJobQueue(config.dataDir);
@@ -74,6 +83,9 @@ export async function createRuntime(
   });
   const orchestrator = new WorkflowOrchestrator(
     projects,
+    runs,
+    stepRuns,
+    stepAttempts,
     artifacts,
     events,
     workflows,
@@ -89,6 +101,7 @@ export async function createRuntime(
   );
   const projectService = new ProjectService(
     projects,
+    runs,
     artifacts,
     events,
     queue,
@@ -105,6 +118,9 @@ export async function createRuntime(
   return {
     config,
     projects,
+    runs,
+    stepRuns,
+    stepAttempts,
     artifacts,
     events,
     queue,

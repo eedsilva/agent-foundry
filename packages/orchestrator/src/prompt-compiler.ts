@@ -5,6 +5,8 @@ import { stableJson } from '@agent-foundry/domain';
 export function compileRequestMarkdown(input: {
   projectId: string;
   runId: string;
+  stepRunId: string;
+  attemptId: string;
   workflowId: string;
   stack: string;
   step: AgentStep;
@@ -32,6 +34,8 @@ export function compileRequestMarkdown(input: {
 - Project: ${input.projectId}
 - Workflow: ${input.workflowId}
 - Run: ${input.runId}
+- Step run: ${input.stepRunId}
+- Attempt: ${input.attemptId}
 - Step: ${input.step.id}
 - Role: ${input.step.role}
 - Task kind: ${input.step.taskKind}
@@ -75,13 +79,13 @@ Return an object with:
 - decisions: important choices with rationale, alternatives, and consequences
 - assumptions, risks, nextActions: arrays of strings
 
-The machine-readable schema is stored at .orchestrator/runs/${input.runId}/output.schema.json.
+The machine-readable schema is stored at .orchestrator/runs/${input.runId}/steps/${input.stepRunId}/attempts/${input.attemptId}/output.schema.json.
 `;
 }
 
-export function compileCliPrompt(runId: string): string {
+export function compileCliPrompt(runId: string, stepRunId: string, attemptId: string): string {
   return [
-    `Open and follow .orchestrator/runs/${runId}/REQUEST.md exactly.`,
+    `Open and follow .orchestrator/runs/${runId}/steps/${stepRunId}/attempts/${attemptId}/REQUEST.md exactly.`,
     'Perform the task in the current workspace.',
     'Return only the required JSON object, with no Markdown fence or surrounding prose.',
   ].join(' ');

@@ -53,11 +53,22 @@ export class FileWorkspaceManager implements WorkspaceManager {
   async writeRunContext(input: {
     projectId: string;
     runId: string;
+    stepRunId: string;
+    attemptId: string;
     requestMarkdown: string;
     outputSchema: Record<string, unknown>;
   }): Promise<{ requestPath: string; schemaPath: string }> {
     const workspace = this.workspacePath(input.projectId);
-    const runDir = join(workspace, '.orchestrator', 'runs', safeSegment(input.runId));
+    const runDir = join(
+      workspace,
+      '.orchestrator',
+      'runs',
+      safeSegment(input.runId),
+      'steps',
+      safeSegment(input.stepRunId),
+      'attempts',
+      safeSegment(input.attemptId),
+    );
     await ensureDir(runDir);
     const requestPath = join(runDir, 'REQUEST.md');
     const schemaPath = join(runDir, 'output.schema.json');

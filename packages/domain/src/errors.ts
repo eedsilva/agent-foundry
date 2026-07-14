@@ -38,3 +38,30 @@ export class QualityGateError extends Error {
     super(message);
   }
 }
+
+export class InvalidStateTransitionError extends Error {
+  override readonly name = 'InvalidStateTransitionError';
+
+  constructor(
+    readonly entity: 'workflow-run' | 'step-run' | 'step-attempt',
+    readonly from: string,
+    readonly to: string,
+  ) {
+    super(`Invalid ${entity} transition from ${from} to ${to}`);
+  }
+}
+
+export class VersionConflictError extends Error {
+  override readonly name = 'VersionConflictError';
+
+  constructor(
+    readonly entity: string,
+    readonly id: string,
+    readonly expectedVersion: number,
+    readonly actualVersion: number,
+  ) {
+    super(
+      `Version conflict for ${entity} ${id}: expected ${expectedVersion}, found ${actualVersion}`,
+    );
+  }
+}

@@ -542,6 +542,8 @@ async function createExecutionRequest(
 
   return {
     runId,
+    stepRunId: `${runId}-step`,
+    attemptId: `${runId}-attempt`,
     projectId: 'provider-canary',
     stepId: runId,
     role,
