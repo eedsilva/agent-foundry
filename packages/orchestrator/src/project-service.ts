@@ -80,6 +80,7 @@ export class ProjectService {
       maxAttempts: 1,
       createdAt: now,
       availableAt: now,
+      leaseEpoch: 0,
     };
     await this.queue.enqueue(job);
     await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.');
@@ -142,6 +143,7 @@ export class ProjectService {
       maxAttempts: 1,
       createdAt: now,
       availableAt: now,
+      leaseEpoch: 0,
     });
     await this.appendEvent(projectId, 'project.queued', 'Project manually re-queued.');
     return saved;

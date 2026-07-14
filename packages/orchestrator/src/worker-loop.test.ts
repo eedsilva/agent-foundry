@@ -1,0 +1,173 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { QueueJob } from '@agent-foundry/contracts';
+import { LeaseLostError, type JobQueue } from '@agent-foundry/domain';
+import { WorkerLoop } from './worker-loop.js';
+import type { WorkflowOrchestrator } from './workflow-orchestrator.js';
+
+function job(overrides: Partial<QueueJob> = {}): QueueJob {
+  return {
+    id: 'job-1',
+    type: 'run-project',
+    projectId: 'project-1',
+    workflowId: 'web-app-v1',
+    attempts: 0,
+    maxAttempts: 3,
+    createdAt: '2026-07-14T12:00:00.000Z',
+    availableAt: '2026-07-14T12:00:00.000Z',
+    leaseEpoch: 1,
+    lease: {
+      workerId: 'worker-a',
+      fencingToken: 1,
+      heartbeatAt: '2026-07-14T12:00:00.000Z',
+      expiresAt: '2026-07-14T12:01:00.000Z',
+    },
+    ...overrides,
+  };
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+}
+
+function deferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function fakeQueue(overrides: Partial<JobQueue> = {}): JobQueue {
+  return {
+    enqueue: vi.fn(),
+    claim: vi.fn().mockResolvedValue(null),
+    heartbeat: vi.fn(),
+    ack: vi.fn().mockResolvedValue(undefined),
+    nack: vi.fn().mockResolvedValue(undefined),
+    reapExpired: vi.fn().mockResolvedValue([]),
+    ...overrides,
+  };
+}
+
+describe('WorkerLoop heartbeat renewal', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('renews the lease on an interval while the project runs and acks with the latest job', async () => {
+    const initialJob = job();
+    const renewedJob = job({
+      lease: { ...initialJob.lease!, heartbeatAt: '2026-07-14T12:00:00.200Z' },
+    });
+    const heartbeat = vi.fn().mockResolvedValue(renewedJob);
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(initialJob), heartbeat });
+
+    const run = deferred<void>();
+    const runProject = vi.fn().mockReturnValue(run.promise);
+    const orchestrator = { runProject } as unknown as WorkflowOrchestrator;
+
+    const worker = new WorkerLoop(queue, orchestrator, {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+      heartbeatIntervalMs: 100,
+    });
+
+    const runOncePromise = worker.runOnce();
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(heartbeat).toHaveBeenCalledTimes(2);
+    expect(heartbeat).toHaveBeenNthCalledWith(1, initialJob, 'worker-a');
+    expect(heartbeat).toHaveBeenNthCalledWith(2, renewedJob, 'worker-a');
+
+    run.resolve();
+    await runOncePromise;
+
+    expect(queue.ack).toHaveBeenCalledTimes(1);
+    expect(queue.ack).toHaveBeenCalledWith(renewedJob, 'worker-a');
+    expect(queue.nack).not.toHaveBeenCalled();
+
+    const callsAfterCompletion = heartbeat.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(heartbeat.mock.calls.length).toBe(callsAfterCompletion);
+  });
+
+  it('skips ack when a heartbeat reports the lease was lost mid-run', async () => {
+    const initialJob = job();
+    const heartbeat = vi.fn().mockRejectedValue(new LeaseLostError('job-1', 'worker-a'));
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(initialJob), heartbeat });
+
+    const run = deferred<void>();
+    const orchestrator = {
+      runProject: vi.fn().mockReturnValue(run.promise),
+    } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+      heartbeatIntervalMs: 100,
+    });
+
+    const runOncePromise = worker.runOnce();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(heartbeat).toHaveBeenCalledTimes(1);
+
+    run.resolve();
+    await runOncePromise;
+
+    expect(queue.ack).not.toHaveBeenCalled();
+    expect(queue.nack).not.toHaveBeenCalled();
+  });
+
+  it('nacks with the run error and the latest heartbeat-renewed job when the run fails', async () => {
+    const initialJob = job();
+    const renewedJob = job({
+      lease: { ...initialJob.lease!, heartbeatAt: '2026-07-14T12:00:00.200Z' },
+    });
+    const heartbeat = vi.fn().mockResolvedValue(renewedJob);
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(initialJob), heartbeat });
+
+    const run = deferred<void>();
+    const orchestrator = {
+      runProject: vi.fn().mockReturnValue(run.promise),
+    } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+      heartbeatIntervalMs: 100,
+    });
+
+    const runOncePromise = worker.runOnce();
+    await vi.advanceTimersByTimeAsync(150);
+    run.reject(new Error('boom'));
+    await runOncePromise;
+
+    expect(queue.nack).toHaveBeenCalledTimes(1);
+    expect(queue.nack).toHaveBeenCalledWith(
+      renewedJob,
+      'worker-a',
+      expect.objectContaining({ message: 'boom' }),
+    );
+    expect(queue.ack).not.toHaveBeenCalled();
+  });
+
+  it('returns false and starts no heartbeat when there is no job to claim', async () => {
+    const heartbeat = vi.fn();
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(null), heartbeat });
+    const orchestrator = { runProject: vi.fn() } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+    });
+
+    expect(await worker.runOnce()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(heartbeat).not.toHaveBeenCalled();
+  });
+});

@@ -10,6 +10,7 @@ const shutdown = (signal: string): void => {
   console.info(`[worker] received ${signal}; stopping`);
   abortController.abort();
   runtime.worker.stop();
+  runtime.leaseReaper.stop();
 };
 process.once('SIGINT', () => shutdown('SIGINT'));
 process.once('SIGTERM', () => shutdown('SIGTERM'));
@@ -17,4 +18,7 @@ process.once('SIGTERM', () => shutdown('SIGTERM'));
 console.info(
   `[worker] ${runtime.config.workerId} started in ${runtime.config.executorMode} mode; data=${runtime.config.dataDir}`,
 );
+void runtime.leaseReaper.start(abortController.signal).catch((error: unknown) => {
+  console.error('[worker] lease reaper stopped unexpectedly', error);
+});
 await runtime.worker.start(abortController.signal);

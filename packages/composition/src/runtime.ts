@@ -21,7 +21,12 @@ import {
   FileWorkspaceManager,
   YamlWorkflowRepository,
 } from '@agent-foundry/persistence';
-import { ProjectService, WorkerLoop, WorkflowOrchestrator } from '@agent-foundry/orchestrator';
+import {
+  ProjectService,
+  QueueLeaseReaper,
+  WorkerLoop,
+  WorkflowOrchestrator,
+} from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
 
@@ -44,6 +49,7 @@ export interface Runtime {
   projectService: ProjectService;
   orchestrator: WorkflowOrchestrator;
   worker: WorkerLoop;
+  leaseReaper: QueueLeaseReaper;
 }
 
 export async function createRuntime(
@@ -58,7 +64,7 @@ export async function createRuntime(
   const stepAttempts = new FileStepAttemptRepository(config.dataDir);
   const artifacts = new FileArtifactStore(config.dataDir);
   const events = new FileEventStore(config.dataDir);
-  const queue = new FileJobQueue(config.dataDir);
+  const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
   const metrics = new FileMetricsRepository(config.dataDir);
   const workflows = new YamlWorkflowRepository(config.workflowsDir);
   const harness = new VersionedHarnessRepository(config.harnessDir);
@@ -113,6 +119,10 @@ export async function createRuntime(
   const worker = new WorkerLoop(queue, orchestrator, {
     workerId: config.workerId,
     pollIntervalMs: config.workerPollIntervalMs,
+    heartbeatIntervalMs: config.queueHeartbeatIntervalMs,
+  });
+  const leaseReaper = new QueueLeaseReaper(queue, events, clock, ids, {
+    intervalMs: config.queueReapIntervalMs,
   });
 
   return {
@@ -134,5 +144,6 @@ export async function createRuntime(
     projectService,
     orchestrator,
     worker,
+    leaseReaper,
   };
 }

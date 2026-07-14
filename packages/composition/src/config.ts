@@ -26,6 +26,9 @@ const ConfigSchema = z.object({
   MAX_CLI_OUTPUT_BYTES: z.coerce.number().int().positive().default(20_000_000),
   WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(750),
   WORKER_ID: z.string().default(`worker-${process.pid}`),
+  QUEUE_LEASE_MS: z.coerce.number().int().positive().default(60_000),
+  QUEUE_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
+  QUEUE_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
   GIT_AUTHOR_NAME: z.string().default('Agent Foundry'),
   GIT_AUTHOR_EMAIL: z.string().email().default('agent-foundry@localhost'),
 });
@@ -49,6 +52,9 @@ export interface RuntimeConfig {
   maxCliOutputBytes: number;
   workerPollIntervalMs: number;
   workerId: string;
+  queueLeaseMs: number;
+  queueHeartbeatIntervalMs: number;
+  queueReapIntervalMs: number;
   gitAuthorName: string;
   gitAuthorEmail: string;
 }
@@ -90,6 +96,9 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     maxCliOutputBytes: parsed.MAX_CLI_OUTPUT_BYTES,
     workerPollIntervalMs: parsed.WORKER_POLL_INTERVAL_MS,
     workerId: parsed.WORKER_ID,
+    queueLeaseMs: parsed.QUEUE_LEASE_MS,
+    queueHeartbeatIntervalMs: parsed.QUEUE_HEARTBEAT_INTERVAL_MS,
+    queueReapIntervalMs: parsed.QUEUE_REAP_INTERVAL_MS,
     gitAuthorName: parsed.GIT_AUTHOR_NAME,
     gitAuthorEmail: parsed.GIT_AUTHOR_EMAIL,
   };
