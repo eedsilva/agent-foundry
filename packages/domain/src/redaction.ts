@@ -11,11 +11,13 @@ const VALUE_PATTERNS = [
   /\bAKIA[0-9A-Z]{16}\b/g,
 ];
 
+const KEY_PREFIXES = new Set(['api', 'access', 'private']);
+
 function isSensitiveKey(key: string): boolean {
   const words = key.split(/[-_.\s]+|(?<=[a-z0-9])(?=[A-Z])/).filter(Boolean);
   if (words.some((word) => SENSITIVE_WORD.test(word))) return true;
   const lower = words.map((word) => word.toLowerCase());
-  return lower.some((word, index) => word === 'api' && lower[index + 1] === 'key');
+  return lower.some((word, index) => KEY_PREFIXES.has(word) && lower[index + 1] === 'key');
 }
 
 export function redactString(value: string): string {

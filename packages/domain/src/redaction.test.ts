@@ -90,4 +90,25 @@ describe('redactEvent', () => {
     const redacted = redactEvent(event({ data: { dedupeKey: 'node:1', idempotencyKey: 'abc' } }));
     expect(redacted.data).toEqual({ dedupeKey: 'node:1', idempotencyKey: 'abc' });
   });
+
+  it('redacts access/private key compounds', () => {
+    const redacted = redactEvent(
+      event({
+        data: {
+          access_key: 'a',
+          accessKeyId: 'b',
+          privateKey: 'c',
+          private_key: 'd',
+          secretKey: 'e',
+        },
+      }),
+    );
+    expect(redacted.data).toEqual({
+      access_key: '[REDACTED]',
+      accessKeyId: '[REDACTED]',
+      privateKey: '[REDACTED]',
+      private_key: '[REDACTED]',
+      secretKey: '[REDACTED]',
+    });
+  });
 });
