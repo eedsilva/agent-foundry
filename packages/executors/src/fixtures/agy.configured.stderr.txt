@@ -1,0 +1,1 @@
+I0713 18:59:54.059198 1000 model_config_manager.go:157] Propagating selected model override to backend: label="Gemini 3.5 Flash (Medium)"

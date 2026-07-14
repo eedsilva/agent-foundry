@@ -1,3 +1,5 @@
+import { readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { AgyCliExecutor } from './agy-executor.js';
@@ -44,11 +46,45 @@ function request(overrides: Partial<AgentExecutionRequest> = {}): AgentExecution
 describe('CLI executor contracts', () => {
   it('uses stdin and workspace-write sandbox for mutating Codex runs', async () => {
     const invocation = await new InspectableCodexExecutor(1_000_000).inspect(request());
-    expect(invocation.command).toBe('codex');
-    expect(invocation.input).toBe('Open the request file.');
-    expect(invocation.args).toContain('workspace-write');
-    expect(invocation.args).not.toContain('--model');
-    expect(invocation.outputFile).toContain('codex.final.json');
+    try {
+      expect(invocation.command).toBe('codex');
+      expect(invocation.input).toBe(
+        'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
+      );
+      expect(invocation.args).toContain('workspace-write');
+      expect(invocation.args).not.toContain('--ask-for-approval');
+      expect(invocation.args).not.toContain('--output-schema');
+      expect(invocation.args).not.toContain('--model');
+      expect(invocation.outputFile).toContain('codex.final.json');
+      expect(invocation.outputFile?.startsWith('/tmp/workspace/')).toBe(false);
+    } finally {
+      if (invocation.outputDirectory) {
+        await rm(invocation.outputDirectory, { force: true, recursive: true });
+      }
+    }
+  });
+
+  it('refuses a Codex output schema that exceeds the bounded prompt contract', async () => {
+    const before = await temporaryEntries('agent-foundry-codex-output-');
+    await expect(
+      new InspectableCodexExecutor(1_000_000).inspect(
+        request({ outputSchema: { description: 'x'.repeat(32_768) } }),
+      ),
+    ).rejects.toThrow(/output schema exceeds/i);
+    expect(await temporaryEntries('agent-foundry-codex-output-')).toEqual(before);
+  });
+
+  it('requests configured-session metadata only for explicit Codex evidence runs', async () => {
+    const invocation = await new InspectableCodexExecutor(1_000_000, true).inspect(request());
+    try {
+      expect(invocation.environment).toEqual({
+        RUST_LOG: 'codex_core::session::session=debug',
+      });
+    } finally {
+      if (invocation.outputDirectory) {
+        await rm(invocation.outputDirectory, { force: true, recursive: true });
+      }
+    }
   });
 
   it('uses plan permission mode and structured JSON for read-only Claude runs', async () => {
@@ -56,6 +92,11 @@ describe('CLI executor contracts', () => {
       request({ provider: 'claude', model: 'sonnet', mutatesWorkspace: false }),
     );
     expect(invocation.command).toBe('claude');
+    expect(invocation.args).not.toContain('--bare');
+    expect(invocation.args).toContain('--safe-mode');
+    expect(invocation.args).toContain('--verbose');
+    expect(invocation.args).toContain('stream-json');
+    expect(invocation.args).toEqual(expect.arrayContaining(['--prompt-suggestions', 'false']));
     expect(invocation.args).toContain('plan');
     expect(invocation.args).toContain('--json-schema');
     expect(invocation.args).toContain('sonnet');
@@ -67,6 +108,7 @@ describe('CLI executor contracts', () => {
       request({ provider: 'agy', model: 'example-agy-model', timeoutMs: 90_000 }),
     );
     expect(invocation.command).toBe('agy');
+    expect(invocation.args).not.toContain('--new-project');
     expect(invocation.args).toEqual(
       expect.arrayContaining([
         '--sandbox',
@@ -77,8 +119,56 @@ describe('CLI executor contracts', () => {
         '--model',
         'example-agy-model',
         '--print',
-        'Open the request file.',
       ]),
     );
+    expect(invocation.args.at(-1)).toBe(
+      'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
+    );
+  });
+
+  it('creates an isolated AGY project only for explicit canary evidence runs', async () => {
+    const invocation = await new InspectableAgyExecutor(1_000_000, {
+      newProject: true,
+    }).inspect(request({ provider: 'agy' }));
+
+    expect(invocation.args).toContain('--new-project');
+  });
+
+  it('refuses an AGY output schema that exceeds the bounded prompt contract', async () => {
+    const before = await temporaryEntries('agent-foundry-agy-metadata-');
+    await expect(
+      new InspectableAgyExecutor(1_000_000).inspect(
+        request({
+          provider: 'agy',
+          outputSchema: { description: 'x'.repeat(32_768) },
+        }),
+      ),
+    ).rejects.toThrow(/output schema exceeds/i);
+    expect(await temporaryEntries('agent-foundry-agy-metadata-')).toEqual(before);
+  });
+
+  it('routes AGY provider metadata to its per-run file only for explicit evidence runs', async () => {
+    const invocation = await new InspectableAgyExecutor(1_000_000, {
+      reportConfiguredModel: true,
+    }).inspect(request({ provider: 'agy', model: 'Gemini 3.5 Flash (Medium)' }));
+
+    try {
+      expect(invocation.metadataFile).toMatch(
+        /^\/.*\/agent-foundry-agy-metadata-[^/]+\/agy\.metadata\.log$/,
+      );
+      expect(invocation.metadataDirectory).toBe(
+        invocation.metadataFile?.slice(0, -'/agy.metadata.log'.length),
+      );
+      expect(invocation.metadataFile?.startsWith('/tmp/workspace/')).toBe(false);
+      expect(invocation.args).toContain(invocation.metadataFile);
+    } finally {
+      if (invocation.metadataDirectory) {
+        await rm(invocation.metadataDirectory, { force: true, recursive: true });
+      }
+    }
   });
 });
+
+async function temporaryEntries(prefix: string): Promise<string[]> {
+  return (await readdir(tmpdir())).filter((entry) => entry.startsWith(prefix)).sort();
+}

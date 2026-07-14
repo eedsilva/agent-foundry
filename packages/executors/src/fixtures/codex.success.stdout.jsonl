@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"thread_scrubbed","model":"gpt-5.3-codex"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_scrubbed","type":"agent_message","text":"{\"schemaVersion\":\"1\",\"status\":\"completed\",\"summary\":\"Codex fixture completed.\",\"data\":{},\"decisions\":[],\"assumptions\":[],\"risks\":[],\"nextActions\":[]}"}}
+{"type":"turn.completed","usage":{"input_tokens":180,"cached_input_tokens":80,"output_tokens":42}}

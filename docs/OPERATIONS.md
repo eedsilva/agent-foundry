@@ -19,6 +19,33 @@ RUN_WORKER_INLINE=false
 
 O worker precisa encontrar `codex`, `claude` e `agy` no `PATH`, além de sessões autenticadas. O adapter do AGY requer versão 1.1.1 ou superior. Use `npm run doctor` antes de iniciar.
 
+### Canary real dos providers
+
+Valide versões, autenticação e flags sem invocar modelos:
+
+```bash
+EXECUTOR_MODE=real npm run doctor -- --json
+```
+
+Codex e Claude expõem status de autenticação dedicado. O AGY 1.1.2 não expõe `agy auth status`; o doctor usa `agy models` como probe autenticado e valida estritamente o formato da lista sem enviar prompt ou invocar modelo.
+
+O canary real exige opt-in explícito, executa planejamento, implementação greenfield e reparo em um repositório Git temporário independente para cada provider, e falha se houver skip, modelo executado desconhecido ou verificação incompleta:
+
+A verificação compara diretamente os arquivos com o fixture imutável e também rejeita alterações no `HEAD`, flags de índice do Git e exclusões locais; os arquivos de controle do runner ficam fora do repositório entregue ao provider.
+
+```bash
+CODEX_CANARY_MODEL="gpt-5.6-sol" \
+CLAUDE_CANARY_MODEL="sonnet" \
+AGY_CANARY_MODEL="Gemini 3.1 Pro (Low)" \
+EXECUTOR_MODE=real \
+RUN_REAL_PROVIDER_CANARIES=true \
+npm run canary:providers -- --freeze
+```
+
+O AGY recebe `--new-project` em cada execução para vincular corretamente o repositório temporário em vez de reutilizar um projeto em cache. Os repositórios temporários e logs de metadata são removidos; falhas persistem somente diagnósticos normalizados e ignorados em `.data/provider-canaries/`. Nunca envie stdout/stderr bruto de provider para Git.
+
+O baseline congelado está em [`docs/baselines/v0.2-provider-canaries.json`](baselines/v0.2-provider-canaries.json), com uma leitura humana em [`docs/baselines/v0.2-provider-canaries.md`](baselines/v0.2-provider-canaries.md). Reverta esses dois arquivos e a mudança de adapter em conjunto se o baseline precisar ser retirado.
+
 ## Topologias
 
 ### Local simples

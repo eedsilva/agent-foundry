@@ -1,15 +1,25 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
+import { promptWithOutputSchema } from './output-schema-prompt.js';
 
 export class CodexCliExecutor extends BaseCliExecutor {
   readonly provider = 'codex' as const;
   protected readonly command = 'codex';
 
+  constructor(
+    maxOutputBytes: number,
+    private readonly reportConfiguredModel = false,
+  ) {
+    super(maxOutputBytes);
+  }
+
   protected async invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
-    const runDir = join(request.cwd, '.orchestrator', 'runs', request.runId);
-    const schemaPath = join(runDir, 'output.schema.json');
-    const outputFile = join(runDir, 'codex.final.json');
+    const input = promptWithOutputSchema(request, 'Codex');
+    const outputDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-codex-output-'));
+    const outputFile = join(outputDirectory, 'codex.final.json');
     const args = [
       'exec',
       '--json',
@@ -18,11 +28,7 @@ export class CodexCliExecutor extends BaseCliExecutor {
       'never',
       '--sandbox',
       request.mutatesWorkspace ? 'workspace-write' : 'read-only',
-      '--ask-for-approval',
-      'never',
       '--skip-git-repo-check',
-      '--output-schema',
-      schemaPath,
       '--output-last-message',
       outputFile,
     ];
@@ -32,8 +38,12 @@ export class CodexCliExecutor extends BaseCliExecutor {
     return {
       command: this.command,
       args,
-      input: request.prompt,
+      input,
       outputFile,
+      outputDirectory,
+      ...(this.reportConfiguredModel
+        ? { environment: { RUST_LOG: 'codex_core::session::session=debug' } }
+        : {}),
     };
   }
 }

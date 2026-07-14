@@ -1,6 +1,6 @@
 # Validation record
 
-Validation date: 2026-07-11.
+Latest validation date: 2026-07-14.
 
 This repository was validated from a clean dependency installation using the public npm registry.
 
@@ -21,11 +21,28 @@ This repository was validated from a clean dependency installation using the pub
 
 ## Boundaries of this validation
 
-The Codex, Claude Code and AGY executors were not invoked against live authenticated provider sessions in the validation environment. Their argument construction is covered by contract tests, while real-provider behavior still requires a canary run on the host where the CLIs are installed and authenticated.
+Real-provider coverage is a one-run canary matrix, not a reliability or quality benchmark. It proves the three authenticated CLIs can execute the bounded scenarios and report a known model on this host at the recorded versions. It does not prove performance under concurrency, long-running repositories, provider outages, quota exhaustion or future CLI versions.
 
 The final attempt to query npm's remote audit endpoint failed because DNS resolution for the registry was temporarily unavailable. Run `npm audit` in your own environment before a production deployment.
 
 Docker Compose configuration is included, but Docker was not installed in the validation environment, so the image itself was not built here.
+
+## Real provider canary baseline — 2026-07-14
+
+The versioned v0.2 baseline invoked Codex, Claude Code and AGY independently for planning, greenfield implementation and repository repair. All nine runs passed. Planning produced no diff; every mutation scenario passed `node --test`, `git diff --check` and its exact file allowlist.
+
+| Provider | CLI     | Selected model         | Executed model         | Scenarios  |
+| -------- | ------- | ---------------------- | ---------------------- | ---------- |
+| Codex    | 0.144.1 | `gpt-5.6-sol`          | `gpt-5.6-sol`          | 3/3 passed |
+| Claude   | 2.1.208 | `sonnet`               | `claude-sonnet-5`      | 3/3 passed |
+| AGY      | 1.1.2   | `Gemini 3.1 Pro (Low)` | `Gemini 3.1 Pro (Low)` | 3/3 passed |
+
+Evidence:
+
+- [`docs/baselines/v0.2-provider-canaries.json`](baselines/v0.2-provider-canaries.json) is the machine-readable source of truth.
+- [`docs/baselines/v0.2-provider-canaries.md`](baselines/v0.2-provider-canaries.md) records versions, durations, usage where reported, aliases and limitations.
+- Frozen evidence excludes raw provider output, authentication payloads, identities, credentials, session identifiers and machine-specific temporary paths.
+- AGY is invoked with `--new-project` so each temporary repository is isolated from its cached project selection.
 
 ## Personal Builder v1 roadmap alignment — 2026-07-13
 

@@ -7,11 +7,14 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
 
   protected async invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
     const args = [
-      '--bare',
+      '--safe-mode',
       '-p',
+      '--verbose',
       '--output-format',
-      'json',
+      'stream-json',
       '--no-session-persistence',
+      '--prompt-suggestions',
+      'false',
       '--permission-mode',
       request.mutatesWorkspace ? 'acceptEdits' : 'plan',
       '--json-schema',
