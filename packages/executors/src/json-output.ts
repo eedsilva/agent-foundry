@@ -1,4 +1,4 @@
-import { AgentArtifactSchema, type AgentArtifact } from '@agent-foundry/contracts';
+import { AgentArtifactSchema, type AgentArtifact, type Provider } from '@agent-foundry/contracts';
 import { ExecutionError } from '@agent-foundry/domain';
 
 export function parseAgentArtifact(raw: string): AgentArtifact {
@@ -80,24 +80,39 @@ export function extractUsage(raw: string):
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
-export function extractExecutedModel(raw: string): string | undefined {
+export function extractExecutedModel(
+  provider: Provider,
+  sources: { stdout: string; stderr: string; metadata: string },
+): string | undefined {
+  if (provider === 'codex') return extractSingletonCodexModel(sources.stderr);
+  if (provider === 'agy') return extractSingletonAgyModel(sources.metadata);
+  if (provider !== 'claude') return undefined;
+
+  const documents = providerDocuments(sources.stdout);
+  return extractSingletonClaudeModel(documents);
+}
+
+function extractSingletonCodexModel(raw: string): string | undefined {
   const codexConfiguredModels = new Set(
     [...raw.matchAll(/Configuring session:\s+model=([^;\r\n]+);\s+provider=ModelProviderInfo/g)]
       .map((match) => match[1]?.trim())
       .filter((model): model is string => Boolean(model)),
   );
   if (codexConfiguredModels.size === 1) return codexConfiguredModels.values().next().value;
-  if (codexConfiguredModels.size > 1) return undefined;
+  return undefined;
+}
 
+function extractSingletonAgyModel(raw: string): string | undefined {
   const agyBackendModels = new Set(
     [...raw.matchAll(/Propagating selected model override to backend:\s+label="([^"\r\n]+)"/g)]
       .map((match) => match[1]?.trim())
       .filter((model): model is string => Boolean(model)),
   );
   if (agyBackendModels.size === 1) return agyBackendModels.values().next().value;
-  if (agyBackendModels.size > 1) return undefined;
+  return undefined;
+}
 
-  const documents = providerDocuments(raw);
+function extractSingletonClaudeModel(documents: unknown[]): string | undefined {
   const claudePrimaryModels = new Set<string>();
   for (const document of documents) {
     if (document === null || typeof document !== 'object' || Array.isArray(document)) continue;
@@ -110,12 +125,18 @@ export function extractExecutedModel(raw: string): string | undefined {
   if (claudePrimaryModels.size === 1) return claudePrimaryModels.values().next().value;
   if (claudePrimaryModels.size > 1) return undefined;
 
-  const metadataRecords = documents.flatMap(providerMetadataRecords);
+  const resultRecords = documents.filter(
+    (document): document is Record<string, unknown> =>
+      document !== null &&
+      typeof document === 'object' &&
+      !Array.isArray(document) &&
+      (document as Record<string, unknown>).type === 'result',
+  );
   const concreteModels = new Set<string>();
 
   // Claude reports concrete model IDs as keys in modelUsage. Aggregate every
   // provider envelope before deciding so conflicting documents fail closed.
-  for (const record of metadataRecords) {
+  for (const record of resultRecords) {
     const modelUsage = record.modelUsage ?? record.model_usage;
     if (modelUsage !== null && typeof modelUsage === 'object' && !Array.isArray(modelUsage)) {
       for (const model of Object.keys(modelUsage)) {
@@ -124,28 +145,7 @@ export function extractExecutedModel(raw: string): string | undefined {
     }
   }
   if (concreteModels.size === 1) return concreteModels.values().next().value;
-  if (concreteModels.size > 1) return undefined;
-
-  const explicitModels = new Set<string>();
-  const directModels = new Set<string>();
-  for (const record of metadataRecords) {
-    const explicit = stringFrom(record, [
-      'executed_model',
-      'executedModel',
-      'model_name',
-      'modelName',
-      'model_id',
-      'modelId',
-    ]);
-    if (explicit !== undefined) explicitModels.add(explicit);
-
-    const direct = stringFrom(record, ['model']);
-    if (direct !== undefined) directModels.add(direct);
-  }
-
-  if (explicitModels.size === 1) return explicitModels.values().next().value;
-  if (explicitModels.size > 1) return undefined;
-  return directModels.size === 1 ? directModels.values().next().value : undefined;
+  return undefined;
 }
 
 interface UsageAccumulator {
@@ -242,21 +242,6 @@ function providerDocuments(raw: string): unknown[] {
   }
   if (documents.length === 0) documents.push(...extractJsonObjects(cleaned));
   return documents;
-}
-
-function providerMetadataRecords(document: unknown): Record<string, unknown>[] {
-  if (Array.isArray(document)) return document.flatMap(providerMetadataRecords);
-  if (document === null || typeof document !== 'object') return [];
-
-  const envelope = document as Record<string, unknown>;
-  const records = [envelope];
-  for (const key of ['metadata', 'response_metadata', 'responseMetadata']) {
-    const value = envelope[key];
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      records.push(value as Record<string, unknown>);
-    }
-  }
-  return records;
 }
 
 function tryParse(value: string): unknown | null {

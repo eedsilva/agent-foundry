@@ -1,7 +1,14 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
 import { promptWithOutputSchema } from './output-schema-prompt.js';
+
+export interface AgyCliExecutorOptions {
+  reportConfiguredModel?: boolean;
+  newProject?: boolean;
+}
 
 export class AgyCliExecutor extends BaseCliExecutor {
   readonly provider = 'agy' as const;
@@ -9,24 +16,23 @@ export class AgyCliExecutor extends BaseCliExecutor {
 
   constructor(
     maxOutputBytes: number,
-    private readonly reportConfiguredModel = false,
+    private readonly options: AgyCliExecutorOptions = {},
   ) {
     super(maxOutputBytes);
   }
 
   protected async invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
     const seconds = Math.max(30, Math.ceil(request.timeoutMs / 1000));
-    const metadataFile = join(
-      request.cwd,
-      '.orchestrator',
-      'runs',
-      request.runId,
-      'agy.metadata.log',
-    );
+    const metadataDirectory = this.options.reportConfiguredModel
+      ? await mkdtemp(join(tmpdir(), 'agent-foundry-agy-metadata-'))
+      : undefined;
+    const metadataFile = metadataDirectory
+      ? join(metadataDirectory, 'agy.metadata.log')
+      : undefined;
     const args = [
-      '--new-project',
+      ...(this.options.newProject ? ['--new-project'] : []),
       '--sandbox',
-      ...(this.reportConfiguredModel ? ['--log-file', metadataFile] : []),
+      ...(metadataFile ? ['--log-file', metadataFile] : []),
       '--mode',
       request.mutatesWorkspace ? 'accept-edits' : 'plan',
       '--print-timeout',
@@ -38,7 +44,7 @@ export class AgyCliExecutor extends BaseCliExecutor {
     return {
       command: this.command,
       args,
-      ...(this.reportConfiguredModel ? { metadataFile } : {}),
+      ...(metadataFile && metadataDirectory ? { metadataFile, metadataDirectory } : {}),
     };
   }
 }

@@ -17,6 +17,7 @@ export interface CliInvocation {
   input?: string;
   outputFile?: string;
   metadataFile?: string;
+  metadataDirectory?: string;
   environment?: NodeJS.ProcessEnv;
 }
 
@@ -61,7 +62,9 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     try {
       return await this.executeInvocation(request, invocation, startedAt);
     } finally {
-      if (invocation.metadataFile) {
+      if (invocation.metadataDirectory) {
+        await rm(invocation.metadataDirectory, { force: true, recursive: true });
+      } else if (invocation.metadataFile) {
         await rm(invocation.metadataFile, { force: true });
       }
     }
@@ -116,7 +119,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     const metadata = invocation.metadataFile
       ? await readBoundedFile(invocation.metadataFile, this.maxOutputBytes)
       : '';
-    const executedModel = extractExecutedModel(`${stdout}\n${stderr}\n${metadata}`);
+    const executedModel = extractExecutedModel(this.provider, { stdout, stderr, metadata });
 
     return {
       runId: request.runId,

@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { AgyCliExecutor } from './agy-executor.js';
@@ -92,7 +93,7 @@ describe('CLI executor contracts', () => {
       request({ provider: 'agy', model: 'example-agy-model', timeoutMs: 90_000 }),
     );
     expect(invocation.command).toBe('agy');
-    expect(invocation.args).toContain('--new-project');
+    expect(invocation.args).not.toContain('--new-project');
     expect(invocation.args).toEqual(
       expect.arrayContaining([
         '--sandbox',
@@ -110,6 +111,14 @@ describe('CLI executor contracts', () => {
     );
   });
 
+  it('creates an isolated AGY project only for explicit canary evidence runs', async () => {
+    const invocation = await new InspectableAgyExecutor(1_000_000, {
+      newProject: true,
+    }).inspect(request({ provider: 'agy' }));
+
+    expect(invocation.args).toContain('--new-project');
+  });
+
   it('refuses an AGY output schema that exceeds the bounded prompt contract', async () => {
     await expect(
       new InspectableAgyExecutor(1_000_000).inspect(
@@ -122,18 +131,23 @@ describe('CLI executor contracts', () => {
   });
 
   it('routes AGY provider metadata to its per-run file only for explicit evidence runs', async () => {
-    const invocation = await new InspectableAgyExecutor(1_000_000, true).inspect(
-      request({ provider: 'agy', model: 'Gemini 3.5 Flash (Medium)' }),
-    );
+    const invocation = await new InspectableAgyExecutor(1_000_000, {
+      reportConfiguredModel: true,
+    }).inspect(request({ provider: 'agy', model: 'Gemini 3.5 Flash (Medium)' }));
 
-    expect(invocation.args).toEqual(
-      expect.arrayContaining([
-        '--log-file',
-        '/tmp/workspace/.orchestrator/runs/01KX9B14GCCJ4R93SD739PHBW4/agy.metadata.log',
-      ]),
-    );
-    expect(invocation.metadataFile).toBe(
-      '/tmp/workspace/.orchestrator/runs/01KX9B14GCCJ4R93SD739PHBW4/agy.metadata.log',
-    );
+    try {
+      expect(invocation.metadataFile).toMatch(
+        /^\/.*\/agent-foundry-agy-metadata-[^/]+\/agy\.metadata\.log$/,
+      );
+      expect(invocation.metadataDirectory).toBe(
+        invocation.metadataFile?.slice(0, -'/agy.metadata.log'.length),
+      );
+      expect(invocation.metadataFile?.startsWith('/tmp/workspace/')).toBe(false);
+      expect(invocation.args).toContain(invocation.metadataFile);
+    } finally {
+      if (invocation.metadataDirectory) {
+        await rm(invocation.metadataDirectory, { force: true, recursive: true });
+      }
+    }
   });
 });

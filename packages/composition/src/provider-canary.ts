@@ -108,16 +108,13 @@ export async function runProviderCanaries(
     }
   }
 
+  const aliases = confirmedAliases(runs);
   const report = ProviderCanaryReportSchema.parse({
     schemaVersion: '1',
     createdAt: now().toISOString(),
     probes,
     runs,
-    aliases: PROVIDERS.map((provider) => ({
-      provider,
-      alias: 'canary',
-      model: models[provider],
-    })),
+    aliases,
     limitations: [
       'Each provider and scenario is executed once in a dependency-free temporary repository.',
       'Executed models are recorded only when recognized provider metadata reports them.',
@@ -126,7 +123,11 @@ export async function runProviderCanaries(
 
   return {
     report,
-    exitCode: runs.every((run) => run.status === 'passed' && run.executedModel) ? 0 : 1,
+    exitCode:
+      runs.every((run) => run.status === 'passed' && run.executedModel) &&
+      aliases.length === PROVIDERS.length
+        ? 0
+        : 1,
   };
 }
 
@@ -149,6 +150,9 @@ export async function freezeProviderCanaryReport(
       'Provider canary freeze requires exact passing scenario-specific verification checks.',
     );
   }
+  if (!hasCompleteReadyProbeMatrix(report.probes)) {
+    throw new Error('Provider canary freeze requires one complete ready probe per provider.');
+  }
 
   const actualMatrix = new Set(report.runs.map((run) => `${run.provider}:${run.scenario}`));
   const requiredMatrix = new Set(
@@ -159,6 +163,24 @@ export async function freezeProviderCanaryReport(
     [...requiredMatrix].some((entry) => !actualMatrix.has(entry))
   ) {
     throw new Error('Provider canary freeze requires one run for every provider/scenario pair.');
+  }
+  const expectedAliases = confirmedAliases(report.runs);
+  if (
+    expectedAliases.length !== PROVIDERS.length ||
+    report.aliases.length !== expectedAliases.length ||
+    expectedAliases.some(
+      (expected) =>
+        !report.aliases.some(
+          (actual) =>
+            actual.provider === expected.provider &&
+            actual.alias === expected.alias &&
+            actual.model === expected.model,
+        ),
+    )
+  ) {
+    throw new Error(
+      'Provider canary freeze requires aliases observed consistently across all runs.',
+    );
   }
 
   const baselineDirectory = join(rootDir, 'docs', 'baselines');
@@ -215,7 +237,7 @@ function renderProviderCanaryMarkdown(report: ProviderCanaryReport): string {
     '',
     '## Confirmed model aliases',
     '',
-    '| Provider | Alias | Selected model |',
+    '| Provider | Selected alias/model | Executed model |',
     '| --- | --- | --- |',
     ...report.aliases.map(
       (alias) =>
@@ -267,7 +289,10 @@ function createProductionProviderCanaryDependencies(
   const executors = {
     codex: new CodexCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, true),
     claude: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
-    agy: new AgyCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, true),
+    agy: new AgyCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, {
+      reportConfiguredModel: true,
+      newProject: true,
+    }),
   };
 
   return {
@@ -308,7 +333,8 @@ async function executeCanaryScenario(input: {
   let verification: CanaryVerificationResult[] = [];
 
   try {
-    workspacePath = await createFixtureWorkspace(input.scenario);
+    const fixtureWorkspace = await createFixtureWorkspace(input.scenario);
+    workspacePath = fixtureWorkspace.path;
     const request = await createExecutionRequest(
       input.provider,
       input.scenario,
@@ -317,8 +343,12 @@ async function executeCanaryScenario(input: {
       workspacePath,
     );
     const result = await input.dependencies.execute(input.provider, request);
-    await rm(join(workspacePath, '.orchestrator'), { recursive: true, force: true });
-    verification = await verifyScenario(workspacePath, input.scenario);
+    await removeRunnerOwnedFiles(request);
+    verification = await verifyScenario(
+      workspacePath,
+      input.scenario,
+      fixtureWorkspace.baselineCommit,
+    );
 
     if (!result.executedModel) {
       return {
@@ -402,7 +432,9 @@ async function executeCanaryScenario(input: {
   }
 }
 
-async function createFixtureWorkspace(scenario: CanaryScenario): Promise<string> {
+async function createFixtureWorkspace(
+  scenario: CanaryScenario,
+): Promise<{ path: string; baselineCommit: string }> {
   const workspacePath = await mkdtemp(join(tmpdir(), 'agent-foundry-provider-canary-'));
   try {
     const fixture = PROVIDER_CANARY_FIXTURES[scenario];
@@ -425,7 +457,15 @@ async function createFixtureWorkspace(scenario: CanaryScenario): Promise<string>
       '-m',
       'fixture baseline',
     ]);
-    return workspacePath;
+    const baseline = await execa('git', ['rev-parse', 'HEAD'], {
+      cwd: workspacePath,
+      reject: false,
+      encoding: 'utf8',
+    });
+    if (baseline.exitCode !== 0 || !baseline.stdout.trim()) {
+      throw new Error('Temporary fixture repository baseline could not be resolved.');
+    }
+    return { path: workspacePath, baselineCommit: baseline.stdout.trim() };
   } catch (error) {
     await rm(workspacePath, { recursive: true, force: true });
     throw error;
@@ -469,16 +509,10 @@ async function createExecutionRequest(
 async function verifyScenario(
   workspacePath: string,
   scenario: CanaryScenario,
+  baselineCommit: string,
 ): Promise<CanaryVerificationResult[]> {
   if (scenario === 'planning') {
-    const result = await commandVerification(
-      'no-diff',
-      workspacePath,
-      'git',
-      ['status', '--porcelain=v1', '--untracked-files=all'],
-      'Planning changed the repository.',
-      (stdout) => stdout.trim().length === 0,
-    );
+    const result = await noDiffVerification(workspacePath, baselineCommit);
     return [result];
   }
 
@@ -489,12 +523,56 @@ async function verifyScenario(
     ['--test'],
     'node --test failed.',
   );
-  const diffCheck = await gitDiffCheckVerification(workspacePath);
-  const allowedFiles = await allowedFileVerification(workspacePath, scenario);
+  const diffCheck = await gitDiffCheckVerification(workspacePath, baselineCommit);
+  const allowedFiles = await allowedFileVerification(workspacePath, scenario, baselineCommit);
   return [nodeTest, diffCheck, allowedFiles];
 }
 
-async function gitDiffCheckVerification(workspacePath: string): Promise<CanaryVerificationResult> {
+async function noDiffVerification(
+  workspacePath: string,
+  baselineCommit: string,
+): Promise<CanaryVerificationResult> {
+  const startedAt = Date.now();
+  try {
+    const [head, status] = await Promise.all([
+      execa('git', ['rev-parse', 'HEAD'], {
+        cwd: workspacePath,
+        reject: false,
+        encoding: 'utf8',
+      }),
+      execa('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
+        cwd: workspacePath,
+        reject: false,
+        encoding: 'utf8',
+      }),
+    ]);
+    const passed =
+      head.exitCode === 0 &&
+      head.stdout.trim() === baselineCommit &&
+      status.exitCode === 0 &&
+      status.stdout.length === 0;
+    return {
+      name: 'no-diff',
+      passed,
+      exitCode: passed ? 0 : 1,
+      durationMs: Date.now() - startedAt,
+      ...(!passed ? { message: 'Planning changed the repository.' } : {}),
+    };
+  } catch {
+    return {
+      name: 'no-diff',
+      passed: false,
+      exitCode: 1,
+      durationMs: Date.now() - startedAt,
+      message: 'Planning changed the repository.',
+    };
+  }
+}
+
+async function gitDiffCheckVerification(
+  workspacePath: string,
+  baselineCommit: string,
+): Promise<CanaryVerificationResult> {
   try {
     const intentToAdd = await execa('git', ['add', '--intent-to-add', '--all'], {
       cwd: workspacePath,
@@ -524,7 +602,7 @@ async function gitDiffCheckVerification(workspacePath: string): Promise<CanaryVe
     'git-diff-check',
     workspacePath,
     'git',
-    ['diff', '--check'],
+    ['diff', '--check', baselineCommit, '--'],
     'git diff --check failed.',
   );
 }
@@ -569,21 +647,29 @@ async function commandVerification(
 async function allowedFileVerification(
   workspacePath: string,
   scenario: Exclude<CanaryScenario, 'planning'>,
+  baselineCommit: string,
 ): Promise<CanaryVerificationResult> {
   const startedAt = Date.now();
   try {
-    const result = await execa('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
-      cwd: workspacePath,
-      reject: false,
-      encoding: 'utf8',
-    });
-    const changedFiles = result.stdout
-      .split('\0')
-      .filter(Boolean)
-      .map((entry) => entry.slice(3));
+    const [head, result] = await Promise.all([
+      execa('git', ['rev-parse', 'HEAD'], {
+        cwd: workspacePath,
+        reject: false,
+        encoding: 'utf8',
+      }),
+      execa('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
+        cwd: workspacePath,
+        reject: false,
+        encoding: 'utf8',
+      }),
+    ]);
+    const changedFiles = changedFilesFromPorcelain(result.stdout);
     const allowed = [...PROVIDER_CANARY_FIXTURES[scenario].allowedFiles];
     const passed =
+      head.exitCode === 0 &&
+      head.stdout.trim() === baselineCommit &&
       result.exitCode === 0 &&
+      changedFiles !== undefined &&
       changedFiles.length === allowed.length &&
       allowed.every((path) => changedFiles.includes(path));
     return {
@@ -602,6 +688,33 @@ async function allowedFileVerification(
       message: 'Workspace changes did not match the scenario allowlist.',
     };
   }
+}
+
+function changedFilesFromPorcelain(output: string): string[] | undefined {
+  const entries = output.split('\0');
+  if (entries.at(-1) === '') entries.pop();
+  const paths: string[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!entry || entry.length < 4 || entry[2] !== ' ') return undefined;
+    const status = entry.slice(0, 2);
+    paths.push(entry.slice(3));
+    if (status.includes('R') || status.includes('C')) {
+      const source = entries[index + 1];
+      if (!source) return undefined;
+      paths.push(source);
+      index += 1;
+    }
+  }
+  return [...new Set(paths)];
+}
+
+async function removeRunnerOwnedFiles(request: AgentExecutionRequest): Promise<void> {
+  const runDirectory = join(request.cwd, '.orchestrator', 'runs', request.runId);
+  await Promise.all([
+    rm(join(runDirectory, 'output.schema.json'), { force: true }),
+    rm(join(runDirectory, 'codex.final.json'), { force: true }),
+  ]);
 }
 
 async function runWorkspaceCommand(cwd: string, command: string, args: string[]): Promise<void> {
@@ -657,6 +770,44 @@ function hasExactPassingVerification(run: ProviderCanaryRun): boolean {
     required.every((name) => {
       const check = byName.get(name);
       return check?.passed === true && (check.exitCode === undefined || check.exitCode === 0);
+    })
+  );
+}
+
+function confirmedAliases(runs: ProviderCanaryRun[]): ProviderCanaryReport['aliases'] {
+  return PROVIDERS.flatMap((provider) => {
+    const providerRuns = runs.filter((run) => run.provider === provider);
+    if (
+      providerRuns.length !== SCENARIOS.length ||
+      providerRuns.some((run) => run.status !== 'passed' || !run.executedModel)
+    ) {
+      return [];
+    }
+    const selectedModels = new Set(providerRuns.map((run) => run.model));
+    const executedModels = new Set(providerRuns.map((run) => run.executedModel));
+    if (selectedModels.size !== 1 || executedModels.size !== 1) return [];
+    return [
+      {
+        provider,
+        alias: selectedModels.values().next().value!,
+        model: executedModels.values().next().value!,
+      },
+    ];
+  });
+}
+
+function hasCompleteReadyProbeMatrix(probes: ProviderProbe[]): boolean {
+  if (probes.length !== PROVIDERS.length) return false;
+  const byProvider = new Map(probes.map((probe) => [probe.provider, probe]));
+  return (
+    byProvider.size === PROVIDERS.length &&
+    PROVIDERS.every((provider) => {
+      const probe = byProvider.get(provider);
+      return (
+        probe?.status === 'ready' &&
+        Boolean(probe.version) &&
+        Object.values(probe.capabilities).every(Boolean)
+      );
     })
   );
 }

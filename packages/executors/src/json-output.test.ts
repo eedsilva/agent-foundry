@@ -6,6 +6,18 @@ function fixture(name: string): string {
   return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 }
 
+function executedModel(
+  provider: 'codex' | 'claude' | 'agy',
+  raw: string,
+  source: 'stdout' | 'stderr' | 'metadata',
+): string | undefined {
+  return extractExecutedModel(provider, {
+    stdout: source === 'stdout' ? raw : '',
+    stderr: source === 'stderr' ? raw : '',
+    metadata: source === 'metadata' ? raw : '',
+  });
+}
+
 const artifact = {
   schemaVersion: '1',
   status: 'completed',
@@ -156,22 +168,45 @@ describe('extractUsage', () => {
 
 describe('extractExecutedModel', () => {
   it.each([
-    ['codex.success.stdout.jsonl', 'gpt-5.3-codex'],
-    ['codex.configured.stderr.txt', 'gpt-5.6-sol'],
-    ['claude.success.stdout.json', 'claude-sonnet-4-20250514'],
-    ['agy.success.stdout.json', 'gemini-2.5-pro'],
-    ['agy.configured.stderr.txt', 'Gemini 3.5 Flash (Medium)'],
-    ['claude.stream.success.stdout.jsonl', 'claude-sonnet-5'],
-  ])('extracts the executed model from the scrubbed provider fixture %s', (name, expected) => {
-    expect(extractExecutedModel(fixture(name))).toBe(expected);
-  });
-
-  it.each(['codex.malformed.stdout.txt', 'agy.failed.stdout.json'])(
-    'returns no executed model for malformed or failed output from %s',
-    (name) => {
-      expect(extractExecutedModel(fixture(name))).toBeUndefined();
+    ['codex.configured.stderr.txt', 'codex', 'stderr', 'gpt-5.6-sol'],
+    ['claude.success.stdout.json', 'claude', 'stdout', 'claude-sonnet-4-20250514'],
+    ['agy.configured.stderr.txt', 'agy', 'metadata', 'Gemini 3.5 Flash (Medium)'],
+    ['claude.stream.success.stdout.jsonl', 'claude', 'stdout', 'claude-sonnet-5'],
+  ] as const)(
+    'extracts the executed model from the authoritative source in %s',
+    (name, provider, source, expected) => {
+      expect(executedModel(provider, fixture(name), source)).toBe(expected);
     },
   );
+
+  it('ignores Codex and AGY model-like fields in stdout artifacts', () => {
+    expect(executedModel('codex', fixture('codex.success.stdout.jsonl'), 'stdout')).toBeUndefined();
+    expect(executedModel('agy', fixture('agy.success.stdout.json'), 'stdout')).toBeUndefined();
+  });
+
+  it('ignores cross-provider model metadata even in an otherwise authoritative source', () => {
+    expect(
+      executedModel(
+        'codex',
+        'Propagating selected model override to backend: label="spoofed-agy"',
+        'stderr',
+      ),
+    ).toBeUndefined();
+    expect(
+      executedModel(
+        'agy',
+        'Configuring session: model=spoofed-codex; provider=ModelProviderInfo',
+        'metadata',
+      ),
+    ).toBeUndefined();
+    expect(
+      executedModel(
+        'claude',
+        JSON.stringify({ type: 'result', executedModel: 'spoofed-generic' }),
+        'stdout',
+      ),
+    ).toBeUndefined();
+  });
 
   it('returns no model when singleton Claude modelUsage records disagree across documents', () => {
     const raw = [
@@ -186,12 +221,13 @@ describe('extractExecutedModel', () => {
       }),
     ].join('\n');
 
-    expect(extractExecutedModel(raw)).toBeUndefined();
+    expect(executedModel('claude', raw, 'stdout')).toBeUndefined();
   });
 
   it('does not fall back to a top-level alias when Claude modelUsage is ambiguous', () => {
     expect(
-      extractExecutedModel(
+      executedModel(
+        'claude',
         JSON.stringify({
           type: 'result',
           model: 'sonnet',
@@ -200,13 +236,15 @@ describe('extractExecutedModel', () => {
             'claude-opus-4-20250514': { outputTokens: 5 },
           },
         }),
+        'stdout',
       ),
     ).toBeUndefined();
   });
 
   it('uses one Claude system init model as the primary model despite auxiliary usage', () => {
     expect(
-      extractExecutedModel(
+      executedModel(
+        'claude',
         [
           JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-sonnet-5' }),
           JSON.stringify({
@@ -217,39 +255,46 @@ describe('extractExecutedModel', () => {
             },
           }),
         ].join('\n'),
+        'stdout',
       ),
     ).toBe('claude-sonnet-5');
   });
 
   it('returns no model when Claude system init events disagree', () => {
     expect(
-      extractExecutedModel(
+      executedModel(
+        'claude',
         [
           JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-sonnet-5' }),
           JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-opus-4-6' }),
         ].join('\n'),
+        'stdout',
       ),
     ).toBeUndefined();
   });
 
   it('returns no model when Codex configured-session records disagree', () => {
     expect(
-      extractExecutedModel(
+      executedModel(
+        'codex',
         [
           'Configuring session: model=gpt-5.6-sol; provider=ModelProviderInfo',
           'Configuring session: model=gpt-5.5-codex; provider=ModelProviderInfo',
         ].join('\n'),
+        'stderr',
       ),
     ).toBeUndefined();
   });
 
   it('returns no model when AGY backend-override metadata disagrees', () => {
     expect(
-      extractExecutedModel(
+      executedModel(
+        'agy',
         [
           'Propagating selected model override to backend: label="Gemini 3.5 Flash (Medium)"',
           'Propagating selected model override to backend: label="Gemini 3.1 Pro (High)"',
         ].join('\n'),
+        'metadata',
       ),
     ).toBeUndefined();
   });
@@ -266,27 +311,30 @@ describe('extractExecutedModel', () => {
       }),
     ].join('\n');
 
-    expect(extractExecutedModel(raw)).toBe('claude-sonnet-4-20250514');
+    expect(executedModel('claude', raw, 'stdout')).toBe('claude-sonnet-4-20250514');
   });
 
   it('ignores artifact model data when provider metadata identifies the executed model', () => {
     expect(
-      extractExecutedModel(
+      executedModel(
+        'claude',
         JSON.stringify({
           type: 'result',
-          model: 'gpt-5.3-codex',
+          modelUsage: { 'claude-sonnet-5': { inputTokens: 10 } },
           output: {
             ...artifact,
             data: { type: 'model-config', model: 'artifact-model' },
           },
         }),
+        'stdout',
       ),
-    ).toBe('gpt-5.3-codex');
+    ).toBe('claude-sonnet-5');
   });
 
   it('does not manufacture executed-model metadata from artifact content', () => {
     expect(
-      extractExecutedModel(
+      executedModel(
+        'claude',
         JSON.stringify({
           type: 'result',
           output: {
@@ -294,6 +342,7 @@ describe('extractExecutedModel', () => {
             data: { type: 'model-config', model: 'artifact-model' },
           },
         }),
+        'stdout',
       ),
     ).toBeUndefined();
   });

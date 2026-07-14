@@ -10,12 +10,18 @@ const doctorPath = resolve('scripts/doctor.mjs');
 const readyFixtures = {
   codex: {
     version: { stdout: 'codex-cli 0.144.2\n' },
-    help: { stdout: '--json --model --sandbox --ask-for-approval\n' },
+    help: {
+      stdout:
+        '--json --ephemeral --color --output-last-message --skip-git-repo-check --model --sandbox\n',
+    },
     auth: { stderr: 'Logged in using ChatGPT\n' },
   },
   claude: {
     version: { stdout: '2.1.207 (Claude Code)\n' },
-    help: { stdout: '--print --output-format --model --permission-mode\n' },
+    help: {
+      stdout:
+        '--safe-mode --print --verbose --output-format --no-session-persistence --prompt-suggestions --json-schema --model --permission-mode\n',
+    },
     auth: {
       stdout: JSON.stringify({
         loggedIn: true,
@@ -26,7 +32,9 @@ const readyFixtures = {
   },
   agy: {
     version: { stdout: '1.1.1\n' },
-    help: { stderr: '--print --print-timeout --model --sandbox --mode\n' },
+    help: {
+      stderr: '--new-project --print --print-timeout --log-file --model --sandbox --mode\n',
+    },
     auth: { stdout: 'Gemini 2.5 Pro (pro)\nGemini 2.5 Flash (flash)\n' },
   },
 };
@@ -115,15 +123,33 @@ test('reports individual incompatible capabilities when required flags disappear
     sandbox: true,
   });
   assert.deepEqual(probes[1].capabilities, {
-    nonInteractive: true,
+    nonInteractive: false,
     modelSelection: true,
     sandbox: false,
   });
   assert.deepEqual(probes[2].capabilities, {
-    nonInteractive: true,
+    nonInteractive: false,
     modelSelection: false,
     sandbox: true,
   });
+});
+
+test('rejects providers missing execution flags outside the representative capability labels', async (t) => {
+  const providers = structuredClone(readyFixtures);
+  providers.codex.help.stdout = providers.codex.help.stdout.replace('--ephemeral ', '');
+  providers.claude.help.stdout = providers.claude.help.stdout.replace(
+    '--no-session-persistence ',
+    '',
+  );
+  providers.agy.help.stderr = providers.agy.help.stderr.replace('--new-project ', '');
+  const fixture = await createFixture(t, providers);
+  const result = runDoctor(fixture, ['--json']);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(
+    JSON.parse(result.stdout).probes.map(({ status }) => status),
+    ['incompatible', 'incompatible', 'incompatible'],
+  );
 });
 
 test('requires exact help option tokens instead of accepting longer prefix collisions', async (t) => {

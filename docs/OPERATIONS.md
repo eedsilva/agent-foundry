@@ -27,6 +27,8 @@ Valide versões, autenticação e flags sem invocar modelos:
 EXECUTOR_MODE=real npm run doctor -- --json
 ```
 
+Codex e Claude expõem status de autenticação dedicado. O AGY 1.1.2 não expõe `agy auth status`; o doctor usa `agy models` como probe autenticado e valida estritamente o formato da lista sem enviar prompt ou invocar modelo.
+
 O canary real exige opt-in explícito, executa planejamento, implementação greenfield e reparo em um repositório Git temporário independente para cada provider, e falha se houver skip, modelo executado desconhecido ou verificação incompleta:
 
 ```bash

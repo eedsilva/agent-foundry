@@ -1,6 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 import {
   ProviderCanaryReportSchema,
@@ -235,6 +236,56 @@ describe('provider canary runner', () => {
     );
   });
 
+  it('fails when a provider hides a forbidden file under the runner directory', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        if (request.stepId.endsWith('repair')) {
+          const hiddenDirectory = join(request.cwd, '.orchestrator', 'provider-created');
+          await mkdir(hiddenDirectory, { recursive: true });
+          await writeFile(join(hiddenDirectory, 'hidden.txt'), 'forbidden\n');
+        }
+        return successfulResult(request);
+      }),
+    });
+
+    const repair = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'repair',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(repair?.verification).toContainEqual(
+      expect.objectContaining({ name: 'allowed-files', passed: false }),
+    );
+  });
+
+  it('fails when a provider commits a forbidden change before making the allowed edit', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        if (request.stepId.endsWith('repair')) {
+          await writeFile(join(request.cwd, 'README.md'), 'forbidden committed edit\n');
+          await execa('git', ['add', 'README.md'], { cwd: request.cwd });
+          await execa('git', ['commit', '--quiet', '-m', 'provider commit'], {
+            cwd: request.cwd,
+          });
+        }
+        await applySuccessfulMutation(request);
+        return successfulResult(request);
+      }),
+    });
+
+    const repair = outcome.report.runs.find(
+      (run) => run.provider === 'codex' && run.scenario === 'repair',
+    );
+    expect(outcome.exitCode).toBe(1);
+    expect(repair?.verification).toContainEqual(
+      expect.objectContaining({ name: 'allowed-files', passed: false }),
+    );
+  });
+
   it('fails greenfield directly through git diff --check on trailing whitespace', async () => {
     const outcome = await runProviderCanaries({
       env: optedInEnvironment(),
@@ -359,6 +410,24 @@ describe('provider canary runner', () => {
       message: 'Provider did not return a completed artifact.',
     });
   });
+
+  it('fails the outcome when one selected alias resolves to inconsistent executed models', async () => {
+    const outcome = await runProviderCanaries({
+      env: optedInEnvironment(),
+      models: selectedModels(),
+      dependencies: fakeDependencies(async (_provider, request) => {
+        await applySuccessfulMutation(request);
+        const result = successfulResult(request);
+        if (request.stepId === 'claude-repair') result.executedModel = 'claude-different-model';
+        return result;
+      }),
+    });
+
+    expect(outcome.exitCode).toBe(1);
+    expect(outcome.report.aliases).not.toContainEqual(
+      expect.objectContaining({ provider: 'claude' }),
+    );
+  });
 });
 
 describe('provider canary freeze', () => {
@@ -421,64 +490,139 @@ describe('provider canary freeze', () => {
       ),
     });
 
-    await expect(
-      freezeProviderCanaryReport(replaceVerification('planning', []), root),
-    ).rejects.toThrow(/verification/i);
-    await expect(
-      freezeProviderCanaryReport(
-        replaceVerification('planning', [
-          outcome.report.runs.find((run) => run.scenario === 'planning')!.verification[0]!,
-          { name: 'node-test', passed: true, exitCode: 0, durationMs: 1 },
-        ]),
-        root,
-      ),
-    ).rejects.toThrow(/verification/i);
-    await expect(
-      freezeProviderCanaryReport(
-        replaceVerification(
-          'greenfield',
-          outcome.report.runs
-            .find((run) => run.scenario === 'greenfield')!
-            .verification.filter((check) => check.name !== 'allowed-files'),
+    try {
+      await expect(
+        freezeProviderCanaryReport(replaceVerification('planning', []), root),
+      ).rejects.toThrow(/verification/i);
+      await expect(
+        freezeProviderCanaryReport(
+          replaceVerification('planning', [
+            outcome.report.runs.find((run) => run.scenario === 'planning')!.verification[0]!,
+            { name: 'node-test', passed: true, exitCode: 0, durationMs: 1 },
+          ]),
+          root,
         ),
-        root,
-      ),
-    ).rejects.toThrow(/verification/i);
-    await expect(
-      freezeProviderCanaryReport(
-        replaceVerification(
-          'repair',
-          outcome.report.runs
-            .find((run) => run.scenario === 'repair')!
-            .verification.map((check) =>
-              check.name === 'git-diff-check' ? { ...check, passed: false } : check,
+      ).rejects.toThrow(/verification/i);
+      await expect(
+        freezeProviderCanaryReport(
+          replaceVerification(
+            'greenfield',
+            outcome.report.runs
+              .find((run) => run.scenario === 'greenfield')!
+              .verification.filter((check) => check.name !== 'allowed-files'),
+          ),
+          root,
+        ),
+      ).rejects.toThrow(/verification/i);
+      await expect(
+        freezeProviderCanaryReport(
+          replaceVerification(
+            'repair',
+            outcome.report.runs
+              .find((run) => run.scenario === 'repair')!
+              .verification.map((check) =>
+                check.name === 'git-diff-check' ? { ...check, passed: false } : check,
+              ),
+          ),
+          root,
+        ),
+      ).rejects.toThrow(/verification/i);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses incomplete, duplicate, non-ready, or incapable probe evidence', async () => {
+    const outcome = await successfulOutcome();
+    const root = await mkdtemp(join(tmpdir(), 'agent-foundry-freeze-test-'));
+
+    try {
+      await expect(
+        freezeProviderCanaryReport(
+          { ...outcome.report, probes: outcome.report.probes.slice(0, 2) },
+          root,
+        ),
+      ).rejects.toThrow(/probe/i);
+      await expect(
+        freezeProviderCanaryReport(
+          { ...outcome.report, probes: [...outcome.report.probes, outcome.report.probes[0]!] },
+          root,
+        ),
+      ).rejects.toThrow(/probe/i);
+      await expect(
+        freezeProviderCanaryReport(
+          {
+            ...outcome.report,
+            probes: outcome.report.probes.map((probe, index) =>
+              index === 0 ? { ...probe, status: 'incompatible' as const } : probe,
             ),
+          },
+          root,
         ),
-        root,
-      ),
-    ).rejects.toThrow(/verification/i);
+      ).rejects.toThrow(/probe/i);
+      await expect(
+        freezeProviderCanaryReport(
+          {
+            ...outcome.report,
+            probes: outcome.report.probes.map((probe, index) =>
+              index === 0
+                ? { ...probe, capabilities: { ...probe.capabilities, sandbox: false } }
+                : probe,
+            ),
+          },
+          root,
+        ),
+      ).rejects.toThrow(/probe/i);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses alias evidence that does not match every successful run', async () => {
+    const outcome = await successfulOutcome();
+    const root = await mkdtemp(join(tmpdir(), 'agent-foundry-freeze-test-'));
+
+    try {
+      await expect(
+        freezeProviderCanaryReport(
+          {
+            ...outcome.report,
+            aliases: outcome.report.aliases.map((alias, index) =>
+              index === 0 ? { ...alias, model: 'unobserved-model' } : alias,
+            ),
+          },
+          root,
+        ),
+      ).rejects.toThrow(/alias/i);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('freezes a strict complete nine-run matrix', async () => {
     const outcome = await successfulOutcome();
     const root = await mkdtemp(join(tmpdir(), 'agent-foundry-freeze-test-'));
-    await freezeProviderCanaryReport(outcome.report, root);
+    try {
+      await freezeProviderCanaryReport(outcome.report, root);
 
-    const baselineDir = join(root, 'docs', 'baselines');
-    const frozen = JSON.parse(
-      await readFile(join(baselineDir, 'v0.2-provider-canaries.json'), 'utf8'),
-    ) as unknown;
-    const markdown = await readFile(join(baselineDir, 'v0.2-provider-canaries.md'), 'utf8');
-    expect(frozen).toEqual(outcome.report);
-    expect(ProviderCanaryReportSchema.safeParse(frozen).success).toBe(true);
-    expect(markdown).toContain('# v0.2 real provider canary baseline');
-    expect(markdown).toContain('| Codex | 1.2.3 | Ready |');
-    expect(markdown).toContain(
-      '| codex | planning | codex-model | codex-executed-model | Passed |',
-    );
-    expect(markdown).toContain('## Confirmed model aliases');
-    expect(markdown).toContain('| codex | canary | codex-model |');
-    expect(markdown).toContain('## Limitations');
+      const baselineDir = join(root, 'docs', 'baselines');
+      const frozen = JSON.parse(
+        await readFile(join(baselineDir, 'v0.2-provider-canaries.json'), 'utf8'),
+      ) as unknown;
+      const markdown = await readFile(join(baselineDir, 'v0.2-provider-canaries.md'), 'utf8');
+      expect(frozen).toEqual(outcome.report);
+      expect(ProviderCanaryReportSchema.safeParse(frozen).success).toBe(true);
+      expect(markdown).toContain('# v0.2 real provider canary baseline');
+      expect(markdown).toContain('| Codex | 1.2.3 | Ready |');
+      expect(markdown).toContain(
+        '| codex | planning | codex-model | codex-executed-model | Passed |',
+      );
+      expect(markdown).toContain('## Confirmed model aliases');
+      expect(markdown).toContain('| codex | codex-model | codex-executed-model |');
+      expect(markdown).toContain('## Limitations');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

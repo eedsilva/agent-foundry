@@ -31,7 +31,13 @@ const probes = [
     helpArgs: ['exec', '--help'],
     authArgs: ['login', 'status'],
     flags: {
-      nonInteractive: ['--json'],
+      nonInteractive: [
+        '--json',
+        '--ephemeral',
+        '--color',
+        '--output-last-message',
+        '--skip-git-repo-check',
+      ],
       modelSelection: ['--model'],
       sandbox: ['--sandbox'],
     },
@@ -51,9 +57,16 @@ const probes = [
     helpArgs: ['--help'],
     authArgs: ['auth', 'status'],
     flags: {
-      nonInteractive: ['--print', '--output-format'],
+      nonInteractive: [
+        '--print',
+        '--verbose',
+        '--output-format',
+        '--no-session-persistence',
+        '--prompt-suggestions',
+        '--json-schema',
+      ],
       modelSelection: ['--model'],
-      sandbox: ['--permission-mode'],
+      sandbox: ['--safe-mode', '--permission-mode'],
     },
     authenticationStatus(result) {
       try {
@@ -74,7 +87,7 @@ const probes = [
     authArgs: ['models'],
     minimumVersion: '1.1.1',
     flags: {
-      nonInteractive: ['--print', '--print-timeout'],
+      nonInteractive: ['--new-project', '--print', '--print-timeout', '--log-file'],
       modelSelection: ['--model'],
       sandbox: ['--sandbox', '--mode'],
     },
