@@ -51,4 +51,23 @@ describe('dogfood contracts', () => {
     };
     expect(DogfoodReportSchema.safeParse(report).success).toBe(false);
   });
+
+  it('rejects a record with an unknown extra field', () => {
+    expect(DogfoodRunRecordSchema.safeParse({ ...runRecord, extra: 'nope' }).success).toBe(false);
+  });
+
+  it("rejects status: 'failed' without failure", () => {
+    expect(DogfoodRunRecordSchema.safeParse({ ...runRecord, status: 'failed' }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects status: 'passed' with failure present", () => {
+    const record = {
+      ...runRecord,
+      status: 'passed',
+      failure: { kind: 'execution', message: 'boom' },
+    };
+    expect(DogfoodRunRecordSchema.safeParse(record).success).toBe(false);
+  });
 });
