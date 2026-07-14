@@ -46,6 +46,8 @@ export const ProjectEventSchema = z.object({
     'project.started',
     'project.completed',
     'project.failed',
+    'run.cancel_requested',
+    'run.cancelled',
     'node.started',
     'node.completed',
     'node.failed',

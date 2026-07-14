@@ -8,6 +8,7 @@ import {
   type VerificationReport,
 } from '@agent-foundry/contracts';
 import type { VerificationService } from '@agent-foundry/domain';
+import { RunCancelledError } from '@agent-foundry/domain';
 
 const EMPTY_GIT_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
@@ -20,11 +21,15 @@ export interface WorkspaceVerifierOptions {
 export class WorkspaceVerifier implements VerificationService {
   constructor(private readonly options: WorkspaceVerifierOptions) {}
 
-  async verify(input: {
-    workspacePath: string;
-    scripts: string[];
-    includeGitDiffCheck: boolean;
-  }): Promise<VerificationReport> {
+  async verify(
+    input: {
+      workspacePath: string;
+      scripts: string[];
+      includeGitDiffCheck: boolean;
+    },
+    signal?: AbortSignal,
+  ): Promise<VerificationReport> {
+    if (signal?.aborted) throw new RunCancelledError();
     const packageManager = await detectPackageManager(input.workspacePath);
     const commands: VerificationCommandResult[] = [];
     const packageJson = await readPackageJson(input.workspacePath);
@@ -44,11 +49,12 @@ export class WorkspaceVerifier implements VerificationService {
       this.options.autoInstallDependencies &&
       !(await pathExists(join(input.workspacePath, 'node_modules')))
     ) {
-      commands.push(await this.runInstall(packageManager, input.workspacePath));
+      commands.push(await this.runInstall(packageManager, input.workspacePath, signal));
     }
 
     const scripts = isRecord(packageJson.scripts) ? packageJson.scripts : {};
     for (const script of input.scripts) {
+      if (signal?.aborted) throw new RunCancelledError();
       if (typeof scripts[script] !== 'string') {
         commands.push({
           name: script,
@@ -62,16 +68,18 @@ export class WorkspaceVerifier implements VerificationService {
         });
         continue;
       }
-      commands.push(await this.runScript(packageManager, script, input.workspacePath));
+      commands.push(await this.runScript(packageManager, script, input.workspacePath, signal));
     }
 
     if (input.includeGitDiffCheck) {
+      if (signal?.aborted) throw new RunCancelledError();
       commands.push(
         await this.run(
           'git-committed-tree-check',
           'git',
           ['diff', '--check', EMPTY_GIT_TREE, 'HEAD'],
           input.workspacePath,
+          signal,
         ),
       );
       commands.push(
@@ -80,9 +88,12 @@ export class WorkspaceVerifier implements VerificationService {
           'git',
           ['diff', '--check', 'HEAD'],
           input.workspacePath,
+          signal,
         ),
       );
     }
+
+    if (signal?.aborted) throw new RunCancelledError();
 
     const failed = commands.filter((command) => !command.skipped && command.exitCode !== 0);
     return VerificationReportSchema.parse({
@@ -101,17 +112,18 @@ export class WorkspaceVerifier implements VerificationService {
   private async runInstall(
     packageManager: VerificationReport['packageManager'],
     cwd: string,
+    signal?: AbortSignal,
   ): Promise<VerificationCommandResult> {
     switch (packageManager) {
       case 'pnpm':
-        return this.run('install', 'pnpm', ['install', '--frozen-lockfile=false'], cwd);
+        return this.run('install', 'pnpm', ['install', '--frozen-lockfile=false'], cwd, signal);
       case 'yarn':
-        return this.run('install', 'yarn', ['install'], cwd);
+        return this.run('install', 'yarn', ['install'], cwd, signal);
       case 'bun':
-        return this.run('install', 'bun', ['install'], cwd);
+        return this.run('install', 'bun', ['install'], cwd, signal);
       case 'npm':
       case 'unknown':
-        return this.run('install', 'npm', ['install'], cwd);
+        return this.run('install', 'npm', ['install'], cwd, signal);
     }
   }
 
@@ -119,17 +131,18 @@ export class WorkspaceVerifier implements VerificationService {
     packageManager: VerificationReport['packageManager'],
     script: string,
     cwd: string,
+    signal?: AbortSignal,
   ): Promise<VerificationCommandResult> {
     switch (packageManager) {
       case 'pnpm':
-        return this.run(script, 'pnpm', ['run', script], cwd);
+        return this.run(script, 'pnpm', ['run', script], cwd, signal);
       case 'yarn':
-        return this.run(script, 'yarn', [script], cwd);
+        return this.run(script, 'yarn', [script], cwd, signal);
       case 'bun':
-        return this.run(script, 'bun', ['run', script], cwd);
+        return this.run(script, 'bun', ['run', script], cwd, signal);
       case 'npm':
       case 'unknown':
-        return this.run(script, 'npm', ['run', script], cwd);
+        return this.run(script, 'npm', ['run', script], cwd, signal);
     }
   }
 
@@ -138,6 +151,7 @@ export class WorkspaceVerifier implements VerificationService {
     command: string,
     args: string[],
     cwd: string,
+    signal?: AbortSignal,
   ): Promise<VerificationCommandResult> {
     const startedAt = Date.now();
     try {
@@ -146,6 +160,7 @@ export class WorkspaceVerifier implements VerificationService {
         timeout: this.options.timeoutMs,
         maxBuffer: this.options.maxOutputBytes,
         reject: false,
+        ...(signal ? { cancelSignal: signal } : {}),
       });
       return {
         name,

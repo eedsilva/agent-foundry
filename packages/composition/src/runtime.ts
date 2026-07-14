@@ -103,7 +103,7 @@ export async function createRuntime(
     workspaces,
     clock,
     ids,
-    { agentTimeoutMs: config.agentTimeoutMs },
+    { agentTimeoutMs: config.agentTimeoutMs, cancelPollIntervalMs: config.cancelPollIntervalMs },
   );
   const projectService = new ProjectService(
     projects,

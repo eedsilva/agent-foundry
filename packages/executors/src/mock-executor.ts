@@ -7,11 +7,16 @@ import type {
   ExecutorHealth,
 } from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
+import { RunCancelledError } from '@agent-foundry/domain';
 
 export class MockAgentExecutor implements AgentExecutor {
   readonly provider = 'mock';
 
-  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+  async execute(
+    request: AgentExecutionRequest,
+    signal?: AbortSignal,
+  ): Promise<AgentExecutionResult> {
+    if (signal?.aborted) throw new RunCancelledError(request.runId);
     const startedAt = Date.now();
     if (request.mutatesWorkspace) await this.mutateWorkspace(request);
     const output = await this.artifactFor(request);

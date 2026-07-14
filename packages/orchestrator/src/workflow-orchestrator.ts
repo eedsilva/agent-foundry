@@ -40,6 +40,7 @@ import {
   ExecutionError,
   NotFoundError,
   QualityGateError,
+  RunCancelledError,
   errorMessage,
   getValueAtPath,
   transitionStepAttempt,
@@ -51,6 +52,7 @@ import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
+  cancelPollIntervalMs: number;
 }
 
 interface DecisionLogEntry {
@@ -94,6 +96,11 @@ export class WorkflowOrchestrator {
         `Run ${run.id} does not belong to project/workflow ${projectId}/${workflow.id}`,
       );
     }
+    if (run.status === 'cancelled') return;
+    if (run.status === 'cancel_requested') {
+      await this.finalizeCancellation(run.id, projectId);
+      return;
+    }
     run = await this.runs.update(
       transitionWorkflowRun(run, 'running', this.clock.now()),
       run.version,
@@ -103,14 +110,17 @@ export class WorkflowOrchestrator {
       runId: run.id,
     });
 
+    const cancellation = new AbortController();
+    const stopWatching = this.watchForCancellation(run.id, cancellation);
     try {
       await this.workspaces.ensureGit(projectId);
       for (const node of workflow.nodes) {
+        throwIfCancelled(cancellation.signal, run.id);
         await this.emit(projectId, 'node.started', node.title, {
           nodeId: node.id,
           runId: run.id,
         });
-        await this.executeNode(project, workflow, node, run.id);
+        await this.executeNode(project, workflow, node, run.id, cancellation.signal);
         await this.emit(projectId, 'node.completed', node.title, {
           nodeId: node.id,
           runId: run.id,
@@ -126,6 +136,10 @@ export class WorkflowOrchestrator {
         runId: run.id,
       });
     } catch (error) {
+      if (isCancellation(error, cancellation.signal)) {
+        await this.finalizeCancellation(run.id, projectId);
+        return;
+      }
       const latest = await this.requireRun(run.id);
       if (latest.status === 'running') {
         run = await this.runs.update(
@@ -140,7 +154,50 @@ export class WorkflowOrchestrator {
         runId: run.id,
       });
       throw error;
+    } finally {
+      stopWatching();
     }
+  }
+
+  private watchForCancellation(runId: string, controller: AbortController): () => void {
+    let stopped = false;
+    let timer: NodeJS.Timeout;
+    const poll = async (): Promise<void> => {
+      if (stopped || controller.signal.aborted) return;
+      try {
+        const run = await this.runs.get(runId);
+        if (run && (run.status === 'cancel_requested' || run.status === 'cancelled')) {
+          controller.abort();
+          return;
+        }
+      } catch {
+        // Transient read failures must not kill the watcher; the next tick retries.
+      }
+      if (!stopped) timer = setTimeout(() => void poll(), this.options.cancelPollIntervalMs);
+    };
+    timer = setTimeout(() => void poll(), this.options.cancelPollIntervalMs);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }
+
+  private async finalizeCancellation(runId: string, projectId: string): Promise<void> {
+    let run = await this.requireRun(runId);
+    if (run.status === 'running') {
+      run = await this.runs.update(
+        transitionWorkflowRun(run, 'cancel_requested', this.clock.now()),
+        run.version,
+      );
+    }
+    if (run.status !== 'cancelled') {
+      run = await this.runs.update(
+        transitionWorkflowRun(run, 'cancelled', this.clock.now()),
+        run.version,
+      );
+    }
+    await this.syncProjectSummary(run);
+    await this.emit(projectId, 'run.cancelled', 'Workflow run cancelled.', { runId });
   }
 
   private async executeNode(
@@ -148,10 +205,11 @@ export class WorkflowOrchestrator {
     workflow: WorkflowDefinition,
     node: WorkflowNode,
     runId: string,
+    signal: AbortSignal,
   ): Promise<StoredArtifact> {
     if (node.type === 'quality-loop')
-      return this.executeQualityLoop(project, workflow, node, runId);
-    return this.executeStep(project, workflow, node, runId, node.id);
+      return this.executeQualityLoop(project, workflow, node, runId, signal);
+    return this.executeStep(project, workflow, node, runId, node.id, signal);
   }
 
   private async executeQualityLoop(
@@ -159,6 +217,7 @@ export class WorkflowOrchestrator {
     workflow: WorkflowDefinition,
     node: QualityLoopStep,
     runId: string,
+    signal: AbortSignal,
   ): Promise<StoredArtifact> {
     let qualitySubject: StoredArtifact | null = null;
     if (node.setup) {
@@ -168,6 +227,7 @@ export class WorkflowOrchestrator {
         node.setup,
         runId,
         node.id,
+        signal,
         1,
       );
       if (node.setup.type === 'agent') qualitySubject = setupArtifact;
@@ -175,7 +235,15 @@ export class WorkflowOrchestrator {
 
     let latest: StoredArtifact | null = null;
     for (let iteration = 1; iteration <= node.maxIterations; iteration += 1) {
-      latest = await this.executeStep(project, workflow, node.check, runId, node.id, iteration);
+      latest = await this.executeStep(
+        project,
+        workflow,
+        node.check,
+        runId,
+        node.id,
+        signal,
+        iteration,
+      );
       const approved = await this.conditionApproved(project.id, node);
       if (qualitySubject) await this.recordQualityOutcome(qualitySubject, approved);
       if (approved) {
@@ -199,6 +267,7 @@ export class WorkflowOrchestrator {
         node.repair,
         runId,
         node.id,
+        signal,
         iteration,
       );
     }
@@ -221,8 +290,10 @@ export class WorkflowOrchestrator {
     step: ExecutableStep,
     runId: string,
     nodeId: string,
+    signal: AbortSignal,
     iteration?: number,
   ): Promise<StoredArtifact> {
+    throwIfCancelled(signal, runId);
     const timestamp = this.clock.now().toISOString();
     let stepRun: StepRun = {
       id: this.ids.next(),
@@ -246,8 +317,16 @@ export class WorkflowOrchestrator {
     try {
       const artifact =
         step.type === 'agent'
-          ? await this.executeAgentStep(project, workflow, step, runId, stepRun, iteration)
-          : await this.executeVerifyStep(project, workflow, step, runId, stepRun, iteration);
+          ? await this.executeAgentStep(project, workflow, step, runId, stepRun, signal, iteration)
+          : await this.executeVerifyStep(
+              project,
+              workflow,
+              step,
+              runId,
+              stepRun,
+              signal,
+              iteration,
+            );
       stepRun = await this.stepRuns.update(
         transitionStepRun(stepRun, 'completed', this.clock.now()),
         stepRun.version,
@@ -256,8 +335,14 @@ export class WorkflowOrchestrator {
       return artifact;
     } catch (error) {
       if (stepRun.status === 'running') {
+        const cancelled = isCancellation(error, signal);
         await this.stepRuns.update(
-          transitionStepRun(stepRun, 'failed', this.clock.now(), { error: runError(error) }),
+          transitionStepRun(
+            stepRun,
+            cancelled ? 'cancelled' : 'failed',
+            this.clock.now(),
+            cancelled ? {} : { error: runError(error) },
+          ),
           stepRun.version,
         );
       }
@@ -272,6 +357,7 @@ export class WorkflowOrchestrator {
     step: VerifyStep,
     runId: string,
     stepRun: StepRun,
+    signal: AbortSignal,
     iteration?: number,
   ): Promise<StoredArtifact> {
     const timestamp = this.clock.now().toISOString();
@@ -301,11 +387,15 @@ export class WorkflowOrchestrator {
     await this.stepAttempts.create(attempt);
     const startedAt = Date.now();
     try {
-      const report = await this.verifier.verify({
-        workspacePath: this.workspaces.workspacePath(project.id),
-        scripts: step.scripts,
-        includeGitDiffCheck: step.includeGitDiffCheck,
-      });
+      const report = await this.verifier.verify(
+        {
+          workspacePath: this.workspaces.workspacePath(project.id),
+          scripts: step.scripts,
+          includeGitDiffCheck: step.includeGitDiffCheck,
+        },
+        signal,
+      );
+      throwIfCancelled(signal, runId);
       const artifact = await this.artifacts.put({
         projectId: project.id,
         name: step.outputArtifact,
@@ -331,10 +421,11 @@ export class WorkflowOrchestrator {
       return artifact;
     } catch (error) {
       if (attempt.status === 'running') {
+        const cancelled = isCancellation(error, signal);
         await this.stepAttempts.update(
-          transitionStepAttempt(attempt, 'failed', this.clock.now(), {
+          transitionStepAttempt(attempt, cancelled ? 'cancelled' : 'failed', this.clock.now(), {
             durationMs: Date.now() - startedAt,
-            error: runError(error),
+            ...(cancelled ? {} : { error: runError(error) }),
           }),
           attempt.version,
         );
@@ -349,6 +440,7 @@ export class WorkflowOrchestrator {
     step: AgentStep,
     runId: string,
     stepRun: StepRun,
+    signal: AbortSignal,
     loopIteration?: number,
   ): Promise<StoredArtifact> {
     const inputArtifacts = await this.loadInputArtifacts(project.id, step.inputArtifacts);
@@ -398,6 +490,7 @@ export class WorkflowOrchestrator {
     for (let index = 0; index < candidates.length; index += 1) {
       const candidate = candidates[index];
       if (!candidate) continue;
+      throwIfCancelled(signal, runId);
       if (checkpoint && index > 0) await this.workspaces.rollback(project.id, checkpoint);
 
       const timestamp = this.clock.now().toISOString();
@@ -462,6 +555,7 @@ export class WorkflowOrchestrator {
           stepRun.id,
           attempt.id,
           candidate,
+          signal,
         );
         if (step.mutatesWorkspace) {
           await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`);
@@ -519,6 +613,16 @@ export class WorkflowOrchestrator {
         return artifact;
       } catch (error) {
         if (attempt.status !== 'running') throw error;
+        if (isCancellation(error, signal)) {
+          await this.stepAttempts.update(
+            transitionStepAttempt(attempt, 'cancelled', this.clock.now(), {
+              durationMs: Date.now() - attemptStartedAt,
+            }),
+            attempt.version,
+          );
+          if (checkpoint) await this.workspaces.rollback(project.id, checkpoint);
+          throw error instanceof RunCancelledError ? error : new RunCancelledError(runId);
+        }
         lastError = error;
         let failureArtifact: StoredArtifact | undefined;
         let failureRecordError: unknown;
@@ -583,6 +687,7 @@ export class WorkflowOrchestrator {
     stepRunId: string,
     attemptId: string,
     candidate: RankedModel,
+    signal: AbortSignal,
   ): Promise<AgentExecutionResult> {
     await this.emit(project.id, 'agent.started', `${step.id} started on ${candidate.model.id}.`, {
       nodeId: step.id,
@@ -590,22 +695,27 @@ export class WorkflowOrchestrator {
       data: { modelId: candidate.model.id, provider: candidate.model.provider, attemptId },
     });
     const executor = this.executors.get(candidate.model.provider);
-    const result = await executor.execute({
-      runId,
-      stepRunId,
-      attemptId,
-      projectId: project.id,
-      stepId: step.id,
-      role: step.role,
-      taskKind: step.taskKind,
-      provider: candidate.model.provider,
-      model: candidate.model.model,
-      prompt: compileCliPrompt(runId, stepRunId, attemptId),
-      cwd: this.workspaces.workspacePath(project.id),
-      mutatesWorkspace: step.mutatesWorkspace,
-      timeoutMs: this.options.agentTimeoutMs,
-      outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
-    });
+    const result = await executor.execute(
+      {
+        runId,
+        stepRunId,
+        attemptId,
+        projectId: project.id,
+        stepId: step.id,
+        role: step.role,
+        taskKind: step.taskKind,
+        provider: candidate.model.provider,
+        model: candidate.model.model,
+        prompt: compileCliPrompt(runId, stepRunId, attemptId),
+        cwd: this.workspaces.workspacePath(project.id),
+        mutatesWorkspace: step.mutatesWorkspace,
+        timeoutMs: this.options.agentTimeoutMs,
+        outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+      },
+      signal,
+    );
+    // A result that arrives after cancellation was requested must never be promoted.
+    throwIfCancelled(signal, runId);
     await this.metrics.record({
       modelId: candidate.model.id,
       taskKind: step.taskKind,
@@ -907,6 +1017,14 @@ function artifactReference(artifact: StoredArtifact) {
     revision: artifact.metadata.revision,
     sha256: artifact.metadata.sha256,
   };
+}
+
+function throwIfCancelled(signal: AbortSignal, runId: string): void {
+  if (signal.aborted) throw new RunCancelledError(runId);
+}
+
+function isCancellation(error: unknown, signal: AbortSignal): boolean {
+  return signal.aborted || error instanceof RunCancelledError;
 }
 
 function runError(error: unknown): RunError {

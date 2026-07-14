@@ -190,15 +190,13 @@ Antes de paralelizar nodes, modele dependências explícitas. Paralelismo sem DA
 
 ## Cancelamento
 
-O MVP não cancela processos ativos. A implementação correta precisa:
+`POST /runs/:runId/cancel` é idempotente: marca o run como `cancel_requested`, emite `run.cancel_requested` e retorna o run atualizado. Repetir a chamada não duplica eventos; cancelar um run `completed` ou `failed` retorna 409.
 
-- estado `cancel_requested`;
-- AbortSignal até o executor;
-- encerramento da árvore de processos;
-- timeout de graça e kill forçado;
-- rollback para checkpoint;
-- evento e artefato de cancelamento;
-- limpeza segura do job.
+O orquestrador observa o estado persistido do run durante a execução (`CANCEL_POLL_INTERVAL_MS`) e propaga um `AbortSignal` até `AgentExecutor.execute` e o verifier. A CLI recebe SIGTERM no grupo de processos inteiro e, após o período de graça, SIGKILL — o encerramento cobre a árvore de processos, não só o filho direto. Run, step e attempt terminam em `cancelled`; a confirmação emite `run.cancelled`.
+
+Um step mutável cancelado antes do commit aprovado volta ao checkpoint Git criado no início do step. Nenhum artifact output é promovido depois do cancelamento confirmado, mesmo que o resultado do executor chegue após o abort.
+
+A confirmação acontece no processo que executa o run. Um run `cancel_requested` ainda na fila é confirmado como `cancelled` quando o job for reclamado por um worker; sem worker ativo, ele permanece `cancel_requested` até um worker subir.
 
 ## Compatibilidade v0.1, migração e rollback
 

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
+import { RunCancelledError } from '@agent-foundry/domain';
 import { WorkspaceVerifier } from './verifier.js';
 
 const temporaryDirectories: string[] = [];
@@ -70,5 +71,25 @@ describe('WorkspaceVerifier', () => {
     const gitCheck = report.commands.find((command) => command.name === 'git-committed-tree-check');
     expect(gitCheck?.exitCode).not.toBe(0);
     expect(report.approved).toBe(false);
+  });
+
+  it('throws RunCancelledError instead of producing a report when cancelled', async () => {
+    const cwd = await workspace();
+    await writeFile(join(cwd, 'package.json'), JSON.stringify({ private: true, scripts: {} }));
+
+    const verifier = new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 10_000,
+      maxOutputBytes: 1_000_000,
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      verifier.verify(
+        { workspacePath: cwd, scripts: ['test'], includeGitDiffCheck: true },
+        controller.signal,
+      ),
+    ).rejects.toThrow(RunCancelledError);
   });
 });
