@@ -1,0 +1,10 @@
+{
+  "id": "legacy-job",
+  "type": "run-project",
+  "projectId": "legacy-project",
+  "workflowId": "web-app-v1",
+  "attempts": 0,
+  "maxAttempts": 1,
+  "createdAt": "2026-07-14T12:00:00.000Z",
+  "availableAt": "2026-07-14T12:00:00.000Z"
+}
