@@ -71,7 +71,7 @@ export interface ArtifactStore {
 
 export interface EventStore {
   append(event: ProjectEvent): Promise<void>;
-  list(projectId: string, limit?: number): Promise<ProjectEvent[]>;
+  list(projectId: string, limit?: number, afterId?: string): Promise<ProjectEvent[]>;
 }
 
 /**

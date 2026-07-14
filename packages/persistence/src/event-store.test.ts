@@ -49,3 +49,47 @@ describe('FileEventStore idempotent append', () => {
     expect(await store.list('project-1')).toHaveLength(2);
   });
 });
+
+describe('FileEventStore.list cursor', () => {
+  it('lists events after a cursor id without duplication', async () => {
+    const store = new FileEventStore(await temporaryDataDir());
+    const e1 = event('01A');
+    const e2 = event('01B');
+    const e3 = event('01C');
+    const e4 = event('01D');
+    const e5 = event('01E');
+    for (const e of [e1, e2, e3, e4, e5]) await store.append(e);
+
+    const after = await store.list('project-1', 500, e3.id);
+    expect(after.map((item) => item.id)).toEqual([e4.id, e5.id]);
+  });
+
+  it('falls back to id-ordering when the cursor id is unknown (e.g. truncated file)', async () => {
+    const store = new FileEventStore(await temporaryDataDir());
+    const e1 = event('01A');
+    const e2 = event('01B');
+    const e3 = event('01C');
+    const e4 = event('01D');
+    const e5 = event('01E');
+    for (const e of [e1, e2, e3, e4, e5]) await store.append(e);
+
+    // '01C1' sorts strictly between e3 ('01C') and e4 ('01D') but is not a known id.
+    const after = await store.list('project-1', 500, '01C1');
+    expect(after.map((item) => item.id)).toEqual([e4.id, e5.id]);
+  });
+});
+
+describe('FileEventStore redaction on append', () => {
+  it('redacts sensitive data before persisting', async () => {
+    const store = new FileEventStore(await temporaryDataDir());
+    await store.append({
+      ...event('event-1'),
+      message: 'Bearer abcdef1234567890ABCDEF',
+      data: { apiKey: 'x' },
+    });
+
+    const [persisted] = await store.list('project-1');
+    expect(persisted?.message).toContain('[REDACTED]');
+    expect(persisted?.data.apiKey).toBe('[REDACTED]');
+  });
+});
