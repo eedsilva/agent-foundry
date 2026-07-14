@@ -45,12 +45,22 @@ describe('CLI executor contracts', () => {
   it('uses stdin and workspace-write sandbox for mutating Codex runs', async () => {
     const invocation = await new InspectableCodexExecutor(1_000_000).inspect(request());
     expect(invocation.command).toBe('codex');
-    expect(invocation.input).toBe('Open the request file.');
+    expect(invocation.input).toBe(
+      'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
+    );
     expect(invocation.args).toContain('workspace-write');
     expect(invocation.args).not.toContain('--ask-for-approval');
     expect(invocation.args).not.toContain('--output-schema');
     expect(invocation.args).not.toContain('--model');
     expect(invocation.outputFile).toContain('codex.final.json');
+  });
+
+  it('refuses a Codex output schema that exceeds the bounded prompt contract', async () => {
+    await expect(
+      new InspectableCodexExecutor(1_000_000).inspect(
+        request({ outputSchema: { description: 'x'.repeat(32_768) } }),
+      ),
+    ).rejects.toThrow(/output schema exceeds/i);
   });
 
   it('requests configured-session metadata only for explicit Codex evidence runs', async () => {

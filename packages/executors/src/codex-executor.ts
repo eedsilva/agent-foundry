@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
+import { promptWithOutputSchema } from './output-schema-prompt.js';
 
 export class CodexCliExecutor extends BaseCliExecutor {
   readonly provider = 'codex' as const;
@@ -34,7 +35,7 @@ export class CodexCliExecutor extends BaseCliExecutor {
     return {
       command: this.command,
       args,
-      input: request.prompt,
+      input: promptWithOutputSchema(request, 'Codex'),
       outputFile,
       ...(this.reportConfiguredModel
         ? { environment: { RUST_LOG: 'codex_core::session::session=debug' } }

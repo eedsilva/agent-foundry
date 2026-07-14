@@ -51,14 +51,14 @@ export const PROVIDER_CANARY_FIXTURES: Readonly<Record<CanaryScenario, ProviderC
   repair: {
     scenario: 'repair',
     mutatesWorkspace: true,
-    allowedFiles: ['src/sum.js'],
+    allowedFiles: ['sum.js'],
     files: {
       'package.json': packageJson,
       'README.md': '# Sum repair\n\nRepair the existing sum implementation.\n',
-      'src/sum.js': 'export function sum(left, right) { return left - right; }\n',
+      'sum.js': 'export function sum(left, right) { return left - right; }\n',
       'test/sum.test.js':
-        "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { sum } from '../src/sum.js';\n\ntest('adds two numbers', () => {\n  assert.equal(sum(7, 5), 12);\n});\n",
+        "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { sum } from '../sum.js';\n\ntest('adds two numbers', () => {\n  assert.equal(sum(7, 5), 12);\n});\n",
     },
-    prompt: 'Repair src/sum.js so the existing node:test suite passes. Only src/sum.js may change.',
+    prompt: 'Repair sum.js so the existing node:test suite passes. Only sum.js may change.',
   },
 };

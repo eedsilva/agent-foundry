@@ -538,7 +538,7 @@ async function applySuccessfulMutation(request: AgentExecutionRequest): Promise<
   }
   if (request.stepId.endsWith('repair')) {
     await writeFile(
-      join(request.cwd, 'src', 'sum.js'),
+      join(request.cwd, 'sum.js'),
       'export function sum(left, right) { return left + right; }\n',
     );
   }
