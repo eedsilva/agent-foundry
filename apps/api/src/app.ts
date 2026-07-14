@@ -100,6 +100,54 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     return runtime.projectService.getArtifact(projectId, name, revision);
   });
 
+  app.get('/projects/:projectId/events/stream', async (request, reply) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const { cursor } = z.object({ cursor: z.string().min(1).optional() }).parse(request.query);
+    await runtime.projectService.get(projectId); // NotFoundError -> 404 before headers
+
+    const lastEventId = request.headers['last-event-id'];
+    let lastId =
+      cursor ?? (typeof lastEventId === 'string' && lastEventId ? lastEventId : undefined);
+
+    reply.hijack();
+    const raw = reply.raw;
+    const origin = request.headers.origin;
+    const allowed = runtime.config.webOrigin.split(',').map((entry) => entry.trim());
+    raw.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      ...(origin && allowed.includes(origin) ? { 'access-control-allow-origin': origin } : {}),
+    });
+    raw.write(': connected\n\n');
+
+    let sending = false;
+    const send = async (): Promise<void> => {
+      if (sending) return;
+      sending = true;
+      try {
+        const batch = await runtime.events.list(projectId, 500, lastId);
+        for (const event of batch) {
+          raw.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
+          lastId = event.id;
+        }
+      } finally {
+        sending = false;
+      }
+    };
+    await send();
+    // ponytail: 1s file-tail poll; swap for an in-process bus + fs notification if latency ever matters
+    const poll = setInterval(() => void send().catch(() => undefined), 1_000);
+    const heartbeat = setInterval(() => raw.write(': ping\n\n'), 15_000);
+    poll.unref?.();
+    heartbeat.unref?.();
+    request.raw.on('close', () => {
+      clearInterval(poll);
+      clearInterval(heartbeat);
+      raw.end();
+    });
+  });
+
   app.post('/runs/:runId/cancel', async (request, reply) => {
     const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
     const run = await runtime.projectService.cancelRun(runId);
