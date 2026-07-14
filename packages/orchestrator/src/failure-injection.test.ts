@@ -192,3 +192,27 @@ describe('Group A: executor failure modes with fallback recovery', () => {
     expect(harness.workspaces.commits.length).toBe(before.commits);
   });
 });
+
+describe('Group B: process kill — a late result is never promoted', () => {
+  it('never promotes a result that arrives after cancellation (process kill)', async () => {
+    const harness = makeHarness({ implement: { kind: 'hang-until-abort' } });
+    await seedRun(harness);
+
+    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await vi.waitFor(() => {
+      expect(harness.executor.started('implement')).toBe(1);
+    });
+    await harness.service.cancelRun('run-1');
+    await running; // cancellation is caught, not thrown
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('cancelled');
+    const implement = liveStepRun(harness, 'implement');
+    const attempts = await harness.stepAttempts.list('run-1', implement.id);
+    expect(attempts[0]?.status).toBe('cancelled');
+    // The killed step never committed and left no output artifact.
+    expect(harness.workspaces.commits).toHaveLength(0);
+    expect(harness.artifacts.named('implementation')).toHaveLength(0);
+    // The workspace was rolled back to the checkpoint the attempt started from.
+    expect(harness.workspaces.rollbacks).toContain(attempts[0]?.checkpoint);
+  });
+});
