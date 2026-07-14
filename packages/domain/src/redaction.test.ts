@@ -64,4 +64,30 @@ describe('redactEvent', () => {
     const redacted = redactEvent(event({ data: { author: 'ed', nodeId: 'plan-gate' } }));
     expect(redacted.data).toEqual({ author: 'ed', nodeId: 'plan-gate' });
   });
+
+  it('redacts camelCase compound sensitive keys', () => {
+    const redacted = redactEvent(
+      event({
+        data: {
+          accessToken: 'a',
+          refreshToken: 'b',
+          clientSecret: 'c',
+          userPassword: 'd',
+          sessionId: 'e',
+        },
+      }),
+    );
+    expect(redacted.data).toEqual({
+      accessToken: '[REDACTED]',
+      refreshToken: '[REDACTED]',
+      clientSecret: '[REDACTED]',
+      userPassword: '[REDACTED]',
+      sessionId: '[REDACTED]',
+    });
+  });
+
+  it('does not redact idempotency or dedupe keys', () => {
+    const redacted = redactEvent(event({ data: { dedupeKey: 'node:1', idempotencyKey: 'abc' } }));
+    expect(redacted.data).toEqual({ dedupeKey: 'node:1', idempotencyKey: 'abc' });
+  });
 });

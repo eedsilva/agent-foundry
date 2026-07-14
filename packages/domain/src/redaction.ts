@@ -1,7 +1,7 @@
 import type { ProjectEvent } from '@agent-foundry/contracts';
 
-const SENSITIVE_KEY =
-  /(?:^|[-_.])(?:token|secret|password|passwd|credential|credentials|authorization|auth|apikey|api[-_]key|access[-_]key|private[-_]key|bearer|cookie|session)(?:$|[-_.])/i;
+const SENSITIVE_WORD =
+  /^(?:token|secret|secrets|password|passwd|credential|credentials|authorization|auth|bearer|cookie|cookies|session|apikey)$/i;
 
 const VALUE_PATTERNS = [
   /\b(?:sk|rk)-[A-Za-z0-9_-]{16,}\b/g,
@@ -10,6 +10,13 @@ const VALUE_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9._-]{8,}\b/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
 ];
+
+function isSensitiveKey(key: string): boolean {
+  const words = key.split(/[-_.\s]+|(?<=[a-z0-9])(?=[A-Z])/).filter(Boolean);
+  if (words.some((word) => SENSITIVE_WORD.test(word))) return true;
+  const lower = words.map((word) => word.toLowerCase());
+  return lower.some((word, index) => word === 'api' && lower[index + 1] === 'key');
+}
 
 export function redactString(value: string): string {
   return VALUE_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[REDACTED]'), value);
@@ -23,7 +30,7 @@ function redactValue(value: unknown, depth: number): unknown {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
         key,
-        SENSITIVE_KEY.test(key) ? '[REDACTED]' : redactValue(entry, depth + 1),
+        isSensitiveKey(key) ? '[REDACTED]' : redactValue(entry, depth + 1),
       ]),
     );
   }
