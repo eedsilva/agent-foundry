@@ -33,6 +33,7 @@ export class FileArtifactStore implements ArtifactStore {
     stepRunId?: string;
     attemptId?: string;
     routeDecision?: RouteDecision;
+    idempotencyKey?: string;
   }): Promise<StoredArtifact> {
     const projectId = safeSegment(input.projectId);
     const name = safeSegment(input.name);
@@ -57,6 +58,7 @@ export class FileArtifactStore implements ArtifactStore {
         ...(input.stepRunId ? { stepRunId: input.stepRunId } : {}),
         ...(input.attemptId ? { attemptId: input.attemptId } : {}),
         ...(input.routeDecision ? { routeDecision: input.routeDecision } : {}),
+        ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
         sha256: sha256(serialized),
       });
 

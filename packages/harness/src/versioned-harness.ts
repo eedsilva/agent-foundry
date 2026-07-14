@@ -22,6 +22,12 @@ const ManifestSchema = z.object({
 export class VersionedHarnessRepository implements HarnessRepository {
   constructor(private readonly harnessDir: string) {}
 
+  async version(): Promise<string> {
+    const manifestPath = resolve(this.harnessDir, 'manifest.json');
+    const manifest = ManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
+    return manifest.version;
+  }
+
   async select(input: {
     role: string;
     taskKind: string;

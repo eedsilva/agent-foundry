@@ -15,12 +15,17 @@ import { InvalidStateTransitionError } from './errors.js';
 const workflowRunTransitions: Record<WorkflowRunStatus, readonly WorkflowRunStatus[]> = {
   queued: ['running', 'cancel_requested', 'cancelled', 'failed'],
   running: ['pause_requested', 'cancel_requested', 'completed', 'failed'],
-  pause_requested: ['paused', 'cancel_requested', 'failed'],
-  paused: ['running', 'cancel_requested', 'cancelled', 'failed'],
+  // 'completed' covers a pause requested after the final step already started.
+  pause_requested: ['paused', 'cancel_requested', 'completed', 'failed'],
+  // 'queued' is the resume path: the run goes back through the queue so a
+  // worker picks it up with a fresh lease.
+  paused: ['queued', 'running', 'cancel_requested', 'cancelled', 'failed'],
   cancel_requested: ['cancelled', 'failed'],
   cancelled: [],
-  completed: [],
-  failed: [],
+  // Step retry re-opens a finished run; completed steps are reused by
+  // idempotency key, so re-queueing never repeats approved work.
+  completed: ['queued'],
+  failed: ['queued'],
 };
 
 const stepRunTransitions: Record<StepRunStatus, readonly StepRunStatus[]> = {
@@ -43,14 +48,25 @@ export function transitionWorkflowRun(
   run: WorkflowRun,
   status: WorkflowRunStatus,
   now: Date,
-  patch: { currentStepRunId?: string; error?: RunError } = {},
+  patch: {
+    currentStepRunId?: string;
+    error?: RunError;
+    pause?: WorkflowRun['pause'];
+    retry?: WorkflowRun['retry'];
+  } = {},
 ): WorkflowRun {
   assertTransition('workflow-run', run.status, status, workflowRunTransitions);
   const timestamp = now.toISOString();
   const updated: Record<string, unknown> = { ...run, ...patch, status, updatedAt: timestamp };
   if (!run.startedAt && status !== 'queued') updated.startedAt = timestamp;
-  if (isWorkflowRunTerminal(status)) updated.completedAt = timestamp;
+  if (isWorkflowRunTerminal(status)) {
+    updated.completedAt = timestamp;
+    delete updated.retry;
+  } else {
+    delete updated.completedAt;
+  }
   if (status !== 'failed') delete updated.error;
+  if (status !== 'paused') delete updated.pause;
   return WorkflowRunSchema.parse(updated);
 }
 
@@ -76,7 +92,13 @@ export function transitionStepAttempt(
   patch: Partial<
     Pick<
       StepAttempt,
-      'durationMs' | 'usage' | 'error' | 'executedModel' | 'outputArtifacts' | 'routeDecision'
+      | 'durationMs'
+      | 'usage'
+      | 'error'
+      | 'executedModel'
+      | 'outputArtifacts'
+      | 'routeDecision'
+      | 'commit'
     >
   > = {},
 ): StepAttempt {

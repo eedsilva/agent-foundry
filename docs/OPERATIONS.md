@@ -98,14 +98,17 @@ Faça isso apenas depois de confirmar que nenhum worker ainda executa o job. Cas
 
 ## Idempotência
 
-A retomada completa ainda não é idempotente. Reexecutar um projeto cria um novo `WorkflowRun`, preservando runs, steps e attempts anteriores, mas ainda pode criar novas revisões e commits. O Git reduz corrupção, mas não garante exactly-once.
+Cada execução de step recebe uma chave idempotente determinística (`sha256` de runId, nodeId, stepId, iteração, política de attempts e hashes dos inputs), gravada no `StepRun` e no metadata do artifact de saída. Em qualquer redelivery o orquestrador re-percorre o workflow inteiro: steps concluídos com a mesma chave são reutilizados (artifact e commit incluídos), registros interrompidos por crash entre a escrita do artifact e a do estado são finalizados contra o artifact órfão, e redelivery de um run terminal é no-op. Eventos com `dedupeKey` têm append idempotente, então a linha do tempo não duplica em replay. Detalhes e limites no ADR 0011.
 
-Lease com expiração e fencing token na fila já existem (seção anterior). Uma evolução robusta ainda deve incluir:
+Reexecutar um projeto (`POST /projects/:id/retry`) continua criando um novo `WorkflowRun` do zero; a idempotência acima vale dentro de um mesmo run.
 
-- chave idempotente por step e iteração;
-- chave de deduplicação para o status já persistido de cada step/attempt;
-- resume a partir do último checkpoint aprovado;
-- side effects externos com deduplicação.
+## Controles de execução (pause, resume, retry de step)
+
+- `POST /runs/:runId/pause` — solicita pausa; o run pausa na próxima fronteira de step (um step em andamento sempre termina). Ao pausar, grava snapshot de compatibilidade: hash do workflow, versão do harness, HEAD do workspace e hash da última revisão de cada artifact.
+- `POST /runs/:runId/resume` — valida o snapshot contra o estado atual. Qualquer divergência responde `409` com diagnósticos por campo e a opção explícita de restart (`POST /projects/:id/retry`). Validação ok re-enfileira o run; steps concluídos não são reexecutados.
+- `GET /runs/:runId` — trilha consultável run -> step -> attempt -> artifact -> commit.
+- `GET /runs/:runId/steps/:stepRunId/retry-plan` — mostra quais steps e artifacts um retry invalidaria.
+- `POST /runs/:runId/steps/:stepRunId/retry` — body `{ mode: 'preserve' | 'invalidate', override?: { provider, model } }`. Reexecuta só o step alvo (preserve) ou também os descendentes (invalidate). O histórico anterior nunca é sobrescrito: step runs antigos ganham `invalidatedAt`. Steps que mutam o workspace voltam ao checkpoint registrado no attempt original antes de reexecutar.
 
 ## Observabilidade
 

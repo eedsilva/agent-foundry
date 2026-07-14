@@ -66,6 +66,83 @@ describe('run state transitions', () => {
     );
   });
 
+  it('re-queues a completed run for step retry, clearing completedAt and keeping the directive', () => {
+    const completed: WorkflowRun = {
+      id: 'run-1',
+      projectId: 'project-1',
+      workflowId: 'workflow-1',
+      status: 'completed',
+      version: 3,
+      createdAt: '2026-07-14T11:00:00.000Z',
+      updatedAt: '2026-07-14T13:00:00.000Z',
+      startedAt: '2026-07-14T12:00:00.000Z',
+      completedAt: '2026-07-14T13:00:00.000Z',
+    };
+    const directive = {
+      stepRunId: 'step-run-1',
+      nodeId: 'node-1',
+      stepId: 'step-1',
+      mode: 'preserve' as const,
+      requestedAt: now.toISOString(),
+    };
+
+    const queued = domain.transitionWorkflowRun(completed, 'queued', now, { retry: directive });
+
+    expect(queued.status).toBe('queued');
+    expect(queued.completedAt).toBeUndefined();
+    expect(queued.startedAt).toBe('2026-07-14T12:00:00.000Z');
+    expect(queued.retry).toEqual(directive);
+
+    // Reaching a terminal state consumes the directive.
+    const running = domain.transitionWorkflowRun(queued, 'running', now);
+    const done = domain.transitionWorkflowRun(
+      running,
+      'completed',
+      new Date('2026-07-14T14:00:00.000Z'),
+    );
+    expect(done.retry).toBeUndefined();
+  });
+
+  it('drops the pause snapshot when a paused run re-queues for resume', () => {
+    const paused: WorkflowRun = {
+      id: 'run-1',
+      projectId: 'project-1',
+      workflowId: 'workflow-1',
+      status: 'paused',
+      version: 4,
+      createdAt: '2026-07-14T11:00:00.000Z',
+      updatedAt: '2026-07-14T13:00:00.000Z',
+      startedAt: '2026-07-14T12:00:00.000Z',
+      pause: {
+        workflowHash: 'a'.repeat(64),
+        harnessVersion: '1',
+        workspaceHead: 'head-1',
+        artifactHashes: { plan: 'b'.repeat(64) },
+        resumeNodeId: 'node-2',
+      },
+    };
+
+    const queued = domain.transitionWorkflowRun(paused, 'queued', now);
+    expect(queued.pause).toBeUndefined();
+  });
+
+  it('allows a pause requested during the final step to complete', () => {
+    const pauseRequested: WorkflowRun = {
+      id: 'run-1',
+      projectId: 'project-1',
+      workflowId: 'workflow-1',
+      status: 'pause_requested',
+      version: 4,
+      createdAt: '2026-07-14T11:00:00.000Z',
+      updatedAt: '2026-07-14T13:00:00.000Z',
+      startedAt: '2026-07-14T12:00:00.000Z',
+    };
+
+    const done = domain.transitionWorkflowRun(pauseRequested, 'completed', now);
+    expect(done.status).toBe('completed');
+    expect(done.completedAt).toBe(now.toISOString());
+  });
+
   it('transitions step and attempt failures with sanitized errors', () => {
     const step: StepRun = {
       id: 'step-run-1',
@@ -136,12 +213,12 @@ describe('run state transitions', () => {
     const allowed: Record<WorkflowRunStatus, WorkflowRunStatus[]> = {
       queued: ['running', 'cancel_requested', 'cancelled', 'failed'],
       running: ['pause_requested', 'cancel_requested', 'completed', 'failed'],
-      pause_requested: ['paused', 'cancel_requested', 'failed'],
-      paused: ['running', 'cancel_requested', 'cancelled', 'failed'],
+      pause_requested: ['paused', 'cancel_requested', 'completed', 'failed'],
+      paused: ['queued', 'running', 'cancel_requested', 'cancelled', 'failed'],
       cancel_requested: ['cancelled', 'failed'],
       cancelled: [],
-      completed: [],
-      failed: [],
+      completed: ['queued'],
+      failed: ['queued'],
     };
 
     for (const from of statuses) {

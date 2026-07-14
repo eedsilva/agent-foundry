@@ -27,6 +27,10 @@ export const ArtifactMetadataSchema = z.object({
   stepRunId: PathSegmentSchema.optional(),
   attemptId: PathSegmentSchema.optional(),
   routeDecision: RouteDecisionSchema.optional(),
+  idempotencyKey: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   sha256: z.string(),
 });
 export type ArtifactMetadata = z.infer<typeof ArtifactMetadataSchema>;
@@ -48,6 +52,12 @@ export const ProjectEventSchema = z.object({
     'project.failed',
     'run.cancel_requested',
     'run.cancelled',
+    'run.pause_requested',
+    'run.paused',
+    'run.resume_requested',
+    'run.resume_blocked',
+    'step.reused',
+    'step.retry_requested',
     'node.started',
     'node.completed',
     'node.failed',
@@ -66,6 +76,7 @@ export const ProjectEventSchema = z.object({
   nodeId: PathSegmentSchema.optional(),
   runId: PathSegmentSchema.optional(),
   message: z.string(),
+  dedupeKey: z.string().min(1).optional(),
   data: z.record(z.string(), z.unknown()).default({}),
 });
 export type ProjectEvent = z.infer<typeof ProjectEventSchema>;

@@ -308,6 +308,9 @@ class FakeWorkspaces implements WorkspaceManager {
     this.commits.push(message);
     return Promise.resolve(`commit-${String(this.commits.length)}`);
   }
+  head(): Promise<string | null> {
+    return Promise.resolve(null);
+  }
 }
 
 type ExecutorBehavior = 'instant' | 'reject-on-abort' | 'resolve-on-abort';
@@ -412,6 +415,7 @@ function makeHarness(
   };
   const harness: HarnessRepository = {
     select: () => Promise.resolve({ version: '1', files: [], combined: '' }),
+    version: () => Promise.resolve('1'),
   };
   const router: ModelRouter = {
     route: (profile) =>
@@ -478,10 +482,14 @@ function makeHarness(
   const service = new ProjectService(
     projects,
     runs,
+    stepRuns,
+    stepAttempts,
     artifacts,
     events,
     queue,
     workflows,
+    harness,
+    router,
     workspaces,
     clock,
     ids,

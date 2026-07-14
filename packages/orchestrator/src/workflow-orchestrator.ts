@@ -8,6 +8,8 @@ import type {
   QualityLoopStep,
   RankedModel,
   RunError,
+  RunPauseSnapshot,
+  RunRetryDirective,
   RouteDecision,
   StepAttempt,
   StepRun,
@@ -41,6 +43,7 @@ import {
   NotFoundError,
   QualityGateError,
   RunCancelledError,
+  RunPausedError,
   errorMessage,
   getValueAtPath,
   transitionStepAttempt,
@@ -48,6 +51,7 @@ import {
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
 import { buildTaskProfile } from './task-profiler.js';
+import { stepIdempotencyKey, workflowHash } from './idempotency.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 
 interface OrchestratorOptions {
@@ -96,18 +100,27 @@ export class WorkflowOrchestrator {
         `Run ${run.id} does not belong to project/workflow ${projectId}/${workflow.id}`,
       );
     }
-    if (run.status === 'cancelled') return;
+    // Redelivery of an already-finished run (e.g. a crash between the final
+    // state write and the queue ack) must be a no-op.
+    if (run.status === 'cancelled' || run.status === 'completed' || run.status === 'failed') return;
     if (run.status === 'cancel_requested') {
       await this.finalizeCancellation(run.id, projectId);
       return;
     }
-    run = await this.runs.update(
-      transitionWorkflowRun(run, 'running', this.clock.now()),
-      run.version,
-    );
+    if (run.status === 'pause_requested') {
+      await this.finalizePause(run.id, projectId, workflow);
+      return;
+    }
+    if (run.status !== 'running') {
+      run = await this.runs.update(
+        transitionWorkflowRun(run, 'running', this.clock.now()),
+        run.version,
+      );
+    }
     await this.syncProjectSummary(run);
     await this.emit(projectId, 'project.started', `Workflow ${workflow.id} started.`, {
       runId: run.id,
+      dedupeKey: `${run.id}:project.started`,
     });
 
     const cancellation = new AbortController();
@@ -119,11 +132,13 @@ export class WorkflowOrchestrator {
         await this.emit(projectId, 'node.started', node.title, {
           nodeId: node.id,
           runId: run.id,
+          dedupeKey: `${run.id}:node:${node.id}:started`,
         });
         await this.executeNode(project, workflow, node, run.id, cancellation.signal);
         await this.emit(projectId, 'node.completed', node.title, {
           nodeId: node.id,
           runId: run.id,
+          dedupeKey: `${run.id}:node:${node.id}:completed`,
         });
       }
       const latest = await this.requireRun(run.id);
@@ -132,16 +147,22 @@ export class WorkflowOrchestrator {
         latest.version,
       );
       await this.syncProjectSummary(run);
+      // No dedupe key here: a terminal run early-returns on redelivery, and a
+      // step retry legitimately completes the same run a second time.
       await this.emit(projectId, 'project.completed', `Workflow ${workflow.id} completed.`, {
         runId: run.id,
       });
     } catch (error) {
+      if (error instanceof RunPausedError) {
+        await this.finalizePause(run.id, projectId, workflow, error.nodeId);
+        return;
+      }
       if (isCancellation(error, cancellation.signal)) {
         await this.finalizeCancellation(run.id, projectId);
         return;
       }
       const latest = await this.requireRun(run.id);
-      if (latest.status === 'running') {
+      if (latest.status === 'running' || latest.status === 'pause_requested') {
         run = await this.runs.update(
           transitionWorkflowRun(latest, 'failed', this.clock.now(), { error: runError(error) }),
           latest.version,
@@ -200,6 +221,66 @@ export class WorkflowOrchestrator {
     await this.emit(projectId, 'run.cancelled', 'Workflow run cancelled.', { runId });
   }
 
+  /**
+   * Turns a pause request into a paused run at a step boundary, capturing the
+   * compatibility snapshot resume validates against. A cancel that raced the
+   * pause wins.
+   */
+  private async finalizePause(
+    runId: string,
+    projectId: string,
+    workflow: WorkflowDefinition,
+    resumeNodeId?: string,
+  ): Promise<void> {
+    let run = await this.requireRun(runId);
+    if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+      await this.finalizeCancellation(runId, projectId);
+      return;
+    }
+    if (run.status === 'pause_requested') {
+      const snapshot = await this.pauseSnapshot(projectId, workflow, resumeNodeId);
+      run = await this.runs.update(
+        transitionWorkflowRun(run, 'paused', this.clock.now(), { pause: snapshot }),
+        run.version,
+      );
+    }
+    await this.syncProjectSummary(run);
+    await this.emit(
+      projectId,
+      'run.paused',
+      resumeNodeId ? `Run paused before ${resumeNodeId}.` : 'Run paused.',
+      {
+        runId,
+        ...(resumeNodeId ? { nodeId: resumeNodeId } : {}),
+        data: { ...(resumeNodeId ? { resumeNodeId } : {}) },
+      },
+    );
+  }
+
+  private async pauseSnapshot(
+    projectId: string,
+    workflow: WorkflowDefinition,
+    resumeNodeId?: string,
+  ): Promise<RunPauseSnapshot> {
+    const metadata = await this.artifacts.listMetadata(projectId);
+    const latest = new Map<string, { revision: number; sha256: string }>();
+    for (const item of metadata) {
+      const current = latest.get(item.name);
+      if (!current || current.revision < item.revision) {
+        latest.set(item.name, { revision: item.revision, sha256: item.sha256 });
+      }
+    }
+    return {
+      workflowHash: workflowHash(workflow),
+      harnessVersion: await this.harness.version(),
+      workspaceHead: await this.workspaces.head(projectId),
+      artifactHashes: Object.fromEntries(
+        [...latest.entries()].map(([name, item]) => [name, item.sha256]),
+      ),
+      ...(resumeNodeId ? { resumeNodeId } : {}),
+    };
+  }
+
   private async executeNode(
     project: Project,
     workflow: WorkflowDefinition,
@@ -250,6 +331,7 @@ export class WorkflowOrchestrator {
         await this.emit(project.id, 'quality.approved', `${node.title} approved.`, {
           runId,
           nodeId: node.id,
+          dedupeKey: `${runId}:quality:${node.id}:${iteration}:approved`,
           data: { iteration },
         });
         return latest;
@@ -259,6 +341,7 @@ export class WorkflowOrchestrator {
       await this.emit(project.id, 'quality.repair_requested', `${node.title} requires repair.`, {
         runId,
         nodeId: node.id,
+        dedupeKey: `${runId}:quality:${node.id}:${iteration}:repair_requested`,
         data: { iteration },
       });
       qualitySubject = await this.executeStep(
@@ -294,6 +377,44 @@ export class WorkflowOrchestrator {
     iteration?: number,
   ): Promise<StoredArtifact> {
     throwIfCancelled(signal, runId);
+    const run = await this.requireRun(runId);
+    // Pause only takes effect between steps: an in-flight step always
+    // finishes (or fails) before the run parks.
+    if (run.status === 'pause_requested') throw new RunPausedError(runId, nodeId);
+
+    const inputArtifacts =
+      step.type === 'agent' ? await this.loadInputArtifacts(project.id, step.inputArtifacts) : [];
+    const idempotencyKey = stepIdempotencyKey({
+      runId,
+      nodeId,
+      step,
+      iteration,
+      inputs: inputArtifacts.map(artifactReference),
+    });
+    const directive = run.retry;
+    const isRetryTarget =
+      directive !== undefined &&
+      directive.nodeId === nodeId &&
+      directive.stepId === step.id &&
+      (directive.iteration ?? null) === (iteration ?? null);
+
+    if (!isRetryTarget) {
+      const reused = await this.reuseCompletedStep({
+        project,
+        step,
+        runId,
+        nodeId,
+        iteration,
+        idempotencyKey,
+        preserve: directive?.mode === 'preserve',
+      });
+      if (reused) return reused;
+    } else if (directive.checkpoint && step.type === 'agent' && step.mutatesWorkspace) {
+      // A retried mutable step starts from the checkpoint its original
+      // attempt recorded, not from whatever the workspace drifted to.
+      await this.workspaces.rollback(project.id, directive.checkpoint);
+    }
+
     const timestamp = this.clock.now().toISOString();
     let stepRun: StepRun = {
       id: this.ids.next(),
@@ -302,6 +423,7 @@ export class WorkflowOrchestrator {
       stepId: step.id,
       stepType: step.type,
       ...(iteration ? { iteration } : {}),
+      idempotencyKey,
       status: 'pending',
       version: 1,
       createdAt: timestamp,
@@ -317,7 +439,12 @@ export class WorkflowOrchestrator {
     try {
       const artifact =
         step.type === 'agent'
-          ? await this.executeAgentStep(project, workflow, step, runId, stepRun, signal, iteration)
+          ? await this.executeAgentStep(project, workflow, step, runId, stepRun, signal, {
+              inputArtifacts,
+              idempotencyKey,
+              ...(isRetryTarget && directive.override ? { override: directive.override } : {}),
+              ...(iteration ? { iteration } : {}),
+            })
           : await this.executeVerifyStep(
               project,
               workflow,
@@ -325,6 +452,7 @@ export class WorkflowOrchestrator {
               runId,
               stepRun,
               signal,
+              idempotencyKey,
               iteration,
             );
       stepRun = await this.stepRuns.update(
@@ -351,6 +479,154 @@ export class WorkflowOrchestrator {
     }
   }
 
+  /**
+   * Idempotent replay: when this step already completed under the same key
+   * (or was explicitly preserved by a retry directive), reuse its artifact
+   * instead of re-executing. Also recovers a walk that crashed between the
+   * artifact write and the state write — the stale running records are
+   * finalized against the orphaned artifact, and stale records without an
+   * artifact are failed so the step re-executes cleanly.
+   */
+  private async reuseCompletedStep(input: {
+    project: Project;
+    step: ExecutableStep;
+    runId: string;
+    nodeId: string;
+    iteration?: number | undefined;
+    idempotencyKey: string;
+    preserve: boolean;
+  }): Promise<StoredArtifact | null> {
+    const { project, step, runId, nodeId, iteration, idempotencyKey, preserve } = input;
+    const siblings = (await this.stepRuns.list(runId)).filter(
+      (candidate) =>
+        candidate.nodeId === nodeId &&
+        candidate.stepId === step.id &&
+        (candidate.iteration ?? null) === (iteration ?? null) &&
+        !candidate.invalidatedAt,
+    );
+
+    const completed = siblings
+      .filter(
+        (candidate) =>
+          candidate.status === 'completed' &&
+          (candidate.idempotencyKey === idempotencyKey || preserve),
+      )
+      .at(-1);
+    if (completed) {
+      const artifact = await this.artifactForStepRun(project.id, runId, completed, step);
+      if (artifact) {
+        await this.emitStepReused(project.id, runId, nodeId, completed, artifact);
+        return artifact;
+      }
+    }
+
+    let adopted: StoredArtifact | null = null;
+    for (const stale of siblings.filter((candidate) => candidate.status === 'running')) {
+      const attempts = await this.stepAttempts.list(runId, stale.id);
+      const running = attempts.filter((attempt) => attempt.status === 'running');
+      const orphan: StoredArtifact | null =
+        !adopted && stale.idempotencyKey === idempotencyKey
+          ? await this.findArtifactByKey(project.id, step.outputArtifact, idempotencyKey)
+          : null;
+      if (orphan) {
+        const last = running.at(-1);
+        if (last) {
+          await this.stepAttempts.update(
+            transitionStepAttempt(last, 'succeeded', this.clock.now(), {
+              outputArtifacts: [artifactReference(orphan)],
+            }),
+            last.version,
+          );
+        }
+        for (const attempt of running.slice(0, -1)) {
+          await this.failInterrupted(attempt);
+        }
+        const finalized = await this.stepRuns.update(
+          transitionStepRun(stale, 'completed', this.clock.now()),
+          stale.version,
+        );
+        await this.emitStepReused(project.id, runId, nodeId, finalized, orphan);
+        adopted = orphan;
+      } else {
+        for (const attempt of running) {
+          await this.failInterrupted(attempt);
+        }
+        await this.stepRuns.update(
+          transitionStepRun(stale, 'failed', this.clock.now(), {
+            error: {
+              name: 'ExecutionError',
+              message: 'Interrupted before completion; superseded by replay.',
+            },
+          }),
+          stale.version,
+        );
+      }
+    }
+    return adopted;
+  }
+
+  private async failInterrupted(attempt: StepAttempt): Promise<void> {
+    await this.stepAttempts.update(
+      transitionStepAttempt(attempt, 'failed', this.clock.now(), {
+        error: {
+          name: 'ExecutionError',
+          message: 'Interrupted before completion; superseded by replay.',
+        },
+      }),
+      attempt.version,
+    );
+  }
+
+  private async emitStepReused(
+    projectId: string,
+    runId: string,
+    nodeId: string,
+    stepRun: StepRun,
+    artifact: StoredArtifact,
+  ): Promise<void> {
+    await this.emit(
+      projectId,
+      'step.reused',
+      `${stepRun.stepId} reused ${artifact.metadata.name} r${artifact.metadata.revision}.`,
+      {
+        nodeId,
+        runId,
+        dedupeKey: `${runId}:step:${stepRun.id}:reused`,
+        data: {
+          stepRunId: stepRun.id,
+          artifact: artifact.metadata.name,
+          revision: artifact.metadata.revision,
+        },
+      },
+    );
+  }
+
+  private async artifactForStepRun(
+    projectId: string,
+    runId: string,
+    stepRun: StepRun,
+    step: ExecutableStep,
+  ): Promise<StoredArtifact | null> {
+    const attempts = await this.stepAttempts.list(runId, stepRun.id);
+    const succeeded = attempts.filter((attempt) => attempt.status === 'succeeded').at(-1);
+    if (!succeeded) return null;
+    const reference =
+      succeeded.outputArtifacts.find((output) => output.name === step.outputArtifact) ??
+      succeeded.outputArtifacts[0];
+    if (!reference) return null;
+    return this.artifacts.getRevision(projectId, reference.name, reference.revision);
+  }
+
+  private async findArtifactByKey(
+    projectId: string,
+    name: string,
+    idempotencyKey: string,
+  ): Promise<StoredArtifact | null> {
+    const metadata = await this.artifacts.listMetadata(projectId, name);
+    const match = metadata.find((item) => item.idempotencyKey === idempotencyKey);
+    return match ? this.artifacts.getRevision(projectId, name, match.revision) : null;
+  }
+
   private async executeVerifyStep(
     project: Project,
     workflow: WorkflowDefinition,
@@ -358,6 +634,7 @@ export class WorkflowOrchestrator {
     runId: string,
     stepRun: StepRun,
     signal: AbortSignal,
+    idempotencyKey: string,
     iteration?: number,
   ): Promise<StoredArtifact> {
     const timestamp = this.clock.now().toISOString();
@@ -404,6 +681,7 @@ export class WorkflowOrchestrator {
         runId,
         stepRunId: stepRun.id,
         attemptId: attempt.id,
+        idempotencyKey,
       });
       attempt = await this.stepAttempts.update(
         transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
@@ -441,9 +719,14 @@ export class WorkflowOrchestrator {
     runId: string,
     stepRun: StepRun,
     signal: AbortSignal,
-    loopIteration?: number,
+    options: {
+      inputArtifacts: StoredArtifact[];
+      idempotencyKey: string;
+      override?: RunRetryDirective['override'];
+      iteration?: number;
+    },
   ): Promise<StoredArtifact> {
-    const inputArtifacts = await this.loadInputArtifacts(project.id, step.inputArtifacts);
+    const { inputArtifacts, idempotencyKey, override, iteration: loopIteration } = options;
     const harness = await this.harness.select({
       role: step.role,
       taskKind: step.taskKind,
@@ -469,7 +752,10 @@ export class WorkflowOrchestrator {
       },
     );
 
-    const candidates = [route.selected, ...route.fallbacks].slice(0, step.maxAttempts);
+    // An explicit override skips fallbacks: the user chose the model.
+    const candidates = override
+      ? [await this.resolveOverrideCandidate(override, route)]
+      : [route.selected, ...route.fallbacks].slice(0, step.maxAttempts);
     const checkpoint = step.mutatesWorkspace
       ? await this.workspaces.checkpoint(project.id, `${step.id}-${runId}`)
       : null;
@@ -481,6 +767,7 @@ export class WorkflowOrchestrator {
         {
           nodeId: step.id,
           runId,
+          dedupeKey: `${runId}:checkpoint:${checkpoint}:${stepRun.id}`,
           data: { checkpoint },
         },
       );
@@ -557,9 +844,9 @@ export class WorkflowOrchestrator {
           candidate,
           signal,
         );
-        if (step.mutatesWorkspace) {
-          await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`);
-        }
+        const commit = step.mutatesWorkspace
+          ? await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`)
+          : null;
         const executionRoute: RouteDecision = {
           ...route,
           executed: candidate,
@@ -574,6 +861,7 @@ export class WorkflowOrchestrator {
           stepRunId: stepRun.id,
           attemptId: attempt.id,
           routeDecision: executionRoute,
+          idempotencyKey,
         });
         const auditArtifact = await this.persistRunRecord(
           project.id,
@@ -592,6 +880,7 @@ export class WorkflowOrchestrator {
             durationMs: result.durationMs,
             ...(result.executedModel ? { executedModel: result.executedModel } : {}),
             ...(result.usage ? { usage: result.usage } : {}),
+            ...(commit ? { commit } : {}),
             routeDecision: executionRoute,
             outputArtifacts: [artifactReference(artifact), artifactReference(auditArtifact)],
           }),
@@ -678,6 +967,39 @@ export class WorkflowOrchestrator {
     throw lastError instanceof Error
       ? lastError
       : new ExecutionError(`All candidates failed for step ${step.id}`);
+  }
+
+  /**
+   * Resolves an explicit retry override to a routable candidate. Prefers the
+   * scored entry the router produced; falls back to the raw catalog entry
+   * with a zeroed score so the audit trail stays schema-valid.
+   */
+  private async resolveOverrideCandidate(
+    override: NonNullable<RunRetryDirective['override']>,
+    route: RouteDecision,
+  ): Promise<RankedModel> {
+    const scored = [route.selected, ...route.fallbacks].find(
+      (candidate) => candidate.model.id === override.modelId,
+    );
+    if (scored) return scored;
+    const definition = (await this.router.catalog()).find((model) => model.id === override.modelId);
+    if (!definition) {
+      throw new ExecutionError(`Override model ${override.modelId} is not in the catalog`);
+    }
+    return {
+      model: definition,
+      score: {
+        capability: 0,
+        context: 0,
+        speed: 0,
+        cost: 0,
+        reliability: 0,
+        historical: 0,
+        tagAffinity: 0,
+        estimatedCostUsd: null,
+        total: 0,
+      },
+    };
   }
 
   private async executeCandidate(
@@ -902,6 +1224,7 @@ export class WorkflowOrchestrator {
       {
         nodeId,
         ...(runId ? { runId } : {}),
+        dedupeKey: `${projectId}:artifact:${artifact.metadata.name}:r${artifact.metadata.revision}`,
         data: {
           name: artifact.metadata.name,
           revision: artifact.metadata.revision,
@@ -995,6 +1318,7 @@ export class WorkflowOrchestrator {
     options: {
       nodeId?: string;
       runId?: string;
+      dedupeKey?: string;
       data?: Record<string, unknown>;
     } = {},
   ): Promise<void> {
@@ -1005,6 +1329,7 @@ export class WorkflowOrchestrator {
       createdAt: this.clock.now().toISOString(),
       ...(options.nodeId ? { nodeId: options.nodeId } : {}),
       ...(options.runId ? { runId: options.runId } : {}),
+      ...(options.dedupeKey ? { dedupeKey: options.dedupeKey } : {}),
       message,
       data: options.data ?? {},
     });

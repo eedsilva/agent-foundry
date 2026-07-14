@@ -58,6 +58,44 @@ export const ArtifactReferenceSchema = z
   .strict();
 export type ArtifactReference = z.infer<typeof ArtifactReferenceSchema>;
 
+export const IdempotencyKeySchema = z.string().regex(/^[a-f0-9]{64}$/);
+
+/**
+ * Compatibility snapshot captured when a run pauses. Resume compares each
+ * field against the live system and blocks with a diagnostic on mismatch.
+ */
+export const RunPauseSnapshotSchema = z
+  .object({
+    workflowHash: IdempotencyKeySchema,
+    harnessVersion: z.string().min(1),
+    workspaceHead: z.string().min(1).nullable(),
+    artifactHashes: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/)),
+    resumeNodeId: PathSegmentSchema.optional(),
+  })
+  .strict();
+export type RunPauseSnapshot = z.infer<typeof RunPauseSnapshotSchema>;
+
+export const RunRetryDirectiveSchema = z
+  .object({
+    stepRunId: PathSegmentSchema,
+    nodeId: PathSegmentSchema,
+    stepId: PathSegmentSchema,
+    iteration: z.number().int().positive().optional(),
+    mode: z.enum(['preserve', 'invalidate']),
+    override: z
+      .object({
+        modelId: PathSegmentSchema,
+        provider: ProviderSchema.exclude(['mock']),
+        model: z.string(),
+      })
+      .strict()
+      .optional(),
+    checkpoint: z.string().min(1).optional(),
+    requestedAt: z.string().datetime(),
+  })
+  .strict();
+export type RunRetryDirective = z.infer<typeof RunRetryDirectiveSchema>;
+
 export const WorkflowRunSchema = z
   .object({
     id: PathSegmentSchema,
@@ -71,6 +109,8 @@ export const WorkflowRunSchema = z
     completedAt: z.string().datetime().optional(),
     currentStepRunId: PathSegmentSchema.optional(),
     error: RunErrorSchema.optional(),
+    pause: RunPauseSnapshotSchema.optional(),
+    retry: RunRetryDirectiveSchema.optional(),
   })
   .strict()
   .superRefine((run, context) => {
@@ -86,6 +126,20 @@ export const WorkflowRunSchema = z
         code: 'custom',
         path: ['error'],
         message: 'Only failed runs may retain an error',
+      });
+    }
+    if (run.pause && run.status !== 'paused') {
+      context.addIssue({
+        code: 'custom',
+        path: ['pause'],
+        message: 'Only paused runs may retain a pause snapshot',
+      });
+    }
+    if (run.retry && ['completed', 'failed', 'cancelled'].includes(run.status)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['retry'],
+        message: 'Terminal runs may not retain a retry directive',
       });
     }
   });
@@ -105,6 +159,9 @@ export const StepRunSchema = z
     updatedAt: z.string().datetime(),
     startedAt: z.string().datetime().optional(),
     completedAt: z.string().datetime().optional(),
+    idempotencyKey: IdempotencyKeySchema.optional(),
+    invalidatedAt: z.string().datetime().optional(),
+    invalidationReason: z.string().min(1).optional(),
     error: RunErrorSchema.optional(),
   })
   .strict()
@@ -144,6 +201,7 @@ export const StepAttemptSchema = z
     startedAt: z.string().datetime(),
     completedAt: z.string().datetime().optional(),
     checkpoint: z.string().min(1).optional(),
+    commit: z.string().min(1).optional(),
     durationMs: z.number().nonnegative().optional(),
     usage: ExecutionUsageSchema.optional(),
     error: RunErrorSchema.optional(),

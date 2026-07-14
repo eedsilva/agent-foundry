@@ -84,3 +84,36 @@ export class RunCancelledError extends Error {
     super(runId ? `Workflow run ${runId} was cancelled.` : 'Execution was cancelled.');
   }
 }
+
+/** Control-flow signal: a pause was requested and the run reached a step boundary. */
+export class RunPausedError extends Error {
+  override readonly name = 'RunPausedError';
+
+  constructor(
+    readonly runId: string,
+    readonly nodeId?: string,
+  ) {
+    super(`Workflow run ${runId} paused before ${nodeId ?? 'the next step'}.`);
+  }
+}
+
+export interface ResumeDiagnostic {
+  field: string;
+  expected: string;
+  actual: string;
+}
+
+export class ResumeBlockedError extends Error {
+  override readonly name = 'ResumeBlockedError';
+
+  constructor(
+    readonly runId: string,
+    readonly diagnostics: ResumeDiagnostic[],
+  ) {
+    super(
+      `Workflow run ${runId} cannot resume: ` +
+        diagnostics.map((item) => `${item.field} changed`).join(', ') +
+        '. Restart the project to run against the current state.',
+    );
+  }
+}
