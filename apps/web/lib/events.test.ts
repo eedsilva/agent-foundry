@@ -31,4 +31,8 @@ describe('mergeEvents', () => {
     const current = mergeEvents([a, b], []);
     expect(mergeEvents(current, [a])).toBe(current);
   });
+
+  it('takes the ordered fast path when incoming is strictly after current', () => {
+    expect(mergeEvents([a], [b, c]).map((e) => e.id)).toEqual([a.id, b.id, c.id]);
+  });
 });

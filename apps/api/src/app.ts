@@ -22,8 +22,10 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     bodyLimit: 1_000_000,
   });
 
+  const allowedOrigins = runtime.config.webOrigin.split(',').map((origin) => origin.trim());
+
   await app.register(cors, {
-    origin: runtime.config.webOrigin.split(',').map((origin) => origin.trim()),
+    origin: allowedOrigins,
     methods: ['GET', 'POST', 'OPTIONS'],
   });
 
@@ -103,7 +105,8 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
   app.get('/projects/:projectId/events/stream', async (request, reply) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
     const { cursor } = z.object({ cursor: z.string().min(1).optional() }).parse(request.query);
-    await runtime.projectService.get(projectId); // NotFoundError -> 404 before headers
+    const project = await runtime.projects.get(projectId); // cheap existence check before headers
+    if (!project) throw new NotFoundError(`Project ${projectId} not found`);
 
     const lastEventId = request.headers['last-event-id'];
     let lastId =
@@ -112,12 +115,13 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     reply.hijack();
     const raw = reply.raw;
     const origin = request.headers.origin;
-    const allowed = runtime.config.webOrigin.split(',').map((entry) => entry.trim());
     raw.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',
       connection: 'keep-alive',
-      ...(origin && allowed.includes(origin) ? { 'access-control-allow-origin': origin } : {}),
+      ...(origin && allowedOrigins.includes(origin)
+        ? { 'access-control-allow-origin': origin }
+        : {}),
     });
     raw.write(': connected\n\n');
 

@@ -6,6 +6,7 @@ import type {
   ProjectEvent,
   ResumeBlockedResponse,
   RetryPlanResponse,
+  RouteDecision,
   RunDetailResponse,
   StepRun,
   StoredArtifact,
@@ -24,12 +25,20 @@ import { mergeEvents } from '../../../lib/events';
 
 const PROJECT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
+const rowStyle = { display: 'flex', alignItems: 'center', gap: '0.75rem' } as const;
+
+const formatSeconds = (ms: number) => `${Math.round(ms / 1000)}s`;
+
+function isFallback(route: RouteDecision | undefined): boolean {
+  return Boolean(route?.executed && route.executed.model.id !== route.selected.model.id);
+}
+
 function eventBadges(event: ProjectEvent): string[] {
   const data = event.data;
   const badges: string[] = [];
   if (typeof data.modelId === 'string') badges.push(data.modelId);
   if (typeof data.provider === 'string') badges.push(data.provider);
-  if (typeof data.durationMs === 'number') badges.push(`${Math.round(data.durationMs / 1000)}s`);
+  if (typeof data.durationMs === 'number') badges.push(formatSeconds(data.durationMs));
   if (Array.isArray(data.fallbacks) && data.fallbacks.length > 0) {
     badges.push(`fallbacks: ${data.fallbacks.join(', ')}`);
   }
@@ -316,7 +325,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           <div className="artifactList">
             {runDetail.steps.map(({ step, attempts }) => (
               <div key={step.id}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={rowStyle}>
                   <span style={{ flex: 1 }}>
                     <strong>{step.stepId}</strong>
                     <small>
@@ -337,18 +346,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   ) : null}
                 </div>
                 {attempts.map((attempt) => {
-                  const usedFallback = Boolean(
-                    attempt.routeDecision?.executed &&
-                    attempt.routeDecision.executed.model.id !==
-                      attempt.routeDecision.selected.model.id,
-                  );
+                  const usedFallback = isFallback(attempt.routeDecision);
                   return (
                     <div key={attempt.id} style={{ paddingLeft: '1.5rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <div style={rowStyle}>
                         <small style={{ flex: 1 }}>
                           #{attempt.sequence} · {attempt.model} → {attempt.executedModel ?? '—'}
                           {attempt.durationMs !== undefined
-                            ? ` · ${Math.round(attempt.durationMs / 1000)}s`
+                            ? ` · ${formatSeconds(attempt.durationMs)}`
                             : ''}
                           {usedFallback ? ' · fallback' : ''}
                         </small>
@@ -374,7 +379,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         <div className="routeGrid">
           {routes.map(({ artifact, route }) => {
             const executed = route.executed ?? route.selected;
-            const usedFallback = executed.model.id !== route.selected.model.id;
+            const usedFallback = isFallback(route);
             return (
               <article key={`${artifact}-${route.routeId}`}>
                 <p className="eyebrow">{artifact}</p>
