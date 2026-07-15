@@ -16,6 +16,7 @@ import {
   type ProviderProbe,
 } from '@agent-foundry/contracts';
 import { AgyCliExecutor, ClaudeCliExecutor, CodexCliExecutor } from '@agent-foundry/executors';
+import { markdownCell, publishBaselinePair } from './baseline-publish.js';
 import { PROVIDER_CANARY_FIXTURES } from './provider-canary-fixtures.js';
 
 const PROVIDERS = ['codex', 'claude', 'agy'] as const;
@@ -187,78 +188,20 @@ export async function freezeProviderCanaryReport(
   }
 
   const baselineDirectory = join(rootDir, 'docs', 'baselines');
-  const jsonPath = join(baselineDirectory, `${BASELINE_STEM}.json`);
-  const markdownPath = join(baselineDirectory, `${BASELINE_STEM}.md`);
-  const temporarySuffix = `.${process.pid}-${Date.now()}.tmp`;
-  const temporaryJsonPath = `${jsonPath}${temporarySuffix}`;
-  const temporaryMarkdownPath = `${markdownPath}${temporarySuffix}`;
-  const backupJsonPath = `${jsonPath}${temporarySuffix}.backup`;
-  const backupMarkdownPath = `${markdownPath}${temporarySuffix}.backup`;
-  const renameFile = options.rename ?? rename;
-  const removeFile = options.rm ?? rm;
-  let jsonBackedUp = false;
-  let markdownBackedUp = false;
-  let jsonPublished = false;
-  let markdownPublished = false;
-
-  await mkdir(baselineDirectory, { recursive: true });
-  try {
-    await Promise.all([
-      writeFile(temporaryJsonPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' }),
-      writeFile(temporaryMarkdownPath, renderProviderCanaryMarkdown(report), { flag: 'wx' }),
-    ]);
-    jsonBackedUp = await renameIfPresent(jsonPath, backupJsonPath, renameFile);
-    markdownBackedUp = await renameIfPresent(markdownPath, backupMarkdownPath, renameFile);
-    await renameFile(temporaryJsonPath, jsonPath);
-    jsonPublished = true;
-    await renameFile(temporaryMarkdownPath, markdownPath);
-    markdownPublished = true;
-  } catch (error) {
-    try {
-      if (jsonPublished) await removeFile(jsonPath, { force: true, recursive: true });
-      if (markdownPublished) await removeFile(markdownPath, { force: true, recursive: true });
-      if (jsonBackedUp) await renameFile(backupJsonPath, jsonPath);
-      if (markdownBackedUp) await renameFile(backupMarkdownPath, markdownPath);
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
+  await publishBaselinePair(
+    join(baselineDirectory, `${BASELINE_STEM}.json`),
+    join(baselineDirectory, `${BASELINE_STEM}.md`),
+    `${JSON.stringify(report, null, 2)}\n`,
+    renderProviderCanaryMarkdown(report),
+    {
+      ...(options.rename ? { rename: options.rename } : {}),
+      ...(options.rm ? { rm: options.rm } : {}),
+      restoreFailureMessage:
         'Provider canary freeze failed and its baseline pair could not be restored.',
-      );
-    }
-    throw error;
-  } finally {
-    await Promise.all([
-      removeFile(temporaryJsonPath, { force: true }),
-      removeFile(temporaryMarkdownPath, { force: true }),
-    ]);
-  }
-  const cleanup = await Promise.allSettled([
-    removeFile(backupJsonPath, { force: true, recursive: true }),
-    removeFile(backupMarkdownPath, { force: true, recursive: true }),
-  ]);
-  const cleanupFailures = cleanup.filter(
-    (result): result is PromiseRejectedResult => result.status === 'rejected',
+      cleanupFailureMessage:
+        'Provider canary baseline pair was published but backup cleanup failed.',
+    },
   );
-  if (cleanupFailures.length > 0) {
-    throw new AggregateError(
-      cleanupFailures.map((result) => result.reason),
-      'Provider canary baseline pair was published but backup cleanup failed.',
-    );
-  }
-}
-
-async function renameIfPresent(
-  source: string,
-  destination: string,
-  renameFile: typeof rename,
-): Promise<boolean> {
-  try {
-    await renameFile(source, destination);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw error;
-  }
 }
 
 function renderProviderCanaryMarkdown(report: ProviderCanaryReport): string {
@@ -319,10 +262,6 @@ function formatUsage(usage: ProviderCanaryRun['usage']): string {
   return parts.join(', ') || 'Not reported';
 }
 
-function markdownCell(value: string): string {
-  return value.replaceAll('|', '\\|').replaceAll(/\r?\n/g, ' ');
-}
-
 function titleCase(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
@@ -351,29 +290,35 @@ function createProductionProviderCanaryDependencies(
   };
 
   return {
-    async loadProbes() {
-      const result = await execa(
-        process.execPath,
-        [join(rootDir, 'scripts', 'doctor.mjs'), '--json'],
-        {
-          cwd: rootDir,
-          env: { ...env, EXECUTOR_MODE: 'real' },
-          reject: false,
-          encoding: 'utf8',
-        },
-      );
-      try {
-        const parsed = JSON.parse(result.stdout) as { probes?: unknown };
-        if (!Array.isArray(parsed.probes)) throw new Error('missing probes');
-        return parsed.probes.map((probe) => ProviderProbeSchema.parse(probe));
-      } catch {
-        throw new Error('Provider doctor did not return valid probe JSON.');
-      }
-    },
+    loadProbes: () => loadDoctorProbes(rootDir, env),
     async execute(provider, request) {
       return executors[provider].execute(request);
     },
   };
+}
+
+/**
+ * Run the provider doctor and return schema-validated readiness probes. Shared
+ * by the canary dependencies and the dogfood runner so both load probes the
+ * same way. Throws on invalid JSON; callers decide skip-vs-fail per probe.
+ */
+export async function loadDoctorProbes(
+  rootDir: string,
+  env: NodeJS.ProcessEnv,
+): Promise<ProviderProbe[]> {
+  const result = await execa(process.execPath, [join(rootDir, 'scripts', 'doctor.mjs'), '--json'], {
+    cwd: rootDir,
+    env: { ...env, EXECUTOR_MODE: 'real' },
+    reject: false,
+    encoding: 'utf8',
+  });
+  try {
+    const parsed = JSON.parse(result.stdout) as { probes?: unknown };
+    if (!Array.isArray(parsed.probes)) throw new Error('missing probes');
+    return parsed.probes.map((probe) => ProviderProbeSchema.parse(probe));
+  } catch {
+    throw new Error('Provider doctor did not return valid probe JSON.');
+  }
 }
 
 async function executeCanaryScenario(input: {

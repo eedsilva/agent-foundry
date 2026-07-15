@@ -1,0 +1,532 @@
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { execa } from 'execa';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import {
+  DogfoodReportSchema,
+  DogfoodRunRecordSchema,
+  DogfoodTaskSchema,
+  RouteDecisionSchema,
+  type DogfoodRunRecord,
+} from '@agent-foundry/contracts';
+import { YamlWorkflowRepository } from '@agent-foundry/persistence';
+import {
+  annotateHumanEdits,
+  freezeDogfoodReport,
+  renderDogfoodMarkdown,
+  runDogfoodTask,
+} from './dogfood.js';
+
+const repoRoot = resolve(import.meta.dirname, '../../..');
+const workflowsDir = resolve(repoRoot, 'workflows');
+const tasksDir = resolve(repoRoot, 'examples/dogfood/tasks');
+
+const temporaryDirectories: string[] = [];
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
+  );
+});
+
+// Suite-lifetime dirs (e.g. the shared read-only mini fixture) survive afterEach
+// and are cleaned once at the end.
+const suiteDirectories: string[] = [];
+afterAll(async () => {
+  await Promise.all(
+    suiteDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
+  );
+});
+
+async function tempDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  temporaryDirectories.push(dir);
+  return dir;
+}
+
+async function suiteDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  suiteDirectories.push(dir);
+  return dir;
+}
+
+async function seedFixtureRepo(
+  path: string,
+  files: Record<string, string>,
+): Promise<{ path: string; sha: string }> {
+  for (const [relative, content] of Object.entries(files)) {
+    const destination = join(path, relative);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, content);
+  }
+  await execa('git', ['init', '--quiet'], { cwd: path });
+  await execa('git', ['config', 'user.name', 'Dogfood Fixture'], { cwd: path });
+  await execa('git', ['config', 'user.email', 'dogfood-fixture@example.invalid'], { cwd: path });
+  await execa('git', ['add', '.'], { cwd: path });
+  await execa('git', ['commit', '--quiet', '-m', 'fixture baseline'], { cwd: path });
+  // Real tasks reference short SHAs of non-tip commits (e.g. 8896a3c), so the
+  // fixture baseline must not be a branch tip either.
+  const short = await execa('git', ['rev-parse', '--short', 'HEAD'], { cwd: path });
+  await writeFile(join(path, 'EXTRA.txt'), 'later commit\n');
+  await execa('git', ['add', '.'], { cwd: path });
+  await execa('git', ['commit', '--quiet', '-m', 'later commit'], { cwd: path });
+  return { path, sha: short.stdout.trim() };
+}
+
+async function createFixtureRepo(files: Record<string, string>): Promise<{
+  path: string;
+  sha: string;
+}> {
+  return seedFixtureRepo(await tempDir('dogfood-fixture-'), files);
+}
+
+const MINI_PACKAGE = `${JSON.stringify({ name: 'mini', private: true, version: '0.0.0' }, null, 2)}\n`;
+
+// runDogfoodTask only reads from repoRoot, so the four passing/failing mini-task
+// tests can share one lazily-built fixture instead of each rebuilding an
+// identical git repo. Its dir lives for the whole suite (cleaned in afterAll).
+let miniFixture: Promise<{ path: string; sha: string }> | undefined;
+function sharedMiniFixture(): Promise<{ path: string; sha: string }> {
+  return (miniFixture ??= (async () =>
+    seedFixtureRepo(await suiteDir('dogfood-fixture-shared-'), {
+      'package.json': MINI_PACKAGE,
+      'src/lib.js': 'export const value = 1;\n',
+    }))());
+}
+
+function miniTask(overrides: Record<string, unknown>): ReturnType<typeof DogfoodTaskSchema.parse> {
+  return DogfoodTaskSchema.parse({
+    id: 'mini',
+    title: 'Mini task',
+    issueRef: 'test/mini#1',
+    workflowId: 'dogfood-task-v1',
+    prompt:
+      'Implement a tiny module inside the seeded workspace so the deterministic verification passes.',
+    allowedFiles: ['package.json', 'src/index.js', 'src/index.test.js'],
+    seedFiles: [],
+    ...overrides,
+  });
+}
+
+function sampleRecord(overrides: Partial<DogfoodRunRecord> = {}): DogfoodRunRecord {
+  return DogfoodRunRecordSchema.parse({
+    schemaVersion: '1',
+    taskId: 'sample',
+    attempt: 1,
+    issueRef: 'test/sample#1',
+    baselineRef: '8896a3c',
+    projectId: 'project',
+    runId: 'run',
+    startedAt: '2026-07-14T12:00:00.000Z',
+    status: 'passed',
+    durationMs: 1234,
+    checks: [{ name: 'dogfood:verify', exitCode: 0, durationMs: 12, skipped: false }],
+    repairs: { iterations: 1, repairEvents: 0 },
+    humanEdit: { status: 'pending', files: [] },
+    ...overrides,
+  });
+}
+
+describe('runDogfoodTask (mock mode)', () => {
+  it('runs a mock mini-task and writes an append-only record with copied files and a patch', async () => {
+    const fixture = await sharedMiniFixture();
+    const dataDir = await tempDir('dogfood-data-');
+    const task = miniTask({
+      id: 'mini-pass',
+      baselineRef: fixture.sha,
+      verifyScript: 'node -e "process.exit(0)"',
+    });
+
+    const record = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+    });
+
+    expect(() => DogfoodRunRecordSchema.parse(record)).not.toThrow();
+    expect(record.status).toBe('passed');
+    expect(record.attempt).toBe(1);
+    expect(record.route).toBeDefined();
+    expect(record.executedModel).toBeTruthy();
+    expect(record.usage?.inputTokens).toBe(100);
+    expect(record.diff?.filesChanged ?? []).toEqual(
+      expect.arrayContaining(['src/index.js', 'src/index.test.js']),
+    );
+    // stat/patch come from one `git diff --stat --patch` split on `diff --git`:
+    // the stat must be the diffstat summary only (no leaked patch, no trailing
+    // blank line) and the patch file must hold the raw unified diff.
+    expect(record.diff?.stat).toMatch(/ \| /);
+    expect(record.diff?.stat).toContain('file');
+    expect(record.diff?.stat).not.toContain('diff --git');
+    expect(record.diff?.stat.endsWith('\n')).toBe(false);
+    await expect(
+      readFile(join(dataDir, 'dogfood', 'mini-pass-attempt01.patch.txt'), 'utf8'),
+    ).resolves.toMatch(/^diff --git /);
+    expect(record.checks.some((check) => check.name === 'dogfood:verify')).toBe(true);
+    expect(record.repairs.iterations).toBeGreaterThanOrEqual(1);
+    expect(record.humanEdit.status).toBe('pending');
+
+    const recordPath = join(dataDir, 'dogfood', 'mini-pass-attempt01.json');
+    await expect(readFile(recordPath, 'utf8')).resolves.toContain('"taskId": "mini-pass"');
+    await expect(
+      readFile(join(dataDir, 'dogfood', 'mini-pass-attempt01-files', 'src', 'index.js'), 'utf8'),
+    ).resolves.toContain('createProject');
+    await expect(
+      readFile(join(dataDir, 'dogfood', 'mini-pass-attempt01.patch.txt'), 'utf8'),
+    ).resolves.toContain('index.js');
+
+    // The assembled REQUEST.md lives inside the throwaway runtime data dir,
+    // which is removed once the run finishes — it must be copied out before
+    // cleanup so the prompt audit trail survives.
+    expect(record.promptArtifact).toBe('dogfood/mini-pass-attempt01-request.md');
+    await expect(readFile(join(dataDir, record.promptArtifact ?? ''), 'utf8')).resolves.toContain(
+      '# Agent execution request',
+    );
+  }, 60_000);
+
+  it('is not failed by baseline .patch files whose diff content carries trailing whitespace', async () => {
+    const fixture = await createFixtureRepo({
+      'package.json': MINI_PACKAGE,
+      'src/lib.js': 'export const value = 1;\n',
+      // Real baselines (e.g. 8896a3c) ship *.patch files whose "+" content
+      // lines legitimately end in whitespace — data, not sloppiness. The
+      // whole-tree `git diff --check` must not fail the run for them.
+      'upstream.patch': '@@ -1,2 +1,2 @@\n+content line with trailing space \n',
+    });
+    const dataDir = await tempDir('dogfood-data-');
+    const task = miniTask({
+      id: 'mini-patch-baseline',
+      baselineRef: fixture.sha,
+      verifyScript: 'node -e "process.exit(0)"',
+    });
+
+    const record = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+    });
+
+    expect(record.failure?.message ?? '').toBe('');
+    expect(record.status).toBe('passed');
+  }, 60_000);
+
+  it('appends a second attempt without overwriting the first record', async () => {
+    const fixture = await sharedMiniFixture();
+    const dataDir = await tempDir('dogfood-data-');
+    const task = miniTask({
+      id: 'mini-append',
+      baselineRef: fixture.sha,
+      verifyScript: 'node -e "process.exit(0)"',
+    });
+
+    const first = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+    });
+    const second = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+    });
+
+    expect(first.attempt).toBe(1);
+    expect(second.attempt).toBe(2);
+    const files = await readdir(join(dataDir, 'dogfood'));
+    expect(files).toContain('mini-append-attempt01.json');
+    expect(files).toContain('mini-append-attempt02.json');
+  }, 90_000);
+
+  it('records a failed run with a populated failure when the verify script fails', async () => {
+    const fixture = await sharedMiniFixture();
+    const dataDir = await tempDir('dogfood-data-');
+    const task = miniTask({
+      id: 'mini-fail',
+      baselineRef: fixture.sha,
+      verifyScript: 'node -e "process.exit(1)"',
+    });
+
+    const record = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+    });
+
+    expect(record.status).toBe('failed');
+    expect(record.failure).toBeDefined();
+    expect(record.failure?.message.length ?? 0).toBeGreaterThan(0);
+    await expect(
+      readFile(join(dataDir, 'dogfood', 'mini-fail-attempt01.json'), 'utf8'),
+    ).resolves.toContain('"taskId": "mini-fail"');
+  }, 60_000);
+
+  it('sanitizes git failures so no stderr text reaches the record', async () => {
+    // A plain (non-git) temp dir as repoRoot makes seedWorkspace's `git rev-parse`
+    // fail before any pipeline step runs — no fixture repo needed.
+    const repoRoot = await tempDir('dogfood-bad-repo-');
+    const dataDir = await tempDir('dogfood-data-');
+    const task = miniTask({
+      id: 'mini-bad-baseline',
+      baselineRef: 'not-a-real-baseline-ref',
+    });
+
+    const record = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot,
+      dataDir,
+    });
+
+    expect(record.status).toBe('failed');
+    expect(record.failure?.message).toMatch(/^git rev-parse failed \(exit \d+\)$/);
+    expect(record.failure?.message).not.toContain('not-a-real-baseline-ref');
+    expect(record.failure?.message).not.toContain('fatal');
+    // Infra failed before any step ran, so no repair iterations were attempted.
+    expect(record.repairs.iterations).toBe(0);
+    await expect(
+      readFile(join(dataDir, 'dogfood', 'mini-bad-baseline-attempt01.json'), 'utf8'),
+    ).resolves.toContain('"taskId": "mini-bad-baseline"');
+  }, 30_000);
+
+  it('flags a diff outside the allowlist as a failed run with failure.kind "allowlist"', async () => {
+    const fixture = await sharedMiniFixture();
+    const dataDir = await tempDir('dogfood-data-');
+    const task = miniTask({
+      id: 'mini-allowlist',
+      baselineRef: fixture.sha,
+      verifyScript: 'node -e "process.exit(0)"',
+      // The mock executor also writes src/index.test.js; excluding it here
+      // forces an allowlist violation.
+      allowedFiles: ['package.json', 'src/index.js'],
+    });
+
+    const record = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+    });
+
+    expect(record.status).toBe('failed');
+    expect(record.failure?.kind).toBe('allowlist');
+    expect(record.failure?.message).toContain('src/index.test.js');
+    await expect(
+      readFile(join(dataDir, 'dogfood', 'mini-allowlist-attempt01.json'), 'utf8'),
+    ).resolves.toContain('"taskId": "mini-allowlist"');
+  }, 60_000);
+});
+
+describe('freezeDogfoodReport', () => {
+  it('refuses fewer than five distinct tasks', async () => {
+    const baselinesDir = await tempDir('dogfood-baselines-');
+    const records = ['a', 'b', 'c', 'd'].map((id) => sampleRecord({ taskId: id }));
+    await expect(
+      freezeDogfoodReport(records, { baselinesDir, baselineRef: '8896a3c' }),
+    ).rejects.toThrow(/five distinct/i);
+  });
+
+  it('freezes five distinct tasks including a failure and renders the table header', async () => {
+    const baselinesDir = await tempDir('dogfood-baselines-');
+    const records = [
+      sampleRecord({ taskId: 't1' }),
+      sampleRecord({ taskId: 't2' }),
+      sampleRecord({ taskId: 't3' }),
+      sampleRecord({ taskId: 't4' }),
+      sampleRecord({
+        taskId: 't5',
+        status: 'failed',
+        failure: { kind: 'run', message: 'verification did not approve' },
+      }),
+    ];
+
+    await freezeDogfoodReport(records, { baselinesDir, baselineRef: '8896a3c' });
+
+    const json = JSON.parse(await readFile(join(baselinesDir, 'v0.2-dogfood.json'), 'utf8')) as {
+      runs: unknown[];
+    };
+    expect(json.runs).toHaveLength(5);
+    const markdown = await readFile(join(baselinesDir, 'v0.2-dogfood.md'), 'utf8');
+    expect(markdown).toContain('| Task | Attempt | Status |');
+  });
+});
+
+describe('renderDogfoodMarkdown', () => {
+  it('includes the per-run table header', () => {
+    const report = DogfoodReportSchema.parse({
+      schemaVersion: '1',
+      createdAt: '2026-07-14T12:00:00.000Z',
+      baselineRef: '8896a3c',
+      runs: [sampleRecord()],
+      limitations: ['Runs are executed once each.'],
+    });
+    expect(renderDogfoodMarkdown(report)).toContain('| Task | Attempt | Status |');
+  });
+
+  it('falls back to route.executed.model.id when top-level executedModel is absent', () => {
+    // Codex CLI reports no resolved model string, so codex records carry a null
+    // top-level executedModel; the route still records what actually executed.
+    const capabilities = {
+      planning: 0.5,
+      architecture: 0.5,
+      coding: 0.5,
+      review: 0.5,
+      repair: 0.5,
+      structuredOutput: 0.5,
+      speed: 0.5,
+      costEfficiency: 0.5,
+      reliability: 0.5,
+    };
+    const score = {
+      capability: 0,
+      context: 0,
+      speed: 0,
+      cost: 0,
+      reliability: 0,
+      historical: 0,
+      tagAffinity: 0,
+      estimatedCostUsd: null,
+      total: 0,
+    };
+    const ranked = (id: string) => ({
+      model: { id, provider: 'codex' as const, model: id, maxContextTokens: 200000, capabilities },
+      score,
+    });
+    const route = RouteDecisionSchema.parse({
+      routeId: 'route-1',
+      createdAt: '2026-07-15T00:00:00.000Z',
+      profile: {
+        role: 'developer' as const,
+        taskKind: 'implementation' as const,
+        complexity: 3,
+        risk: 3,
+        estimatedContextTokens: 1000,
+        estimatedOutputTokens: 1000,
+        mutatesWorkspace: true,
+        priorities: { quality: 0.5, speed: 0.5, cost: 0.5, reliability: 0.5 },
+      },
+      selected: ranked('router-alias'),
+      fallbacks: [],
+      executed: ranked('codex-default'),
+      rejected: [],
+    });
+    // executedModel intentionally omitted (undefined) to force the fallback.
+    const report = DogfoodReportSchema.parse({
+      schemaVersion: '1',
+      createdAt: '2026-07-15T00:00:00.000Z',
+      baselineRef: '8896a3c',
+      runs: [sampleRecord({ route })],
+      limitations: ['n/a'],
+    });
+    const markdown = renderDogfoodMarkdown(report);
+    expect(markdown).toContain('router-alias → codex-default');
+    expect(markdown).not.toContain('router-alias → —');
+  });
+});
+
+describe('annotateHumanEdits', () => {
+  it('classifies same, modified, and absent against a merged ref', async () => {
+    const repo = await tempDir('dogfood-merged-');
+    await execa('git', ['init', '--quiet'], { cwd: repo });
+    await execa('git', ['config', 'user.name', 'Dogfood Merge'], { cwd: repo });
+    await execa('git', ['config', 'user.email', 'dogfood-merge@example.invalid'], { cwd: repo });
+    await writeFile(join(repo, 'a.txt'), 'A\n');
+    await writeFile(join(repo, 'b.txt'), 'B-base\n');
+    await writeFile(join(repo, 'c.txt'), 'C\n');
+    await execa('git', ['add', '.'], { cwd: repo });
+    await execa('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: repo });
+    const baseline = (await execa('git', ['rev-parse', 'HEAD'], { cwd: repo })).stdout.trim();
+    await writeFile(join(repo, 'b.txt'), 'B-human\n');
+    await rm(join(repo, 'c.txt'));
+    await execa('git', ['add', '-A'], { cwd: repo });
+    await execa('git', ['commit', '--quiet', '-m', 'merged'], { cwd: repo });
+    const merged = (await execa('git', ['rev-parse', 'HEAD'], { cwd: repo })).stdout.trim();
+
+    const dataDir = await tempDir('dogfood-data-');
+    const filesDir = join(dataDir, 'dogfood', 'mini-annotate-attempt01-files');
+    await mkdir(filesDir, { recursive: true });
+    await writeFile(join(filesDir, 'a.txt'), 'A\n');
+    await writeFile(join(filesDir, 'b.txt'), 'B-agent\n');
+    await writeFile(join(filesDir, 'c.txt'), 'C\n');
+
+    const record = sampleRecord({
+      taskId: 'mini-annotate',
+      baselineRef: baseline,
+      diff: {
+        checkpoint: baseline,
+        commit: merged,
+        stat: '3 files changed',
+        filesChanged: ['a.txt', 'b.txt', 'c.txt'],
+      },
+    });
+
+    const annotated = (
+      await annotateHumanEdits([record], {
+        repoRoot: repo,
+        mergedRef: merged,
+        dataDir,
+        notes: 'reviewed against merged PR',
+      })
+    )[0]!;
+
+    expect(annotated.humanEdit.status).toBe('recorded');
+    expect(annotated.humanEdit.notes).toBe('reviewed against merged PR');
+    const byPath = new Map(
+      annotated.humanEdit.files.map((file) => [file.path, file.agentVsMerged]),
+    );
+    expect(byPath.get('a.txt')).toBe('same');
+    expect(byPath.get('b.txt')).toBe('modified');
+    expect(byPath.get('c.txt')).toBe('absent');
+
+    const rewritten = JSON.parse(
+      await readFile(join(dataDir, 'dogfood', 'mini-annotate-attempt01.json'), 'utf8'),
+    ) as DogfoodRunRecord;
+    expect(rewritten.humanEdit.status).toBe('recorded');
+  }, 30_000);
+});
+
+describe('dogfood workflows', () => {
+  it('loads dogfood-task-v1 through the real workflow repository', async () => {
+    const workflows = new YamlWorkflowRepository(workflowsDir);
+    const workflow = await workflows.get('dogfood-task-v1');
+    expect(workflow).toBeTruthy();
+    expect(workflow.id).toBe('dogfood-task-v1');
+  });
+
+  it('loads dogfood-plan-v1 through the real workflow repository', async () => {
+    const workflows = new YamlWorkflowRepository(workflowsDir);
+    const workflow = await workflows.get('dogfood-plan-v1');
+    expect(workflow).toBeTruthy();
+    expect(workflow.id).toBe('dogfood-plan-v1');
+  });
+});
+
+describe('dogfood task definitions', () => {
+  it('every task file in examples/dogfood/tasks parses with DogfoodTaskSchema', async () => {
+    const entries = (await readdir(tasksDir)).filter((name) => name.endsWith('.json'));
+    expect(entries.length).toBeGreaterThanOrEqual(5);
+
+    for (const entry of entries) {
+      const raw = await readFile(resolve(tasksDir, entry), 'utf8');
+      const parsed = DogfoodTaskSchema.parse(JSON.parse(raw));
+      expect(parsed.id.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('covers all five real v0.2 tasks by id', async () => {
+    const entries = (await readdir(tasksDir)).filter((name) => name.endsWith('.json'));
+    const tasks = await Promise.all(
+      entries.map(async (entry) => {
+        const raw = await readFile(resolve(tasksDir, entry), 'utf8');
+        return DogfoodTaskSchema.parse(JSON.parse(raw));
+      }),
+    );
+    const ids = tasks.map((task) => task.id).sort();
+    expect(ids).toEqual(
+      [
+        'domain-redaction',
+        'event-store-cursor',
+        'executor-failure-fixtures',
+        'failure-matrix-plan',
+        'web-merge-events',
+      ].sort(),
+    );
+  });
+});

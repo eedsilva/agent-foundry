@@ -122,6 +122,18 @@ O adapter do AGY exige a versão 1.1.1 ou superior, pois depende de `--model`, `
 
 A sintaxe e os aliases das CLIs podem mudar. Os adaptadores estão isolados em `packages/executors`, para que uma alteração de fornecedor não contamine o domínio ou o orquestrador.
 
+## Dogfood
+
+Enquanto o canary (em [docs/VALIDATION.md](docs/VALIDATION.md)) invoca cada CLI diretamente, o dogfood roda tarefas v0.2 reais **pelo pipeline do produto** — projeto, worker, workflow declarativo, roteamento, loop de qualidade e verifier — e congela rota, uso, diff e verificação de cada execução (ADR 0013).
+
+```bash
+RUN_REAL_DOGFOOD=true npm run dogfood:run -- --task <id>   # roda uma tarefa
+npm run dogfood:run -- --annotate-human-edits <ref> --task <id>  # anota edições humanas
+npm run dogfood:run -- --freeze                            # congela docs/baselines/v0.2-dogfood.{json,md}
+```
+
+Os registros são append-only: um rerun adiciona uma nova tentativa e nunca sobrescreve a anterior; falhas são congeladas junto com os acertos, como dado, não como bloqueio. O baseline v0.2 inclui um ciclo real de falha -> correção de causa raiz -> rerun. Ver [docs/VALIDATION.md](docs/VALIDATION.md) e [docs/baselines/v0.2-dogfood.md](docs/baselines/v0.2-dogfood.md).
+
 ## Ciclo de uma execução
 
 1. `POST /projects` valida o nome, PRD e workflow.

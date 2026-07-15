@@ -6,7 +6,7 @@ coverage/
 .env.*
 !.env.example
 data/
-.data/provider-canaries/
+.data/
 *.log
 .DS_Store
 *.tsbuildinfo

@@ -1,0 +1,10 @@
+{
+  "id": "failure-matrix-plan",
+  "title": "Matriz fase x falha para injeção de falhas no executor",
+  "issueRef": "eedsilva/agent-foundry#11",
+  "workflowId": "dogfood-plan-v1",
+  "baselineRef": "8896a3c",
+  "allowedFiles": [],
+  "seedFiles": [],
+  "prompt": "# Tarefa: matriz fase x falha para injeção de falhas (issue #11)\n\nEste é o monorepo **agent-foundry**. O orquestrador de workflows vive em\n`packages/orchestrator/src/workflow-orchestrator.ts` (execução de nós `agent`, `verify` e\n`quality-loop`, incluindo checkpoints de git, cancelamento e pausa/retomada);\n`packages/orchestrator/src/run-controls.test.ts` cobre hoje pausa, retry de step e reuso\nidempotente de step; e `packages/orchestrator/src/cancellation.test.ts` cobre cancelamento.\n\n## Entregável\n\nEsta é uma tarefa de **planejamento, sem alteração de código**. Analise os três arquivos acima\n(leia o código real, não suponha) e produza um artefato de plano que enumere uma matriz fase x\ntipo de falha para a issue #11 (injeção determinística de falhas no executor):\n\n- **Fases** (linhas), no mínimo: setup de um step `agent`, step `check` de um `quality-loop`,\n  step `repair`, step `verify`, e a fronteira entre iterações de um `quality-loop`.\n- **Tipos de falha** (colunas), no mínimo: timeout do CLI, rate limit do provedor, saída JSON\n  inválida do agente, encerramento abrupto do processo (crash) e cancelamento durante a\n  execução.\n\nPara cada célula da matriz, descreva: o comportamento atual (com base no código real, citando\narquivo e trecho relevante), se já existe cobertura de teste para esse cenário, e o que falta\npara cobrir esse cenário de forma sistemática com fixtures determinísticas de falha.\n\n## Arquivos permitidos (allowlist)\n\nNenhum arquivo do workspace pode ser criado ou modificado (`allowedFiles` vazio nesta tarefa) —\napenas o artefato de plano do workflow deve ser produzido. Qualquer diff no repositório reprova a\ntarefa.\n\n## Verificação\n\nEsta tarefa não tem `dogfood:verify`; a aprovação vem do gate de qualidade do plano\n(`dogfood-plan-v1`: planner -> plan-reviewer -> repair-plan).\n"
+}
