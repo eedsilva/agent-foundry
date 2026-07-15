@@ -7,7 +7,14 @@ import {
 } from './project.js';
 import { ModelDefinitionSchema } from './model.js';
 import { PathSegmentSchema, ProviderSchema } from './primitives.js';
-import { StepAttemptSchema, StepRunSchema, WorkflowRunSchema } from './run.js';
+import { ApprovalActionSchema } from './workflow.js';
+import {
+  ApprovalDecisionSchema,
+  ApprovalRequestSchema,
+  StepAttemptSchema,
+  StepRunSchema,
+  WorkflowRunSchema,
+} from './run.js';
 
 export const CreateProjectRequestSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -75,6 +82,29 @@ export const ResumeBlockedResponseSchema = z.object({
   options: z.object({ restart: z.string() }),
 });
 export type ResumeBlockedResponse = z.infer<typeof ResumeBlockedResponseSchema>;
+
+export const DecideApprovalRequestSchema = z.object({
+  action: ApprovalActionSchema,
+  decidedBy: z.string().trim().min(1),
+  note: z.string().trim().min(1).optional(),
+});
+export type DecideApprovalRequest = z.infer<typeof DecideApprovalRequestSchema>;
+
+export const DecideApprovalResponseSchema = z.object({
+  run: WorkflowRunSchema,
+  decision: ApprovalDecisionSchema,
+});
+export type DecideApprovalResponse = z.infer<typeof DecideApprovalResponseSchema>;
+
+export const ApprovalListResponseSchema = z.object({
+  approvals: z.array(
+    z.object({
+      request: ApprovalRequestSchema,
+      decision: ApprovalDecisionSchema.nullable(),
+    }),
+  ),
+});
+export type ApprovalListResponse = z.infer<typeof ApprovalListResponseSchema>;
 
 export const RuntimeInfoResponseSchema = z.object({
   executorMode: z.enum(['real', 'mock']),

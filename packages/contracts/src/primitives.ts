@@ -39,9 +39,11 @@ export const ProjectStatusSchema = z.enum([
   'queued',
   'running',
   'paused',
+  'awaiting_approval',
   'completed',
   'failed',
   'cancelled',
+  'rejected',
 ]);
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
 

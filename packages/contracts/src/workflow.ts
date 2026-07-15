@@ -61,10 +61,65 @@ const QualityLoopStepSchema = z.object({
 });
 export type QualityLoopStep = z.infer<typeof QualityLoopStepSchema>;
 
+export const ApprovalActionSchema = z.enum(['approve', 'reject', 'request-changes']);
+export type ApprovalAction = z.infer<typeof ApprovalActionSchema>;
+
+export const ApprovalTimeoutPolicySchema = z
+  .object({
+    policy: z.enum(['none', 'auto-approve', 'auto-reject']).default('none'),
+    afterMs: z.number().int().positive().optional(),
+  })
+  .strict()
+  .refine((timeout) => timeout.policy === 'none' || timeout.afterMs !== undefined, {
+    message: 'afterMs is required when a timeout policy is set',
+    path: ['afterMs'],
+  });
+
+/**
+ * Halts the run at this node until a human decision is persisted. Named
+ * `approval-gate` (not `approval`) to avoid confusion with QualityLoopStep's
+ * unrelated `approval: ArtifactCondition` field.
+ */
+const ApprovalGateStepSchema = z
+  .object({
+    id: PathSegmentSchema,
+    type: z.literal('approval-gate'),
+    title: z.string().min(1),
+    artifact: PathSegmentSchema,
+    outputArtifact: PathSegmentSchema,
+    actions: z.array(ApprovalActionSchema).min(1).default(['approve', 'reject']),
+    onReject: z.enum(['end', 'return-to-step']).default('end'),
+    returnToStepId: PathSegmentSchema.optional(),
+    repairArtifact: PathSegmentSchema.optional(),
+    timeout: ApprovalTimeoutPolicySchema.default({ policy: 'none' }),
+  })
+  .strict()
+  .superRefine((step, ctx) => {
+    if (step.onReject === 'return-to-step' && !step.returnToStepId) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['returnToStepId'],
+        message: "onReject: 'return-to-step' requires returnToStepId",
+      });
+    }
+    if (
+      step.actions.includes('request-changes') &&
+      (!step.returnToStepId || !step.repairArtifact)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['repairArtifact'],
+        message: "'request-changes' requires both returnToStepId and repairArtifact",
+      });
+    }
+  });
+export type ApprovalGateStep = z.infer<typeof ApprovalGateStepSchema>;
+
 export const WorkflowNodeSchema = z.discriminatedUnion('type', [
   AgentStepSchema,
   VerifyStepSchema,
   QualityLoopStepSchema,
+  ApprovalGateStepSchema,
 ]);
 export type WorkflowNode = z.infer<typeof WorkflowNodeSchema>;
 

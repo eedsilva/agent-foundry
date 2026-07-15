@@ -6,6 +6,25 @@ import type {
 } from '@agent-foundry/contracts';
 
 /**
+ * Keyed on the reviewed artifact's reference: a changed input naturally
+ * invalidates reuse, same spirit as stepIdempotencyKey.
+ */
+export function approvalGateIdempotencyKey(input: {
+  runId: string;
+  nodeId: string;
+  artifact: ArtifactReference;
+}): string {
+  return sha256(
+    stableStringify({
+      runId: input.runId,
+      nodeId: input.nodeId,
+      kind: 'approval-gate',
+      artifact: input.artifact,
+    }),
+  );
+}
+
+/**
  * Deterministic identity of one step execution: the run, the position in the
  * workflow, the attempt policy, and the exact input revisions. A replayed
  * walk that computes the same key may safely reuse the recorded outcome.

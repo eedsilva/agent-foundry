@@ -5,6 +5,8 @@ import {
   WorkflowDefinitionSchema,
   type AgentExecutionRequest,
   type AgentExecutionResult,
+  type ApprovalDecision,
+  type ApprovalRequest,
   type ArtifactMetadata,
   type ExecutorHealth,
   type Project,
@@ -23,6 +25,8 @@ import {
   VersionConflictError,
   transitionWorkflowRun,
   type AgentExecutor,
+  type ApprovalDecisionRepository,
+  type ApprovalRequestRepository,
   type ArtifactStore,
   type EventStore,
   type ExecutorRegistry,
@@ -210,6 +214,39 @@ class InMemoryStepAttempts implements StepAttemptRepository {
   }
   all(): StepAttempt[] {
     return [...this.store.values()];
+  }
+}
+
+class InMemoryApprovalRequests implements ApprovalRequestRepository {
+  readonly store = new Map<string, ApprovalRequest>();
+  create(request: ApprovalRequest): Promise<void> {
+    this.store.set(`${request.runId}/${request.id}`, { ...request });
+    return Promise.resolve();
+  }
+  get(runId: string, requestId: string): Promise<ApprovalRequest | null> {
+    const request = this.store.get(`${runId}/${requestId}`);
+    return Promise.resolve(request ? { ...request } : null);
+  }
+  getForStepRun(runId: string, stepRunId: string): Promise<ApprovalRequest | null> {
+    const match = [...this.store.values()].find(
+      (request) => request.runId === runId && request.stepRunId === stepRunId,
+    );
+    return Promise.resolve(match ? { ...match } : null);
+  }
+  list(runId: string): Promise<ApprovalRequest[]> {
+    return Promise.resolve([...this.store.values()].filter((request) => request.runId === runId));
+  }
+}
+
+class InMemoryApprovalDecisions implements ApprovalDecisionRepository {
+  readonly store = new Map<string, ApprovalDecision>();
+  create(decision: ApprovalDecision): Promise<void> {
+    this.store.set(`${decision.runId}/${decision.requestId}`, { ...decision });
+    return Promise.resolve();
+  }
+  get(runId: string, requestId: string): Promise<ApprovalDecision | null> {
+    const decision = this.store.get(`${runId}/${requestId}`);
+    return Promise.resolve(decision ? { ...decision } : null);
   }
 }
 
@@ -404,6 +441,8 @@ function makeHarness(
   const runs = new InMemoryRuns();
   const stepRuns = new InMemoryStepRuns();
   const stepAttempts = new InMemoryStepAttempts();
+  const approvalRequests = new InMemoryApprovalRequests();
+  const approvalDecisions = new InMemoryApprovalDecisions();
   const artifacts = new InMemoryArtifacts();
   const events = new InMemoryEvents();
   const workspaces = new FakeWorkspaces();
@@ -466,6 +505,8 @@ function makeHarness(
     runs,
     stepRuns,
     stepAttempts,
+    approvalRequests,
+    approvalDecisions,
     artifacts,
     events,
     workflows,
@@ -484,6 +525,8 @@ function makeHarness(
     runs,
     stepRuns,
     stepAttempts,
+    approvalRequests,
+    approvalDecisions,
     artifacts,
     events,
     queue,

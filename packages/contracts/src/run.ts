@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { RouteDecisionSchema } from './model.js';
 import { PathSegmentSchema, ProviderSchema } from './primitives.js';
+import { ApprovalActionSchema, ApprovalTimeoutPolicySchema } from './workflow.js';
 
 export const EntityVersionSchema = z.number().int().positive();
 
@@ -9,10 +10,12 @@ export const WorkflowRunStatusSchema = z.enum([
   'running',
   'pause_requested',
   'paused',
+  'awaiting_approval',
   'cancel_requested',
   'cancelled',
   'completed',
   'failed',
+  'rejected',
 ]);
 export type WorkflowRunStatus = z.infer<typeof WorkflowRunStatusSchema>;
 
@@ -116,7 +119,7 @@ export const WorkflowRunSchema = z
   .superRefine((run, context) => {
     validateLifecycleTimestamps(run.status, run, context, {
       initial: ['queued'],
-      terminal: ['completed', 'failed', 'cancelled'],
+      terminal: ['completed', 'failed', 'cancelled', 'rejected'],
     });
     if (run.status === 'failed' && !run.error) {
       context.addIssue({ code: 'custom', path: ['error'], message: 'Failed run requires error' });
@@ -135,7 +138,7 @@ export const WorkflowRunSchema = z
         message: 'Only paused runs may retain a pause snapshot',
       });
     }
-    if (run.retry && ['completed', 'failed', 'cancelled'].includes(run.status)) {
+    if (run.retry && ['completed', 'failed', 'cancelled', 'rejected'].includes(run.status)) {
       context.addIssue({
         code: 'custom',
         path: ['retry'],
@@ -151,7 +154,7 @@ export const StepRunSchema = z
     runId: PathSegmentSchema,
     nodeId: PathSegmentSchema,
     stepId: PathSegmentSchema,
-    stepType: z.enum(['agent', 'verify']),
+    stepType: z.enum(['agent', 'verify', 'approval-gate']),
     iteration: z.number().int().positive().optional(),
     status: StepRunStatusSchema,
     version: EntityVersionSchema,
@@ -182,6 +185,41 @@ export const StepRunSchema = z
     }
   });
 export type StepRun = z.infer<typeof StepRunSchema>;
+
+/**
+ * Immutable record that a workflow run halted for a human decision. Never
+ * updated after creation — the linked ApprovalDecision is the only thing
+ * that changes what happens next.
+ */
+export const ApprovalRequestSchema = z
+  .object({
+    id: PathSegmentSchema,
+    runId: PathSegmentSchema,
+    stepRunId: PathSegmentSchema,
+    nodeId: PathSegmentSchema,
+    artifact: ArtifactReferenceSchema,
+    allowedActions: z.array(ApprovalActionSchema).min(1),
+    timeout: ApprovalTimeoutPolicySchema.optional(),
+    timeoutAt: z.string().datetime().optional(),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
+
+/** Immutable; at most one decision is ever recorded per ApprovalRequest. */
+export const ApprovalDecisionSchema = z
+  .object({
+    id: PathSegmentSchema,
+    requestId: PathSegmentSchema,
+    runId: PathSegmentSchema,
+    stepRunId: PathSegmentSchema,
+    action: ApprovalActionSchema,
+    decidedBy: z.string().min(1),
+    note: z.string().optional(),
+    decidedAt: z.string().datetime(),
+  })
+  .strict();
+export type ApprovalDecision = z.infer<typeof ApprovalDecisionSchema>;
 
 export const StepAttemptSchema = z
   .object({

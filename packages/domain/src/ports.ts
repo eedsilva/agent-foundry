@@ -2,6 +2,8 @@ import type {
   AgentExecutionRequest,
   AgentExecutionResult,
   AgentRole,
+  ApprovalDecision,
+  ApprovalRequest,
   ArtifactMetadata,
   ExecutorHealth,
   ModelDefinition,
@@ -48,6 +50,19 @@ export interface StepAttemptRepository {
   get(runId: string, stepRunId: string, attemptId: string): Promise<StepAttempt | null>;
   list(runId: string, stepRunId: string): Promise<StepAttempt[]>;
   update(attempt: StepAttempt, expectedVersion: number): Promise<StepAttempt>;
+}
+
+/** Create-only: neither ApprovalRequest nor ApprovalDecision is ever updated. */
+export interface ApprovalRequestRepository {
+  create(request: ApprovalRequest): Promise<void>;
+  get(runId: string, requestId: string): Promise<ApprovalRequest | null>;
+  getForStepRun(runId: string, stepRunId: string): Promise<ApprovalRequest | null>;
+  list(runId: string): Promise<ApprovalRequest[]>;
+}
+
+export interface ApprovalDecisionRepository {
+  create(decision: ApprovalDecision): Promise<void>;
+  get(runId: string, requestId: string): Promise<ApprovalDecision | null>;
 }
 
 export interface ArtifactStore {
