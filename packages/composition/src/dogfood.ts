@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { execa } from 'execa';
@@ -18,6 +18,8 @@ import {
   type StepRun,
   type VerificationReport,
 } from '@agent-foundry/contracts';
+import { atomicWriteJson, atomicWriteText, ensureDir } from '@agent-foundry/persistence';
+import { markdownCell, publishBaselinePair } from './baseline-publish.js';
 import { createRuntime, type Runtime } from './runtime.js';
 
 // The monorepo root that owns the workflows, model catalog, and harness. This is
@@ -33,7 +35,6 @@ export interface RunDogfoodTaskOptions {
   repoRoot: string;
   dataDir?: string;
   executorMode?: 'real' | 'mock';
-  attempt?: number;
 }
 
 export async function runDogfoodTask(
@@ -41,8 +42,8 @@ export async function runDogfoodTask(
   options: RunDogfoodTaskOptions,
 ): Promise<DogfoodRunRecord> {
   const dogfoodDir = join(options.dataDir ?? join(FOUNDRY_ROOT, '.data'), 'dogfood');
-  await mkdir(dogfoodDir, { recursive: true });
-  const attempt = options.attempt ?? (await countRecords(dogfoodDir, task.id)) + 1;
+  await ensureDir(dogfoodDir);
+  const attempt = (await countRecords(dogfoodDir, task.id)) + 1;
   const tag = attemptTag(attempt);
   const startedAt = new Date();
   const started = Date.now();
@@ -57,7 +58,9 @@ export async function runDogfoodTask(
   let usage: ExecutionUsage | undefined;
   let diff: DogfoodRunRecord['diff'];
   let checks: DogfoodRunRecord['checks'] = [];
-  let repairs = { iterations: 1, repairEvents: 0 };
+  // Stays 0 if infra fails before any step ran; a run that reaches the worker
+  // overwrites this with Math.max(1, …) below.
+  let repairs = { iterations: 0, repairEvents: 0 };
   let promptArtifact: string | undefined;
 
   try {
@@ -114,7 +117,10 @@ export async function runDogfoodTask(
       );
       if (existsSync(requestPath)) {
         const requestArtifactName = `${task.id}-attempt${tag}-request.md`;
-        await writeFile(join(dogfoodDir, requestArtifactName), await readFile(requestPath));
+        await atomicWriteText(
+          join(dogfoodDir, requestArtifactName),
+          await readFile(requestPath, 'utf8'),
+        );
         promptArtifact = `dogfood/${requestArtifactName}`;
       }
     }
@@ -138,7 +144,14 @@ export async function runDogfoodTask(
     const changedFiles = commit
       ? splitLines(await gitOutput(workspacePath, ['diff', '--name-only', baseline, commit]))
       : [];
-    const stat = commit ? await gitOutput(workspacePath, ['diff', '--stat', baseline, commit]) : '';
+    // One `git diff --stat --patch` carries both the summary and the raw patch;
+    // git puts a blank line before the first `diff --git`, so splitStatPatch
+    // recovers byte-identical `stat` and `patch` from the single invocation.
+    const { stat, patch } = commit
+      ? splitStatPatch(
+          await gitOutput(workspacePath, ['diff', '--stat', '--patch', baseline, commit]),
+        )
+      : { stat: '', patch: '' };
     diff = {
       ...(baseline ? { checkpoint: baseline } : {}),
       ...(commit ? { commit } : {}),
@@ -149,8 +162,7 @@ export async function runDogfoodTask(
     // Persist verbatim copies + the raw patch before the throwaway runtime dir is removed.
     const filesDir = join(dogfoodDir, `${task.id}-attempt${tag}-files`);
     await saveChangedFiles(workspacePath, filesDir, changedFiles);
-    const patch = commit ? await gitOutput(workspacePath, ['diff', baseline, commit]) : '';
-    await writeFile(
+    await atomicWriteText(
       join(dogfoodDir, `${task.id}-attempt${tag}.patch.txt`),
       patch ? `${patch}\n` : '',
     );
@@ -204,10 +216,7 @@ export async function runDogfoodTask(
     ...(failure ? { failure } : {}),
     humanEdit: { status: 'pending', files: [] },
   });
-  await writeFile(
-    join(dogfoodDir, `${task.id}-attempt${tag}.json`),
-    `${JSON.stringify(record, null, 2)}\n`,
-  );
+  await atomicWriteJson(join(dogfoodDir, `${task.id}-attempt${tag}.json`), record);
   return record;
 }
 
@@ -233,7 +242,7 @@ export function renderDogfoodMarkdown(report: DogfoodReport): string {
     '| --- | ---: | --- | --- | ---: | --- | --- | ---: | --- |',
     ...report.runs.map(
       (run) =>
-        `| ${run.taskId} | ${run.attempt} | ${run.status} | ${cell(formatModels(run))} | ${run.durationMs} | ${cell(formatUsage(run.usage))} | ${run.repairs.iterations} iter / ${run.repairs.repairEvents} repair(s) | ${run.diff?.filesChanged.length ?? 0} | ${run.humanEdit.status} |`,
+        `| ${run.taskId} | ${run.attempt} | ${run.status} | ${markdownCell(formatModels(run))} | ${run.durationMs} | ${markdownCell(formatUsage(run.usage))} | ${run.repairs.iterations} iter / ${run.repairs.repairEvents} repair(s) | ${run.diff?.filesChanged.length ?? 0} | ${run.humanEdit.status} |`,
     ),
     '',
     '## Limitations',
@@ -268,10 +277,15 @@ export async function freezeDogfoodReport(
     ],
   });
 
-  await writeBaselinePair(
-    options.baselinesDir,
+  await publishBaselinePair(
+    join(options.baselinesDir, `${BASELINE_STEM}.json`),
+    join(options.baselinesDir, `${BASELINE_STEM}.md`),
     `${JSON.stringify(report, null, 2)}\n`,
     renderDogfoodMarkdown(report),
+    {
+      restoreFailureMessage: 'Dogfood freeze failed and its baseline pair could not be restored.',
+      cleanupFailureMessage: 'Dogfood baseline pair was published but backup cleanup failed.',
+    },
   );
 }
 
@@ -280,22 +294,26 @@ export async function annotateHumanEdits(
   options: { repoRoot: string; mergedRef: string; dataDir?: string; notes?: string },
 ): Promise<DogfoodRunRecord[]> {
   const dogfoodDir = join(options.dataDir ?? join(FOUNDRY_ROOT, '.data'), 'dogfood');
-  await mkdir(dogfoodDir, { recursive: true });
+  await ensureDir(dogfoodDir);
   const annotated: DogfoodRunRecord[] = [];
   for (const record of records) {
     const tag = attemptTag(record.attempt);
     const filesDir = join(dogfoodDir, `${record.taskId}-attempt${tag}-files`);
-    const files: DogfoodHumanEdit['files'] = [];
-    for (const path of record.diff?.filesChanged ?? []) {
-      const classification = await classifyHumanEdit(
-        join(filesDir, path),
-        options.repoRoot,
-        options.mergedRef,
-        record.baselineRef,
-        path,
-      );
-      if (classification) files.push({ path, agentVsMerged: classification });
-    }
+    const classified = await Promise.all(
+      (record.diff?.filesChanged ?? []).map(async (path) => {
+        const classification = await classifyHumanEdit(
+          join(filesDir, path),
+          options.repoRoot,
+          options.mergedRef,
+          record.baselineRef,
+          path,
+        );
+        return classification ? { path, agentVsMerged: classification } : null;
+      }),
+    );
+    const files: DogfoodHumanEdit['files'] = classified.filter(
+      (entry): entry is NonNullable<typeof entry> => entry !== null,
+    );
     const updated = DogfoodRunRecordSchema.parse({
       ...record,
       humanEdit: {
@@ -305,10 +323,7 @@ export async function annotateHumanEdits(
         ...(options.notes ? { notes: options.notes } : {}),
       },
     });
-    await writeFile(
-      join(dogfoodDir, `${record.taskId}-attempt${tag}.json`),
-      `${JSON.stringify(updated, null, 2)}\n`,
-    );
+    await atomicWriteJson(join(dogfoodDir, `${record.taskId}-attempt${tag}.json`), updated);
     annotated.push(updated);
   }
   return annotated;
@@ -464,69 +479,31 @@ async function saveChangedFiles(
   filesDir: string,
   changedFiles: string[],
 ): Promise<void> {
-  for (const relative of changedFiles) {
-    let content: Buffer;
-    try {
-      content = await readFile(join(workspacePath, relative));
-    } catch {
-      continue; // ponytail: deleted files have no content to snapshot
-    }
-    const destination = join(filesDir, relative);
-    await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, content);
-  }
+  await Promise.all(
+    changedFiles.map(async (relative) => {
+      let content: Buffer;
+      try {
+        content = await readFile(join(workspacePath, relative));
+      } catch {
+        return; // ponytail: deleted files have no content to snapshot
+      }
+      const destination = join(filesDir, relative);
+      await mkdir(dirname(destination), { recursive: true });
+      await writeFile(destination, content);
+    }),
+  );
 }
 
-async function writeBaselinePair(dir: string, json: string, markdown: string): Promise<void> {
-  const jsonPath = join(dir, `${BASELINE_STEM}.json`);
-  const markdownPath = join(dir, `${BASELINE_STEM}.md`);
-  const suffix = `.${process.pid}-${Date.now()}.tmp`;
-  const tmpJson = `${jsonPath}${suffix}`;
-  const tmpMarkdown = `${markdownPath}${suffix}`;
-  const backupJson = `${jsonPath}${suffix}.backup`;
-  const backupMarkdown = `${markdownPath}${suffix}.backup`;
-  let jsonBackedUp = false;
-  let markdownBackedUp = false;
-  let jsonPublished = false;
-  let markdownPublished = false;
-
-  await mkdir(dir, { recursive: true });
-  try {
-    await writeFile(tmpJson, json, { flag: 'wx' });
-    await writeFile(tmpMarkdown, markdown, { flag: 'wx' });
-    jsonBackedUp = await renameIfPresent(jsonPath, backupJson);
-    markdownBackedUp = await renameIfPresent(markdownPath, backupMarkdown);
-    await rename(tmpJson, jsonPath);
-    jsonPublished = true;
-    await rename(tmpMarkdown, markdownPath);
-    markdownPublished = true;
-  } catch (error) {
-    try {
-      if (jsonPublished) await rm(jsonPath, { force: true });
-      if (markdownPublished) await rm(markdownPath, { force: true });
-      if (jsonBackedUp) await rename(backupJson, jsonPath);
-      if (markdownBackedUp) await rename(backupMarkdown, markdownPath);
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        'Dogfood freeze failed and its baseline pair could not be restored.',
-      );
-    }
-    throw error;
-  } finally {
-    await Promise.allSettled([rm(tmpJson, { force: true }), rm(tmpMarkdown, { force: true })]);
-  }
-  await Promise.allSettled([rm(backupJson, { force: true }), rm(backupMarkdown, { force: true })]);
-}
-
-async function renameIfPresent(source: string, destination: string): Promise<boolean> {
-  try {
-    await rename(source, destination);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw error;
-  }
+// Split a `git diff --stat --patch` capture back into the standalone `git diff
+// --stat` and `git diff` outputs (both with execa's trailing newline stripped):
+// git separates them with a single blank line before the first `diff --git`.
+function splitStatPatch(statPatch: string): { stat: string; patch: string } {
+  const lines = statPatch.split('\n');
+  const patchStart = lines.findIndex((line) => line.startsWith('diff --git '));
+  if (patchStart < 0) return { stat: statPatch, patch: '' };
+  const statLines = lines.slice(0, patchStart);
+  while (statLines.length > 0 && statLines[statLines.length - 1] === '') statLines.pop();
+  return { stat: statLines.join('\n'), patch: lines.slice(patchStart).join('\n') };
 }
 
 function allowlistViolations(changedFiles: string[], allowedFiles: string[]): string[] {
@@ -551,6 +528,9 @@ function formatModels(record: DogfoodRunRecord): string {
   return `${selected} → ${executed}`;
 }
 
+// Deliberately NOT shared with provider-canary's formatUsage: the label wording
+// differs ('in'/'out'/'USD' here vs 'input'/'output'/'cost USD' there), and
+// unifying would re-render — and force a re-freeze of — committed baselines.
 function formatUsage(usage: ExecutionUsage | undefined): string {
   if (!usage) return 'Not reported';
   const parts: string[] = [];
@@ -559,10 +539,6 @@ function formatUsage(usage: ExecutionUsage | undefined): string {
   if (usage.cachedInputTokens !== undefined) parts.push(`cached ${usage.cachedInputTokens}`);
   if (usage.estimatedCostUsd !== undefined) parts.push(`USD ${usage.estimatedCostUsd}`);
   return parts.join(', ') || 'Not reported';
-}
-
-function cell(value: string): string {
-  return value.replaceAll('|', '\\|').replaceAll(/\r?\n/g, ' ');
 }
 
 function splitLines(value: string): string[] {
@@ -589,8 +565,7 @@ function errorMessage(error: unknown): string {
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {
-  const result = await execa('git', args, { cwd, reject: false });
-  if (result.exitCode !== 0) throw commandFailure(`git ${args[0]}`, result);
+  await gitOutput(cwd, args);
 }
 
 async function gitOutput(cwd: string, args: string[]): Promise<string> {

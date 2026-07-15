@@ -1,6 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { execa } from 'execa';
 import { DogfoodRunRecordSchema, type DogfoodRunRecord } from '@agent-foundry/contracts';
 import {
   annotateHumanEdits,
@@ -8,6 +7,7 @@ import {
   loadDogfoodTasks,
   runDogfoodTask,
 } from '../packages/composition/src/dogfood.js';
+import { loadDoctorProbes } from '../packages/composition/src/provider-canary.js';
 
 // Anchor to the repo root (this script lives at <root>/scripts/dogfood.ts) so
 // the CLI resolves the same .data/dogfood records that runDogfoodTask writes
@@ -41,19 +41,13 @@ async function assertRealModeReady(): Promise<void> {
     console.error('Real dogfood runs require RUN_REAL_DOGFOOD=true.');
     process.exit(1);
   }
-  const doctor = await execa(process.execPath, [join(rootDir, 'scripts', 'doctor.mjs'), '--json'], {
-    cwd: rootDir,
-    env: { ...process.env, EXECUTOR_MODE: 'real' },
-    reject: false,
-    encoding: 'utf8',
-  });
-  let probes: Array<{ provider: string; status: string; message?: string }>;
+  let probes: Awaited<ReturnType<typeof loadDoctorProbes>>;
   try {
-    const parsed = JSON.parse(doctor.stdout) as { probes?: unknown };
-    if (!Array.isArray(parsed.probes)) throw new Error('missing probes');
-    probes = parsed.probes as typeof probes;
-  } catch {
-    console.error('Provider doctor did not return valid probe JSON.');
+    probes = await loadDoctorProbes(rootDir, process.env);
+  } catch (error) {
+    console.error(
+      error instanceof Error ? error.message : 'Provider doctor did not return valid probe JSON.',
+    );
     process.exit(1);
   }
   // Canary style: a non-ready provider is a skip, not a failure — routing can
@@ -74,6 +68,12 @@ const executorMode = argValue('--executor-mode') === 'mock' ? ('mock' as const) 
 try {
   if (args.includes('--freeze')) {
     const records = await loadRecords();
+    const baselineRefs = new Set(records.map((record) => record.baselineRef));
+    if (baselineRefs.size > 1) {
+      throw new Error(
+        `--freeze requires all records to share one baselineRef; found: ${[...baselineRefs].join(', ')}`,
+      );
+    }
     const baselineRef = records[0]?.baselineRef ?? 'unknown';
     await freezeDogfoodReport(records, {
       baselinesDir: resolve(rootDir, 'docs/baselines'),

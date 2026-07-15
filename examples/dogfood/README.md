@@ -34,8 +34,10 @@ npm run dogfood:run -- --task domain-redaction
 # run every task in examples/dogfood/tasks/
 npm run dogfood:run -- --all
 
-# after a task's real PR has merged, compare the agent's diff against what a human actually shipped
-npm run dogfood:run -- --annotate-human-edits <merged-ref>
+# after a task's real PR has merged, compare the agent's diff against what a human actually shipped.
+# --task scopes the annotation to one task's records (per-task merges live on sibling branches);
+# --notes attaches a free-text note to the comparison.
+npm run dogfood:run -- --annotate-human-edits <merged-ref> [--task <id>] [--notes "<text>"]
 
 # freeze the accumulated run records into docs/baselines/v0.2-dogfood.{json,md}
 npm run dogfood:run -- --freeze
@@ -57,8 +59,9 @@ distinguished by an incrementing `attempt` number, because failures are data, no
 ## Safety gates
 
 - **Opt-in, fail-closed real execution.** `RUN_REAL_DOGFOOD=true` is required to run against real
-  CLIs; without it (or in CI) the runner refuses. Real mode also requires `npm run doctor` to
-  report every relevant provider as `ready`.
+  CLIs; without it (or in CI) the runner refuses. Real mode probes providers with `npm run doctor`
+  and _skips_ any provider that is not `ready` (routing falls back to the ready ones); it refuses to
+  run only when no provider is ready at all.
 - **File allowlist enforcement.** Every task declares `allowedFiles`; a task whose diff touches
   any other path fails the run, regardless of whether its tests passed. `allowedFiles: []` (the
   planning task) requires an empty diff — no exceptions.

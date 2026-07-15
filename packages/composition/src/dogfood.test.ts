@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { execa } from 'execa';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import {
   DogfoodReportSchema,
   DogfoodRunRecordSchema,
@@ -29,17 +29,31 @@ afterEach(async () => {
   );
 });
 
+// Suite-lifetime dirs (e.g. the shared read-only mini fixture) survive afterEach
+// and are cleaned once at the end.
+const suiteDirectories: string[] = [];
+afterAll(async () => {
+  await Promise.all(
+    suiteDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
+  );
+});
+
 async function tempDir(prefix: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), prefix));
   temporaryDirectories.push(dir);
   return dir;
 }
 
-async function createFixtureRepo(files: Record<string, string>): Promise<{
-  path: string;
-  sha: string;
-}> {
-  const path = await tempDir('dogfood-fixture-');
+async function suiteDir(prefix: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  suiteDirectories.push(dir);
+  return dir;
+}
+
+async function seedFixtureRepo(
+  path: string,
+  files: Record<string, string>,
+): Promise<{ path: string; sha: string }> {
   for (const [relative, content] of Object.entries(files)) {
     const destination = join(path, relative);
     await mkdir(dirname(destination), { recursive: true });
@@ -59,7 +73,26 @@ async function createFixtureRepo(files: Record<string, string>): Promise<{
   return { path, sha: short.stdout.trim() };
 }
 
+async function createFixtureRepo(files: Record<string, string>): Promise<{
+  path: string;
+  sha: string;
+}> {
+  return seedFixtureRepo(await tempDir('dogfood-fixture-'), files);
+}
+
 const MINI_PACKAGE = `${JSON.stringify({ name: 'mini', private: true, version: '0.0.0' }, null, 2)}\n`;
+
+// runDogfoodTask only reads from repoRoot, so the four passing/failing mini-task
+// tests can share one lazily-built fixture instead of each rebuilding an
+// identical git repo. Its dir lives for the whole suite (cleaned in afterAll).
+let miniFixture: Promise<{ path: string; sha: string }> | undefined;
+function sharedMiniFixture(): Promise<{ path: string; sha: string }> {
+  return (miniFixture ??= (async () =>
+    seedFixtureRepo(await suiteDir('dogfood-fixture-shared-'), {
+      'package.json': MINI_PACKAGE,
+      'src/lib.js': 'export const value = 1;\n',
+    }))());
+}
 
 function miniTask(overrides: Record<string, unknown>): ReturnType<typeof DogfoodTaskSchema.parse> {
   return DogfoodTaskSchema.parse({
@@ -96,10 +129,7 @@ function sampleRecord(overrides: Partial<DogfoodRunRecord> = {}): DogfoodRunReco
 
 describe('runDogfoodTask (mock mode)', () => {
   it('runs a mock mini-task and writes an append-only record with copied files and a patch', async () => {
-    const fixture = await createFixtureRepo({
-      'package.json': MINI_PACKAGE,
-      'src/lib.js': 'export const value = 1;\n',
-    });
+    const fixture = await sharedMiniFixture();
     const dataDir = await tempDir('dogfood-data-');
     const task = miniTask({
       id: 'mini-pass',
@@ -122,6 +152,16 @@ describe('runDogfoodTask (mock mode)', () => {
     expect(record.diff?.filesChanged ?? []).toEqual(
       expect.arrayContaining(['src/index.js', 'src/index.test.js']),
     );
+    // stat/patch come from one `git diff --stat --patch` split on `diff --git`:
+    // the stat must be the diffstat summary only (no leaked patch, no trailing
+    // blank line) and the patch file must hold the raw unified diff.
+    expect(record.diff?.stat).toMatch(/ \| /);
+    expect(record.diff?.stat).toContain('file');
+    expect(record.diff?.stat).not.toContain('diff --git');
+    expect(record.diff?.stat.endsWith('\n')).toBe(false);
+    await expect(
+      readFile(join(dataDir, 'dogfood', 'mini-pass-attempt01.patch.txt'), 'utf8'),
+    ).resolves.toMatch(/^diff --git /);
     expect(record.checks.some((check) => check.name === 'dogfood:verify')).toBe(true);
     expect(record.repairs.iterations).toBeGreaterThanOrEqual(1);
     expect(record.humanEdit.status).toBe('pending');
@@ -171,10 +211,7 @@ describe('runDogfoodTask (mock mode)', () => {
   }, 60_000);
 
   it('appends a second attempt without overwriting the first record', async () => {
-    const fixture = await createFixtureRepo({
-      'package.json': MINI_PACKAGE,
-      'src/lib.js': 'export const value = 1;\n',
-    });
+    const fixture = await sharedMiniFixture();
     const dataDir = await tempDir('dogfood-data-');
     const task = miniTask({
       id: 'mini-append',
@@ -201,10 +238,7 @@ describe('runDogfoodTask (mock mode)', () => {
   }, 90_000);
 
   it('records a failed run with a populated failure when the verify script fails', async () => {
-    const fixture = await createFixtureRepo({
-      'package.json': MINI_PACKAGE,
-      'src/lib.js': 'export const value = 1;\n',
-    });
+    const fixture = await sharedMiniFixture();
     const dataDir = await tempDir('dogfood-data-');
     const task = miniTask({
       id: 'mini-fail',
@@ -227,10 +261,9 @@ describe('runDogfoodTask (mock mode)', () => {
   }, 60_000);
 
   it('sanitizes git failures so no stderr text reaches the record', async () => {
-    const fixture = await createFixtureRepo({
-      'package.json': MINI_PACKAGE,
-      'src/lib.js': 'export const value = 1;\n',
-    });
+    // A plain (non-git) temp dir as repoRoot makes seedWorkspace's `git rev-parse`
+    // fail before any pipeline step runs — no fixture repo needed.
+    const repoRoot = await tempDir('dogfood-bad-repo-');
     const dataDir = await tempDir('dogfood-data-');
     const task = miniTask({
       id: 'mini-bad-baseline',
@@ -239,7 +272,7 @@ describe('runDogfoodTask (mock mode)', () => {
 
     const record = await runDogfoodTask(task, {
       executorMode: 'mock',
-      repoRoot: fixture.path,
+      repoRoot,
       dataDir,
     });
 
@@ -247,16 +280,15 @@ describe('runDogfoodTask (mock mode)', () => {
     expect(record.failure?.message).toMatch(/^git rev-parse failed \(exit \d+\)$/);
     expect(record.failure?.message).not.toContain('not-a-real-baseline-ref');
     expect(record.failure?.message).not.toContain('fatal');
+    // Infra failed before any step ran, so no repair iterations were attempted.
+    expect(record.repairs.iterations).toBe(0);
     await expect(
       readFile(join(dataDir, 'dogfood', 'mini-bad-baseline-attempt01.json'), 'utf8'),
     ).resolves.toContain('"taskId": "mini-bad-baseline"');
   }, 30_000);
 
   it('flags a diff outside the allowlist as a failed run with failure.kind "allowlist"', async () => {
-    const fixture = await createFixtureRepo({
-      'package.json': MINI_PACKAGE,
-      'src/lib.js': 'export const value = 1;\n',
-    });
+    const fixture = await sharedMiniFixture();
     const dataDir = await tempDir('dogfood-data-');
     const task = miniTask({
       id: 'mini-allowlist',
