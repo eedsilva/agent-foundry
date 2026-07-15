@@ -1,0 +1,1544 @@
+{
+  "schemaVersion": "1",
+  "createdAt": "2026-07-15T13:16:31.720Z",
+  "baselineRef": "8896a3c",
+  "runs": [
+    {
+      "schemaVersion": "1",
+      "taskId": "domain-redaction",
+      "attempt": 1,
+      "issueRef": "eedsilva/agent-foundry#10",
+      "baselineRef": "8896a3c",
+      "projectId": "01KXJXH3CS0XYEW2X76D2AEGVE",
+      "runId": "01KXJXH3CTNJYP81MC6CG20YTM",
+      "startedAt": "2026-07-15T12:55:18.653Z",
+      "status": "passed",
+      "durationMs": 385490,
+      "route": {
+        "routeId": "01KXJXHHXKD71PVMFFR4FRFEYX",
+        "createdAt": "2026-07-15T12:55:33.556Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3548,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "codex-default",
+            "provider": "codex",
+            "model": "",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["coding", "repository", "balanced"],
+            "capabilities": {
+              "planning": 0.82,
+              "architecture": 0.84,
+              "coding": 0.94,
+              "review": 0.88,
+              "repair": 0.94,
+              "structuredOutput": 0.92,
+              "speed": 0.66,
+              "costEfficiency": 0.58,
+              "reliability": 0.9
+            }
+          },
+          "score": {
+            "capability": 0.94,
+            "context": 0.9667,
+            "speed": 0.66,
+            "cost": 0.58,
+            "reliability": 0.7,
+            "historical": 0.5,
+            "tagAffinity": 0.4,
+            "estimatedCostUsd": null,
+            "total": 0.795
+          }
+        },
+        "fallbacks": [
+          {
+            "model": {
+              "id": "claude-sonnet",
+              "provider": "claude",
+              "model": "sonnet",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "planning", "coding", "review"],
+              "capabilities": {
+                "planning": 0.9,
+                "architecture": 0.91,
+                "coding": 0.9,
+                "review": 0.91,
+                "repair": 0.9,
+                "structuredOutput": 0.95,
+                "speed": 0.69,
+                "costEfficiency": 0.62,
+                "reliability": 0.91
+              }
+            },
+            "score": {
+              "capability": 0.9,
+              "context": 0.9742,
+              "speed": 0.69,
+              "cost": 0.62,
+              "reliability": 0.705,
+              "historical": 0.5,
+              "tagAffinity": 0.2,
+              "estimatedCostUsd": null,
+              "total": 0.78
+            }
+          },
+          {
+            "model": {
+              "id": "agy-default",
+              "provider": "agy",
+              "model": "",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "coding", "multimodal"],
+              "capabilities": {
+                "planning": 0.82,
+                "architecture": 0.81,
+                "coding": 0.86,
+                "review": 0.82,
+                "repair": 0.86,
+                "structuredOutput": 0.74,
+                "speed": 0.78,
+                "costEfficiency": 0.72,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.86,
+              "context": 0.9217,
+              "speed": 0.78,
+              "cost": 0.72,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0.2,
+              "estimatedCostUsd": null,
+              "total": 0.7548
+            }
+          },
+          {
+            "model": {
+              "id": "claude-haiku",
+              "provider": "claude",
+              "model": "haiku",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["fast", "economy", "triage"],
+              "capabilities": {
+                "planning": 0.68,
+                "architecture": 0.64,
+                "coding": 0.74,
+                "review": 0.72,
+                "repair": 0.73,
+                "structuredOutput": 0.92,
+                "speed": 0.96,
+                "costEfficiency": 0.95,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.74,
+              "context": 0.9667,
+              "speed": 0.96,
+              "cost": 0.95,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0,
+              "estimatedCostUsd": null,
+              "total": 0.7489
+            }
+          }
+        ],
+        "executed": {
+          "model": {
+            "id": "codex-default",
+            "provider": "codex",
+            "model": "",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["coding", "repository", "balanced"],
+            "capabilities": {
+              "planning": 0.82,
+              "architecture": 0.84,
+              "coding": 0.94,
+              "review": 0.88,
+              "repair": 0.94,
+              "structuredOutput": 0.92,
+              "speed": 0.66,
+              "costEfficiency": 0.58,
+              "reliability": 0.9
+            }
+          },
+          "score": {
+            "capability": 0.94,
+            "context": 0.9667,
+            "speed": 0.66,
+            "cost": 0.58,
+            "reliability": 0.7,
+            "historical": 0.5,
+            "tagAffinity": 0.4,
+            "estimatedCostUsd": null,
+            "total": 0.795
+          }
+        },
+        "attemptedModelIds": ["codex-default"],
+        "rejected": []
+      },
+      "usage": {
+        "inputTokens": 228932,
+        "outputTokens": 4458,
+        "cachedInputTokens": 198656
+      },
+      "promptArtifact": "dogfood/domain-redaction-attempt01-request.md",
+      "diff": {
+        "checkpoint": "59f9d9a1fda4386e0bbb035ea16782e2e0bfa01f",
+        "commit": "2d6cb2d8413bed8e47ee28a274795cf73f020af4",
+        "stat": " packages/domain/src/index.ts     |  1 +\n packages/domain/src/redaction.ts | 55 ++++++++++++++++++++++++++++++++++++++++\n 2 files changed, 56 insertions(+)",
+        "filesChanged": ["packages/domain/src/index.ts", "packages/domain/src/redaction.ts"]
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 0,
+          "durationMs": 901,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 0,
+          "durationMs": 48,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 27,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 1,
+        "repairEvents": 0
+      },
+      "humanEdit": {
+        "status": "recorded",
+        "reference": "origin/agent/issue-10-sse-timeline",
+        "files": [
+          {
+            "path": "packages/domain/src/index.ts",
+            "agentVsMerged": "same"
+          },
+          {
+            "path": "packages/domain/src/redaction.ts",
+            "agentVsMerged": "modified"
+          }
+        ]
+      }
+    },
+    {
+      "schemaVersion": "1",
+      "taskId": "event-store-cursor",
+      "attempt": 1,
+      "issueRef": "eedsilva/agent-foundry#10",
+      "baselineRef": "8896a3c",
+      "projectId": "01KXJXHY720KBJZA8X6AFG2HXC",
+      "runId": "01KXJXHY7518B0ZFY172TD56PY",
+      "startedAt": "2026-07-15T12:55:46.086Z",
+      "status": "passed",
+      "durationMs": 458775,
+      "route": {
+        "routeId": "01KXJXJPTYC1JQ9Z76RHMKAP4Y",
+        "createdAt": "2026-07-15T12:56:11.358Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3498,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "codex-default",
+            "provider": "codex",
+            "model": "",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["coding", "repository", "balanced"],
+            "capabilities": {
+              "planning": 0.82,
+              "architecture": 0.84,
+              "coding": 0.94,
+              "review": 0.88,
+              "repair": 0.94,
+              "structuredOutput": 0.92,
+              "speed": 0.66,
+              "costEfficiency": 0.58,
+              "reliability": 0.9
+            }
+          },
+          "score": {
+            "capability": 0.94,
+            "context": 0.9669,
+            "speed": 0.66,
+            "cost": 0.58,
+            "reliability": 0.7,
+            "historical": 0.5,
+            "tagAffinity": 0.4,
+            "estimatedCostUsd": null,
+            "total": 0.795
+          }
+        },
+        "fallbacks": [
+          {
+            "model": {
+              "id": "claude-sonnet",
+              "provider": "claude",
+              "model": "sonnet",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "planning", "coding", "review"],
+              "capabilities": {
+                "planning": 0.9,
+                "architecture": 0.91,
+                "coding": 0.9,
+                "review": 0.91,
+                "repair": 0.9,
+                "structuredOutput": 0.95,
+                "speed": 0.69,
+                "costEfficiency": 0.62,
+                "reliability": 0.91
+              }
+            },
+            "score": {
+              "capability": 0.9,
+              "context": 0.9744,
+              "speed": 0.69,
+              "cost": 0.62,
+              "reliability": 0.705,
+              "historical": 0.5,
+              "tagAffinity": 0.2,
+              "estimatedCostUsd": null,
+              "total": 0.78
+            }
+          },
+          {
+            "model": {
+              "id": "agy-default",
+              "provider": "agy",
+              "model": "",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "coding", "multimodal"],
+              "capabilities": {
+                "planning": 0.82,
+                "architecture": 0.81,
+                "coding": 0.86,
+                "review": 0.82,
+                "repair": 0.86,
+                "structuredOutput": 0.74,
+                "speed": 0.78,
+                "costEfficiency": 0.72,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.86,
+              "context": 0.9219,
+              "speed": 0.78,
+              "cost": 0.72,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0.2,
+              "estimatedCostUsd": null,
+              "total": 0.7548
+            }
+          },
+          {
+            "model": {
+              "id": "claude-haiku",
+              "provider": "claude",
+              "model": "haiku",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["fast", "economy", "triage"],
+              "capabilities": {
+                "planning": 0.68,
+                "architecture": 0.64,
+                "coding": 0.74,
+                "review": 0.72,
+                "repair": 0.73,
+                "structuredOutput": 0.92,
+                "speed": 0.96,
+                "costEfficiency": 0.95,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.74,
+              "context": 0.9669,
+              "speed": 0.96,
+              "cost": 0.95,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0,
+              "estimatedCostUsd": null,
+              "total": 0.7489
+            }
+          }
+        ],
+        "executed": {
+          "model": {
+            "id": "codex-default",
+            "provider": "codex",
+            "model": "",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["coding", "repository", "balanced"],
+            "capabilities": {
+              "planning": 0.82,
+              "architecture": 0.84,
+              "coding": 0.94,
+              "review": 0.88,
+              "repair": 0.94,
+              "structuredOutput": 0.92,
+              "speed": 0.66,
+              "costEfficiency": 0.58,
+              "reliability": 0.9
+            }
+          },
+          "score": {
+            "capability": 0.94,
+            "context": 0.9669,
+            "speed": 0.66,
+            "cost": 0.58,
+            "reliability": 0.7,
+            "historical": 0.5,
+            "tagAffinity": 0.4,
+            "estimatedCostUsd": null,
+            "total": 0.795
+          }
+        },
+        "attemptedModelIds": ["codex-default"],
+        "rejected": []
+      },
+      "usage": {
+        "inputTokens": 358505,
+        "outputTokens": 5771,
+        "cachedInputTokens": 301312
+      },
+      "promptArtifact": "dogfood/event-store-cursor-attempt01-request.md",
+      "diff": {
+        "checkpoint": "54bac7fe24550a94be57853c8b774b0456ef8841",
+        "commit": "f4449caed25f363d81e600a09662e556ec71efe4",
+        "stat": " packages/domain/src/ports.ts            |  2 +-\n packages/persistence/src/event-store.ts | 10 ++++++++--\n 2 files changed, 9 insertions(+), 3 deletions(-)",
+        "filesChanged": ["packages/domain/src/ports.ts", "packages/persistence/src/event-store.ts"]
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 0,
+          "durationMs": 1420,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 0,
+          "durationMs": 50,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 25,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 1,
+        "repairEvents": 0
+      },
+      "humanEdit": {
+        "status": "recorded",
+        "reference": "origin/agent/issue-10-sse-timeline",
+        "files": [
+          {
+            "path": "packages/domain/src/ports.ts",
+            "agentVsMerged": "same"
+          },
+          {
+            "path": "packages/persistence/src/event-store.ts",
+            "agentVsMerged": "modified"
+          }
+        ]
+      }
+    },
+    {
+      "schemaVersion": "1",
+      "taskId": "executor-failure-fixtures",
+      "attempt": 1,
+      "issueRef": "eedsilva/agent-foundry#11",
+      "baselineRef": "8896a3c",
+      "projectId": "01KXJXJ1JQKQFZS6Z2PJ6MSJ85",
+      "runId": "01KXJXJ1JRQHX0ZATWNQPYDR2Z",
+      "startedAt": "2026-07-15T12:55:49.562Z",
+      "status": "passed",
+      "durationMs": 383390,
+      "route": {
+        "routeId": "01KXJXJQ56X94RVZM5NQBD38R4",
+        "createdAt": "2026-07-15T12:56:11.686Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3752,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "codex-default",
+            "provider": "codex",
+            "model": "",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["coding", "repository", "balanced"],
+            "capabilities": {
+              "planning": 0.82,
+              "architecture": 0.84,
+              "coding": 0.94,
+              "review": 0.88,
+              "repair": 0.94,
+              "structuredOutput": 0.92,
+              "speed": 0.66,
+              "costEfficiency": 0.58,
+              "reliability": 0.9
+            }
+          },
+          "score": {
+            "capability": 0.94,
+            "context": 0.9659,
+            "speed": 0.66,
+            "cost": 0.58,
+            "reliability": 0.7,
+            "historical": 0.5,
+            "tagAffinity": 0.4,
+            "estimatedCostUsd": null,
+            "total": 0.795
+          }
+        },
+        "fallbacks": [
+          {
+            "model": {
+              "id": "claude-sonnet",
+              "provider": "claude",
+              "model": "sonnet",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "planning", "coding", "review"],
+              "capabilities": {
+                "planning": 0.9,
+                "architecture": 0.91,
+                "coding": 0.9,
+                "review": 0.91,
+                "repair": 0.9,
+                "structuredOutput": 0.95,
+                "speed": 0.69,
+                "costEfficiency": 0.62,
+                "reliability": 0.91
+              }
+            },
+            "score": {
+              "capability": 0.9,
+              "context": 0.9734,
+              "speed": 0.69,
+              "cost": 0.62,
+              "reliability": 0.705,
+              "historical": 0.5,
+              "tagAffinity": 0.2,
+              "estimatedCostUsd": null,
+              "total": 0.78
+            }
+          },
+          {
+            "model": {
+              "id": "agy-default",
+              "provider": "agy",
+              "model": "",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "coding", "multimodal"],
+              "capabilities": {
+                "planning": 0.82,
+                "architecture": 0.81,
+                "coding": 0.86,
+                "review": 0.82,
+                "repair": 0.86,
+                "structuredOutput": 0.74,
+                "speed": 0.78,
+                "costEfficiency": 0.72,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.86,
+              "context": 0.9209,
+              "speed": 0.78,
+              "cost": 0.72,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0.2,
+              "estimatedCostUsd": null,
+              "total": 0.7547
+            }
+          },
+          {
+            "model": {
+              "id": "claude-haiku",
+              "provider": "claude",
+              "model": "haiku",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["fast", "economy", "triage"],
+              "capabilities": {
+                "planning": 0.68,
+                "architecture": 0.64,
+                "coding": 0.74,
+                "review": 0.72,
+                "repair": 0.73,
+                "structuredOutput": 0.92,
+                "speed": 0.96,
+                "costEfficiency": 0.95,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.74,
+              "context": 0.9659,
+              "speed": 0.96,
+              "cost": 0.95,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0,
+              "estimatedCostUsd": null,
+              "total": 0.7488
+            }
+          }
+        ],
+        "executed": {
+          "model": {
+            "id": "codex-default",
+            "provider": "codex",
+            "model": "",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["coding", "repository", "balanced"],
+            "capabilities": {
+              "planning": 0.82,
+              "architecture": 0.84,
+              "coding": 0.94,
+              "review": 0.88,
+              "repair": 0.94,
+              "structuredOutput": 0.92,
+              "speed": 0.66,
+              "costEfficiency": 0.58,
+              "reliability": 0.9
+            }
+          },
+          "score": {
+            "capability": 0.94,
+            "context": 0.9659,
+            "speed": 0.66,
+            "cost": 0.58,
+            "reliability": 0.7,
+            "historical": 0.5,
+            "tagAffinity": 0.4,
+            "estimatedCostUsd": null,
+            "total": 0.795
+          }
+        },
+        "attemptedModelIds": ["codex-default"],
+        "rejected": []
+      },
+      "usage": {
+        "inputTokens": 399214,
+        "outputTokens": 4401,
+        "cachedInputTokens": 353536
+      },
+      "promptArtifact": "dogfood/executor-failure-fixtures-attempt01-request.md",
+      "diff": {
+        "checkpoint": "ce69c7208212c77113f58cd33ee1c8228024a585",
+        "commit": "72d45822535a256e96848c5bf83609878dafe269",
+        "stat": " packages/orchestrator/src/testing/fixtures.ts | 38 +++++++++++++++++++++++++++\n 1 file changed, 38 insertions(+)",
+        "filesChanged": ["packages/orchestrator/src/testing/fixtures.ts"]
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 0,
+          "durationMs": 1212,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 0,
+          "durationMs": 48,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 27,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 1,
+        "repairEvents": 0
+      },
+      "humanEdit": {
+        "status": "recorded",
+        "reference": "origin/agent/issue-11-failure-injection",
+        "files": [
+          {
+            "path": "packages/orchestrator/src/testing/fixtures.ts",
+            "agentVsMerged": "agent-only"
+          }
+        ]
+      }
+    },
+    {
+      "schemaVersion": "1",
+      "taskId": "failure-matrix-plan",
+      "attempt": 1,
+      "issueRef": "eedsilva/agent-foundry#11",
+      "baselineRef": "8896a3c",
+      "projectId": "01KXHYDA10TV0QM4M4A35SKWW4",
+      "runId": "01KXHYDA113GXQD6RSSQF7XCJK",
+      "startedAt": "2026-07-15T03:51:28.522Z",
+      "status": "passed",
+      "durationMs": 2081901,
+      "route": {
+        "routeId": "01KXHYDAY8F3BG87E1BGWH8RCM",
+        "createdAt": "2026-07-15T03:51:29.480Z",
+        "profile": {
+          "role": "planner",
+          "taskKind": "planning",
+          "complexity": 3,
+          "risk": 2,
+          "estimatedContextTokens": 3335,
+          "estimatedOutputTokens": 8000,
+          "mutatesWorkspace": false,
+          "priorities": {
+            "quality": 0.55,
+            "speed": 0.1,
+            "cost": 0.1,
+            "reliability": 0.25
+          },
+          "preferredTags": ["planning", "reasoning", "structured-output"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.3333,
+            "estimatedCostUsd": null,
+            "total": 0.7689
+          }
+        },
+        "fallbacks": [
+          {
+            "model": {
+              "id": "agy-default",
+              "provider": "agy",
+              "model": "",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "coding", "multimodal"],
+              "capabilities": {
+                "planning": 0.82,
+                "architecture": 0.81,
+                "coding": 0.86,
+                "review": 0.82,
+                "repair": 0.86,
+                "structuredOutput": 0.74,
+                "speed": 0.78,
+                "costEfficiency": 0.72,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.82,
+              "context": 0.9225,
+              "speed": 0.78,
+              "cost": 0.72,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0,
+              "estimatedCostUsd": null,
+              "total": 0.7183
+            }
+          },
+          {
+            "model": {
+              "id": "codex-default",
+              "provider": "codex",
+              "model": "",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["coding", "repository", "balanced"],
+              "capabilities": {
+                "planning": 0.82,
+                "architecture": 0.84,
+                "coding": 0.94,
+                "review": 0.88,
+                "repair": 0.94,
+                "structuredOutput": 0.92,
+                "speed": 0.66,
+                "costEfficiency": 0.58,
+                "reliability": 0.9
+              }
+            },
+            "score": {
+              "capability": 0.82,
+              "context": 0.9675,
+              "speed": 0.66,
+              "cost": 0.58,
+              "reliability": 0.7,
+              "historical": 0.5,
+              "tagAffinity": 0,
+              "estimatedCostUsd": null,
+              "total": 0.7141
+            }
+          },
+          {
+            "model": {
+              "id": "claude-opus",
+              "provider": "claude",
+              "model": "opus",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+              "capabilities": {
+                "planning": 0.96,
+                "architecture": 0.97,
+                "coding": 0.9,
+                "review": 0.96,
+                "repair": 0.91,
+                "structuredOutput": 0.95,
+                "speed": 0.4,
+                "costEfficiency": 0.28,
+                "reliability": 0.93
+              }
+            },
+            "score": {
+              "capability": 0.96,
+              "context": 0.975,
+              "speed": 0.4,
+              "cost": 0.28,
+              "reliability": 0.715,
+              "historical": 0.5,
+              "tagAffinity": 0.6667,
+              "estimatedCostUsd": null,
+              "total": 0.7453
+            }
+          }
+        ],
+        "executed": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.3333,
+            "estimatedCostUsd": null,
+            "total": 0.7689
+          }
+        },
+        "attemptedModelIds": ["claude-sonnet"],
+        "rejected": []
+      },
+      "executedModel": "claude-sonnet-5",
+      "usage": {
+        "inputTokens": 54,
+        "outputTokens": 56880,
+        "cachedInputTokens": 2553586,
+        "estimatedCostUsd": 2.4364038
+      },
+      "promptArtifact": "dogfood/failure-matrix-plan-attempt01-request.md",
+      "diff": {
+        "checkpoint": "0822ba3dc84f30b241edcf25030c6d3be5ee949c",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [],
+      "repairs": {
+        "iterations": 2,
+        "repairEvents": 1
+      },
+      "humanEdit": {
+        "status": "recorded",
+        "reference": "origin/agent/issue-11-failure-injection",
+        "files": [],
+        "notes": "Plan task (dogfood-plan-v1): the agent produced a plan artifact and an empty code diff, so there are no per-file edits to classify against the merged branch."
+      }
+    },
+    {
+      "schemaVersion": "1",
+      "taskId": "web-merge-events",
+      "attempt": 1,
+      "issueRef": "eedsilva/agent-foundry#10",
+      "baselineRef": "8896a3c",
+      "projectId": "01KXJMQFCQPP7BP7AX5WVHR4ZC",
+      "runId": "01KXJMQFCRP1YT5WKB49EZ3AK7",
+      "startedAt": "2026-07-15T10:21:30.369Z",
+      "status": "failed",
+      "durationMs": 372365,
+      "route": {
+        "routeId": "01KXJMQV1W4CVZ35GXCHR1AYRG",
+        "createdAt": "2026-07-15T10:21:42.332Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3434,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "codex-default",
+            "provider": "codex",
+            "model": "",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["coding", "repository", "balanced"],
+            "capabilities": {
+              "planning": 0.82,
+              "architecture": 0.84,
+              "coding": 0.94,
+              "review": 0.88,
+              "repair": 0.94,
+              "structuredOutput": 0.92,
+              "speed": 0.66,
+              "costEfficiency": 0.58,
+              "reliability": 0.9
+            }
+          },
+          "score": {
+            "capability": 0.94,
+            "context": 0.9671,
+            "speed": 0.66,
+            "cost": 0.58,
+            "reliability": 0.7,
+            "historical": 0.5,
+            "tagAffinity": 0.4,
+            "estimatedCostUsd": null,
+            "total": 0.7951
+          }
+        },
+        "fallbacks": [
+          {
+            "model": {
+              "id": "claude-sonnet",
+              "provider": "claude",
+              "model": "sonnet",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "planning", "coding", "review"],
+              "capabilities": {
+                "planning": 0.9,
+                "architecture": 0.91,
+                "coding": 0.9,
+                "review": 0.91,
+                "repair": 0.9,
+                "structuredOutput": 0.95,
+                "speed": 0.69,
+                "costEfficiency": 0.62,
+                "reliability": 0.91
+              }
+            },
+            "score": {
+              "capability": 0.9,
+              "context": 0.9746,
+              "speed": 0.69,
+              "cost": 0.62,
+              "reliability": 0.705,
+              "historical": 0.5,
+              "tagAffinity": 0.2,
+              "estimatedCostUsd": null,
+              "total": 0.78
+            }
+          },
+          {
+            "model": {
+              "id": "agy-default",
+              "provider": "agy",
+              "model": "",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "coding", "multimodal"],
+              "capabilities": {
+                "planning": 0.82,
+                "architecture": 0.81,
+                "coding": 0.86,
+                "review": 0.82,
+                "repair": 0.86,
+                "structuredOutput": 0.74,
+                "speed": 0.78,
+                "costEfficiency": 0.72,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.86,
+              "context": 0.9221,
+              "speed": 0.78,
+              "cost": 0.72,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0.2,
+              "estimatedCostUsd": null,
+              "total": 0.7548
+            }
+          },
+          {
+            "model": {
+              "id": "claude-haiku",
+              "provider": "claude",
+              "model": "haiku",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["fast", "economy", "triage"],
+              "capabilities": {
+                "planning": 0.68,
+                "architecture": 0.64,
+                "coding": 0.74,
+                "review": 0.72,
+                "repair": 0.73,
+                "structuredOutput": 0.92,
+                "speed": 0.96,
+                "costEfficiency": 0.95,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.74,
+              "context": 0.9671,
+              "speed": 0.96,
+              "cost": 0.95,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0,
+              "estimatedCostUsd": null,
+              "total": 0.7489
+            }
+          }
+        ],
+        "executed": {
+          "model": {
+            "id": "codex-default",
+            "provider": "codex",
+            "model": "",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["coding", "repository", "balanced"],
+            "capabilities": {
+              "planning": 0.82,
+              "architecture": 0.84,
+              "coding": 0.94,
+              "review": 0.88,
+              "repair": 0.94,
+              "structuredOutput": 0.92,
+              "speed": 0.66,
+              "costEfficiency": 0.58,
+              "reliability": 0.9
+            }
+          },
+          "score": {
+            "capability": 0.94,
+            "context": 0.9671,
+            "speed": 0.66,
+            "cost": 0.58,
+            "reliability": 0.7,
+            "historical": 0.5,
+            "tagAffinity": 0.4,
+            "estimatedCostUsd": null,
+            "total": 0.7951
+          }
+        },
+        "attemptedModelIds": ["codex-default"],
+        "rejected": []
+      },
+      "usage": {
+        "inputTokens": 270830,
+        "outputTokens": 2873,
+        "cachedInputTokens": 243200
+      },
+      "promptArtifact": "dogfood/web-merge-events-attempt01-request.md",
+      "diff": {
+        "checkpoint": "c534d88fe891407454f862dcf76a3f2eff03b148",
+        "commit": "75d9f79022953f161967c3fffd8b6e0ed8cc0f5c",
+        "stat": " apps/web/lib/events.ts | 19 +++++++++++++++++++\n 1 file changed, 19 insertions(+)",
+        "filesChanged": ["apps/web/lib/events.ts"]
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 0,
+          "durationMs": 771,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 45,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 20,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 2,
+        "repairEvents": 1
+      },
+      "failure": {
+        "kind": "QualityGateError",
+        "message": "Deterministic verification gate did not satisfy verification.report.approved after 2 iteration(s)."
+      },
+      "humanEdit": {
+        "status": "recorded",
+        "reference": "origin/agent/issue-10-sse-timeline",
+        "files": [
+          {
+            "path": "apps/web/lib/events.ts",
+            "agentVsMerged": "modified"
+          }
+        ]
+      }
+    },
+    {
+      "schemaVersion": "1",
+      "taskId": "web-merge-events",
+      "attempt": 2,
+      "issueRef": "eedsilva/agent-foundry#10",
+      "baselineRef": "8896a3c",
+      "projectId": "01KXJNXRFRB60F22K90AV53M14",
+      "runId": "01KXJNXRFS2X0RMP063ZFYQ145",
+      "startedAt": "2026-07-15T10:42:24.854Z",
+      "status": "passed",
+      "durationMs": 399042,
+      "route": {
+        "routeId": "01KXJNY622C22HVP6N81GA04Z3",
+        "createdAt": "2026-07-15T10:42:38.786Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3434,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "codex-default",
+            "provider": "codex",
+            "model": "",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["coding", "repository", "balanced"],
+            "capabilities": {
+              "planning": 0.82,
+              "architecture": 0.84,
+              "coding": 0.94,
+              "review": 0.88,
+              "repair": 0.94,
+              "structuredOutput": 0.92,
+              "speed": 0.66,
+              "costEfficiency": 0.58,
+              "reliability": 0.9
+            }
+          },
+          "score": {
+            "capability": 0.94,
+            "context": 0.9671,
+            "speed": 0.66,
+            "cost": 0.58,
+            "reliability": 0.7,
+            "historical": 0.5,
+            "tagAffinity": 0.4,
+            "estimatedCostUsd": null,
+            "total": 0.7951
+          }
+        },
+        "fallbacks": [
+          {
+            "model": {
+              "id": "claude-sonnet",
+              "provider": "claude",
+              "model": "sonnet",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "planning", "coding", "review"],
+              "capabilities": {
+                "planning": 0.9,
+                "architecture": 0.91,
+                "coding": 0.9,
+                "review": 0.91,
+                "repair": 0.9,
+                "structuredOutput": 0.95,
+                "speed": 0.69,
+                "costEfficiency": 0.62,
+                "reliability": 0.91
+              }
+            },
+            "score": {
+              "capability": 0.9,
+              "context": 0.9746,
+              "speed": 0.69,
+              "cost": 0.62,
+              "reliability": 0.705,
+              "historical": 0.5,
+              "tagAffinity": 0.2,
+              "estimatedCostUsd": null,
+              "total": 0.78
+            }
+          },
+          {
+            "model": {
+              "id": "agy-default",
+              "provider": "agy",
+              "model": "",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["balanced", "coding", "multimodal"],
+              "capabilities": {
+                "planning": 0.82,
+                "architecture": 0.81,
+                "coding": 0.86,
+                "review": 0.82,
+                "repair": 0.86,
+                "structuredOutput": 0.74,
+                "speed": 0.78,
+                "costEfficiency": 0.72,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.86,
+              "context": 0.9221,
+              "speed": 0.78,
+              "cost": 0.72,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0.2,
+              "estimatedCostUsd": null,
+              "total": 0.7548
+            }
+          },
+          {
+            "model": {
+              "id": "claude-haiku",
+              "provider": "claude",
+              "model": "haiku",
+              "billingMode": "subscription",
+              "enabled": true,
+              "requireExplicitModel": false,
+              "maxContextTokens": 100000,
+              "canWriteWorkspace": true,
+              "tags": ["fast", "economy", "triage"],
+              "capabilities": {
+                "planning": 0.68,
+                "architecture": 0.64,
+                "coding": 0.74,
+                "review": 0.72,
+                "repair": 0.73,
+                "structuredOutput": 0.92,
+                "speed": 0.96,
+                "costEfficiency": 0.95,
+                "reliability": 0.84
+              }
+            },
+            "score": {
+              "capability": 0.74,
+              "context": 0.9671,
+              "speed": 0.96,
+              "cost": 0.95,
+              "reliability": 0.67,
+              "historical": 0.5,
+              "tagAffinity": 0,
+              "estimatedCostUsd": null,
+              "total": 0.7489
+            }
+          }
+        ],
+        "executed": {
+          "model": {
+            "id": "codex-default",
+            "provider": "codex",
+            "model": "",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["coding", "repository", "balanced"],
+            "capabilities": {
+              "planning": 0.82,
+              "architecture": 0.84,
+              "coding": 0.94,
+              "review": 0.88,
+              "repair": 0.94,
+              "structuredOutput": 0.92,
+              "speed": 0.66,
+              "costEfficiency": 0.58,
+              "reliability": 0.9
+            }
+          },
+          "score": {
+            "capability": 0.94,
+            "context": 0.9671,
+            "speed": 0.66,
+            "cost": 0.58,
+            "reliability": 0.7,
+            "historical": 0.5,
+            "tagAffinity": 0.4,
+            "estimatedCostUsd": null,
+            "total": 0.7951
+          }
+        },
+        "attemptedModelIds": ["codex-default"],
+        "rejected": []
+      },
+      "usage": {
+        "inputTokens": 385061,
+        "outputTokens": 4902,
+        "cachedInputTokens": 349184
+      },
+      "promptArtifact": "dogfood/web-merge-events-attempt02-request.md",
+      "diff": {
+        "checkpoint": "00ac81b2e3cdf49981c0b0222f86fcba0a6c71e5",
+        "commit": "c1e3ed4f27951f1929d186baa93302494c737d18",
+        "stat": " apps/web/lib/events.ts | 16 ++++++++++++++++\n 1 file changed, 16 insertions(+)",
+        "filesChanged": ["apps/web/lib/events.ts"]
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 0,
+          "durationMs": 867,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 0,
+          "durationMs": 65,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 29,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 1,
+        "repairEvents": 0
+      },
+      "humanEdit": {
+        "status": "recorded",
+        "reference": "origin/agent/issue-10-sse-timeline",
+        "files": [
+          {
+            "path": "apps/web/lib/events.ts",
+            "agentVsMerged": "modified"
+          }
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "Each task is executed through the real pipeline; results depend on provider availability at run time.",
+    "Failures are frozen alongside passes to record the honest state of the loop, not a green wall.",
+    "Human-edit annotations, when present, compare the agent output against a single merged reference."
+  ]
+}
