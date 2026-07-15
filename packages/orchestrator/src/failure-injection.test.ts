@@ -230,6 +230,11 @@ describe('Group B: process kill — a late result is never promoted', () => {
  * | after artifact put, before attempt update | run-controls.test.ts       |
  * | before queue ack                          | run-controls.test.ts       |
  * | after ack (redelivery of completed run)   | C5 (this block)            |
+ *
+ * Note: C1 and C2 assert the same persisted crash state (no attempt record
+ * for the step) because the checkpoint ref is only persisted as a field on
+ * the attempt record itself — there is no reachable "checkpoint persisted,
+ * attempt not" state to distinguish them.
  */
 describe('Group C: phase crash matrix + replay', () => {
   it('C1: crash before checkpoint is resumable without duplicate side effects', async () => {

@@ -190,30 +190,24 @@ describe('FileJobQueue lease semantics', () => {
     const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
     await queue.enqueue({ ...baseJob(), runId: 'run-1' });
 
-    // Delivering the same runId twice must execute the underlying run once:
-    // the effect is idempotent, mirroring the orchestrator's terminal-run guard.
-    const executions: string[] = [];
-    const runOnce = (runId: string): void => {
-      if (!executions.includes(runId)) executions.push(runId);
-    };
-
-    // worker-a claims and runs the job, then dies before acking (no heartbeat).
+    // worker-a claims the job, then dies before acking (no heartbeat).
     const workerA = (await queue.claim('worker-a'))!;
-    runOnce(workerA.runId!);
 
     // Past the lease, the reaper returns the job to pending.
     clock.advanceMs(60_001);
     const [recovered] = await queue.reapExpired();
     expect(recovered?.runId).toBe('run-1');
 
-    // worker-b reclaims (fresh fencing token), re-runs the idempotent job, acks.
+    // worker-b reclaims (fresh fencing token) and acks.
     const workerB = (await queue.claim('worker-b'))!;
     expect(workerB.lease?.fencingToken).toBe(2);
-    runOnce(workerB.runId!);
     await queue.ack(workerB, 'worker-b');
 
-    // The run executed exactly once despite the redelivery.
-    expect(executions).toEqual(['run-1']);
+    // This queue-level test only pins claim/reap/ack mechanics; it can't
+    // itself prove the underlying run executed exactly once. That's pinned
+    // by failure-injection.test.ts (Group C5 and the Group D
+    // duplicate-delivery test), which assert on real side effects
+    // (artifacts, commits, events).
 
     // The job completed exactly once: nothing left to claim or reap.
     expect(await queue.claim('worker-c')).toBeNull();
