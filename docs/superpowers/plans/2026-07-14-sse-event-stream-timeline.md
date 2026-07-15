@@ -22,11 +22,13 @@
 ### Task 1: Redaction utility in domain
 
 **Files:**
+
 - Create: `packages/domain/src/redaction.ts`
 - Modify: `packages/domain/src/index.ts` (add export)
 - Test: `packages/domain/src/redaction.test.ts`
 
 **Interfaces:**
+
 - Produces: `redactEvent(event: ProjectEvent): ProjectEvent` and `redactString(value: string): string` — consumed by Task 2.
 
 - [ ] **Step 1: Write the failing test** (`packages/domain/src/redaction.test.ts`):
@@ -156,11 +158,13 @@ export function redactEvent(event: ProjectEvent): ProjectEvent {
 ### Task 2: Cursor-aware EventStore + redaction on append
 
 **Files:**
+
 - Modify: `packages/domain/src/ports.ts:72-75` (EventStore interface)
 - Modify: `packages/persistence/src/event-store.ts`
 - Test: `packages/persistence/src/event-store.test.ts` (extend)
 
 **Interfaces:**
+
 - Consumes: `redactEvent` from Task 1.
 - Produces: `EventStore.list(projectId: string, limit?: number, afterId?: string): Promise<ProjectEvent[]>` — consumed by the SSE route (Task 4). Semantics: without `afterId`, unchanged (tail `slice(-limit)`); with `afterId`, return events strictly after that id in append order, capped at `limit` from the start of the remainder.
 
@@ -180,7 +184,9 @@ it('falls back to id-ordering when the cursor id is unknown (e.g. truncated file
 });
 
 it('redacts sensitive data before persisting', async () => {
-  await store.append(eventWith({ message: 'Bearer abcdef1234567890ABCDEF', data: { apiKey: 'x' } }));
+  await store.append(
+    eventWith({ message: 'Bearer abcdef1234567890ABCDEF', data: { apiKey: 'x' } }),
+  );
   const [persisted] = await store.list('p1');
   expect(persisted.message).toContain('[REDACTED]');
   expect(persisted.data.apiKey).toBe('[REDACTED]');
@@ -228,10 +234,12 @@ async list(projectId: string, limit = 500, afterId?: string): Promise<ProjectEve
 ### Task 3: Extract `buildApp(runtime)` from the API bootstrap
 
 **Files:**
+
 - Create: `apps/api/src/app.ts`
 - Modify: `apps/api/src/index.ts`
 
 **Interfaces:**
+
 - Produces: `export function buildApp(runtime: Runtime): FastifyInstance` (async registration inside; import `Runtime` type from `@agent-foundry/composition`). Consumed by Task 4's tests and by `index.ts`.
 
 - [ ] **Step 1: Move** everything from `Fastify({...})` creation through the last route registration (`apps/api/src/index.ts:28-156`) into `apps/api/src/app.ts` as:
@@ -257,10 +265,12 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
 ### Task 4: SSE endpoint with replay + reconnection/restart test
 
 **Files:**
+
 - Modify: `apps/api/src/app.ts` (new route)
 - Test: `apps/api/src/events-stream.test.ts` (first HTTP-level test in the repo)
 
 **Interfaces:**
+
 - Consumes: `runtime.events.list(projectId, limit, afterId)` (Task 2), `runtime.projectService.get(projectId)` (throws `NotFoundError` → 404 via existing error handler).
 - Produces: `GET /projects/:projectId/events/stream?cursor=<eventId>` — also honors `Last-Event-ID` header. Emits standard SSE frames `id: <event.id>\ndata: <JSON ProjectEvent>\n\n`, `: ping` heartbeat every 15s.
 
@@ -284,7 +294,9 @@ async function readSse(
 }
 
 describe('GET /projects/:projectId/events/stream', () => {
-  it('404s for unknown project before streaming', async () => { /* fetch, expect 404 JSON */ });
+  it('404s for unknown project before streaming', async () => {
+    /* fetch, expect 404 JSON */
+  });
 
   it('replays mid-run, reconnects without duplicates, and survives an API restart', async () => {
     // 1. start api #1, POST /projects (fetch, body: { name, prd: 'x'.repeat(60) })
@@ -367,12 +379,14 @@ Note: `lastId` starting as `undefined` means the first `send` replays the tail (
 ### Task 5: Web — live stream with dedupe merge, enriched timeline, polling fallback
 
 **Files:**
+
 - Create: `apps/web/lib/events.ts`
 - Test: `apps/web/lib/events.test.ts`
 - Modify: `apps/web/lib/api.ts` (add `eventStreamUrl`)
 - Modify: `apps/web/app/project/[id]/page.tsx`
 
 **Interfaces:**
+
 - Produces: `mergeEvents(current: ProjectEvent[], incoming: ProjectEvent[]): ProjectEvent[]` — id-deduped, ascending id order, returns `current` reference-equal when nothing new (avoids re-renders). `eventStreamUrl(id: string, cursor?: string): string`.
 
 - [ ] **Step 1: Write failing test** (`apps/web/lib/events.test.ts` — pure function, node env, no React):
@@ -422,6 +436,7 @@ export function eventStreamUrl(id: string, cursor?: string): string {
 ### Task 6: Docs + ADR + full check
 
 **Files:**
+
 - Create: `docs/adr/0012-sse-event-stream-and-redaction.md`
 - Modify: `docs/ARCHITECTURE.md` (apps/web polling paragraph + extension points list), `README.md` if it documents the API routes.
 

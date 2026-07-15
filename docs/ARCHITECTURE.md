@@ -17,7 +17,7 @@ A regra central é simples: **agentes não fazem handoff por memória implícita
 
 ### `apps/web`
 
-Cliente Next.js. Cria projetos, consulta o runtime, acompanha eventos, abre artefatos e exibe as decisões do router. O polling é intencionalmente simples para o MVP.
+Cliente Next.js. Cria projetos, consulta o runtime, acompanha eventos, abre artefatos e exibe as decisões do router. A timeline de eventos usa SSE (`GET /projects/:id/events/stream`) para atualização quase em tempo real, com o polling original mantido como fallback automático quando o stream cai ou antes de conectar.
 
 ### `apps/api`
 
@@ -278,5 +278,4 @@ Fallback sem rollback permite que o segundo modelo trabalhe sobre um workspace p
 - Criar seleção semântica de harness.
 - Adicionar executor por API além de CLI.
 - Incluir benchmark e exploração controlada no router.
-- Emitir eventos por SSE.
 - Separar verifier em sandbox dedicado.

@@ -89,7 +89,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     const source = new EventSource(eventStreamUrl(id));
     source.onopen = () => setLive(true);
     source.onmessage = (message) => {
-      setEvents((current) => mergeEvents(current, [JSON.parse(message.data) as ProjectEvent]));
+      try {
+        const event = JSON.parse(message.data) as ProjectEvent;
+        setEvents((current) => mergeEvents(current, [event]));
+      } catch {
+        // Malformed frame; drop it silently and let polling recover.
+      }
     };
     source.onerror = () => setLive(false);
     return () => {
