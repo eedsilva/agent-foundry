@@ -111,4 +111,11 @@ describe('redactEvent', () => {
       secretKey: '[REDACTED]',
     });
   });
+
+  it('redacts instead of passing through beyond the depth ceiling', () => {
+    let deep: Record<string, unknown> = { secretValue: 'sk-abc123def456ghi789jkl' };
+    for (let i = 0; i < 10; i += 1) deep = { nested: deep };
+    const redacted = redactEvent(event({ data: { deep } }));
+    expect(JSON.stringify(redacted.data)).not.toContain('sk-abc123def456ghi789jkl');
+  });
 });

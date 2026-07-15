@@ -25,7 +25,7 @@ export function redactString(value: string): string {
 }
 
 function redactValue(value: unknown, depth: number): unknown {
-  if (depth > 8) return value;
+  if (depth > 8) return '[REDACTED]';
   if (typeof value === 'string') return redactString(value);
   if (Array.isArray(value)) return value.map((item) => redactValue(item, depth + 1));
   if (value && typeof value === 'object') {
