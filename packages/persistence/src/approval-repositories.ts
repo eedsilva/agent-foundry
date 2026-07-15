@@ -6,11 +6,14 @@ import {
   type ApprovalDecision,
   type ApprovalRequest,
 } from '@agent-foundry/contracts';
-import type {
-  ApprovalDecisionRepository,
-  ApprovalRequestRepository,
-} from '@agent-foundry/domain';
-import { atomicWriteJson, ensureDir, pathFor, readJsonOrNull, withDirectoryLock } from './fs-utils.js';
+import type { ApprovalDecisionRepository, ApprovalRequestRepository } from '@agent-foundry/domain';
+import {
+  atomicWriteJson,
+  ensureDir,
+  pathFor,
+  readJsonOrNull,
+  withDirectoryLock,
+} from './fs-utils.js';
 
 /**
  * ApprovalRequest and ApprovalDecision are create-only: unlike the versioned

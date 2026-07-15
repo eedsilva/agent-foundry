@@ -326,11 +326,16 @@ export class ProjectService {
       override = { modelId: match.id, provider: match.provider, model: match.model };
     }
 
-    const { run: updated, invalidatedStepRunIds } = await this.invalidateFromStep(run, target, downstream, {
-      mode: input.mode,
-      override,
-      reason: 'retry-requested',
-    });
+    const { run: updated, invalidatedStepRunIds } = await this.invalidateFromStep(
+      run,
+      target,
+      downstream,
+      {
+        mode: input.mode,
+        override,
+        reason: 'retry-requested',
+      },
+    );
     await this.appendEvent(
       run.projectId,
       'step.retry_requested',
@@ -375,7 +380,8 @@ export class ProjectService {
   ): Promise<{ run: WorkflowRun; decision: ApprovalDecision }> {
     const run = await this.requireRun(runId);
     const request = await this.approvalRequests.get(runId, requestId);
-    if (!request) throw new NotFoundError(`Approval request ${requestId} not found in run ${runId}`);
+    if (!request)
+      throw new NotFoundError(`Approval request ${requestId} not found in run ${runId}`);
 
     let decision = await this.approvalDecisions.get(runId, requestId);
     if (decision) {
@@ -536,7 +542,11 @@ export class ProjectService {
     run: WorkflowRun,
     target: StepRun,
     downstream: StepRun[],
-    options: { mode: RunRetryDirective['mode']; override?: RunRetryDirective['override']; reason: string },
+    options: {
+      mode: RunRetryDirective['mode'];
+      override?: RunRetryDirective['override'];
+      reason: string;
+    },
   ): Promise<{ run: WorkflowRun; invalidatedStepRunIds: string[] }> {
     const attempts = await this.stepAttempts.list(run.id, target.id);
     const checkpoint = attempts.filter((attempt) => attempt.checkpoint).at(-1)?.checkpoint;

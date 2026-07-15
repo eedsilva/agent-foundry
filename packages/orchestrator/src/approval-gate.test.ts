@@ -54,11 +54,9 @@ describe('approval gates halt the run for a human decision (#13)', () => {
   });
 
   it('rejects with return-to-step: rewinds the repair step and re-halts with a fresh request', async () => {
-    const harness = makeHarness(
-      {},
-      undefined,
-      { gate: { onReject: 'return-to-step', returnToStepId: 'implement' } },
-    );
+    const harness = makeHarness({}, undefined, {
+      gate: { onReject: 'return-to-step', returnToStepId: 'implement' },
+    });
     await seedRun(harness);
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
     const [firstEntry] = await harness.service.listApprovals('run-1');
@@ -104,17 +102,13 @@ describe('approval gates halt the run for a human decision (#13)', () => {
   });
 
   it('request-changes writes a repair artifact, rewinds, and re-halts', async () => {
-    const harness = makeHarness(
-      {},
-      undefined,
-      {
-        gate: {
-          actions: ['approve', 'request-changes'],
-          returnToStepId: 'implement',
-          repairArtifact: 'repair-notes',
-        },
+    const harness = makeHarness({}, undefined, {
+      gate: {
+        actions: ['approve', 'request-changes'],
+        returnToStepId: 'implement',
+        repairArtifact: 'repair-notes',
       },
-    );
+    });
     await seedRun(harness);
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
     const [entry] = await harness.service.listApprovals('run-1');

@@ -102,7 +102,10 @@ const ApprovalGateStepSchema = z
         message: "onReject: 'return-to-step' requires returnToStepId",
       });
     }
-    if (step.actions.includes('request-changes') && (!step.returnToStepId || !step.repairArtifact)) {
+    if (
+      step.actions.includes('request-changes') &&
+      (!step.returnToStepId || !step.repairArtifact)
+    ) {
       ctx.addIssue({
         code: 'custom',
         path: ['repairArtifact'],

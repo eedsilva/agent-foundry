@@ -141,10 +141,7 @@ function assertTransition<TStatus extends string>(
 
 function isWorkflowRunTerminal(status: WorkflowRunStatus): boolean {
   return (
-    status === 'completed' ||
-    status === 'failed' ||
-    status === 'cancelled' ||
-    status === 'rejected'
+    status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'rejected'
   );
 }
 

@@ -185,7 +185,7 @@ and ADR 0011 rather than adding new control flow. See ADR 0012 for the design.
   between recording a decision and requeuing recovers using the originally recorded decision
   without duplicating side effects; deciding a disallowed action is rejected.
 - A manual HTTP smoke test against the mock runtime (`POST /projects`, `GET
-  /runs/:runId/approvals`, `POST /runs/:runId/approvals/:requestId/decide`) exercised both the
+/runs/:runId/approvals`, `POST /runs/:runId/approvals/:requestId/decide`) exercised both the
   approve path (`awaiting_approval -> queued -> completed`) and the reject path
   (`awaiting_approval -> queued -> rejected`) against the real file-backed persistence layer.
 

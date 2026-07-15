@@ -19,9 +19,9 @@ describe('approval-gate workflow node', () => {
   });
 
   it('requires returnToStepId when onReject is return-to-step', () => {
-    expect(() =>
-      WorkflowNodeSchema.parse({ ...BASE_GATE, onReject: 'return-to-step' }),
-    ).toThrow(/returnToStepId/);
+    expect(() => WorkflowNodeSchema.parse({ ...BASE_GATE, onReject: 'return-to-step' })).toThrow(
+      /returnToStepId/,
+    );
   });
 
   it('requires returnToStepId and repairArtifact when request-changes is allowed', () => {

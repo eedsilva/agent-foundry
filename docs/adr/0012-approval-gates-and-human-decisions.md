@@ -58,7 +58,7 @@ Reusing the existing replay model directly:
   downstream computation and checkpoint-rollback directive `retryStep` already uses (extracted
   into shared private helpers `downstreamOf` and `invalidateFromStep`). Because the gate's own
   `StepRun` is inside that invalidated range, the orchestrator never observes a `reject` or
-  `request-changes` decision attached to a *live* `StepRun` — by construction, those two actions
+  `request-changes` decision attached to a _live_ `StepRun` — by construction, those two actions
   only ever reach the orchestrator indirectly, as "no non-invalidated StepRun for this node,"
   which is handled by the first-encounter branch above. For `request-changes`, the decision's
   note is also written as a plain artifact under the configured `repairArtifact` name — not
@@ -72,10 +72,10 @@ Reusing the existing replay model directly:
 
 `decideApproval` is idempotent on more than a simple repeat: if a decision already exists but the
 run is still `awaiting_approval`, the original call recorded the decision and crashed before
-requeuing — the retry completes the requeue using the *originally recorded* decision, not the
+requeuing — the retry completes the requeue using the _originally recorded_ decision, not the
 retry's input, rather than silently no-op'ing. Once the run has moved on, a repeat is a true
 no-op. A second, independent crash-safety fix: the plain approve/reject-end path now explicitly
-clears any retry directive a *prior* request-changes/reject-return cycle on the same run may have
+clears any retry directive a _prior_ request-changes/reject-return cycle on the same run may have
 left behind — otherwise a later replay could mistake an already-superseded step for a stale
 retry target and re-execute it a third time, rolling the workspace back to an outdated
 checkpoint. Both gaps were found by writing the approval-gate test suite, not anticipated

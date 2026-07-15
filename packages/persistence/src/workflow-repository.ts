@@ -75,7 +75,10 @@ function validateWorkflow(workflow: WorkflowDefinition): void {
           `Workflow ${workflow.id} approval gate ${node.id} reviews unavailable artifact ${node.artifact}`,
         );
       }
-      if (node.returnToStepId && (node.returnToStepId === node.id || !identifiers.has(node.returnToStepId))) {
+      if (
+        node.returnToStepId &&
+        (node.returnToStepId === node.id || !identifiers.has(node.returnToStepId))
+      ) {
         throw new Error(
           `Workflow ${workflow.id} approval gate ${node.id} returnToStepId ${node.returnToStepId} must reference an earlier node`,
         );

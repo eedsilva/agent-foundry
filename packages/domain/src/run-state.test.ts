@@ -293,7 +293,10 @@ describe('run state transitions', () => {
 
 function workflowRunAt(status: WorkflowRunStatus): WorkflowRun {
   const terminal =
-    status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'rejected';
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'rejected';
   return {
     id: 'run-graph',
     projectId: 'project-1',
