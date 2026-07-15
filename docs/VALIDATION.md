@@ -103,7 +103,8 @@ Issue #11 generalizes ADR 0011's validation into a systematic failure matrix ove
 | ---------------------------------------------------------------- | ------------------------------------------------ |
 | Executor timeout, rate limit, invalid output (fallback recovers) | `failure-injection.test.ts` Group A              |
 | All routing candidates fail (valid terminal state, no-op replay) | `failure-injection.test.ts` Group A              |
-| Process kill: late result after cancellation never promoted      | `failure-injection.test.ts` Group B              |
+| Process kill: cancelled run leaves no commit or artifact         | `failure-injection.test.ts` Group B              |
+| Late result after cancellation never promoted                    | `packages/orchestrator/src/cancellation.test.ts` |
 | Crash before checkpoint                                          | `failure-injection.test.ts` Group C1             |
 | Crash after checkpoint, before execution                         | `failure-injection.test.ts` Group C2             |
 | Crash mid-execution (interrupted attempt finalized)              | `failure-injection.test.ts` Group C3             |
