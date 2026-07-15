@@ -1,6 +1,6 @@
 # Validation record
 
-Latest validation date: 2026-07-14.
+Latest validation date: 2026-07-15.
 
 This repository was validated from a clean dependency installation using the public npm registry.
 
@@ -43,6 +43,34 @@ Evidence:
 - [`docs/baselines/v0.2-provider-canaries.md`](baselines/v0.2-provider-canaries.md) records versions, durations, usage where reported, aliases and limitations.
 - Frozen evidence excludes raw provider output, authentication payloads, identities, credentials, session identifiers and machine-specific temporary paths.
 - AGY is invoked with `--new-project` so each temporary repository is isolated from its cached project selection.
+
+## Dogfood baseline — 2026-07-15
+
+Where the canary invokes each CLI directly, the dogfood baseline runs five real v0.2 tasks **through the product pipeline** — `projectService.create`, the worker, the declarative workflow, routing, the quality loop and the deterministic verifier — and freezes the persisted route, usage, diff and verification of each run (ADR 0013). A task passes only when the run completes, the verifier approves and the diff stays inside the task's file allowlist. Records are append-only: a rerun appends a new attempt and never overwrites the prior one, and failures are frozen alongside passes rather than blocking the freeze.
+
+Six records cover five tasks. `web-merge-events` carries a real failure -> root-cause fix -> rerun cycle: attempt 1 failed a whole-tree `git diff --check` that tripped on baseline `*.patch` files whose diff content legitimately ends in whitespace; the fix (`34da954`) silenced `*.patch` whitespace in the seeded workspace without weakening the verifier, and attempt 2 passed on the same class of diff.
+
+| Task                      | Attempt | Status            | Executed model    | Duration | Human edits vs merged       |
+| ------------------------- | ------: | ----------------- | ----------------- | -------- | --------------------------- |
+| domain-redaction          |       1 | passed            | `codex-default`   | 6.4 min  | 1 same, 1 modified          |
+| event-store-cursor        |       1 | passed            | `codex-default`   | 7.6 min  | 1 same, 1 modified          |
+| executor-failure-fixtures |       1 | passed            | `codex-default`   | 6.4 min  | 1 agent-only                |
+| failure-matrix-plan       |       1 | passed            | `claude-sonnet-5` | 34.7 min | n/a — plan task, empty diff |
+| web-merge-events          |       1 | failed (harness)  | `codex-default`   | 6.2 min  | 1 modified                  |
+| web-merge-events          |       2 | passed (post-fix) | `codex-default`   | 6.7 min  | 1 modified                  |
+
+Human-edit annotation compares each agent output against the merged, human-reviewed sibling branch for its task (`agent/issue-10-sse-timeline` for the domain/persistence/web tasks, `agent/issue-11-failure-injection` for the fixtures task). `modified` and `agent-only` are expected, not defects: the merged #10 PR simplified `mergeEvents` with a fast path, and the merged #11 organized fixtures under `harness.ts` rather than the `testing/fixtures.ts` the agent created. `failure-matrix-plan` is a plan task that produced an empty code diff, so it has no per-file comparison and its record is annotated with a note.
+
+### Boundaries of this baseline
+
+This is an honest snapshot of the loop at a point in time, not a reliability or quality benchmark. It ran on a single host, one to two attempts per task (the second attempt exists only where a failure forced a rerun), against a single baseline ref (`8896a3c`). It does not prove behavior under concurrency, larger repositories, provider outages or quota exhaustion, and passing here is not a guarantee the agent's design matches what a human would merge — the human-edit column is exactly the evidence of that gap. It feeds the pre-adaptive-routing baseline: the routing feedback loop can later be measured against these durations, models and edit distances.
+
+Evidence:
+
+- [`docs/baselines/v0.2-dogfood.json`](baselines/v0.2-dogfood.json) is the machine-readable source of truth (six records, five tasks).
+- [`docs/baselines/v0.2-dogfood.md`](baselines/v0.2-dogfood.md) renders the run table with per-run tokens, cost where reported, repairs and human-edit status.
+- Frozen records are built through strict schemas that admit no stdout, stderr, credentials, identities or machine paths; the committed JSON carries only whitelisted fields.
+- "Quota" in these records means tokens and estimated cost (ADR 0009); a subscription is not unlimited capacity.
 
 ## Personal Builder v1 roadmap alignment — 2026-07-13
 

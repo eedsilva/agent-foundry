@@ -22,6 +22,7 @@
 ### Task 1: Dogfood contracts
 
 **Files:**
+
 - Create: `packages/contracts/src/dogfood.ts`
 - Modify: `packages/contracts/src/index.ts` (export)
 - Test: `packages/contracts/src/dogfood.test.ts`
@@ -30,26 +31,31 @@
 
 ```ts
 import { z } from 'zod';
-import { RouteDecisionSchema } from './model.js';   // match real import paths used by canary.ts
+import { RouteDecisionSchema } from './model.js'; // match real import paths used by canary.ts
 import { ExecutionUsageSchema } from './run.js';
 
 export const DogfoodTaskSchema = z.object({
-  id: z.string().min(1),                       // e.g. 'domain-redaction'
+  id: z.string().min(1), // e.g. 'domain-redaction'
   title: z.string().min(1),
-  issueRef: z.string().min(1),                 // e.g. 'eedsilva/agent-foundry#10'
-  workflowId: z.string().min(1),               // 'dogfood-task-v1' | 'dogfood-plan-v1'
-  prompt: z.string().min(50),                  // becomes the project PRD
-  baselineRef: z.string().min(7),              // git ref the workspace is seeded from
-  allowedFiles: z.array(z.string().min(1)),    // paths the agent may create/modify ([] = no diff allowed)
+  issueRef: z.string().min(1), // e.g. 'eedsilva/agent-foundry#10'
+  workflowId: z.string().min(1), // 'dogfood-task-v1' | 'dogfood-plan-v1'
+  prompt: z.string().min(50), // becomes the project PRD
+  baselineRef: z.string().min(7), // git ref the workspace is seeded from
+  allowedFiles: z.array(z.string().min(1)), // paths the agent may create/modify ([] = no diff allowed)
   seedFiles: z.array(z.object({ path: z.string().min(1), content: z.string() })).default([]),
-  verifyScript: z.string().min(1).optional(),  // value injected as package.json "dogfood:verify"
+  verifyScript: z.string().min(1).optional(), // value injected as package.json "dogfood:verify"
 });
 
 export const DogfoodHumanEditSchema = z.object({
   status: z.enum(['pending', 'recorded']),
-  reference: z.string().optional(),            // merged ref/PR the comparison used
+  reference: z.string().optional(), // merged ref/PR the comparison used
   files: z
-    .array(z.object({ path: z.string(), agentVsMerged: z.enum(['same', 'modified', 'absent', 'agent-only']) }))
+    .array(
+      z.object({
+        path: z.string(),
+        agentVsMerged: z.enum(['same', 'modified', 'absent', 'agent-only']),
+      }),
+    )
     .default([]),
   notes: z.string().optional(),
 });
@@ -57,26 +63,43 @@ export const DogfoodHumanEditSchema = z.object({
 export const DogfoodRunRecordSchema = z.object({
   schemaVersion: z.literal('1'),
   taskId: z.string(),
-  attempt: z.number().int().positive(),        // 1, 2… — reruns append, never overwrite
+  attempt: z.number().int().positive(), // 1, 2… — reruns append, never overwrite
   issueRef: z.string(),
   baselineRef: z.string(),
   projectId: z.string(),
   runId: z.string(),
   startedAt: z.string().datetime(),
-  status: z.enum(['passed', 'failed']),        // passed = run completed AND verification approved AND allowlist respected
+  status: z.enum(['passed', 'failed']), // passed = run completed AND verification approved AND allowlist respected
   durationMs: z.number().nonnegative(),
-  route: RouteDecisionSchema.optional(),       // from the implementation StepAttempt
+  route: RouteDecisionSchema.optional(), // from the implementation StepAttempt
   executedModel: z.string().optional(),
   usage: ExecutionUsageSchema.optional(),
-  promptArtifact: z.string().optional(),       // artifact name holding REQUEST.md (audit trail)
+  promptArtifact: z.string().optional(), // artifact name holding REQUEST.md (audit trail)
   diff: z
-    .object({ checkpoint: z.string().optional(), commit: z.string().optional(), stat: z.string(), filesChanged: z.array(z.string()) })
+    .object({
+      checkpoint: z.string().optional(),
+      commit: z.string().optional(),
+      stat: z.string(),
+      filesChanged: z.array(z.string()),
+    })
     .optional(),
   checks: z
-    .array(z.object({ name: z.string(), exitCode: z.number().nullable(), durationMs: z.number().nonnegative(), skipped: z.boolean() }))
+    .array(
+      z.object({
+        name: z.string(),
+        exitCode: z.number().nullable(),
+        durationMs: z.number().nonnegative(),
+        skipped: z.boolean(),
+      }),
+    )
     .default([]),
-  repairs: z.object({ iterations: z.number().int().nonnegative(), repairEvents: z.number().int().nonnegative() }),
-  failure: z.object({ kind: z.string(), code: z.string().optional(), message: z.string() }).optional(),
+  repairs: z.object({
+    iterations: z.number().int().nonnegative(),
+    repairEvents: z.number().int().nonnegative(),
+  }),
+  failure: z
+    .object({ kind: z.string(), code: z.string().optional(), message: z.string() })
+    .optional(),
   humanEdit: DogfoodHumanEditSchema,
 });
 
@@ -101,10 +124,12 @@ export type DogfoodReport = z.infer<typeof DogfoodReportSchema>;
 ### Task 2: Dogfood workflows + task definitions
 
 **Files:**
+
 - Create: `workflows/dogfood-task-v1.yaml`, `workflows/dogfood-plan-v1.yaml`
 - Create: `examples/dogfood/README.md`, `examples/dogfood/tasks/*.json` (5 tasks)
 
 **Workflows.** Copy node structure from `workflows/web-app-v1.yaml` (read it first), trimmed:
+
 - `dogfood-task-v1`: two nodes — `implementation-gate` quality-loop (`developer` setup, `code-reviewer` check, `repair-code` repair, `mutatesWorkspace: true`, `maxIterations: 2`) and `deterministic-verification` (verify step with scripts `['dogfood:verify']`, `fixer` repair, `maxIterations: 2`). Keep roles/artifact names exactly as web-app-v1 uses so the harness selection works unchanged.
 - `dogfood-plan-v1`: single `plan-gate` quality-loop (planner / plan-reviewer / repair-plan), no workspace mutation.
 
@@ -127,6 +152,7 @@ export type DogfoodReport = z.infer<typeof DogfoodReportSchema>;
 ### Task 3: The runner
 
 **Files:**
+
 - Create: `packages/composition/src/dogfood.ts`
 - Create: `scripts/dogfood.ts`
 - Modify: `package.json` (add `"dogfood:run": "tsx scripts/dogfood.ts"`), `.env.example` (document `RUN_REAL_DOGFOOD`), `.gitignore` if `.data/` isn't already covered
@@ -135,20 +161,34 @@ export type DogfoodReport = z.infer<typeof DogfoodReportSchema>;
 **Interfaces (produces):**
 
 ```ts
-export interface DogfoodDependencies {  // injectable for tests, mirroring provider-canary.ts style
-  repoRoot: string;                     // local repo to seed from
+export interface DogfoodDependencies {
+  // injectable for tests, mirroring provider-canary.ts style
+  repoRoot: string; // local repo to seed from
   now(): Date;
 }
-export async function runDogfoodTask(task: DogfoodTask, options: {
-  repoRoot: string; dataDir?: string; executorMode?: 'real' | 'mock'; attempt?: number;
-}): Promise<DogfoodRunRecord>;
+export async function runDogfoodTask(
+  task: DogfoodTask,
+  options: {
+    repoRoot: string;
+    dataDir?: string;
+    executorMode?: 'real' | 'mock';
+    attempt?: number;
+  },
+): Promise<DogfoodRunRecord>;
 export async function loadDogfoodTasks(dir: string): Promise<DogfoodTask[]>;
 export function renderDogfoodMarkdown(report: DogfoodReport): string;
-export async function freezeDogfoodReport(records: DogfoodRunRecord[], options: { baselinesDir: string; baselineRef: string }): Promise<void>;
-export async function annotateHumanEdits(records: DogfoodRunRecord[], options: { repoRoot: string; mergedRef: string }): Promise<DogfoodRunRecord[]>;
+export async function freezeDogfoodReport(
+  records: DogfoodRunRecord[],
+  options: { baselinesDir: string; baselineRef: string },
+): Promise<void>;
+export async function annotateHumanEdits(
+  records: DogfoodRunRecord[],
+  options: { repoRoot: string; mergedRef: string },
+): Promise<DogfoodRunRecord[]>;
 ```
 
 `runDogfoodTask` flow (each numbered step is code, not prose — read `packages/composition/src/runtime.ts`, `provider-canary.ts`, and `packages/persistence/src/workspace-manager.ts` before writing):
+
 1. `mkdtemp` a `DATA_DIR`; `createRuntime(env)` with `{ DATA_DIR, EXECUTOR_MODE: options.executorMode ?? 'real', RUN_WORKER_INLINE: 'false', WORKFLOWS_DIR: <repo workflows dir> }` (copy the full env recipe from `runtime.integration.test.ts`).
 2. `project = await runtime.projectService.create({ name: task.id, prd: task.prompt, workflowId: task.workflowId })` — this creates the workspace and enqueues the job, but the worker has NOT claimed it yet (not inline).
 3. Seed the workspace at `runtime.workspaces.workspacePath(project.id)` (or via the manager's path helper): `git -C <ws> fetch <repoRoot> <task.baselineRef>` + `git -C <ws> checkout FETCH_HEAD -- .`; write `task.seedFiles`; if `task.verifyScript`, inject `"dogfood:verify": task.verifyScript` into the workspace `package.json` scripts; run `npm ci` in the workspace (skip when `allowedFiles` is empty AND no verifyScript — the planning task needs no deps); `git add -A && git commit -m 'dogfood: seed baseline <ref>'`.
@@ -186,6 +226,7 @@ Preconditions: `EXECUTOR_MODE=real` CLIs authenticated on this host (see `docs/V
 ### Task 5: Docs + evidence
 
 **Files:**
+
 - Modify: `docs/VALIDATION.md` (new "Dogfood baseline — v0.2" section: table, boundaries, link to baselines), `README.md` (short dogfood subsection near the canary one)
 - Create: `docs/adr/0012-dogfood-run-record-contract.md` (numbering: check `docs/adr/` in this worktree; if #10's ADR merged first as 0012, use 0013)
 
