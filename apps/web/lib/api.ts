@@ -52,6 +52,10 @@ export function getRuntime(): Promise<RuntimeInfoResponse> {
   return api<RuntimeInfoResponse>('/runtime');
 }
 
+export function eventStreamUrl(id: string): string {
+  return `${API_URL}/projects/${encodeURIComponent(id)}/events/stream`;
+}
+
 export async function retryProject(id: string): Promise<Project> {
   const response = await api<{ project: Project }>(`/projects/${encodeURIComponent(id)}/retry`, {
     method: 'POST',

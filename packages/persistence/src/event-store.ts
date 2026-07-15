@@ -1,13 +1,13 @@
 import { join } from 'node:path';
 import { ProjectEventSchema, type ProjectEvent } from '@agent-foundry/contracts';
-import type { EventStore } from '@agent-foundry/domain';
+import { redactEvent, type EventStore } from '@agent-foundry/domain';
 import { appendJsonLine, readJsonLines, safeSegment, withDirectoryLock } from './fs-utils.js';
 
 export class FileEventStore implements EventStore {
   constructor(private readonly dataDir: string) {}
 
   async append(event: ProjectEvent): Promise<void> {
-    const parsed = ProjectEventSchema.parse(event);
+    const parsed = redactEvent(ProjectEventSchema.parse(event));
     const path = this.pathFor(parsed.projectId);
     if (!parsed.dedupeKey) {
       await appendJsonLine(path, parsed);
@@ -24,9 +24,15 @@ export class FileEventStore implements EventStore {
     });
   }
 
-  async list(projectId: string, limit = 500): Promise<ProjectEvent[]> {
-    const events = await readJsonLines<unknown>(this.pathFor(projectId));
-    return events.map((event) => ProjectEventSchema.parse(event)).slice(-limit);
+  async list(projectId: string, limit = 500, afterId?: string): Promise<ProjectEvent[]> {
+    const events = (await readJsonLines<unknown>(this.pathFor(projectId))).map((event) =>
+      ProjectEventSchema.parse(event),
+    );
+    if (afterId === undefined) return events.slice(-limit);
+    const index = events.findIndex((event) => event.id === afterId);
+    const after =
+      index >= 0 ? events.slice(index + 1) : events.filter((event) => event.id > afterId);
+    return after.slice(0, limit);
   }
 
   private pathFor(projectId: string): string {
