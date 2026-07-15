@@ -319,7 +319,11 @@ async function seedWorkspace(
   await git(workspacePath, ['config', 'user.email', 'dogfood@localhost']);
   // Local excludes keep orchestrator run state and installed deps out of the
   // agent's measured diff.
-  await appendExclude(workspacePath, ['.orchestrator/', 'node_modules/']);
+  await appendGitInfoFile(workspacePath, 'exclude', ['.orchestrator/', 'node_modules/']);
+  // Baseline *.patch files carry diff content whose trailing whitespace is
+  // data, not sloppiness; without this the verifier's whole-tree
+  // `git diff --check` fails every task before the agent writes a line.
+  await appendGitInfoFile(workspacePath, 'attributes', ['*.patch -whitespace']);
   // Short SHAs (e.g. 8896a3c) cannot be fetched directly: resolve the full
   // commit in the source repo, fetch its branches and tags, then check out
   // the resolved commit's tree.
@@ -378,11 +382,15 @@ async function injectVerifyScript(workspacePath: string, verifyScript: string): 
   await writeFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 }
 
-async function appendExclude(workspacePath: string, patterns: string[]): Promise<void> {
-  const excludePath = join(workspacePath, '.git', 'info', 'exclude');
+async function appendGitInfoFile(
+  workspacePath: string,
+  fileName: 'exclude' | 'attributes',
+  patterns: string[],
+): Promise<void> {
+  const infoPath = join(workspacePath, '.git', 'info', fileName);
   let current = '';
   try {
-    current = await readFile(excludePath, 'utf8');
+    current = await readFile(infoPath, 'utf8');
   } catch {
     current = '';
   }
@@ -390,7 +398,7 @@ async function appendExclude(workspacePath: string, patterns: string[]): Promise
   const missing = patterns.filter((pattern) => !existing.has(pattern));
   if (missing.length === 0) return;
   const prefix = current === '' || current.endsWith('\n') ? current : `${current}\n`;
-  await writeFile(excludePath, `${prefix}${missing.join('\n')}\n`);
+  await writeFile(infoPath, `${prefix}${missing.join('\n')}\n`);
 }
 
 function pickImplementationAttempt(

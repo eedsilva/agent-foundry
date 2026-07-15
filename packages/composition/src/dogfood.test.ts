@@ -143,6 +143,32 @@ describe('runDogfoodTask (mock mode)', () => {
     );
   }, 60_000);
 
+  it('is not failed by baseline .patch files whose diff content carries trailing whitespace', async () => {
+    const fixture = await createFixtureRepo({
+      'package.json': MINI_PACKAGE,
+      'src/lib.js': 'export const value = 1;\n',
+      // Real baselines (e.g. 8896a3c) ship *.patch files whose "+" content
+      // lines legitimately end in whitespace — data, not sloppiness. The
+      // whole-tree `git diff --check` must not fail the run for them.
+      'upstream.patch': '@@ -1,2 +1,2 @@\n+content line with trailing space \n',
+    });
+    const dataDir = await tempDir('dogfood-data-');
+    const task = miniTask({
+      id: 'mini-patch-baseline',
+      baselineRef: fixture.sha,
+      verifyScript: 'node -e "process.exit(0)"',
+    });
+
+    const record = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+    });
+
+    expect(record.failure?.message ?? '').toBe('');
+    expect(record.status).toBe('passed');
+  }, 60_000);
+
   it('appends a second attempt without overwriting the first record', async () => {
     const fixture = await createFixtureRepo({
       'package.json': MINI_PACKAGE,
