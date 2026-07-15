@@ -34,6 +34,7 @@ import type {
   WorkflowRepository,
 } from '@agent-foundry/domain';
 import {
+  ApprovalConflictError,
   NotFoundError,
   ResumeBlockedError,
   ValidationError,
@@ -385,11 +386,18 @@ export class ProjectService {
 
     let decision = await this.approvalDecisions.get(runId, requestId);
     if (decision) {
-      // A decision already exists. If the run already moved past awaiting
-      // approval, this is a true repeat — return it, no further action. If
-      // the run is still parked, a prior call recorded the decision but
-      // crashed before requeuing; fall through and finish that instead of
-      // silently no-op'ing on the retry.
+      // A decision already exists. A different requested action is a real
+      // conflict (two reviewers disagreed) regardless of what the run has
+      // done since — surface it rather than silently keeping whichever
+      // decision happened to land first.
+      if (decision.action !== input.action) {
+        throw new ApprovalConflictError(runId, requestId, decision);
+      }
+      // Same action: if the run already moved past awaiting approval, this
+      // is a true repeat — return it, no further action. If the run is
+      // still parked, a prior call recorded the decision but crashed before
+      // requeuing; fall through and finish that instead of silently
+      // no-op'ing on the retry.
       if (run.status !== 'awaiting_approval') return { run, decision };
     } else {
       if (!request.allowedActions.includes(input.action)) {
@@ -400,7 +408,7 @@ export class ProjectService {
       if (run.status !== 'awaiting_approval') {
         throw new ValidationError(`Run ${runId} is ${run.status}; no pending approval to decide.`);
       }
-      decision = {
+      const candidate: ApprovalDecision = {
         id: this.ids.next(),
         requestId,
         runId,
@@ -410,7 +418,19 @@ export class ProjectService {
         ...(input.note ? { note: input.note } : {}),
         decidedAt: this.clock.now().toISOString(),
       };
-      await this.approvalDecisions.create(decision);
+      try {
+        await this.approvalDecisions.create(candidate);
+        decision = candidate;
+      } catch (cause) {
+        // Lost a simultaneous-write race: another decision was recorded
+        // between our read and our write. Resolve against what actually won.
+        const settled = await this.approvalDecisions.get(runId, requestId);
+        if (!settled) throw cause;
+        if (settled.action !== input.action) {
+          throw new ApprovalConflictError(runId, requestId, settled);
+        }
+        decision = settled;
+      }
     }
 
     const workflow = await this.workflows.get(run.workflowId);

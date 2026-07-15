@@ -83,11 +83,16 @@ export const ResumeBlockedResponseSchema = z.object({
 });
 export type ResumeBlockedResponse = z.infer<typeof ResumeBlockedResponseSchema>;
 
-export const DecideApprovalRequestSchema = z.object({
-  action: ApprovalActionSchema,
-  decidedBy: z.string().trim().min(1),
-  note: z.string().trim().min(1).optional(),
-});
+export const DecideApprovalRequestSchema = z
+  .object({
+    action: ApprovalActionSchema,
+    decidedBy: z.string().trim().min(1),
+    note: z.string().trim().min(1).optional(),
+  })
+  .refine((input) => input.action !== 'request-changes' || Boolean(input.note), {
+    message: "note is required when action is 'request-changes'",
+    path: ['note'],
+  });
 export type DecideApprovalRequest = z.infer<typeof DecideApprovalRequestSchema>;
 
 export const DecideApprovalResponseSchema = z.object({
@@ -95,6 +100,13 @@ export const DecideApprovalResponseSchema = z.object({
   decision: ApprovalDecisionSchema,
 });
 export type DecideApprovalResponse = z.infer<typeof DecideApprovalResponseSchema>;
+
+export const ApprovalConflictResponseSchema = z.object({
+  error: z.literal('ApprovalConflictError'),
+  message: z.string(),
+  decision: ApprovalDecisionSchema,
+});
+export type ApprovalConflictResponse = z.infer<typeof ApprovalConflictResponseSchema>;
 
 export const ApprovalListResponseSchema = z.object({
   approvals: z.array(

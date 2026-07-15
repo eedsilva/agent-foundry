@@ -1,3 +1,5 @@
+import type { ApprovalDecision } from '@agent-foundry/contracts';
+
 export class NotFoundError extends Error {
   override readonly name = 'NotFoundError';
 }
@@ -125,6 +127,22 @@ export class ApprovalRejectedError extends Error {
     readonly decidedBy: string,
   ) {
     super(`Workflow run ${runId} was rejected at ${nodeId} by ${decidedBy}.`);
+  }
+}
+
+/** Two different decisions were made for the same approval request. */
+export class ApprovalConflictError extends Error {
+  override readonly name = 'ApprovalConflictError';
+
+  constructor(
+    readonly runId: string,
+    readonly requestId: string,
+    readonly decision: ApprovalDecision,
+  ) {
+    super(
+      `Approval request ${requestId} on run ${runId} was already decided as ` +
+        `'${decision.action}' by ${decision.decidedBy}.`,
+    );
   }
 }
 

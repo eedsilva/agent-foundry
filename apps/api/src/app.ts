@@ -9,6 +9,7 @@ import {
   RetryStepRequestSchema,
 } from '@agent-foundry/contracts';
 import {
+  ApprovalConflictError,
   InvalidStateTransitionError,
   NotFoundError,
   ResumeBlockedError,
@@ -54,6 +55,13 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     }
     if (error instanceof InvalidStateTransitionError) {
       return reply.status(409).send({ error: error.name, message: error.message });
+    }
+    if (error instanceof ApprovalConflictError) {
+      return reply.status(409).send({
+        error: error.name,
+        message: error.message,
+        decision: error.decision,
+      });
     }
     app.log.error(error);
     const name = error instanceof Error ? error.name : 'InternalServerError';

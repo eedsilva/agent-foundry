@@ -1538,9 +1538,11 @@ function runError(error: unknown): RunError {
 function projectStatusForRun(run: WorkflowRun): Project['status'] {
   if (run.status === 'queued') return 'queued';
   if (run.status === 'paused') return 'paused';
+  if (run.status === 'awaiting_approval') return 'awaiting_approval';
   if (run.status === 'completed') return 'completed';
   if (run.status === 'failed') return 'failed';
   if (run.status === 'cancelled') return 'cancelled';
+  if (run.status === 'rejected') return 'rejected';
   return 'running';
 }
 

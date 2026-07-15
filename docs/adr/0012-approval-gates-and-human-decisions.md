@@ -128,3 +128,22 @@ runtime exercised `POST /projects`, `GET /runs/:runId/approvals`, and
 Rollback: stop workers first. Older code ignores the new optional `WorkflowRun`/`Project` status
 values and the new `approvals/` directory tree, but any run currently `awaiting_approval` should
 be cancelled before downgrading, since older code has no path to resume it.
+
+## Decision update (issue #14): concurrent conflicting decisions
+
+The idempotency rule above ("a decision already exists but the run is still `awaiting_approval`
+→ finish using the originally recorded decision") only covers a retried call from the _same_
+logical decision — e.g. a crash-and-retry, where the retry's `action` matches what was already
+recorded. It never distinguished that from a genuinely different decision (a second reviewer
+choosing `reject` after a first recorded `approve`), which `decideApproval` also treated as a
+silent no-op returning the first decision — and the true simultaneous-write race (two callers
+both reading no decision, both attempting to create one) fell through
+`FileApprovalDecisionRepository.create`'s duplicate-write guard as an uncaught `Error`, surfacing
+as a generic 500.
+
+`decideApproval` now compares `decision.action` against the caller's requested `input.action` in
+both paths (pre-existing decision, and losing the create race) before treating anything as
+idempotent. A match is still a no-op recovery, exactly as before. A mismatch throws the new
+`ApprovalConflictError(runId, requestId, decision)`, mapped by the API to `409` with the settled
+`ApprovalDecision` in the body — the caller learns what was actually recorded instead of being
+told their own request succeeded.
