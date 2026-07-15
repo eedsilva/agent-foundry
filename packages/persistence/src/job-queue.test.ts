@@ -105,18 +105,21 @@ describe('FileJobQueue lease semantics', () => {
     expect(reclaimed?.lease?.fencingToken).toBe(2);
   });
 
-  it('rejects a stale fencingToken from the crashed worker after another worker reclaims the job', async () => {
+  it("recovers a dead worker's expired lease and fences out the stale claimant", async () => {
     const dataDir = await temporaryDataDir();
     const clock = new FakeClock(new Date(createdAt));
     const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
-    await queue.enqueue(baseJob());
+    await queue.enqueue({ ...baseJob(), runId: 'run-1' });
 
+    // worker-a claims the job, then dies before acking (no heartbeat).
     const staleClaim = (await queue.claim('worker-a'))!;
     expect(staleClaim.lease?.fencingToken).toBe(1);
 
+    // Past the lease, the reaper recovers it; the job's runId survives.
     clock.advanceMs(61_000);
     const [recovered] = await queue.reapExpired();
     expect(recovered).toBeDefined();
+    expect(recovered?.runId).toBe('run-1');
 
     const freshClaim = (await queue.claim('worker-b'))!;
     expect(freshClaim.lease?.fencingToken).toBe(2);
@@ -131,6 +134,10 @@ describe('FileJobQueue lease semantics', () => {
 
     // worker-b, the legitimate holder, can still complete the job.
     await expect(queue.ack(freshClaim, 'worker-b')).resolves.toBeUndefined();
+
+    // The job is done at the queue level: nothing left to claim or reap.
+    expect(await queue.claim('worker-c')).toBeNull();
+    expect(await queue.reapExpired()).toHaveLength(0);
   });
 
   it('rejects ack/nack from a worker whose lease was reassigned to another worker directly', async () => {
