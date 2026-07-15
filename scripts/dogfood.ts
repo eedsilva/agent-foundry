@@ -9,7 +9,10 @@ import {
   runDogfoodTask,
 } from '../packages/composition/src/dogfood.js';
 
-const rootDir = process.cwd();
+// Anchor to the repo root (this script lives at <root>/scripts/dogfood.ts) so
+// the CLI resolves the same .data/dogfood records that runDogfoodTask writes
+// by default, regardless of the invoking cwd.
+const rootDir = resolve(import.meta.dirname, '..');
 const tasksDir = resolve(rootDir, 'examples/dogfood/tasks');
 const dogfoodDir = resolve(rootDir, '.data/dogfood');
 const args = process.argv.slice(2);

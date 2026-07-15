@@ -58,6 +58,7 @@ export async function runDogfoodTask(
   let diff: DogfoodRunRecord['diff'];
   let checks: DogfoodRunRecord['checks'] = [];
   let repairs = { iterations: 1, repairEvents: 0 };
+  let promptArtifact: string | undefined;
 
   try {
     const runtime = await createRuntime({
@@ -95,6 +96,28 @@ export async function runDogfoodTask(
     route = implementation?.routeDecision;
     executedModel = implementation?.executedModel;
     usage = implementation?.usage;
+    // The assembled prompt lives under the throwaway runtimeDataDir removed in
+    // `finally` — copy it out now so the audit trail survives cleanup. If no
+    // attempt ever wrote REQUEST.md (e.g. the run failed before implementing),
+    // promptArtifact stays unset.
+    if (implementation) {
+      const requestPath = join(
+        workspacePath,
+        '.orchestrator',
+        'runs',
+        runId,
+        'steps',
+        implementation.stepRunId,
+        'attempts',
+        implementation.id,
+        'REQUEST.md',
+      );
+      if (existsSync(requestPath)) {
+        const requestArtifactName = `${task.id}-attempt${tag}-request.md`;
+        await writeFile(join(dogfoodDir, requestArtifactName), await readFile(requestPath));
+        promptArtifact = `dogfood/${requestArtifactName}`;
+      }
+    }
 
     const events = projectId ? await runtime.events.list(projectId) : [];
     repairs = {
@@ -174,6 +197,7 @@ export async function runDogfoodTask(
     ...(route ? { route } : {}),
     ...(executedModel ? { executedModel } : {}),
     ...(usage ? { usage } : {}),
+    ...(promptArtifact ? { promptArtifact } : {}),
     ...(diff ? { diff } : {}),
     checks,
     repairs,
@@ -323,7 +347,8 @@ async function seedWorkspace(
     existsSync(join(workspacePath, 'package-lock.json')) &&
     (task.allowedFiles.length > 0 || task.verifyScript)
   ) {
-    await execa('npm', ['ci'], { cwd: workspacePath });
+    const result = await execa('npm', ['ci'], { cwd: workspacePath, reject: false });
+    if (result.exitCode !== 0) throw commandFailure('npm ci', result);
   }
 
   await git(workspacePath, ['add', '-A']);
@@ -552,17 +577,25 @@ function errorMessage(error: unknown): string {
 
 async function git(cwd: string, args: string[]): Promise<void> {
   const result = await execa('git', args, { cwd, reject: false });
-  if (result.exitCode !== 0) {
-    throw new Error(
-      truncate(`git ${args[0]} failed: ${result.stderr || result.stdout || 'unknown'}`),
-    );
-  }
+  if (result.exitCode !== 0) throw commandFailure(`git ${args[0]}`, result);
 }
 
 async function gitOutput(cwd: string, args: string[]): Promise<string> {
   const result = await execa('git', args, { cwd, reject: false });
-  if (result.exitCode !== 0) throw new Error(`git ${args[0]} failed`);
+  if (result.exitCode !== 0) throw commandFailure(`git ${args[0]}`, result);
   return result.stdout;
+}
+
+// Infrastructure failure messages (git, npm) are copied verbatim into
+// failure.message, which is frozen into committed baseline JSON — so the
+// thrown error carries a fixed, short message only. Full stderr/stdout is
+// still logged to the console for local diagnosis.
+function commandFailure(
+  command: string,
+  result: { exitCode?: number; stderr: string; stdout: string },
+): Error {
+  if (result.stderr || result.stdout) console.error(result.stderr || result.stdout);
+  return new Error(`${command} failed (exit ${result.exitCode ?? 'unknown'})`);
 }
 
 async function gitShow(repoRoot: string, ref: string, path: string): Promise<string | null> {

@@ -133,6 +133,14 @@ describe('runDogfoodTask (mock mode)', () => {
     await expect(
       readFile(join(dataDir, 'dogfood', 'mini-pass-attempt01.patch.txt'), 'utf8'),
     ).resolves.toContain('index.js');
+
+    // The assembled REQUEST.md lives inside the throwaway runtime data dir,
+    // which is removed once the run finishes — it must be copied out before
+    // cleanup so the prompt audit trail survives.
+    expect(record.promptArtifact).toBe('dogfood/mini-pass-attempt01-request.md');
+    await expect(readFile(join(dataDir, record.promptArtifact ?? ''), 'utf8')).resolves.toContain(
+      '# Agent execution request',
+    );
   }, 60_000);
 
   it('appends a second attempt without overwriting the first record', async () => {
@@ -189,6 +197,61 @@ describe('runDogfoodTask (mock mode)', () => {
     await expect(
       readFile(join(dataDir, 'dogfood', 'mini-fail-attempt01.json'), 'utf8'),
     ).resolves.toContain('"taskId": "mini-fail"');
+  }, 60_000);
+
+  it('sanitizes git failures so no stderr text reaches the record', async () => {
+    const fixture = await createFixtureRepo({
+      'package.json': MINI_PACKAGE,
+      'src/lib.js': 'export const value = 1;\n',
+    });
+    const dataDir = await tempDir('dogfood-data-');
+    const task = miniTask({
+      id: 'mini-bad-baseline',
+      baselineRef: 'not-a-real-baseline-ref',
+    });
+
+    const record = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+    });
+
+    expect(record.status).toBe('failed');
+    expect(record.failure?.message).toMatch(/^git rev-parse failed \(exit \d+\)$/);
+    expect(record.failure?.message).not.toContain('not-a-real-baseline-ref');
+    expect(record.failure?.message).not.toContain('fatal');
+    await expect(
+      readFile(join(dataDir, 'dogfood', 'mini-bad-baseline-attempt01.json'), 'utf8'),
+    ).resolves.toContain('"taskId": "mini-bad-baseline"');
+  }, 30_000);
+
+  it('flags a diff outside the allowlist as a failed run with failure.kind "allowlist"', async () => {
+    const fixture = await createFixtureRepo({
+      'package.json': MINI_PACKAGE,
+      'src/lib.js': 'export const value = 1;\n',
+    });
+    const dataDir = await tempDir('dogfood-data-');
+    const task = miniTask({
+      id: 'mini-allowlist',
+      baselineRef: fixture.sha,
+      verifyScript: 'node -e "process.exit(0)"',
+      // The mock executor also writes src/index.test.js; excluding it here
+      // forces an allowlist violation.
+      allowedFiles: ['package.json', 'src/index.js'],
+    });
+
+    const record = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+    });
+
+    expect(record.status).toBe('failed');
+    expect(record.failure?.kind).toBe('allowlist');
+    expect(record.failure?.message).toContain('src/index.test.js');
+    await expect(
+      readFile(join(dataDir, 'dogfood', 'mini-allowlist-attempt01.json'), 'utf8'),
+    ).resolves.toContain('"taskId": "mini-allowlist"');
   }, 60_000);
 });
 
