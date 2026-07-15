@@ -1,0 +1,115 @@
+import { readFile, readdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { execa } from 'execa';
+import { DogfoodRunRecordSchema, type DogfoodRunRecord } from '@agent-foundry/contracts';
+import {
+  annotateHumanEdits,
+  freezeDogfoodReport,
+  loadDogfoodTasks,
+  runDogfoodTask,
+} from '../packages/composition/src/dogfood.js';
+
+const rootDir = process.cwd();
+const tasksDir = resolve(rootDir, 'examples/dogfood/tasks');
+const dogfoodDir = resolve(rootDir, '.data/dogfood');
+const args = process.argv.slice(2);
+
+function argValue(flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  return index >= 0 ? args[index + 1] : undefined;
+}
+
+async function loadRecords(): Promise<DogfoodRunRecord[]> {
+  let entries: string[];
+  try {
+    entries = (await readdir(dogfoodDir)).filter((name) => name.endsWith('.json'));
+  } catch {
+    return [];
+  }
+  return Promise.all(
+    entries.map(async (name) =>
+      DogfoodRunRecordSchema.parse(JSON.parse(await readFile(join(dogfoodDir, name), 'utf8'))),
+    ),
+  );
+}
+
+async function assertRealModeReady(): Promise<void> {
+  if (process.env.RUN_REAL_DOGFOOD !== 'true') {
+    console.error('Real dogfood runs require RUN_REAL_DOGFOOD=true.');
+    process.exit(1);
+  }
+  const doctor = await execa(process.execPath, [join(rootDir, 'scripts', 'doctor.mjs'), '--json'], {
+    cwd: rootDir,
+    env: { ...process.env, EXECUTOR_MODE: 'real' },
+    reject: false,
+    encoding: 'utf8',
+  });
+  let probes: Array<{ provider: string; status: string; message?: string }>;
+  try {
+    const parsed = JSON.parse(doctor.stdout) as { probes?: unknown };
+    if (!Array.isArray(parsed.probes)) throw new Error('missing probes');
+    probes = parsed.probes as typeof probes;
+  } catch {
+    console.error('Provider doctor did not return valid probe JSON.');
+    process.exit(1);
+  }
+  // Canary style: a non-ready provider is a skip, not a failure — routing can
+  // still fall back to the ready ones. No ready provider at all is fatal.
+  for (const probe of probes) {
+    if (probe.status !== 'ready') {
+      console.error(`skip: ${probe.provider} probe reported ${probe.status}.`);
+    }
+  }
+  if (!probes.some((probe) => probe.status === 'ready')) {
+    console.error('No provider CLI is ready; refusing to run real dogfood tasks.');
+    process.exit(1);
+  }
+}
+
+const executorMode = argValue('--executor-mode') === 'mock' ? ('mock' as const) : ('real' as const);
+
+try {
+  if (args.includes('--freeze')) {
+    const records = await loadRecords();
+    const baselineRef = records[0]?.baselineRef ?? 'unknown';
+    await freezeDogfoodReport(records, {
+      baselinesDir: resolve(rootDir, 'docs/baselines'),
+      baselineRef,
+    });
+    console.log(`Frozen ${records.length} record(s) into docs/baselines.`);
+  } else if (argValue('--annotate-human-edits')) {
+    const mergedRef = argValue('--annotate-human-edits')!;
+    const annotated = await annotateHumanEdits(await loadRecords(), {
+      repoRoot: rootDir,
+      mergedRef,
+    });
+    console.log(`Annotated ${annotated.length} record(s) against ${mergedRef}.`);
+  } else if (args.includes('--all') || argValue('--task')) {
+    if (executorMode === 'real') await assertRealModeReady();
+    const tasks = await loadDogfoodTasks(tasksDir);
+    const taskId = argValue('--task');
+    const selected = taskId ? tasks.filter((task) => task.id === taskId) : tasks;
+    if (selected.length === 0) {
+      console.error(taskId ? `Unknown task: ${taskId}` : 'No dogfood tasks found.');
+      process.exit(1);
+    }
+    let failures = 0;
+    for (const task of selected) {
+      const record = await runDogfoodTask(task, { repoRoot: rootDir, executorMode });
+      console.log(
+        `${record.taskId} attempt ${record.attempt}: ${record.status}` +
+          (record.failure ? ` (${record.failure.kind}: ${record.failure.message})` : ''),
+      );
+      if (record.status === 'failed') failures += 1;
+    }
+    process.exitCode = failures === 0 ? 0 : 1;
+  } else {
+    console.error(
+      'Usage: tsx scripts/dogfood.ts --task <id> | --all | --freeze | --annotate-human-edits <ref> [--executor-mode mock]',
+    );
+    process.exit(1);
+  }
+} catch (error) {
+  console.error(error instanceof Error ? error.message : 'Dogfood runner failed.');
+  process.exitCode = 1;
+}
