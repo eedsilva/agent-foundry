@@ -69,6 +69,21 @@ function validateWorkflow(workflow: WorkflowDefinition): void {
       continue;
     }
 
+    if (node.type === 'approval-gate') {
+      if (!availableArtifacts.has(node.artifact)) {
+        throw new Error(
+          `Workflow ${workflow.id} approval gate ${node.id} reviews unavailable artifact ${node.artifact}`,
+        );
+      }
+      if (node.returnToStepId && (node.returnToStepId === node.id || !identifiers.has(node.returnToStepId))) {
+        throw new Error(
+          `Workflow ${workflow.id} approval gate ${node.id} returnToStepId ${node.returnToStepId} must reference an earlier node`,
+        );
+      }
+      availableArtifacts.add(node.outputArtifact);
+      continue;
+    }
+
     validateStepInputs(node, availableArtifacts, workflow.id);
     availableArtifacts.add(node.outputArtifact);
   }

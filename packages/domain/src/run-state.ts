@@ -14,18 +14,31 @@ import { InvalidStateTransitionError } from './errors.js';
 
 const workflowRunTransitions: Record<WorkflowRunStatus, readonly WorkflowRunStatus[]> = {
   queued: ['running', 'cancel_requested', 'cancelled', 'failed'],
-  running: ['pause_requested', 'cancel_requested', 'completed', 'failed'],
+  running: [
+    'pause_requested',
+    'awaiting_approval',
+    'cancel_requested',
+    'completed',
+    'failed',
+    'rejected',
+  ],
   // 'completed' covers a pause requested after the final step already started.
   pause_requested: ['paused', 'cancel_requested', 'completed', 'failed'],
   // 'queued' is the resume path: the run goes back through the queue so a
   // worker picks it up with a fresh lease.
   paused: ['queued', 'running', 'cancel_requested', 'cancelled', 'failed'],
+  // 'queued' is how a decision continues the run; the orchestrator's replay
+  // decides whether that means completing, resuming, or terminal rejection.
+  // 'running' tolerates a stray redelivery while parked, same as 'paused':
+  // the gate just re-halts idempotently instead of crashing the run.
+  awaiting_approval: ['queued', 'running', 'cancel_requested', 'cancelled', 'rejected'],
   cancel_requested: ['cancelled', 'failed'],
   cancelled: [],
   // Step retry re-opens a finished run; completed steps are reused by
   // idempotency key, so re-queueing never repeats approved work.
   completed: ['queued'],
   failed: ['queued'],
+  rejected: [],
 };
 
 const stepRunTransitions: Record<StepRunStatus, readonly StepRunStatus[]> = {
@@ -127,7 +140,12 @@ function assertTransition<TStatus extends string>(
 }
 
 function isWorkflowRunTerminal(status: WorkflowRunStatus): boolean {
-  return status === 'completed' || status === 'failed' || status === 'cancelled';
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'rejected'
+  );
 }
 
 function isStepRunTerminal(status: StepRunStatus): boolean {

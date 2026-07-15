@@ -103,6 +103,31 @@ export interface ResumeDiagnostic {
   actual: string;
 }
 
+/** Control-flow signal: the run reached an approval-gate node with no decision yet. */
+export class ApprovalRequiredError extends Error {
+  override readonly name = 'ApprovalRequiredError';
+
+  constructor(
+    readonly runId: string,
+    readonly nodeId: string,
+  ) {
+    super(`Workflow run ${runId} is awaiting an approval decision at ${nodeId}.`);
+  }
+}
+
+/** Control-flow signal: an approval-gate decision rejected the run outright. */
+export class ApprovalRejectedError extends Error {
+  override readonly name = 'ApprovalRejectedError';
+
+  constructor(
+    readonly runId: string,
+    readonly nodeId: string,
+    readonly decidedBy: string,
+  ) {
+    super(`Workflow run ${runId} was rejected at ${nodeId} by ${decidedBy}.`);
+  }
+}
+
 export class ResumeBlockedError extends Error {
   override readonly name = 'ResumeBlockedError';
 

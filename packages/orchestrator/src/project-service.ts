@@ -1,4 +1,7 @@
 import type {
+  ApprovalAction,
+  ApprovalDecision,
+  ApprovalRequest,
   CreateProjectRequest,
   Project,
   ProjectDetailResponse,
@@ -9,9 +12,12 @@ import type {
   RunDetailResponse,
   RunRetryDirective,
   StepRun,
+  WorkflowDefinition,
   WorkflowRun,
 } from '@agent-foundry/contracts';
 import type {
+  ApprovalDecisionRepository,
+  ApprovalRequestRepository,
   ArtifactStore,
   Clock,
   EventStore,
@@ -42,6 +48,8 @@ export class ProjectService {
     private readonly runs: WorkflowRunRepository,
     private readonly stepRuns: StepRunRepository,
     private readonly stepAttempts: StepAttemptRepository,
+    private readonly approvalRequests: ApprovalRequestRepository,
+    private readonly approvalDecisions: ApprovalDecisionRepository,
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
     private readonly queue: JobQueue,
@@ -318,34 +326,11 @@ export class ProjectService {
       override = { modelId: match.id, provider: match.provider, model: match.model };
     }
 
-    const attempts = await this.stepAttempts.list(runId, stepRunId);
-    const checkpoint = attempts.filter((attempt) => attempt.checkpoint).at(-1)?.checkpoint;
-    const now = this.clock.now().toISOString();
-
-    await this.invalidateStepRun(target, 'retry-requested', now);
-    const invalidated: string[] = [];
-    if (input.mode === 'invalidate') {
-      for (const step of downstream) {
-        await this.invalidateStepRun(step, `invalidated-by-retry-of-${target.stepId}`, now);
-        invalidated.push(step.id);
-      }
-    }
-
-    const directive: RunRetryDirective = {
-      stepRunId,
-      nodeId: target.nodeId,
-      stepId: target.stepId,
-      ...(target.iteration ? { iteration: target.iteration } : {}),
+    const { run: updated, invalidatedStepRunIds } = await this.invalidateFromStep(run, target, downstream, {
       mode: input.mode,
-      ...(override ? { override } : {}),
-      ...(checkpoint ? { checkpoint } : {}),
-      requestedAt: now,
-    };
-    const updated = await this.runs.update(
-      transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: directive }),
-      run.version,
-    );
-    await this.requeueProject(run.projectId, runId);
+      override,
+      reason: 'retry-requested',
+    });
     await this.appendEvent(
       run.projectId,
       'step.retry_requested',
@@ -355,10 +340,144 @@ export class ProjectService {
         stepRunId,
         mode: input.mode,
         ...(override ? { override } : {}),
-        invalidatedStepRunIds: invalidated,
+        invalidatedStepRunIds,
       },
     );
     return updated;
+  }
+
+  /** Requests pending decision for a run, each paired with its decision if one has arrived. */
+  async listApprovals(
+    runId: string,
+  ): Promise<Array<{ request: ApprovalRequest; decision: ApprovalDecision | null }>> {
+    await this.requireRun(runId);
+    const requests = await this.approvalRequests.list(runId);
+    return Promise.all(
+      requests.map(async (request) => ({
+        request,
+        decision: await this.approvalDecisions.get(runId, request.id),
+      })),
+    );
+  }
+
+  /**
+   * Records a human decision and, in every case, requeues the run — the
+   * orchestrator's next replay interprets what the decision means for
+   * execution (advance, terminate as rejected, or redo the invalidated
+   * range up to a fresh approval request). Idempotent: repeating an
+   * already-decided request returns the recorded decision without acting
+   * again.
+   */
+  async decideApproval(
+    runId: string,
+    requestId: string,
+    input: { action: ApprovalAction; decidedBy: string; note?: string | undefined },
+  ): Promise<{ run: WorkflowRun; decision: ApprovalDecision }> {
+    const run = await this.requireRun(runId);
+    const request = await this.approvalRequests.get(runId, requestId);
+    if (!request) throw new NotFoundError(`Approval request ${requestId} not found in run ${runId}`);
+
+    let decision = await this.approvalDecisions.get(runId, requestId);
+    if (decision) {
+      // A decision already exists. If the run already moved past awaiting
+      // approval, this is a true repeat — return it, no further action. If
+      // the run is still parked, a prior call recorded the decision but
+      // crashed before requeuing; fall through and finish that instead of
+      // silently no-op'ing on the retry.
+      if (run.status !== 'awaiting_approval') return { run, decision };
+    } else {
+      if (!request.allowedActions.includes(input.action)) {
+        throw new ValidationError(
+          `Action ${input.action} is not allowed for approval request ${requestId}.`,
+        );
+      }
+      if (run.status !== 'awaiting_approval') {
+        throw new ValidationError(`Run ${runId} is ${run.status}; no pending approval to decide.`);
+      }
+      decision = {
+        id: this.ids.next(),
+        requestId,
+        runId,
+        stepRunId: request.stepRunId,
+        action: input.action,
+        decidedBy: input.decidedBy,
+        ...(input.note ? { note: input.note } : {}),
+        decidedAt: this.clock.now().toISOString(),
+      };
+      await this.approvalDecisions.create(decision);
+    }
+
+    const workflow = await this.workflows.get(run.workflowId);
+    const node = workflow.nodes.find((candidate) => candidate.id === request.nodeId);
+    if (!node || node.type !== 'approval-gate') {
+      throw new NotFoundError(
+        `Approval gate node ${request.nodeId} not found in workflow ${run.workflowId}`,
+      );
+    }
+
+    // Everything below acts on the settled `decision` record, not `input` —
+    // on the crash-recovery path the retry's input may differ (e.g. a
+    // different caller), and the originally recorded decision must win.
+    const needsReturn =
+      decision.action === 'request-changes' ||
+      (decision.action === 'reject' && node.onReject === 'return-to-step');
+
+    let updatedRun: WorkflowRun;
+    if (needsReturn) {
+      if (!node.returnToStepId) {
+        throw new ValidationError(`Approval gate ${node.id} has no returnToStepId configured.`);
+      }
+      const allSteps = await this.stepRuns.list(runId);
+      const target = allSteps.find(
+        (step) => step.nodeId === node.returnToStepId && !step.invalidatedAt,
+      );
+      if (!target) {
+        throw new NotFoundError(
+          `Step for returnToStepId ${node.returnToStepId} not found in run ${runId}`,
+        );
+      }
+      const downstream = this.downstreamOf(workflow, allSteps, target);
+
+      if (decision.action === 'request-changes' && node.repairArtifact) {
+        // ponytail: re-running after a crash here writes a second identical
+        // revision (artifact puts aren't keyed for reuse the way steps are);
+        // narrow, accepted crash window per ADR 0011, add a key if it bites.
+        await this.artifacts.put({
+          projectId: run.projectId,
+          name: node.repairArtifact,
+          content: {
+            note: decision.note ?? '',
+            decidedBy: decision.decidedBy,
+            decidedAt: decision.decidedAt,
+          },
+          createdBy: `approval-gate:${node.id}`,
+          runId,
+        });
+      }
+
+      ({ run: updatedRun } = await this.invalidateFromStep(run, target, downstream, {
+        mode: 'invalidate',
+        reason: `approval-${decision.action}`,
+      }));
+    } else {
+      updatedRun = await this.runs.update(
+        // Clears any stale retry directive left by an earlier request-changes
+        // cycle on this same run — otherwise a later replay could mistake an
+        // already-superseded step for the current retry target.
+        transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: undefined }),
+        run.version,
+      );
+      await this.requeueProject(run.projectId, runId);
+    }
+
+    await this.appendEvent(
+      run.projectId,
+      'run.approval_decided',
+      `${decision.action} recorded for approval ${requestId}.`,
+      runId,
+      { requestId, action: decision.action, decidedBy: decision.decidedBy },
+    );
+    return { run: updatedRun, decision };
   }
 
   private async retryTargets(
@@ -375,10 +494,19 @@ export class ProjectService {
     if (target.status === 'pending' || target.status === 'running') {
       throw new ValidationError(`Step run ${stepRunId} is still ${target.status}.`);
     }
-    // ponytail: workflows execute sequentially, so node order (then
-    // iteration, then creation) is dependency order; switch to graph edges
-    // if parallel nodes ever land.
     const workflow = await this.workflows.get(run.workflowId);
+    const all = await this.stepRuns.list(run.id);
+    return { target, downstream: this.downstreamOf(workflow, all, target) };
+  }
+
+  // ponytail: workflows execute sequentially, so node order (then iteration,
+  // then creation) is dependency order; switch to graph edges if parallel
+  // nodes ever land.
+  private downstreamOf(
+    workflow: WorkflowDefinition,
+    allSteps: StepRun[],
+    target: StepRun,
+  ): StepRun[] {
     const nodeOrder = new Map(workflow.nodes.map((node, index) => [node.id, index]));
     const position = (step: StepRun): [number, number, string, string] => [
       nodeOrder.get(step.nodeId) ?? Number.MAX_SAFE_INTEGER,
@@ -387,8 +515,7 @@ export class ProjectService {
       step.id,
     ];
     const targetPosition = position(target);
-    const all = await this.stepRuns.list(run.id);
-    const downstream = all.filter((step) => {
+    return allSteps.filter((step) => {
       if (step.id === target.id || step.invalidatedAt) return false;
       const stepPosition = position(step);
       for (let index = 0; index < targetPosition.length; index += 1) {
@@ -397,7 +524,49 @@ export class ProjectService {
       }
       return false;
     });
-    return { target, downstream };
+  }
+
+  /**
+   * Shared by retryStep and decideApproval: invalidate a target step (and,
+   * in 'invalidate' mode, everything downstream of it), then reopen the run
+   * with a retry directive the orchestrator's replay consumes — same
+   * checkpoint-rollback machinery either caller needs.
+   */
+  private async invalidateFromStep(
+    run: WorkflowRun,
+    target: StepRun,
+    downstream: StepRun[],
+    options: { mode: RunRetryDirective['mode']; override?: RunRetryDirective['override']; reason: string },
+  ): Promise<{ run: WorkflowRun; invalidatedStepRunIds: string[] }> {
+    const attempts = await this.stepAttempts.list(run.id, target.id);
+    const checkpoint = attempts.filter((attempt) => attempt.checkpoint).at(-1)?.checkpoint;
+    const now = this.clock.now().toISOString();
+
+    await this.invalidateStepRun(target, options.reason, now);
+    const invalidatedStepRunIds: string[] = [];
+    if (options.mode === 'invalidate') {
+      for (const step of downstream) {
+        await this.invalidateStepRun(step, `invalidated-by-${options.reason}`, now);
+        invalidatedStepRunIds.push(step.id);
+      }
+    }
+
+    const directive: RunRetryDirective = {
+      stepRunId: target.id,
+      nodeId: target.nodeId,
+      stepId: target.stepId,
+      ...(target.iteration ? { iteration: target.iteration } : {}),
+      mode: options.mode,
+      ...(options.override ? { override: options.override } : {}),
+      ...(checkpoint ? { checkpoint } : {}),
+      requestedAt: now,
+    };
+    const updated = await this.runs.update(
+      transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: directive }),
+      run.version,
+    );
+    await this.requeueProject(run.projectId, run.id);
+    return { run: updated, invalidatedStepRunIds };
   }
 
   private async invalidateStepRun(step: StepRun, reason: string, now: string): Promise<void> {

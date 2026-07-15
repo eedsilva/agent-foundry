@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
 import {
   CreateProjectRequestSchema,
+  DecideApprovalRequestSchema,
   PathSegmentSchema,
   RetryStepRequestSchema,
 } from '@agent-foundry/contracts';
@@ -202,6 +203,20 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     const input = RetryStepRequestSchema.parse(request.body);
     const run = await runtime.projectService.retryStep(runId, stepRunId, input);
     return reply.status(202).send({ run });
+  });
+
+  app.get('/runs/:runId/approvals', async (request) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    return { approvals: await runtime.projectService.listApprovals(runId) };
+  });
+
+  app.post('/runs/:runId/approvals/:requestId/decide', async (request, reply) => {
+    const { runId, requestId } = z
+      .object({ runId: PathSegmentSchema, requestId: PathSegmentSchema })
+      .parse(request.params);
+    const input = DecideApprovalRequestSchema.parse(request.body);
+    const result = await runtime.projectService.decideApproval(runId, requestId, input);
+    return reply.status(202).send(result);
   });
 
   app.post('/projects/:projectId/retry', async (request, reply) => {

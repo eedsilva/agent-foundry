@@ -2,6 +2,7 @@ import type {
   AgentArtifact,
   AgentExecutionResult,
   AgentStep,
+  ApprovalGateStep,
   ExecutableStep,
   Project,
   ProjectEvent,
@@ -21,6 +22,8 @@ import type {
 } from '@agent-foundry/contracts';
 import { AGENT_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
 import type {
+  ApprovalDecisionRepository,
+  ApprovalRequestRepository,
   ArtifactStore,
   Clock,
   EventStore,
@@ -39,6 +42,8 @@ import type {
   WorkspaceManager,
 } from '@agent-foundry/domain';
 import {
+  ApprovalRejectedError,
+  ApprovalRequiredError,
   ExecutionError,
   NotFoundError,
   QualityGateError,
@@ -51,7 +56,7 @@ import {
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
 import { buildTaskProfile } from './task-profiler.js';
-import { stepIdempotencyKey, workflowHash } from './idempotency.js';
+import { approvalGateIdempotencyKey, stepIdempotencyKey, workflowHash } from './idempotency.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 
 interface OrchestratorOptions {
@@ -75,6 +80,8 @@ export class WorkflowOrchestrator {
     private readonly runs: WorkflowRunRepository,
     private readonly stepRuns: StepRunRepository,
     private readonly stepAttempts: StepAttemptRepository,
+    private readonly approvalRequests: ApprovalRequestRepository,
+    private readonly approvalDecisions: ApprovalDecisionRepository,
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
     private readonly workflows: WorkflowRepository,
@@ -102,7 +109,13 @@ export class WorkflowOrchestrator {
     }
     // Redelivery of an already-finished run (e.g. a crash between the final
     // state write and the queue ack) must be a no-op.
-    if (run.status === 'cancelled' || run.status === 'completed' || run.status === 'failed') return;
+    if (
+      run.status === 'cancelled' ||
+      run.status === 'completed' ||
+      run.status === 'failed' ||
+      run.status === 'rejected'
+    )
+      return;
     if (run.status === 'cancel_requested') {
       await this.finalizeCancellation(run.id, projectId);
       return;
@@ -155,6 +168,14 @@ export class WorkflowOrchestrator {
     } catch (error) {
       if (error instanceof RunPausedError) {
         await this.finalizePause(run.id, projectId, workflow, error.nodeId);
+        return;
+      }
+      if (error instanceof ApprovalRequiredError) {
+        await this.finalizeApproval(run.id, projectId, error.nodeId);
+        return;
+      }
+      if (error instanceof ApprovalRejectedError) {
+        await this.finalizeRejection(run.id, projectId, error.nodeId, error.decidedBy);
         return;
       }
       if (isCancellation(error, cancellation.signal)) {
@@ -257,6 +278,41 @@ export class WorkflowOrchestrator {
     );
   }
 
+  private async finalizeApproval(runId: string, projectId: string, nodeId: string): Promise<void> {
+    let run = await this.requireRun(runId);
+    if (run.status === 'running') {
+      run = await this.runs.update(
+        transitionWorkflowRun(run, 'awaiting_approval', this.clock.now()),
+        run.version,
+      );
+    }
+    await this.syncProjectSummary(run, nodeId);
+    await this.emit(projectId, 'run.approval_requested', `Awaiting approval at ${nodeId}.`, {
+      runId,
+      nodeId,
+    });
+  }
+
+  private async finalizeRejection(
+    runId: string,
+    projectId: string,
+    nodeId: string,
+    decidedBy: string,
+  ): Promise<void> {
+    let run = await this.requireRun(runId);
+    if (run.status === 'running') {
+      run = await this.runs.update(
+        transitionWorkflowRun(run, 'rejected', this.clock.now()),
+        run.version,
+      );
+    }
+    await this.syncProjectSummary(run, nodeId);
+    await this.emit(projectId, 'run.rejected', `Rejected at ${nodeId} by ${decidedBy}.`, {
+      runId,
+      nodeId,
+    });
+  }
+
   private async pauseSnapshot(
     projectId: string,
     workflow: WorkflowDefinition,
@@ -290,7 +346,120 @@ export class WorkflowOrchestrator {
   ): Promise<StoredArtifact> {
     if (node.type === 'quality-loop')
       return this.executeQualityLoop(project, workflow, node, runId, signal);
+    if (node.type === 'approval-gate') return this.executeApprovalGate(project, node, runId);
     return this.executeStep(project, workflow, node, runId, node.id, signal);
+  }
+
+  /**
+   * Halts the run until a human decision is persisted. Reuse is keyed on the
+   * output artifact's idempotency key rather than StepAttempts (a gate never
+   * has any): once approved, the keyed artifact alone proves it's resolved.
+   * request-changes and reject+return-to-step are never observed here —
+   * ProjectService.decideApproval invalidates this StepRun before requeueing,
+   * so the next replay takes the "no pending StepRun" branch below instead.
+   */
+  private async executeApprovalGate(
+    project: Project,
+    node: ApprovalGateStep,
+    runId: string,
+  ): Promise<StoredArtifact> {
+    const reviewed = await this.artifacts.getLatest(project.id, node.artifact);
+    if (!reviewed) throw new NotFoundError(`Missing input artifact(s): ${node.artifact}`);
+    const idempotencyKey = approvalGateIdempotencyKey({
+      runId,
+      nodeId: node.id,
+      artifact: artifactReference(reviewed),
+    });
+
+    const reused = await this.findArtifactByKey(project.id, node.outputArtifact, idempotencyKey);
+    if (reused) return reused;
+
+    let stepRun = (await this.stepRuns.list(runId)).find(
+      (candidate) =>
+        candidate.nodeId === node.id && candidate.stepId === node.id && !candidate.invalidatedAt,
+    );
+
+    if (!stepRun) {
+      const timestamp = this.clock.now().toISOString();
+      stepRun = {
+        id: this.ids.next(),
+        runId,
+        nodeId: node.id,
+        stepId: node.id,
+        stepType: 'approval-gate',
+        idempotencyKey,
+        status: 'pending',
+        version: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      await this.stepRuns.create(stepRun);
+      stepRun = await this.stepRuns.update(
+        transitionStepRun(stepRun, 'running', this.clock.now()),
+        stepRun.version,
+      );
+      await this.setCurrentStep(runId, stepRun, node.id);
+
+      const requestTimestamp = this.clock.now();
+      const timeout =
+        node.timeout.policy !== 'none' && node.timeout.afterMs !== undefined
+          ? {
+              timeout: { policy: node.timeout.policy, afterMs: node.timeout.afterMs },
+              timeoutAt: new Date(requestTimestamp.getTime() + node.timeout.afterMs).toISOString(),
+            }
+          : {};
+      await this.approvalRequests.create({
+        id: this.ids.next(),
+        runId,
+        stepRunId: stepRun.id,
+        nodeId: node.id,
+        artifact: artifactReference(reviewed),
+        allowedActions: node.actions,
+        ...timeout,
+        createdAt: requestTimestamp.toISOString(),
+      });
+      throw new ApprovalRequiredError(runId, node.id);
+    }
+
+    const request = await this.approvalRequests.getForStepRun(runId, stepRun.id);
+    if (!request) {
+      throw new ExecutionError(
+        `Approval gate ${node.id} has a pending StepRun but no ApprovalRequest`,
+      );
+    }
+    const decision = await this.approvalDecisions.get(runId, request.id);
+    if (!decision) throw new ApprovalRequiredError(runId, node.id);
+
+    if (decision.action === 'reject') {
+      throw new ApprovalRejectedError(runId, node.id, decision.decidedBy);
+    }
+    if (decision.action === 'request-changes') {
+      throw new ExecutionError(
+        `Approval gate ${node.id} decision 'request-changes' was not applied before replay`,
+      );
+    }
+
+    const artifact = await this.artifacts.put({
+      projectId: project.id,
+      name: node.outputArtifact,
+      content: { schemaVersion: '1', requestId: request.id, decision },
+      createdBy: `approval-gate:${node.id}`,
+      runId,
+      stepRunId: stepRun.id,
+      idempotencyKey,
+    });
+    await this.stepRuns.update(
+      transitionStepRun(stepRun, 'completed', this.clock.now()),
+      stepRun.version,
+    );
+    await this.clearCurrentStep(runId);
+    await this.emit(project.id, 'run.approval_decided', `${node.title} approved.`, {
+      nodeId: node.id,
+      runId,
+      data: { action: decision.action, decidedBy: decision.decidedBy },
+    });
+    await this.emitArtifactCreated(project.id, artifact, node.id, runId);
+    return artifact;
   }
 
   private async executeQualityLoop(

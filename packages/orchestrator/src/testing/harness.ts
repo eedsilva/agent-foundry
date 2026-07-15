@@ -6,6 +6,9 @@ import {
   WorkflowDefinitionSchema,
   type AgentExecutionRequest,
   type AgentExecutionResult,
+  type ApprovalAction,
+  type ApprovalDecision,
+  type ApprovalRequest,
   type ArtifactMetadata,
   type ExecutorHealth,
   type ModelDefinition,
@@ -23,6 +26,8 @@ import {
   SystemClock,
   VersionConflictError,
   type AgentExecutor,
+  type ApprovalDecisionRepository,
+  type ApprovalRequestRepository,
   type ArtifactStore,
   type EventStore,
   type ExecutorRegistry,
@@ -269,6 +274,47 @@ export class InMemoryStepAttempts implements StepAttemptRepository {
   }
   all(): StepAttempt[] {
     return [...this.store.values()];
+  }
+}
+
+export class InMemoryApprovalRequests implements ApprovalRequestRepository {
+  readonly store = new Map<string, ApprovalRequest>();
+  constructor(private readonly power: PowerSwitch) {}
+  create(request: ApprovalRequest): Promise<void> {
+    checkPower(this.power);
+    this.store.set(`${request.runId}/${request.id}`, { ...request });
+    return Promise.resolve();
+  }
+  get(runId: string, requestId: string): Promise<ApprovalRequest | null> {
+    const request = this.store.get(`${runId}/${requestId}`);
+    return Promise.resolve(request ? { ...request } : null);
+  }
+  getForStepRun(runId: string, stepRunId: string): Promise<ApprovalRequest | null> {
+    const match = [...this.store.values()].find(
+      (request) => request.runId === runId && request.stepRunId === stepRunId,
+    );
+    return Promise.resolve(match ? { ...match } : null);
+  }
+  list(runId: string): Promise<ApprovalRequest[]> {
+    return Promise.resolve(
+      [...this.store.values()]
+        .filter((request) => request.runId === runId)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    );
+  }
+}
+
+export class InMemoryApprovalDecisions implements ApprovalDecisionRepository {
+  readonly store = new Map<string, ApprovalDecision>();
+  constructor(private readonly power: PowerSwitch) {}
+  create(decision: ApprovalDecision): Promise<void> {
+    checkPower(this.power);
+    this.store.set(`${decision.runId}/${decision.requestId}`, { ...decision });
+    return Promise.resolve();
+  }
+  get(runId: string, requestId: string): Promise<ApprovalDecision | null> {
+    const decision = this.store.get(`${runId}/${requestId}`);
+    return Promise.resolve(decision ? { ...decision } : null);
   }
 }
 
@@ -546,6 +592,8 @@ export interface Stores {
   runs: InMemoryRuns;
   stepRuns: InMemoryStepRuns;
   stepAttempts: InMemoryStepAttempts;
+  approvalRequests: InMemoryApprovalRequests;
+  approvalDecisions: InMemoryApprovalDecisions;
   artifacts: InMemoryArtifacts;
   events: InMemoryEvents;
   workspaces: FakeWorkspaces;
@@ -561,6 +609,8 @@ export function makeStores(): Stores {
     runs: new InMemoryRuns(power),
     stepRuns: new InMemoryStepRuns(power),
     stepAttempts: new InMemoryStepAttempts(power),
+    approvalRequests: new InMemoryApprovalRequests(power),
+    approvalDecisions: new InMemoryApprovalDecisions(power),
     artifacts: new InMemoryArtifacts(power),
     events: new InMemoryEvents(power),
     workspaces: new FakeWorkspaces(power),
@@ -568,23 +618,46 @@ export function makeStores(): Stores {
   };
 }
 
+export interface GateOptions {
+  actions?: ApprovalAction[];
+  onReject?: 'end' | 'return-to-step';
+  returnToStepId?: string;
+  repairArtifact?: string;
+}
+
 export function makeHarness(
   behaviors: Record<string, StepBehavior> = {},
   existing?: Stores,
-  opts: { fallback?: boolean } = {},
+  opts: { fallback?: boolean; gate?: GateOptions } = {},
 ) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
   const executor = new ControllableExecutor(behaviors, stores.workspaces);
   // Fallback recovery needs the mutating step to offer a second candidate.
-  const workflow: WorkflowDefinition = opts.fallback
-    ? WorkflowDefinitionSchema.parse({
-        ...WORKFLOW,
-        nodes: WORKFLOW.nodes.map((node) =>
-          node.id === 'implement' ? { ...node, maxAttempts: 2 } : node,
-        ),
-      })
-    : WORKFLOW;
+  // A gate opt inserts an approval-gate node reviewing the review artifact,
+  // between 'review' and 'verify', for approval-gate.test.ts.
+  const workflow: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+    ...WORKFLOW,
+    nodes: [
+      ...WORKFLOW.nodes.map((node) =>
+        opts.fallback && node.id === 'implement' ? { ...node, maxAttempts: 2 } : node,
+      ),
+    ].flatMap((node) =>
+      opts.gate && node.id === 'verify'
+        ? [
+            {
+              id: 'gate',
+              type: 'approval-gate' as const,
+              title: 'Human review',
+              artifact: 'review',
+              outputArtifact: 'gate-decision',
+              ...opts.gate,
+            },
+            node,
+          ]
+        : [node],
+    ),
+  });
   const verifier: VerificationService = {
     verify: () =>
       Promise.resolve({
@@ -679,6 +752,8 @@ export function makeHarness(
     stores.runs,
     stores.stepRuns,
     stores.stepAttempts,
+    stores.approvalRequests,
+    stores.approvalDecisions,
     stores.artifacts,
     stores.events,
     workflows,
@@ -697,6 +772,8 @@ export function makeHarness(
     stores.runs,
     stores.stepRuns,
     stores.stepAttempts,
+    stores.approvalRequests,
+    stores.approvalDecisions,
     stores.artifacts,
     stores.events,
     queue,

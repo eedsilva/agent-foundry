@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ArtifactMetadataSchema, ProjectSchema, QueueJobSchema } from './project.js';
-import { StepAttemptSchema, StepRunSchema, WorkflowRunSchema } from './run.js';
+import {
+  ApprovalDecisionSchema,
+  ApprovalRequestSchema,
+  StepAttemptSchema,
+  StepRunSchema,
+  WorkflowRunSchema,
+} from './run.js';
 import * as contracts from './index.js';
 
 const exported = contracts as Record<string, unknown>;
@@ -176,5 +182,60 @@ describe('persisted run contracts', () => {
         error: { name: 'Error', message: 'stale error' },
       }),
     ).toThrow(/Only failed runs/);
+  });
+
+  it('accepts a run parked awaiting approval and a run rejected as terminal', () => {
+    const timestamp = '2026-07-14T12:00:00.000Z';
+    expect(
+      WorkflowRunSchema.parse({
+        id: 'run-1',
+        projectId: 'project-1',
+        workflowId: 'web-app-v1',
+        status: 'awaiting_approval',
+        version: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        startedAt: timestamp,
+      }).status,
+    ).toBe('awaiting_approval');
+
+    expect(
+      WorkflowRunSchema.parse({
+        id: 'run-1',
+        projectId: 'project-1',
+        workflowId: 'web-app-v1',
+        status: 'rejected',
+        version: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        startedAt: timestamp,
+        completedAt: timestamp,
+      }).status,
+    ).toBe('rejected');
+  });
+
+  it('parses linked, immutable approval requests and decisions', () => {
+    const timestamp = '2026-07-14T12:00:00.000Z';
+    const request = ApprovalRequestSchema.parse({
+      id: 'approval-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      nodeId: 'review-gate',
+      artifact: { name: 'plan', revision: 1, sha256: 'a'.repeat(64) },
+      allowedActions: ['approve', 'reject'],
+      createdAt: timestamp,
+    });
+    expect(request.timeoutAt).toBeUndefined();
+
+    const decision = ApprovalDecisionSchema.parse({
+      id: 'decision-1',
+      requestId: 'approval-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      action: 'approve',
+      decidedBy: 'ed',
+      decidedAt: timestamp,
+    });
+    expect(decision.action).toBe('approve');
   });
 });

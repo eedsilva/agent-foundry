@@ -10,6 +10,8 @@ import {
 import { VersionedHarnessRepository } from '@agent-foundry/harness';
 import { ScoreBasedModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
 import {
+  FileApprovalDecisionRepository,
+  FileApprovalRequestRepository,
   FileArtifactStore,
   FileEventStore,
   FileJobQueue,
@@ -36,6 +38,8 @@ export interface Runtime {
   runs: FileWorkflowRunRepository;
   stepRuns: FileStepRunRepository;
   stepAttempts: FileStepAttemptRepository;
+  approvalRequests: FileApprovalRequestRepository;
+  approvalDecisions: FileApprovalDecisionRepository;
   artifacts: FileArtifactStore;
   events: FileEventStore;
   queue: FileJobQueue;
@@ -62,6 +66,8 @@ export async function createRuntime(
   const runs = new FileWorkflowRunRepository(config.dataDir);
   const stepRuns = new FileStepRunRepository(config.dataDir);
   const stepAttempts = new FileStepAttemptRepository(config.dataDir);
+  const approvalRequests = new FileApprovalRequestRepository(config.dataDir);
+  const approvalDecisions = new FileApprovalDecisionRepository(config.dataDir);
   const artifacts = new FileArtifactStore(config.dataDir);
   const events = new FileEventStore(config.dataDir);
   const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
@@ -92,6 +98,8 @@ export async function createRuntime(
     runs,
     stepRuns,
     stepAttempts,
+    approvalRequests,
+    approvalDecisions,
     artifacts,
     events,
     workflows,
@@ -110,6 +118,8 @@ export async function createRuntime(
     runs,
     stepRuns,
     stepAttempts,
+    approvalRequests,
+    approvalDecisions,
     artifacts,
     events,
     queue,
@@ -135,6 +145,8 @@ export async function createRuntime(
     runs,
     stepRuns,
     stepAttempts,
+    approvalRequests,
+    approvalDecisions,
     artifacts,
     events,
     queue,

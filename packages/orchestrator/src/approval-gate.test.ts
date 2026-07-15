@@ -1,0 +1,215 @@
+import { describe, expect, it } from 'vitest';
+import { makeHarness, makeStores, seedRun } from './testing/harness.js';
+
+describe('approval gates halt the run for a human decision (#13)', () => {
+  it('approves and advances to completion', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+
+    const approvals = await harness.service.listApprovals('run-1');
+    expect(approvals).toHaveLength(1);
+    const { request, decision } = approvals[0]!;
+    expect(decision).toBeNull();
+    expect(request.nodeId).toBe('gate');
+    expect(request.artifact.name).toBe('review');
+    expect(request.allowedActions).toEqual(['approve', 'reject']);
+
+    const decided = await harness.service.decideApproval('run-1', request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    expect(decided.run.status).toBe('queued');
+    expect(harness.enqueued).toHaveLength(1);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    const run = await harness.runs.get('run-1');
+    expect(run?.status).toBe('completed');
+    expect(harness.executor.started('review')).toBe(1);
+    expect(harness.artifacts.named('gate-decision')).toHaveLength(1);
+    expect(harness.events.types()).toContain('run.approval_requested');
+    expect(harness.events.types()).toContain('run.approval_decided');
+  });
+
+  it('rejects and ends the run when no return step is configured', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    const { request } = entry!;
+
+    await harness.service.decideApproval('run-1', request.id, {
+      action: 'reject',
+      decidedBy: 'ed',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    const run = await harness.runs.get('run-1');
+    expect(run?.status).toBe('rejected');
+    expect(run?.completedAt).toBeDefined();
+    expect(harness.events.types()).toContain('run.rejected');
+  });
+
+  it('rejects with return-to-step: rewinds the repair step and re-halts with a fresh request', async () => {
+    const harness = makeHarness(
+      {},
+      undefined,
+      { gate: { onReject: 'return-to-step', returnToStepId: 'implement' } },
+    );
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [firstEntry] = await harness.service.listApprovals('run-1');
+    const { request: firstRequest } = firstEntry!;
+
+    await harness.service.decideApproval('run-1', firstRequest.id, {
+      action: 'reject',
+      decidedBy: 'ed',
+      note: 'not quite right',
+    });
+    const afterDecision = await harness.runs.get('run-1');
+    expect(afterDecision?.status).toBe('queued');
+    expect(afterDecision?.retry?.stepId).toBe('implement');
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    // The repair step and everything after it (including the gate itself)
+    // re-executed; a brand new approval request is now pending.
+    expect(harness.executor.started('implement')).toBe(2);
+    expect(harness.executor.started('review')).toBe(2);
+    expect(harness.executor.started('verify')).toBe(0);
+    expect(harness.stepRuns.byStepId('run-1', 'gate')).toHaveLength(2);
+
+    const approvals = await harness.service.listApprovals('run-1');
+    expect(approvals).toHaveLength(2);
+    const second = approvals.find((entry) => entry.request.id !== firstRequest.id)!;
+    expect(second.decision).toBeNull();
+    const run = await harness.runs.get('run-1');
+    expect(run?.status).toBe('awaiting_approval');
+
+    // Approving the second request completes the run and clears the stale
+    // retry directive left over from the rewind.
+    await harness.service.decideApproval('run-1', second.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const finalRun = await harness.runs.get('run-1');
+    expect(finalRun?.status).toBe('completed');
+    expect(finalRun?.retry).toBeUndefined();
+    // implement did not spuriously re-execute a third time.
+    expect(harness.executor.started('implement')).toBe(2);
+  });
+
+  it('request-changes writes a repair artifact, rewinds, and re-halts', async () => {
+    const harness = makeHarness(
+      {},
+      undefined,
+      {
+        gate: {
+          actions: ['approve', 'request-changes'],
+          returnToStepId: 'implement',
+          repairArtifact: 'repair-notes',
+        },
+      },
+    );
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    const { request } = entry!;
+
+    await harness.service.decideApproval('run-1', request.id, {
+      action: 'request-changes',
+      decidedBy: 'ed',
+      note: 'please add tests',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect(harness.artifacts.named('repair-notes')).toHaveLength(1);
+    expect(harness.artifacts.named('repair-notes')[0]?.content).toMatchObject({
+      note: 'please add tests',
+      decidedBy: 'ed',
+    });
+    expect(harness.executor.started('implement')).toBe(2);
+    const approvals = await harness.service.listApprovals('run-1');
+    expect(approvals).toHaveLength(2);
+    expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+  });
+
+  it('halts idempotently across a worker restart before any decision arrives', async () => {
+    const stores = makeStores();
+    const first = makeHarness({}, stores, { gate: {} });
+    await seedRun(first);
+    await first.orchestrator.runProject('project-1', undefined, 'run-1');
+    expect((await first.runs.get('run-1'))?.status).toBe('awaiting_approval');
+    const before = await first.service.listApprovals('run-1');
+    expect(before).toHaveLength(1);
+
+    // Fresh orchestrator/service instances over the same persisted state
+    // (simulating a restarted worker), replaying the same run again with no
+    // decision recorded yet: no duplicate ApprovalRequest, still parked.
+    const second = makeHarness({}, stores, { gate: {} });
+    await second.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    const after = await second.service.listApprovals('run-1');
+    expect(after).toHaveLength(1);
+    expect(after[0]?.request.id).toBe(before[0]?.request.id);
+    expect((await second.runs.get('run-1'))?.status).toBe('awaiting_approval');
+    expect(second.executor.started('review')).toBe(0);
+  });
+
+  it('recovers a crash between recording a decision and requeuing, without duplicating anything', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    const { request } = entry!;
+
+    // Simulate a crash right after the decision was durably recorded but
+    // before the run was transitioned back to queued: write the decision
+    // directly, bypassing decideApproval's own requeue step.
+    await harness.approvalDecisions.create({
+      id: 'decision-manual',
+      requestId: request.id,
+      runId: 'run-1',
+      stepRunId: request.stepRunId,
+      action: 'approve',
+      decidedBy: 'ed',
+      decidedAt: harness.clock.now().toISOString(),
+    });
+    expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+
+    // A retried (or first, from the caller's perspective) call recovers
+    // instead of silently no-op'ing on the already-recorded decision.
+    const recovered = await harness.service.decideApproval('run-1', request.id, {
+      action: 'approve',
+      decidedBy: 'someone-else',
+    });
+    expect(recovered.decision.id).toBe('decision-manual');
+    expect(recovered.decision.decidedBy).toBe('ed');
+    expect(recovered.run.status).toBe('queued');
+    expect(harness.enqueued).toHaveLength(1);
+
+    // Once the run has moved on, a further repeat is a true no-op.
+    const again = await harness.service.decideApproval('run-1', request.id, {
+      action: 'approve',
+      decidedBy: 'someone-else',
+    });
+    expect(again.run.status).toBe('queued');
+    expect(harness.enqueued).toHaveLength(1);
+  });
+
+  it('rejects deciding an action the request does not allow', async () => {
+    const harness = makeHarness({}, undefined, { gate: { actions: ['approve'] } });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    const { request } = entry!;
+
+    await expect(
+      harness.service.decideApproval('run-1', request.id, { action: 'reject', decidedBy: 'ed' }),
+    ).rejects.toThrow(/not allowed/);
+  });
+});

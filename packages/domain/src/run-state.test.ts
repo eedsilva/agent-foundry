@@ -205,20 +205,31 @@ describe('run state transitions', () => {
       'running',
       'pause_requested',
       'paused',
+      'awaiting_approval',
       'cancel_requested',
       'cancelled',
       'completed',
       'failed',
+      'rejected',
     ];
     const allowed: Record<WorkflowRunStatus, WorkflowRunStatus[]> = {
       queued: ['running', 'cancel_requested', 'cancelled', 'failed'],
-      running: ['pause_requested', 'cancel_requested', 'completed', 'failed'],
+      running: [
+        'pause_requested',
+        'awaiting_approval',
+        'cancel_requested',
+        'completed',
+        'failed',
+        'rejected',
+      ],
       pause_requested: ['paused', 'cancel_requested', 'completed', 'failed'],
       paused: ['queued', 'running', 'cancel_requested', 'cancelled', 'failed'],
+      awaiting_approval: ['queued', 'running', 'cancel_requested', 'cancelled', 'rejected'],
       cancel_requested: ['cancelled', 'failed'],
       cancelled: [],
       completed: ['queued'],
       failed: ['queued'],
+      rejected: [],
     };
 
     for (const from of statuses) {
@@ -281,7 +292,8 @@ describe('run state transitions', () => {
 });
 
 function workflowRunAt(status: WorkflowRunStatus): WorkflowRun {
-  const terminal = status === 'completed' || status === 'failed' || status === 'cancelled';
+  const terminal =
+    status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'rejected';
   return {
     id: 'run-graph',
     projectId: 'project-1',

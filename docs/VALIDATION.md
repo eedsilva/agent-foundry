@@ -162,4 +162,39 @@ All failures are simulated in-memory (scripted executor behaviors, fake workspac
 ### Verification performed
 
 - The failure injection suite was run three consecutive times single-worker (`--pool=threads --maxWorkers=1`); all 16 tests passed on every run.
+
+## Approval gates — 2026-07-15
+
+Issue #13 adds `approval-gate` as a new `WorkflowNode` type that halts a run until a persisted
+human decision, reusing the existing idempotent-replay and invalidation mechanisms from ADR 0010
+and ADR 0011 rather than adding new control flow. See ADR 0012 for the design.
+
+### Coverage
+
+- `packages/contracts/src/workflow.test.ts` and `run.test.ts`: `ApprovalGateStep` schema
+  constraints (`onReject`/`returnToStepId`/`repairArtifact`/timeout combinations), and the new
+  `ApprovalRequest`/`ApprovalDecision` schemas.
+- `packages/domain/src/run-state.test.ts`: the `awaiting_approval`/`rejected` transition graph.
+- `packages/persistence/src/approval-repositories.test.ts`: create/get (plus list for requests)
+  and duplicate-create rejection for both repositories; confirms neither exposes an `update`
+  method.
+- `packages/orchestrator/src/approval-gate.test.ts` (7 tests): approve advances to completion;
+  reject with `onReject: 'end'` terminates the run as `rejected`; reject-with-return-to-step and
+  request-changes rewind the repair step and re-halt with a fresh approval request; a simulated
+  worker restart before any decision produces no duplicate `ApprovalRequest`; a simulated crash
+  between recording a decision and requeuing recovers using the originally recorded decision
+  without duplicating side effects; deciding a disallowed action is rejected.
+- A manual HTTP smoke test against the mock runtime (`POST /projects`, `GET
+  /runs/:runId/approvals`, `POST /runs/:runId/approvals/:requestId/decide`) exercised both the
+  approve path (`awaiting_approval -> queued -> completed`) and the reject path
+  (`awaiting_approval -> queued -> rejected`) against the real file-backed persistence layer.
+
+### Verification performed
+
+- `npm run typecheck` passed across the full workspace.
+- `npm test` passed: 34 test files, 275 tests (up from the 8 files / 27 tests recorded above,
+  reflecting all orchestrator features shipped since).
+- `npm run build` passed for all TypeScript packages, the API, the worker, and the Next.js web
+  production build.
+- `npm run doctor` passed in mock mode.
 - `npm run check` completed successfully: Prettier, ESLint with zero warnings, architecture and roadmap validation, TypeScript, Vitest with 26 files and 217 tests, 42 Node script tests, and all package, API, worker, and Next.js production builds.
