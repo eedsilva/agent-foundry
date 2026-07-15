@@ -7,6 +7,7 @@ import {
   DogfoodReportSchema,
   DogfoodRunRecordSchema,
   DogfoodTaskSchema,
+  RouteDecisionSchema,
   type DogfoodRunRecord,
 } from '@agent-foundry/contracts';
 import { YamlWorkflowRepository } from '@agent-foundry/persistence';
@@ -326,6 +327,66 @@ describe('renderDogfoodMarkdown', () => {
     });
     expect(renderDogfoodMarkdown(report)).toContain('| Task | Attempt | Status |');
   });
+
+  it('falls back to route.executed.model.id when top-level executedModel is absent', () => {
+    // Codex CLI reports no resolved model string, so codex records carry a null
+    // top-level executedModel; the route still records what actually executed.
+    const capabilities = {
+      planning: 0.5,
+      architecture: 0.5,
+      coding: 0.5,
+      review: 0.5,
+      repair: 0.5,
+      structuredOutput: 0.5,
+      speed: 0.5,
+      costEfficiency: 0.5,
+      reliability: 0.5,
+    };
+    const score = {
+      capability: 0,
+      context: 0,
+      speed: 0,
+      cost: 0,
+      reliability: 0,
+      historical: 0,
+      tagAffinity: 0,
+      estimatedCostUsd: null,
+      total: 0,
+    };
+    const ranked = (id: string) => ({
+      model: { id, provider: 'codex' as const, model: id, maxContextTokens: 200000, capabilities },
+      score,
+    });
+    const route = RouteDecisionSchema.parse({
+      routeId: 'route-1',
+      createdAt: '2026-07-15T00:00:00.000Z',
+      profile: {
+        role: 'developer' as const,
+        taskKind: 'implementation' as const,
+        complexity: 3,
+        risk: 3,
+        estimatedContextTokens: 1000,
+        estimatedOutputTokens: 1000,
+        mutatesWorkspace: true,
+        priorities: { quality: 0.5, speed: 0.5, cost: 0.5, reliability: 0.5 },
+      },
+      selected: ranked('router-alias'),
+      fallbacks: [],
+      executed: ranked('codex-default'),
+      rejected: [],
+    });
+    // executedModel intentionally omitted (undefined) to force the fallback.
+    const report = DogfoodReportSchema.parse({
+      schemaVersion: '1',
+      createdAt: '2026-07-15T00:00:00.000Z',
+      baselineRef: '8896a3c',
+      runs: [sampleRecord({ route })],
+      limitations: ['n/a'],
+    });
+    const markdown = renderDogfoodMarkdown(report);
+    expect(markdown).toContain('router-alias → codex-default');
+    expect(markdown).not.toContain('router-alias → —');
+  });
 });
 
 describe('annotateHumanEdits', () => {
@@ -365,10 +426,16 @@ describe('annotateHumanEdits', () => {
     });
 
     const annotated = (
-      await annotateHumanEdits([record], { repoRoot: repo, mergedRef: merged, dataDir })
+      await annotateHumanEdits([record], {
+        repoRoot: repo,
+        mergedRef: merged,
+        dataDir,
+        notes: 'reviewed against merged PR',
+      })
     )[0]!;
 
     expect(annotated.humanEdit.status).toBe('recorded');
+    expect(annotated.humanEdit.notes).toBe('reviewed against merged PR');
     const byPath = new Map(
       annotated.humanEdit.files.map((file) => [file.path, file.agentVsMerged]),
     );

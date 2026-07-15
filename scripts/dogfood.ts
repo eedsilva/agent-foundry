@@ -82,9 +82,16 @@ try {
     console.log(`Frozen ${records.length} record(s) into docs/baselines.`);
   } else if (argValue('--annotate-human-edits')) {
     const mergedRef = argValue('--annotate-human-edits')!;
-    const annotated = await annotateHumanEdits(await loadRecords(), {
+    // Human-reviewed merges live on different sibling branches per task group,
+    // so annotation runs per-group: --task selects which records this ref applies to.
+    const taskId = argValue('--task');
+    const records = await loadRecords();
+    const selected = taskId ? records.filter((record) => record.taskId === taskId) : records;
+    const notes = argValue('--notes');
+    const annotated = await annotateHumanEdits(selected, {
       repoRoot: rootDir,
       mergedRef,
+      ...(notes ? { notes } : {}),
     });
     console.log(`Annotated ${annotated.length} record(s) against ${mergedRef}.`);
   } else if (args.includes('--all') || argValue('--task')) {

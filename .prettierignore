@@ -3,6 +3,7 @@ dist
 .next
 coverage
 data
+.superpowers
 apps/web/next-env.d.ts
 planning/ROADMAP.md
 *.tsbuildinfo

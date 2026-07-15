@@ -277,7 +277,7 @@ export async function freezeDogfoodReport(
 
 export async function annotateHumanEdits(
   records: DogfoodRunRecord[],
-  options: { repoRoot: string; mergedRef: string; dataDir?: string },
+  options: { repoRoot: string; mergedRef: string; dataDir?: string; notes?: string },
 ): Promise<DogfoodRunRecord[]> {
   const dogfoodDir = join(options.dataDir ?? join(FOUNDRY_ROOT, '.data'), 'dogfood');
   await mkdir(dogfoodDir, { recursive: true });
@@ -298,7 +298,12 @@ export async function annotateHumanEdits(
     }
     const updated = DogfoodRunRecordSchema.parse({
       ...record,
-      humanEdit: { status: 'recorded', reference: options.mergedRef, files },
+      humanEdit: {
+        status: 'recorded',
+        reference: options.mergedRef,
+        files,
+        ...(options.notes ? { notes: options.notes } : {}),
+      },
     });
     await writeFile(
       join(dogfoodDir, `${record.taskId}-attempt${tag}.json`),
