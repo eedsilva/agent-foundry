@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { ExecutionError } from '@agent-foundry/domain';
 import {
+  assertCountsUnchanged,
   ControllableExecutor,
   completeRun,
   FakeWorkspaces,
@@ -11,6 +12,7 @@ import {
   makeStores,
   rateLimitError,
   seedRun,
+  snapshotCounts,
   timeoutError,
 } from './testing/harness.js';
 
@@ -33,29 +35,6 @@ function request(stepId: string, mutatesWorkspace = false): AgentExecutionReques
 }
 
 describe('failure fixtures', () => {
-  it('fail-once fails the first execution and succeeds on the second', async () => {
-    const stores = makeStores();
-    const executor = new ControllableExecutor(
-      { implement: { kind: 'fail-once', error: rateLimitError } },
-      stores.workspaces,
-    );
-
-    await expect(executor.execute(request('implement'))).rejects.toThrow(ExecutionError);
-    const result = await executor.execute(request('implement'));
-    expect(result.output.status).toBe('completed');
-  });
-
-  it('fail-always fails every execution', async () => {
-    const stores = makeStores();
-    const executor = new ControllableExecutor(
-      { implement: { kind: 'fail-always', error: rateLimitError } },
-      stores.workspaces,
-    );
-
-    await expect(executor.execute(request('implement'))).rejects.toThrow(ExecutionError);
-    await expect(executor.execute(request('implement'))).rejects.toThrow(ExecutionError);
-  });
-
   it('hang-until-abort rejects when the signal aborts', async () => {
     const stores = makeStores();
     const executor = new ControllableExecutor(
@@ -177,19 +156,9 @@ describe('Group A: executor failure modes with fallback recovery', () => {
     expect((await harness.projects.get('project-1'))?.status).toBe('failed');
 
     // Terminal-run guard: redelivering the failed run changes nothing.
-    const before = {
-      steps: harness.stepRuns.store.size,
-      attempts: harness.stepAttempts.store.size,
-      artifacts: harness.artifacts.artifacts.length,
-      events: harness.events.events.length,
-      commits: harness.workspaces.commits.length,
-    };
+    const before = snapshotCounts(harness);
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-    expect(harness.stepRuns.store.size).toBe(before.steps);
-    expect(harness.stepAttempts.store.size).toBe(before.attempts);
-    expect(harness.artifacts.artifacts.length).toBe(before.artifacts);
-    expect(harness.events.events.length).toBe(before.events);
-    expect(harness.workspaces.commits.length).toBe(before.commits);
+    assertCountsUnchanged(harness, before);
   });
 });
 
@@ -220,16 +189,16 @@ describe('Group B: process kill — a late result is never promoted', () => {
 /**
  * Group C — phase crash matrix (PowerSwitch) + replay.
  *
- * | Phase boundary                            | Where covered              |
- * | ----------------------------------------- | -------------------------- |
- * | before checkpoint                         | C1 (this block)            |
- * | after checkpoint, before execution        | C2 (this block)            |
- * | mid-execution (executor dies with power)  | C3 (this block)            |
- * | after execution, before commit            | C4 (this block)            |
- * | after commit, before artifact put         | run-controls.test.ts       |
- * | after artifact put, before attempt update | run-controls.test.ts       |
- * | before queue ack                          | run-controls.test.ts       |
- * | after ack (redelivery of completed run)   | C5 (this block)            |
+ * | Phase boundary                            | Where covered                     |
+ * | ----------------------------------------- | ---------------------------------- |
+ * | before checkpoint                         | C1/C2 (this block, parameterized) |
+ * | after checkpoint, before execution        | C1/C2 (this block, parameterized) |
+ * | mid-execution (executor dies with power)  | C3 (this block)                   |
+ * | after execution, before commit            | C4 (this block)                   |
+ * | after commit, before artifact put         | run-controls.test.ts              |
+ * | after artifact put, before attempt update | run-controls.test.ts              |
+ * | before queue ack                          | run-controls.test.ts              |
+ * | after ack (redelivery of completed run)   | C5 (this block)                   |
  *
  * Note: C1 and C2 assert the same persisted crash state (no attempt record
  * for the step) because the checkpoint ref is only persisted as a field on
@@ -237,57 +206,38 @@ describe('Group B: process kill — a late result is never promoted', () => {
  * attempt not" state to distinguish them.
  */
 describe('Group C: phase crash matrix + replay', () => {
-  it('C1: crash before checkpoint is resumable without duplicate side effects', async () => {
-    const stores = makeStores();
-    const first = makeHarness({}, stores);
-    await seedRun(first);
-    stores.workspaces.onBeforeCheckpoint = () => {
-      stores.power.on = false;
-    };
+  it.each([
+    ['before checkpoint', 'onBeforeCheckpoint'],
+    ['after checkpoint, before execution', 'onAfterCheckpoint'],
+  ] as const)(
+    'C1/C2: crash %s is resumable without duplicate side effects',
+    async (_label, hook) => {
+      const stores = makeStores();
+      const first = makeHarness({}, stores);
+      await seedRun(first);
+      stores.workspaces[hook] = () => {
+        stores.power.on = false;
+      };
 
-    await expect(first.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      /simulated power loss/,
-    );
+      await expect(first.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+        /simulated power loss/,
+      );
 
-    stores.workspaces.onBeforeCheckpoint = undefined;
-    stores.power.on = true;
-    const second = makeHarness({}, stores);
-    await second.orchestrator.runProject('project-1', undefined, 'run-1');
+      stores.workspaces[hook] = undefined;
+      stores.power.on = true;
+      const second = makeHarness({}, stores);
+      await second.orchestrator.runProject('project-1', undefined, 'run-1');
 
-    expect((await stores.runs.get('run-1'))?.status).toBe('completed');
-    expect(second.executor.started('plan')).toBe(0); // completed plan reused
-    expect(second.executor.started('implement')).toBe(1);
-    expect(stores.artifacts.named('implementation')).toHaveLength(1);
-    expect(stores.workspaces.commits).toHaveLength(1);
-    // Lifecycle events stay single across the replay.
-    expect(stores.events.types().filter((type) => type === 'project.started')).toHaveLength(1);
-    expect(stores.events.types().filter((type) => type === 'node.started')).toHaveLength(4);
-  });
-
-  it('C2: crash after checkpoint but before execution is resumable', async () => {
-    const stores = makeStores();
-    const first = makeHarness({}, stores);
-    await seedRun(first);
-    stores.workspaces.onAfterCheckpoint = () => {
-      stores.power.on = false;
-    };
-
-    await expect(first.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      /simulated power loss/,
-    );
-
-    stores.workspaces.onAfterCheckpoint = undefined;
-    stores.power.on = true;
-    const second = makeHarness({}, stores);
-    await second.orchestrator.runProject('project-1', undefined, 'run-1');
-
-    expect((await stores.runs.get('run-1'))?.status).toBe('completed');
-    expect(second.executor.started('plan')).toBe(0);
-    expect(second.executor.started('implement')).toBe(1);
-    expect(stores.artifacts.named('implementation')).toHaveLength(1);
-    expect(stores.workspaces.commits).toHaveLength(1);
-    expect(stores.events.types().filter((type) => type === 'project.started')).toHaveLength(1);
-  });
+      expect((await stores.runs.get('run-1'))?.status).toBe('completed');
+      expect(second.executor.started('plan')).toBe(0); // completed plan reused
+      expect(second.executor.started('implement')).toBe(1);
+      expect(stores.artifacts.named('implementation')).toHaveLength(1);
+      expect(stores.workspaces.commits).toHaveLength(1);
+      // Lifecycle events stay single across the replay.
+      expect(stores.events.types().filter((type) => type === 'project.started')).toHaveLength(1);
+      expect(stores.events.types().filter((type) => type === 'node.started')).toHaveLength(4);
+    },
+  );
 
   it('C3: crash mid-execution finalizes the interrupted attempt and re-executes', async () => {
     const stores = makeStores();
@@ -337,17 +287,20 @@ describe('Group C: phase crash matrix + replay', () => {
     const stores = makeStores();
     const first = makeHarness({ implement: 'gated' }, stores);
     await seedRun(first);
+    stores.workspaces.onBeforeCommit = () => {
+      stores.power.on = false;
+    };
 
     const running = first.orchestrator.runProject('project-1', undefined, 'run-1');
     await vi.waitFor(() => {
       expect(first.executor.started('implement')).toBe(1);
     });
-    // The executor succeeds, but power dies before the orchestrator commits.
-    stores.power.on = false;
+    // The executor succeeds; onBeforeCommit flips power off before the commit lands.
     first.executor.release('implement');
     await expect(running).rejects.toThrow(/simulated power loss/);
     expect(stores.workspaces.commits).toHaveLength(0);
 
+    stores.workspaces.onBeforeCommit = undefined;
     stores.power.on = true;
     const second = makeHarness({}, stores);
     await second.orchestrator.runProject('project-1', undefined, 'run-1');
@@ -363,24 +316,14 @@ describe('Group C: phase crash matrix + replay', () => {
     const first = makeHarness({}, stores);
     await completeRun(first);
 
-    const before = {
-      steps: stores.stepRuns.store.size,
-      attempts: stores.stepAttempts.store.size,
-      artifacts: stores.artifacts.artifacts.length,
-      events: stores.events.events.length,
-      commits: stores.workspaces.commits.length,
-    };
+    const before = snapshotCounts(stores);
 
     // A different worker instance receives the same job again.
     const second = makeHarness({}, stores);
     await second.orchestrator.runProject('project-1', undefined, 'run-1');
 
     expect((await stores.runs.get('run-1'))?.status).toBe('completed');
-    expect(stores.stepRuns.store.size).toBe(before.steps);
-    expect(stores.stepAttempts.store.size).toBe(before.attempts);
-    expect(stores.artifacts.artifacts.length).toBe(before.artifacts);
-    expect(stores.events.events.length).toBe(before.events);
-    expect(stores.workspaces.commits.length).toBe(before.commits);
+    assertCountsUnchanged(stores, before);
     expect(second.executor.started('implement')).toBe(0);
   });
 });
@@ -389,22 +332,16 @@ describe('Group D: duplicate delivery idempotency', () => {
   it('duplicate delivery of the same job does not duplicate artifact or commit', async () => {
     const harness = makeHarness();
     await completeRun(harness);
+    expect(harness.artifacts.named('implementation')).toHaveLength(1);
 
-    const before = {
-      implementations: harness.artifacts.named('implementation').length,
-      commits: harness.workspaces.commits.length,
-      implementStarts: harness.executor.started('implement'),
-      events: harness.events.events.length,
-    };
+    const before = snapshotCounts(harness);
+    const implementStarts = harness.executor.started('implement');
 
     // Redelivery: the same runId is handed to runProject again.
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
-    expect(harness.artifacts.named('implementation')).toHaveLength(before.implementations);
-    expect(harness.artifacts.named('implementation')).toHaveLength(1);
-    expect(harness.workspaces.commits).toHaveLength(before.commits);
-    expect(harness.executor.started('implement')).toBe(before.implementStarts);
-    // Deduped events: the redelivery adds nothing.
-    expect(harness.events.events.length).toBe(before.events);
+    // Deduped: no new step runs, attempts, artifacts, events, or commits.
+    assertCountsUnchanged(harness, before);
+    expect(harness.executor.started('implement')).toBe(implementStarts);
   });
 });

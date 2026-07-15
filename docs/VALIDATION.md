@@ -99,24 +99,24 @@ Issue #11 generalizes ADR 0011's validation into a systematic failure matrix ove
 
 ### Matrix
 
-| Phase / failure mode                                             | Covering test                                    |
-| ---------------------------------------------------------------- | ------------------------------------------------ |
-| Executor timeout, rate limit, invalid output (fallback recovers) | `failure-injection.test.ts` Group A              |
-| All routing candidates fail (valid terminal state, no-op replay) | `failure-injection.test.ts` Group A              |
-| Process kill: cancelled run leaves no commit or artifact         | `failure-injection.test.ts` Group B              |
-| Late result after cancellation never promoted                    | `packages/orchestrator/src/cancellation.test.ts` |
-| Crash before checkpoint                                          | `failure-injection.test.ts` Group C1             |
-| Crash after checkpoint, before execution                         | `failure-injection.test.ts` Group C2             |
-| Crash mid-execution (interrupted attempt finalized)              | `failure-injection.test.ts` Group C3             |
-| Crash after execution, before commit                             | `failure-injection.test.ts` Group C4             |
-| Crash after commit, before artifact put                          | `packages/orchestrator/src/run-controls.test.ts` |
-| Crash after artifact put, before attempt update                  | `packages/orchestrator/src/run-controls.test.ts` |
-| Crash before queue ack                                           | `packages/orchestrator/src/run-controls.test.ts` |
-| Redelivery of a completed run after ack                          | `failure-injection.test.ts` Group C5             |
-| Duplicate delivery of the same job                               | `failure-injection.test.ts` Group D              |
-| Dead worker: lease expiry, reap, redelivery, stale-lease fencing | `packages/persistence/src/job-queue.test.ts`     |
+| Phase / failure mode                                             | Covering test                                              |
+| ---------------------------------------------------------------- | ---------------------------------------------------------- |
+| Executor timeout, rate limit, invalid output (fallback recovers) | `failure-injection.test.ts` Group A                        |
+| All routing candidates fail (valid terminal state, no-op replay) | `failure-injection.test.ts` Group A                        |
+| Process kill: cancelled run leaves no commit or artifact         | `failure-injection.test.ts` Group B                        |
+| Late result after cancellation never promoted                    | `packages/orchestrator/src/cancellation.test.ts`           |
+| Crash before checkpoint                                          | `failure-injection.test.ts` Group C, C1/C2 (parameterized) |
+| Crash after checkpoint, before execution                         | `failure-injection.test.ts` Group C, C1/C2 (parameterized) |
+| Crash mid-execution (interrupted attempt finalized)              | `failure-injection.test.ts` Group C3                       |
+| Crash after execution, before commit                             | `failure-injection.test.ts` Group C4                       |
+| Crash after commit, before artifact put                          | `packages/orchestrator/src/run-controls.test.ts`           |
+| Crash after artifact put, before attempt update                  | `packages/orchestrator/src/run-controls.test.ts`           |
+| Crash before queue ack                                           | `packages/orchestrator/src/run-controls.test.ts`           |
+| Redelivery of a completed run after ack                          | `failure-injection.test.ts` Group C5                       |
+| Duplicate delivery of the same job                               | `failure-injection.test.ts` Group D                        |
+| Dead worker: expired lease reaped, stale claimant fenced         | `packages/persistence/src/job-queue.test.ts`               |
 
-C1 and C2 converge on the same persisted crash state because the checkpoint ref is only persisted on the attempt record; there is no reachable "checkpoint persisted, attempt not" state.
+C1 and C2 converge on the same persisted crash state because the checkpoint ref is only persisted on the attempt record; there is no reachable "checkpoint persisted, attempt not" state. They are expressed as one `it.each` over the two crash points.
 
 ### Invariants asserted
 
@@ -133,5 +133,5 @@ All failures are simulated in-memory (scripted executor behaviors, fake workspac
 
 ### Verification performed
 
-- The failure injection suite was run three consecutive times single-worker (`--pool=threads --maxWorkers=1`); all 18 tests passed on every run.
-- `npm run check` completed successfully: Prettier, ESLint with zero warnings, architecture and roadmap validation, TypeScript, Vitest with 26 files and 220 tests, 42 Node script tests, and all package, API, worker, and Next.js production builds.
+- The failure injection suite was run three consecutive times single-worker (`--pool=threads --maxWorkers=1`); all 16 tests passed on every run.
+- `npm run check` completed successfully: Prettier, ESLint with zero warnings, architecture and roadmap validation, TypeScript, Vitest with 26 files and 217 tests, 42 Node script tests, and all package, API, worker, and Next.js production builds.

@@ -402,6 +402,10 @@ export class FakeWorkspaces implements WorkspaceManager {
     checkPower(this.power);
     if (!this.dirty) return Promise.resolve(null);
     this.onBeforeCommit?.();
+    // Re-checked so a hook that flips power off pre-empts the commit itself,
+    // not just the caller's next write (mirrors checkpoint()'s failure mode
+    // one level earlier, where the hook's write is the mutation being gated).
+    checkPower(this.power);
     this.current = this.nextSha();
     this.dirty = false;
     this.commits.push(this.current);
@@ -735,6 +739,29 @@ export async function completeRun(harness: Harness): Promise<void> {
   await seedRun(harness);
   await harness.orchestrator.runProject('project-1', undefined, 'run-1');
   assert.strictEqual((await harness.runs.get('run-1'))?.status, 'completed');
+}
+
+/** Counts used to pin "replay/redelivery changes nothing" assertions. */
+export interface StoreCounts {
+  steps: number;
+  attempts: number;
+  artifacts: number;
+  events: number;
+  commits: number;
+}
+
+export function snapshotCounts(stores: Stores): StoreCounts {
+  return {
+    steps: stores.stepRuns.store.size,
+    attempts: stores.stepAttempts.store.size,
+    artifacts: stores.artifacts.artifacts.length,
+    events: stores.events.events.length,
+    commits: stores.workspaces.commits.length,
+  };
+}
+
+export function assertCountsUnchanged(stores: Stores, before: StoreCounts): void {
+  assert.deepStrictEqual(snapshotCounts(stores), before);
 }
 
 export function liveStepRun(harness: Harness, stepId: string): StepRun {
