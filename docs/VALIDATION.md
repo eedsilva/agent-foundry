@@ -92,3 +92,45 @@ Each required command was run separately against the final implementation:
 - `git diff --check` passed.
 
 Focused run-domain coverage includes seven contract tests, seven state-transition tests, six filesystem persistence/concurrency tests, and four mock-runtime integration tests. These verify timestamp and terminal-error invariants, every illegal state transition, compare-and-swap conflicts, legacy reads, attempt metadata/artifact linkage, fallback ordering, nested request context, and closure of the attempt/step/run hierarchy on failure.
+
+## Failure injection suite — 2026-07-14
+
+Issue #11 generalizes ADR 0011's validation into a systematic failure matrix over the orchestrator's execution pipeline. The suite lives in `packages/orchestrator/src/failure-injection.test.ts` on a shared harness (`packages/orchestrator/src/testing/harness.ts`); the dead-worker fixture lives in `packages/persistence/src/job-queue.test.ts` because the architecture rules forbid orchestrator→persistence imports.
+
+### Matrix
+
+| Phase / failure mode                                             | Covering test                                    |
+| ---------------------------------------------------------------- | ------------------------------------------------ |
+| Executor timeout, rate limit, invalid output (fallback recovers) | `failure-injection.test.ts` Group A              |
+| All routing candidates fail (valid terminal state, no-op replay) | `failure-injection.test.ts` Group A              |
+| Process kill: late result after cancellation never promoted      | `failure-injection.test.ts` Group B              |
+| Crash before checkpoint                                          | `failure-injection.test.ts` Group C1             |
+| Crash after checkpoint, before execution                         | `failure-injection.test.ts` Group C2             |
+| Crash mid-execution (interrupted attempt finalized)              | `failure-injection.test.ts` Group C3             |
+| Crash after execution, before commit                             | `failure-injection.test.ts` Group C4             |
+| Crash after commit, before artifact put                          | `packages/orchestrator/src/run-controls.test.ts` |
+| Crash after artifact put, before attempt update                  | `packages/orchestrator/src/run-controls.test.ts` |
+| Crash before queue ack                                           | `packages/orchestrator/src/run-controls.test.ts` |
+| Redelivery of a completed run after ack                          | `failure-injection.test.ts` Group C5             |
+| Duplicate delivery of the same job                               | `failure-injection.test.ts` Group D              |
+| Dead worker: lease expiry, reap, redelivery, stale-lease fencing | `packages/persistence/src/job-queue.test.ts`     |
+
+C1 and C2 converge on the same persisted crash state because the checkpoint ref is only persisted on the attempt record; there is no reachable "checkpoint persisted, attempt not" state.
+
+### Invariants asserted
+
+- Exactly one workspace commit per successful mutating step, across crash, replay, fallback, and redelivery.
+- Exactly one artifact revision per step output after any replay.
+- Lifecycle events are deduplicated: replay and redelivery add no events.
+- The workspace is rolled back to the attempt's checkpoint before a fallback candidate runs and after a cancelled or killed attempt.
+- Queue leases are fenced: a dead worker's stale lease can neither heartbeat nor ack (`LeaseLostError`), and the reclaiming worker receives a fresh fencing token.
+- Terminal runs are replay no-ops: redelivering a completed or failed run changes no step runs, attempts, artifacts, events, or commits.
+
+### Boundaries of this validation
+
+All failures are simulated in-memory (scripted executor behaviors, fake workspaces, a power switch that aborts persistence writes) and on a temporary filesystem for the job queue. No real provider CLI processes were started or killed; crash and power-loss semantics are those of the fakes, which mirror the port contracts, not real git or real process trees.
+
+### Verification performed
+
+- The failure injection suite was run three consecutive times single-worker (`--pool=threads --maxWorkers=1`); all 18 tests passed on every run.
+- `npm run check` completed successfully: Prettier, ESLint with zero warnings, architecture and roadmap validation, TypeScript, Vitest with 26 files and 220 tests, 42 Node script tests, and all package, API, worker, and Next.js production builds.

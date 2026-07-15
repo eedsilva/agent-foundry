@@ -21,13 +21,16 @@
 ### Task 1: Extract the shared in-memory harness
 
 **Files:**
+
 - Create: `packages/orchestrator/src/testing/harness.ts`
 - Modify: `packages/orchestrator/src/run-controls.test.ts` (import from harness; delete the moved ~500 lines)
 
 **Interfaces:**
+
 - Produces (moved verbatim from `run-controls.test.ts`, exported): `PowerSwitch`, `checkPower`, `SequentialIds`, `FixedClock` (if present), `InMemoryProjects`, `InMemoryRuns`, `InMemoryStepRuns`, `InMemoryStepAttempts`, `InMemoryArtifacts` (with `onAfterPut` hook), `InMemoryEvents`, `FakeWorkspaces` (with `onAfterCommit` hook; Task 3 adds more hooks), `ControllableExecutor`, `makeStores(): Stores`, `makeHarness(behaviors, existing?: Stores)`, `seedRun`, `completeRun`, `liveStepRun`, plus their types (`Stores`, `Harness`, `ExecutorBehavior`).
 
 Rules for the move:
+
 - The harness module must not import `vitest` (no `vi.*` inside it) — keep `vi.waitFor` calls in test files.
 - Copy signatures exactly as they exist in `run-controls.test.ts` today; this is a mechanical extraction, not a redesign.
 - `run-controls.test.ts` keeps its `describe`/`it` blocks and any helper used only by a single test.
@@ -42,22 +45,24 @@ Rules for the move:
 ### Task 2: Scripted failure behaviors for the executor + workspace hooks
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/testing/harness.ts`
 
 **Interfaces:**
+
 - Produces: extended behavior union consumed by Task 3:
 
 ```ts
 export type StepBehavior =
   | 'instant'
   | 'gated'
-  | { kind: 'fail-once'; error: () => Error }   // fails on first execution of the step, succeeds after
+  | { kind: 'fail-once'; error: () => Error } // fails on first execution of the step, succeeds after
   | { kind: 'fail-always'; error: () => Error }
-  | { kind: 'hang-until-abort' };                // resolves only when signal aborts, rejecting with the abort reason
+  | { kind: 'hang-until-abort' }; // resolves only when signal aborts, rejecting with the abort reason
 
-export function timeoutError(): Error;        // new ExecutionError('Command timed out after 300000 milliseconds: codex ...', { provider: 'mock', exitCode: undefined, stderr: '' }) — mirror execa timeout surface in base-cli-executor
-export function rateLimitError(): Error;      // new ExecutionError('CLI exited with a failure status', { exitCode: 1, stderr: '429 Too Many Requests: rate limit reached' })
-export function invalidOutputError(): Error;  // new ExecutionError('Agent did not return a valid artifact JSON object', { stdout: 'not json at all' }) — mirror json-output.ts
+export function timeoutError(): Error; // new ExecutionError('Command timed out after 300000 milliseconds: codex ...', { provider: 'mock', exitCode: undefined, stderr: '' }) — mirror execa timeout surface in base-cli-executor
+export function rateLimitError(): Error; // new ExecutionError('CLI exited with a failure status', { exitCode: 1, stderr: '429 Too Many Requests: rate limit reached' })
+export function invalidOutputError(): Error; // new ExecutionError('Agent did not return a valid artifact JSON object', { stdout: 'not json at all' }) — mirror json-output.ts
 ```
 
 - Also add to `FakeWorkspaces`: optional hooks `onBeforeCheckpoint`, `onAfterCheckpoint`, `onBeforeCommit` (in addition to existing `onAfterCommit`), each `(() => void) | undefined`, invoked at the matching point in `checkpoint()`/`commit()`. Also ensure `ControllableExecutor` can `touch()` the workspace (dirty it) before failing — add optional `dirtyWorkspace?: FakeWorkspaces` wiring or a per-behavior `beforeResult?: () => void` callback (choose whichever is smaller given the current class shape; keep it one mechanism, not both).
@@ -84,9 +89,11 @@ describe('failure fixtures', () => {
 ### Task 3: The failure matrix suite
 
 **Files:**
+
 - Create/extend: `packages/orchestrator/src/failure-injection.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 1–2. Workflow fixtures: reuse whatever minimal workflow definition `run-controls.test.ts` uses (single mutating `developer` step + optionally a second node) via `makeHarness`.
 
 Scenario groups — each `it` asserts BOTH the immediate outcome AND the terminal invariant (valid final state or successful replay to completion):
@@ -130,16 +137,16 @@ it('never promotes a result that arrives after cancellation (process kill)', asy
 
 **Group C — phase crash matrix (PowerSwitch) + replay.** Cells marked `(covered)` already exist in `run-controls.test.ts` — do NOT duplicate them; the matrix table in a comment names where each cell lives:
 
-| Phase boundary | Where covered |
-| --- | --- |
-| before checkpoint | NEW (C1) |
-| after checkpoint, before execution | NEW (C2) |
-| mid-execution (executor dies with power) | NEW (C3) |
-| after execution, before commit | NEW (C4) |
-| after commit, before artifact put | (covered) run-controls.test.ts |
+| Phase boundary                            | Where covered                  |
+| ----------------------------------------- | ------------------------------ |
+| before checkpoint                         | NEW (C1)                       |
+| after checkpoint, before execution        | NEW (C2)                       |
+| mid-execution (executor dies with power)  | NEW (C3)                       |
+| after execution, before commit            | NEW (C4)                       |
+| after commit, before artifact put         | (covered) run-controls.test.ts |
 | after artifact put, before attempt update | (covered) run-controls.test.ts |
-| before queue ack | (covered) run-controls.test.ts |
-| after ack (redelivery of completed run) | NEW (C5) |
+| before queue ack                          | (covered) run-controls.test.ts |
+| after ack (redelivery of completed run)   | NEW (C5)                       |
 
 Each NEW cell follows the exact recipe of the existing crash tests (read them first):
 
@@ -192,6 +199,7 @@ it('duplicate delivery of the same job does not duplicate artifact or commit', a
 ### Task 4: Wire-up, docs, evidence
 
 **Files:**
+
 - Modify: `docs/VALIDATION.md` (new dated section), possibly `docs/adr/0011-idempotent-step-reuse-and-run-controls.md` cross-reference — no new ADR (no new architecture decided; this generalizes ADR 0011's validation).
 
 - [ ] **Step 1:** Run the whole suite 3× to shake out flakes: `npx vitest run packages/orchestrator/src/failure-injection.test.ts --pool=threads --maxWorkers=1` (repeat 3 times).
