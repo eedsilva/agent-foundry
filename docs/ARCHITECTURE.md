@@ -46,7 +46,8 @@ Implementações locais:
 - fila por diretórios e rename atômico;
 - métricas com lock de diretório;
 - workspace e operações Git;
-- workflows YAML.
+- workflows YAML;
+- policies YAML versionadas (`policies/<id>.yaml`), com hash fixado por run.
 
 ### `packages/harness`
 
