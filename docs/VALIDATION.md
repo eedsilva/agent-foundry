@@ -366,5 +366,10 @@ findings after fixes for terminal lifecycle races, exact duplicate-model identit
 identity resolution, and the exact post-stop four-hour boundary. Its focused regression run passed
 8 files / 94 tests.
 
-Post-PR Ponytail and code-simplifier results remain a publication gate and must be appended only
-after those reviews run.
+The post-PR Ponytail review found one actionable duplication: the run/step and retry pin forms
+repeated the same model, actor, reason, and estimated-impact fields. The code-simplifier extracted
+one local `ModelPinFields` component and shared actor-kind list while preserving field names,
+validation, defaults, styling, submission, and async behavior (net -27 lines). Its focused
+verification passed 12 / 12 tests, root typecheck, the web production build, page ESLint, Prettier,
+and `git diff --check`. The second Ponytail pass returned `Lean already. Ship.` with no further
+complexity findings.

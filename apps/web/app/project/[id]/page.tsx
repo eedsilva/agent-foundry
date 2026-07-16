@@ -51,6 +51,47 @@ const PROJECT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', '
 const rowStyle = { display: 'flex', alignItems: 'center', gap: '0.75rem' } as const;
 
 const formatSeconds = (ms: number) => `${Math.round(ms / 1000)}s`;
+const ACTOR_KINDS = ['user', 'system', 'worker', 'provider'] as const;
+
+function ModelPinFields({ models }: { models: ModelDefinition[] }) {
+  return (
+    <div className="modelPinGrid">
+      <label>
+        Modelo do runtime
+        <select name="modelId" required>
+          <option value="">Selecione…</option>
+          {models.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.provider} / {model.model}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Tipo de ator
+        <select name="actorKind" required defaultValue="user">
+          {ACTOR_KINDS.map((kind) => (
+            <option key={kind} value={kind}>
+              {kind}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        ID do ator
+        <input name="actorId" required />
+      </label>
+      <label>
+        Motivo
+        <textarea className="compactTextarea" name="reason" required />
+      </label>
+      <label>
+        Impacto estimado
+        <textarea className="compactTextarea" name="estimatedImpact" required />
+      </label>
+    </div>
+  );
+}
 
 function isFallback(route: RouteDecision | undefined): boolean {
   return Boolean(route?.executed && route.executed.model.id !== route.selected.model.id);
@@ -547,39 +588,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   </select>
                 </label>
               ) : null}
-              <label>
-                Modelo do runtime
-                <select name="modelId" required>
-                  <option value="">Selecione…</option>
-                  {runnableModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.provider} / {model.model}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Tipo de ator
-                <select name="actorKind" required defaultValue="user">
-                  {(['user', 'system', 'worker', 'provider'] as const).map((kind) => (
-                    <option key={kind} value={kind}>
-                      {kind}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                ID do ator
-                <input name="actorId" required />
-              </label>
-              <label>
-                Motivo
-                <textarea className="compactTextarea" name="reason" required />
-              </label>
-              <label>
-                Impacto estimado
-                <textarea className="compactTextarea" name="estimatedImpact" required />
-              </label>
+              <ModelPinFields models={runnableModels} />
             </div>
             <button className="secondaryButton" type="submit" disabled={!runnableModels.length}>
               Fixar modelo
@@ -895,43 +904,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                     />
                     Fixar modelo somente para esta reexecução
                   </label>
-                  {retryWithPin ? (
-                    <div className="modelPinGrid">
-                      <label>
-                        Modelo do runtime
-                        <select name="modelId" required>
-                          <option value="">Selecione…</option>
-                          {runnableModels.map((model) => (
-                            <option key={model.id} value={model.id}>
-                              {model.provider} / {model.model}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        Tipo de ator
-                        <select name="actorKind" required defaultValue="user">
-                          {(['user', 'system', 'worker', 'provider'] as const).map((kind) => (
-                            <option key={kind} value={kind}>
-                              {kind}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        ID do ator
-                        <input name="actorId" required />
-                      </label>
-                      <label>
-                        Motivo
-                        <textarea className="compactTextarea" name="reason" required />
-                      </label>
-                      <label>
-                        Impacto estimado
-                        <textarea className="compactTextarea" name="estimatedImpact" required />
-                      </label>
-                    </div>
-                  ) : null}
+                  {retryWithPin ? <ModelPinFields models={runnableModels} /> : null}
                 </div>
               ) : null}
 
