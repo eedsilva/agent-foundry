@@ -230,6 +230,11 @@ export interface WorkspaceManager {
   ensureGit(projectId: string): Promise<void>;
   checkpoint(projectId: string, label: string): Promise<string>;
   rollback(projectId: string, ref: string): Promise<void>;
+  preserveDraft(
+    projectId: string,
+    runId: string,
+    verifiedCheckpoint: string,
+  ): Promise<{ draftBranch: string }>;
   commit(projectId: string, message: string): Promise<string | null>;
   head(projectId: string): Promise<string | null>;
 }

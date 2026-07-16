@@ -121,8 +121,12 @@ export class WorkflowOrchestrator {
         `Run ${run.id} does not belong to project/workflow ${projectId}/${workflow.id}`,
       );
     }
-    // Redelivery of an already-finished run (e.g. a crash between the final
-    // state write and the queue ack) must be a no-op.
+    // A ceiling can crash after the terminal state write but before summary
+    // sync or event append, so failed redelivery finishes those idempotently.
+    if (run.status === 'failed' && run.execution?.ceiling) {
+      await this.finalizeEmergencyCeiling(run.id, projectId);
+      return;
+    }
     if (
       run.status === 'cancelled' ||
       run.status === 'completed' ||
@@ -137,6 +141,11 @@ export class WorkflowOrchestrator {
     if (run.status === 'pause_requested') {
       await this.finalizePause(run.id, projectId, workflow);
       return;
+    }
+    if (run.execution?.ceiling) {
+      const error = new EmergencyCeilingError(run.id, run.execution.ceiling.reason);
+      await this.finalizeEmergencyCeiling(run.id, projectId);
+      throw error;
     }
     if (run.status !== 'running') {
       run = await this.runs.update(
@@ -156,6 +165,7 @@ export class WorkflowOrchestrator {
     const stopWatching = this.watchForCancellation(run.id, cancellation);
     try {
       await this.workspaces.ensureGit(projectId);
+      run = await this.ensureInitialVerifiedCheckpoint(run.id, projectId);
       run = await this.enforceRunPolicy(run, project, workflow);
       for (const node of workflow.nodes) {
         throwIfCancelled(cancellation.signal, run.id);
@@ -207,6 +217,7 @@ export class WorkflowOrchestrator {
           await this.finalizeCancellation(run.id, projectId);
           return;
         }
+        if (!(await this.finalizeEmergencyCeiling(run.id, projectId))) return;
         throw error;
       }
       const latest = await this.stopActiveExecution(run.id);
@@ -419,6 +430,96 @@ export class WorkflowOrchestrator {
     }
     await this.syncProjectSummary(run);
     await this.emit(projectId, 'run.cancelled', 'Workflow run cancelled.', { runId });
+  }
+
+  private async ensureInitialVerifiedCheckpoint(
+    runId: string,
+    projectId: string,
+  ): Promise<WorkflowRun> {
+    const existing = await this.requireRun(runId);
+    if (existing.execution?.lastVerifiedCheckpoint) return existing;
+    const checkpoint =
+      (await this.workspaces.head(projectId)) ??
+      (await this.workspaces.checkpoint(projectId, `${runId}-initial`));
+    return this.updateExecution(runId, (run) => {
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      return execution.lastVerifiedCheckpoint
+        ? execution
+        : { ...execution, lastVerifiedCheckpoint: checkpoint };
+    });
+  }
+
+  private async finalizeEmergencyCeiling(runId: string, projectId: string): Promise<boolean> {
+    let run = await this.requireRun(runId);
+    if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+      await this.finalizeCancellation(runId, projectId);
+      return false;
+    }
+    const ceiling = run.execution?.ceiling;
+    const verifiedCheckpoint = run.execution?.lastVerifiedCheckpoint;
+    if (!ceiling || !verifiedCheckpoint) {
+      throw new ExecutionError(`Run ${runId} is missing emergency ceiling checkpoint evidence`);
+    }
+    if (!ceiling.draftBranch) {
+      const { draftBranch } = await this.workspaces.preserveDraft(
+        projectId,
+        runId,
+        verifiedCheckpoint,
+      );
+      run = await this.requireRun(runId);
+      if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+        await this.finalizeCancellation(runId, projectId);
+        return false;
+      }
+      try {
+        run = await this.updateExecution(runId, (latest) => {
+          if (latest.status === 'cancel_requested' || latest.status === 'cancelled') {
+            throw new RunCancelledError(runId);
+          }
+          return {
+            ...(latest.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
+            ceiling: { ...latest.execution!.ceiling!, draftBranch },
+          };
+        });
+      } catch (error) {
+        if (!(error instanceof RunCancelledError)) throw error;
+        await this.finalizeCancellation(runId, projectId);
+        return false;
+      }
+    }
+    run = await this.requireRun(runId);
+    if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+      await this.finalizeCancellation(runId, projectId);
+      return false;
+    }
+    while (run.status !== 'failed') {
+      if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+        await this.finalizeCancellation(runId, projectId);
+        return false;
+      }
+      const error = new EmergencyCeilingError(runId, ceiling.reason);
+      try {
+        run = await this.runs.update(
+          transitionWorkflowRun(run, 'failed', this.clock.now(), { error: runError(error) }),
+          run.version,
+        );
+      } catch (updateError) {
+        if (!(updateError instanceof VersionConflictError)) throw updateError;
+        run = await this.requireRun(runId);
+      }
+    }
+    await this.syncProjectSummary(run);
+    await this.emit(
+      projectId,
+      'run.emergency_ceiling_reached',
+      errorMessage(new EmergencyCeilingError(runId, ceiling.reason)),
+      {
+        runId,
+        dedupeKey: `${runId}:emergency-ceiling`,
+        data: { reason: ceiling.reason, draftBranch: run.execution?.ceiling?.draftBranch },
+      },
+    );
+    return true;
   }
 
   /**
@@ -1111,6 +1212,16 @@ export class WorkflowOrchestrator {
       );
       throwIfCancelled(signal, runId);
       await this.assertExecutionMayContinue(runId, signal);
+      if (report.approved) {
+        const checkpoint = await this.workspaces.checkpoint(
+          project.id,
+          `${step.id}-${runId}-verified`,
+        );
+        await this.updateExecution(runId, (run) => ({
+          ...(run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
+          lastVerifiedCheckpoint: checkpoint,
+        }));
+      }
       const artifact = await this.artifacts.put({
         projectId: project.id,
         name: step.outputArtifact,

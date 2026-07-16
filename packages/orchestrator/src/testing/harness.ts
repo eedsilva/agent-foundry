@@ -203,7 +203,7 @@ export class InMemoryProjects implements ProjectRepository {
 
 export class InMemoryRuns implements WorkflowRunRepository {
   private readonly store = new Map<string, WorkflowRun>();
-  onBeforeUpdate: ((run: WorkflowRun) => void) | undefined;
+  onBeforeUpdate: ((run: WorkflowRun) => void | Promise<void>) | undefined;
   onAfterUpdate: ((run: WorkflowRun) => void | Promise<void>) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   create(run: WorkflowRun): Promise<void> {
@@ -220,7 +220,7 @@ export class InMemoryRuns implements WorkflowRunRepository {
   }
   async update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
     checkPower(this.power);
-    this.onBeforeUpdate?.(run);
+    await this.onBeforeUpdate?.(run);
     const existing = this.store.get(run.id);
     if (!existing) throw new Error(`run ${run.id} missing`);
     if (existing.version !== expectedVersion) {
@@ -455,9 +455,11 @@ export class InMemoryArtifacts implements ArtifactStore {
 
 export class InMemoryEvents implements EventStore {
   readonly events: ProjectEvent[] = [];
+  onBeforeAppend?: ((event: ProjectEvent) => void) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   append(event: ProjectEvent): Promise<void> {
     checkPower(this.power);
+    this.onBeforeAppend?.(event);
     if (event.dedupeKey && this.events.some((item) => item.dedupeKey === event.dedupeKey)) {
       return Promise.resolve();
     }
@@ -477,12 +479,14 @@ export class FakeWorkspaces implements WorkspaceManager {
   readonly checkpoints: string[] = [];
   readonly commits: string[] = [];
   readonly rollbacks: string[] = [];
+  readonly drafts: string[] = [];
   current = 'initial-head';
   dirty = false;
   onBeforeCheckpoint?: (() => void) | undefined;
   onAfterCheckpoint?: (() => void) | undefined;
   onBeforeCommit?: (() => void) | undefined;
   onAfterCommit?: (() => void) | undefined;
+  onAfterPreserveDraft?: (() => void | Promise<void>) | undefined;
   private counter = 0;
   constructor(private readonly power: PowerSwitch) {}
   projectRoot(projectId: string): string {
@@ -521,6 +525,15 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.current = ref;
     this.dirty = false;
     return Promise.resolve();
+  }
+  async preserveDraft(_projectId: string, runId: string, verifiedCheckpoint: string) {
+    checkPower(this.power);
+    const draftBranch = `draft/${runId}`;
+    if (!this.drafts.includes(draftBranch)) this.drafts.push(draftBranch);
+    this.current = verifiedCheckpoint;
+    this.dirty = false;
+    await this.onAfterPreserveDraft?.();
+    return { draftBranch };
   }
   commit(): Promise<string | null> {
     checkPower(this.power);

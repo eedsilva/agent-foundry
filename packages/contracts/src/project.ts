@@ -75,6 +75,7 @@ export const ProjectEventSchema = z.object({
     'project.failed',
     'run.cancel_requested',
     'run.cancelled',
+    'run.emergency_ceiling_reached',
     'run.pause_requested',
     'run.paused',
     'run.resume_requested',

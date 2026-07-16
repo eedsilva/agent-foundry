@@ -123,6 +123,32 @@ export class FileWorkspaceManager implements WorkspaceManager {
     await execa('git', ['clean', '-fd', '-e', '.orchestrator/'], { cwd });
   }
 
+  async preserveDraft(
+    projectId: string,
+    runId: string,
+    verifiedCheckpoint: string,
+  ): Promise<{ draftBranch: string }> {
+    await this.ensureGit(projectId);
+    const cwd = this.workspacePath(projectId);
+    const draftBranch = `draft/${safeSegment(runId)}`;
+    const existing = await execa('git', ['show-ref', '--verify', `refs/heads/${draftBranch}`], {
+      cwd,
+      reject: false,
+    });
+    if (existing.exitCode !== 0) {
+      await execa('git', ['add', '-A'], { cwd });
+      const staged = await execa('git', ['diff', '--cached', '--quiet'], { cwd, reject: false });
+      if (staged.exitCode !== 0) {
+        await execa('git', ['commit', '-m', `draft: preserve emergency ceiling run ${runId}`], {
+          cwd,
+        });
+      }
+      await execa('git', ['branch', draftBranch, 'HEAD'], { cwd });
+    }
+    await this.rollback(projectId, verifiedCheckpoint);
+    return { draftBranch };
+  }
+
   async commit(projectId: string, message: string): Promise<string | null> {
     const cwd = this.workspacePath(projectId);
     await execa('git', ['add', '-A'], { cwd });
