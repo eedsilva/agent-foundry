@@ -348,9 +348,16 @@ export class InMemoryApprovalDecisions implements ApprovalDecisionRepository {
 export class InMemoryArtifacts implements ArtifactStore {
   readonly artifacts: StoredArtifact[] = [];
   onAfterPut?: ((name: string) => void) | undefined;
+  onListMetadata?: (() => Promise<void>) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   put(input: Parameters<ArtifactStore['put']>[0]): Promise<StoredArtifact> {
     checkPower(this.power);
+    const existing = input.sourceDecisionId
+      ? this.named(input.name).find(
+          (artifact) => artifact.metadata.sourceDecisionId === input.sourceDecisionId,
+        )
+      : undefined;
+    if (existing) return Promise.resolve(existing);
     const revision = this.named(input.name).length + 1;
     const metadata: ArtifactMetadata = {
       projectId: input.projectId,
@@ -392,9 +399,10 @@ export class InMemoryArtifacts implements ArtifactStore {
   listLatest(): Promise<StoredArtifact[]> {
     return Promise.resolve([...this.artifacts]);
   }
-  listMetadata(_projectId?: string, name?: string): Promise<ArtifactMetadata[]> {
+  async listMetadata(_projectId?: string, name?: string): Promise<ArtifactMetadata[]> {
+    await this.onListMetadata?.();
     const items = name ? this.named(name) : this.artifacts;
-    return Promise.resolve(items.map((artifact) => artifact.metadata));
+    return items.map((artifact) => artifact.metadata);
   }
   named(name: string): StoredArtifact[] {
     return this.artifacts.filter((artifact) => artifact.metadata.name === name);

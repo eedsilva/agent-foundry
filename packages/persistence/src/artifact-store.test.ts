@@ -38,4 +38,23 @@ describe('FileArtifactStore feedback metadata', () => {
       new FileArtifactStore(dataDir).getRevision('project-1', 'repair-notes', 1),
     ).resolves.toEqual(stored);
   });
+
+  it('returns one revision for concurrent feedback writes from the same decision', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-feedback-race-'));
+    dirs.push(dataDir);
+    const store = new FileArtifactStore(dataDir);
+    const input = {
+      projectId: 'project-1',
+      name: 'repair-notes',
+      content: { schemaVersion: '1', note: 'add tests' },
+      createdBy: 'approval-gate:gate',
+      kind: 'feedback' as const,
+      sourceDecisionId: 'decision-1',
+    };
+
+    const [left, right] = await Promise.all([store.put(input), store.put(input)]);
+
+    expect(left).toEqual(right);
+    await expect(store.listMetadata('project-1', 'repair-notes')).resolves.toHaveLength(1);
+  });
 });

@@ -135,4 +135,8 @@ describe('redactUnknown', () => {
       headers: ['Authorization: [REDACTED]', 'token=[REDACTED]', 'Cookie: [REDACTED]'],
     });
   });
+
+  it('redacts the complete cookie header after semicolon-separated values', () => {
+    expect(redactUnknown('Cookie: session=abc; csrf=still-secret')).toBe('Cookie: [REDACTED]');
+  });
 });

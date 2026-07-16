@@ -167,6 +167,45 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
   });
 
+  it('stores one feedback artifact when identical request-changes decisions race', async () => {
+    const harness = makeHarness({}, undefined, {
+      gate: {
+        actions: ['approve', 'request-changes'],
+        returnToStepId: 'implement',
+        repairArtifact: 'repair-notes',
+      },
+    });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    let reads = 0;
+    let release!: () => void;
+    const bothRead = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    harness.artifacts.onListMetadata = async () => {
+      reads += 1;
+      if (reads === 2) release();
+      await bothRead;
+    };
+
+    const results = await Promise.allSettled([
+      harness.service.decideApproval('run-1', entry!.request.id, {
+        action: 'request-changes',
+        decidedBy: 'ed',
+        note: 'add tests',
+      }),
+      harness.service.decideApproval('run-1', entry!.request.id, {
+        action: 'request-changes',
+        decidedBy: 'ed',
+        note: 'add tests',
+      }),
+    ]);
+
+    expect(results.some((result) => result.status === 'fulfilled')).toBe(true);
+    expect(harness.artifacts.named('repair-notes')).toHaveLength(1);
+  });
+
   it('halts idempotently across a worker restart before any decision arrives', async () => {
     const stores = makeStores();
     const first = makeHarness({}, stores, { gate: {} });

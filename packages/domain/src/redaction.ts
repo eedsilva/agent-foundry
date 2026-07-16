@@ -10,7 +10,9 @@ const VALUE_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9._-]{8,}\b/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
 ];
-const RAW_SECRET = /(\b(?:authorization|token|cookie)\s*[:=]\s*)(?:basic\s+|bearer\s+)?[^\s,;]+/gi;
+const COOKIE_HEADER = /(\bcookie\s*:\s*).*$/gim;
+const RAW_SECRET =
+  /(\b(?:(?:authorization|token)\s*[:=]|cookie\s*=)\s*)(?:basic\s+|bearer\s+)?[^\s,;]+/gi;
 
 const KEY_PREFIXES = new Set(['api', 'access', 'private']);
 
@@ -24,7 +26,7 @@ function isSensitiveKey(key: string): boolean {
 export function redactString(value: string): string {
   return VALUE_PATTERNS.reduce(
     (acc, pattern) => acc.replace(pattern, '[REDACTED]'),
-    value.replace(RAW_SECRET, '$1[REDACTED]'),
+    value.replace(COOKIE_HEADER, '$1[REDACTED]').replace(RAW_SECRET, '$1[REDACTED]'),
   );
 }
 
