@@ -174,6 +174,39 @@ describe('ScoreBasedModelRouter', () => {
     ]);
   });
 
+  it('rejects providers forbidden by policy with an auditable reason', async () => {
+    const router = new ScoreBasedModelRouter(
+      [model('claude-model', { provider: 'claude' }), model('codex-model', { provider: 'codex' })],
+      new MemoryMetrics(),
+    );
+
+    const route = await router.route({
+      ...profile,
+      policy: { id: 'strict', version: 2, allowedProviders: ['codex'] },
+    });
+    expect(route.selected.model.id).toBe('codex-model');
+    expect(route.rejected).toEqual([
+      {
+        modelId: 'claude-model',
+        reason: 'provider claude is forbidden by policy strict@v2',
+      },
+    ]);
+  });
+
+  it('throws when policy forbids every provider', async () => {
+    const router = new ScoreBasedModelRouter(
+      [model('claude-model', { provider: 'claude' })],
+      new MemoryMetrics(),
+    );
+
+    await expect(
+      router.route({
+        ...profile,
+        policy: { id: 'strict', version: 2, allowedProviders: ['codex'] },
+      }),
+    ).rejects.toThrow(/forbidden by policy strict@v2/);
+  });
+
   it('rejects models whose context window is too small', async () => {
     const router = new ScoreBasedModelRouter(
       [model('small', { maxContextTokens: 1_000 }), model('large', { maxContextTokens: 100_000 })],
