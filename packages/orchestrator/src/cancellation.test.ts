@@ -44,6 +44,7 @@ import {
   type WorkspaceManager,
 } from '@agent-foundry/domain';
 import { ProjectService } from './project-service.js';
+import { DEFAULT_POLICY, InMemoryPolicies } from './testing/harness.js';
 import { WorkflowOrchestrator } from './workflow-orchestrator.js';
 
 const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
@@ -510,6 +511,7 @@ function makeHarness(
     artifacts,
     events,
     workflows,
+    new InMemoryPolicies(DEFAULT_POLICY),
     harness,
     router,
     metrics,
@@ -531,6 +533,7 @@ function makeHarness(
     events,
     queue,
     workflows,
+    new InMemoryPolicies(DEFAULT_POLICY),
     harness,
     router,
     workspaces,

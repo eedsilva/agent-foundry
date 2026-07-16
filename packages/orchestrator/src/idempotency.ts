@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type {
   ArtifactReference,
   ExecutableStep,
+  ProjectPolicy,
   WorkflowDefinition,
 } from '@agent-foundry/contracts';
 
@@ -55,6 +56,10 @@ export function stepIdempotencyKey(input: {
 
 export function workflowHash(workflow: WorkflowDefinition): string {
   return sha256(stableStringify(workflow));
+}
+
+export function policyHash(policy: ProjectPolicy): string {
+  return sha256(stableStringify(policy));
 }
 
 export function sha256(value: string): string {

@@ -1,4 +1,9 @@
-import type { AgentStep, StoredArtifact, TaskProfile } from '@agent-foundry/contracts';
+import type {
+  AgentStep,
+  ProjectPolicy,
+  StoredArtifact,
+  TaskProfile,
+} from '@agent-foundry/contracts';
 import type { HarnessSelection } from '@agent-foundry/domain';
 import { estimateTokens, stableJson } from '@agent-foundry/domain';
 
@@ -60,6 +65,7 @@ export function buildTaskProfile(input: {
   step: AgentStep;
   harness: HarnessSelection;
   artifacts: StoredArtifact[];
+  policy?: ProjectPolicy | undefined;
 }): TaskProfile {
   const defaults = DEFAULTS[input.step.taskKind];
   const contextText = [
@@ -85,6 +91,15 @@ export function buildTaskProfile(input: {
     },
     ...(input.step.profile.allowedProviders
       ? { allowedProviders: input.step.profile.allowedProviders }
+      : {}),
+    ...(input.policy?.allowedProviders
+      ? {
+          policy: {
+            id: input.policy.id,
+            version: input.policy.version,
+            allowedProviders: input.policy.allowedProviders,
+          },
+        }
       : {}),
     preferredTags: [
       ...new Set([

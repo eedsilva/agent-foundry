@@ -6,6 +6,7 @@ import type {
   ExecutableStep,
   Project,
   ProjectEvent,
+  ProjectPolicy,
   QualityLoopStep,
   RankedModel,
   RunError,
@@ -33,6 +34,7 @@ import type {
   IdGenerator,
   MetricsRepository,
   ModelRouter,
+  PolicyRepository,
   ProjectRepository,
   StepAttemptRepository,
   StepRunRepository,
@@ -46,6 +48,7 @@ import {
   ApprovalRequiredError,
   ExecutionError,
   NotFoundError,
+  PolicyViolationError,
   QualityGateError,
   RunCancelledError,
   RunPausedError,
@@ -56,7 +59,12 @@ import {
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
 import { buildTaskProfile } from './task-profiler.js';
-import { approvalGateIdempotencyKey, stepIdempotencyKey, workflowHash } from './idempotency.js';
+import {
+  approvalGateIdempotencyKey,
+  policyHash,
+  stepIdempotencyKey,
+  workflowHash,
+} from './idempotency.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 
 interface OrchestratorOptions {
@@ -85,6 +93,7 @@ export class WorkflowOrchestrator {
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
     private readonly workflows: WorkflowRepository,
+    private readonly policies: PolicyRepository,
     private readonly harness: HarnessRepository,
     private readonly router: ModelRouter,
     private readonly metrics: MetricsRepository,
@@ -100,6 +109,7 @@ export class WorkflowOrchestrator {
     const project = await this.projects.get(projectId);
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
     const workflow = await this.workflows.get(workflowId ?? project.workflowId);
+    const policy = await this.policies.get(project.policyId ?? 'default');
     let run = requestedRunId ? await this.runs.get(requestedRunId) : null;
     if (!run) run = await this.createLegacyCompatibleRun(project, workflow.id, requestedRunId);
     if (run.projectId !== projectId || run.workflowId !== workflow.id) {
@@ -121,7 +131,7 @@ export class WorkflowOrchestrator {
       return;
     }
     if (run.status === 'pause_requested') {
-      await this.finalizePause(run.id, projectId, workflow);
+      await this.finalizePause(run.id, projectId, workflow, policy);
       return;
     }
     if (run.status !== 'running') {
@@ -140,6 +150,7 @@ export class WorkflowOrchestrator {
     const stopWatching = this.watchForCancellation(run.id, cancellation);
     try {
       await this.workspaces.ensureGit(projectId);
+      await this.enforceRunPolicy(run.id, project, workflow, policy);
       for (const node of workflow.nodes) {
         throwIfCancelled(cancellation.signal, run.id);
         await this.emit(projectId, 'node.started', node.title, {
@@ -147,7 +158,7 @@ export class WorkflowOrchestrator {
           runId: run.id,
           dedupeKey: `${run.id}:node:${node.id}:started`,
         });
-        await this.executeNode(project, workflow, node, run.id, cancellation.signal);
+        await this.executeNode(project, workflow, node, run.id, policy, cancellation.signal);
         await this.emit(projectId, 'node.completed', node.title, {
           nodeId: node.id,
           runId: run.id,
@@ -167,7 +178,7 @@ export class WorkflowOrchestrator {
       });
     } catch (error) {
       if (error instanceof RunPausedError) {
-        await this.finalizePause(run.id, projectId, workflow, error.nodeId);
+        await this.finalizePause(run.id, projectId, workflow, policy, error.nodeId);
         return;
       }
       if (error instanceof ApprovalRequiredError) {
@@ -251,6 +262,7 @@ export class WorkflowOrchestrator {
     runId: string,
     projectId: string,
     workflow: WorkflowDefinition,
+    policy: ProjectPolicy,
     resumeNodeId?: string,
   ): Promise<void> {
     let run = await this.requireRun(runId);
@@ -259,7 +271,7 @@ export class WorkflowOrchestrator {
       return;
     }
     if (run.status === 'pause_requested') {
-      const snapshot = await this.pauseSnapshot(projectId, workflow, resumeNodeId);
+      const snapshot = await this.pauseSnapshot(projectId, workflow, policy, resumeNodeId);
       run = await this.runs.update(
         transitionWorkflowRun(run, 'paused', this.clock.now(), { pause: snapshot }),
         run.version,
@@ -313,9 +325,66 @@ export class WorkflowOrchestrator {
     });
   }
 
+  /**
+   * Pins the run to the policy it started under and blocks execution when the
+   * policy content changed mid-run — retrying the project (a fresh run) is
+   * the explicit fork that adopts the new policy.
+   */
+  private async enforceRunPolicy(
+    runId: string,
+    project: Project,
+    workflow: WorkflowDefinition,
+    policy: ProjectPolicy,
+  ): Promise<void> {
+    const hash = policyHash(policy);
+    const run = await this.requireRun(runId);
+    if (run.policy && run.policy.hash !== hash) {
+      throw await this.policyChanged(project.id, runId, run.policy, policy, hash, undefined);
+    }
+    if (!run.policy) {
+      await this.runs.update(
+        {
+          ...run,
+          policy: { id: policy.id, version: policy.version, hash },
+          updatedAt: this.clock.now().toISOString(),
+        },
+        run.version,
+      );
+    }
+    if (policy.requiredStack && policy.requiredStack !== workflow.stack) {
+      const message = `Workflow ${workflow.id} stack '${workflow.stack}' violates policy ${policy.id}@v${policy.version} requiredStack '${policy.requiredStack}'.`;
+      await this.emit(project.id, 'policy.violation', message, {
+        runId,
+        data: { requiredStack: policy.requiredStack, stack: workflow.stack },
+      });
+      throw new PolicyViolationError(message, ['required-stack']);
+    }
+  }
+
+  /** Emits the audit event for a mid-run policy content change and builds the error. */
+  private async policyChanged(
+    projectId: string,
+    runId: string,
+    pinned: NonNullable<WorkflowRun['policy']>,
+    current: ProjectPolicy,
+    currentHash: string,
+    nodeId: string | undefined,
+  ): Promise<PolicyViolationError> {
+    const message =
+      `Policy ${current.id} changed (v${pinned.version} → v${current.version}) while run ${runId} was in flight. ` +
+      'Retry the project to fork a new run under the current policy.';
+    await this.emit(projectId, 'policy.violation', message, {
+      runId,
+      ...(nodeId ? { nodeId } : {}),
+      data: { field: 'policyHash', expected: pinned.hash, actual: currentHash },
+    });
+    return new PolicyViolationError(message, ['policy-changed-mid-run']);
+  }
+
   private async pauseSnapshot(
     projectId: string,
     workflow: WorkflowDefinition,
+    policy: ProjectPolicy,
     resumeNodeId?: string,
   ): Promise<RunPauseSnapshot> {
     const metadata = await this.artifacts.listMetadata(projectId);
@@ -328,6 +397,7 @@ export class WorkflowOrchestrator {
     }
     return {
       workflowHash: workflowHash(workflow),
+      policyHash: policyHash(policy),
       harnessVersion: await this.harness.version(),
       workspaceHead: await this.workspaces.head(projectId),
       artifactHashes: Object.fromEntries(
@@ -342,12 +412,13 @@ export class WorkflowOrchestrator {
     workflow: WorkflowDefinition,
     node: WorkflowNode,
     runId: string,
+    policy: ProjectPolicy,
     signal: AbortSignal,
   ): Promise<StoredArtifact> {
     if (node.type === 'quality-loop')
-      return this.executeQualityLoop(project, workflow, node, runId, signal);
+      return this.executeQualityLoop(project, workflow, node, runId, policy, signal);
     if (node.type === 'approval-gate') return this.executeApprovalGate(project, node, runId);
-    return this.executeStep(project, workflow, node, runId, node.id, signal);
+    return this.executeStep(project, workflow, node, runId, node.id, policy, signal);
   }
 
   /**
@@ -467,6 +538,7 @@ export class WorkflowOrchestrator {
     workflow: WorkflowDefinition,
     node: QualityLoopStep,
     runId: string,
+    policy: ProjectPolicy,
     signal: AbortSignal,
   ): Promise<StoredArtifact> {
     let qualitySubject: StoredArtifact | null = null;
@@ -477,6 +549,7 @@ export class WorkflowOrchestrator {
         node.setup,
         runId,
         node.id,
+        policy,
         signal,
         1,
       );
@@ -491,6 +564,7 @@ export class WorkflowOrchestrator {
         node.check,
         runId,
         node.id,
+        policy,
         signal,
         iteration,
       );
@@ -519,6 +593,7 @@ export class WorkflowOrchestrator {
         node.repair,
         runId,
         node.id,
+        policy,
         signal,
         iteration,
       );
@@ -542,6 +617,7 @@ export class WorkflowOrchestrator {
     step: ExecutableStep,
     runId: string,
     nodeId: string,
+    policy: ProjectPolicy,
     signal: AbortSignal,
     iteration?: number,
   ): Promise<StoredArtifact> {
@@ -550,6 +626,13 @@ export class WorkflowOrchestrator {
     // Pause only takes effect between steps: an in-flight step always
     // finishes (or fails) before the run parks.
     if (run.status === 'pause_requested') throw new RunPausedError(runId, nodeId);
+    if (run.policy) {
+      const current = await this.policies.get(project.policyId ?? 'default');
+      const currentHash = policyHash(current);
+      if (run.policy.hash !== currentHash) {
+        throw await this.policyChanged(project.id, runId, run.policy, current, currentHash, nodeId);
+      }
+    }
 
     const inputArtifacts =
       step.type === 'agent' ? await this.loadInputArtifacts(project.id, step.inputArtifacts) : [];
@@ -608,7 +691,7 @@ export class WorkflowOrchestrator {
     try {
       const artifact =
         step.type === 'agent'
-          ? await this.executeAgentStep(project, workflow, step, runId, stepRun, signal, {
+          ? await this.executeAgentStep(project, workflow, step, runId, stepRun, policy, signal, {
               inputArtifacts,
               idempotencyKey,
               ...(isRetryTarget && directive.override ? { override: directive.override } : {}),
@@ -620,6 +703,7 @@ export class WorkflowOrchestrator {
               step,
               runId,
               stepRun,
+              policy,
               signal,
               idempotencyKey,
               iteration,
@@ -802,6 +886,7 @@ export class WorkflowOrchestrator {
     step: VerifyStep,
     runId: string,
     stepRun: StepRun,
+    policy: ProjectPolicy,
     signal: AbortSignal,
     idempotencyKey: string,
     iteration?: number,
@@ -838,6 +923,7 @@ export class WorkflowOrchestrator {
           workspacePath: this.workspaces.workspacePath(project.id),
           scripts: step.scripts,
           includeGitDiffCheck: step.includeGitDiffCheck,
+          policy,
         },
         signal,
       );
@@ -887,6 +973,7 @@ export class WorkflowOrchestrator {
     step: AgentStep,
     runId: string,
     stepRun: StepRun,
+    policy: ProjectPolicy,
     signal: AbortSignal,
     options: {
       inputArtifacts: StoredArtifact[];
@@ -902,7 +989,7 @@ export class WorkflowOrchestrator {
       stack: workflow.stack,
       tags: step.harnessTags,
     });
-    const profile = buildTaskProfile({ step, harness, artifacts: inputArtifacts });
+    const profile = buildTaskProfile({ step, harness, artifacts: inputArtifacts, policy });
     const route = await this.router.route(profile);
     await this.emit(
       project.id,
