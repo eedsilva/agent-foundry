@@ -457,6 +457,65 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     ]);
   });
 
+  it('does not replay an old decision across a newer pending approval', async () => {
+    const harness = makeHarness({}, undefined, {
+      gate: {
+        actions: ['approve', 'request-changes'],
+        returnToStepId: 'implement',
+        repairArtifact: 'repair-notes',
+      },
+    });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [firstApproval] = await harness.service.listApprovals('run-1');
+    const first = await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+      action: 'request-changes',
+      decidedBy: 'ed',
+      note: 'revise it',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    const snapshot = async () => ({
+      run: await harness.runs.get('run-1'),
+      approvals: await harness.service.listApprovals('run-1'),
+      steps: await harness.stepRuns.list('run-1'),
+      jobs: [...harness.enqueued],
+      events: [...harness.events.events],
+    });
+    const before = await snapshot();
+    expect(before.run?.status).toBe('awaiting_approval');
+    expect(before.approvals.some((entry) => entry.decision === null)).toBe(true);
+
+    const replay = await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+      action: 'request-changes',
+      decidedBy: 'ed',
+      note: 'revise it',
+    });
+
+    expect(replay.decision.id).toBe(first.decision.id);
+    expect(await snapshot()).toEqual(before);
+
+    const secondRequest = before.approvals.find((entry) => entry.decision === null)!.request;
+    await harness.approvalDecisions.create({
+      id: 'decision-second',
+      requestId: secondRequest.id,
+      runId: 'run-1',
+      stepRunId: secondRequest.stepRunId,
+      action: 'approve',
+      decidedBy: 'reviewer',
+      decidedAt: harness.clock.now().toISOString(),
+    });
+    const afterSecondDecision = await snapshot();
+
+    await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+      action: 'request-changes',
+      decidedBy: 'ed',
+      note: 'revise it',
+    });
+
+    expect(await snapshot()).toEqual(afterSecondDecision);
+  });
+
   it('rejects deciding an action the request does not allow', async () => {
     const harness = makeHarness({}, undefined, { gate: { actions: ['approve'] } });
     await seedRun(harness);

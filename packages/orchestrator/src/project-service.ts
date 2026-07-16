@@ -454,6 +454,14 @@ export class ProjectService {
       if (decision.action !== input.action) {
         throw new ApprovalConflictError(runId, requestId, decision);
       }
+      if (run.status === 'awaiting_approval') {
+        const hasLaterRequest = (await this.approvalRequests.list(runId)).some(
+          (candidate) =>
+            candidate.createdAt > request.createdAt ||
+            (candidate.createdAt === request.createdAt && candidate.id > request.id),
+        );
+        if (hasLaterRequest) return { run, decision };
+      }
       // Same action: if the run already moved past awaiting approval, this
       // is a true repeat — return it, no further action. If the run is
       // still parked, a prior call recorded the decision but crashed before
