@@ -38,9 +38,9 @@ interface ProcessEntry {
   exited: boolean;
 }
 
-// Keeps the combined worst case (this spawn-confirm poll + PreviewService's own
-// health poll, each ~5s) near the documented ~10s startup window instead of
-// doubling it when a dev server hangs without ever crashing.
+// Half of PreviewService's own health-poll timeout, so the combined worst case
+// (this spawn-confirm poll + PreviewService's health poll) stays around 15s
+// instead of doubling to ~20s when a dev server hangs without ever crashing.
 const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
 const DEFAULT_INSTALL_TIMEOUT_MS = 120_000;
 const DEFAULT_LOG_BUFFER_LINES = 500;
