@@ -6,6 +6,7 @@ import {
   ClaudeCliExecutor,
   AgyCliExecutor,
   WorkspaceVerifier,
+  NodePreviewRunner,
 } from '@agent-foundry/executors';
 import { VersionedHarnessRepository } from '@agent-foundry/harness';
 import { ScoreBasedModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
@@ -30,6 +31,7 @@ import {
   QueueLeaseReaper,
   WorkerLoop,
   WorkflowOrchestrator,
+  PreviewService,
 } from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
@@ -58,6 +60,8 @@ export interface Runtime {
   orchestrator: WorkflowOrchestrator;
   worker: WorkerLoop;
   leaseReaper: QueueLeaseReaper;
+  previewRunner: NodePreviewRunner;
+  previewService: PreviewService;
 }
 
 export async function createRuntime(
@@ -98,6 +102,11 @@ export async function createRuntime(
     autoInstallDependencies: config.autoInstallDependencies,
     timeoutMs: config.verificationTimeoutMs,
     maxOutputBytes: config.maxCliOutputBytes,
+  });
+  const previewRunner = new NodePreviewRunner();
+  const previewService = new PreviewService(previewRunner, clock, ids, {
+    previewBaseUrl: `http://${config.apiHost}:${config.apiPort}/preview`,
+    ttlSeconds: config.previewTtlSeconds,
   });
   const orchestrator = new WorkflowOrchestrator(
     projects,
@@ -173,5 +182,7 @@ export async function createRuntime(
     orchestrator,
     worker,
     leaseReaper,
+    previewRunner,
+    previewService,
   };
 }
