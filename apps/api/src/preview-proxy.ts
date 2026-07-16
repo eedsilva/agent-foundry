@@ -245,7 +245,8 @@ function sanitizeResponseHeaders(
   return result;
 }
 
-/** Relative locations are rebased under the proxy prefix; absolute locations pointing anywhere but this session's own upstream are dropped rather than followed, so a compromised preview process can't redirect through the trusted proxy origin. */
+/** Relative locations are rebased under the proxy prefix; absolute locations pointing anywhere but this session's own upstream are dropped rather than followed, so a compromised preview process can't redirect through the trusted proxy origin.
+ * ponytail: the relative-rebase branch doesn't scrub an absolute same-host URL embedded in the redirect's own query string (e.g. `Location: /foo?next=http://127.0.0.1:<port>/bar`); low-severity port-leak edge case under this tool's loopback/single-operator threat model. Upgrade: parse and recursively sanitize URL-shaped query values if this tool is ever exposed beyond loopback. */
 function rewriteLocation(location: string, sessionId: string, upstreamPort: number): string {
   if (location.startsWith('/') && !location.startsWith('//')) {
     return `/preview/${sessionId}${location}`;

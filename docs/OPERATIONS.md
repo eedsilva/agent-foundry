@@ -101,7 +101,7 @@ WebSocket /preview/:sessionId/*
 
 Encaminha requisições para o servidor de desenvolvimento upstream. O proxy valida:
 
-- **Host header**: apenas `localhost` (ou equivalente de loopback) é permitido, defendendo contra ataques de DNS rebinding (ADR-0005, ADR-0017).
+- **Host header**: apenas `localhost` (ou equivalente de loopback) na porta da própria API (`=== apiPort`) é permitido, defendendo contra ataques de DNS rebinding (ADR-0005, ADR-0017).
 - **Token**: esperado como query param na primeira requisição (convertido para cookie HttpOnly/path-scoped) ou como cookie em requisições subsequentes. Mismatch retorna `403`.
 
 O proxy:
@@ -109,7 +109,7 @@ O proxy:
 - Remove o token da query string antes de enviar ao upstream, evitando que o servidor de dev o receba.
 - Reescreve Location e headers relacionados para evitar que a porta interna vaze (as respostas com porta interna são convertidas para paths de proxy ou rejeitadas).
 - Bloqueia redirecionamentos para URLs externas, evitando que um servidor de dev comprometido redirecione através da origem de proxy confiável.
-- Mantém a sessão strictly loopback: conexões de máquinas remotas são rejeitadas.
+- Mantém a sessão restrita a loopback: conexões de máquinas remotas são rejeitadas.
 
 ## Recovery manual da fila
 

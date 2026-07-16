@@ -102,6 +102,20 @@ describe('preview reverse proxy', () => {
     expect(await responseB.text()).toContain('ok:');
   }, 20_000);
 
+  it('sets the pv_<sessionId> auth cookie on the first token-authenticated response', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const started = await startPreview(baseUrl, runtime, 'set-cookie');
+    const token = new URL(started.url).searchParams.get('token') as string;
+    const response = await fetch(started.url);
+    expect(response.status).toBe(200);
+    const setCookie = response.headers.get('set-cookie') ?? '';
+    // Cookie name must be pv_<sessionId>, and its value must be the session's own
+    // token — this is what lets a real HMR client's later reconnect (which drops
+    // ?token= when it rebuilds the WS URL from location.host) authenticate via
+    // cookie alone. See the websocket cookie-only-auth test below.
+    expect(setCookie).toContain(`pv_${started.session.id}=${token}`);
+  }, 20_000);
+
   it('does not forward the proxy auth cookie to the untrusted upstream', async () => {
     const { baseUrl, runtime } = await startApi();
     const started = await startPreview(baseUrl, runtime, 'cookie-leak');
@@ -205,6 +219,38 @@ describe('preview reverse proxy', () => {
           Upgrade: 'websocket',
           'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
           'Sec-WebSocket-Version': '13',
+        },
+      });
+      req.on('upgrade', (res, upgradedSocket) => {
+        upgradedSocket.destroy(); // close the relay so app.close() can drain
+        resolvePromise(res.statusCode === 101);
+      });
+      req.on('error', () => resolvePromise(false));
+      req.end();
+    });
+    expect(upgraded).toBe(true);
+  }, 20_000);
+
+  it('accepts a websocket upgrade authenticated only by the pv_<sessionId> cookie, with no ?token= query param', async () => {
+    // Real HMR clients reconnect by rebuilding the WS URL from location.host plus
+    // a fixed path, which drops the original ?token=. The cookie set on the first
+    // HTTP response is the only auth that survives that reconnect, so this exact
+    // path — WS upgrade, cookie present, query token absent — must work.
+    const { baseUrl, runtime } = await startApi();
+    const started = await startPreview(baseUrl, runtime, 'ws-cookie');
+    const target = new URL(started.url);
+    const token = target.searchParams.get('token') as string;
+    const upgraded = await new Promise<boolean>((resolvePromise) => {
+      const req = httpRequest({
+        host: target.hostname,
+        port: target.port,
+        path: `${target.pathname}ws`, // deliberately no ?token=
+        headers: {
+          Connection: 'Upgrade',
+          Upgrade: 'websocket',
+          'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+          'Sec-WebSocket-Version': '13',
+          Cookie: `pv_${started.session.id}=${token}`,
         },
       });
       req.on('upgrade', (res, upgradedSocket) => {
