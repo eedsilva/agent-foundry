@@ -5,6 +5,7 @@ import type {
   ModelMetric,
   RankedModel,
   RouteDecision,
+  RouteOverrideProvenance,
   RouteScoreBreakdown,
   TaskKind,
   TaskProfile,
@@ -23,11 +24,15 @@ export class ScoreBasedModelRouter implements ModelRouter {
     return [...this.models];
   }
 
-  async route(profile: TaskProfile): Promise<RouteDecision> {
+  async route(
+    profile: TaskProfile,
+    explicit?: { modelId: string; provenance?: RouteOverrideProvenance },
+  ): Promise<RouteDecision> {
     const rejected: Array<{ modelId: string; reason: string }> = [];
     const ranked: RankedModel[] = [];
 
     for (const model of this.models) {
+      if (explicit && model.id !== explicit.modelId) continue;
       const rejection = this.rejectReason(model, profile);
       if (rejection) {
         rejected.push({ modelId: model.id, reason: rejection });
@@ -45,6 +50,9 @@ export class ScoreBasedModelRouter implements ModelRouter {
 
     const selected = ranked[0];
     if (!selected) {
+      if (explicit && !this.models.some((model) => model.id === explicit.modelId)) {
+        throw new Error(`Override model ${explicit.modelId} is not in the catalog`);
+      }
       throw new Error(
         `No model can satisfy ${profile.taskKind}. Rejections: ${rejected
           .map((item) => `${item.modelId}: ${item.reason}`)
@@ -57,7 +65,8 @@ export class ScoreBasedModelRouter implements ModelRouter {
       createdAt: new Date().toISOString(),
       profile,
       selected,
-      fallbacks: diverseFallbacks(ranked, selected, 3),
+      fallbacks: explicit ? [] : diverseFallbacks(ranked, selected, 3),
+      ...(explicit?.provenance ? { override: explicit.provenance } : {}),
       rejected,
     };
   }

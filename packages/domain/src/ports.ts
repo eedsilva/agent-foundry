@@ -8,6 +8,7 @@ import type {
   ExecutorHealth,
   ModelDefinition,
   ModelMetric,
+  ModelOverrideRecord,
   PreviewHealth,
   PreviewSession,
   Project,
@@ -15,6 +16,7 @@ import type {
   ProjectEvent,
   QueueJob,
   RouteDecision,
+  RouteOverrideProvenance,
   StoredArtifact,
   StepAttempt,
   StepRun,
@@ -51,6 +53,12 @@ export interface StepAttemptRepository {
   get(runId: string, stepRunId: string, attemptId: string): Promise<StepAttempt | null>;
   list(runId: string, stepRunId: string): Promise<StepAttempt[]>;
   update(attempt: StepAttempt, expectedVersion: number): Promise<StepAttempt>;
+}
+
+/** Create-only audited model pins, ordered newest first. */
+export interface ModelOverrideRepository {
+  create(override: ModelOverrideRecord): Promise<void>;
+  list(runId: string): Promise<ModelOverrideRecord[]>;
 }
 
 /** Create-only: neither ApprovalRequest nor ApprovalDecision is ever updated. */
@@ -137,7 +145,10 @@ export interface HarnessRepository {
 }
 
 export interface ModelRouter {
-  route(profile: TaskProfile): Promise<RouteDecision>;
+  route(
+    profile: TaskProfile,
+    explicit?: { modelId: string; provenance?: RouteOverrideProvenance },
+  ): Promise<RouteDecision>;
   catalog(): Promise<ModelDefinition[]>;
 }
 

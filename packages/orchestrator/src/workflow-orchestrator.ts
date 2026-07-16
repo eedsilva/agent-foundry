@@ -13,6 +13,7 @@ import type {
   RunPauseSnapshot,
   RunRetryDirective,
   RouteDecision,
+  RouteOverrideProvenance,
   StepAttempt,
   StepRun,
   StoredArtifact,
@@ -34,6 +35,7 @@ import type {
   IdGenerator,
   MetricsRepository,
   ModelRouter,
+  ModelOverrideRepository,
   PolicyRepository,
   ProjectRepository,
   StepAttemptRepository,
@@ -104,6 +106,7 @@ export class WorkflowOrchestrator {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly options: OrchestratorOptions,
+    private readonly modelOverrides?: ModelOverrideRepository,
   ) {}
 
   async runProject(projectId: string, workflowId?: string, requestedRunId?: string): Promise<void> {
@@ -707,6 +710,9 @@ export class WorkflowOrchestrator {
               inputArtifacts,
               idempotencyKey,
               ...(isRetryTarget && directive.override ? { override: directive.override } : {}),
+              ...(isRetryTarget && directive.override
+                ? { overrideCreatedAt: directive.requestedAt }
+                : {}),
               ...(iteration ? { iteration } : {}),
             })
           : await this.executeVerifyStep(
@@ -991,10 +997,17 @@ export class WorkflowOrchestrator {
       inputArtifacts: StoredArtifact[];
       idempotencyKey: string;
       override?: RunRetryDirective['override'];
+      overrideCreatedAt?: string;
       iteration?: number;
     },
   ): Promise<StoredArtifact> {
-    const { inputArtifacts, idempotencyKey, override, iteration: loopIteration } = options;
+    const {
+      inputArtifacts,
+      idempotencyKey,
+      override,
+      overrideCreatedAt,
+      iteration: loopIteration,
+    } = options;
     const harness = await this.harness.select({
       role: step.role,
       taskKind: step.taskKind,
@@ -1002,7 +1015,14 @@ export class WorkflowOrchestrator {
       tags: step.harnessTags,
     });
     const profile = buildTaskProfile({ step, harness, artifacts: inputArtifacts, policy });
-    const route = await this.router.route(profile);
+    const explicit = await this.resolveModelPin(
+      runId,
+      stepRun.nodeId,
+      step.id,
+      override,
+      overrideCreatedAt,
+    );
+    const route = await this.router.route(profile, explicit);
     await this.emit(
       project.id,
       'agent.routed',
@@ -1015,14 +1035,15 @@ export class WorkflowOrchestrator {
           provider: route.selected.model.provider,
           score: route.selected.score.total,
           fallbacks: route.fallbacks.map((candidate) => candidate.model.id),
+          ...(route.override ? { override: route.override } : {}),
           ...(loopIteration ? { loopIteration } : {}),
         },
       },
     );
 
-    // An explicit override skips fallbacks: the user chose the model.
-    const candidates = override
-      ? [await this.resolveOverrideCandidate(override, route)]
+    // Explicit pins are already validated and scored by the router.
+    const candidates = explicit
+      ? [route.selected]
       : [route.selected, ...route.fallbacks].slice(0, step.maxAttempts);
     const checkpoint = step.mutatesWorkspace
       ? await this.workspaces.checkpoint(project.id, `${step.id}-${runId}`)
@@ -1237,35 +1258,49 @@ export class WorkflowOrchestrator {
       : new ExecutionError(`All candidates failed for step ${step.id}`);
   }
 
-  /**
-   * Resolves an explicit retry override to a routable candidate. Prefers the
-   * scored entry the router produced; falls back to the raw catalog entry
-   * with a zeroed score so the audit trail stays schema-valid.
-   */
-  private async resolveOverrideCandidate(
-    override: NonNullable<RunRetryDirective['override']>,
-    route: RouteDecision,
-  ): Promise<RankedModel> {
-    const scored = [route.selected, ...route.fallbacks].find(
-      (candidate) => candidate.model.id === override.modelId,
-    );
-    if (scored) return scored;
-    const definition = (await this.router.catalog()).find((model) => model.id === override.modelId);
-    if (!definition) {
-      throw new ExecutionError(`Override model ${override.modelId} is not in the catalog`);
+  private async resolveModelPin(
+    runId: string,
+    nodeId: string,
+    stepId: string,
+    retry?: RunRetryDirective['override'],
+    retryCreatedAt?: string,
+  ): Promise<{ modelId: string; provenance?: RouteOverrideProvenance } | undefined> {
+    if (retry) {
+      return {
+        modelId: retry.modelId,
+        provenance: {
+          source: 'retry',
+          modelId: retry.modelId,
+          provider: retry.provider,
+          model: retry.model,
+          actor: retry.actor ?? { kind: 'system', id: 'legacy-retry' },
+          reason: retry.reason ?? 'Legacy retry override without a recorded reason',
+          estimatedImpact: retry.estimatedImpact ?? 'Not recorded in legacy retry directive',
+          createdAt: retryCreatedAt ?? this.clock.now().toISOString(),
+        },
+      };
     }
+    const overrides = (await this.modelOverrides?.list(runId)) ?? [];
+    const match =
+      overrides.find(
+        (item) =>
+          item.scope.kind === 'step' &&
+          item.scope.nodeId === nodeId &&
+          item.scope.stepId === stepId,
+      ) ?? overrides.find((item) => item.scope.kind === 'run');
+    if (!match) return undefined;
     return {
-      model: definition,
-      score: {
-        capability: 0,
-        context: 0,
-        speed: 0,
-        cost: 0,
-        reliability: 0,
-        historical: 0,
-        tagAffinity: 0,
-        estimatedCostUsd: null,
-        total: 0,
+      modelId: match.modelId,
+      provenance: {
+        source: match.scope.kind,
+        overrideId: match.id,
+        modelId: match.modelId,
+        provider: match.provider,
+        model: match.model,
+        actor: match.actor,
+        reason: match.reason,
+        estimatedImpact: match.estimatedImpact,
+        createdAt: match.createdAt,
       },
     };
   }

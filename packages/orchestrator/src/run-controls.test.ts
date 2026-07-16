@@ -160,7 +160,13 @@ describe('step retry with controlled invalidation (#8)', () => {
 
     await harness.service.retryStep('run-1', implement.id, {
       mode: 'invalidate',
-      override: { provider: 'codex', model: 'alt-model' },
+      override: {
+        provider: 'codex',
+        model: 'alt-model',
+        actor: { kind: 'user', id: 'ed' },
+        reason: 'Retry on the alternate model',
+        estimatedImpact: 'Avoid the prior model failure',
+      },
     });
     for (const stepId of ['implement', 'review', 'verify']) {
       expect(
@@ -202,7 +208,13 @@ describe('step retry with controlled invalidation (#8)', () => {
     await expect(
       harness.service.retryStep('run-1', review.id, {
         mode: 'preserve',
-        override: { provider: 'codex', model: 'not-a-model' },
+        override: {
+          provider: 'codex',
+          model: 'not-a-model',
+          actor: { kind: 'user', id: 'ed' },
+          reason: 'Test an unknown model',
+          estimatedImpact: 'No execution expected',
+        },
       }),
     ).rejects.toThrow(/No catalog model/);
 

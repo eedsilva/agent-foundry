@@ -13,6 +13,7 @@ import {
   type ArtifactMetadata,
   type ExecutorHealth,
   type ModelDefinition,
+  type ModelOverrideRecord,
   type Project,
   type ProjectEvent,
   type ProjectPolicy,
@@ -39,6 +40,7 @@ import {
   type IdGenerator,
   type JobQueue,
   type MetricsRepository,
+  type ModelOverrideRepository,
   type ModelRouter,
   type PolicyRepository,
   type ProjectRepository,
@@ -225,6 +227,30 @@ export class InMemoryRuns implements WorkflowRunRepository {
     const updated = { ...run, version: expectedVersion + 1 };
     this.store.set(run.id, updated);
     return Promise.resolve({ ...updated });
+  }
+}
+
+export class InMemoryModelOverrides implements ModelOverrideRepository {
+  private readonly store: ModelOverrideRecord[] = [];
+
+  create(override: ModelOverrideRecord): Promise<void> {
+    if (this.store.some((item) => item.id === override.id)) {
+      return Promise.reject(new Error(`model-override ${override.id} already exists`));
+    }
+    this.store.push(structuredClone(override));
+    return Promise.resolve();
+  }
+
+  list(runId: string): Promise<ModelOverrideRecord[]> {
+    return Promise.resolve(
+      this.store
+        .filter((item) => item.runId === runId)
+        .sort(
+          (left, right) =>
+            right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+        )
+        .map((item) => structuredClone(item)),
+    );
   }
 }
 
@@ -629,6 +655,7 @@ export interface Stores {
   runs: InMemoryRuns;
   stepRuns: InMemoryStepRuns;
   stepAttempts: InMemoryStepAttempts;
+  modelOverrides: InMemoryModelOverrides;
   approvalRequests: InMemoryApprovalRequests;
   approvalDecisions: InMemoryApprovalDecisions;
   artifacts: InMemoryArtifacts;
@@ -646,6 +673,7 @@ export function makeStores(): Stores {
     runs: new InMemoryRuns(power),
     stepRuns: new InMemoryStepRuns(power),
     stepAttempts: new InMemoryStepAttempts(power),
+    modelOverrides: new InMemoryModelOverrides(),
     approvalRequests: new InMemoryApprovalRequests(power),
     approvalDecisions: new InMemoryApprovalDecisions(power),
     artifacts: new InMemoryArtifacts(power),
@@ -720,14 +748,16 @@ export function makeHarness(
     version: () => Promise.resolve(stores.harnessVersion.value),
   };
   const router: ModelRouter = {
-    route: (profile) =>
-      Promise.resolve(
+    route: (profile, explicit) => {
+      const selected = explicit ? MODELS.find((model) => model.id === explicit.modelId) : MODELS[0];
+      if (!selected) return Promise.reject(new ExecutionError('Override model is not in catalog'));
+      return Promise.resolve(
         RouteDecisionSchema.parse({
           routeId: 'route-1',
           createdAt: new Date().toISOString(),
           profile,
           selected: {
-            model: MODELS[0],
+            model: selected,
             score: {
               capability: 0.5,
               context: 0.5,
@@ -740,27 +770,30 @@ export function makeHarness(
               total: 3,
             },
           },
-          fallbacks: opts.fallback
-            ? [
-                {
-                  model: MODELS[1]!,
-                  score: {
-                    capability: 0.5,
-                    context: 0.5,
-                    speed: 0.5,
-                    cost: 0.5,
-                    reliability: 0.5,
-                    historical: 0.5,
-                    tagAffinity: 0,
-                    estimatedCostUsd: null,
-                    total: 3,
+          fallbacks:
+            !explicit && opts.fallback
+              ? [
+                  {
+                    model: MODELS[1]!,
+                    score: {
+                      capability: 0.5,
+                      context: 0.5,
+                      speed: 0.5,
+                      cost: 0.5,
+                      reliability: 0.5,
+                      historical: 0.5,
+                      tagAffinity: 0,
+                      estimatedCostUsd: null,
+                      total: 3,
+                    },
                   },
-                },
-              ]
-            : [],
+                ]
+              : [],
+          ...(explicit?.provenance ? { override: explicit.provenance } : {}),
           rejected: [],
         }),
-      ),
+      );
+    },
     catalog: () => Promise.resolve(MODELS),
   };
   const metricsRecords: Parameters<MetricsRepository['record']>[0][] = [];
@@ -814,6 +847,7 @@ export function makeHarness(
     stores.clock,
     ids,
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
+    stores.modelOverrides,
   );
   const service = new ProjectService(
     stores.projects,
@@ -832,6 +866,7 @@ export function makeHarness(
     stores.workspaces,
     stores.clock,
     ids,
+    stores.modelOverrides,
   );
   return {
     ...stores,
