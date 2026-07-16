@@ -71,6 +71,17 @@ export class InvalidStateTransitionError extends Error {
   }
 }
 
+export class PreviewAccessDeniedError extends Error {
+  override readonly name = 'PreviewAccessDeniedError';
+
+  constructor(
+    readonly sessionId: string,
+    readonly reason: string,
+  ) {
+    super(`Preview session ${sessionId} denied: ${reason}`);
+  }
+}
+
 export class LeaseLostError extends Error {
   override readonly name = 'LeaseLostError';
 
