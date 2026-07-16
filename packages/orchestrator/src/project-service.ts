@@ -46,7 +46,6 @@ import {
   VersionConflictError,
   normalizeApprovalDecision,
   transitionWorkflowRun,
-  redactUnknown,
 } from '@agent-foundry/domain';
 import { policyHash, workflowHash } from './idempotency.js';
 
@@ -491,7 +490,7 @@ export class ProjectService {
         action: input.action,
         decidedBy: input.actor ? (input.actor.displayName ?? input.actor.id) : input.decidedBy!,
         actor,
-        ...(input.note ? { note: redactUnknown(input.note) as string } : {}),
+        ...(input.note ? { note: input.note } : {}),
         decidedAt: this.clock.now().toISOString(),
       })!;
       try {
@@ -553,32 +552,26 @@ export class ProjectService {
 
       let feedbackArtifact: ArtifactReference | undefined;
       if (decision.action === 'request-changes' && node.repairArtifact) {
-        const existing = (
-          await this.artifacts.listMetadata(run.projectId, node.repairArtifact)
-        ).find((metadata) => metadata.sourceDecisionId === decision.id);
-        const stored = existing
-          ? await this.artifacts.getRevision(run.projectId, existing.name, existing.revision)
-          : await this.artifacts.put({
-              projectId: run.projectId,
-              name: node.repairArtifact,
-              content: FeedbackArtifactSchema.parse({
-                schemaVersion: '1',
-                actor: decision.actor ?? { kind: 'user', id: decision.decidedBy },
-                sourceRequestId: request.id,
-                sourceDecisionId: decision.id,
-                runId,
-                stepRunId: request.stepRunId,
-                note: redactUnknown(decision.note ?? '') as string,
-                createdAt: decision.decidedAt,
-              }),
-              createdBy: `approval-gate:${node.id}`,
-              runId,
-              stepRunId: request.stepRunId,
-              kind: 'feedback',
-              actor: decision.actor ?? { kind: 'user', id: decision.decidedBy },
-              sourceDecisionId: decision.id,
-            });
-        if (!stored) throw new NotFoundError(`Feedback artifact ${node.repairArtifact} not found`);
+        const stored = await this.artifacts.put({
+          projectId: run.projectId,
+          name: node.repairArtifact,
+          content: FeedbackArtifactSchema.parse({
+            schemaVersion: '1',
+            actor: decision.actor ?? { kind: 'user', id: decision.decidedBy },
+            sourceRequestId: request.id,
+            sourceDecisionId: decision.id,
+            runId,
+            stepRunId: request.stepRunId,
+            note: decision.note ?? '',
+            createdAt: decision.decidedAt,
+          }),
+          createdBy: `approval-gate:${node.id}`,
+          runId,
+          stepRunId: request.stepRunId,
+          kind: 'feedback',
+          actor: decision.actor ?? { kind: 'user', id: decision.decidedBy },
+          sourceDecisionId: decision.id,
+        });
         feedbackArtifact = {
           name: stored.metadata.name,
           revision: stored.metadata.revision,

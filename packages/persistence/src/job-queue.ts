@@ -6,7 +6,6 @@ import {
   atomicCreateJson,
   atomicWriteJson,
   ensureDir,
-  exists,
   readJson,
   readJsonOrNull,
   safeSegment,
@@ -36,7 +35,6 @@ export class FileJobQueue implements JobQueue {
     const id = safeSegment(parsed.id);
     const pendingPath = join(this.dir('pending'), `${id}.json`);
     await Promise.all([ensureDir(this.dir('pending')), ensureDir(this.dir('processing'))]);
-    if (await exists(pendingPath)) return;
     if (await this.isProcessing(id)) return;
 
     // Create-if-absent preserves any retry/nack/reap file that won the
