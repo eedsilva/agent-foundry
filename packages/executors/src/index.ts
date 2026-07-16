@@ -6,3 +6,4 @@ export * from './agy-executor.js';
 export * from './mock-executor.js';
 export * from './registry.js';
 export * from './verifier.js';
+export * from './package-manager.js';

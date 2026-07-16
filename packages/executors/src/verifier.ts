@@ -10,6 +10,7 @@ import {
 } from '@agent-foundry/contracts';
 import type { VerificationService } from '@agent-foundry/domain';
 import { RunCancelledError } from '@agent-foundry/domain';
+import { detectPackageManager, scriptCommand } from './package-manager.js';
 
 const EMPTY_GIT_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
@@ -144,17 +145,8 @@ export class WorkspaceVerifier implements VerificationService {
     cwd: string,
     signal?: AbortSignal,
   ): Promise<VerificationCommandResult> {
-    switch (packageManager) {
-      case 'pnpm':
-        return this.run(script, 'pnpm', ['run', script], cwd, signal);
-      case 'yarn':
-        return this.run(script, 'yarn', [script], cwd, signal);
-      case 'bun':
-        return this.run(script, 'bun', ['run', script], cwd, signal);
-      case 'npm':
-      case 'unknown':
-        return this.run(script, 'npm', ['run', script], cwd, signal);
-    }
+    const { command, args } = scriptCommand(packageManager, script);
+    return this.run(script, command, args, cwd, signal);
   }
 
   private async run(
@@ -196,15 +188,6 @@ export class WorkspaceVerifier implements VerificationService {
       };
     }
   }
-}
-
-async function detectPackageManager(cwd: string): Promise<VerificationReport['packageManager']> {
-  if (await pathExists(join(cwd, 'pnpm-lock.yaml'))) return 'pnpm';
-  if (await pathExists(join(cwd, 'yarn.lock'))) return 'yarn';
-  if ((await pathExists(join(cwd, 'bun.lockb'))) || (await pathExists(join(cwd, 'bun.lock'))))
-    return 'bun';
-  if (await pathExists(join(cwd, 'package-lock.json'))) return 'npm';
-  return 'npm';
 }
 
 /** A check decided without running anything — policy blocks and missing scripts. */
