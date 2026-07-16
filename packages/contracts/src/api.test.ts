@@ -27,15 +27,29 @@ describe('DecideApprovalRequestSchema (#14)', () => {
   });
 
   it('accepts a typed actor and keeps legacy decidedBy input readable', () => {
-    expect(
-      DecideApprovalRequestSchema.parse({
-        action: 'approve',
-        actor: { kind: 'user', id: 'ed', displayName: 'Ed' },
-      }).actor?.id,
-    ).toBe('ed');
+    const actor = DecideApprovalRequestSchema.parse({
+      action: 'approve',
+      actor: { kind: 'user', id: ' ed ', displayName: ' Ed ' },
+    }).actor;
+    expect(actor).toEqual({ kind: 'user', id: 'ed', displayName: 'Ed' });
     expect(
       DecideApprovalRequestSchema.parse({ action: 'approve', decidedBy: 'legacy-ed' }).decidedBy,
     ).toBe('legacy-ed');
+  });
+
+  it('rejects blank actor ids and display names after trimming', () => {
+    expect(() =>
+      DecideApprovalRequestSchema.parse({
+        action: 'approve',
+        actor: { kind: 'user', id: '   ' },
+      }),
+    ).toThrow();
+    expect(() =>
+      DecideApprovalRequestSchema.parse({
+        action: 'approve',
+        actor: { kind: 'user', id: 'ed', displayName: '   ' },
+      }),
+    ).toThrow();
   });
 
   it('rejects ambiguous actor and decidedBy input', () => {

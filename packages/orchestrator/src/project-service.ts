@@ -44,6 +44,7 @@ import {
   ResumeBlockedError,
   ValidationError,
   VersionConflictError,
+  normalizeApprovalDecision,
   transitionWorkflowRun,
   redactUnknown,
 } from '@agent-foundry/domain';
@@ -371,9 +372,7 @@ export class ProjectService {
     return Promise.all(
       requests.map(async (request) => ({
         request,
-        decision: this.normalizeApprovalDecision(
-          await this.approvalDecisions.get(runId, request.id),
-        ),
+        decision: normalizeApprovalDecision(await this.approvalDecisions.get(runId, request.id)),
       })),
     );
   }
@@ -388,7 +387,7 @@ export class ProjectService {
       request,
     }));
     for (const request of requests) {
-      const decision = this.normalizeApprovalDecision(
+      const decision = normalizeApprovalDecision(
         await this.approvalDecisions.get(runId, request.id),
       );
       if (decision) {
@@ -449,9 +448,7 @@ export class ProjectService {
     if (!request)
       throw new NotFoundError(`Approval request ${requestId} not found in run ${runId}`);
 
-    let decision = this.normalizeApprovalDecision(
-      await this.approvalDecisions.get(runId, requestId),
-    );
+    let decision = normalizeApprovalDecision(await this.approvalDecisions.get(runId, requestId));
     if (decision) {
       // A decision already exists. A different requested action is a real
       // conflict (two reviewers disagreed) regardless of what the run has
@@ -503,7 +500,7 @@ export class ProjectService {
       } catch (cause) {
         // Lost a simultaneous-write race: another decision was recorded
         // between our read and our write. Resolve against what actually won.
-        const settled = this.normalizeApprovalDecision(
+        const settled = normalizeApprovalDecision(
           await this.approvalDecisions.get(runId, requestId),
         );
         if (!settled) throw cause;
@@ -832,15 +829,6 @@ export class ProjectService {
     const run = await this.runs.get(runId);
     if (!run) throw new NotFoundError(`Workflow run ${runId} not found`);
     return run;
-  }
-
-  private normalizeApprovalDecision(decision: ApprovalDecision | null): ApprovalDecision | null {
-    if (!decision) return null;
-    return {
-      ...decision,
-      actor: decision.actor ?? { kind: 'user', id: decision.decidedBy },
-      ...(decision.note !== undefined ? { note: redactUnknown(decision.note) as string } : {}),
-    };
   }
 
   private async requireProject(projectId: string): Promise<Project> {

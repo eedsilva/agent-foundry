@@ -54,6 +54,7 @@ import {
   RunPausedError,
   errorMessage,
   getValueAtPath,
+  normalizeApprovalDecision,
   transitionStepAttempt,
   transitionStepRun,
   transitionWorkflowRun,
@@ -493,7 +494,7 @@ export class WorkflowOrchestrator {
         `Approval gate ${node.id} has a pending StepRun but no ApprovalRequest`,
       );
     }
-    const decision = await this.approvalDecisions.get(runId, request.id);
+    const decision = normalizeApprovalDecision(await this.approvalDecisions.get(runId, request.id));
     if (!decision) throw new ApprovalRequiredError(runId, node.id);
 
     if (decision.action === 'reject') {

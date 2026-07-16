@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { ProjectEvent } from '@agent-foundry/contracts';
-import { redactEvent, redactString, redactUnknown } from './redaction.js';
+import { ApprovalDecisionSchema, type ProjectEvent } from '@agent-foundry/contracts';
+import {
+  normalizeApprovalDecision,
+  redactEvent,
+  redactString,
+  redactUnknown,
+} from './redaction.js';
 
 function event(overrides: Partial<ProjectEvent>): ProjectEvent {
   return {
@@ -28,6 +33,25 @@ describe('redactString', () => {
 
   it('leaves ordinary text untouched', () => {
     expect(redactString('node.completed em 3s')).toBe('node.completed em 3s');
+  });
+});
+
+describe('normalizeApprovalDecision', () => {
+  it('gives a whitespace-only legacy decidedBy a valid fallback actor', () => {
+    const normalized = normalizeApprovalDecision({
+      id: 'decision-1',
+      requestId: 'approval-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      action: 'approve',
+      decidedBy: '   ',
+      decidedAt: '2026-07-14T12:00:00.000Z',
+    });
+
+    expect(ApprovalDecisionSchema.parse(normalized).actor).toEqual({
+      kind: 'user',
+      id: 'unknown',
+    });
   });
 });
 

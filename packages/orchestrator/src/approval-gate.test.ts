@@ -269,6 +269,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
       stepRunId: request.stepRunId,
       action: 'approve',
       decidedBy: 'ed',
+      note: 'Authorization: Bearer abcdef1234567890\nCookie: session=raw-secret; token=also-raw',
       decidedAt: harness.clock.now().toISOString(),
     });
     expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
@@ -291,6 +292,17 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     });
     expect(again.run.status).toBe('queued');
     expect(harness.enqueued).toHaveLength(1);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const approvalArtifact = harness.artifacts.named('gate-decision')[0]!;
+    expect(approvalArtifact.content).toMatchObject({
+      decision: {
+        decidedBy: 'ed',
+        actor: { kind: 'user', id: 'ed' },
+        note: 'Authorization: [REDACTED]\nCookie: [REDACTED]',
+      },
+    });
+    expect(JSON.stringify(approvalArtifact.content)).not.toContain('raw-secret');
   });
 
   it('recovers request-changes after invalidation completes but the retry update crashes', async () => {

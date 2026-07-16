@@ -1,4 +1,4 @@
-import type { ProjectEvent } from '@agent-foundry/contracts';
+import type { ApprovalDecision, ProjectEvent } from '@agent-foundry/contracts';
 
 const SENSITIVE_WORD =
   /^(?:token|secret|secrets|password|passwd|credential|credentials|authorization|auth|bearer|cookie|cookies|session|apikey)$/i;
@@ -47,6 +47,17 @@ function redactValue(value: unknown, depth: number): unknown {
 
 export function redactUnknown(value: unknown): unknown {
   return redactValue(value, 0);
+}
+
+export function normalizeApprovalDecision(
+  decision: ApprovalDecision | null,
+): ApprovalDecision | null {
+  if (!decision) return null;
+  return {
+    ...decision,
+    actor: decision.actor ?? { kind: 'user', id: decision.decidedBy.trim() || 'unknown' },
+    ...(decision.note !== undefined ? { note: redactString(decision.note) } : {}),
+  };
 }
 
 export function redactEvent(event: ProjectEvent): ProjectEvent {
