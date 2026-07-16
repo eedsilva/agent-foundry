@@ -123,6 +123,65 @@ export class FileWorkspaceManager implements WorkspaceManager {
     await execa('git', ['clean', '-fd', '-e', '.orchestrator/'], { cwd });
   }
 
+  async preserveDraft(
+    projectId: string,
+    runId: string,
+    verifiedCheckpoint: string,
+  ): Promise<{ draftBranch: string; draftCommit: string; created: boolean }> {
+    await this.ensureGit(projectId);
+    const cwd = this.workspacePath(projectId);
+    const draftBranch = `draft/${safeSegment(runId)}`;
+    const existing = await execa('git', ['show-ref', '--verify', `refs/heads/${draftBranch}`], {
+      cwd,
+      reject: false,
+    });
+    let created = false;
+    if (existing.exitCode !== 0) {
+      await execa('git', ['add', '-A'], { cwd });
+      const staged = await execa('git', ['diff', '--cached', '--quiet'], { cwd, reject: false });
+      if (staged.exitCode !== 0) {
+        await execa('git', ['commit', '-m', `draft: preserve emergency ceiling run ${runId}`], {
+          cwd,
+        });
+      }
+      await execa('git', ['branch', draftBranch, 'HEAD'], { cwd });
+      created = true;
+    } else {
+      const [head, draft, status] = await Promise.all([
+        execa('git', ['rev-parse', 'HEAD'], { cwd }),
+        execa('git', ['rev-parse', draftBranch], { cwd }),
+        execa('git', ['status', '--porcelain'], { cwd }),
+      ]);
+      if (
+        status.stdout !== '' ||
+        (head.stdout !== draft.stdout && head.stdout !== verifiedCheckpoint)
+      ) {
+        throw new Error(`existing ${draftBranch} is not a safe replay`);
+      }
+    }
+    const draftCommit = (await execa('git', ['rev-parse', draftBranch], { cwd })).stdout;
+    await this.rollback(projectId, verifiedCheckpoint);
+    return { draftBranch, draftCommit, created };
+  }
+
+  async discardDraft(projectId: string, runId: string, expectedCommit: string): Promise<void> {
+    const cwd = this.workspacePath(projectId);
+    const draftBranch = `draft/${safeSegment(runId)}`;
+    const draft = await execa('git', ['rev-parse', '--verify', `refs/heads/${draftBranch}`], {
+      cwd,
+      reject: false,
+    });
+    if (draft.exitCode !== 0) return;
+    const discarded = await execa(
+      'git',
+      ['update-ref', '-d', `refs/heads/${draftBranch}`, expectedCommit],
+      { cwd, reject: false },
+    );
+    if (discarded.exitCode !== 0) {
+      throw new Error(`${draftBranch} no longer points to the owned commit`);
+    }
+  }
+
   async commit(projectId: string, message: string): Promise<string | null> {
     const cwd = this.workspacePath(projectId);
     await execa('git', ['add', '-A'], { cwd });

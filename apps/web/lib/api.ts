@@ -1,6 +1,8 @@
 import type {
   ApprovalConflictResponse,
   ApprovalListResponse,
+  CreateModelOverrideRequest,
+  CreateModelOverrideResponse,
   DecideApprovalRequest,
   DecideApprovalResponse,
   Project,
@@ -71,6 +73,16 @@ export async function retryProject(id: string): Promise<Project> {
 
 export function getRunDetail(runId: string): Promise<RunDetailResponse> {
   return api<RunDetailResponse>(`/runs/${encodeURIComponent(runId)}`);
+}
+
+export function createModelOverride(
+  runId: string,
+  input: CreateModelOverrideRequest,
+): Promise<CreateModelOverrideResponse> {
+  return api<CreateModelOverrideResponse>(`/runs/${encodeURIComponent(runId)}/model-overrides`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 export async function pauseRun(runId: string): Promise<WorkflowRun> {

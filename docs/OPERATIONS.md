@@ -108,7 +108,96 @@ Reexecutar um projeto (`POST /projects/:id/retry`) continua criando um novo `Wor
 - `POST /runs/:runId/resume` — valida o snapshot contra o estado atual. Qualquer divergência responde `409` com diagnósticos por campo e a opção explícita de restart (`POST /projects/:id/retry`). Validação ok re-enfileira o run; steps concluídos não são reexecutados.
 - `GET /runs/:runId` — trilha consultável run -> step -> attempt -> artifact -> commit.
 - `GET /runs/:runId/steps/:stepRunId/retry-plan` — mostra quais steps e artifacts um retry invalidaria.
-- `POST /runs/:runId/steps/:stepRunId/retry` — body `{ mode: 'preserve' | 'invalidate', override?: { provider, model } }`. Reexecuta só o step alvo (preserve) ou também os descendentes (invalidate). O histórico anterior nunca é sobrescrito: step runs antigos ganham `invalidatedAt`. Steps que mutam o workspace voltam ao checkpoint registrado no attempt original antes de reexecutar.
+- `POST /runs/:runId/steps/:stepRunId/retry` — reexecuta só o step alvo (`preserve`) ou também os descendentes (`invalidate`). O histórico anterior nunca é sobrescrito: step runs antigos ganham `invalidatedAt`. Steps que mutam o workspace voltam ao checkpoint registrado no attempt original antes de reexecutar. Um pin opcional exige provider, modelo, ator, motivo e impacto estimado:
+
+```json
+{
+  "mode": "invalidate",
+  "override": {
+    "modelId": "codex-gpt-5",
+    "provider": "codex",
+    "model": "gpt-5",
+    "actor": { "kind": "user", "id": "operator-1" },
+    "reason": "Reparo de alto risco requer o modelo validado",
+    "estimatedImpact": "Maior latência e consumo de quota"
+  }
+}
+```
+
+## Overrides auditados de modelo
+
+Crie pins de run e step em `POST /runs/:runId/model-overrides`. `modelId`, provider e modelo devem
+identificar exatamente a mesma entrada habilitada no catálogo ativo; isso preserva a identidade
+quando duas entradas compartilham provider/model e rejeita drift posterior do tuple. Exemplos:
+
+```json
+{
+  "scope": { "kind": "run" },
+  "modelId": "codex-gpt-5",
+  "provider": "codex",
+  "model": "gpt-5",
+  "actor": { "kind": "user", "id": "operator-1", "displayName": "Operator" },
+  "reason": "Fixar a rota durante a resposta ao incidente",
+  "estimatedImpact": "Pode aumentar latência e consumo de quota"
+}
+```
+
+```json
+{
+  "scope": { "kind": "step", "nodeId": "quality", "stepId": "repair" },
+  "modelId": "claude-sonnet",
+  "provider": "claude",
+  "model": "sonnet",
+  "actor": { "kind": "worker", "id": "release-controller" },
+  "reason": "Pin aprovado para o reparo desta etapa",
+  "estimatedImpact": "Sem fallback automático nesta etapa"
+}
+```
+
+Os records são create-only. A precedência é retry da etapa, override de step mais novo, override de
+run mais novo. Um pin explícito desliga fallback, mas não contorna modelo desabilitado, drift de
+catálogo, ProjectPolicy, `allowedProviders` do step, limite de contexto ou capacidade de escrita no
+workspace. Ator, motivo e impacto passam pelo redactor antes de chegar ao disco. Consulte a
+proveniência aplicada em `RouteDecision.override` nos artifacts do attempt.
+
+## Emergency ceiling
+
+`GET /runs/:runId` expõe `run.execution`: `activeElapsedMs`, `activeSince`,
+`consecutiveRepairs`, `lastVerifiedCheckpoint` e, quando alcançado, `ceiling.reason`,
+`ceiling.reachedAt` e `ceiling.draftBranch`. O relógio para em `paused` e `awaiting_approval` e
+retoma quando o run volta a executar. Se o processo cair enquanto o status persistido ainda for
+`running`, o intervalo até o restart conta por segurança. O limite é inclusivo: quatro horas
+(`14_400_000ms`) ou o décimo reparo consecutivo concluído. Uma aprovação de qualidade zera o
+contador de reparos.
+
+Ao alcançar o limite, o orquestrador preserva a árvore atual em `draft/<runId>`, restaura o
+workspace para `lastVerifiedCheckpoint`, marca o run `failed` com código `EMERGENCY_CEILING` e
+emite uma única ocorrência de `run.emergency_ceiling_reached`. Cancelamento continua tendo
+precedência, inclusive durante as escritas finais do ceiling.
+
+Inspeção e recuperação manual, no workspace do projeto:
+
+```bash
+git show --stat draft/<runId>
+git diff <lastVerifiedCheckpoint>..draft/<runId>
+git switch -c recover/<runId> draft/<runId>
+```
+
+Não force nem apague `draft/<runId>` enquanto o run ainda puder ser redelivered. O replay aceita
+somente o draft que reconhece como seguro; ref conflitante ou worktree sujo falha fechado. Depois
+de copiar ou integrar o trabalho necessário e confirmar que nenhum worker executa o run, o
+operador pode remover a branch manualmente.
+
+`maxAttempts` e `maxIterations` continuam aceitos em workflows antigos, mas não são budgets de
+execução. A lista automática de candidatos continua finita; loops de qualidade terminam por
+aprovação, cancelamento, erro irrecuperável ou emergency ceiling. Retry directives antigos sem
+campos de auditoria continuam legíveis; requests novos de retry exigem todos os campos acima.
+
+Antes do upgrade, pare os workers e faça snapshot de todo `DATA_DIR`, incluindo os workspaces Git.
+Não misture versões. Para rollback, preserve externamente qualquer `draft/<runId>` necessário,
+restaure o snapshot pré-upgrade e só então inicie a versão antiga. Um rollback somente de código
+não é suportado porque schemas antigos estritos não aceitam `run.execution`. ADR 0016 registra a
+decisão e os limites.
 
 ## Observabilidade
 

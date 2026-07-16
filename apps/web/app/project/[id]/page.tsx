@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { diffLines } from 'diff';
 import {
   VerificationReportSchema,
@@ -8,6 +8,8 @@ import {
   type ApprovalGateStep,
   type ApprovalListResponse,
   type ApprovalRequest,
+  type ActorRef,
+  type ModelDefinition,
   type ProjectDetailResponse,
   type ProjectEvent,
   type ResumeBlockedResponse,
@@ -21,11 +23,13 @@ import {
 } from '@agent-foundry/contracts';
 import {
   decideApproval,
+  createModelOverride,
   eventStreamUrl,
   getArtifact,
   getProject,
   getRetryPlan,
   getRunDetail,
+  getRuntime,
   listApprovals,
   listWorkflows,
   pauseRun,
@@ -34,12 +38,60 @@ import {
   retryStep,
 } from '../../../lib/api';
 import { mergeEvents } from '../../../lib/events';
+import {
+  agentStepTargets,
+  executionEvidence,
+  modelOverrideRequest,
+  retryMode,
+  retryRequest,
+} from '../../../lib/model-overrides';
 
 const PROJECT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 
 const rowStyle = { display: 'flex', alignItems: 'center', gap: '0.75rem' } as const;
 
 const formatSeconds = (ms: number) => `${Math.round(ms / 1000)}s`;
+const ACTOR_KINDS = ['user', 'system', 'worker', 'provider'] as const;
+
+function ModelPinFields({ models }: { models: ModelDefinition[] }) {
+  return (
+    <div className="modelPinGrid">
+      <label>
+        Modelo do runtime
+        <select name="modelId" required>
+          <option value="">Selecione…</option>
+          {models.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.provider} / {model.model}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Tipo de ator
+        <select name="actorKind" required defaultValue="user">
+          {ACTOR_KINDS.map((kind) => (
+            <option key={kind} value={kind}>
+              {kind}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        ID do ator
+        <input name="actorId" required />
+      </label>
+      <label>
+        Motivo
+        <textarea className="compactTextarea" name="reason" required />
+      </label>
+      <label>
+        Impacto estimado
+        <textarea className="compactTextarea" name="estimatedImpact" required />
+      </label>
+    </div>
+  );
+}
 
 function isFallback(route: RouteDecision | undefined): boolean {
   return Boolean(route?.executed && route.executed.model.id !== route.selected.model.id);
@@ -83,6 +135,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [live, setLive] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalListResponse['approvals']>([]);
   const [workflowDef, setWorkflowDef] = useState<WorkflowDefinition | null>(null);
+  const [runtimeModels, setRuntimeModels] = useState<ModelDefinition[]>([]);
+  const [overrideScope, setOverrideScope] = useState<'run' | 'step'>('run');
+  const [retryWithPin, setRetryWithPin] = useState(false);
   const [decideTarget, setDecideTarget] = useState<{
     request: ApprovalRequest;
     node: ApprovalGateStep;
@@ -178,6 +233,20 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     };
   }, [workflowId]);
 
+  useEffect(() => {
+    let active = true;
+    void getRuntime()
+      .then((runtime) => {
+        if (active) setRuntimeModels(runtime.models);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const routes = useMemo(
     () =>
       detail?.artifacts
@@ -190,7 +259,51 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   );
 
   const run = runDetail?.run;
+  const stepTargets = useMemo(
+    () => (workflowDef ? agentStepTargets(workflowDef) : []),
+    [workflowDef],
+  );
+  const runnableModels = runtimeModels.filter((model) => model.enabled && model.model.trim());
+  const evidence = run ? executionEvidence(run) : null;
   const refresh = () => setRefreshTick((tick) => tick + 1);
+
+  function pinFields(data: FormData) {
+    return {
+      modelId: String(data.get('modelId') ?? ''),
+      actorKind: String(data.get('actorKind') ?? 'user') as ActorRef['kind'],
+      actorId: String(data.get('actorId') ?? ''),
+      reason: String(data.get('reason') ?? ''),
+      estimatedImpact: String(data.get('estimatedImpact') ?? ''),
+    };
+  }
+
+  async function submitOverride(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!run) return;
+    const form = event.currentTarget;
+    try {
+      const data = new FormData(form);
+      const target = stepTargets.find(
+        ({ nodeId, stepId }) => `${nodeId}/${stepId}` === data.get('stepTarget'),
+      );
+      if (overrideScope === 'step' && !target) throw new Error('Selecione um step de agente.');
+      await createModelOverride(
+        run.id,
+        modelOverrideRequest(
+          runtimeModels,
+          overrideScope === 'run'
+            ? { kind: 'run' }
+            : { kind: 'step', nodeId: target!.nodeId, stepId: target!.stepId },
+          pinFields(data),
+        ),
+      );
+      setError('');
+      form.reset();
+      refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
 
   async function retry() {
     try {
@@ -230,16 +343,21 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   async function openRetryPlan(step: StepRun) {
     if (!run) return;
     try {
+      setRetryWithPin(false);
       setRetryPlan({ step, plan: await getRetryPlan(run.id, step.id) });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
-  async function confirmRetry(mode: 'preserve' | 'invalidate') {
+  async function confirmRetry(mode: 'preserve' | 'invalidate', form: HTMLFormElement) {
     if (!run || !retryPlan) return;
     try {
-      await retryStep(run.id, retryPlan.step.id, { mode });
+      const input =
+        retryWithPin && retryPlan.step.stepType === 'agent'
+          ? retryRequest(mode, runtimeModels, pinFields(new FormData(form)))
+          : retryRequest(mode, runtimeModels);
+      await retryStep(run.id, retryPlan.step.id, input);
       setRetryPlan(null);
       refresh();
     } catch (cause) {
@@ -403,6 +521,79 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               </button>
             </div>
           ) : null}
+        </section>
+      ) : null}
+
+      {run && evidence ? (
+        <section className="panel modelPinPanel">
+          <div className="panelHeader">
+            <h2>Limite de emergência e modelo fixado</h2>
+            <span className="hint">run {run.id}</span>
+          </div>
+          <dl className="executionEvidence">
+            <div>
+              <dt>tempo ativo</dt>
+              <dd>{evidence.activeElapsed}</dd>
+            </div>
+            <div>
+              <dt>reparos consecutivos</dt>
+              <dd>{evidence.consecutiveRepairs}</dd>
+            </div>
+            {evidence.ceiling ? (
+              <div>
+                <dt>limite atingido</dt>
+                <dd>{evidence.ceiling}</dd>
+              </div>
+            ) : null}
+            {evidence.errorCode ? (
+              <div>
+                <dt>erro</dt>
+                <dd>{evidence.errorCode}</dd>
+              </div>
+            ) : null}
+            {evidence.draftBranch ? (
+              <div>
+                <dt>branch preservada</dt>
+                <dd>{evidence.draftBranch}</dd>
+              </div>
+            ) : null}
+          </dl>
+
+          <form onSubmit={(event) => void submitOverride(event)}>
+            <div className="modelPinGrid">
+              <label>
+                Escopo
+                <select
+                  name="scope"
+                  value={overrideScope}
+                  onChange={(event) => setOverrideScope(event.target.value as 'run' | 'step')}
+                >
+                  <option value="run">Toda a execução</option>
+                  <option value="step">Step de agente</option>
+                </select>
+              </label>
+              {overrideScope === 'step' ? (
+                <label>
+                  Step de agente
+                  <select name="stepTarget" required>
+                    <option value="">Selecione…</option>
+                    {stepTargets.map((target) => (
+                      <option
+                        key={`${target.nodeId}/${target.stepId}`}
+                        value={`${target.nodeId}/${target.stepId}`}
+                      >
+                        {target.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <ModelPinFields models={runnableModels} />
+            </div>
+            <button className="secondaryButton" type="submit" disabled={!runnableModels.length}>
+              Fixar modelo
+            </button>
+          </form>
         </section>
       ) : null}
 
@@ -667,42 +858,67 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 ×
               </button>
             </div>
-            {retryPlan.plan.downstream.length > 0 ? (
-              <div>
-                <p>
-                  Invalidar downstream reexecuta {retryPlan.plan.downstream.length} step(s) e gera
-                  novas revisões destes artifacts (o histórico anterior é preservado):
-                </p>
-                <ul>
-                  {retryPlan.plan.downstream.map((step) => (
-                    <li key={step.id}>
-                      <code>{step.stepId}</code> ({step.status})
-                    </li>
-                  ))}
-                </ul>
-                <p>
-                  Artifacts afetados:{' '}
-                  {retryPlan.plan.artifacts.length > 0 ? (
-                    <code>{retryPlan.plan.artifacts.join(', ')}</code>
-                  ) : (
-                    'nenhum'
-                  )}
-                </p>
-                <p>Preservar downstream reexecuta apenas este step e mantém os outputs atuais.</p>
-              </div>
-            ) : (
-              <p>Nenhum step downstream: apenas este step será reexecutado.</p>
-            )}
-            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
-              <button className="secondaryButton" onClick={() => void confirmRetry('preserve')}>
-                Reexecutar preservando downstream
-              </button>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                const mode = retryMode(
+                  (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value'),
+                );
+                void confirmRetry(mode, event.currentTarget);
+              }}
+            >
               {retryPlan.plan.downstream.length > 0 ? (
-                <button className="secondaryButton" onClick={() => void confirmRetry('invalidate')}>
-                  Reexecutar invalidando downstream
-                </button>
+                <div>
+                  <p>
+                    Invalidar downstream reexecuta {retryPlan.plan.downstream.length} step(s) e gera
+                    novas revisões destes artifacts (o histórico anterior é preservado):
+                  </p>
+                  <ul>
+                    {retryPlan.plan.downstream.map((step) => (
+                      <li key={step.id}>
+                        <code>{step.stepId}</code> ({step.status})
+                      </li>
+                    ))}
+                  </ul>
+                  <p>
+                    Artifacts afetados:{' '}
+                    {retryPlan.plan.artifacts.length > 0 ? (
+                      <code>{retryPlan.plan.artifacts.join(', ')}</code>
+                    ) : (
+                      'nenhum'
+                    )}
+                  </p>
+                  <p>Preservar downstream reexecuta apenas este step e mantém os outputs atuais.</p>
+                </div>
+              ) : (
+                <p>Nenhum step downstream: apenas este step será reexecutado.</p>
+              )}
+
+              {retryPlan.step.stepType === 'agent' ? (
+                <div>
+                  <label className="checkLabel">
+                    <input
+                      type="checkbox"
+                      checked={retryWithPin}
+                      onChange={(event) => setRetryWithPin(event.target.checked)}
+                    />
+                    Fixar modelo somente para esta reexecução
+                  </label>
+                  {retryWithPin ? <ModelPinFields models={runnableModels} /> : null}
+                </div>
               ) : null}
-            </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+                <button className="secondaryButton" type="submit" value="preserve">
+                  Reexecutar preservando downstream
+                </button>
+                {retryPlan.plan.downstream.length > 0 ? (
+                  <button className="secondaryButton" type="submit" value="invalidate">
+                    Reexecutar invalidando downstream
+                  </button>
+                ) : null}
+              </div>
+            </form>
           </section>
         </div>
       ) : null}

@@ -4,10 +4,14 @@ import type {
   ApprovalRequest,
   ActorRef,
   ArtifactReference,
+  CreateModelOverrideRequest,
   CreateProjectRequest,
+  ModelOverrideRecord,
+  ModelDefinition,
   Project,
   ProjectDetailResponse,
   ProjectEvent,
+  Provider,
   QueueJob,
   RetryPlanResponse,
   RetryStepRequest,
@@ -29,6 +33,7 @@ import type {
   IdGenerator,
   JobQueue,
   ModelRouter,
+  ModelOverrideRepository,
   PolicyRepository,
   ProjectRepository,
   ResumeDiagnostic,
@@ -45,6 +50,7 @@ import {
   ValidationError,
   VersionConflictError,
   normalizeApprovalDecision,
+  redactString,
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
 import { policyHash, workflowHash } from './idempotency.js';
@@ -67,7 +73,38 @@ export class ProjectService {
     private readonly workspaces: WorkspaceManager,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly modelOverrides?: ModelOverrideRepository,
   ) {}
+
+  async createModelOverride(
+    runId: string,
+    input: CreateModelOverrideRequest,
+  ): Promise<ModelOverrideRecord> {
+    const run = await this.requireRun(runId);
+    if (!this.modelOverrides) throw new Error('Model override repository is not configured');
+    const scope = input.scope;
+    if (scope.kind === 'step') {
+      const workflow = await this.workflows.get(run.workflowId);
+      if (!isAgentStep(workflow, scope.nodeId, scope.stepId)) {
+        throw new ValidationError(
+          `Scope ${scope.nodeId}/${scope.stepId} does not identify an agent step in workflow ${workflow.id}.`,
+        );
+      }
+    }
+    const match = await this.resolveCatalogModel(input.modelId, input.provider, input.model);
+    const audit = redactOverrideAudit(input);
+    const override: Omit<ModelOverrideRecord, 'sequence'> = {
+      id: this.ids.next(),
+      runId,
+      scope: input.scope,
+      modelId: match.id,
+      provider: match.provider,
+      model: match.model,
+      ...audit,
+      createdAt: this.clock.now().toISOString(),
+    };
+    return this.modelOverrides.create(override);
+  }
 
   async create(input: CreateProjectRequest): Promise<Project> {
     await this.workflows.get(input.workflowId);
@@ -323,18 +360,24 @@ export class ProjectService {
 
     let override: RunRetryDirective['override'];
     if (input.override) {
-      const catalog = await this.router.catalog();
-      const match = catalog.find(
-        (model) =>
-          model.provider === input.override?.provider &&
-          (model.model === input.override.model || model.id === input.override.model),
-      );
-      if (!match) {
+      const workflow = await this.workflows.get(run.workflowId);
+      if (!isAgentStep(workflow, target.nodeId, target.stepId)) {
         throw new ValidationError(
-          `No catalog model matches ${input.override.provider}/${input.override.model}.`,
+          `Step run ${stepRunId} is not an agent step; only agent steps support model overrides.`,
         );
       }
-      override = { modelId: match.id, provider: match.provider, model: match.model };
+      const match = await this.resolveCatalogModel(
+        input.override.modelId,
+        input.override.provider,
+        input.override.model,
+      );
+      const audit = redactOverrideAudit(input.override);
+      override = {
+        modelId: match.id,
+        provider: match.provider,
+        model: match.model,
+        ...audit,
+      };
     }
 
     const { run: updated, invalidatedStepRunIds } = await this.invalidateFromStep(
@@ -824,6 +867,28 @@ export class ProjectService {
     return run;
   }
 
+  private async resolveCatalogModel(
+    modelId: string,
+    provider: Provider,
+    model: string,
+  ): Promise<ModelDefinition> {
+    const match = (await this.router.catalog()).find((candidate) => candidate.id === modelId);
+    if (!match || !match.enabled) {
+      throw new ValidationError(`Catalog model ${modelId} is not enabled.`);
+    }
+    if (!match.model.trim()) {
+      throw new ValidationError(
+        `Catalog model ${match.id} does not resolve to an explicit model; configure its provider model first.`,
+      );
+    }
+    if (match.provider !== provider || match.model !== model) {
+      throw new ValidationError(
+        `Override model ${modelId} catalog tuple changed: expected ${provider}/${model}, found ${match.provider}/${match.model}.`,
+      );
+    }
+    return match;
+  }
+
   private async requireProject(projectId: string): Promise<Project> {
     const project = await this.projects.get(projectId);
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
@@ -849,4 +914,33 @@ export class ProjectService {
       ...(dedupeKey ? { dedupeKey } : {}),
     });
   }
+}
+
+function isAgentStep(workflow: WorkflowDefinition, nodeId: string, stepId: string): boolean {
+  const node = workflow.nodes.find((candidate) => candidate.id === nodeId);
+  return (
+    (node?.type === 'agent' && node.id === stepId) ||
+    (node?.type === 'quality-loop' &&
+      [node.setup, node.check, node.repair].some(
+        (step) => step?.type === 'agent' && step.id === stepId,
+      ))
+  );
+}
+
+function redactOverrideAudit(input: { actor: ActorRef; reason: string; estimatedImpact: string }): {
+  actor: ActorRef;
+  reason: string;
+  estimatedImpact: string;
+} {
+  return {
+    actor: {
+      ...input.actor,
+      id: redactString(input.actor.id).trim() || '[REDACTED]',
+      ...(input.actor.displayName
+        ? { displayName: redactString(input.actor.displayName).trim() || '[REDACTED]' }
+        : {}),
+    },
+    reason: redactString(input.reason).trim() || '[REDACTED]',
+    estimatedImpact: redactString(input.estimatedImpact).trim() || '[REDACTED]',
+  };
 }

@@ -13,6 +13,7 @@ import {
   type ArtifactMetadata,
   type ExecutorHealth,
   type ModelDefinition,
+  type ModelOverrideRecord,
   type Project,
   type ProjectEvent,
   type ProjectPolicy,
@@ -33,12 +34,14 @@ import {
   type ApprovalDecisionRepository,
   type ApprovalRequestRepository,
   type ArtifactStore,
+  type Clock,
   type EventStore,
   type ExecutorRegistry,
   type HarnessRepository,
   type IdGenerator,
   type JobQueue,
   type MetricsRepository,
+  type ModelOverrideRepository,
   type ModelRouter,
   type PolicyRepository,
   type ProjectRepository,
@@ -99,7 +102,7 @@ const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   ],
 });
 
-const MODELS: ModelDefinition[] = [
+export const MODELS: ModelDefinition[] = [
   ModelDefinitionSchema.parse({
     id: 'model-1',
     provider: 'codex',
@@ -200,7 +203,8 @@ export class InMemoryProjects implements ProjectRepository {
 
 export class InMemoryRuns implements WorkflowRunRepository {
   private readonly store = new Map<string, WorkflowRun>();
-  onBeforeUpdate: ((run: WorkflowRun) => void) | undefined;
+  onBeforeUpdate: ((run: WorkflowRun) => void | Promise<void>) | undefined;
+  onAfterUpdate: ((run: WorkflowRun) => void | Promise<void>) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   create(run: WorkflowRun): Promise<void> {
     checkPower(this.power);
@@ -214,9 +218,9 @@ export class InMemoryRuns implements WorkflowRunRepository {
   list(projectId: string): Promise<WorkflowRun[]> {
     return Promise.resolve([...this.store.values()].filter((run) => run.projectId === projectId));
   }
-  update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
+  async update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
     checkPower(this.power);
-    this.onBeforeUpdate?.(run);
+    await this.onBeforeUpdate?.(run);
     const existing = this.store.get(run.id);
     if (!existing) throw new Error(`run ${run.id} missing`);
     if (existing.version !== expectedVersion) {
@@ -224,7 +228,44 @@ export class InMemoryRuns implements WorkflowRunRepository {
     }
     const updated = { ...run, version: expectedVersion + 1 };
     this.store.set(run.id, updated);
-    return Promise.resolve({ ...updated });
+    await this.onAfterUpdate?.({ ...updated });
+    return { ...updated };
+  }
+}
+
+export class InMemoryModelOverrides implements ModelOverrideRepository {
+  private readonly store: ModelOverrideRecord[] = [];
+
+  create(override: Omit<ModelOverrideRecord, 'sequence'>): Promise<ModelOverrideRecord> {
+    if (this.store.some((item) => item.id === override.id)) {
+      return Promise.reject(new Error(`model-override ${override.id} already exists`));
+    }
+    const stored = {
+      ...structuredClone(override),
+      sequence:
+        Math.max(
+          0,
+          ...this.store
+            .filter((item) => item.runId === override.runId)
+            .map((item) => item.sequence),
+        ) + 1,
+    };
+    this.store.push(stored);
+    return Promise.resolve(structuredClone(stored));
+  }
+
+  list(runId: string): Promise<ModelOverrideRecord[]> {
+    return Promise.resolve(
+      this.store
+        .filter((item) => item.runId === runId)
+        .sort(
+          (left, right) =>
+            right.sequence - left.sequence ||
+            right.createdAt.localeCompare(left.createdAt) ||
+            right.id.localeCompare(left.id),
+        )
+        .map((item) => structuredClone(item)),
+    );
   }
 }
 
@@ -414,9 +455,11 @@ export class InMemoryArtifacts implements ArtifactStore {
 
 export class InMemoryEvents implements EventStore {
   readonly events: ProjectEvent[] = [];
+  onBeforeAppend?: ((event: ProjectEvent) => void) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   append(event: ProjectEvent): Promise<void> {
     checkPower(this.power);
+    this.onBeforeAppend?.(event);
     if (event.dedupeKey && this.events.some((item) => item.dedupeKey === event.dedupeKey)) {
       return Promise.resolve();
     }
@@ -436,12 +479,15 @@ export class FakeWorkspaces implements WorkspaceManager {
   readonly checkpoints: string[] = [];
   readonly commits: string[] = [];
   readonly rollbacks: string[] = [];
+  readonly drafts: string[] = [];
+  readonly draftCommits = new Map<string, string>();
   current = 'initial-head';
   dirty = false;
   onBeforeCheckpoint?: (() => void) | undefined;
   onAfterCheckpoint?: (() => void) | undefined;
   onBeforeCommit?: (() => void) | undefined;
   onAfterCommit?: (() => void) | undefined;
+  onAfterPreserveDraft?: (() => void | Promise<void>) | undefined;
   private counter = 0;
   constructor(private readonly power: PowerSwitch) {}
   projectRoot(projectId: string): string {
@@ -479,6 +525,32 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.rollbacks.push(ref);
     this.current = ref;
     this.dirty = false;
+    return Promise.resolve();
+  }
+  async preserveDraft(_projectId: string, runId: string, verifiedCheckpoint: string) {
+    checkPower(this.power);
+    const draftBranch = `draft/${runId}`;
+    const created = !this.drafts.includes(draftBranch);
+    if (created) {
+      if (this.dirty) this.current = this.nextSha();
+      this.drafts.push(draftBranch);
+      this.draftCommits.set(draftBranch, this.current);
+    }
+    const draftCommit = this.draftCommits.get(draftBranch)!;
+    this.current = verifiedCheckpoint;
+    this.dirty = false;
+    await this.onAfterPreserveDraft?.();
+    return { draftBranch, draftCommit, created };
+  }
+  discardDraft(_projectId: string, runId: string, expectedCommit: string): Promise<void> {
+    const draftBranch = `draft/${runId}`;
+    const current = this.draftCommits.get(draftBranch);
+    if (current === undefined) return Promise.resolve();
+    if (current !== expectedCommit) {
+      return Promise.reject(new Error(`${draftBranch} no longer points to the owned commit`));
+    }
+    this.draftCommits.delete(draftBranch);
+    this.drafts.splice(this.drafts.indexOf(draftBranch), 1);
     return Promise.resolve();
   }
   commit(): Promise<string | null> {
@@ -624,11 +696,12 @@ export class ControllableExecutor implements AgentExecutor {
 
 export interface Stores {
   power: PowerSwitch;
-  clock: SystemClock;
+  clock: Clock;
   projects: InMemoryProjects;
   runs: InMemoryRuns;
   stepRuns: InMemoryStepRuns;
   stepAttempts: InMemoryStepAttempts;
+  modelOverrides: InMemoryModelOverrides;
   approvalRequests: InMemoryApprovalRequests;
   approvalDecisions: InMemoryApprovalDecisions;
   artifacts: InMemoryArtifacts;
@@ -637,15 +710,16 @@ export interface Stores {
   harnessVersion: { value: string };
 }
 
-export function makeStores(): Stores {
+export function makeStores(clock: Clock = new SystemClock()): Stores {
   const power: PowerSwitch = { on: true };
   return {
     power,
-    clock: new SystemClock(),
+    clock,
     projects: new InMemoryProjects(power),
     runs: new InMemoryRuns(power),
     stepRuns: new InMemoryStepRuns(power),
     stepAttempts: new InMemoryStepAttempts(power),
+    modelOverrides: new InMemoryModelOverrides(),
     approvalRequests: new InMemoryApprovalRequests(power),
     approvalDecisions: new InMemoryApprovalDecisions(power),
     artifacts: new InMemoryArtifacts(power),
@@ -665,19 +739,28 @@ export interface GateOptions {
 export function makeHarness(
   behaviors: Record<string, StepBehavior> = {},
   existing?: Stores,
-  opts: { fallback?: boolean; gate?: GateOptions; policy?: ProjectPolicy } = {},
+  opts: {
+    fallback?: boolean;
+    gate?: GateOptions;
+    policy?: ProjectPolicy;
+    models?: ModelDefinition[];
+    workflow?: WorkflowDefinition;
+    verification?: () => VerificationReport | Promise<VerificationReport>;
+  } = {},
 ) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
   const executor = new ControllableExecutor(behaviors, stores.workspaces);
   const policies = new InMemoryPolicies(opts.policy ?? DEFAULT_POLICY);
+  const models = opts.models ?? MODELS;
   // Fallback recovery needs the mutating step to offer a second candidate.
   // A gate opt inserts an approval-gate node reviewing the review artifact,
   // between 'review' and 'verify', for approval-gate.test.ts.
+  const baseWorkflow = opts.workflow ?? WORKFLOW;
   const workflow: WorkflowDefinition = WorkflowDefinitionSchema.parse({
-    ...WORKFLOW,
+    ...baseWorkflow,
     nodes: [
-      ...WORKFLOW.nodes.map((node) =>
+      ...baseWorkflow.nodes.map((node) =>
         opts.fallback && node.id === 'implement' ? { ...node, maxAttempts: 2 } : node,
       ),
     ].flatMap((node) =>
@@ -698,16 +781,17 @@ export function makeHarness(
   });
   const verifierInputs: Array<{ policy?: ProjectPolicy | undefined }> = [];
   const verifier: VerificationService = {
-    verify: (input) => {
+    verify: async (input) => {
       verifierInputs.push(input);
-      return Promise.resolve({
+      if (opts.verification) return opts.verification();
+      return {
         schemaVersion: '1',
         approved: true,
         packageManager: 'npm',
         summary: 'ok',
         commands: [],
         createdAt: new Date().toISOString(),
-      } satisfies VerificationReport);
+      } satisfies VerificationReport;
     },
   };
   const workflows: WorkflowRepository = {
@@ -720,14 +804,22 @@ export function makeHarness(
     version: () => Promise.resolve(stores.harnessVersion.value),
   };
   const router: ModelRouter = {
-    route: (profile) =>
-      Promise.resolve(
+    route: (profile, explicit) => {
+      const selected = explicit ? models.find((model) => model.id === explicit.modelId) : models[0];
+      if (!selected) return Promise.reject(new ExecutionError('Override model is not in catalog'));
+      if (
+        explicit &&
+        (selected.provider !== explicit.provider || selected.model !== explicit.model)
+      ) {
+        return Promise.reject(new ExecutionError('Override model catalog tuple changed'));
+      }
+      return Promise.resolve(
         RouteDecisionSchema.parse({
           routeId: 'route-1',
           createdAt: new Date().toISOString(),
           profile,
           selected: {
-            model: MODELS[0],
+            model: selected,
             score: {
               capability: 0.5,
               context: 0.5,
@@ -740,28 +832,31 @@ export function makeHarness(
               total: 3,
             },
           },
-          fallbacks: opts.fallback
-            ? [
-                {
-                  model: MODELS[1]!,
-                  score: {
-                    capability: 0.5,
-                    context: 0.5,
-                    speed: 0.5,
-                    cost: 0.5,
-                    reliability: 0.5,
-                    historical: 0.5,
-                    tagAffinity: 0,
-                    estimatedCostUsd: null,
-                    total: 3,
+          fallbacks:
+            !explicit && opts.fallback
+              ? [
+                  {
+                    model: models[1]!,
+                    score: {
+                      capability: 0.5,
+                      context: 0.5,
+                      speed: 0.5,
+                      cost: 0.5,
+                      reliability: 0.5,
+                      historical: 0.5,
+                      tagAffinity: 0,
+                      estimatedCostUsd: null,
+                      total: 3,
+                    },
                   },
-                },
-              ]
-            : [],
+                ]
+              : [],
+          ...(explicit?.provenance ? { override: explicit.provenance } : {}),
           rejected: [],
         }),
-      ),
-    catalog: () => Promise.resolve(MODELS),
+      );
+    },
+    catalog: () => Promise.resolve(models),
   };
   const metricsRecords: Parameters<MetricsRepository['record']>[0][] = [];
   const metrics: MetricsRepository = {
@@ -814,6 +909,7 @@ export function makeHarness(
     stores.clock,
     ids,
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
+    stores.modelOverrides,
   );
   const service = new ProjectService(
     stores.projects,
@@ -832,6 +928,7 @@ export function makeHarness(
     stores.workspaces,
     stores.clock,
     ids,
+    stores.modelOverrides,
   );
   return {
     ...stores,
@@ -857,7 +954,7 @@ export async function seedRun(harness: Harness): Promise<void> {
   await harness.projects.create({
     id: 'project-1',
     name: 'Run controls fixture',
-    workflowId: WORKFLOW.id,
+    workflowId: harness.workflow.id,
     policyId: 'default',
     status: 'queued',
     version: 1,
@@ -868,7 +965,7 @@ export async function seedRun(harness: Harness): Promise<void> {
   await harness.runs.create({
     id: 'run-1',
     projectId: 'project-1',
-    workflowId: WORKFLOW.id,
+    workflowId: harness.workflow.id,
     status: 'queued',
     version: 1,
     createdAt: now,

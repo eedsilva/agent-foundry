@@ -9,3 +9,4 @@ export * from './workflow-repository.js';
 export * from './workspace-manager.js';
 export * from './run-repositories.js';
 export * from './approval-repositories.js';
+export * from './model-override-repository.js';

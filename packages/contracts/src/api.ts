@@ -5,7 +5,11 @@ import {
   ProjectEventSchema,
   ExecutorHealthSchema,
 } from './project.js';
-import { ModelDefinitionSchema } from './model.js';
+import {
+  ModelDefinitionSchema,
+  ModelOverrideRecordSchema,
+  ModelOverrideScopeSchema,
+} from './model.js';
 import { ActorRefSchema, PathSegmentSchema, ProviderSchema } from './primitives.js';
 import { ApprovalActionSchema } from './workflow.js';
 import {
@@ -56,12 +60,35 @@ export const RetryStepRequestSchema = z.object({
   mode: z.enum(['preserve', 'invalidate']),
   override: z
     .object({
+      modelId: PathSegmentSchema,
       provider: ProviderSchema.exclude(['mock']),
-      model: z.string(),
+      model: z.string().trim().min(1),
+      actor: ActorRefSchema,
+      reason: z.string().trim().min(1),
+      estimatedImpact: z.string().trim().min(1),
     })
+    .strict()
     .optional(),
 });
 export type RetryStepRequest = z.infer<typeof RetryStepRequestSchema>;
+
+export const CreateModelOverrideRequestSchema = z
+  .object({
+    scope: ModelOverrideScopeSchema,
+    modelId: PathSegmentSchema,
+    provider: ProviderSchema.exclude(['mock']),
+    model: z.string().trim().min(1),
+    actor: ActorRefSchema,
+    reason: z.string().trim().min(1),
+    estimatedImpact: z.string().trim().min(1),
+  })
+  .strict();
+export type CreateModelOverrideRequest = z.infer<typeof CreateModelOverrideRequestSchema>;
+
+export const CreateModelOverrideResponseSchema = z
+  .object({ override: ModelOverrideRecordSchema })
+  .strict();
+export type CreateModelOverrideResponse = z.infer<typeof CreateModelOverrideResponseSchema>;
 
 export const RetryPlanResponseSchema = z.object({
   target: StepRunSchema,

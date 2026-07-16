@@ -8,6 +8,7 @@ import type {
   ExecutorHealth,
   ModelDefinition,
   ModelMetric,
+  ModelOverrideRecord,
   PreviewHealth,
   PreviewSession,
   Project,
@@ -15,6 +16,7 @@ import type {
   ProjectEvent,
   QueueJob,
   RouteDecision,
+  RouteOverrideProvenance,
   StoredArtifact,
   StepAttempt,
   StepRun,
@@ -51,6 +53,12 @@ export interface StepAttemptRepository {
   get(runId: string, stepRunId: string, attemptId: string): Promise<StepAttempt | null>;
   list(runId: string, stepRunId: string): Promise<StepAttempt[]>;
   update(attempt: StepAttempt, expectedVersion: number): Promise<StepAttempt>;
+}
+
+/** Create-only audited model pins, ordered newest first. */
+export interface ModelOverrideRepository {
+  create(override: Omit<ModelOverrideRecord, 'sequence'>): Promise<ModelOverrideRecord>;
+  list(runId: string): Promise<ModelOverrideRecord[]>;
 }
 
 /** Create-only: neither ApprovalRequest nor ApprovalDecision is ever updated. */
@@ -136,8 +144,15 @@ export interface HarnessRepository {
   version(): Promise<string>;
 }
 
+export interface ExplicitModelRoute {
+  modelId: string;
+  provider: ModelDefinition['provider'];
+  model: string;
+  provenance?: RouteOverrideProvenance;
+}
+
 export interface ModelRouter {
-  route(profile: TaskProfile): Promise<RouteDecision>;
+  route(profile: TaskProfile, explicit?: ExplicitModelRoute): Promise<RouteDecision>;
   catalog(): Promise<ModelDefinition[]>;
 }
 
@@ -215,6 +230,12 @@ export interface WorkspaceManager {
   ensureGit(projectId: string): Promise<void>;
   checkpoint(projectId: string, label: string): Promise<string>;
   rollback(projectId: string, ref: string): Promise<void>;
+  preserveDraft(
+    projectId: string,
+    runId: string,
+    verifiedCheckpoint: string,
+  ): Promise<{ draftBranch: string; draftCommit: string; created: boolean }>;
+  discardDraft(projectId: string, runId: string, expectedCommit: string): Promise<void>;
   commit(projectId: string, message: string): Promise<string | null>;
   head(projectId: string): Promise<string | null>;
 }
