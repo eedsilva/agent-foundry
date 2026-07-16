@@ -2,6 +2,8 @@ import type {
   ApprovalAction,
   ApprovalDecision,
   ApprovalRequest,
+  ActorRef,
+  ArtifactReference,
   CreateProjectRequest,
   Project,
   ProjectDetailResponse,
@@ -10,6 +12,7 @@ import type {
   RetryPlanResponse,
   RetryStepRequest,
   RunDetailResponse,
+  RunAuditExport,
   RunRetryDirective,
   StepRun,
   WorkflowDefinition,
@@ -41,6 +44,7 @@ import {
   ValidationError,
   VersionConflictError,
   transitionWorkflowRun,
+  redactUnknown,
 } from '@agent-foundry/domain';
 import { policyHash, workflowHash } from './idempotency.js';
 
@@ -371,6 +375,49 @@ export class ProjectService {
     );
   }
 
+  async exportRunAudit(runId: string): Promise<RunAuditExport> {
+    const run = await this.requireRun(runId);
+    const requests = await this.approvalRequests.list(runId);
+    const entries: RunAuditExport['entries'] = requests.map((request) => ({
+      kind: 'approval-request',
+      id: request.id,
+      timestamp: request.createdAt,
+      request,
+    }));
+    for (const request of requests) {
+      const decision = await this.approvalDecisions.get(runId, request.id);
+      if (decision) {
+        entries.push({
+          kind: 'approval-decision',
+          id: decision.id,
+          timestamp: decision.decidedAt,
+          decision,
+        });
+      }
+    }
+    for (const metadata of await this.artifacts.listMetadata(run.projectId)) {
+      if (metadata.kind !== 'feedback' || metadata.runId !== runId) continue;
+      const artifact = await this.artifacts.getRevision(
+        run.projectId,
+        metadata.name,
+        metadata.revision,
+      );
+      if (artifact) {
+        entries.push({
+          kind: 'feedback',
+          id: `${metadata.name}-${metadata.revision}`,
+          timestamp: metadata.createdAt,
+          artifact,
+        });
+      }
+    }
+    entries.sort(
+      (left, right) =>
+        left.timestamp.localeCompare(right.timestamp) || left.id.localeCompare(right.id),
+    );
+    return { schemaVersion: '1', runId, entries };
+  }
+
   /**
    * Records a human decision and, in every case, requeues the run — the
    * orchestrator's next replay interprets what the decision means for
@@ -382,7 +429,12 @@ export class ProjectService {
   async decideApproval(
     runId: string,
     requestId: string,
-    input: { action: ApprovalAction; decidedBy: string; note?: string | undefined },
+    input: {
+      action: ApprovalAction;
+      actor?: ActorRef | undefined;
+      decidedBy?: string | undefined;
+      note?: string | undefined;
+    },
   ): Promise<{ run: WorkflowRun; decision: ApprovalDecision }> {
     const run = await this.requireRun(runId);
     const request = await this.approvalRequests.get(runId, requestId);
@@ -413,14 +465,16 @@ export class ProjectService {
       if (run.status !== 'awaiting_approval') {
         throw new ValidationError(`Run ${runId} is ${run.status}; no pending approval to decide.`);
       }
+      const actor: ActorRef = input.actor ?? { kind: 'user', id: input.decidedBy! };
       const candidate: ApprovalDecision = {
         id: this.ids.next(),
         requestId,
         runId,
         stepRunId: request.stepRunId,
         action: input.action,
-        decidedBy: input.decidedBy,
-        ...(input.note ? { note: input.note } : {}),
+        decidedBy: input.decidedBy ?? actor.id,
+        actor,
+        ...(input.note ? { note: redactUnknown(input.note) as string } : {}),
         decidedAt: this.clock.now().toISOString(),
       };
       try {
@@ -469,26 +523,45 @@ export class ProjectService {
       }
       const downstream = this.downstreamOf(workflow, allSteps, target);
 
+      let feedbackArtifact: ArtifactReference | undefined;
       if (decision.action === 'request-changes' && node.repairArtifact) {
-        // ponytail: re-running after a crash here writes a second identical
-        // revision (artifact puts aren't keyed for reuse the way steps are);
-        // narrow, accepted crash window per ADR 0011, add a key if it bites.
-        await this.artifacts.put({
-          projectId: run.projectId,
-          name: node.repairArtifact,
-          content: {
-            note: decision.note ?? '',
-            decidedBy: decision.decidedBy,
-            decidedAt: decision.decidedAt,
-          },
-          createdBy: `approval-gate:${node.id}`,
-          runId,
-        });
+        const existing = (
+          await this.artifacts.listMetadata(run.projectId, node.repairArtifact)
+        ).find((metadata) => metadata.sourceDecisionId === decision.id);
+        const stored = existing
+          ? await this.artifacts.getRevision(run.projectId, existing.name, existing.revision)
+          : await this.artifacts.put({
+              projectId: run.projectId,
+              name: node.repairArtifact,
+              content: {
+                schemaVersion: '1',
+                actor: decision.actor ?? { kind: 'user', id: decision.decidedBy },
+                sourceRequestId: request.id,
+                sourceDecisionId: decision.id,
+                runId,
+                stepRunId: request.stepRunId,
+                note: decision.note ?? '',
+                createdAt: decision.decidedAt,
+              },
+              createdBy: `approval-gate:${node.id}`,
+              runId,
+              stepRunId: request.stepRunId,
+              kind: 'feedback',
+              actor: decision.actor ?? { kind: 'user', id: decision.decidedBy },
+              sourceDecisionId: decision.id,
+            });
+        if (!stored) throw new NotFoundError(`Feedback artifact ${node.repairArtifact} not found`);
+        feedbackArtifact = {
+          name: stored.metadata.name,
+          revision: stored.metadata.revision,
+          sha256: stored.metadata.sha256,
+        };
       }
 
       ({ run: updatedRun } = await this.invalidateFromStep(run, target, downstream, {
         mode: 'invalidate',
         reason: `approval-${decision.action}`,
+        ...(feedbackArtifact ? { feedbackArtifact } : {}),
       }));
     } else {
       updatedRun = await this.runs.update(
@@ -570,6 +643,7 @@ export class ProjectService {
     options: {
       mode: RunRetryDirective['mode'];
       override?: RunRetryDirective['override'];
+      feedbackArtifact?: ArtifactReference;
       reason: string;
     },
   ): Promise<{ run: WorkflowRun; invalidatedStepRunIds: string[] }> {
@@ -594,6 +668,7 @@ export class ProjectService {
       mode: options.mode,
       ...(options.override ? { override: options.override } : {}),
       ...(checkpoint ? { checkpoint } : {}),
+      ...(options.feedbackArtifact ? { feedbackArtifact: options.feedbackArtifact } : {}),
       requestedAt: now,
     };
     const updated = await this.runs.update(

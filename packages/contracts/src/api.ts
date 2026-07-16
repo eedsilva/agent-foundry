@@ -6,7 +6,7 @@ import {
   ExecutorHealthSchema,
 } from './project.js';
 import { ModelDefinitionSchema } from './model.js';
-import { PathSegmentSchema, ProviderSchema } from './primitives.js';
+import { ActorRefSchema, PathSegmentSchema, ProviderSchema } from './primitives.js';
 import { ApprovalActionSchema } from './workflow.js';
 import {
   ApprovalDecisionSchema,
@@ -87,8 +87,13 @@ export type ResumeBlockedResponse = z.infer<typeof ResumeBlockedResponseSchema>;
 export const DecideApprovalRequestSchema = z
   .object({
     action: ApprovalActionSchema,
-    decidedBy: z.string().trim().min(1),
+    decidedBy: z.string().trim().min(1).optional(),
+    actor: ActorRefSchema.optional(),
     note: z.string().trim().min(1).optional(),
+  })
+  .refine((input) => Boolean(input.actor || input.decidedBy), {
+    message: 'actor or decidedBy is required',
+    path: ['actor'],
   })
   .refine((input) => input.action !== 'request-changes' || Boolean(input.note), {
     message: "note is required when action is 'request-changes'",
@@ -118,6 +123,42 @@ export const ApprovalListResponseSchema = z.object({
   ),
 });
 export type ApprovalListResponse = z.infer<typeof ApprovalListResponseSchema>;
+
+const RunAuditEntrySchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('approval-request'),
+      id: PathSegmentSchema,
+      timestamp: z.string().datetime(),
+      request: ApprovalRequestSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('approval-decision'),
+      id: PathSegmentSchema,
+      timestamp: z.string().datetime(),
+      decision: ApprovalDecisionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('feedback'),
+      id: z.string().min(1),
+      timestamp: z.string().datetime(),
+      artifact: StoredArtifactSchema,
+    })
+    .strict(),
+]);
+
+export const RunAuditExportSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    runId: PathSegmentSchema,
+    entries: z.array(RunAuditEntrySchema),
+  })
+  .strict();
+export type RunAuditExport = z.infer<typeof RunAuditExportSchema>;
 
 export const RuntimeInfoResponseSchema = z.object({
   executorMode: z.enum(['real', 'mock']),

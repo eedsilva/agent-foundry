@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { PathSegmentSchema, ProjectStatusSchema, ProviderSchema } from './primitives.js';
+import {
+  ActorRefSchema,
+  PathSegmentSchema,
+  ProjectStatusSchema,
+  ProviderSchema,
+} from './primitives.js';
 import { RouteDecisionSchema } from './model.js';
 
 export const ProjectSchema = z.object({
@@ -27,6 +32,9 @@ export const ArtifactMetadataSchema = z.object({
   runId: PathSegmentSchema.optional(),
   stepRunId: PathSegmentSchema.optional(),
   attemptId: PathSegmentSchema.optional(),
+  kind: z.literal('feedback').optional(),
+  actor: ActorRefSchema.optional(),
+  sourceDecisionId: PathSegmentSchema.optional(),
   routeDecision: RouteDecisionSchema.optional(),
   idempotencyKey: z
     .string()
@@ -41,6 +49,20 @@ export const StoredArtifactSchema = z.object({
   content: z.unknown(),
 });
 export type StoredArtifact = z.infer<typeof StoredArtifactSchema>;
+
+export const FeedbackArtifactSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    actor: ActorRefSchema,
+    sourceRequestId: PathSegmentSchema,
+    sourceDecisionId: PathSegmentSchema,
+    runId: PathSegmentSchema,
+    stepRunId: PathSegmentSchema,
+    note: z.string(),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+export type FeedbackArtifact = z.infer<typeof FeedbackArtifactSchema>;
 
 export const ProjectEventSchema = z.object({
   id: PathSegmentSchema,

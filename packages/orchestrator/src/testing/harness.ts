@@ -349,14 +349,7 @@ export class InMemoryArtifacts implements ArtifactStore {
   readonly artifacts: StoredArtifact[] = [];
   onAfterPut?: ((name: string) => void) | undefined;
   constructor(private readonly power: PowerSwitch) {}
-  put(input: {
-    projectId: string;
-    name: string;
-    content: unknown;
-    contentType?: string;
-    createdBy: string;
-    idempotencyKey?: string;
-  }): Promise<StoredArtifact> {
+  put(input: Parameters<ArtifactStore['put']>[0]): Promise<StoredArtifact> {
     checkPower(this.power);
     const revision = this.named(input.name).length + 1;
     const metadata: ArtifactMetadata = {
@@ -367,6 +360,12 @@ export class InMemoryArtifacts implements ArtifactStore {
       createdAt: new Date().toISOString(),
       createdBy: input.createdBy,
       ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+      ...(input.runId ? { runId: input.runId } : {}),
+      ...(input.stepRunId ? { stepRunId: input.stepRunId } : {}),
+      ...(input.attemptId ? { attemptId: input.attemptId } : {}),
+      ...(input.kind ? { kind: input.kind } : {}),
+      ...(input.actor ? { actor: input.actor } : {}),
+      ...(input.sourceDecisionId ? { sourceDecisionId: input.sourceDecisionId } : {}),
       sha256: createHash('sha256').update(JSON.stringify(input.content)).digest('hex'),
     };
     const stored: StoredArtifact = { metadata, content: input.content };

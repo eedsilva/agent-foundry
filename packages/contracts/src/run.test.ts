@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ArtifactMetadataSchema, ProjectSchema, QueueJobSchema } from './project.js';
+import {
+  ArtifactMetadataSchema,
+  FeedbackArtifactSchema,
+  ProjectSchema,
+  QueueJobSchema,
+} from './project.js';
+import { ActorRefSchema } from './primitives.js';
 import {
   ApprovalDecisionSchema,
   ApprovalRequestSchema,
@@ -12,6 +18,16 @@ import * as contracts from './index.js';
 const exported = contracts as Record<string, unknown>;
 
 describe('persisted run contracts', () => {
+  it('parses all supported actor identities', () => {
+    for (const kind of ['user', 'system', 'worker', 'provider'] as const) {
+      expect(ActorRefSchema.parse({ kind, id: `${kind}-1`, displayName: kind })).toEqual({
+        kind,
+        id: `${kind}-1`,
+        displayName: kind,
+      });
+    }
+  });
+
   it('exports schemas for workflow runs, step runs, and attempts', () => {
     expect(exported.WorkflowRunSchema).toBeDefined();
     expect(exported.StepRunSchema).toBeDefined();
@@ -237,5 +253,45 @@ describe('persisted run contracts', () => {
       decidedAt: timestamp,
     });
     expect(decision.action).toBe('approve');
+
+    const actorDecision = ApprovalDecisionSchema.parse({
+      ...decision,
+      actor: { kind: 'user', id: 'ed', displayName: 'Ed' },
+    });
+    expect(actorDecision.actor?.id).toBe('ed');
+  });
+
+  it('parses typed feedback artifacts and metadata without breaking legacy metadata', () => {
+    const timestamp = '2026-07-14T12:00:00.000Z';
+    const actor = { kind: 'user' as const, id: 'ed' };
+    expect(
+      FeedbackArtifactSchema.parse({
+        schemaVersion: '1',
+        actor,
+        sourceRequestId: 'approval-1',
+        sourceDecisionId: 'decision-1',
+        runId: 'run-1',
+        stepRunId: 'step-run-1',
+        note: 'please add tests',
+        createdAt: timestamp,
+      }).note,
+    ).toBe('please add tests');
+
+    expect(
+      ArtifactMetadataSchema.parse({
+        projectId: 'project-1',
+        name: 'repair-notes',
+        revision: 1,
+        contentType: 'application/json',
+        createdAt: timestamp,
+        createdBy: 'approval-gate:gate',
+        runId: 'run-1',
+        stepRunId: 'step-run-1',
+        kind: 'feedback',
+        actor,
+        sourceDecisionId: 'decision-1',
+        sha256: 'a'.repeat(64),
+      }),
+    ).toMatchObject({ kind: 'feedback', actor, sourceDecisionId: 'decision-1' });
   });
 });

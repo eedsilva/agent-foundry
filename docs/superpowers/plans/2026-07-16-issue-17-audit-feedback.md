@@ -22,6 +22,7 @@
 ### Task 1: Actor-aware persisted feedback and audit export
 
 **Files:**
+
 - Modify: `packages/contracts/src/primitives.ts`, `packages/contracts/src/run.ts`, `packages/contracts/src/project.ts`, `packages/contracts/src/api.ts`, `packages/contracts/src/index.ts`
 - Modify: `packages/domain/src/redaction.ts`, `packages/domain/src/ports.ts`
 - Modify: `packages/persistence/src/artifact-store.ts`
@@ -31,6 +32,7 @@
 - Document: `docs/adr/0015-actor-feedback-audit.md`, `docs/OPERATIONS.md`, `docs/VALIDATION.md`
 
 **Interfaces:**
+
 - Produce `ActorRefSchema` and `ActorRef` with `kind`, `id`, and optional `displayName`.
 - Produce `FeedbackArtifactSchema` with schema version, actor, approval origin, run/step relationship, redacted note, and creation time.
 - Extend artifact metadata/input with optional `kind: 'feedback'`, `actor`, and `sourceDecisionId`.

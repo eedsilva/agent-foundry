@@ -76,6 +76,9 @@ export interface ArtifactStore {
     runId?: string;
     stepRunId?: string;
     attemptId?: string;
+    kind?: 'feedback';
+    actor?: import('@agent-foundry/contracts').ActorRef;
+    sourceDecisionId?: string;
     routeDecision?: RouteDecision;
     idempotencyKey?: string;
   }): Promise<StoredArtifact>;

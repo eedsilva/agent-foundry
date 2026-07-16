@@ -625,8 +625,27 @@ export class WorkflowOrchestrator {
       throw await this.policyChanged(project.id, runId, run.policy, policy, currentHash, nodeId);
     }
 
-    const inputArtifacts =
+    let inputArtifacts =
       step.type === 'agent' ? await this.loadInputArtifacts(project.id, step.inputArtifacts) : [];
+    const directive = run.retry;
+    const isRetryTarget =
+      directive !== undefined &&
+      directive.nodeId === nodeId &&
+      directive.stepId === step.id &&
+      (directive.iteration ?? null) === (iteration ?? null);
+    if (isRetryTarget && directive.feedbackArtifact) {
+      const feedback = await this.artifacts.getRevision(
+        project.id,
+        directive.feedbackArtifact.name,
+        directive.feedbackArtifact.revision,
+      );
+      if (!feedback || feedback.metadata.sha256 !== directive.feedbackArtifact.sha256) {
+        throw new NotFoundError(
+          `Feedback artifact ${directive.feedbackArtifact.name} revision ${directive.feedbackArtifact.revision} not found`,
+        );
+      }
+      inputArtifacts = [...inputArtifacts, feedback];
+    }
     const idempotencyKey = stepIdempotencyKey({
       runId,
       nodeId,
@@ -634,12 +653,6 @@ export class WorkflowOrchestrator {
       iteration,
       inputs: inputArtifacts.map(artifactReference),
     });
-    const directive = run.retry;
-    const isRetryTarget =
-      directive !== undefined &&
-      directive.nodeId === nodeId &&
-      directive.stepId === step.id &&
-      (directive.iteration ?? null) === (iteration ?? null);
 
     if (!isRetryTarget) {
       const reused = await this.reuseCompletedStep({

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectEvent } from '@agent-foundry/contracts';
-import { redactEvent, redactString } from './redaction.js';
+import { redactEvent, redactString, redactUnknown } from './redaction.js';
 
 function event(overrides: Partial<ProjectEvent>): ProjectEvent {
   return {
@@ -117,5 +117,22 @@ describe('redactEvent', () => {
     for (let i = 0; i < 10; i += 1) deep = { nested: deep };
     const redacted = redactEvent(event({ data: { deep } }));
     expect(JSON.stringify(redacted.data)).not.toContain('sk-abc123def456ghi789jkl');
+  });
+});
+
+describe('redactUnknown', () => {
+  it('redacts nested secret keys and raw authorization, token, and cookie strings', () => {
+    const redacted = redactUnknown({
+      nested: { clientSecret: 'keep-me-secret', safe: 'preserve me' },
+      headers: [
+        'Authorization: Basic abc123',
+        'token=plain-token-value',
+        'Cookie: session=plain-cookie-value',
+      ],
+    });
+    expect(redacted).toEqual({
+      nested: { clientSecret: '[REDACTED]', safe: 'preserve me' },
+      headers: ['Authorization: [REDACTED]', 'token=[REDACTED]', 'Cookie: [REDACTED]'],
+    });
   });
 });

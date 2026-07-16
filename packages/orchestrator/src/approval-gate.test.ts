@@ -118,18 +118,49 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     const [entry] = await harness.service.listApprovals('run-1');
     const { request } = entry!;
 
-    await harness.service.decideApproval('run-1', request.id, {
+    const decided = await harness.service.decideApproval('run-1', request.id, {
       action: 'request-changes',
+      actor: { kind: 'user', id: 'ed', displayName: 'Ed' },
+      note: 'please add tests; Authorization: Bearer abcdef1234567890ABCDEF',
+    });
+    expect(decided.decision).toMatchObject({
       decidedBy: 'ed',
-      note: 'please add tests',
+      actor: { kind: 'user', id: 'ed', displayName: 'Ed' },
+      note: 'please add tests; Authorization: [REDACTED]',
+    });
+    const retry = (await harness.runs.get('run-1'))?.retry;
+    expect(retry?.feedbackArtifact).toMatchObject({
+      name: 'repair-notes',
+      revision: 1,
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
     expect(harness.artifacts.named('repair-notes')).toHaveLength(1);
-    expect(harness.artifacts.named('repair-notes')[0]?.content).toMatchObject({
-      note: 'please add tests',
-      decidedBy: 'ed',
+    const feedback = harness.artifacts.named('repair-notes')[0]!;
+    expect(feedback.content).toMatchObject({
+      schemaVersion: '1',
+      note: 'please add tests; Authorization: [REDACTED]',
+      actor: { kind: 'user', id: 'ed' },
+      sourceRequestId: request.id,
+      sourceDecisionId: decided.decision.id,
+      runId: 'run-1',
+      stepRunId: request.stepRunId,
     });
+    expect(feedback.metadata).toMatchObject({
+      kind: 'feedback',
+      actor: { kind: 'user', id: 'ed' },
+      sourceDecisionId: decided.decision.id,
+    });
+    const activeImplement = harness.stepRuns
+      .byStepId('run-1', 'implement')
+      .find((step) => !step.invalidatedAt)!;
+    const [repairAttempt] = await harness.stepAttempts.list('run-1', activeImplement.id);
+    expect(repairAttempt?.inputArtifacts).toContainEqual(retry?.feedbackArtifact);
+    const runRecord = harness.artifacts.named(`run-${repairAttempt!.id}`)[0]!;
+    expect((runRecord.content as { requestMarkdown: string }).requestMarkdown).toContain(
+      `SHA-256: ${retry!.feedbackArtifact!.sha256}`,
+    );
     expect(harness.executor.started('implement')).toBe(2);
     const approvals = await harness.service.listApprovals('run-1');
     expect(approvals).toHaveLength(2);

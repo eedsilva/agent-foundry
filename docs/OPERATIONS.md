@@ -133,6 +133,21 @@ Métricas úteis:
 - defeitos descobertos após aprovação;
 - intervenção humana por entrega.
 
+### Feedback humano e export de auditoria
+
+Novas decisões aceitam um `ActorRef`; clientes antigos que enviam somente `decidedBy` continuam
+funcionando e são normalizados para um ator `user`. Em `request-changes`, o comentário é redigido
+antes da persistência e a revisão exata do feedback (`name`, `revision`, `sha256`) acompanha o
+retry e o prompt de reparo.
+
+Use `GET /runs/:runId/audit` para exportar a sequência determinística de pedidos, decisões e
+feedback. Para reproduzir um reparo, confira a referência `feedbackArtifact` do run/attempt e leia
+a revisão correspondente no artifact store; não use automaticamente a revisão mais recente.
+
+Não há backfill: decisões antigas sem `actor` continuam legíveis. Em rollback, preserve
+`DATA_DIR`, pare workers antes de trocar a versão e trate os novos campos opcionais como dados que
+o binário antigo ignora. Detalhes no ADR 0015.
+
 ## Atualização de CLIs
 
 CLIs mudam flags e formatos. Faça upgrade deliberado:

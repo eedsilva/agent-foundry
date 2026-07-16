@@ -218,6 +218,11 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     return { approvals: await runtime.projectService.listApprovals(runId) };
   });
 
+  app.get('/runs/:runId/audit', async (request) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    return runtime.projectService.exportRunAudit(runId);
+  });
+
   app.post('/runs/:runId/approvals/:requestId/decide', async (request, reply) => {
     const { runId, requestId } = z
       .object({ runId: PathSegmentSchema, requestId: PathSegmentSchema })

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { RouteDecisionSchema } from './model.js';
 import { PolicyRecordSchema } from './policy.js';
-import { PathSegmentSchema, ProviderSchema } from './primitives.js';
+import { ActorRefSchema, PathSegmentSchema, ProviderSchema } from './primitives.js';
 import { ApprovalActionSchema, ApprovalTimeoutPolicySchema } from './workflow.js';
 
 export const EntityVersionSchema = z.number().int().positive();
@@ -95,6 +95,7 @@ export const RunRetryDirectiveSchema = z
       .strict()
       .optional(),
     checkpoint: z.string().min(1).optional(),
+    feedbackArtifact: ArtifactReferenceSchema.optional(),
     requestedAt: z.string().datetime(),
   })
   .strict();
@@ -217,6 +218,7 @@ export const ApprovalDecisionSchema = z
     stepRunId: PathSegmentSchema,
     action: ApprovalActionSchema,
     decidedBy: z.string().min(1),
+    actor: ActorRefSchema.optional(),
     note: z.string().optional(),
     decidedAt: z.string().datetime(),
   })

@@ -254,3 +254,19 @@ to the two affected `approval-gate.test.ts` cases.
   production build.
 - `/ponytail:ponytail-review` flagged one finding (a hand-rolled `VerificationReport` duck-type
   check reinventing the already-exported `VerificationReportSchema`); applied before opening the PR.
+
+## Actor-aware feedback audit — 2026-07-16
+
+Issue #17 adds typed actor identity, redacted persisted feedback, exact retry/prompt provenance,
+filesystem reconstruction, and a deterministic run audit export (ADR 0015).
+
+Focused TDD evidence:
+
+- Contract/redaction RED failed because `ActorRefSchema`, `FeedbackArtifactSchema`,
+  `RunAuditExportSchema`, typed approval actors, and `redactUnknown` did not exist; GREEN passed 3
+  files / 26 tests.
+- Persistence/orchestrator/API RED failed on missing feedback metadata, retry linkage, prompt hash,
+  typed actor normalization, and audit route; GREEN passed 4 files / 16 tests.
+- `npm run typecheck` passed after the focused suites.
+
+The final validation commands are `npm run check`, `npm run doctor`, and `git diff --check`.

@@ -291,7 +291,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     try {
       const outcome = await decideApproval(run.id, decideTarget.request.id, {
         action: decideTarget.action,
-        decidedBy: trimmedName,
+        actor: { kind: 'user', id: trimmedName, displayName: trimmedName },
         ...(decideNote.trim() ? { note: decideNote.trim() } : {}),
       });
       if (outcome.conflict) {

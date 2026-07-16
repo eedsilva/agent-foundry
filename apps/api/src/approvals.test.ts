@@ -226,8 +226,8 @@ describe('approval review API (#14)', () => {
 
     const response = await decide(baseUrl, runId, entry!.request.id, {
       action: 'request-changes',
-      decidedBy: 'ed',
-      note: 'tighten the boundaries',
+      actor: { kind: 'user', id: 'ed', displayName: 'Ed' },
+      note: 'tighten the boundaries; token=plain-token-value',
     });
     expect(response.status).toBe(202);
 
@@ -242,8 +242,33 @@ describe('approval review API (#14)', () => {
       `${baseUrl}/projects/${projectId}/artifacts/architecture.repair-notes`,
     );
     expect(artifactResponse.status).toBe(200);
-    const { content } = (await artifactResponse.json()) as { content: { note: string } };
-    expect(content).toMatchObject({ note: 'tighten the boundaries', decidedBy: 'ed' });
+    const { content, metadata } = (await artifactResponse.json()) as {
+      content: { note: string };
+      metadata: { kind: string; actor: { id: string }; sourceDecisionId: string };
+    };
+    expect(content).toMatchObject({
+      note: 'tighten the boundaries; token=[REDACTED]',
+      actor: { kind: 'user', id: 'ed', displayName: 'Ed' },
+    });
+    expect(metadata).toMatchObject({ kind: 'feedback', actor: { id: 'ed' } });
+
+    const auditResponse = await fetch(`${baseUrl}/runs/${runId}/audit`);
+    expect(auditResponse.status).toBe(200);
+    const audit = (await auditResponse.json()) as {
+      entries: Array<{ kind: string; id: string; timestamp: string }>;
+    };
+    expect(audit.entries.map((item) => item.kind)).toEqual([
+      'approval-request',
+      'approval-decision',
+      'feedback',
+      'approval-request',
+    ]);
+    expect(
+      [...audit.entries].sort(
+        (left, right) =>
+          left.timestamp.localeCompare(right.timestamp) || left.id.localeCompare(right.id),
+      ),
+    ).toEqual(audit.entries);
   });
 
   it('returns 409 with the settled decision when two differing decisions race', async () => {
