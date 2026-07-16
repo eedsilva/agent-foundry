@@ -25,6 +25,7 @@ import type {
   IdGenerator,
   JobQueue,
   ModelRouter,
+  PolicyRepository,
   ProjectRepository,
   ResumeDiagnostic,
   StepAttemptRepository,
@@ -41,7 +42,7 @@ import {
   VersionConflictError,
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
-import { workflowHash } from './idempotency.js';
+import { policyHash, workflowHash } from './idempotency.js';
 
 export class ProjectService {
   constructor(
@@ -55,6 +56,7 @@ export class ProjectService {
     private readonly events: EventStore,
     private readonly queue: JobQueue,
     private readonly workflows: WorkflowRepository,
+    private readonly policies: PolicyRepository,
     private readonly harness: HarnessRepository,
     private readonly router: ModelRouter,
     private readonly workspaces: WorkspaceManager,
@@ -64,6 +66,8 @@ export class ProjectService {
 
   async create(input: CreateProjectRequest): Promise<Project> {
     await this.workflows.get(input.workflowId);
+    const policyId = input.policyId ?? 'default';
+    await this.policies.get(policyId);
     const now = this.clock.now().toISOString();
     const projectId = this.ids.next();
     const runId = this.ids.next();
@@ -71,6 +75,7 @@ export class ProjectService {
       id: projectId,
       name: input.name,
       workflowId: input.workflowId,
+      policyId,
       status: 'queued',
       version: 1,
       createdAt: now,
@@ -628,6 +633,18 @@ export class ProjectService {
         expected: snapshot.harnessVersion,
         actual: harnessVersion,
       });
+    }
+    if (run.policy) {
+      const project = await this.requireProject(run.projectId);
+      const policy = await this.policies.get(project.policyId);
+      const actualPolicyHash = policyHash(policy);
+      if (actualPolicyHash !== run.policy.hash) {
+        diagnostics.push({
+          field: 'policyVersion',
+          expected: run.policy.hash,
+          actual: actualPolicyHash,
+        });
+      }
     }
     const head = await this.workspaces.head(run.projectId);
     if ((head ?? 'none') !== (snapshot.workspaceHead ?? 'none')) {

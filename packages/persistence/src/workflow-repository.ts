@@ -1,36 +1,24 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import YAML from 'yaml';
+import { readdir } from 'node:fs/promises';
 import {
   WorkflowDefinitionSchema,
   type ExecutableStep,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import type { WorkflowRepository } from '@agent-foundry/domain';
-import { NotFoundError } from '@agent-foundry/domain';
-import { safeSegment } from './fs-utils.js';
+import { readYamlEntity } from './fs-utils.js';
 
 export class YamlWorkflowRepository implements WorkflowRepository {
   constructor(private readonly workflowsDir: string) {}
 
   async get(workflowId: string): Promise<WorkflowDefinition> {
-    const path = join(this.workflowsDir, `${safeSegment(workflowId)}.yaml`);
-    try {
-      const raw = await readFile(path, 'utf8');
-      const workflow = WorkflowDefinitionSchema.parse(YAML.parse(raw));
-      if (workflow.id !== workflowId) {
-        throw new Error(
-          `Workflow file ${workflowId}.yaml declares id ${workflow.id}; filename and id must match`,
-        );
-      }
-      validateWorkflow(workflow);
-      return workflow;
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        throw new NotFoundError(`Workflow ${workflowId} not found`);
-      }
-      throw error;
-    }
+    const workflow = await readYamlEntity(
+      this.workflowsDir,
+      workflowId,
+      WorkflowDefinitionSchema,
+      'Workflow',
+    );
+    validateWorkflow(workflow);
+    return workflow;
   }
 
   async list(): Promise<WorkflowDefinition[]> {

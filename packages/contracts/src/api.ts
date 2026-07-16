@@ -20,6 +20,7 @@ export const CreateProjectRequestSchema = z.object({
   name: z.string().trim().min(1).max(120),
   prd: z.string().trim().min(50).max(500_000),
   workflowId: PathSegmentSchema.default('web-app-v1'),
+  policyId: PathSegmentSchema.optional(),
 });
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 

@@ -41,6 +41,11 @@ export class QualityGateError extends Error {
   }
 }
 
+/** A hard ProjectPolicy constraint was violated; the run must not proceed. */
+export class PolicyViolationError extends Error {
+  override readonly name = 'PolicyViolationError';
+}
+
 export class InvalidStateTransitionError extends Error {
   override readonly name = 'InvalidStateTransitionError';
 

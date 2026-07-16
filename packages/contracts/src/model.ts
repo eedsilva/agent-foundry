@@ -67,6 +67,14 @@ export const TaskProfileSchema = z.object({
   mutatesWorkspace: z.boolean(),
   priorities: RoutingPrioritiesSchema,
   allowedProviders: z.array(ProviderSchema.exclude(['mock'])).optional(),
+  policy: z
+    .object({
+      id: PathSegmentSchema,
+      version: z.number().int().positive(),
+      allowedProviders: z.array(ProviderSchema.exclude(['mock'])),
+    })
+    .strict()
+    .optional(),
   preferredTags: z.array(z.string()).default([]),
 });
 export type TaskProfile = z.infer<typeof TaskProfileSchema>;

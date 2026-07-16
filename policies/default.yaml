@@ -1,0 +1,4 @@
+schemaVersion: '1'
+id: default
+version: 1
+forbiddenDependencies: []

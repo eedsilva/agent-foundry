@@ -304,6 +304,7 @@ describe('mock runtime', () => {
       id: 'legacy-project',
       name: 'Legacy project',
       workflowId: 'web-app-v1',
+      policyId: 'default',
       status: 'queued',
       version: 1,
       createdAt,

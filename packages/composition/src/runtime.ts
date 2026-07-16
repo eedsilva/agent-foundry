@@ -21,6 +21,7 @@ import {
   FileStepRunRepository,
   FileWorkflowRunRepository,
   FileWorkspaceManager,
+  YamlPolicyRepository,
   YamlWorkflowRepository,
 } from '@agent-foundry/persistence';
 import {
@@ -45,6 +46,7 @@ export interface Runtime {
   queue: FileJobQueue;
   metrics: FileMetricsRepository;
   workflows: YamlWorkflowRepository;
+  policies: YamlPolicyRepository;
   harness: VersionedHarnessRepository;
   workspaces: FileWorkspaceManager;
   router: ScoreBasedModelRouter;
@@ -73,6 +75,7 @@ export async function createRuntime(
   const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
   const metrics = new FileMetricsRepository(config.dataDir);
   const workflows = new YamlWorkflowRepository(config.workflowsDir);
+  const policies = new YamlPolicyRepository(config.policiesDir);
   const harness = new VersionedHarnessRepository(config.harnessDir);
   const workspaces = new FileWorkspaceManager(config.dataDir, {
     gitAuthorName: config.gitAuthorName,
@@ -103,6 +106,7 @@ export async function createRuntime(
     artifacts,
     events,
     workflows,
+    policies,
     harness,
     router,
     metrics,
@@ -124,6 +128,7 @@ export async function createRuntime(
     events,
     queue,
     workflows,
+    policies,
     harness,
     router,
     workspaces,
@@ -152,6 +157,7 @@ export async function createRuntime(
     queue,
     metrics,
     workflows,
+    policies,
     harness,
     workspaces,
     router,

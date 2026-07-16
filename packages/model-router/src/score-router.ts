@@ -63,6 +63,9 @@ export class ScoreBasedModelRouter implements ModelRouter {
   }
 
   private rejectReason(model: ModelDefinition, profile: TaskProfile): string | null {
+    if (profile.policy && !profile.policy.allowedProviders.includes(model.provider)) {
+      return `provider ${model.provider} is forbidden by policy ${profile.policy.id}@v${profile.policy.version}`;
+    }
     if (profile.allowedProviders && !profile.allowedProviders.includes(model.provider)) {
       return `provider ${model.provider} is not allowed`;
     }

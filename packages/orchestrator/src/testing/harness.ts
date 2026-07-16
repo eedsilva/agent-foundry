@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   ModelDefinitionSchema,
+  ProjectPolicySchema,
   RouteDecisionSchema,
   WorkflowDefinitionSchema,
   type AgentExecutionRequest,
@@ -14,6 +15,7 @@ import {
   type ModelDefinition,
   type Project,
   type ProjectEvent,
+  type ProjectPolicy,
   type StepAttempt,
   type StepRun,
   type StoredArtifact,
@@ -23,6 +25,7 @@ import {
 } from '@agent-foundry/contracts';
 import {
   ExecutionError,
+  NotFoundError,
   SystemClock,
   VersionConflictError,
   type AgentExecutor,
@@ -36,6 +39,7 @@ import {
   type JobQueue,
   type MetricsRepository,
   type ModelRouter,
+  type PolicyRepository,
   type ProjectRepository,
   type StepAttemptRepository,
   type StepRunRepository,
@@ -130,6 +134,22 @@ const MODELS: ModelDefinition[] = [
     },
   }),
 ];
+
+export const DEFAULT_POLICY: ProjectPolicy = ProjectPolicySchema.parse({
+  schemaVersion: '1',
+  id: 'default',
+  version: 1,
+});
+
+export class InMemoryPolicies implements PolicyRepository {
+  constructor(public policy: ProjectPolicy) {}
+  get(policyId: string): Promise<ProjectPolicy> {
+    if (policyId !== this.policy.id) {
+      return Promise.reject(new NotFoundError(`Policy ${policyId} not found`));
+    }
+    return Promise.resolve({ ...this.policy });
+  }
+}
 
 export interface PowerSwitch {
   on: boolean;
@@ -635,11 +655,12 @@ export interface GateOptions {
 export function makeHarness(
   behaviors: Record<string, StepBehavior> = {},
   existing?: Stores,
-  opts: { fallback?: boolean; gate?: GateOptions } = {},
+  opts: { fallback?: boolean; gate?: GateOptions; policy?: ProjectPolicy } = {},
 ) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
   const executor = new ControllableExecutor(behaviors, stores.workspaces);
+  const policies = new InMemoryPolicies(opts.policy ?? DEFAULT_POLICY);
   // Fallback recovery needs the mutating step to offer a second candidate.
   // A gate opt inserts an approval-gate node reviewing the review artifact,
   // between 'review' and 'verify', for approval-gate.test.ts.
@@ -665,16 +686,19 @@ export function makeHarness(
         : [node],
     ),
   });
+  const verifierInputs: Array<{ policy?: ProjectPolicy | undefined }> = [];
   const verifier: VerificationService = {
-    verify: () =>
-      Promise.resolve({
+    verify: (input) => {
+      verifierInputs.push(input);
+      return Promise.resolve({
         schemaVersion: '1',
         approved: true,
         packageManager: 'npm',
         summary: 'ok',
         commands: [],
         createdAt: new Date().toISOString(),
-      } satisfies VerificationReport),
+      } satisfies VerificationReport);
+    },
   };
   const workflows: WorkflowRepository = {
     get: () => Promise.resolve(workflow),
@@ -764,6 +788,7 @@ export function makeHarness(
     stores.artifacts,
     stores.events,
     workflows,
+    policies,
     harness,
     router,
     metrics,
@@ -785,13 +810,24 @@ export function makeHarness(
     stores.events,
     queue,
     workflows,
+    policies,
     harness,
     router,
     stores.workspaces,
     stores.clock,
     ids,
   );
-  return { ...stores, ids, executor, orchestrator, service, enqueued, metricsRecords };
+  return {
+    ...stores,
+    ids,
+    executor,
+    orchestrator,
+    service,
+    enqueued,
+    metricsRecords,
+    policies,
+    verifierInputs,
+  };
 }
 
 export type Harness = ReturnType<typeof makeHarness>;
@@ -802,6 +838,7 @@ export async function seedRun(harness: Harness): Promise<void> {
     id: 'project-1',
     name: 'Run controls fixture',
     workflowId: WORKFLOW.id,
+    policyId: 'default',
     status: 'queued',
     version: 1,
     createdAt: now,
