@@ -19,6 +19,7 @@ type PinFields = {
 function pinRequest(models: ModelDefinition[], fields: PinFields) {
   const model = models.find((candidate) => candidate.id === fields.modelId);
   if (!model) throw new Error('Select a model from the runtime catalog.');
+  if (model.enabled === false) throw new Error('The selected catalog model is disabled.');
   if (!model.model.trim()) throw new Error('The catalog entry has no resolved model.');
   const actorId = fields.actorId.trim();
   const reason = fields.reason.trim();

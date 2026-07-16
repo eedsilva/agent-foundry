@@ -87,6 +87,13 @@ describe('model override request helpers', () => {
     ).toThrow('resolved model');
   });
 
+  it('rejects disabled catalog models for persistent and retry pins', () => {
+    const disabled = [{ ...models[0]!, enabled: false }];
+
+    expect(() => modelOverrideRequest(disabled, { kind: 'run' }, audit)).toThrow('disabled');
+    expect(() => retryRequest('preserve', disabled, audit)).toThrow('disabled');
+  });
+
   it('omits an unselected retry pin and shapes a selected retry pin', () => {
     expect(retryRequest('preserve', models)).toEqual({ mode: 'preserve' });
     expect(retryRequest('invalidate', models, audit)).toEqual({
