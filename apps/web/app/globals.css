@@ -37,6 +37,7 @@ a {
 }
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -217,6 +218,7 @@ label {
   margin-top: 18px;
 }
 input,
+select,
 textarea {
   width: 100%;
   color: var(--ink);
@@ -227,6 +229,7 @@ textarea {
   outline: none;
 }
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(217, 255, 82, 0.08);
@@ -450,6 +453,34 @@ textarea {
 }
 .routesPanel {
   margin-top: 20px;
+}
+.modelPinPanel {
+  margin-bottom: 20px;
+}
+.modelPinGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+.modelPinGrid label {
+  margin: 0;
+}
+.compactTextarea {
+  min-height: 84px;
+}
+.executionEvidence {
+  margin-bottom: 24px;
+}
+.executionEvidence dd {
+  overflow-wrap: anywhere;
+}
+.checkLabel {
+  display: flex;
+  align-items: center;
+}
+.checkLabel input {
+  width: auto;
 }
 .routeGrid {
   display: grid;
