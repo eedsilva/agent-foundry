@@ -115,6 +115,7 @@ export const ModelOverrideRecordSchema = z
   .object({
     id: PathSegmentSchema,
     runId: PathSegmentSchema,
+    sequence: z.number().int().positive().default(1),
     scope: ModelOverrideScopeSchema,
     modelId: PathSegmentSchema,
     provider: ProviderSchema.exclude(['mock']),

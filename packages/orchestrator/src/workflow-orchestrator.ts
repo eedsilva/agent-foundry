@@ -13,7 +13,6 @@ import type {
   RunPauseSnapshot,
   RunRetryDirective,
   RouteDecision,
-  RouteOverrideProvenance,
   StepAttempt,
   StepRun,
   StoredArtifact,
@@ -30,6 +29,7 @@ import type {
   Clock,
   EventStore,
   ExecutorRegistry,
+  ExplicitModelRoute,
   HarnessRepository,
   HarnessSelection,
   IdGenerator,
@@ -1264,10 +1264,12 @@ export class WorkflowOrchestrator {
     stepId: string,
     retry?: RunRetryDirective['override'],
     retryCreatedAt?: string,
-  ): Promise<{ modelId: string; provenance?: RouteOverrideProvenance } | undefined> {
+  ): Promise<ExplicitModelRoute | undefined> {
     if (retry) {
       return {
         modelId: retry.modelId,
+        provider: retry.provider,
+        model: retry.model,
         provenance: {
           source: 'retry',
           modelId: retry.modelId,
@@ -1291,6 +1293,8 @@ export class WorkflowOrchestrator {
     if (!match) return undefined;
     return {
       modelId: match.modelId,
+      provider: match.provider,
+      model: match.model,
       provenance: {
         source: match.scope.kind,
         overrideId: match.id,

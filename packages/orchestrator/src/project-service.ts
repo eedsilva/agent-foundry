@@ -100,7 +100,7 @@ export class ProjectService {
     }
     const match = await this.resolveCatalogModel(input.provider, input.model);
     const audit = redactOverrideAudit(input);
-    const override: ModelOverrideRecord = {
+    const override: Omit<ModelOverrideRecord, 'sequence'> = {
       id: this.ids.next(),
       runId,
       scope: input.scope,
@@ -110,8 +110,7 @@ export class ProjectService {
       ...audit,
       createdAt: this.clock.now().toISOString(),
     };
-    await this.modelOverrides.create(override);
-    return override;
+    return this.modelOverrides.create(override);
   }
 
   async create(input: CreateProjectRequest): Promise<Project> {

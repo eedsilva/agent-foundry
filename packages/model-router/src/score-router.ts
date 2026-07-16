@@ -5,12 +5,11 @@ import type {
   ModelMetric,
   RankedModel,
   RouteDecision,
-  RouteOverrideProvenance,
   RouteScoreBreakdown,
   TaskKind,
   TaskProfile,
 } from '@agent-foundry/contracts';
-import type { MetricsRepository, ModelRouter } from '@agent-foundry/domain';
+import type { ExplicitModelRoute, MetricsRepository, ModelRouter } from '@agent-foundry/domain';
 
 export class ScoreBasedModelRouter implements ModelRouter {
   constructor(
@@ -24,12 +23,19 @@ export class ScoreBasedModelRouter implements ModelRouter {
     return [...this.models];
   }
 
-  async route(
-    profile: TaskProfile,
-    explicit?: { modelId: string; provenance?: RouteOverrideProvenance },
-  ): Promise<RouteDecision> {
+  async route(profile: TaskProfile, explicit?: ExplicitModelRoute): Promise<RouteDecision> {
     const rejected: Array<{ modelId: string; reason: string }> = [];
     const ranked: RankedModel[] = [];
+
+    if (explicit) {
+      const current = this.models.find((model) => model.id === explicit.modelId);
+      if (!current) throw new Error(`Override model ${explicit.modelId} is not in the catalog`);
+      if (current.provider !== explicit.provider || current.model !== explicit.model) {
+        throw new Error(
+          `Override model ${explicit.modelId} catalog tuple changed: expected ${explicit.provider}/${explicit.model}, found ${current.provider}/${current.model}`,
+        );
+      }
+    }
 
     for (const model of this.models) {
       if (explicit && model.id !== explicit.modelId) continue;
@@ -50,9 +56,6 @@ export class ScoreBasedModelRouter implements ModelRouter {
 
     const selected = ranked[0];
     if (!selected) {
-      if (explicit && !this.models.some((model) => model.id === explicit.modelId)) {
-        throw new Error(`Override model ${explicit.modelId} is not in the catalog`);
-      }
       throw new Error(
         `No model can satisfy ${profile.taskKind}. Rejections: ${rejected
           .map((item) => `${item.modelId}: ${item.reason}`)

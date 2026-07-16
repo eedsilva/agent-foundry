@@ -57,7 +57,7 @@ export interface StepAttemptRepository {
 
 /** Create-only audited model pins, ordered newest first. */
 export interface ModelOverrideRepository {
-  create(override: ModelOverrideRecord): Promise<void>;
+  create(override: Omit<ModelOverrideRecord, 'sequence'>): Promise<ModelOverrideRecord>;
   list(runId: string): Promise<ModelOverrideRecord[]>;
 }
 
@@ -144,11 +144,15 @@ export interface HarnessRepository {
   version(): Promise<string>;
 }
 
+export interface ExplicitModelRoute {
+  modelId: string;
+  provider: ModelDefinition['provider'];
+  model: string;
+  provenance?: RouteOverrideProvenance;
+}
+
 export interface ModelRouter {
-  route(
-    profile: TaskProfile,
-    explicit?: { modelId: string; provenance?: RouteOverrideProvenance },
-  ): Promise<RouteDecision>;
+  route(profile: TaskProfile, explicit?: ExplicitModelRoute): Promise<RouteDecision>;
   catalog(): Promise<ModelDefinition[]>;
 }
 

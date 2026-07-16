@@ -54,6 +54,10 @@ describe('persisted run contracts', () => {
       kind: 'run',
     });
     expect(
+      ModelOverrideRecordSchema.parse({ ...base, sequence: 7, scope: { kind: 'run' } }).sequence,
+    ).toBe(7);
+    expect(ModelOverrideRecordSchema.parse({ ...base, scope: { kind: 'run' } }).sequence).toBe(1);
+    expect(
       ModelOverrideRecordSchema.parse({
         ...base,
         scope: { kind: 'step', nodeId: 'implementation-gate', stepId: 'repair-code' },

@@ -246,11 +246,32 @@ describe('ScoreBasedModelRouter', () => {
       new MemoryMetrics(),
     );
 
-    const route = await router.route(profile, { modelId: 'pinned', provenance: override });
+    const route = await router.route(profile, {
+      modelId: 'pinned',
+      provider: 'codex',
+      model: 'gpt-5',
+      provenance: override,
+    });
 
     expect(route.selected.model.id).toBe('pinned');
     expect(route.fallbacks).toEqual([]);
     expect(route.override).toEqual(override);
+  });
+
+  it('fails closed when a pinned catalog id now resolves to a different tuple', async () => {
+    const router = new ScoreBasedModelRouter(
+      [model('pinned', { provider: 'codex', model: 'gpt-5.1' })],
+      new MemoryMetrics(),
+    );
+
+    await expect(
+      router.route(profile, {
+        modelId: 'pinned',
+        provider: 'codex',
+        model: 'gpt-5',
+        provenance: override,
+      }),
+    ).rejects.toThrow(/catalog tuple changed.*codex\/gpt-5.*codex\/gpt-5.1/);
   });
 
   it.each([
@@ -278,7 +299,12 @@ describe('ScoreBasedModelRouter', () => {
     } as TaskProfile;
 
     await expect(
-      router.route(constrainedProfile, { modelId: 'pinned', provenance: override }),
+      router.route(constrainedProfile, {
+        modelId: 'pinned',
+        provider: 'codex',
+        model: 'gpt-5',
+        provenance: override,
+      }),
     ).rejects.toThrow(message);
   });
 });

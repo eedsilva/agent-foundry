@@ -233,12 +233,22 @@ export class InMemoryRuns implements WorkflowRunRepository {
 export class InMemoryModelOverrides implements ModelOverrideRepository {
   private readonly store: ModelOverrideRecord[] = [];
 
-  create(override: ModelOverrideRecord): Promise<void> {
+  create(override: Omit<ModelOverrideRecord, 'sequence'>): Promise<ModelOverrideRecord> {
     if (this.store.some((item) => item.id === override.id)) {
       return Promise.reject(new Error(`model-override ${override.id} already exists`));
     }
-    this.store.push(structuredClone(override));
-    return Promise.resolve();
+    const stored = {
+      ...structuredClone(override),
+      sequence:
+        Math.max(
+          0,
+          ...this.store
+            .filter((item) => item.runId === override.runId)
+            .map((item) => item.sequence),
+        ) + 1,
+    };
+    this.store.push(stored);
+    return Promise.resolve(structuredClone(stored));
   }
 
   list(runId: string): Promise<ModelOverrideRecord[]> {
@@ -247,7 +257,9 @@ export class InMemoryModelOverrides implements ModelOverrideRepository {
         .filter((item) => item.runId === runId)
         .sort(
           (left, right) =>
-            right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+            right.sequence - left.sequence ||
+            right.createdAt.localeCompare(left.createdAt) ||
+            right.id.localeCompare(left.id),
         )
         .map((item) => structuredClone(item)),
     );
@@ -751,6 +763,12 @@ export function makeHarness(
     route: (profile, explicit) => {
       const selected = explicit ? MODELS.find((model) => model.id === explicit.modelId) : MODELS[0];
       if (!selected) return Promise.reject(new ExecutionError('Override model is not in catalog'));
+      if (
+        explicit &&
+        (selected.provider !== explicit.provider || selected.model !== explicit.model)
+      ) {
+        return Promise.reject(new ExecutionError('Override model catalog tuple changed'));
+      }
       return Promise.resolve(
         RouteDecisionSchema.parse({
           routeId: 'route-1',
