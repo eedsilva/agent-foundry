@@ -37,7 +37,13 @@ export async function resolvePreviewCommandPlan(
       scripts,
       policy,
     ),
-    dev: resolveScript(packageManager, 'dev', policy?.previewCommands?.dev ?? devDefault, scripts, policy),
+    dev: resolveScript(
+      packageManager,
+      'dev',
+      policy?.previewCommands?.dev ?? devDefault,
+      scripts,
+      policy,
+    ),
     detectedAt: new Date().toISOString(),
   });
 }
@@ -108,12 +114,13 @@ export async function runReproducibleInstall(
       reject: false,
     });
     const exitCode = result.exitCode ?? 1;
+    const versions = exitCode === 0 ? await probeVersions(plan.install.command) : undefined;
     return {
       ok: exitCode === 0,
       exitCode,
       stdout: result.stdout ?? '',
       stderr: result.stderr ?? '',
-      versions: exitCode === 0 ? await probeVersions(plan.install.command) : undefined,
+      ...(versions ? { versions } : {}),
     };
   } catch (error) {
     return {

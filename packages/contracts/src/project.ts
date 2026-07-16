@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { PackageManagerSchema, PathSegmentSchema, ProjectStatusSchema, ProviderSchema } from './primitives.js';
+import {
+  PackageManagerSchema,
+  PathSegmentSchema,
+  ProjectStatusSchema,
+  ProviderSchema,
+} from './primitives.js';
 import { RouteDecisionSchema } from './model.js';
 
 export const ProjectSchema = z.object({
