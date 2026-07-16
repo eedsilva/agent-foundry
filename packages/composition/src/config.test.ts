@@ -35,6 +35,15 @@ describe('runtime exposure policy', () => {
   });
 });
 
+describe('policies directory', () => {
+  it('defaults POLICIES_DIR to <root>/policies and honors overrides', () => {
+    expect(loadRuntimeConfig(base).policiesDir).toBe(resolve(root, 'policies'));
+    expect(loadRuntimeConfig({ ...base, POLICIES_DIR: 'custom/policies' }).policiesDir).toBe(
+      resolve(root, 'custom/policies'),
+    );
+  });
+});
+
 describe('isLoopbackHost', () => {
   it.each(['localhost', 'LOCALHOST', '127.0.0.1', '127.9.8.7', '::1', '[::1]'])(
     'accepts %s',

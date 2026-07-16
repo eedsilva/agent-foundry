@@ -16,6 +16,7 @@ const ConfigSchema = z.object({
   DATA_DIR: z.string().default('.data'),
   HARNESS_DIR: z.string().default('harness'),
   WORKFLOWS_DIR: z.string().default('workflows'),
+  POLICIES_DIR: z.string().default('policies'),
   MODEL_CATALOG_PATH: z.string().default('models/catalog.yaml'),
   EXECUTOR_MODE: z.enum(['real', 'mock']).default('mock'),
   RUN_WORKER_INLINE: booleanFromEnv,
@@ -43,6 +44,7 @@ export interface RuntimeConfig {
   dataDir: string;
   harnessDir: string;
   workflowsDir: string;
+  policiesDir: string;
   modelCatalogPath: string;
   executorMode: 'real' | 'mock';
   runWorkerInline: boolean;
@@ -88,6 +90,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     dataDir: resolve(rootDir, parsed.DATA_DIR),
     harnessDir: resolve(rootDir, parsed.HARNESS_DIR),
     workflowsDir: resolve(rootDir, parsed.WORKFLOWS_DIR),
+    policiesDir: resolve(rootDir, parsed.POLICIES_DIR),
     modelCatalogPath: resolve(rootDir, parsed.MODEL_CATALOG_PATH),
     executorMode: parsed.EXECUTOR_MODE,
     runWorkerInline: parsed.RUN_WORKER_INLINE,
