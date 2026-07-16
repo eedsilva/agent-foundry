@@ -103,7 +103,7 @@ export async function createRuntime(
     timeoutMs: config.verificationTimeoutMs,
     maxOutputBytes: config.maxCliOutputBytes,
   });
-  const previewRunner = new NodePreviewRunner();
+  const previewRunner = new NodePreviewRunner({ maxOutputBytes: config.maxCliOutputBytes });
   const previewService = new PreviewService(previewRunner, clock, ids, {
     previewBaseUrl: `http://${config.apiHost}:${config.apiPort}/preview`,
     ttlSeconds: config.previewTtlSeconds,

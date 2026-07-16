@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { connect } from 'node:net';
+import { connect, createServer } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PreviewSessionSchema, type PreviewSession } from '@agent-foundry/contracts';
 import { NodePreviewRunner } from './node-preview-runner.js';
@@ -137,6 +137,38 @@ describe('NodePreviewRunner', () => {
   // deterministically exercise the same code path (spawn() retries once on
   // immediate crash, then fails) instead of relying on a racy real port
   // conflict.
+  it('binds the dev server to the port returned by the injected reservePort seam', async () => {
+    // Reserve a real free port the same bind-then-release way preview-port.test.ts
+    // does, then inject it so we can prove the runner uses exactly that port end
+    // to end (not just that the injection seam exists).
+    const freePort = await new Promise<number>((resolvePromise, reject) => {
+      const probe = createServer();
+      probe.once('error', reject);
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address();
+        const port = typeof address === 'object' && address ? address.port : 0;
+        probe.close(() => resolvePromise(port));
+      });
+    });
+    const runner = new NodePreviewRunner({
+      startupTimeoutMs: 5_000,
+      reservePort: async () => freePort,
+    });
+    let session = await newSession('sess-reserve');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
+      },
+    };
+    session = await runner.start(session);
+    expect(session.status).toBe('starting');
+    expect(session.process?.port).toBe(freePort);
+    await runner.stop(session);
+  }, 15_000);
+
   it('fails after two immediate crashes instead of hanging', async () => {
     const runner = new NodePreviewRunner({ startupTimeoutMs: 3_000 });
     let session = await newSession('sess-d');

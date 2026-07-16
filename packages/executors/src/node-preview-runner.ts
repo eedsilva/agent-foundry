@@ -16,8 +16,7 @@ import { detectPortFromOutput, reservePreviewPort } from './preview-port.js';
 export interface NodePreviewRunnerOptions {
   reservePort?: () => Promise<number>;
   startupTimeoutMs?: number;
-  installTimeoutMs?: number;
-  logBufferLines?: number;
+  maxOutputBytes?: number;
   clock?: Clock;
 }
 
@@ -39,11 +38,14 @@ interface ProcessEntry {
   exited: boolean;
 }
 
-const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
+// Keeps the combined worst case (this spawn-confirm poll + PreviewService's own
+// health poll, each ~5s) near the documented ~10s startup window instead of
+// doubling it when a dev server hangs without ever crashing.
+const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
 const DEFAULT_INSTALL_TIMEOUT_MS = 120_000;
 const DEFAULT_LOG_BUFFER_LINES = 500;
 const POLL_INTERVAL_MS = 100;
-const MAX_INSTALL_OUTPUT_BYTES = 5_000_000;
+const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
 
 /**
  * Mechanism-only PreviewRunner: reserves/detects a port, spawns the dev
@@ -54,16 +56,14 @@ const MAX_INSTALL_OUTPUT_BYTES = 5_000_000;
 export class NodePreviewRunner implements PreviewRunner {
   private readonly reservePort: () => Promise<number>;
   private readonly startupTimeoutMs: number;
-  private readonly installTimeoutMs: number;
-  private readonly logBufferLines: number;
+  private readonly maxOutputBytes: number;
   private readonly clock: Clock;
   private readonly processes = new Map<string, ProcessEntry>();
 
   constructor(options: NodePreviewRunnerOptions = {}) {
     this.reservePort = options.reservePort ?? reservePreviewPort;
     this.startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
-    this.installTimeoutMs = options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
-    this.logBufferLines = options.logBufferLines ?? DEFAULT_LOG_BUFFER_LINES;
+    this.maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
     this.clock = options.clock ?? new SystemClock();
   }
 
@@ -72,8 +72,8 @@ export class NodePreviewRunner implements PreviewRunner {
     const withPlan = recordPreviewCommandPlan(session, plan, this.clock.now());
     if (!plan.install.ok) return withPlan; // no install needed/possible; start() will fail fast on a bad dev command
     const outcome = await runReproducibleInstall(plan, session.workspaceRef.workspacePath, {
-      timeoutMs: this.installTimeoutMs,
-      maxOutputBytes: MAX_INSTALL_OUTPUT_BYTES,
+      timeoutMs: DEFAULT_INSTALL_TIMEOUT_MS,
+      maxOutputBytes: this.maxOutputBytes,
     });
     if (outcome.ok) return withPlan;
     return transitionPreviewSession(withPlan, 'failed', this.clock.now(), {
@@ -188,7 +188,7 @@ export class NodePreviewRunner implements PreviewRunner {
     let detectedPort: number | undefined;
     const captureAndDetect = (data: Buffer): void => {
       const text = data.toString('utf8');
-      appendLog(entry, this.logBufferLines, text);
+      appendLog(entry, DEFAULT_LOG_BUFFER_LINES, text);
       detectedPort ??= detectPortFromOutput(text);
     };
     child.stdout?.on('data', captureAndDetect);

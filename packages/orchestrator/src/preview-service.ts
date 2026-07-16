@@ -25,7 +25,6 @@ interface StartPreviewInput {
 
 interface ResolvedUpstream {
   port: number;
-  session: PreviewSession;
 }
 
 interface TrackedSession {
@@ -127,15 +126,7 @@ export class PreviewService {
     if (!session.process?.port) {
       throw new PreviewAccessDeniedError(sessionId, 'session has no upstream port');
     }
-    return { port: session.process.port, session };
-  }
-
-  /** Returns the token to set as a proxy cookie, or undefined if auth didn't succeed via query token. */
-  issueCookieToken(sessionId: string, presentedToken: string | undefined): string | undefined {
-    const tracked = this.sessions.get(sessionId);
-    if (!tracked || !presentedToken || !constantTimeEquals(presentedToken, tracked.token))
-      return undefined;
-    return tracked.token;
+    return { port: session.process.port };
   }
 
   private buildUrl(sessionId: string, token: string): string {

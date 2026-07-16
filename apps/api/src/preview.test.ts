@@ -74,9 +74,8 @@ describe('preview routes', () => {
   });
 
   it('404s stopping an unknown session', async () => {
-    const { baseUrl, runtime } = await startApi();
+    const { baseUrl } = await startApi();
     const projectId = await createProject(baseUrl);
-    void runtime;
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview/does-not-exist/stop`, {
       method: 'POST',
     });
