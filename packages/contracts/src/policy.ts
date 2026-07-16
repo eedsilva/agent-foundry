@@ -18,6 +18,13 @@ export const ProjectPolicySchema = z.object({
     .optional(),
   forbiddenDependencies: z.array(z.string().min(1)).default([]),
   allowedCommands: z.array(z.string().min(1)).min(1).optional(),
+  previewCommands: z
+    .object({
+      build: z.string().min(1).optional(),
+      dev: z.string().min(1).optional(),
+    })
+    .strict()
+    .optional(),
 });
 export type ProjectPolicy = z.infer<typeof ProjectPolicySchema>;
 

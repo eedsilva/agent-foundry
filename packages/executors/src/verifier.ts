@@ -1,15 +1,21 @@
-import { access, readFile } from 'node:fs/promises';
-import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import {
   VerificationReportSchema,
+  type PackageManager,
   type ProjectPolicy,
   type VerificationCommandResult,
   type VerificationReport,
 } from '@agent-foundry/contracts';
 import type { VerificationService } from '@agent-foundry/domain';
 import { RunCancelledError } from '@agent-foundry/domain';
+import {
+  detectPackageManager,
+  isRecord,
+  pathExists,
+  readPackageJsonAt,
+  scriptCommand,
+} from './package-manager.js';
 
 const EMPTY_GIT_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
@@ -34,7 +40,7 @@ export class WorkspaceVerifier implements VerificationService {
     if (signal?.aborted) throw new RunCancelledError();
     const packageManager = await detectPackageManager(input.workspacePath);
     const commands: VerificationCommandResult[] = [];
-    const packageJson = await readPackageJson(input.workspacePath);
+    const packageJson = await readPackageJsonAt(input.workspacePath);
 
     if (!packageJson) {
       return VerificationReportSchema.parse({
@@ -121,7 +127,7 @@ export class WorkspaceVerifier implements VerificationService {
   }
 
   private async runInstall(
-    packageManager: VerificationReport['packageManager'],
+    packageManager: PackageManager,
     cwd: string,
     signal?: AbortSignal,
   ): Promise<VerificationCommandResult> {
@@ -139,22 +145,13 @@ export class WorkspaceVerifier implements VerificationService {
   }
 
   private async runScript(
-    packageManager: VerificationReport['packageManager'],
+    packageManager: PackageManager,
     script: string,
     cwd: string,
     signal?: AbortSignal,
   ): Promise<VerificationCommandResult> {
-    switch (packageManager) {
-      case 'pnpm':
-        return this.run(script, 'pnpm', ['run', script], cwd, signal);
-      case 'yarn':
-        return this.run(script, 'yarn', [script], cwd, signal);
-      case 'bun':
-        return this.run(script, 'bun', ['run', script], cwd, signal);
-      case 'npm':
-      case 'unknown':
-        return this.run(script, 'npm', ['run', script], cwd, signal);
-    }
+    const { command, args } = scriptCommand(packageManager, script);
+    return this.run(script, command, args, cwd, signal);
   }
 
   private async run(
@@ -198,15 +195,6 @@ export class WorkspaceVerifier implements VerificationService {
   }
 }
 
-async function detectPackageManager(cwd: string): Promise<VerificationReport['packageManager']> {
-  if (await pathExists(join(cwd, 'pnpm-lock.yaml'))) return 'pnpm';
-  if (await pathExists(join(cwd, 'yarn.lock'))) return 'yarn';
-  if ((await pathExists(join(cwd, 'bun.lockb'))) || (await pathExists(join(cwd, 'bun.lock'))))
-    return 'bun';
-  if (await pathExists(join(cwd, 'package-lock.json'))) return 'npm';
-  return 'npm';
-}
-
 /** A check decided without running anything — policy blocks and missing scripts. */
 function syntheticResult(
   name: string,
@@ -247,25 +235,4 @@ function dependencyPolicyCheck(
       : `Forbidden dependencies declared: ${violations.join(', ')} (policy ${policy.id}@v${policy.version}).`,
     violations.length === 0 ? 0 : 1,
   );
-}
-
-async function readPackageJson(cwd: string): Promise<Record<string, unknown> | null> {
-  try {
-    return JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8')) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

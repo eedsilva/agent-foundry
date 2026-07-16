@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { PreviewHealth, PreviewSession } from '@agent-foundry/contracts';
+import type { PreviewCommandPlan, PreviewHealth, PreviewSession } from '@agent-foundry/contracts';
 import { InvalidStateTransitionError } from './errors.js';
 import type { PreviewRunner } from './ports.js';
 import {
   expirePreviewSession,
   isPreviewSessionExpired,
   isPreviewSessionTerminal,
+  recordPreviewCommandPlan,
   stopPreviewSession,
   transitionPreviewSession,
 } from './preview-state.js';
@@ -194,5 +195,23 @@ describe('preview session state machine', () => {
     expect(() => transitionPreviewSession(stopped, 'starting', clock.now())).toThrow(
       InvalidStateTransitionError,
     );
+  });
+});
+
+describe('recordPreviewCommandPlan', () => {
+  it('records a command plan on the session and bumps updatedAt', () => {
+    const session = newSession();
+    const plan: PreviewCommandPlan = {
+      packageManager: 'npm',
+      install: { ok: true, command: 'npm', args: ['ci'] },
+      build: { ok: true, command: 'npm', args: ['run', 'build'] },
+      dev: { ok: true, command: 'npm', args: ['run', 'dev'] },
+      detectedAt: '2026-07-16T00:00:00.000Z',
+    };
+
+    const updated = recordPreviewCommandPlan(session, plan, new Date('2026-07-16T00:00:01.000Z'));
+
+    expect(updated.commandPlan).toEqual(plan);
+    expect(updated.updatedAt).toBe('2026-07-16T00:00:01.000Z');
   });
 });

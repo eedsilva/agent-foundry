@@ -10,7 +10,9 @@ Important restrictions — which model providers may run, which stack a workflow
 
 ## Decision
 
-Model a `ProjectPolicy` contract (`schemaVersion`, `id`, `version`, `requiredStack?`, `allowedProviders?`, `forbiddenDependencies`, `allowedCommands?`) stored as YAML files in `policies/<id>.yaml`, loaded by a `YamlPolicyRepository` (same pattern as workflows). Each project selects a policy at creation via `CreateProjectRequest.policyId` (default `default`; a permissive `policies/default.yaml` ships with the repo).
+Model a `ProjectPolicy` contract (`schemaVersion`, `id`, `version`, `requiredStack?`, `allowedProviders?`, `forbiddenDependencies`, `allowedCommands?`, `previewCommands?`) stored as YAML files in `policies/<id>.yaml`, loaded by a `YamlPolicyRepository` (same pattern as workflows). Each project selects a policy at creation via `CreateProjectRequest.policyId` (default `default`; a permissive `policies/default.yaml` ships with the repo).
+
+`previewCommands` (`{ build?: string; dev?: string }`, added for issue #29) lets a policy rename the package.json scripts the preview command detector resolves for `build`/`dev` — e.g. a workflow that names its build script `compile` instead of `build`. It composes with `allowedCommands`: the detector still blocks a renamed script with a diagnostic if the allowlist excludes it.
 
 Enforcement points:
 

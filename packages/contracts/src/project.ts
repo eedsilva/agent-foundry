@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  PackageManagerSchema,
   ActorRefSchema,
   PathSegmentSchema,
   ProjectStatusSchema,
@@ -151,7 +152,7 @@ export type VerificationCommandResult = z.infer<typeof VerificationCommandResult
 export const VerificationReportSchema = z.object({
   schemaVersion: z.literal('1'),
   approved: z.boolean(),
-  packageManager: z.enum(['npm', 'pnpm', 'yarn', 'bun', 'unknown']),
+  packageManager: PackageManagerSchema,
   summary: z.string(),
   commands: z.array(VerificationCommandResultSchema),
   createdAt: z.string().datetime(),
