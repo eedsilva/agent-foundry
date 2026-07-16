@@ -15,6 +15,7 @@ describe('audited model override resolution', () => {
     await expect(
       harness.service.createModelOverride('run-1', {
         scope: { kind: 'step', nodeId: 'typo', stepId: 'implement' },
+        modelId: 'model-2',
         provider: 'codex',
         model: 'alt-model',
         ...audit,
@@ -23,23 +24,42 @@ describe('audited model override resolution', () => {
     expect(await harness.modelOverrides.list('run-1')).toEqual([]);
   });
 
+  it('rejects a selected catalog identity whose provider/model tuple differs', async () => {
+    const harness = makeHarness();
+    await seedRun(harness);
+
+    await expect(
+      harness.service.createModelOverride('run-1', {
+        scope: { kind: 'run' },
+        modelId: 'model-2',
+        provider: 'codex',
+        model: 'test-model',
+        ...audit,
+      }),
+    ).rejects.toThrow(/catalog tuple changed/);
+    expect(await harness.modelOverrides.list('run-1')).toEqual([]);
+  });
+
   it('uses the newest step pin before the run pin', async () => {
     const harness = makeHarness();
     await seedRun(harness);
     await harness.service.createModelOverride('run-1', {
       scope: { kind: 'run' },
+      modelId: 'model-1',
       provider: 'codex',
       model: 'test-model',
       ...audit,
     });
     await harness.service.createModelOverride('run-1', {
       scope: { kind: 'step', nodeId: 'implement', stepId: 'implement' },
+      modelId: 'model-1',
       provider: 'codex',
       model: 'test-model',
       ...audit,
     });
     const latest = await harness.service.createModelOverride('run-1', {
       scope: { kind: 'step', nodeId: 'implement', stepId: 'implement' },
+      modelId: 'model-2',
       provider: 'codex',
       model: 'alt-model',
       ...audit,
@@ -68,6 +88,7 @@ describe('audited model override resolution', () => {
     const implement = liveStepRun(harness, 'implement');
     await harness.service.createModelOverride('run-1', {
       scope: { kind: 'step', nodeId: 'implement', stepId: 'implement' },
+      modelId: 'model-2',
       provider: 'codex',
       model: 'alt-model',
       ...audit,
@@ -75,6 +96,7 @@ describe('audited model override resolution', () => {
     const retryRun = await harness.service.retryStep('run-1', implement.id, {
       mode: 'preserve',
       override: {
+        modelId: 'model-1',
         provider: 'codex',
         model: 'test-model',
         actor: { kind: 'user', id: 'token=raw-actor-secret' },
@@ -109,7 +131,7 @@ describe('audited model override resolution', () => {
     const implement = liveStepRun(harness, 'implement');
     const queued = await harness.service.retryStep('run-1', implement.id, {
       mode: 'preserve',
-      override: { provider: 'codex', model: 'alt-model', ...audit },
+      override: { modelId: 'model-2', provider: 'codex', model: 'alt-model', ...audit },
     });
     await harness.runs.update(
       {

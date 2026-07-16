@@ -28,6 +28,7 @@ function pinRequest(models: ModelDefinition[], fields: PinFields) {
   if (!reason) throw new Error('reason is required.');
   if (!estimatedImpact) throw new Error('estimated impact is required.');
   return {
+    modelId: model.id,
     provider: model.provider,
     model: model.model,
     actor: { kind: fields.actorKind, id: actorId },

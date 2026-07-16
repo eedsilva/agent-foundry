@@ -17,6 +17,7 @@ describe('model override API contracts (#16)', () => {
   it('accepts audited run and step pin requests', () => {
     expect(
       CreateModelOverrideRequestSchema.parse({
+        modelId: 'codex-gpt-5',
         provider: 'codex',
         model: 'gpt-5',
         scope: { kind: 'run' },
@@ -25,6 +26,7 @@ describe('model override API contracts (#16)', () => {
     ).toEqual({ kind: 'run' });
     expect(
       CreateModelOverrideRequestSchema.parse({
+        modelId: 'codex-gpt-5',
         provider: 'codex',
         model: 'gpt-5',
         scope: { kind: 'step', nodeId: 'implementation-gate', stepId: 'repair-code' },
@@ -65,9 +67,26 @@ describe('model override API contracts (#16)', () => {
     expect(
       RetryStepRequestSchema.parse({
         mode: 'invalidate',
-        override: { provider: 'codex', model: 'gpt-5', ...audit },
+        override: { modelId: 'codex-gpt-5', provider: 'codex', model: 'gpt-5', ...audit },
       }).override,
-    ).toMatchObject({ reason: audit.reason });
+    ).toMatchObject({ modelId: 'codex-gpt-5', reason: audit.reason });
+  });
+
+  it('requires the selected catalog identity on new pin inputs', () => {
+    expect(() =>
+      CreateModelOverrideRequestSchema.parse({
+        provider: 'codex',
+        model: 'gpt-5',
+        scope: { kind: 'run' },
+        ...audit,
+      }),
+    ).toThrow();
+    expect(() =>
+      RetryStepRequestSchema.parse({
+        mode: 'preserve',
+        override: { provider: 'codex', model: 'gpt-5', ...audit },
+      }),
+    ).toThrow();
   });
 });
 

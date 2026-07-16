@@ -88,7 +88,7 @@ export const RunRetryDirectiveSchema = z
     mode: z.enum(['preserve', 'invalidate']),
     override: z
       .object({
-        modelId: PathSegmentSchema,
+        modelId: PathSegmentSchema.optional(),
         provider: ProviderSchema.exclude(['mock']),
         model: z.string().trim().min(1),
         actor: ActorRefSchema.optional(),

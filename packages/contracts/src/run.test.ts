@@ -235,6 +235,12 @@ describe('persisted run contracts', () => {
     expect(
       RunRetryDirectiveSchema.parse({
         ...base,
+        override: { provider: 'codex', model: 'gpt-5' },
+      }).override?.modelId,
+    ).toBeUndefined();
+    expect(
+      RunRetryDirectiveSchema.parse({
+        ...base,
         override: { modelId: 'codex-gpt-5', provider: 'codex', model: 'gpt-5' },
       }).override?.actor,
     ).toBeUndefined();

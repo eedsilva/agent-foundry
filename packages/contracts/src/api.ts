@@ -60,6 +60,7 @@ export const RetryStepRequestSchema = z.object({
   mode: z.enum(['preserve', 'invalidate']),
   override: z
     .object({
+      modelId: PathSegmentSchema,
       provider: ProviderSchema.exclude(['mock']),
       model: z.string().trim().min(1),
       actor: ActorRefSchema,
@@ -74,6 +75,7 @@ export type RetryStepRequest = z.infer<typeof RetryStepRequestSchema>;
 export const CreateModelOverrideRequestSchema = z
   .object({
     scope: ModelOverrideScopeSchema,
+    modelId: PathSegmentSchema,
     provider: ProviderSchema.exclude(['mock']),
     model: z.string().trim().min(1),
     actor: ActorRefSchema,

@@ -161,6 +161,7 @@ describe('step retry with controlled invalidation (#8)', () => {
     await harness.service.retryStep('run-1', implement.id, {
       mode: 'invalidate',
       override: {
+        modelId: 'model-2',
         provider: 'codex',
         model: 'alt-model',
         actor: { kind: 'user', id: 'ed' },
@@ -209,6 +210,7 @@ describe('step retry with controlled invalidation (#8)', () => {
       harness.service.retryStep('run-1', review.id, {
         mode: 'preserve',
         override: {
+          modelId: 'missing-model',
           provider: 'codex',
           model: 'not-a-model',
           actor: { kind: 'user', id: 'ed' },
@@ -216,12 +218,39 @@ describe('step retry with controlled invalidation (#8)', () => {
           estimatedImpact: 'No execution expected',
         },
       }),
-    ).rejects.toThrow(/No catalog model/);
+    ).rejects.toThrow(/not enabled/);
 
     await harness.service.retryStep('run-1', review.id, { mode: 'preserve' });
     await expect(
       harness.service.retryStep('run-1', review.id, { mode: 'preserve' }),
     ).rejects.toThrow(/only completed or failed runs/);
+  });
+
+  it('rejects a model pin for a verify retry before mutating or queueing the run', async () => {
+    const harness = makeHarness();
+    await completeRun(harness);
+    const verify = liveStepRun(harness, 'verify');
+    const before = await harness.runs.get('run-1');
+    const queueCount = harness.enqueued.length;
+
+    await expect(
+      harness.service.retryStep('run-1', verify.id, {
+        mode: 'invalidate',
+        override: {
+          modelId: 'model-1',
+          provider: 'codex',
+          model: 'test-model',
+          actor: { kind: 'user', id: 'ed' },
+          reason: 'Try to pin a verifier',
+          estimatedImpact: 'No mutation expected',
+        },
+      }),
+    ).rejects.toThrow(/only agent steps support model overrides/);
+
+    expect(await harness.runs.get('run-1')).toEqual(before);
+    expect(await harness.stepRuns.get('run-1', verify.id)).toEqual(verify);
+    expect(harness.enqueued).toHaveLength(queueCount);
+    expect(harness.events.types()).not.toContain('step.retry_requested');
   });
 });
 

@@ -95,6 +95,7 @@ describe('persisted override catalog drift', () => {
           scopeKind === 'run'
             ? { kind: 'run' }
             : { kind: 'step', nodeId: 'implement', stepId: 'implement' },
+        modelId: 'pinned-model',
         provider: 'codex',
         model: 'model-v1',
         actor: { kind: 'user', id: 'ed' },
@@ -124,6 +125,7 @@ describe('persisted override catalog drift', () => {
     await runtime.projectService.retryStep(runId, completedStep!.id, {
       mode: 'preserve',
       override: {
+        modelId: 'pinned-model',
         provider: 'codex',
         model: 'model-v1',
         actor: { kind: 'user', id: 'ed' },

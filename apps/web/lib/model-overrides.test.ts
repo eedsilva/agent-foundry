@@ -55,6 +55,7 @@ describe('model override request helpers', () => {
   it('shapes run and step pins from a selected catalog tuple', () => {
     expect(modelOverrideRequest(models, { kind: 'run' }, audit)).toEqual({
       scope: { kind: 'run' },
+      modelId: 'codex-fast',
       provider: 'codex',
       model: 'gpt-5.1-codex',
       actor: { kind: 'user', id: 'operator-1' },
@@ -99,6 +100,7 @@ describe('model override request helpers', () => {
     expect(retryRequest('invalidate', models, audit)).toEqual({
       mode: 'invalidate',
       override: {
+        modelId: 'codex-fast',
         provider: 'codex',
         model: 'gpt-5.1-codex',
         actor: { kind: 'user', id: 'operator-1' },

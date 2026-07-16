@@ -85,20 +85,13 @@ export class ProjectService {
     const scope = input.scope;
     if (scope.kind === 'step') {
       const workflow = await this.workflows.get(run.workflowId);
-      const node = workflow.nodes.find((candidate) => candidate.id === scope.nodeId);
-      const matches =
-        (node?.type === 'agent' && node.id === scope.stepId) ||
-        (node?.type === 'quality-loop' &&
-          [node.setup, node.check, node.repair].some(
-            (step) => step?.type === 'agent' && step.id === scope.stepId,
-          ));
-      if (!matches) {
+      if (!isAgentStep(workflow, scope.nodeId, scope.stepId)) {
         throw new ValidationError(
           `Scope ${scope.nodeId}/${scope.stepId} does not identify an agent step in workflow ${workflow.id}.`,
         );
       }
     }
-    const match = await this.resolveCatalogModel(input.provider, input.model);
+    const match = await this.resolveCatalogModel(input.modelId, input.provider, input.model);
     const audit = redactOverrideAudit(input);
     const override: Omit<ModelOverrideRecord, 'sequence'> = {
       id: this.ids.next(),
@@ -367,7 +360,17 @@ export class ProjectService {
 
     let override: RunRetryDirective['override'];
     if (input.override) {
-      const match = await this.resolveCatalogModel(input.override.provider, input.override.model);
+      const workflow = await this.workflows.get(run.workflowId);
+      if (!isAgentStep(workflow, target.nodeId, target.stepId)) {
+        throw new ValidationError(
+          `Step run ${stepRunId} is not an agent step; only agent steps support model overrides.`,
+        );
+      }
+      const match = await this.resolveCatalogModel(
+        input.override.modelId,
+        input.override.provider,
+        input.override.model,
+      );
       const audit = redactOverrideAudit(input.override);
       override = {
         modelId: match.id,
@@ -865,17 +868,22 @@ export class ProjectService {
   }
 
   private async resolveCatalogModel(
+    modelId: string,
     provider: Provider,
-    requested: string,
+    model: string,
   ): Promise<ModelDefinition> {
-    const match = (await this.router.catalog()).find(
-      (model) =>
-        model.provider === provider && (model.id === requested || model.model === requested),
-    );
-    if (!match) throw new ValidationError(`No catalog model matches ${provider}/${requested}.`);
+    const match = (await this.router.catalog()).find((candidate) => candidate.id === modelId);
+    if (!match || !match.enabled) {
+      throw new ValidationError(`Catalog model ${modelId} is not enabled.`);
+    }
     if (!match.model.trim()) {
       throw new ValidationError(
         `Catalog model ${match.id} does not resolve to an explicit model; configure its provider model first.`,
+      );
+    }
+    if (match.provider !== provider || match.model !== model) {
+      throw new ValidationError(
+        `Override model ${modelId} catalog tuple changed: expected ${provider}/${model}, found ${match.provider}/${match.model}.`,
       );
     }
     return match;
@@ -906,6 +914,17 @@ export class ProjectService {
       ...(dedupeKey ? { dedupeKey } : {}),
     });
   }
+}
+
+function isAgentStep(workflow: WorkflowDefinition, nodeId: string, stepId: string): boolean {
+  const node = workflow.nodes.find((candidate) => candidate.id === nodeId);
+  return (
+    (node?.type === 'agent' && node.id === stepId) ||
+    (node?.type === 'quality-loop' &&
+      [node.setup, node.check, node.repair].some(
+        (step) => step?.type === 'agent' && step.id === stepId,
+      ))
+  );
 }
 
 function redactOverrideAudit(input: { actor: ActorRef; reason: string; estimatedImpact: string }): {
