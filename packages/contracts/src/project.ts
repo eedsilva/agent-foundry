@@ -6,7 +6,7 @@ export const ProjectSchema = z.object({
   id: PathSegmentSchema,
   name: z.string().min(1),
   workflowId: PathSegmentSchema,
-  policyId: PathSegmentSchema.optional(),
+  policyId: PathSegmentSchema.default('default'),
   status: ProjectStatusSchema,
   version: z.number().int().positive().default(1),
   createdAt: z.string().datetime(),

@@ -17,7 +17,7 @@ Enforcement points:
 - **Run start (before execution):** the orchestrator resolves the project's policy, stamps `{id, version, hash}` on the `WorkflowRun` (sha256 of the stable-stringified policy, same helper family as `workflowHash`), and fails the run with a `policy.violation` event when `requiredStack` mismatches the workflow's `stack`.
 - **Routing (before execution):** the policy's `allowedProviders` ride inside `TaskProfile.policy`; the router rejects forbidden candidates with the reason `provider <p> is forbidden by policy <id>@v<n>`, recorded in `RouteDecision.rejected` and persisted with every attempt.
 - **Verification (after execution):** the verifier refuses to run scripts outside `allowedCommands` (a failing `policy` command result, script never executed) and fails the report when `package.json` declares a package in `forbiddenDependencies` (`policy-dependency-check`).
-- **Mid-run change:** at every step boundary the orchestrator re-resolves the policy and compares its hash against the run's pinned record; a mismatch emits `policy.violation` and fails the run. Retrying the project — which always creates a fresh run — is the explicit fork that adopts the new policy. Pause snapshots capture `policyHash`, and resume is blocked with a `policyVersion` diagnostic on drift, reusing the `ResumeBlockedError` machinery.
+- **Mid-run change:** at every step boundary the orchestrator re-resolves the policy and compares its hash against the run's pinned record; a mismatch emits `policy.violation` and fails the run. Retrying the project — which always creates a fresh run — is the explicit fork that adopts the new policy. Resume of a paused run validates the current policy hash against the same pinned `run.policy` record and is blocked with a `policyVersion` diagnostic on drift, reusing the `ResumeBlockedError` machinery.
 
 ## Alternatives considered
 
@@ -30,11 +30,11 @@ Enforcement points:
 
 - Positive: violations are auditable (`policy.violation` events, router rejections, verifier command results) and runs are pinned to exact policy content, not just a version number.
 - Negative: the policy file is re-read at every step boundary (one small YAML read per step; cache if it ever matters). Dependency checking is exact-name over `package.json` manifests only — transitive/lockfile scanning is a known ceiling, marked in code.
-- Migration: none. All new persisted fields (`Project.policyId`, `WorkflowRun.policy`, `RunPauseSnapshot.policyHash`) are optional; entities written before this ADR parse unchanged, and legacy projects resolve to the `default` policy.
+- Migration: none. `WorkflowRun.policy` is optional and `Project.policyId` defaults to `default` at parse time; entities written before this ADR parse unchanged, and legacy projects resolve to the `default` policy.
 - Security: policies are local YAML under repo control; no new permissions, network, or secret surface.
 
 ## Validation and rollback
 
 Validated by unit suites in contracts, model-router, executors, persistence, and orchestrator (provider block, forbidden package, disallowed command, hash stamping, mid-run change block + fork, resume block) plus the full `npm run check` gate.
 
-Rollback: revert the change. Runs written with a `policy` field would fail strict parsing under pre-ADR schemas, so a rollback that must read existing data should revert code but keep the schema's optional `policy`/`policyId`/`policyHash` fields (they are additive and harmless); alternatively strip those fields from `.data` run files. New runs never depend on a policy file existing beyond `policies/default.yaml`.
+Rollback: revert the change. Runs written with a `policy` field would fail strict parsing under pre-ADR schemas, so a rollback that must read existing data should revert code but keep the schema's additive `policy`/`policyId` fields (they are harmless); alternatively strip those fields from `.data` run files. New runs never depend on a policy file existing beyond `policies/default.yaml`.

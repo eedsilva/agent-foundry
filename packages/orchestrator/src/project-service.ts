@@ -634,14 +634,14 @@ export class ProjectService {
         actual: harnessVersion,
       });
     }
-    if (snapshot.policyHash) {
+    if (run.policy) {
       const project = await this.requireProject(run.projectId);
-      const policy = await this.policies.get(project.policyId ?? 'default');
+      const policy = await this.policies.get(project.policyId);
       const actualPolicyHash = policyHash(policy);
-      if (actualPolicyHash !== snapshot.policyHash) {
+      if (actualPolicyHash !== run.policy.hash) {
         diagnostics.push({
           field: 'policyVersion',
-          expected: snapshot.policyHash,
+          expected: run.policy.hash,
           actual: actualPolicyHash,
         });
       }

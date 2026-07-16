@@ -37,6 +37,7 @@ describe('FileProjectRepository compatibility and concurrency', () => {
       id: 'project-1',
       name: 'Project',
       workflowId: 'web-app-v1',
+      policyId: 'default',
       status: 'queued' as const,
       version: 1,
       createdAt: '2026-07-14T12:00:00.000Z',

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import YAML from 'yaml';
+import { NotFoundError } from '@agent-foundry/domain';
 
 export async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
@@ -76,6 +78,28 @@ export async function readJsonLines<T>(path: string): Promise<T[]> {
       .map((line) => JSON.parse(line) as T);
   } catch (error) {
     if (isNotFound(error)) return [];
+    throw error;
+  }
+}
+
+/** Loads `<dir>/<id>.yaml`, validates it, and requires the declared id to match the filename. */
+export async function readYamlEntity<T extends { id: string }>(
+  dir: string,
+  id: string,
+  schema: { parse(value: unknown): T },
+  label: string,
+): Promise<T> {
+  const path = join(dir, `${safeSegment(id)}.yaml`);
+  try {
+    const entity = schema.parse(YAML.parse(await readFile(path, 'utf8')));
+    if (entity.id !== id) {
+      throw new Error(
+        `${label} file ${id}.yaml declares id ${entity.id}; filename and id must match`,
+      );
+    }
+    return entity;
+  } catch (error) {
+    if (isNotFound(error)) throw new NotFoundError(`${label} ${id} not found`);
     throw error;
   }
 }

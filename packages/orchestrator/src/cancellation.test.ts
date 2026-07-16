@@ -562,6 +562,7 @@ async function seedRun(harness: ReturnType<typeof makeHarness>): Promise<void> {
     id: 'project-1',
     name: 'Cancellation fixture',
     workflowId: WORKFLOW.id,
+    policyId: 'default',
     status: 'queued',
     version: 1,
     createdAt: now,
