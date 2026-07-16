@@ -5,8 +5,12 @@ import {
   ProjectEventSchema,
   ExecutorHealthSchema,
 } from './project.js';
-import { ModelDefinitionSchema } from './model.js';
-import { PathSegmentSchema, ProviderSchema } from './primitives.js';
+import {
+  ModelDefinitionSchema,
+  ModelOverrideRecordSchema,
+  ModelOverrideScopeSchema,
+} from './model.js';
+import { ActorRefSchema, PathSegmentSchema, ProviderSchema } from './primitives.js';
 import { ApprovalActionSchema } from './workflow.js';
 import {
   ApprovalDecisionSchema,
@@ -56,12 +60,35 @@ export const RetryStepRequestSchema = z.object({
   mode: z.enum(['preserve', 'invalidate']),
   override: z
     .object({
+      modelId: PathSegmentSchema,
       provider: ProviderSchema.exclude(['mock']),
-      model: z.string(),
+      model: z.string().trim().min(1),
+      actor: ActorRefSchema,
+      reason: z.string().trim().min(1),
+      estimatedImpact: z.string().trim().min(1),
     })
+    .strict()
     .optional(),
 });
 export type RetryStepRequest = z.infer<typeof RetryStepRequestSchema>;
+
+export const CreateModelOverrideRequestSchema = z
+  .object({
+    scope: ModelOverrideScopeSchema,
+    modelId: PathSegmentSchema,
+    provider: ProviderSchema.exclude(['mock']),
+    model: z.string().trim().min(1),
+    actor: ActorRefSchema,
+    reason: z.string().trim().min(1),
+    estimatedImpact: z.string().trim().min(1),
+  })
+  .strict();
+export type CreateModelOverrideRequest = z.infer<typeof CreateModelOverrideRequestSchema>;
+
+export const CreateModelOverrideResponseSchema = z
+  .object({ override: ModelOverrideRecordSchema })
+  .strict();
+export type CreateModelOverrideResponse = z.infer<typeof CreateModelOverrideResponseSchema>;
 
 export const RetryPlanResponseSchema = z.object({
   target: StepRunSchema,
@@ -87,8 +114,13 @@ export type ResumeBlockedResponse = z.infer<typeof ResumeBlockedResponseSchema>;
 export const DecideApprovalRequestSchema = z
   .object({
     action: ApprovalActionSchema,
-    decidedBy: z.string().trim().min(1),
+    decidedBy: z.string().trim().min(1).optional(),
+    actor: ActorRefSchema.optional(),
     note: z.string().trim().min(1).optional(),
+  })
+  .refine((input) => Boolean(input.actor) !== Boolean(input.decidedBy), {
+    message: 'exactly one identity form is required: actor or decidedBy',
+    path: ['actor'],
   })
   .refine((input) => input.action !== 'request-changes' || Boolean(input.note), {
     message: "note is required when action is 'request-changes'",
@@ -118,6 +150,42 @@ export const ApprovalListResponseSchema = z.object({
   ),
 });
 export type ApprovalListResponse = z.infer<typeof ApprovalListResponseSchema>;
+
+const RunAuditEntrySchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('approval-request'),
+      id: PathSegmentSchema,
+      timestamp: z.string().datetime(),
+      request: ApprovalRequestSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('approval-decision'),
+      id: PathSegmentSchema,
+      timestamp: z.string().datetime(),
+      decision: ApprovalDecisionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('feedback'),
+      id: z.string().min(1),
+      timestamp: z.string().datetime(),
+      artifact: StoredArtifactSchema,
+    })
+    .strict(),
+]);
+
+export const RunAuditExportSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    runId: PathSegmentSchema,
+    entries: z.array(RunAuditEntrySchema),
+  })
+  .strict();
+export type RunAuditExport = z.infer<typeof RunAuditExportSchema>;
 
 export const RuntimeInfoResponseSchema = z.object({
   executorMode: z.enum(['real', 'mock']),

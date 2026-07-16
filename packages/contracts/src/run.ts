@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { RouteDecisionSchema } from './model.js';
 import { PolicyRecordSchema } from './policy.js';
-import { PathSegmentSchema, ProviderSchema } from './primitives.js';
+import { ActorRefSchema, PathSegmentSchema, ProviderSchema } from './primitives.js';
 import { ApprovalActionSchema, ApprovalTimeoutPolicySchema } from './workflow.js';
 
 export const EntityVersionSchema = z.number().int().positive();
@@ -88,17 +88,51 @@ export const RunRetryDirectiveSchema = z
     mode: z.enum(['preserve', 'invalidate']),
     override: z
       .object({
-        modelId: PathSegmentSchema,
+        modelId: PathSegmentSchema.optional(),
         provider: ProviderSchema.exclude(['mock']),
-        model: z.string(),
+        model: z.string().trim().min(1),
+        actor: ActorRefSchema.optional(),
+        reason: z.string().trim().min(1).optional(),
+        estimatedImpact: z.string().trim().min(1).optional(),
       })
       .strict()
+      .superRefine((override, context) => {
+        const auditFieldCount = [override.actor, override.reason, override.estimatedImpact].filter(
+          Boolean,
+        ).length;
+        if (auditFieldCount !== 0 && auditFieldCount !== 3) {
+          context.addIssue({
+            code: 'custom',
+            message: 'actor, reason, and estimatedImpact must be provided together',
+          });
+        }
+      })
       .optional(),
     checkpoint: z.string().min(1).optional(),
+    feedbackArtifact: ArtifactReferenceSchema.optional(),
     requestedAt: z.string().datetime(),
   })
   .strict();
 export type RunRetryDirective = z.infer<typeof RunRetryDirectiveSchema>;
+
+export const RunExecutionStateSchema = z
+  .object({
+    activeElapsedMs: z.number().int().nonnegative(),
+    activeSince: z.string().datetime().optional(),
+    consecutiveRepairs: z.number().int().nonnegative(),
+    countedRepairStepRunIds: z.array(PathSegmentSchema).max(10).optional(),
+    lastVerifiedCheckpoint: z.string().min(1).optional(),
+    ceiling: z
+      .object({
+        reason: z.enum(['active-time', 'consecutive-repairs']),
+        reachedAt: z.string().datetime(),
+        draftBranch: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type RunExecutionState = z.infer<typeof RunExecutionStateSchema>;
 
 export const WorkflowRunSchema = z
   .object({
@@ -116,6 +150,7 @@ export const WorkflowRunSchema = z
     error: RunErrorSchema.optional(),
     pause: RunPauseSnapshotSchema.optional(),
     retry: RunRetryDirectiveSchema.optional(),
+    execution: RunExecutionStateSchema.optional(),
   })
   .strict()
   .superRefine((run, context) => {
@@ -217,6 +252,7 @@ export const ApprovalDecisionSchema = z
     stepRunId: PathSegmentSchema,
     action: ApprovalActionSchema,
     decidedBy: z.string().min(1),
+    actor: ActorRefSchema.optional(),
     note: z.string().optional(),
     decidedAt: z.string().datetime(),
   })

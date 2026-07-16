@@ -20,6 +20,7 @@ export function compileRequestMarkdown(input: {
           (artifact) =>
             `### ${artifact.metadata.name} · revision ${artifact.metadata.revision}\n\n` +
             `Created by: ${artifact.metadata.createdBy}\n\n` +
+            `SHA-256: ${artifact.metadata.sha256}\n\n` +
             '```json\n' +
             stableJson(artifact.content) +
             '\n```',

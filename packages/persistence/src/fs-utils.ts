@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { link, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 import { NotFoundError } from '@agent-foundry/domain';
@@ -33,7 +33,7 @@ export async function readJsonOrNull<T>(path: string): Promise<T | null> {
 
 export async function atomicWriteJson(path: string, value: unknown): Promise<void> {
   await ensureDir(dirname(path));
-  const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const handle = await open(temp, 'w');
   try {
     await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -42,6 +42,28 @@ export async function atomicWriteJson(path: string, value: unknown): Promise<voi
     await handle.close();
   }
   await rename(temp, path);
+}
+
+/** Publishes a complete JSON file only when the destination does not exist. */
+export async function atomicCreateJson(path: string, value: unknown): Promise<boolean> {
+  await ensureDir(dirname(path));
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const handle = await open(temp, 'wx');
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await link(temp, path);
+    return true;
+  } catch (error) {
+    if (isAlreadyExists(error)) return false;
+    throw error;
+  } finally {
+    await rm(temp, { force: true });
+  }
 }
 
 export async function atomicWriteText(path: string, value: string): Promise<void> {

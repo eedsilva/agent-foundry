@@ -11,6 +11,15 @@ export type PathSegment = z.infer<typeof PathSegmentSchema>;
 export const ProviderSchema = z.enum(['codex', 'claude', 'agy', 'mock']);
 export type Provider = z.infer<typeof ProviderSchema>;
 
+export const ActorRefSchema = z
+  .object({
+    kind: z.enum(['user', 'system', 'worker', 'provider']),
+    id: z.string().trim().min(1),
+    displayName: z.string().trim().min(1).optional(),
+  })
+  .strict();
+export type ActorRef = z.infer<typeof ActorRefSchema>;
+
 export const AgentRoleSchema = z.enum([
   'planner',
   'plan-reviewer',

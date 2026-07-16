@@ -1,9 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { QueueJob } from '@agent-foundry/contracts';
 import { LeaseLostError, type Clock } from '@agent-foundry/domain';
+import { atomicWriteJson, readJson } from './fs-utils.js';
 import { FileJobQueue } from './job-queue.js';
 
 const temporaryDirectories: string[] = [];
@@ -46,6 +47,138 @@ function baseJob(id = 'job-1'): QueueJob {
 }
 
 describe('FileJobQueue lease semantics', () => {
+  it('publishes despite an orphaned enqueue lock directory from a hard crash', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await mkdir(join(dataDir, 'queue', 'enqueue-locks', 'job-1.lock'), { recursive: true });
+
+    await queue.enqueue(baseJob());
+
+    expect((await queue.claim('worker-a'))?.id).toBe('job-1');
+    expect(await queue.claim('worker-b')).toBeNull();
+  }, 15_000);
+
+  it('publishes one pending job when identical enqueues race', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+
+    await Promise.all([queue.enqueue(baseJob()), queue.enqueue(baseJob())]);
+
+    expect((await queue.claim('worker-a'))?.id).toBe('job-1');
+    expect(await queue.claim('worker-b')).toBeNull();
+  });
+
+  it('keeps the first pending job when the same id is enqueued again', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue({
+      ...baseJob(),
+      attempts: 2,
+      lastError: 'recovered state',
+      availableAt: '2026-07-14T12:00:10.000Z',
+    });
+    await queue.enqueue({ ...baseJob(), projectId: 'project-2' });
+
+    clock.advanceMs(10_000);
+    const claimed = await queue.claim('worker-a');
+    expect(claimed?.projectId).toBe('project-1');
+    expect(claimed).toMatchObject({ attempts: 2, lastError: 'recovered state' });
+    expect(await queue.claim('worker-b')).toBeNull();
+  });
+
+  it('does not publish a duplicate while the same job id has an active lease', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue(baseJob());
+    const claimed = (await queue.claim('worker-a'))!;
+
+    await queue.enqueue({ ...baseJob(), projectId: 'project-2' });
+
+    expect(await queue.claim('worker-b')).toBeNull();
+    await expect(queue.heartbeat(claimed, 'worker-a')).resolves.toMatchObject({
+      projectId: 'project-1',
+      lease: { workerId: 'worker-a' },
+    });
+  });
+
+  it('successful ack removes a same-id pending duplicate created during processing', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue(baseJob());
+    const claimed = (await queue.claim('worker-a'))!;
+    await atomicWriteJson(join(dataDir, 'queue', 'pending', 'job-1.json'), {
+      ...baseJob(),
+      projectId: 'duplicate-project',
+    });
+
+    expect(await queue.claim('worker-b')).toBeNull();
+    await queue.ack(claimed, 'worker-a');
+
+    expect(await queue.claim('worker-c')).toBeNull();
+  });
+
+  it('acking one approval generation preserves the next generation for one claim', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    const oldJob = baseJob('run-project-run-1-approval-decision-1');
+    const newJob = baseJob('run-project-run-1-approval-decision-2');
+    await queue.enqueue(oldJob);
+    const claimedOld = (await queue.claim('worker-a'))!;
+    await queue.enqueue(newJob);
+
+    await queue.ack(claimedOld, 'worker-a');
+
+    expect((await queue.claim('worker-b'))?.id).toBe(newJob.id);
+    expect(await queue.claim('worker-c')).toBeNull();
+  });
+
+  it('nack overwrites a same-id pending duplicate with authoritative retry state', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue(baseJob());
+    const claimed = (await queue.claim('worker-a'))!;
+    await atomicWriteJson(join(dataDir, 'queue', 'pending', 'job-1.json'), {
+      ...baseJob(),
+      projectId: 'duplicate-project',
+    });
+
+    await queue.nack(claimed, 'worker-a', new Error('retry me'));
+    clock.advanceMs(10_000);
+
+    expect(await queue.claim('worker-b')).toMatchObject({
+      projectId: 'project-1',
+      attempts: 1,
+      lastError: 'retry me',
+    });
+  });
+
+  it('expired-lease recovery overwrites a same-id pending duplicate with fenced state', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue(baseJob());
+    const claimed = (await queue.claim('worker-a'))!;
+    await atomicWriteJson(join(dataDir, 'queue', 'pending', 'job-1.json'), {
+      ...baseJob(),
+      projectId: 'duplicate-project',
+    });
+    clock.advanceMs(61_000);
+
+    await queue.reapExpired();
+
+    expect(await queue.claim('worker-b')).toMatchObject({
+      projectId: 'project-1',
+      leaseEpoch: claimed.leaseEpoch + 1,
+    });
+  });
+
   it('grants a lease with workerId, heartbeatAt, expiresAt, and a monotonic fencingToken on claim', async () => {
     const dataDir = await temporaryDataDir();
     const clock = new FakeClock(new Date(createdAt));
@@ -156,6 +289,16 @@ describe('FileJobQueue lease semantics', () => {
     await expect(queue.nack(workerB, 'worker-a', new Error('wrong worker'))).rejects.toThrow(
       LeaseLostError,
     );
+
+    const authoritativePending = {
+      ...baseJob(),
+      attempts: 2,
+      lastError: 'authoritative recovery',
+    };
+    const pendingPath = join(dataDir, 'queue', 'pending', 'job-1.json');
+    await atomicWriteJson(pendingPath, authoritativePending);
+    await expect(queue.ack(workerA, 'worker-a')).rejects.toThrow(LeaseLostError);
+    await expect(readJson(pendingPath)).resolves.toMatchObject(authoritativePending);
   });
 
   it('clears the lease and returns a nacked job to pending with backoff', async () => {
@@ -189,5 +332,18 @@ describe('FileJobQueue lease semantics', () => {
     expect(await queue.claim('worker-a')).toBeNull();
     clock.advanceMs(60_000);
     expect(await queue.claim('worker-a')).toBeNull(); // failed, not pending
+  });
+
+  it('removes a same-id pending duplicate when nack exhausts maxAttempts', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue({ ...baseJob(), maxAttempts: 1 });
+    const claimed = (await queue.claim('worker-a'))!;
+    await atomicWriteJson(join(dataDir, 'queue', 'pending', 'job-1.json'), baseJob());
+
+    await queue.nack(claimed, 'worker-a', new Error('fatal'));
+
+    expect(await queue.claim('worker-b')).toBeNull();
   });
 });
