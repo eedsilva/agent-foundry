@@ -1,14 +1,18 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { execa } from 'execa';
 import {
   PreviewCommandPlanSchema,
   type PackageManager,
   type PreviewCommandPlan,
   type PreviewCommandResult,
+  type PreviewToolVersions,
   type ProjectPolicy,
 } from '@agent-foundry/contracts';
-import { detectPackageManager, scriptCommand } from './package-manager.js';
+import {
+  detectPackageManager,
+  isRecord,
+  readPackageJsonAt,
+  scriptCommand,
+} from './package-manager.js';
 
 /**
  * Plans install/build/dev commands for a workspace without executing
@@ -21,7 +25,7 @@ export async function resolvePreviewCommandPlan(
   policy?: ProjectPolicy,
 ): Promise<PreviewCommandPlan> {
   const packageManager = await detectPackageManager(workspacePath);
-  const packageJson = await readPackageJson(workspacePath);
+  const packageJson = await readPackageJsonAt(workspacePath);
   const scripts = isRecord(packageJson?.scripts)
     ? (packageJson.scripts as Record<string, unknown>)
     : {};
@@ -94,7 +98,7 @@ export interface PreviewInstallOutcome {
   exitCode: number;
   stdout: string;
   stderr: string;
-  versions?: { node: string; packageManager?: string };
+  versions?: PreviewToolVersions;
 }
 
 /** Executes the plan's reproducible install command; never falls back to a different command. */
@@ -132,25 +136,11 @@ export async function runReproducibleInstall(
   }
 }
 
-async function probeVersions(
-  packageManagerCommand: string,
-): Promise<{ node: string; packageManager?: string }> {
+async function probeVersions(packageManagerCommand: string): Promise<PreviewToolVersions> {
   try {
     const { stdout } = await execa(packageManagerCommand, ['--version']);
     return { node: process.version, packageManager: stdout.trim() };
   } catch {
     return { node: process.version };
   }
-}
-
-async function readPackageJson(cwd: string): Promise<Record<string, unknown> | null> {
-  try {
-    return JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8')) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

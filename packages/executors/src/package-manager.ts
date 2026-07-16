@@ -61,7 +61,7 @@ function corepackPackageManager(packageJson: Record<string, unknown>): PackageMa
   return KNOWN_MANAGERS.has(name) ? (name as PackageManager) : undefined;
 }
 
-async function readPackageJsonAt(dir: string): Promise<Record<string, unknown> | null> {
+export async function readPackageJsonAt(dir: string): Promise<Record<string, unknown> | null> {
   try {
     return JSON.parse(await readFile(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>;
   } catch {
@@ -69,7 +69,11 @@ async function readPackageJsonAt(dir: string): Promise<Record<string, unknown> |
   }
 }
 
-async function pathExists(path: string): Promise<boolean> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path, constants.F_OK);
     return true;

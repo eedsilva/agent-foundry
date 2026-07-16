@@ -1,16 +1,21 @@
-import { access, readFile } from 'node:fs/promises';
-import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import {
   VerificationReportSchema,
+  type PackageManager,
   type ProjectPolicy,
   type VerificationCommandResult,
   type VerificationReport,
 } from '@agent-foundry/contracts';
 import type { VerificationService } from '@agent-foundry/domain';
 import { RunCancelledError } from '@agent-foundry/domain';
-import { detectPackageManager, scriptCommand } from './package-manager.js';
+import {
+  detectPackageManager,
+  isRecord,
+  pathExists,
+  readPackageJsonAt,
+  scriptCommand,
+} from './package-manager.js';
 
 const EMPTY_GIT_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
@@ -35,7 +40,7 @@ export class WorkspaceVerifier implements VerificationService {
     if (signal?.aborted) throw new RunCancelledError();
     const packageManager = await detectPackageManager(input.workspacePath);
     const commands: VerificationCommandResult[] = [];
-    const packageJson = await readPackageJson(input.workspacePath);
+    const packageJson = await readPackageJsonAt(input.workspacePath);
 
     if (!packageJson) {
       return VerificationReportSchema.parse({
@@ -122,7 +127,7 @@ export class WorkspaceVerifier implements VerificationService {
   }
 
   private async runInstall(
-    packageManager: VerificationReport['packageManager'],
+    packageManager: PackageManager,
     cwd: string,
     signal?: AbortSignal,
   ): Promise<VerificationCommandResult> {
@@ -140,7 +145,7 @@ export class WorkspaceVerifier implements VerificationService {
   }
 
   private async runScript(
-    packageManager: VerificationReport['packageManager'],
+    packageManager: PackageManager,
     script: string,
     cwd: string,
     signal?: AbortSignal,
@@ -230,25 +235,4 @@ function dependencyPolicyCheck(
       : `Forbidden dependencies declared: ${violations.join(', ')} (policy ${policy.id}@v${policy.version}).`,
     violations.length === 0 ? 0 : 1,
   );
-}
-
-async function readPackageJson(cwd: string): Promise<Record<string, unknown> | null> {
-  try {
-    return JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8')) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
