@@ -72,6 +72,45 @@ docker compose up --build
 
 Usa volume para dados e não injeta credenciais de CLI.
 
+## Preview
+
+A prévia em tempo real permite que desenvolvedores testem mudanças no projeto sem fazer commit. O runtime orquestra a preparação, inicialização e monitoramento de saúde de um servidor de desenvolvimento efêmero, e um proxy reverso oferece acesso seguro a esse servidor.
+
+### Ciclo de vida da sessão
+
+```bash
+POST /projects/:projectId/preview
+```
+
+Inicia uma sessão de preview: reserva uma porta, instala dependências, inicia o servidor de dev, sonda a saúde TCP e, quando saudável, retorna a sessão e uma URL de proxy com token (`/preview/:sessionId/?token=<token>`). Cada sessão recebe um token criptograficamente aleatório armazenado em memória.
+
+```bash
+POST /projects/:projectId/preview/:sessionId/stop
+```
+
+Interrompe explicitamente uma sessão, terminando o processo do servidor de desenvolvimento.
+
+Sessões expiram automaticamente após `PREVIEW_TTL_SECONDS` segundos (padrão 1800). Após expiração, tentativas de acesso retornam `403`.
+
+### Proxy
+
+```bash
+GET/* /preview/:sessionId/*
+WebSocket /preview/:sessionId/*
+```
+
+Encaminha requisições para o servidor de desenvolvimento upstream. O proxy valida:
+
+- **Host header**: apenas `localhost` (ou equivalente de loopback) é permitido, defendendo contra ataques de DNS rebinding (ADR-0005, ADR-0017).
+- **Token**: esperado como query param na primeira requisição (convertido para cookie HttpOnly/path-scoped) ou como cookie em requisições subsequentes. Mismatch retorna `403`.
+
+O proxy:
+
+- Remove o token da query string antes de enviar ao upstream, evitando que o servidor de dev o receba.
+- Reescreve Location e headers relacionados para evitar que a porta interna vaze (as respostas com porta interna são convertidas para paths de proxy ou rejeitadas).
+- Bloqueia redirecionamentos para URLs externas, evitando que um servidor de dev comprometido redirecione através da origem de proxy confiável.
+- Mantém a sessão strictly loopback: conexões de máquinas remotas são rejeitadas.
+
 ## Recovery manual da fila
 
 Por padrão, um job de projeto tem uma única tentativa de orquestração. Fallbacks de modelo e loops de reparo já acontecem dentro dessa tentativa; repetir o workflow inteiro automaticamente pode duplicar custo e revisões. O endpoint de retry torna uma nova execução uma decisão explícita.
