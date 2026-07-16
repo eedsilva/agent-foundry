@@ -413,8 +413,47 @@ describe('approval gates halt the run for a human decision (#13)', () => {
       decidedBy: 'ed',
     });
 
+    const [settled] = await harness.service.listApprovals('run-1');
     expect(harness.enqueued).toEqual([
-      expect.objectContaining({ id: 'run-project-run-1', runId: 'run-1' }),
+      expect.objectContaining({
+        id: `run-project-run-1-approval-${settled!.decision!.id}`,
+        runId: 'run-1',
+      }),
+    ]);
+  });
+
+  it('publishes distinct deterministic jobs for two approval decisions on one run', async () => {
+    const harness = makeHarness({}, undefined, {
+      gate: {
+        actions: ['approve', 'request-changes'],
+        returnToStepId: 'implement',
+        repairArtifact: 'repair-notes',
+      },
+    });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [firstApproval] = await harness.service.listApprovals('run-1');
+    const first = await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+      action: 'request-changes',
+      decidedBy: 'ed',
+      note: 'revise it',
+    });
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const approvals = await harness.service.listApprovals('run-1');
+    const secondApproval = approvals.find((entry) => entry.decision === null)!;
+    const second = await harness.service.decideApproval('run-1', secondApproval.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    await harness.service.decideApproval('run-1', secondApproval.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+
+    expect(harness.enqueued.map((job) => job.id)).toEqual([
+      `run-project-run-1-approval-${first.decision.id}`,
+      `run-project-run-1-approval-${second.decision.id}`,
     ]);
   });
 

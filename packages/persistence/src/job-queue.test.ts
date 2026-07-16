@@ -116,9 +116,26 @@ describe('FileJobQueue lease semantics', () => {
       projectId: 'duplicate-project',
     });
 
+    expect(await queue.claim('worker-b')).toBeNull();
     await queue.ack(claimed, 'worker-a');
 
-    expect(await queue.claim('worker-b')).toBeNull();
+    expect(await queue.claim('worker-c')).toBeNull();
+  });
+
+  it('acking one approval generation preserves the next generation for one claim', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    const oldJob = baseJob('run-project-run-1-approval-decision-1');
+    const newJob = baseJob('run-project-run-1-approval-decision-2');
+    await queue.enqueue(oldJob);
+    const claimedOld = (await queue.claim('worker-a'))!;
+    await queue.enqueue(newJob);
+
+    await queue.ack(claimedOld, 'worker-a');
+
+    expect((await queue.claim('worker-b'))?.id).toBe(newJob.id);
+    expect(await queue.claim('worker-c')).toBeNull();
   });
 
   it('nack overwrites a same-id pending duplicate with authoritative retry state', async () => {

@@ -464,7 +464,7 @@ export class ProjectService {
         // process dies in that window, the same settled decision repairs the
         // project summary and queue entry exactly once.
         if (run.status === 'queued') {
-          await this.requeueProject(run.projectId, runId);
+          await this.requeueProject(run.projectId, runId, this.approvalJobId(runId, decision.id));
           await this.appendApprovalDecisionEvent(run, requestId, decision);
         }
         return { run, decision };
@@ -583,6 +583,7 @@ export class ProjectService {
       ({ run: updatedRun } = await this.invalidateFromStep(run, target, downstream, {
         mode: 'invalidate',
         reason: invalidationReason,
+        queueJobId: this.approvalJobId(runId, decision.id),
         ...(feedbackArtifact ? { feedbackArtifact } : {}),
       }));
     } else {
@@ -593,7 +594,7 @@ export class ProjectService {
         transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: undefined }),
         run.version,
       );
-      await this.requeueProject(run.projectId, runId);
+      await this.requeueProject(run.projectId, runId, this.approvalJobId(runId, decision.id));
     }
 
     await this.appendApprovalDecisionEvent(run, requestId, decision);
@@ -661,6 +662,7 @@ export class ProjectService {
       mode: RunRetryDirective['mode'];
       override?: RunRetryDirective['override'];
       feedbackArtifact?: ArtifactReference;
+      queueJobId?: string;
       reason: string;
     },
   ): Promise<{ run: WorkflowRun; invalidatedStepRunIds: string[] }> {
@@ -693,7 +695,7 @@ export class ProjectService {
       transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: directive }),
       run.version,
     );
-    await this.requeueProject(run.projectId, run.id);
+    await this.requeueProject(run.projectId, run.id, options.queueJobId);
     return { run: updated, invalidatedStepRunIds };
   }
 
@@ -766,7 +768,7 @@ export class ProjectService {
     return diagnostics;
   }
 
-  private async requeueProject(projectId: string, runId: string): Promise<void> {
+  private async requeueProject(projectId: string, runId: string, jobId?: string): Promise<void> {
     const project = await this.requireProject(projectId);
     const now = this.clock.now().toISOString();
     if (project.status !== 'queued' || project.currentRunId !== runId) {
@@ -780,7 +782,7 @@ export class ProjectService {
       await this.projects.update(updated, project.version);
     }
     await this.queue.enqueue({
-      id: `run-project-${runId}`,
+      id: jobId ?? `run-project-${runId}`,
       type: 'run-project',
       projectId,
       workflowId: project.workflowId,
@@ -791,6 +793,10 @@ export class ProjectService {
       availableAt: now,
       leaseEpoch: 0,
     });
+  }
+
+  private approvalJobId(runId: string, decisionId: string): string {
+    return `run-project-${runId}-approval-${decisionId}`;
   }
 
   private async appendApprovalDecisionEvent(

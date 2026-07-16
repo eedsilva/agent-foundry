@@ -53,8 +53,10 @@ export class FileJobQueue implements JobQueue {
     const entries = (await readdir(pending)).filter((name) => name.endsWith('.json')).sort();
 
     for (const entry of entries) {
+      const jobId = entry.slice(0, -5);
+      if (await this.isProcessing(jobId)) continue;
       const from = join(pending, entry);
-      const to = join(processing, `${entry.slice(0, -5)}.${safeSegment(workerId)}.json`);
+      const to = join(processing, `${jobId}.${safeSegment(workerId)}.json`);
       try {
         await rename(from, to);
       } catch {
