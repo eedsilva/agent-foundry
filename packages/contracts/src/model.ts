@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  ActorRefSchema,
   AgentRoleSchema,
   ComplexityLevelSchema,
   PathSegmentSchema,
@@ -98,6 +99,49 @@ export const RankedModelSchema = z.object({
 });
 export type RankedModel = z.infer<typeof RankedModelSchema>;
 
+export const ModelOverrideScopeSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('run') }).strict(),
+  z
+    .object({
+      kind: z.literal('step'),
+      nodeId: PathSegmentSchema,
+      stepId: PathSegmentSchema,
+    })
+    .strict(),
+]);
+export type ModelOverrideScope = z.infer<typeof ModelOverrideScopeSchema>;
+
+export const ModelOverrideRecordSchema = z
+  .object({
+    id: PathSegmentSchema,
+    runId: PathSegmentSchema,
+    scope: ModelOverrideScopeSchema,
+    modelId: PathSegmentSchema,
+    provider: ProviderSchema.exclude(['mock']),
+    model: z.string().trim().min(1),
+    actor: ActorRefSchema,
+    reason: z.string().trim().min(1),
+    estimatedImpact: z.string().trim().min(1),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+export type ModelOverrideRecord = z.infer<typeof ModelOverrideRecordSchema>;
+
+export const RouteOverrideProvenanceSchema = z
+  .object({
+    source: z.enum(['retry', 'step', 'run']),
+    overrideId: PathSegmentSchema.optional(),
+    modelId: PathSegmentSchema,
+    provider: ProviderSchema.exclude(['mock']),
+    model: z.string().trim().min(1),
+    actor: ActorRefSchema,
+    reason: z.string().trim().min(1),
+    estimatedImpact: z.string().trim().min(1),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+export type RouteOverrideProvenance = z.infer<typeof RouteOverrideProvenanceSchema>;
+
 export const RouteDecisionSchema = z.object({
   routeId: PathSegmentSchema,
   createdAt: z.string().datetime(),
@@ -106,6 +150,7 @@ export const RouteDecisionSchema = z.object({
   fallbacks: z.array(RankedModelSchema),
   executed: RankedModelSchema.optional(),
   attemptedModelIds: z.array(z.string().min(1)).optional(),
+  override: RouteOverrideProvenanceSchema.optional(),
   rejected: z.array(
     z.object({
       modelId: PathSegmentSchema,

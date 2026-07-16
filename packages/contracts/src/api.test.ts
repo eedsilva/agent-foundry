@@ -1,5 +1,74 @@
 import { describe, expect, it } from 'vitest';
-import { DecideApprovalRequestSchema, RunAuditExportSchema } from './api.js';
+import {
+  CreateModelOverrideRequestSchema,
+  CreateModelOverrideResponseSchema,
+  DecideApprovalRequestSchema,
+  RetryStepRequestSchema,
+  RunAuditExportSchema,
+} from './api.js';
+
+describe('model override API contracts (#16)', () => {
+  const audit = {
+    actor: { kind: 'user' as const, id: 'ed' },
+    reason: 'Pin a model for a risky repair',
+    estimatedImpact: 'Higher latency and metered cost',
+  };
+
+  it('accepts audited run and step pin requests', () => {
+    expect(
+      CreateModelOverrideRequestSchema.parse({
+        provider: 'codex',
+        model: 'gpt-5',
+        scope: { kind: 'run' },
+        ...audit,
+      }).scope,
+    ).toEqual({ kind: 'run' });
+    expect(
+      CreateModelOverrideRequestSchema.parse({
+        provider: 'codex',
+        model: 'gpt-5',
+        scope: { kind: 'step', nodeId: 'implementation-gate', stepId: 'repair-code' },
+        ...audit,
+      }).scope,
+    ).toMatchObject({ kind: 'step', stepId: 'repair-code' });
+  });
+
+  it('rejects unaudited pins and retry overrides', () => {
+    expect(() =>
+      CreateModelOverrideRequestSchema.parse({
+        provider: 'codex',
+        model: 'gpt-5',
+        scope: { kind: 'run' },
+      }),
+    ).toThrow();
+    expect(() =>
+      RetryStepRequestSchema.parse({
+        mode: 'preserve',
+        override: { provider: 'codex', model: 'gpt-5' },
+      }),
+    ).toThrow();
+  });
+
+  it('parses resolved override responses and audited retry input', () => {
+    const record = {
+      id: 'override-1',
+      runId: 'run-1',
+      scope: { kind: 'run' as const },
+      modelId: 'codex-gpt-5',
+      provider: 'codex' as const,
+      model: 'gpt-5',
+      ...audit,
+      createdAt: '2026-07-16T12:00:00.000Z',
+    };
+    expect(CreateModelOverrideResponseSchema.parse({ override: record }).override).toEqual(record);
+    expect(
+      RetryStepRequestSchema.parse({
+        mode: 'invalidate',
+        override: { provider: 'codex', model: 'gpt-5', ...audit },
+      }).override,
+    ).toMatchObject({ reason: audit.reason });
+  });
+});
 
 describe('DecideApprovalRequestSchema (#14)', () => {
   it('requires a note when action is request-changes', () => {

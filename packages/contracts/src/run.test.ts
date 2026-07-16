@@ -6,13 +6,16 @@ import {
   QueueJobSchema,
 } from './project.js';
 import { ActorRefSchema } from './primitives.js';
+import { WorkflowNodeSchema } from './workflow.js';
 import {
   ApprovalDecisionSchema,
   ApprovalRequestSchema,
+  RunRetryDirectiveSchema,
   StepAttemptSchema,
   StepRunSchema,
   WorkflowRunSchema,
 } from './run.js';
+import { ModelOverrideRecordSchema, RouteDecisionSchema } from './model.js';
 import * as contracts from './index.js';
 
 const exported = contracts as Record<string, unknown>;
@@ -32,6 +35,217 @@ describe('persisted run contracts', () => {
     expect(exported.WorkflowRunSchema).toBeDefined();
     expect(exported.StepRunSchema).toBeDefined();
     expect(exported.StepAttemptSchema).toBeDefined();
+  });
+
+  it('parses immutable run and step model override records', () => {
+    const base = {
+      id: 'override-1',
+      runId: 'run-1',
+      modelId: 'codex-gpt-5',
+      provider: 'codex' as const,
+      model: 'gpt-5',
+      actor: { kind: 'user' as const, id: 'ed' },
+      reason: 'Unblock a high-risk repair',
+      estimatedImpact: 'Higher latency and metered cost',
+      createdAt: '2026-07-16T12:00:00.000Z',
+    };
+
+    expect(ModelOverrideRecordSchema.parse({ ...base, scope: { kind: 'run' } }).scope).toEqual({
+      kind: 'run',
+    });
+    expect(
+      ModelOverrideRecordSchema.parse({
+        ...base,
+        scope: { kind: 'step', nodeId: 'implementation-gate', stepId: 'repair-code' },
+      }).scope,
+    ).toEqual({ kind: 'step', nodeId: 'implementation-gate', stepId: 'repair-code' });
+    expect(() =>
+      ModelOverrideRecordSchema.parse({
+        ...base,
+        scope: { kind: 'run' },
+        estimatedImpact: '   ',
+      }),
+    ).toThrow();
+  });
+
+  it('keeps route decisions compatible while exposing override provenance', () => {
+    const route = {
+      routeId: 'route-1',
+      createdAt: '2026-07-16T12:00:00.000Z',
+      profile: {
+        role: 'developer' as const,
+        taskKind: 'implementation' as const,
+        complexity: 3,
+        risk: 3,
+        estimatedContextTokens: 1_000,
+        estimatedOutputTokens: 500,
+        mutatesWorkspace: true,
+        priorities: { quality: 1, speed: 0, cost: 0, reliability: 0 },
+      },
+      selected: {
+        model: {
+          id: 'codex-gpt-5',
+          provider: 'codex' as const,
+          model: 'gpt-5',
+          maxContextTokens: 100_000,
+          capabilities: {
+            planning: 1,
+            architecture: 1,
+            coding: 1,
+            review: 1,
+            repair: 1,
+            structuredOutput: 1,
+            speed: 1,
+            costEfficiency: 1,
+            reliability: 1,
+          },
+        },
+        score: {
+          capability: 1,
+          context: 1,
+          speed: 1,
+          cost: 1,
+          reliability: 1,
+          historical: 1,
+          tagAffinity: 1,
+          estimatedCostUsd: null,
+          total: 1,
+        },
+      },
+      fallbacks: [],
+      rejected: [],
+    };
+
+    expect(RouteDecisionSchema.parse(route).override).toBeUndefined();
+    expect(
+      RouteDecisionSchema.parse({
+        ...route,
+        override: {
+          source: 'step',
+          overrideId: 'override-1',
+          modelId: 'codex-gpt-5',
+          provider: 'codex',
+          model: 'gpt-5',
+          actor: { kind: 'user', id: 'ed' },
+          reason: 'Repair pin',
+          estimatedImpact: 'Higher latency',
+          createdAt: '2026-07-16T12:00:00.000Z',
+        },
+      }).override,
+    ).toMatchObject({ source: 'step', overrideId: 'override-1' });
+  });
+
+  it('parses restart-safe execution and emergency ceiling evidence', () => {
+    const run = WorkflowRunSchema.parse({
+      id: 'run-1',
+      projectId: 'project-1',
+      workflowId: 'web-app-v1',
+      status: 'failed',
+      version: 1,
+      createdAt: '2026-07-16T12:00:00.000Z',
+      updatedAt: '2026-07-16T16:00:00.000Z',
+      startedAt: '2026-07-16T12:00:00.000Z',
+      completedAt: '2026-07-16T16:00:00.000Z',
+      error: {
+        name: 'EmergencyCeilingError',
+        message: 'Repair ceiling reached',
+        code: 'EMERGENCY_CEILING',
+      },
+      execution: {
+        activeElapsedMs: 14_400_000,
+        consecutiveRepairs: 10,
+        lastVerifiedCheckpoint: 'abc123',
+        ceiling: {
+          reason: 'consecutive-repairs',
+          reachedAt: '2026-07-16T16:00:00.000Z',
+          draftBranch: 'draft/run-1',
+        },
+      },
+    });
+
+    expect(run.execution?.ceiling?.draftBranch).toBe('draft/run-1');
+    expect(
+      WorkflowRunSchema.parse({
+        id: 'run-legacy',
+        projectId: 'project-1',
+        workflowId: 'web-app-v1',
+        status: 'queued',
+        version: 1,
+        createdAt: '2026-07-16T12:00:00.000Z',
+        updatedAt: '2026-07-16T12:00:00.000Z',
+      }).execution,
+    ).toBeUndefined();
+  });
+
+  it('reads legacy retry directives and audited retry overrides', () => {
+    const base = {
+      stepRunId: 'step-run-1',
+      nodeId: 'implementation-gate',
+      stepId: 'repair-code',
+      mode: 'preserve' as const,
+      requestedAt: '2026-07-16T12:00:00.000Z',
+    };
+    expect(
+      RunRetryDirectiveSchema.parse({
+        ...base,
+        override: { modelId: 'codex-gpt-5', provider: 'codex', model: 'gpt-5' },
+      }).override?.actor,
+    ).toBeUndefined();
+    expect(
+      RunRetryDirectiveSchema.parse({
+        ...base,
+        override: {
+          modelId: 'codex-gpt-5',
+          provider: 'codex',
+          model: 'gpt-5',
+          actor: { kind: 'user', id: 'ed' },
+          reason: 'Retry on stronger model',
+          estimatedImpact: 'Higher latency',
+        },
+      }).override,
+    ).toMatchObject({ reason: 'Retry on stronger model' });
+    expect(() =>
+      RunRetryDirectiveSchema.parse({
+        ...base,
+        override: {
+          modelId: 'codex-gpt-5',
+          provider: 'codex',
+          model: 'gpt-5',
+          actor: { kind: 'user', id: 'ed' },
+        },
+      }),
+    ).toThrow(/provided together/);
+  });
+
+  it('keeps legacy maxAttempts and maxIterations readable', () => {
+    const agent = {
+      id: 'review',
+      type: 'agent' as const,
+      role: 'code-reviewer' as const,
+      taskKind: 'code-review' as const,
+      title: 'Review',
+      instructions: 'Review the implementation',
+      outputArtifact: 'review',
+      maxAttempts: 5,
+    };
+    const parsedAgent = WorkflowNodeSchema.parse(agent);
+    expect(parsedAgent.type === 'agent' && parsedAgent.maxAttempts).toBe(5);
+    const parsedLoop = WorkflowNodeSchema.parse({
+      id: 'quality',
+      type: 'quality-loop',
+      title: 'Quality loop',
+      check: agent,
+      repair: {
+        ...agent,
+        id: 'repair',
+        role: 'fixer',
+        taskKind: 'repair',
+        outputArtifact: 'repair',
+      },
+      approval: { artifact: 'review', path: 'approved', equals: true },
+      maxIterations: 10,
+    });
+    expect(parsedLoop.type === 'quality-loop' && parsedLoop.maxIterations).toBe(10);
   });
 
   it('accepts valid queued, pending, and running entity records', () => {
