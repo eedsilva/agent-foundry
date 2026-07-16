@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RouteDecisionSchema } from './model.js';
+import { PolicyRecordSchema } from './policy.js';
 import { PathSegmentSchema, ProviderSchema } from './primitives.js';
 import { ApprovalActionSchema, ApprovalTimeoutPolicySchema } from './workflow.js';
 
@@ -71,6 +72,7 @@ export const RunPauseSnapshotSchema = z
   .object({
     workflowHash: IdempotencyKeySchema,
     harnessVersion: z.string().min(1),
+    policyHash: IdempotencyKeySchema.optional(),
     workspaceHead: z.string().min(1).nullable(),
     artifactHashes: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/)),
     resumeNodeId: PathSegmentSchema.optional(),
@@ -104,6 +106,7 @@ export const WorkflowRunSchema = z
     id: PathSegmentSchema,
     projectId: PathSegmentSchema,
     workflowId: PathSegmentSchema,
+    policy: PolicyRecordSchema.optional(),
     status: WorkflowRunStatusSchema,
     version: EntityVersionSchema,
     createdAt: z.string().datetime(),

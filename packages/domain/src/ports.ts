@@ -11,6 +11,7 @@ import type {
   PreviewHealth,
   PreviewSession,
   Project,
+  ProjectPolicy,
   ProjectEvent,
   QueueJob,
   RouteDecision,
@@ -108,6 +109,10 @@ export interface WorkflowRepository {
   list(): Promise<WorkflowDefinition[]>;
 }
 
+export interface PolicyRepository {
+  get(policyId: string): Promise<ProjectPolicy>;
+}
+
 export interface HarnessSelection {
   version: string;
   files: Array<{
@@ -185,6 +190,7 @@ export interface VerificationService {
       workspacePath: string;
       scripts: string[];
       includeGitDiffCheck: boolean;
+      policy?: ProjectPolicy | undefined;
     },
     signal?: AbortSignal,
   ): Promise<VerificationReport>;
