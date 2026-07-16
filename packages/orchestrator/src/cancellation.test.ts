@@ -342,12 +342,23 @@ class FakeWorkspaces implements WorkspaceManager {
     this.rollbacks.push(ref);
     return Promise.resolve();
   }
+  preserveDraft(_projectId: string, runId: string, verifiedCheckpoint: string) {
+    this.rollbacks.push(verifiedCheckpoint);
+    return Promise.resolve({
+      draftBranch: `draft/${runId}`,
+      draftCommit: 'draft-commit',
+      created: true,
+    });
+  }
+  discardDraft(): Promise<void> {
+    return Promise.resolve();
+  }
   commit(_projectId: string, message: string): Promise<string | null> {
     this.commits.push(message);
     return Promise.resolve(`commit-${String(this.commits.length)}`);
   }
   head(): Promise<string | null> {
-    return Promise.resolve(null);
+    return Promise.resolve('initial-head');
   }
 }
 

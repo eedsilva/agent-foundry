@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -11,6 +11,31 @@ import type {
 import type { AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor } from '@agent-foundry/executors';
 import { createRuntime } from './runtime.js';
+
+const RESTART_APPROVAL_WORKFLOW = `
+schemaVersion: '1'
+id: restart-approval-v1
+name: Restart approval fixture
+description: Persisted feedback restart coverage.
+stack: nextjs
+nodes:
+  - id: plan
+    type: agent
+    role: planner
+    taskKind: planning
+    title: Draft a plan
+    instructions: Draft a short plan from the PRD.
+    outputArtifact: plan.current
+
+  - id: plan-approval
+    type: approval-gate
+    title: Plan approval
+    artifact: plan.current
+    outputArtifact: plan.approval
+    actions: [approve, request-changes]
+    returnToStepId: plan
+    repairArtifact: plan.repair-notes
+`;
 
 class FailFirstExecutor implements AgentExecutor {
   readonly provider = 'mock';
@@ -48,6 +73,82 @@ afterEach(async () => {
 });
 
 describe('mock runtime', () => {
+  it('restarts from disk with the exact redacted feedback revision in the repair attempt', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-feedback-restart-'));
+    const workflowsDir = await mkdtemp(join(tmpdir(), 'agent-foundry-feedback-workflows-'));
+    temporaryDirectories.push(dataDir, workflowsDir);
+    await writeFile(
+      join(workflowsDir, 'restart-approval-v1.yaml'),
+      RESTART_APPROVAL_WORKFLOW,
+      'utf8',
+    );
+    const rootDir = resolve(import.meta.dirname, '../../..');
+    const commonEnv = {
+      ...process.env,
+      REPO_ROOT: rootDir,
+      DATA_DIR: dataDir,
+      WORKFLOWS_DIR: workflowsDir,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+    };
+    const runtimeA = await createRuntime({ ...commonEnv, WORKER_ID: 'feedback-worker-a' });
+    const project = await runtimeA.projectService.create({
+      name: 'Feedback restart sample',
+      workflowId: 'restart-approval-v1',
+      prd: 'Build a small persistent issue tracker with validation and deterministic tests.',
+    });
+    if (!project.currentRunId) throw new Error('Expected a persisted workflow run');
+    const runId = project.currentRunId;
+    expect(await runtimeA.worker.runOnce()).toBe(true);
+    const [approval] = await runtimeA.projectService.listApprovals(runId);
+    const rawSecret = 'abcdef1234567890ABCDEF';
+    const decided = await runtimeA.projectService.decideApproval(runId, approval!.request.id, {
+      action: 'request-changes',
+      decidedBy: 'ed',
+      note: `add restart coverage; Authorization: Bearer ${rawSecret}`,
+    });
+    const feedbackRef = decided.run.retry?.feedbackArtifact;
+    expect(feedbackRef).toBeDefined();
+    const feedback = await runtimeA.artifacts.getRevision(
+      project.id,
+      feedbackRef!.name,
+      feedbackRef!.revision,
+    );
+    expect(feedback?.content).toMatchObject({
+      note: 'add restart coverage; Authorization: [REDACTED]',
+    });
+
+    const runtimeB = await createRuntime({ ...commonEnv, WORKER_ID: 'feedback-worker-b' });
+    expect(await runtimeB.worker.runOnce()).toBe(true);
+
+    const activePlan = (await runtimeB.stepRuns.list(runId)).find(
+      (step) => step.stepId === 'plan' && !step.invalidatedAt,
+    );
+    expect(activePlan).toBeDefined();
+    const repairAttempt = (await runtimeB.stepAttempts.list(runId, activePlan!.id)).at(-1);
+    expect(repairAttempt?.inputArtifacts).toContainEqual(feedbackRef);
+    const requestMarkdown = await readFile(
+      join(
+        runtimeB.workspaces.workspacePath(project.id),
+        '.orchestrator',
+        'runs',
+        runId,
+        'steps',
+        activePlan!.id,
+        'attempts',
+        repairAttempt!.id,
+        'REQUEST.md',
+      ),
+      'utf8',
+    );
+    expect(requestMarkdown).toContain(
+      `### ${feedbackRef!.name} · revision ${feedbackRef!.revision}`,
+    );
+    expect(requestMarkdown).toContain(`SHA-256: ${feedbackRef!.sha256}`);
+    expect(requestMarkdown).toContain('add restart coverage; Authorization: [REDACTED]');
+    expect(requestMarkdown).not.toContain(rawSecret);
+  }, 30_000);
+
   it('runs the complete workflow and persists auditable artifacts', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-'));
     temporaryDirectories.push(dataDir);

@@ -2,7 +2,14 @@ import { readdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { QueueJobSchema, type QueueJob } from '@agent-foundry/contracts';
 import { LeaseLostError, type Clock, type JobQueue } from '@agent-foundry/domain';
-import { atomicWriteJson, ensureDir, readJson, readJsonOrNull, safeSegment } from './fs-utils.js';
+import {
+  atomicCreateJson,
+  atomicWriteJson,
+  ensureDir,
+  readJson,
+  readJsonOrNull,
+  safeSegment,
+} from './fs-utils.js';
 
 const SYSTEM_CLOCK: Clock = { now: () => new Date() };
 
@@ -25,8 +32,16 @@ export class FileJobQueue implements JobQueue {
 
   async enqueue(job: QueueJob): Promise<void> {
     const parsed = QueueJobSchema.parse(job);
-    await ensureDir(this.dir('pending'));
-    await atomicWriteJson(join(this.dir('pending'), `${safeSegment(parsed.id)}.json`), parsed);
+    const id = safeSegment(parsed.id);
+    const pendingPath = join(this.dir('pending'), `${id}.json`);
+    await Promise.all([ensureDir(this.dir('pending')), ensureDir(this.dir('processing'))]);
+    if (await this.isProcessing(id)) return;
+
+    // Create-if-absent preserves any retry/nack/reap file that won the
+    // destination. A claim between the checks and publication may leave a
+    // transient same-id pending copy; ack removes it, while nack/reap
+    // overwrite it with their advanced state.
+    await atomicCreateJson(pendingPath, parsed);
   }
 
   async claim(workerId: string): Promise<QueueJob | null> {
@@ -36,8 +51,10 @@ export class FileJobQueue implements JobQueue {
     const entries = (await readdir(pending)).filter((name) => name.endsWith('.json')).sort();
 
     for (const entry of entries) {
+      const jobId = entry.slice(0, -5);
+      if (await this.isProcessing(jobId)) continue;
       const from = join(pending, entry);
-      const to = join(processing, `${entry.slice(0, -5)}.${safeSegment(workerId)}.json`);
+      const to = join(processing, `${jobId}.${safeSegment(workerId)}.json`);
       try {
         await rename(from, to);
       } catch {
@@ -85,6 +102,7 @@ export class FileJobQueue implements JobQueue {
     const completed = this.dir('completed');
     await ensureDir(completed);
     await rename(from, join(completed, `${safeSegment(job.id)}.json`));
+    await rm(join(this.dir('pending'), `${safeSegment(job.id)}.json`), { force: true });
   }
 
   async nack(job: QueueJob, workerId: string, error: Error): Promise<void> {
@@ -105,6 +123,7 @@ export class FileJobQueue implements JobQueue {
     if (attempts >= job.maxAttempts) {
       const failed = this.dir('failed');
       await ensureDir(failed);
+      await rm(join(this.dir('pending'), `${safeSegment(job.id)}.json`), { force: true });
       await atomicWriteJson(join(failed, `${safeSegment(job.id)}.json`), updated);
       await rm(from, { force: true });
       return;
@@ -188,5 +207,10 @@ export class FileJobQueue implements JobQueue {
 
   private processingPath(jobId: string, workerId: string): string {
     return join(this.dir('processing'), `${safeSegment(jobId)}.${safeSegment(workerId)}.json`);
+  }
+
+  private async isProcessing(jobId: string): Promise<boolean> {
+    const prefix = `${safeSegment(jobId)}.`;
+    return (await readdir(this.dir('processing'))).some((entry) => entry.startsWith(prefix));
   }
 }

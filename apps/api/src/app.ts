@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
 import {
   CreateProjectRequestSchema,
+  CreateModelOverrideRequestSchema,
   DecideApprovalRequestSchema,
   PathSegmentSchema,
   RetryStepRequestSchema,
@@ -185,6 +186,13 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     return runtime.projectService.getRunDetail(runId);
   });
 
+  app.post('/runs/:runId/model-overrides', async (request, reply) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    const input = CreateModelOverrideRequestSchema.parse(request.body);
+    const override = await runtime.projectService.createModelOverride(runId, input);
+    return reply.status(201).send({ override });
+  });
+
   app.post('/runs/:runId/pause', async (request, reply) => {
     const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
     const run = await runtime.projectService.pauseRun(runId);
@@ -216,6 +224,11 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
   app.get('/runs/:runId/approvals', async (request) => {
     const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
     return { approvals: await runtime.projectService.listApprovals(runId) };
+  });
+
+  app.get('/runs/:runId/audit', async (request) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    return runtime.projectService.exportRunAudit(runId);
   });
 
   app.post('/runs/:runId/approvals/:requestId/decide', async (request, reply) => {

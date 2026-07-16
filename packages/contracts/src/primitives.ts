@@ -13,6 +13,14 @@ export type Provider = z.infer<typeof ProviderSchema>;
 
 export const PackageManagerSchema = z.enum(['npm', 'pnpm', 'yarn', 'bun', 'unknown']);
 export type PackageManager = z.infer<typeof PackageManagerSchema>;
+export const ActorRefSchema = z
+  .object({
+    kind: z.enum(['user', 'system', 'worker', 'provider']),
+    id: z.string().trim().min(1),
+    displayName: z.string().trim().min(1).optional(),
+  })
+  .strict();
+export type ActorRef = z.infer<typeof ActorRefSchema>;
 
 export const AgentRoleSchema = z.enum([
   'planner',

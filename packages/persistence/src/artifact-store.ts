@@ -3,6 +3,7 @@ import {
   ArtifactMetadataSchema,
   StoredArtifactSchema,
   type ArtifactMetadata,
+  type ActorRef,
   type RouteDecision,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
@@ -32,6 +33,9 @@ export class FileArtifactStore implements ArtifactStore {
     runId?: string;
     stepRunId?: string;
     attemptId?: string;
+    kind?: 'feedback';
+    actor?: ActorRef;
+    sourceDecisionId?: string;
     routeDecision?: RouteDecision;
     idempotencyKey?: string;
   }): Promise<StoredArtifact> {
@@ -44,6 +48,13 @@ export class FileArtifactStore implements ArtifactStore {
       const indexPath = join(root, 'index.json');
       const index = (await readJsonOrNull<ArtifactIndex>(indexPath)) ?? { artifacts: {} };
       const revisions = index.artifacts[name] ?? [];
+      const existing = input.sourceDecisionId
+        ? revisions.find((item) => item.sourceDecisionId === input.sourceDecisionId)
+        : undefined;
+      if (existing) {
+        const stored = await this.getRevision(projectId, name, existing.revision);
+        if (stored) return stored;
+      }
       const revision = revisions.length + 1;
       const serialized = JSON.stringify(input.content);
 
@@ -57,6 +68,9 @@ export class FileArtifactStore implements ArtifactStore {
         ...(input.runId ? { runId: input.runId } : {}),
         ...(input.stepRunId ? { stepRunId: input.stepRunId } : {}),
         ...(input.attemptId ? { attemptId: input.attemptId } : {}),
+        ...(input.kind ? { kind: input.kind } : {}),
+        ...(input.actor ? { actor: input.actor } : {}),
+        ...(input.sourceDecisionId ? { sourceDecisionId: input.sourceDecisionId } : {}),
         ...(input.routeDecision ? { routeDecision: input.routeDecision } : {}),
         ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
         sha256: sha256(serialized),
