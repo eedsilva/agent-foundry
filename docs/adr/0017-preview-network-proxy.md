@@ -17,29 +17,34 @@ The constraint from ADR-0005 (loopback-only, trusted operator only) applies here
 The API adds a hand-rolled reverse proxy for the `/preview/:sessionId/*` route, implemented as an HTTP+WebSocket handler in `apps/api/src/preview-proxy.ts`.
 
 **Port reservation and detection** (`packages/executors/src/preview-port.ts`, `NodePreviewRunner`):
+
 - The executor reserves a port via the standard loopback port allocator before spawning the dev server.
 - The dev server receives `PORT` and `HOST=127.0.0.1` as environment variables, so it knows where to listen.
 - If the port is in use (unlikely, but possible under concurrent preview pressure), the executor detects a bind error from the dev server's output and retries once with a fresh port reservation.
 - The executor does a single TCP-connect health probe to confirm the dev server is reachable; no HTTP-level probe or configurable health window yet.
 
 **Session tokens and lifecycle** (`packages/orchestrator/src/preview-service.ts`, `PreviewService`):
+
 - The service stores sessions in memory (indexed by session ID) alongside an opaque, cryptographically random 32-byte token per session (base64url-encoded).
 - When `POST /projects/:projectId/preview` starts a preview, it runs the prepare/start/health-poll orchestration and mints a new token, returning the session and a full proxy URL (`/preview/:sessionId/?token=<token>`).
 - When `POST /projects/:projectId/preview/:sessionId/stop` stops a preview, the service marks the session terminal; the token is kept for audit but no longer allows access.
 - Sessions expire automatically after `PREVIEW_TTL_SECONDS` (default 1800, configurable).
 
 **Proxy routes and host validation** (`apps/api/src/preview-proxy.ts`, `registerPreviewProxy`):
+
 - Three routes exist: `POST /projects/:projectId/preview` (start), `POST /projects/:projectId/preview/:sessionId/stop` (stop), and the proxy sink `GET/POST/etc. /preview/:sessionId/*` (plus raw WebSocket upgrade on the same prefix).
 - Before any upstream connection or token check, the proxy validates that the `Host` header matches the API's own loopback host:port (via `isAllowedHost`). This prevents DNS-rebinding attacks: an attacker cannot trick the proxy into forwarding a request to a different hostname or port.
 - If the Host header is invalid, the proxy responds `400` immediately and closes the connection.
 
 **Token authentication** (query-or-cookie):
+
 - The client presents the token as a URL query parameter on first request (`/preview/:sessionId/?token=<token>`), or as a cookie in subsequent requests.
 - On the first request (token in query), the proxy verifies the token against the stored session, issues a `Set-Cookie` response with the same token (name `pv_<sessionId>`, path-scoped to `/preview/:sessionId/`, HttpOnly, SameSite=Lax), and forwards the request upstream.
 - On subsequent requests (token in cookie), the proxy reads the cookie and verifies it without issuing a new cookie.
 - If the token is missing or mismatched, the proxy responds `403`.
 
 **Header sanitization**:
+
 - The proxy strips the auth token from the upstream query string (via `strippedSearch`), so the dev server never sees it.
 - The proxy drops hop-by-hop headers (Connection, Transfer-Encoding, etc.) and the client's Host header, then injects `Host: 127.0.0.1` before sending to the upstream, so the dev server sees loopback instead of the client's original Host.
 - Before sending the upstream response back to the client, the proxy sanitizes four URL-bearing response headers (Location, Content-Location, Refresh, Link) via `rewriteLocation`:
