@@ -52,6 +52,7 @@ describe('model override API contracts (#16)', () => {
   it('parses resolved override responses and audited retry input', () => {
     const record = {
       id: 'override-1',
+      sequence: 1,
       runId: 'run-1',
       scope: { kind: 'run' as const },
       modelId: 'codex-gpt-5',

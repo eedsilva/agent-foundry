@@ -274,3 +274,90 @@ Focused TDD evidence:
 - `npm run typecheck` passed after the focused suites.
 
 The final validation commands are `npm run check`, `npm run doctor`, and `git diff --check`.
+
+## Emergency ceiling and model overrides — 2026-07-16
+
+Issue #16 adds immutable audited run/step/retry model pins, policy-safe explicit routing, and a
+restart-safe emergency ceiling (ADR 0016). Legacy `maxAttempts` and `maxIterations` still parse but
+do not bound normal execution.
+
+### TDD and deterministic trace
+
+- Contract RED: `packages/contracts/src/api.test.ts` exposed that the parsed override response
+  adds the compatibility default `sequence: 1`; the expected fixture omitted it. GREEN was the
+  one-field expectation fix. The focused contract run passed 1 file / 10 tests.
+- Ceiling/Git focus: `npx vitest run packages/orchestrator/src/emergency-ceiling.test.ts
+packages/persistence/src/workspace-manager.test.ts --pool=threads --maxWorkers=1
+--reporter=verbose` passed 2 files / 30 tests. The workspace cases use real temporary Git
+  repositories; the orchestration cases cover restart and cancellation races.
+
+The deterministic fixture trace asserted by those suites is:
+
+```text
+lastVerifiedCheckpoint=initial-head
+-> failed tree captured at draft/run-1
+-> active HEAD restored to initial-head; worktree clean
+-> run.status=failed; run.error.code=EMERGENCY_CEILING
+-> run.execution.ceiling.draftBranch=draft/run-1
+-> count(run.emergency_ceiling_reached)=1 after redelivery
+```
+
+Boundary coverage also proves `14_399_999ms` continues, `14_400_000ms` ceilings, the tenth
+completed repair ceilings, approval resets the repair count, persisted pause/approval wait is
+excluded, persisted `running` time across restart is counted fail-safe, and cancellation wins
+ceiling races. Override-focused suites cover all actor kinds through `ActorRef`, immutable sequence
+ordering across restart/concurrency, retry > step > run precedence, fallback suppression, catalog
+drift, and every unchanged hard routing constraint.
+
+### Security, compatibility, migration, and rollback
+
+- Audit inputs are required on new writes and redacted before persistence. Explicit pins cannot
+  add permissions or bypass policy, provider, context, enabled-model, or workspace-write checks.
+- Existing runs without `execution`, retry directives without audit fields, and workflows with
+  legacy budgets remain readable. There is no backfill.
+- Upgrade requires a stopped-worker snapshot of `DATA_DIR` and generated Git workspaces. For
+  downgrade, preserve required draft refs, stop workers, restore that snapshot, then start the old
+  version; do not mix versions or perform code-only rollback.
+- Draft replay and deletion fail closed on ownership/ref drift. Evidence must not include raw
+  provider output, run files, secrets, or draft contents.
+
+### Definition of Done mapping
+
+- **Behavior:** focused tests demonstrate pins, exact thresholds, repair reset, cancellation,
+  restart convergence, draft preservation, and verified restoration.
+- **Engineering:** contract, persistence, routing, orchestration, API, and native web helper tests
+  cover the new contracts and failure modes; full format/lint/architecture/type/test/build results
+  are recorded below.
+- **Safety and operations:** ADR 0016 and `OPERATIONS.md` document redaction, hard constraints,
+  fail-closed draft ownership, recovery, compatibility, migration, containment, and rollback.
+- **Delivery evidence:** this section supplies the trace and command results; the rendered UI
+  captures are `output/playwright/issue-16/issue-16-model-pins-ceiling.png` and
+  `output/playwright/issue-16/issue-16-retry-pin.png`; the PR must link issue #16 and include the
+  clean review results.
+
+### Full verification
+
+The first `npm run check` stopped at `format:check` because three transient Playwright CLI page
+snapshots created during the concurrent evidence capture were unformatted. They contained no
+product source and were removed after capture. The clean rerun passed:
+
+- Prettier and ESLint passed with zero warnings.
+- Architecture validation passed for 11 workspaces with no forbidden edges or cycles; its 2 script
+  tests passed.
+- Roadmap validation passed for 16 milestones, 114 tasks, and 131 managed issues; its 8 tests,
+  GitHub configuration check, and rendered-roadmap synchronization passed.
+- TypeScript project references passed.
+- Vitest passed 48 files / 411 tests; Node script tests passed 42 / 42.
+- All eight packages, the API, the worker, and the Next.js production application built.
+
+`npm run doctor` passed in mock mode with Node 22.22.3, Git 2.50.1, the harness/workflow/catalog,
+and Codex, Claude, and AGY reported ready. `git diff --check` passed.
+
+The two 1440×1537 browser captures above were visually inspected. The first shows the failed
+`EMERGENCY_CEILING` state, 10 repairs, `draft/run-16`, the deduplicated ceiling event, and native
+run/step pin fields. The second shows the native retry-pin modal with required runtime model,
+actor, reason, and estimated-impact controls. They contain deterministic fixture data and no user
+or credential data.
+
+Post-PR Ponytail and code-simplifier results remain a publication gate and must be appended only
+after those reviews run.
