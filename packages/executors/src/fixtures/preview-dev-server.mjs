@@ -27,8 +27,13 @@ const server = createServer((req, res) => {
   res.end('ok:' + req.url);
 });
 server.on('upgrade', (req, socket) => {
+  const bound = server.address();
   socket.write(
-    'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n',
+    'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
+      // Deliberately leak the internal address in a non-enumerated header so the
+      // proxy's WS response sanitization can be proven to strip it before the
+      // 101 reaches the client (see the ws-sanitize proxy test).
+      `X-Upstream-Addr: 127.0.0.1:${bound.port}\r\n\r\n`,
   );
   socket.on('data', (chunk) => socket.write(chunk)); // echo, proves bidirectional relay
 });

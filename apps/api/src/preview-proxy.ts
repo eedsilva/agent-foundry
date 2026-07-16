@@ -1,9 +1,18 @@
-import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
-import { connect, type Socket } from 'node:net';
+import {
+  Agent,
+  request as httpRequest,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
+import type { Socket } from 'node:net';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Runtime } from '@agent-foundry/composition';
 import { isLoopbackHost } from '@agent-foundry/composition';
-import { NotFoundError, PreviewAccessDeniedError } from '@agent-foundry/domain';
+
+// Keep-alive so proxied asset/HMR-poll bursts reuse one upstream TCP connection
+// instead of opening a fresh socket to the dev server per request.
+const upstreamAgent = new Agent({ keepAlive: true });
 
 const HOP_BY_HOP = new Set([
   'connection',
@@ -45,29 +54,24 @@ async function handleHttp(
   }
   const { sessionId } = request.params as { sessionId: string };
   const upstreamPath = '/' + ((request.params as { '*'?: string })['*'] ?? '');
-  const query = (request.query as Record<string, string>) ?? {};
+  const url = new URL(request.url, 'http://internal');
+  const queryToken = url.searchParams.get('token') ?? undefined;
   const cookieToken = readCookieToken(request.headers.cookie, sessionId);
-  const presentedToken = cookieToken ?? query.token;
+  const presentedToken = cookieToken ?? queryToken;
 
-  let resolved: { port: number };
-  try {
-    resolved = await runtime.previewService.resolveUpstream(sessionId, presentedToken);
-  } catch (error) {
-    if (error instanceof NotFoundError)
-      return void reply.status(404).send({ error: error.name, message: error.message });
-    if (error instanceof PreviewAccessDeniedError)
-      return void reply.status(403).send({ error: error.name, message: error.message });
-    throw error;
-  }
+  // Let NotFound/PreviewAccessDenied propagate to the app's setErrorHandler
+  // (same 404/403 mapping the sibling /preview routes rely on). This runs
+  // before reply.hijack(), so Fastify's error handling is still in play.
+  const resolved = await runtime.previewService.resolveUpstream(sessionId, presentedToken);
 
-  const cookieValue = cookieToken
-    ? undefined
-    : runtime.previewService.issueCookieToken(sessionId, query.token);
+  // resolveUpstream already validated queryToken in the no-cookie branch, so
+  // echo it straight back as the pv_<sessionId> cookie without re-checking.
+  const cookieValue = cookieToken ? undefined : queryToken;
   reply.hijack();
   const raw = reply.raw;
   // The proxy auth token is proxy-internal; strip it so the untrusted upstream
   // process never receives it (and so exact-path upstream routing still works).
-  const search = strippedSearch(new URL(request.url, 'http://internal').searchParams);
+  const search = strippedSearch(url.searchParams);
   const upstreamReq = httpRequest(
     {
       host: '127.0.0.1',
@@ -75,6 +79,7 @@ async function handleHttp(
       method: request.method,
       path: upstreamPath + search,
       headers: sanitizeRequestHeaders(request.headers, sessionId),
+      agent: upstreamAgent,
     },
     (upstreamRes) => respondFromUpstream(upstreamRes, raw, sessionId, resolved.port, cookieValue),
   );
@@ -129,35 +134,64 @@ async function handleUpgrade(
   try {
     resolved = await runtime.previewService.resolveUpstream(sessionId, presentedToken);
   } catch {
+    // This runs outside Fastify's request/reply cycle (raw server 'upgrade'
+    // event), so there's no error handler to defer to: destroy the socket.
     socket.destroy();
     return;
   }
   const search = strippedSearch(url.searchParams);
-  const upstream = connect(resolved.port, '127.0.0.1', () => {
-    const requestLine = `${req.method} ${rest || '/'}${search} HTTP/1.1\r\n`;
-    const headerLines = Object.entries(req.headers)
-      .filter(([key]) => {
-        const lower = key.toLowerCase();
-        // Drop hop-by-hop headers (except Upgrade) and the client Host; both are
-        // overridden below so the untrusted upstream never sees the client's Host.
-        return (!HOP_BY_HOP.has(lower) || lower === 'upgrade') && lower !== 'host';
-      })
-      .flatMap(([key, value]) => {
-        if (key.toLowerCase() === 'cookie') {
-          const cookie = stripPreviewCookie(value, sessionId);
-          return cookie ? [`cookie: ${cookie}`] : [];
-        }
-        return [`${key}: ${Array.isArray(value) ? value.join(', ') : value}`];
-      })
-      .concat('Host: 127.0.0.1', 'Connection: Upgrade')
-      .join('\r\n');
-    upstream.write(requestLine + headerLines + '\r\n\r\n');
-    if (head.length) upstream.write(head);
-    upstream.pipe(socket);
-    socket.pipe(upstream);
+  // Reuse the exact same request-header sanitizer as the HTTP path (hop-by-hop
+  // strip, pv_<sessionId> cookie strip, forced Host: 127.0.0.1); re-add the
+  // upgrade handshake headers it strips as hop-by-hop.
+  const headers = sanitizeRequestHeaders(req.headers, sessionId);
+  headers.connection = 'Upgrade';
+  if (req.headers.upgrade) headers.upgrade = req.headers.upgrade;
+  const upstreamReq = httpRequest({
+    host: '127.0.0.1',
+    port: resolved.port,
+    method: req.method,
+    path: (rest || '/') + search,
+    headers,
   });
-  upstream.on('error', () => socket.destroy());
-  socket.on('error', () => upstream.destroy());
+  upstreamReq.on('upgrade', (upstreamRes, upstreamSocket, upstreamHead) => {
+    // Run the upstream's 101 response headers through the SAME sanitizer the
+    // HTTP path uses (port-leak containment + hop-by-hop strip + backstop)
+    // before relaying, then re-add the handshake headers it strips.
+    const responseHeaders = sanitizeResponseHeaders(upstreamRes.headers, sessionId, resolved.port);
+    responseHeaders.connection = 'Upgrade';
+    if (upstreamRes.headers.upgrade) responseHeaders.upgrade = upstreamRes.headers.upgrade;
+    const statusLine = `HTTP/1.1 ${upstreamRes.statusCode ?? 101} ${upstreamRes.statusMessage || 'Switching Protocols'}\r\n`;
+    socket.write(statusLine + serializeHeaders(responseHeaders) + '\r\n\r\n');
+    if (upstreamHead.length) socket.write(upstreamHead);
+    if (head.length) upstreamSocket.write(head);
+    upstreamSocket.pipe(socket);
+    socket.pipe(upstreamSocket);
+    // Post-upgrade the live pair is socket<->upstreamSocket; tear the other down
+    // if either errors so a client disconnect can't leak the upstream socket.
+    upstreamSocket.on('error', () => socket.destroy());
+    socket.on('error', () => upstreamSocket.destroy());
+  });
+  upstreamReq.on('response', (upstreamRes) => {
+    // Upstream answered a normal response instead of upgrading; relay it
+    // sanitized and close rather than leaving the client hanging.
+    const responseHeaders = sanitizeResponseHeaders(upstreamRes.headers, sessionId, resolved.port);
+    const statusLine = `HTTP/1.1 ${upstreamRes.statusCode ?? 502} ${upstreamRes.statusMessage || ''}\r\n`;
+    socket.write(statusLine + serializeHeaders(responseHeaders) + '\r\n\r\n');
+    upstreamRes.pipe(socket);
+  });
+  upstreamReq.on('error', () => socket.destroy());
+  socket.on('error', () => upstreamReq.destroy());
+  upstreamReq.end();
+}
+
+/** Serializes a sanitized header map back into raw HTTP header lines for a
+ * hand-written response on a hijacked upgrade socket. */
+function serializeHeaders(headers: Record<string, string | string[]>): string {
+  return Object.entries(headers)
+    .flatMap(([key, value]) =>
+      (Array.isArray(value) ? value : [value]).map((entry) => `${key}: ${entry}`),
+    )
+    .join('\r\n');
 }
 
 function isAllowedHost(hostHeader: string | undefined, allowedPort: string): boolean {
@@ -204,7 +238,7 @@ function strippedSearch(params: URLSearchParams): string {
 }
 
 function sanitizeRequestHeaders(
-  headers: FastifyRequest['headers'],
+  headers: IncomingHttpHeaders,
   sessionId: string,
 ): Record<string, string | string[]> {
   const result: Record<string, string | string[]> = {};
@@ -241,6 +275,15 @@ function sanitizeResponseHeaders(
     if (typeof value === 'string') {
       result[name] = rewriteLocation(value, sessionId, upstreamPort);
     }
+  }
+  // Defense-in-depth backstop: drop any *other* header whose value embeds the
+  // internal upstream address, so a header nobody thought to enumerate can't
+  // leak the port. URL_BEARING_HEADERS are already rewritten port-free above.
+  const leaks = [`127.0.0.1:${upstreamPort}`, `localhost:${upstreamPort}`];
+  for (const [key, value] of Object.entries(result)) {
+    if (URL_BEARING_HEADERS.includes(key.toLowerCase())) continue;
+    const flat = Array.isArray(value) ? value.join(', ') : value;
+    if (leaks.some((needle) => flat.includes(needle))) delete result[key];
   }
   return result;
 }

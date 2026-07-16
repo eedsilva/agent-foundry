@@ -231,6 +231,37 @@ describe('preview reverse proxy', () => {
     expect(upgraded).toBe(true);
   }, 20_000);
 
+  it('sanitizes the upstream response headers on the websocket upgrade path so the internal port never leaks', async () => {
+    // The fixture's 101 response deliberately embeds its own 127.0.0.1:<port> in
+    // an X-Upstream-Addr header. Unlike the HTTP path, the WS path used to relay
+    // the raw upstream response verbatim; assert the proxy now sanitizes it so no
+    // internal address reaches the client.
+    const { baseUrl, runtime } = await startApi();
+    const started = await startPreview(baseUrl, runtime, 'ws-sanitize');
+    const target = new URL(started.url);
+    const rawHeaders = await new Promise<string>((resolvePromise) => {
+      const req = httpRequest({
+        host: target.hostname,
+        port: target.port,
+        path: `${target.pathname}ws?token=${target.searchParams.get('token')}`,
+        headers: {
+          Connection: 'Upgrade',
+          Upgrade: 'websocket',
+          'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+          'Sec-WebSocket-Version': '13',
+        },
+      });
+      req.on('upgrade', (res, upgradedSocket) => {
+        upgradedSocket.destroy();
+        resolvePromise(res.rawHeaders.join('\n'));
+      });
+      req.on('error', () => resolvePromise('ERROR'));
+      req.end();
+    });
+    expect(rawHeaders).not.toMatch(/127\.0\.0\.1:\d+/); // no internal address in any header
+    expect(rawHeaders.toLowerCase()).not.toContain('x-upstream-addr'); // leaking header stripped
+  }, 20_000);
+
   it('accepts a websocket upgrade authenticated only by the pv_<sessionId> cookie, with no ?token= query param', async () => {
     // Real HMR clients reconnect by rebuilding the WS URL from location.host plus
     // a fixed path, which drops the original ?token=. The cookie set on the first
