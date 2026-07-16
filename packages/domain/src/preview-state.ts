@@ -1,5 +1,6 @@
 import {
   PreviewSessionSchema,
+  type PreviewCommandPlan,
   type PreviewHealth,
   type PreviewProcess,
   type PreviewSession,
@@ -73,4 +74,13 @@ export function isPreviewSessionExpired(session: PreviewSession, now: Date): boo
 /** Marks a serving session as expired; the caller must still stop the runner. */
 export function expirePreviewSession(session: PreviewSession, now: Date): PreviewSession {
   return transitionPreviewSession(session, 'expired', now);
+}
+
+/** Pure update: attaches a detected command plan to the session (e.g. before a runner's prepare()). */
+export function recordPreviewCommandPlan(
+  session: PreviewSession,
+  commandPlan: PreviewCommandPlan,
+  now: Date,
+): PreviewSession {
+  return PreviewSessionSchema.parse({ ...session, commandPlan, updatedAt: now.toISOString() });
 }
