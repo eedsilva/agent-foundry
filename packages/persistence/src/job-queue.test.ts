@@ -46,6 +46,34 @@ function baseJob(id = 'job-1'): QueueJob {
 }
 
 describe('FileJobQueue lease semantics', () => {
+  it('keeps the first pending job when the same id is enqueued again', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue(baseJob());
+    await queue.enqueue({ ...baseJob(), projectId: 'project-2' });
+
+    const claimed = await queue.claim('worker-a');
+    expect(claimed?.projectId).toBe('project-1');
+    expect(await queue.claim('worker-b')).toBeNull();
+  });
+
+  it('does not publish a duplicate while the same job id has an active lease', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue(baseJob());
+    const claimed = (await queue.claim('worker-a'))!;
+
+    await queue.enqueue({ ...baseJob(), projectId: 'project-2' });
+
+    expect(await queue.claim('worker-b')).toBeNull();
+    await expect(queue.heartbeat(claimed, 'worker-a')).resolves.toMatchObject({
+      projectId: 'project-1',
+      lease: { workerId: 'worker-a' },
+    });
+  });
+
   it('grants a lease with workerId, heartbeatAt, expiresAt, and a monotonic fencingToken on claim', async () => {
     const dataDir = await temporaryDataDir();
     const clock = new FakeClock(new Date(createdAt));

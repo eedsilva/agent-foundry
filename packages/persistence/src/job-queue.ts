@@ -2,7 +2,15 @@ import { readdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { QueueJobSchema, type QueueJob } from '@agent-foundry/contracts';
 import { LeaseLostError, type Clock, type JobQueue } from '@agent-foundry/domain';
-import { atomicWriteJson, ensureDir, readJson, readJsonOrNull, safeSegment } from './fs-utils.js';
+import {
+  atomicWriteJson,
+  ensureDir,
+  exists,
+  readJson,
+  readJsonOrNull,
+  safeSegment,
+  withDirectoryLock,
+} from './fs-utils.js';
 
 const SYSTEM_CLOCK: Clock = { now: () => new Date() };
 
@@ -25,8 +33,17 @@ export class FileJobQueue implements JobQueue {
 
   async enqueue(job: QueueJob): Promise<void> {
     const parsed = QueueJobSchema.parse(job);
-    await ensureDir(this.dir('pending'));
-    await atomicWriteJson(join(this.dir('pending'), `${safeSegment(parsed.id)}.json`), parsed);
+    const id = safeSegment(parsed.id);
+    const pendingPath = join(this.dir('pending'), `${id}.json`);
+    const lockPath = join(this.dataDir, 'queue', 'enqueue-locks', `${id}.lock`);
+    await withDirectoryLock(lockPath, async () => {
+      await Promise.all([ensureDir(this.dir('pending')), ensureDir(this.dir('processing'))]);
+      if (await exists(pendingPath)) return;
+      const processingPrefix = `${id}.`;
+      const processing = await readdir(this.dir('processing'));
+      if (processing.some((entry) => entry.startsWith(processingPrefix))) return;
+      await atomicWriteJson(pendingPath, parsed);
+    });
   }
 
   async claim(workerId: string): Promise<QueueJob | null> {

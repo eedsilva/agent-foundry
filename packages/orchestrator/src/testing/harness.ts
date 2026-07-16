@@ -16,6 +16,7 @@ import {
   type Project,
   type ProjectEvent,
   type ProjectPolicy,
+  type QueueJob,
   type StepAttempt,
   type StepRun,
   type StoredArtifact,
@@ -777,10 +778,16 @@ export function makeHarness(
     get: () => executor,
     health: () => Promise.resolve([]),
   };
-  const enqueued: unknown[] = [];
+  const enqueued: QueueJob[] = [];
+  let enqueueFailure: Error | undefined;
   const queue: JobQueue = {
     enqueue: (job) => {
-      enqueued.push(job);
+      if (enqueueFailure) {
+        const failure = enqueueFailure;
+        enqueueFailure = undefined;
+        return Promise.reject(failure);
+      }
+      if (!enqueued.some((pending) => pending.id === job.id)) enqueued.push(job);
       return Promise.resolve();
     },
     claim: () => Promise.resolve(null),
@@ -835,6 +842,9 @@ export function makeHarness(
     orchestrator,
     service,
     enqueued,
+    failNextEnqueue(error: Error) {
+      enqueueFailure = error;
+    },
     metricsRecords,
     policies,
     verifierInputs,

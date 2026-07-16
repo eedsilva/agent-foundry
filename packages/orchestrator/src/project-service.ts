@@ -464,11 +464,8 @@ export class ProjectService {
         // process dies in that window, the same settled decision repairs the
         // project summary and queue entry exactly once.
         if (run.status === 'queued') {
-          const project = await this.requireProject(run.projectId);
-          if (project.status !== 'queued') {
-            await this.requeueProject(run.projectId, runId);
-            await this.appendApprovalDecisionEvent(run, requestId, decision);
-          }
+          await this.requeueProject(run.projectId, runId);
+          await this.appendApprovalDecisionEvent(run, requestId, decision);
         }
         return { run, decision };
       }
@@ -772,16 +769,18 @@ export class ProjectService {
   private async requeueProject(projectId: string, runId: string): Promise<void> {
     const project = await this.requireProject(projectId);
     const now = this.clock.now().toISOString();
-    const updated: Project = {
-      ...project,
-      status: 'queued',
-      updatedAt: now,
-      currentRunId: runId,
-    };
-    delete updated.error;
-    await this.projects.update(updated, project.version);
+    if (project.status !== 'queued' || project.currentRunId !== runId) {
+      const updated: Project = {
+        ...project,
+        status: 'queued',
+        updatedAt: now,
+        currentRunId: runId,
+      };
+      delete updated.error;
+      await this.projects.update(updated, project.version);
+    }
     await this.queue.enqueue({
-      id: this.ids.next(),
+      id: `run-project-${runId}`,
       type: 'run-project',
       projectId,
       workflowId: project.workflowId,
@@ -810,6 +809,7 @@ export class ProjectService {
         decidedBy: decision.decidedBy,
         ...(decision.actor ? { actor: decision.actor } : {}),
       },
+      `approval-decision:${decision.id}`,
     );
   }
 
@@ -831,6 +831,7 @@ export class ProjectService {
     message: string,
     runId?: string,
     data: Record<string, unknown> = {},
+    dedupeKey?: string,
   ): Promise<void> {
     await this.events.append({
       id: this.ids.next(),
@@ -840,6 +841,7 @@ export class ProjectService {
       ...(runId ? { runId } : {}),
       message,
       data,
+      ...(dedupeKey ? { dedupeKey } : {}),
     });
   }
 }

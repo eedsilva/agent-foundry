@@ -387,6 +387,37 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(await harness.service.listApprovals('run-1')).toHaveLength(1);
   });
 
+  it('re-publishes one deterministic job when enqueue fails after the project is queued', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    harness.failNextEnqueue(new Error('simulated enqueue failure'));
+
+    await expect(
+      harness.service.decideApproval('run-1', entry!.request.id, {
+        action: 'approve',
+        decidedBy: 'ed',
+      }),
+    ).rejects.toThrow('simulated enqueue failure');
+    expect((await harness.runs.get('run-1'))?.status).toBe('queued');
+    expect((await harness.projects.get('project-1'))?.status).toBe('queued');
+    expect(harness.enqueued).toHaveLength(0);
+
+    await harness.service.decideApproval('run-1', entry!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    await harness.service.decideApproval('run-1', entry!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+
+    expect(harness.enqueued).toEqual([
+      expect.objectContaining({ id: 'run-project-run-1', runId: 'run-1' }),
+    ]);
+  });
+
   it('rejects deciding an action the request does not allow', async () => {
     const harness = makeHarness({}, undefined, { gate: { actions: ['approve'] } });
     await seedRun(harness);
