@@ -39,6 +39,15 @@ const ONE_AGENT = workflow([
   },
 ]);
 
+const VERIFY_ONLY = workflow([
+  {
+    id: 'verify',
+    type: 'verify',
+    title: 'Verify',
+    outputArtifact: 'verification-report',
+  },
+]);
+
 const QUALITY_LOOP = workflow([
   {
     id: 'quality',
@@ -145,6 +154,43 @@ describe('emergency ceiling accounting', () => {
     const run = await harness.runs.get('run-1');
     expect(run?.execution?.consecutiveRepairs).toBe(10);
     expect(harness.executor.started('repair')).toBe(10);
+    expect(run?.execution?.countedRepairStepRunIds).toHaveLength(10);
+  });
+
+  it('does not recount several completed repairs after a crash and restart', async () => {
+    const stores = makeStores();
+    const first = makeHarness({ check: 'gated' }, stores, { workflow: QUALITY_LOOP });
+    await seedRun(first);
+    const interrupted = first.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    for (let iteration = 1; iteration <= 3; iteration += 1) {
+      await waitUntil(() => first.executor.started('check') === iteration);
+      first.executor.release('check');
+      await waitUntil(() => first.executor.started('repair') === iteration);
+    }
+    await waitUntil(() => first.executor.started('check') === 4);
+    stores.power.on = false;
+    first.executor.release('check');
+    await expect(interrupted).rejects.toThrow('simulated power loss');
+    stores.power.on = true;
+
+    expect((await stores.runs.get('run-1'))?.execution?.consecutiveRepairs).toBe(3);
+    const counted = (await stores.runs.get('run-1'))?.execution?.countedRepairStepRunIds;
+    expect(counted).toHaveLength(3);
+
+    const restarted = makeHarness({ check: 'gated' }, stores, { workflow: QUALITY_LOOP });
+    const resumed = restarted.orchestrator.runProject('project-1', undefined, 'run-1');
+    await waitUntil(() => restarted.executor.started('check') === 1);
+    expect((await stores.runs.get('run-1'))?.execution?.consecutiveRepairs).toBe(3);
+    expect((await stores.runs.get('run-1'))?.execution?.countedRepairStepRunIds).toEqual(counted);
+    await putApproval(stores);
+    restarted.executor.release('check');
+    await resumed;
+
+    expect((await stores.runs.get('run-1'))?.execution).toMatchObject({
+      consecutiveRepairs: 0,
+      countedRepairStepRunIds: [],
+    });
   });
 
   it('resets consecutive repairs after successful quality approval', async () => {
@@ -159,8 +205,45 @@ describe('emergency ceiling accounting', () => {
 
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
-    expect((await harness.runs.get('run-1'))?.execution?.consecutiveRepairs).toBe(0);
+    expect((await harness.runs.get('run-1'))?.execution).toMatchObject({
+      consecutiveRepairs: 0,
+      countedRepairStepRunIds: [],
+    });
   });
+
+  it.each(['agent', 'verifier'] as const)(
+    'classifies %s failure below four hours normally and at four hours as a ceiling',
+    async (kind) => {
+      for (const [elapsed, ceilings] of [
+        [14_399_999, false],
+        [14_400_000, true],
+      ] as const) {
+        const clock = new TestClock();
+        const stores = makeStores(clock);
+        const failure = (): never => {
+          clock.advance(elapsed);
+          throw new Error(`${kind} failed`);
+        };
+        const harness = makeHarness(
+          kind === 'agent' ? { work: { kind: 'fail-always', error: failure } } : {},
+          stores,
+          {
+            workflow: kind === 'agent' ? ONE_AGENT : VERIFY_ONLY,
+            ...(kind === 'verifier' ? { verification: failure } : {}),
+          },
+        );
+        await seedRun(harness);
+
+        const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+        if (ceilings) await expect(running).rejects.toBeInstanceOf(EmergencyCeilingError);
+        else await expect(running).rejects.toThrow(`${kind} failed`);
+        expect((await stores.runs.get('run-1'))?.execution?.ceiling?.reason).toBe(
+          ceilings ? 'active-time' : undefined,
+        );
+        expect((await stores.runs.get('run-1'))?.status).toBe(ceilings ? 'running' : 'failed');
+      }
+    },
+  );
 
   it.each(['paused', 'awaiting_approval'] as const)(
     'does not count persisted %s wait across orchestrator restart',
@@ -215,6 +298,26 @@ describe('emergency ceiling accounting', () => {
     expect(run?.execution?.ceiling).toBeUndefined();
   });
 
+  it('finalizes cancellation requested after the ceiling CAS but before outer handling', async () => {
+    const clock = new TestClock();
+    const stores = makeStores(clock);
+    const harness = makeHarness({ work: 'gated' }, stores, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    stores.runs.onAfterUpdate = async (updated) => {
+      if (!updated.execution?.ceiling) return;
+      stores.runs.onAfterUpdate = undefined;
+      await harness.service.cancelRun('run-1');
+    };
+    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await waitUntil(() => harness.executor.started('work') === 1);
+
+    clock.advance(14_400_000);
+    harness.executor.release('work');
+    await expect(running).resolves.toBeUndefined();
+
+    expect((await stores.runs.get('run-1'))?.status).toBe('cancelled');
+  });
+
   it('aborts a long-running executor when active time reaches four hours', async () => {
     const clock = new TestClock();
     const stores = makeStores(clock);
@@ -254,5 +357,30 @@ describe('emergency ceiling accounting', () => {
     ).rejects.toBeInstanceOf(EmergencyCeilingError);
 
     expect((await harness.runs.get('run-1'))?.execution?.activeSince).toBeUndefined();
+  });
+
+  it('counts fail-safe wall time while a persisted run remains running across restart', async () => {
+    const clock = new TestClock();
+    const stores = makeStores(clock);
+    const seeded = makeHarness({}, stores, { workflow: ONE_AGENT });
+    await seedRun(seeded);
+    const run = await stores.runs.get('run-1');
+    await stores.runs.update(
+      {
+        ...transitionWorkflowRun(run!, 'running', clock.now()),
+        execution: {
+          activeElapsedMs: 1_000,
+          activeSince: clock.now().toISOString(),
+          consecutiveRepairs: 0,
+        },
+      },
+      run!.version,
+    );
+
+    clock.advance(2_000);
+    const restarted = makeHarness({}, stores, { workflow: ONE_AGENT });
+    await restarted.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await stores.runs.get('run-1'))?.execution?.activeElapsedMs).toBe(3_000);
   });
 });

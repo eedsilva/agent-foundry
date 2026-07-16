@@ -201,7 +201,14 @@ export class WorkflowOrchestrator {
         await this.finalizeCancellation(run.id, projectId);
         return;
       }
-      if (error instanceof EmergencyCeilingError) throw error;
+      if (error instanceof EmergencyCeilingError) {
+        const latest = await this.requireRun(run.id);
+        if (latest.status === 'cancel_requested' || latest.status === 'cancelled') {
+          await this.finalizeCancellation(run.id, projectId);
+          return;
+        }
+        throw error;
+      }
       const latest = await this.stopActiveExecution(run.id);
       if (latest.status === 'running' || latest.status === 'pause_requested') {
         run = await this.runs.update(
@@ -259,6 +266,25 @@ export class WorkflowOrchestrator {
     if (activeElapsedMs >= 14_400_000) await this.reachCeiling(runId, 'active-time', signal);
   }
 
+  private async classifyFailure(
+    runId: string,
+    signal: AbortSignal,
+    error: unknown,
+  ): Promise<unknown> {
+    try {
+      await this.assertExecutionMayContinue(runId, signal);
+      return error;
+    } catch (boundaryError) {
+      if (
+        boundaryError instanceof EmergencyCeilingError ||
+        boundaryError instanceof RunCancelledError
+      ) {
+        return boundaryError;
+      }
+      throw boundaryError;
+    }
+  }
+
   private async recordCompletedRepair(
     runId: string,
     nodeId: string,
@@ -279,12 +305,13 @@ export class WorkflowOrchestrator {
     if (!repair) throw new ExecutionError(`Completed repair ${nodeId}/${stepId} was not persisted`);
     const updated = await this.updateExecution(runId, (run) => {
       const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
-      return execution.lastCountedRepairStepRunId === repair.id
+      const countedRepairStepRunIds = execution.countedRepairStepRunIds ?? [];
+      return countedRepairStepRunIds.includes(repair.id)
         ? execution
         : {
             ...execution,
             consecutiveRepairs: execution.consecutiveRepairs + 1,
-            lastCountedRepairStepRunId: repair.id,
+            countedRepairStepRunIds: [...countedRepairStepRunIds, repair.id].slice(-10),
           };
     });
     if ((updated.execution?.consecutiveRepairs ?? 0) >= 10) {
@@ -295,9 +322,9 @@ export class WorkflowOrchestrator {
   private async resetConsecutiveRepairs(runId: string): Promise<void> {
     await this.updateExecution(runId, (run) => {
       const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
-      return execution.consecutiveRepairs === 0
+      return execution.consecutiveRepairs === 0 && !execution.countedRepairStepRunIds?.length
         ? execution
-        : { ...execution, consecutiveRepairs: 0 };
+        : { ...execution, consecutiveRepairs: 0, countedRepairStepRunIds: [] };
     });
   }
 
@@ -1108,7 +1135,8 @@ export class WorkflowOrchestrator {
       });
       await this.emitArtifactCreated(project.id, artifact, step.id, runId);
       return artifact;
-    } catch (error) {
+    } catch (caught) {
+      const error = await this.classifyFailure(runId, signal, caught);
       if (attempt.status === 'running') {
         const cancelled = isCancellation(error, signal);
         await this.stepAttempts.update(
@@ -1326,7 +1354,8 @@ export class WorkflowOrchestrator {
           },
         });
         return artifact;
-      } catch (error) {
+      } catch (caught) {
+        const error = await this.classifyFailure(runId, signal, caught);
         if (attempt.status !== 'running') throw error;
         if (isCancellation(error, signal)) {
           await this.stepAttempts.update(

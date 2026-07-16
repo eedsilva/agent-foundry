@@ -204,6 +204,7 @@ export class InMemoryProjects implements ProjectRepository {
 export class InMemoryRuns implements WorkflowRunRepository {
   private readonly store = new Map<string, WorkflowRun>();
   onBeforeUpdate: ((run: WorkflowRun) => void) | undefined;
+  onAfterUpdate: ((run: WorkflowRun) => void | Promise<void>) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   create(run: WorkflowRun): Promise<void> {
     checkPower(this.power);
@@ -217,7 +218,7 @@ export class InMemoryRuns implements WorkflowRunRepository {
   list(projectId: string): Promise<WorkflowRun[]> {
     return Promise.resolve([...this.store.values()].filter((run) => run.projectId === projectId));
   }
-  update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
+  async update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
     checkPower(this.power);
     this.onBeforeUpdate?.(run);
     const existing = this.store.get(run.id);
@@ -227,7 +228,8 @@ export class InMemoryRuns implements WorkflowRunRepository {
     }
     const updated = { ...run, version: expectedVersion + 1 };
     this.store.set(run.id, updated);
-    return Promise.resolve({ ...updated });
+    await this.onAfterUpdate?.({ ...updated });
+    return { ...updated };
   }
 }
 
@@ -711,6 +713,7 @@ export function makeHarness(
     gate?: GateOptions;
     policy?: ProjectPolicy;
     workflow?: WorkflowDefinition;
+    verification?: () => VerificationReport | Promise<VerificationReport>;
   } = {},
 ) {
   const stores = existing ?? makeStores();
@@ -745,16 +748,17 @@ export function makeHarness(
   });
   const verifierInputs: Array<{ policy?: ProjectPolicy | undefined }> = [];
   const verifier: VerificationService = {
-    verify: (input) => {
+    verify: async (input) => {
       verifierInputs.push(input);
-      return Promise.resolve({
+      if (opts.verification) return opts.verification();
+      return {
         schemaVersion: '1',
         approved: true,
         packageManager: 'npm',
         summary: 'ok',
         commands: [],
         createdAt: new Date().toISOString(),
-      } satisfies VerificationReport);
+      } satisfies VerificationReport;
     },
   };
   const workflows: WorkflowRepository = {

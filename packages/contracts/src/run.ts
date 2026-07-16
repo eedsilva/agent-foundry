@@ -120,7 +120,7 @@ export const RunExecutionStateSchema = z
     activeElapsedMs: z.number().int().nonnegative(),
     activeSince: z.string().datetime().optional(),
     consecutiveRepairs: z.number().int().nonnegative(),
-    lastCountedRepairStepRunId: PathSegmentSchema.optional(),
+    countedRepairStepRunIds: z.array(PathSegmentSchema).max(10).optional(),
     lastVerifiedCheckpoint: z.string().min(1).optional(),
     ceiling: z
       .object({

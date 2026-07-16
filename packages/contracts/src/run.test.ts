@@ -10,6 +10,7 @@ import { WorkflowNodeSchema } from './workflow.js';
 import {
   ApprovalDecisionSchema,
   ApprovalRequestSchema,
+  RunExecutionStateSchema,
   RunRetryDirectiveSchema,
   StepAttemptSchema,
   StepRunSchema,
@@ -188,7 +189,10 @@ describe('persisted run contracts', () => {
       execution: {
         activeElapsedMs: 14_400_000,
         consecutiveRepairs: 10,
-        lastCountedRepairStepRunId: 'repair-step-10',
+        countedRepairStepRunIds: Array.from(
+          { length: 10 },
+          (_, index) => `repair-step-${index + 1}`,
+        ),
         lastVerifiedCheckpoint: 'abc123',
         ceiling: {
           reason: 'consecutive-repairs',
@@ -199,7 +203,14 @@ describe('persisted run contracts', () => {
     });
 
     expect(run.execution?.ceiling?.draftBranch).toBe('draft/run-1');
-    expect(run.execution?.lastCountedRepairStepRunId).toBe('repair-step-10');
+    expect(run.execution?.countedRepairStepRunIds).toHaveLength(10);
+    expect(() =>
+      RunExecutionStateSchema.parse({
+        activeElapsedMs: 0,
+        consecutiveRepairs: 11,
+        countedRepairStepRunIds: Array.from({ length: 11 }, (_, index) => `repair-${index}`),
+      }),
+    ).toThrow();
     expect(
       WorkflowRunSchema.parse({
         id: 'run-legacy',
