@@ -516,6 +516,76 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(await snapshot()).toEqual(afterSecondDecision);
   });
 
+  it('does not republish an old decision after a newer approval is queued', async () => {
+    const harness = makeHarness({}, undefined, {
+      gate: {
+        actions: ['approve', 'request-changes'],
+        returnToStepId: 'implement',
+        repairArtifact: 'repair-notes',
+      },
+    });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [firstApproval] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+      action: 'request-changes',
+      decidedBy: 'ed',
+      note: 'revise it',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    harness.enqueued.length = 0;
+
+    const approvals = await harness.service.listApprovals('run-1');
+    const secondApproval = approvals.find((entry) => entry.decision === null)!;
+    const second = await harness.service.decideApproval('run-1', secondApproval.request.id, {
+      action: 'approve',
+      decidedBy: 'reviewer',
+    });
+    const queuedJobIds = harness.enqueued.map((job) => job.id);
+
+    await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+      action: 'request-changes',
+      decidedBy: 'ed',
+      note: 'revise it',
+    });
+
+    expect(harness.enqueued.map((job) => job.id)).toEqual(queuedJobIds);
+    expect(queuedJobIds).toEqual([`run-project-run-1-approval-${second.decision.id}`]);
+  });
+
+  it('redacts a legacy request-changes note when crash recovery creates feedback', async () => {
+    const harness = makeHarness({}, undefined, {
+      gate: {
+        actions: ['approve', 'request-changes'],
+        returnToStepId: 'implement',
+        repairArtifact: 'repair-notes',
+      },
+    });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    await harness.approvalDecisions.create({
+      id: 'legacy-decision',
+      requestId: entry!.request.id,
+      runId: 'run-1',
+      stepRunId: entry!.request.stepRunId,
+      action: 'request-changes',
+      decidedBy: 'legacy-reviewer',
+      note: 'Authorization: Bearer abcdef1234567890\nCookie: session=raw-secret; token=also-raw',
+      decidedAt: harness.clock.now().toISOString(),
+    });
+
+    await harness.service.decideApproval('run-1', entry!.request.id, {
+      action: 'request-changes',
+      decidedBy: 'legacy-reviewer',
+      note: 'ignored retry input',
+    });
+
+    expect(harness.artifacts.named('repair-notes')[0]?.content).toMatchObject({
+      note: 'Authorization: [REDACTED]\nCookie: [REDACTED]',
+    });
+  });
+
   it('rejects deciding an action the request does not allow', async () => {
     const harness = makeHarness({}, undefined, { gate: { actions: ['approve'] } });
     await seedRun(harness);

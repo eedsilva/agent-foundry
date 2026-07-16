@@ -125,6 +125,7 @@ export class FileJobQueue implements JobQueue {
     if (attempts >= job.maxAttempts) {
       const failed = this.dir('failed');
       await ensureDir(failed);
+      await rm(join(this.dir('pending'), `${safeSegment(job.id)}.json`), { force: true });
       await atomicWriteJson(join(failed, `${safeSegment(job.id)}.json`), updated);
       await rm(from, { force: true });
       return;

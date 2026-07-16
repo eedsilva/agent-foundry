@@ -333,4 +333,17 @@ describe('FileJobQueue lease semantics', () => {
     clock.advanceMs(60_000);
     expect(await queue.claim('worker-a')).toBeNull(); // failed, not pending
   });
+
+  it('removes a same-id pending duplicate when nack exhausts maxAttempts', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue({ ...baseJob(), maxAttempts: 1 });
+    const claimed = (await queue.claim('worker-a'))!;
+    await atomicWriteJson(join(dataDir, 'queue', 'pending', 'job-1.json'), baseJob());
+
+    await queue.nack(claimed, 'worker-a', new Error('fatal'));
+
+    expect(await queue.claim('worker-b')).toBeNull();
+  });
 });
