@@ -8,6 +8,8 @@ describe('approval gates halt the run for a human decision (#13)', () => {
 
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
     expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+    // #14: the project summary must mirror this, not fall back to "running".
+    expect((await harness.projects.get('project-1'))?.status).toBe('awaiting_approval');
 
     const approvals = await harness.service.listApprovals('run-1');
     expect(approvals).toHaveLength(1);
@@ -51,6 +53,8 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(run?.status).toBe('rejected');
     expect(run?.completedAt).toBeDefined();
     expect(harness.events.types()).toContain('run.rejected');
+    // #14: the project summary must mirror this, not fall back to "running".
+    expect((await harness.projects.get('project-1'))?.status).toBe('rejected');
   });
 
   it('rejects with return-to-step: rewinds the repair step and re-halts with a fresh request', async () => {
@@ -205,5 +209,55 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     await expect(
       harness.service.decideApproval('run-1', request.id, { action: 'reject', decidedBy: 'ed' }),
     ).rejects.toThrow(/not allowed/);
+  });
+
+  it('conflicts (#14) when a differing decision arrives after the run already moved on', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    const { request } = entry!;
+
+    const first = await harness.service.decideApproval('run-1', request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    expect(first.decision.action).toBe('approve');
+
+    await expect(
+      harness.service.decideApproval('run-1', request.id, { action: 'reject', decidedBy: 'sam' }),
+    ).rejects.toMatchObject({
+      name: 'ApprovalConflictError',
+      decision: { action: 'approve', decidedBy: 'ed' },
+    });
+
+    // Repeating the same action that actually won is still an idempotent no-op.
+    const repeat = await harness.service.decideApproval('run-1', request.id, {
+      action: 'approve',
+      decidedBy: 'someone-else',
+    });
+    expect(repeat.decision.decidedBy).toBe('ed');
+  });
+
+  it('conflicts (#14) a genuinely simultaneous pair of differing decisions: one wins, one 409s', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    const { request } = entry!;
+
+    const results = await Promise.allSettled([
+      harness.service.decideApproval('run-1', request.id, { action: 'approve', decidedBy: 'ed' }),
+      harness.service.decideApproval('run-1', request.id, { action: 'reject', decidedBy: 'sam' }),
+    ]);
+    const succeeded = results.filter(
+      (r) => r.status === 'fulfilled',
+    ) as PromiseFulfilledResult<any>[];
+    const failed = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+
+    expect(succeeded).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    expect(failed[0]!.reason.name).toBe('ApprovalConflictError');
+    expect(failed[0]!.reason.decision).toEqual(succeeded[0]!.value.decision);
   });
 });

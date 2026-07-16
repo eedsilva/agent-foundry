@@ -1,4 +1,8 @@
 import type {
+  ApprovalConflictResponse,
+  ApprovalListResponse,
+  DecideApprovalRequest,
+  DecideApprovalResponse,
   Project,
   ProjectDetailResponse,
   ResumeBlockedResponse,
@@ -6,6 +10,8 @@ import type {
   RetryStepRequest,
   RunDetailResponse,
   RuntimeInfoResponse,
+  StoredArtifact,
+  WorkflowDefinition,
   WorkflowRun,
 } from '@agent-foundry/contracts';
 
@@ -105,4 +111,46 @@ export async function retryStep(
     { method: 'POST', body: JSON.stringify(input) },
   );
   return response.run;
+}
+
+export async function listApprovals(runId: string): Promise<ApprovalListResponse['approvals']> {
+  const response = await api<ApprovalListResponse>(`/runs/${encodeURIComponent(runId)}/approvals`);
+  return response.approvals;
+}
+
+export async function decideApproval(
+  runId: string,
+  requestId: string,
+  input: DecideApprovalRequest,
+): Promise<{ result?: DecideApprovalResponse; conflict?: ApprovalConflictResponse }> {
+  const response = await fetch(
+    `${API_URL}/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(requestId)}/decide`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify(input),
+    },
+  );
+  const body = (await response.json().catch(() => null)) as
+    (ApprovalConflictResponse & DecideApprovalResponse & { message?: string }) | null;
+  if (response.status === 409 && body?.error === 'ApprovalConflictError') return { conflict: body };
+  if (!response.ok) throw new Error(body?.message ?? `API request failed with ${response.status}`);
+  return { result: body as unknown as DecideApprovalResponse };
+}
+
+export function getArtifact(
+  projectId: string,
+  name: string,
+  revision?: number,
+): Promise<StoredArtifact> {
+  const query = revision ? `?revision=${revision}` : '';
+  return api<StoredArtifact>(
+    `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(name)}${query}`,
+  );
+}
+
+export async function listWorkflows(): Promise<WorkflowDefinition[]> {
+  const response = await api<{ workflows: WorkflowDefinition[] }>('/workflows');
+  return response.workflows;
 }

@@ -338,6 +338,9 @@ textarea {
   font-size: 13px;
   padding: 9px 14px;
 }
+.pill.skipped {
+  color: var(--muted);
+}
 .errorBox {
   border: 1px solid #6b302b;
   background: rgba(255, 121, 108, 0.08);
@@ -523,6 +526,30 @@ dd {
   font:
     12px/1.65 ui-monospace,
     monospace;
+}
+.diffAdded {
+  background: rgba(217, 255, 82, 0.14);
+  color: var(--accent);
+}
+.diffRemoved {
+  background: rgba(255, 121, 108, 0.14);
+  color: var(--danger);
+  text-decoration: line-through;
+}
+.checksList {
+  display: grid;
+  gap: 8px;
+}
+.checksList details {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 13px;
+}
+.checksList summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .iconButton {
   border: 1px solid var(--line);

@@ -309,7 +309,14 @@ export class InMemoryApprovalDecisions implements ApprovalDecisionRepository {
   constructor(private readonly power: PowerSwitch) {}
   create(decision: ApprovalDecision): Promise<void> {
     checkPower(this.power);
-    this.store.set(`${decision.runId}/${decision.requestId}`, { ...decision });
+    const key = `${decision.runId}/${decision.requestId}`;
+    // Matches FileApprovalDecisionRepository: create-only, second writer loses.
+    if (this.store.has(key)) {
+      return Promise.reject(
+        new Error(`Approval request ${decision.requestId} already has a decision`),
+      );
+    }
+    this.store.set(key, { ...decision });
     return Promise.resolve();
   }
   get(runId: string, requestId: string): Promise<ApprovalDecision | null> {

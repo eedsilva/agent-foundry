@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@agent-foundry/contracts": "0.1.0",
+    "diff": "^9.0.0",
     "next": "^16.2.10",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
