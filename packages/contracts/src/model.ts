@@ -127,19 +127,39 @@ export const ModelOverrideRecordSchema = z
   .strict();
 export type ModelOverrideRecord = z.infer<typeof ModelOverrideRecordSchema>;
 
-export const RouteOverrideProvenanceSchema = z
-  .object({
-    source: z.enum(['retry', 'step', 'run']),
-    overrideId: PathSegmentSchema.optional(),
-    modelId: PathSegmentSchema,
-    provider: ProviderSchema.exclude(['mock']),
-    model: z.string().trim().min(1),
-    actor: ActorRefSchema,
-    reason: z.string().trim().min(1),
-    estimatedImpact: z.string().trim().min(1),
-    createdAt: z.string().datetime(),
-  })
-  .strict();
+const RouteOverrideProvenanceShape = {
+  modelId: PathSegmentSchema,
+  provider: ProviderSchema.exclude(['mock']),
+  model: z.string().trim().min(1),
+  actor: ActorRefSchema,
+  reason: z.string().trim().min(1),
+  estimatedImpact: z.string().trim().min(1),
+  createdAt: z.string().datetime(),
+};
+
+export const RouteOverrideProvenanceSchema = z.discriminatedUnion('source', [
+  z
+    .object({
+      ...RouteOverrideProvenanceShape,
+      source: z.literal('retry'),
+      overrideId: PathSegmentSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...RouteOverrideProvenanceShape,
+      source: z.literal('step'),
+      overrideId: PathSegmentSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...RouteOverrideProvenanceShape,
+      source: z.literal('run'),
+      overrideId: PathSegmentSchema,
+    })
+    .strict(),
+]);
 export type RouteOverrideProvenance = z.infer<typeof RouteOverrideProvenanceSchema>;
 
 export const RouteDecisionSchema = z.object({

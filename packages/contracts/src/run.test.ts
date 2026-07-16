@@ -133,6 +133,36 @@ describe('persisted run contracts', () => {
         },
       }).override,
     ).toMatchObject({ source: 'step', overrideId: 'override-1' });
+    expect(() =>
+      RouteDecisionSchema.parse({
+        ...route,
+        override: {
+          source: 'run',
+          modelId: 'codex-gpt-5',
+          provider: 'codex',
+          model: 'gpt-5',
+          actor: { kind: 'user', id: 'ed' },
+          reason: 'Run pin',
+          estimatedImpact: 'Higher latency',
+          createdAt: '2026-07-16T12:00:00.000Z',
+        },
+      }),
+    ).toThrow();
+    expect(
+      RouteDecisionSchema.parse({
+        ...route,
+        override: {
+          source: 'retry',
+          modelId: 'codex-gpt-5',
+          provider: 'codex',
+          model: 'gpt-5',
+          actor: { kind: 'user', id: 'ed' },
+          reason: 'Retry pin',
+          estimatedImpact: 'Higher latency',
+          createdAt: '2026-07-16T12:00:00.000Z',
+        },
+      }).override,
+    ).toMatchObject({ source: 'retry' });
   });
 
   it('parses restart-safe execution and emergency ceiling evidence', () => {
