@@ -467,13 +467,27 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     });
     await seedRun(harness);
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-    const [firstApproval] = await harness.service.listApprovals('run-1');
-    const first = await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+    const [originalFirstApproval] = await harness.service.listApprovals('run-1');
+    const firstApproval = {
+      ...originalFirstApproval!,
+      request: { ...originalFirstApproval!.request, id: 'z-first-request' },
+    };
+    harness.approvalRequests.store.delete(`run-1/${originalFirstApproval!.request.id}`);
+    harness.approvalRequests.store.set('run-1/z-first-request', firstApproval.request);
+    const first = await harness.service.decideApproval('run-1', firstApproval.request.id, {
       action: 'request-changes',
       decidedBy: 'ed',
       note: 'revise it',
     });
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const originalPendingRequest = (await harness.service.listApprovals('run-1')).find(
+      (entry) => entry.decision === null,
+    )!.request;
+    const pendingRequest = {
+      ...originalPendingRequest,
+      createdAt: firstApproval.request.createdAt,
+    };
+    harness.approvalRequests.store.set(`run-1/${pendingRequest.id}`, pendingRequest);
 
     const snapshot = async () => ({
       run: await harness.runs.get('run-1'),
@@ -485,8 +499,10 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     const before = await snapshot();
     expect(before.run?.status).toBe('awaiting_approval');
     expect(before.approvals.some((entry) => entry.decision === null)).toBe(true);
+    expect(pendingRequest.createdAt).toBe(firstApproval.request.createdAt);
+    expect(pendingRequest.id.localeCompare(firstApproval.request.id)).toBeLessThan(0);
 
-    const replay = await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+    const replay = await harness.service.decideApproval('run-1', firstApproval.request.id, {
       action: 'request-changes',
       decidedBy: 'ed',
       note: 'revise it',
@@ -495,7 +511,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(replay.decision.id).toBe(first.decision.id);
     expect(await snapshot()).toEqual(before);
 
-    const secondRequest = before.approvals.find((entry) => entry.decision === null)!.request;
+    const secondRequest = pendingRequest;
     await harness.approvalDecisions.create({
       id: 'decision-second',
       requestId: secondRequest.id,
@@ -507,7 +523,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     });
     const afterSecondDecision = await snapshot();
 
-    await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+    await harness.service.decideApproval('run-1', firstApproval.request.id, {
       action: 'request-changes',
       decidedBy: 'ed',
       note: 'revise it',
@@ -526,8 +542,11 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     });
     await seedRun(harness);
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-    const [firstApproval] = await harness.service.listApprovals('run-1');
-    await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+    const [originalFirstApproval] = await harness.service.listApprovals('run-1');
+    const firstRequest = { ...originalFirstApproval!.request, id: 'z-first-request' };
+    harness.approvalRequests.store.delete(`run-1/${originalFirstApproval!.request.id}`);
+    harness.approvalRequests.store.set('run-1/z-first-request', firstRequest);
+    await harness.service.decideApproval('run-1', firstRequest.id, {
       action: 'request-changes',
       decidedBy: 'ed',
       note: 'revise it',
@@ -537,13 +556,20 @@ describe('approval gates halt the run for a human decision (#13)', () => {
 
     const approvals = await harness.service.listApprovals('run-1');
     const secondApproval = approvals.find((entry) => entry.decision === null)!;
-    const second = await harness.service.decideApproval('run-1', secondApproval.request.id, {
+    const secondRequest = {
+      ...secondApproval.request,
+      createdAt: firstRequest.createdAt,
+    };
+    harness.approvalRequests.store.set(`run-1/${secondRequest.id}`, secondRequest);
+    expect(secondRequest.createdAt).toBe(firstRequest.createdAt);
+    expect(secondRequest.id.localeCompare(firstRequest.id)).toBeLessThan(0);
+    const second = await harness.service.decideApproval('run-1', secondRequest.id, {
       action: 'approve',
       decidedBy: 'reviewer',
     });
     const queuedJobIds = harness.enqueued.map((job) => job.id);
 
-    await harness.service.decideApproval('run-1', firstApproval!.request.id, {
+    await harness.service.decideApproval('run-1', firstRequest.id, {
       action: 'request-changes',
       decidedBy: 'ed',
       note: 'revise it',
@@ -553,7 +579,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(queuedJobIds).toEqual([`run-project-run-1-approval-${second.decision.id}`]);
   });
 
-  it('redacts a legacy request-changes note when crash recovery creates feedback', async () => {
+  it('normalizes and redacts legacy decisions at every service read boundary', async () => {
     const harness = makeHarness({}, undefined, {
       gate: {
         actions: ['approve', 'request-changes'],
@@ -564,6 +590,8 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     await seedRun(harness);
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
     const [entry] = await harness.service.listApprovals('run-1');
+    const rawNote =
+      'Authorization: Bearer abcdef1234567890\nCookie: session=raw-secret; token=also-raw';
     await harness.approvalDecisions.create({
       id: 'legacy-decision',
       requestId: entry!.request.id,
@@ -571,11 +599,11 @@ describe('approval gates halt the run for a human decision (#13)', () => {
       stepRunId: entry!.request.stepRunId,
       action: 'request-changes',
       decidedBy: 'legacy-reviewer',
-      note: 'Authorization: Bearer abcdef1234567890\nCookie: session=raw-secret; token=also-raw',
+      note: rawNote,
       decidedAt: harness.clock.now().toISOString(),
     });
 
-    await harness.service.decideApproval('run-1', entry!.request.id, {
+    const recovered = await harness.service.decideApproval('run-1', entry!.request.id, {
       action: 'request-changes',
       decidedBy: 'legacy-reviewer',
       note: 'ignored retry input',
@@ -584,6 +612,30 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(harness.artifacts.named('repair-notes')[0]?.content).toMatchObject({
       note: 'Authorization: [REDACTED]\nCookie: [REDACTED]',
     });
+    expect(recovered.decision).toMatchObject({
+      actor: { kind: 'user', id: 'legacy-reviewer' },
+      note: 'Authorization: [REDACTED]\nCookie: [REDACTED]',
+    });
+    expect((await harness.service.listApprovals('run-1'))[0]?.decision).toMatchObject(
+      recovered.decision,
+    );
+    expect(
+      (await harness.service.exportRunAudit('run-1')).entries.find(
+        (auditEntry) => auditEntry.kind === 'approval-decision',
+      ),
+    ).toMatchObject({ decision: recovered.decision });
+    expect(
+      (
+        await harness.service.decideApproval('run-1', entry!.request.id, {
+          action: 'request-changes',
+          decidedBy: 'legacy-reviewer',
+          note: 'ignored retry input',
+        })
+      ).decision,
+    ).toEqual(recovered.decision);
+    const persisted = await harness.approvalDecisions.get('run-1', entry!.request.id);
+    expect(persisted?.actor).toBeUndefined();
+    expect(persisted?.note).toBe(rawNote);
   });
 
   it('rejects deciding an action the request does not allow', async () => {
