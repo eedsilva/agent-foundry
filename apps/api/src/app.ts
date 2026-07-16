@@ -13,9 +13,11 @@ import {
   ApprovalConflictError,
   InvalidStateTransitionError,
   NotFoundError,
+  PreviewAccessDeniedError,
   ResumeBlockedError,
   ValidationError,
 } from '@agent-foundry/domain';
+import { registerPreviewProxy } from './preview-proxy.js';
 
 export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
   const app = Fastify({
@@ -45,6 +47,9 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     }
     if (error instanceof ValidationError) {
       return reply.status(400).send({ error: error.name, message: error.message });
+    }
+    if (error instanceof PreviewAccessDeniedError) {
+      return reply.status(403).send({ error: error.name, message: error.message });
     }
     if (error instanceof ResumeBlockedError) {
       return reply.status(409).send({
@@ -264,6 +269,8 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     const session = await runtime.previewService.stop(sessionId);
     return reply.status(202).send({ session });
   });
+
+  registerPreviewProxy(app, runtime);
 
   return app;
 }
