@@ -34,6 +34,7 @@ import {
   type ApprovalDecisionRepository,
   type ApprovalRequestRepository,
   type ArtifactStore,
+  type Clock,
   type EventStore,
   type ExecutorRegistry,
   type HarnessRepository,
@@ -662,7 +663,7 @@ export class ControllableExecutor implements AgentExecutor {
 
 export interface Stores {
   power: PowerSwitch;
-  clock: SystemClock;
+  clock: Clock;
   projects: InMemoryProjects;
   runs: InMemoryRuns;
   stepRuns: InMemoryStepRuns;
@@ -676,11 +677,11 @@ export interface Stores {
   harnessVersion: { value: string };
 }
 
-export function makeStores(): Stores {
+export function makeStores(clock: Clock = new SystemClock()): Stores {
   const power: PowerSwitch = { on: true };
   return {
     power,
-    clock: new SystemClock(),
+    clock,
     projects: new InMemoryProjects(power),
     runs: new InMemoryRuns(power),
     stepRuns: new InMemoryStepRuns(power),
@@ -705,7 +706,12 @@ export interface GateOptions {
 export function makeHarness(
   behaviors: Record<string, StepBehavior> = {},
   existing?: Stores,
-  opts: { fallback?: boolean; gate?: GateOptions; policy?: ProjectPolicy } = {},
+  opts: {
+    fallback?: boolean;
+    gate?: GateOptions;
+    policy?: ProjectPolicy;
+    workflow?: WorkflowDefinition;
+  } = {},
 ) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
@@ -714,10 +720,11 @@ export function makeHarness(
   // Fallback recovery needs the mutating step to offer a second candidate.
   // A gate opt inserts an approval-gate node reviewing the review artifact,
   // between 'review' and 'verify', for approval-gate.test.ts.
+  const baseWorkflow = opts.workflow ?? WORKFLOW;
   const workflow: WorkflowDefinition = WorkflowDefinitionSchema.parse({
-    ...WORKFLOW,
+    ...baseWorkflow,
     nodes: [
-      ...WORKFLOW.nodes.map((node) =>
+      ...baseWorkflow.nodes.map((node) =>
         opts.fallback && node.id === 'implement' ? { ...node, maxAttempts: 2 } : node,
       ),
     ].flatMap((node) =>
@@ -910,7 +917,7 @@ export async function seedRun(harness: Harness): Promise<void> {
   await harness.projects.create({
     id: 'project-1',
     name: 'Run controls fixture',
-    workflowId: WORKFLOW.id,
+    workflowId: harness.workflow.id,
     policyId: 'default',
     status: 'queued',
     version: 1,
@@ -921,7 +928,7 @@ export async function seedRun(harness: Harness): Promise<void> {
   await harness.runs.create({
     id: 'run-1',
     projectId: 'project-1',
-    workflowId: WORKFLOW.id,
+    workflowId: harness.workflow.id,
     status: 'queued',
     version: 1,
     createdAt: now,

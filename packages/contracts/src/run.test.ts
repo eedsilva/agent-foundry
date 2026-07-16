@@ -188,6 +188,7 @@ describe('persisted run contracts', () => {
       execution: {
         activeElapsedMs: 14_400_000,
         consecutiveRepairs: 10,
+        lastCountedRepairStepRunId: 'repair-step-10',
         lastVerifiedCheckpoint: 'abc123',
         ceiling: {
           reason: 'consecutive-repairs',
@@ -198,6 +199,7 @@ describe('persisted run contracts', () => {
     });
 
     expect(run.execution?.ceiling?.draftBranch).toBe('draft/run-1');
+    expect(run.execution?.lastCountedRepairStepRunId).toBe('repair-step-10');
     expect(
       WorkflowRunSchema.parse({
         id: 'run-legacy',

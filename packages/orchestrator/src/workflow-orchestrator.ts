@@ -48,10 +48,10 @@ import type {
 import {
   ApprovalRejectedError,
   ApprovalRequiredError,
+  EmergencyCeilingError,
   ExecutionError,
   NotFoundError,
   PolicyViolationError,
-  QualityGateError,
   RunCancelledError,
   RunPausedError,
   errorMessage,
@@ -60,6 +60,7 @@ import {
   transitionStepAttempt,
   transitionStepRun,
   transitionWorkflowRun,
+  VersionConflictError,
 } from '@agent-foundry/domain';
 import { buildTaskProfile } from './task-profiler.js';
 import {
@@ -143,6 +144,8 @@ export class WorkflowOrchestrator {
         run.version,
       );
     }
+    run = await this.startActiveExecution(run.id);
+    await this.assertExecutionMayContinue(run.id);
     await this.syncProjectSummary(run);
     await this.emit(projectId, 'project.started', `Workflow ${workflow.id} started.`, {
       runId: run.id,
@@ -156,6 +159,7 @@ export class WorkflowOrchestrator {
       run = await this.enforceRunPolicy(run, project, workflow);
       for (const node of workflow.nodes) {
         throwIfCancelled(cancellation.signal, run.id);
+        await this.assertExecutionMayContinue(run.id, cancellation.signal);
         await this.emit(projectId, 'node.started', node.title, {
           nodeId: node.id,
           runId: run.id,
@@ -168,7 +172,8 @@ export class WorkflowOrchestrator {
           dedupeKey: `${run.id}:node:${node.id}:completed`,
         });
       }
-      const latest = await this.requireRun(run.id);
+      await this.assertExecutionMayContinue(run.id, cancellation.signal);
+      const latest = await this.stopActiveExecution(run.id);
       run = await this.runs.update(
         transitionWorkflowRun(latest, 'completed', this.clock.now()),
         latest.version,
@@ -196,7 +201,8 @@ export class WorkflowOrchestrator {
         await this.finalizeCancellation(run.id, projectId);
         return;
       }
-      const latest = await this.requireRun(run.id);
+      if (error instanceof EmergencyCeilingError) throw error;
+      const latest = await this.stopActiveExecution(run.id);
       if (latest.status === 'running' || latest.status === 'pause_requested') {
         run = await this.runs.update(
           transitionWorkflowRun(latest, 'failed', this.clock.now(), { error: runError(error) }),
@@ -215,6 +221,133 @@ export class WorkflowOrchestrator {
     }
   }
 
+  private async startActiveExecution(runId: string): Promise<WorkflowRun> {
+    return this.updateExecution(runId, (run, now) => {
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      return execution.activeSince || execution.ceiling
+        ? execution
+        : { ...execution, activeSince: now.toISOString() };
+    });
+  }
+
+  private async stopActiveExecution(runId: string): Promise<WorkflowRun> {
+    return this.updateExecution(runId, (run, now) => {
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      if (!execution.activeSince) return execution;
+      const activeElapsedMs =
+        execution.activeElapsedMs + Math.max(0, now.getTime() - Date.parse(execution.activeSince));
+      const { activeSince: _activeSince, ...inactive } = execution;
+      return { ...inactive, activeElapsedMs };
+    });
+  }
+
+  private async assertExecutionMayContinue(runId: string, signal?: AbortSignal): Promise<void> {
+    if (signal) throwIfCancelled(signal, runId);
+    const run = await this.requireRun(runId);
+    if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+      throw new RunCancelledError(runId);
+    }
+    if (run.execution?.ceiling) {
+      throw new EmergencyCeilingError(runId, run.execution.ceiling.reason);
+    }
+    const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+    const activeElapsedMs =
+      execution.activeElapsedMs +
+      (execution.activeSince
+        ? Math.max(0, this.clock.now().getTime() - Date.parse(execution.activeSince))
+        : 0);
+    if (activeElapsedMs >= 14_400_000) await this.reachCeiling(runId, 'active-time', signal);
+  }
+
+  private async recordCompletedRepair(
+    runId: string,
+    nodeId: string,
+    stepId: string,
+    iteration: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    await this.assertExecutionMayContinue(runId, signal);
+    const repair = (await this.stepRuns.list(runId))
+      .filter(
+        (candidate) =>
+          candidate.nodeId === nodeId &&
+          candidate.stepId === stepId &&
+          candidate.iteration === iteration &&
+          candidate.status === 'completed',
+      )
+      .at(-1);
+    if (!repair) throw new ExecutionError(`Completed repair ${nodeId}/${stepId} was not persisted`);
+    const updated = await this.updateExecution(runId, (run) => {
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      return execution.lastCountedRepairStepRunId === repair.id
+        ? execution
+        : {
+            ...execution,
+            consecutiveRepairs: execution.consecutiveRepairs + 1,
+            lastCountedRepairStepRunId: repair.id,
+          };
+    });
+    if ((updated.execution?.consecutiveRepairs ?? 0) >= 10) {
+      await this.reachCeiling(runId, 'consecutive-repairs', signal);
+    }
+  }
+
+  private async resetConsecutiveRepairs(runId: string): Promise<void> {
+    await this.updateExecution(runId, (run) => {
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      return execution.consecutiveRepairs === 0
+        ? execution
+        : { ...execution, consecutiveRepairs: 0 };
+    });
+  }
+
+  private async reachCeiling(
+    runId: string,
+    reason: 'active-time' | 'consecutive-repairs',
+    signal?: AbortSignal,
+  ): Promise<never> {
+    if (signal) throwIfCancelled(signal, runId);
+    const updated = await this.updateExecution(runId, (run, now) => {
+      if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+        throw new RunCancelledError(runId);
+      }
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      if (execution.ceiling) return execution;
+      const activeElapsedMs =
+        execution.activeElapsedMs +
+        (execution.activeSince
+          ? Math.max(0, now.getTime() - Date.parse(execution.activeSince))
+          : 0);
+      const { activeSince: _activeSince, ...inactive } = execution;
+      return {
+        ...inactive,
+        activeElapsedMs,
+        ceiling: { reason, reachedAt: now.toISOString() },
+      };
+    });
+    throw new EmergencyCeilingError(runId, updated.execution?.ceiling?.reason ?? reason);
+  }
+
+  private async updateExecution(
+    runId: string,
+    update: (run: WorkflowRun, now: Date) => NonNullable<WorkflowRun['execution']>,
+  ): Promise<WorkflowRun> {
+    for (;;) {
+      const run = await this.requireRun(runId);
+      const now = this.clock.now();
+      const execution = update(run, now);
+      if (run.execution === execution) return run;
+      try {
+        return await this.runs.update(
+          { ...run, execution, updatedAt: now.toISOString() },
+          run.version,
+        );
+      } catch (error) {
+        if (!(error instanceof VersionConflictError)) throw error;
+      }
+    }
+  }
+
   private watchForCancellation(runId: string, controller: AbortController): () => void {
     let stopped = false;
     let timer: NodeJS.Timeout;
@@ -223,10 +356,15 @@ export class WorkflowOrchestrator {
       try {
         const run = await this.runs.get(runId);
         if (run && (run.status === 'cancel_requested' || run.status === 'cancelled')) {
-          controller.abort();
+          controller.abort(new RunCancelledError(runId));
           return;
         }
-      } catch {
+        await this.assertExecutionMayContinue(runId);
+      } catch (error) {
+        if (error instanceof EmergencyCeilingError) {
+          controller.abort(error);
+          return;
+        }
         // Transient read failures must not kill the watcher; the next tick retries.
       }
       if (!stopped) timer = setTimeout(() => void poll(), this.options.cancelPollIntervalMs);
@@ -239,7 +377,7 @@ export class WorkflowOrchestrator {
   }
 
   private async finalizeCancellation(runId: string, projectId: string): Promise<void> {
-    let run = await this.requireRun(runId);
+    let run = await this.stopActiveExecution(runId);
     if (run.status === 'running') {
       run = await this.runs.update(
         transitionWorkflowRun(run, 'cancel_requested', this.clock.now()),
@@ -273,6 +411,7 @@ export class WorkflowOrchestrator {
       return;
     }
     if (run.status === 'pause_requested') {
+      run = await this.stopActiveExecution(runId);
       const snapshot = await this.pauseSnapshot(projectId, workflow, resumeNodeId);
       run = await this.runs.update(
         transitionWorkflowRun(run, 'paused', this.clock.now(), { pause: snapshot }),
@@ -293,7 +432,7 @@ export class WorkflowOrchestrator {
   }
 
   private async finalizeApproval(runId: string, projectId: string, nodeId: string): Promise<void> {
-    let run = await this.requireRun(runId);
+    let run = await this.stopActiveExecution(runId);
     if (run.status === 'running') {
       run = await this.runs.update(
         transitionWorkflowRun(run, 'awaiting_approval', this.clock.now()),
@@ -313,7 +452,7 @@ export class WorkflowOrchestrator {
     nodeId: string,
     decidedBy: string,
   ): Promise<void> {
-    let run = await this.requireRun(runId);
+    let run = await this.stopActiveExecution(runId);
     if (run.status === 'running') {
       run = await this.runs.update(
         transitionWorkflowRun(run, 'rejected', this.clock.now()),
@@ -554,7 +693,8 @@ export class WorkflowOrchestrator {
     }
 
     let latest: StoredArtifact | null = null;
-    for (let iteration = 1; iteration <= node.maxIterations; iteration += 1) {
+    for (let iteration = 1; ; iteration += 1) {
+      await this.assertExecutionMayContinue(runId, signal);
       latest = await this.executeStep(
         project,
         workflow,
@@ -567,6 +707,7 @@ export class WorkflowOrchestrator {
       const approved = await this.conditionApproved(project.id, node);
       if (qualitySubject) await this.recordQualityOutcome(qualitySubject, approved);
       if (approved) {
+        await this.resetConsecutiveRepairs(runId);
         await this.emit(project.id, 'quality.approved', `${node.title} approved.`, {
           runId,
           nodeId: node.id,
@@ -576,7 +717,6 @@ export class WorkflowOrchestrator {
         return latest;
       }
 
-      if (iteration >= node.maxIterations) break;
       await this.emit(project.id, 'quality.repair_requested', `${node.title} requires repair.`, {
         runId,
         nodeId: node.id,
@@ -592,12 +732,8 @@ export class WorkflowOrchestrator {
         signal,
         iteration,
       );
+      await this.recordCompletedRepair(runId, node.id, node.repair.id, iteration, signal);
     }
-
-    throw new QualityGateError(
-      `${node.title} did not satisfy ${node.approval.artifact}.${node.approval.path} after ${node.maxIterations} iteration(s).`,
-      node.id,
-    );
   }
 
   private async conditionApproved(projectId: string, node: QualityLoopStep): Promise<boolean> {
@@ -616,6 +752,7 @@ export class WorkflowOrchestrator {
     iteration?: number,
   ): Promise<StoredArtifact> {
     throwIfCancelled(signal, runId);
+    await this.assertExecutionMayContinue(runId, signal);
     const run = await this.requireRun(runId);
     // Pause only takes effect between steps: an in-flight step always
     // finishes (or fails) before the run parks.
@@ -946,6 +1083,7 @@ export class WorkflowOrchestrator {
         signal,
       );
       throwIfCancelled(signal, runId);
+      await this.assertExecutionMayContinue(runId, signal);
       const artifact = await this.artifacts.put({
         projectId: project.id,
         name: step.outputArtifact,
@@ -1042,9 +1180,7 @@ export class WorkflowOrchestrator {
     );
 
     // Explicit pins are already validated and scored by the router.
-    const candidates = explicit
-      ? [route.selected]
-      : [route.selected, ...route.fallbacks].slice(0, step.maxAttempts);
+    const candidates = explicit ? [route.selected] : [route.selected, ...route.fallbacks];
     const checkpoint = step.mutatesWorkspace
       ? await this.workspaces.checkpoint(project.id, `${step.id}-${runId}`)
       : null;
@@ -1133,6 +1269,7 @@ export class WorkflowOrchestrator {
           candidate,
           signal,
         );
+        await this.assertExecutionMayContinue(runId, signal);
         const commit = step.mutatesWorkspace
           ? await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`)
           : null;
@@ -1232,6 +1369,7 @@ export class WorkflowOrchestrator {
           attempt.version,
         );
         if (failureRecordError) throw failureRecordError;
+        if (error instanceof EmergencyCeilingError) throw error;
         await this.metrics.record({
           modelId: candidate.model.id,
           taskKind: step.taskKind,
@@ -1652,11 +1790,16 @@ function artifactReference(artifact: StoredArtifact) {
 }
 
 function throwIfCancelled(signal: AbortSignal, runId: string): void {
-  if (signal.aborted) throw new RunCancelledError(runId);
+  if (!signal.aborted) return;
+  if (signal.reason instanceof EmergencyCeilingError) throw signal.reason;
+  throw new RunCancelledError(runId);
 }
 
 function isCancellation(error: unknown, signal: AbortSignal): boolean {
-  return signal.aborted || error instanceof RunCancelledError;
+  return (
+    error instanceof RunCancelledError ||
+    (signal.aborted && !(signal.reason instanceof EmergencyCeilingError))
+  );
 }
 
 function runError(error: unknown): RunError {

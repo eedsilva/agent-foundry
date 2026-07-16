@@ -41,6 +41,19 @@ export class QualityGateError extends Error {
   }
 }
 
+/** Signals Task 4 to preserve failed work and converge the run terminally. */
+export class EmergencyCeilingError extends Error {
+  override readonly name = 'EmergencyCeilingError';
+  readonly code = 'EMERGENCY_CEILING';
+
+  constructor(
+    readonly runId: string,
+    readonly reason: 'active-time' | 'consecutive-repairs',
+  ) {
+    super(`Workflow run ${runId} reached the ${reason} emergency ceiling.`);
+  }
+}
+
 /** A hard ProjectPolicy constraint was violated; the run must not proceed. */
 export class PolicyViolationError extends Error {
   override readonly name = 'PolicyViolationError';
