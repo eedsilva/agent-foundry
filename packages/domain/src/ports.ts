@@ -234,7 +234,8 @@ export interface WorkspaceManager {
     projectId: string,
     runId: string,
     verifiedCheckpoint: string,
-  ): Promise<{ draftBranch: string }>;
+  ): Promise<{ draftBranch: string; draftCommit: string; created: boolean }>;
+  discardDraft(projectId: string, runId: string, expectedCommit: string): Promise<void>;
   commit(projectId: string, message: string): Promise<string | null>;
   head(projectId: string): Promise<string | null>;
 }

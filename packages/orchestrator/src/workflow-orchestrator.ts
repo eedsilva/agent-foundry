@@ -461,13 +461,13 @@ export class WorkflowOrchestrator {
       throw new ExecutionError(`Run ${runId} is missing emergency ceiling checkpoint evidence`);
     }
     if (!ceiling.draftBranch) {
-      const { draftBranch } = await this.workspaces.preserveDraft(
-        projectId,
-        runId,
-        verifiedCheckpoint,
-      );
+      const draft = await this.workspaces.preserveDraft(projectId, runId, verifiedCheckpoint);
+      const { draftBranch } = draft;
       run = await this.requireRun(runId);
       if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+        if (draft.created) {
+          await this.workspaces.discardDraft(projectId, runId, draft.draftCommit);
+        }
         await this.finalizeCancellation(runId, projectId);
         return false;
       }
@@ -483,6 +483,9 @@ export class WorkflowOrchestrator {
         });
       } catch (error) {
         if (!(error instanceof RunCancelledError)) throw error;
+        if (draft.created) {
+          await this.workspaces.discardDraft(projectId, runId, draft.draftCommit);
+        }
         await this.finalizeCancellation(runId, projectId);
         return false;
       }

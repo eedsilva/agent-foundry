@@ -179,9 +179,7 @@ describe('emergency ceiling accounting', () => {
     expect(run?.status).toBe('cancelled');
     expect(run?.error).toBeUndefined();
     expect(run?.execution?.ceiling?.draftBranch).toBeUndefined();
-    // Git ref creation is irreversible at this race boundary; cancellation
-    // suppresses persisted ceiling evidence and the event, but keeps the ref.
-    expect(stores.workspaces.drafts).toEqual(['draft/run-1']);
+    expect(stores.workspaces.drafts).toEqual([]);
     expect(stores.events.types()).not.toContain('run.emergency_ceiling_reached');
   });
 

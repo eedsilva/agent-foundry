@@ -344,7 +344,14 @@ class FakeWorkspaces implements WorkspaceManager {
   }
   preserveDraft(_projectId: string, runId: string, verifiedCheckpoint: string) {
     this.rollbacks.push(verifiedCheckpoint);
-    return Promise.resolve({ draftBranch: `draft/${runId}` });
+    return Promise.resolve({
+      draftBranch: `draft/${runId}`,
+      draftCommit: 'draft-commit',
+      created: true,
+    });
+  }
+  discardDraft(): Promise<void> {
+    return Promise.resolve();
   }
   commit(_projectId: string, message: string): Promise<string | null> {
     this.commits.push(message);

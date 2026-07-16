@@ -480,6 +480,7 @@ export class FakeWorkspaces implements WorkspaceManager {
   readonly commits: string[] = [];
   readonly rollbacks: string[] = [];
   readonly drafts: string[] = [];
+  readonly draftCommits = new Map<string, string>();
   current = 'initial-head';
   dirty = false;
   onBeforeCheckpoint?: (() => void) | undefined;
@@ -529,11 +530,28 @@ export class FakeWorkspaces implements WorkspaceManager {
   async preserveDraft(_projectId: string, runId: string, verifiedCheckpoint: string) {
     checkPower(this.power);
     const draftBranch = `draft/${runId}`;
-    if (!this.drafts.includes(draftBranch)) this.drafts.push(draftBranch);
+    const created = !this.drafts.includes(draftBranch);
+    if (created) {
+      if (this.dirty) this.current = this.nextSha();
+      this.drafts.push(draftBranch);
+      this.draftCommits.set(draftBranch, this.current);
+    }
+    const draftCommit = this.draftCommits.get(draftBranch)!;
     this.current = verifiedCheckpoint;
     this.dirty = false;
     await this.onAfterPreserveDraft?.();
-    return { draftBranch };
+    return { draftBranch, draftCommit, created };
+  }
+  discardDraft(_projectId: string, runId: string, expectedCommit: string): Promise<void> {
+    const draftBranch = `draft/${runId}`;
+    const current = this.draftCommits.get(draftBranch);
+    if (current === undefined) return Promise.resolve();
+    if (current !== expectedCommit) {
+      return Promise.reject(new Error(`${draftBranch} no longer points to the owned commit`));
+    }
+    this.draftCommits.delete(draftBranch);
+    this.drafts.splice(this.drafts.indexOf(draftBranch), 1);
+    return Promise.resolve();
   }
   commit(): Promise<string | null> {
     checkPower(this.power);
