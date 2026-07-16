@@ -59,6 +59,7 @@
 ### Task 1: Contracts + domain foundation
 
 **Files:**
+
 - Create: `packages/contracts/src/policy.ts`
 - Create: `packages/contracts/src/policy.test.ts`
 - Modify: `packages/contracts/src/project.ts` (ProjectSchema, ProjectEventSchema)
@@ -70,6 +71,7 @@
 - Modify: `packages/domain/src/ports.ts`
 
 **Interfaces:**
+
 - Consumes: existing `PathSegmentSchema`, `ProviderSchema` (`packages/contracts/src/primitives.ts`), `IdempotencyKeySchema` (`packages/contracts/src/run.ts:64`).
 - Produces (later tasks rely on these exact names):
   - `ProjectPolicySchema` / `type ProjectPolicy` — `{ schemaVersion: '1'; id: string; version: number; requiredStack?: string; allowedProviders?: ('codex'|'claude'|'agy')[]; forbiddenDependencies: string[]; allowedCommands?: string[] }`
@@ -155,7 +157,10 @@ export const ProjectPolicySchema = z.object({
   id: PathSegmentSchema,
   version: z.number().int().positive(),
   requiredStack: PathSegmentSchema.optional(),
-  allowedProviders: z.array(ProviderSchema.exclude(['mock'])).min(1).optional(),
+  allowedProviders: z
+    .array(ProviderSchema.exclude(['mock']))
+    .min(1)
+    .optional(),
   forbiddenDependencies: z.array(z.string().min(1)).default([]),
   allowedCommands: z.array(z.string().min(1)).min(1).optional(),
 });
@@ -175,6 +180,7 @@ export type PolicyRecord = z.infer<typeof PolicyRecordSchema>;
 - [ ] **Step 4: Wire the additive contract fields**
 
 In `packages/contracts/src/project.ts`:
+
 - `ProjectSchema`: after `workflowId`, add `policyId: PathSegmentSchema.optional(),` (optional = legacy projects resolve as `'default'`).
 - `ProjectEventSchema` type enum: add `'policy.violation',` after `'verification.completed',`.
 
@@ -192,6 +198,7 @@ In `packages/contracts/src/model.ts`, inside `TaskProfileSchema` after `allowedP
 ```
 
 In `packages/contracts/src/run.ts`:
+
 - `import { PolicyRecordSchema } from './policy.js';`
 - `RunPauseSnapshotSchema`: add `policyHash: IdempotencyKeySchema.optional(),` after `harnessVersion`.
 - `WorkflowRunSchema`: add `policy: PolicyRecordSchema.optional(),` after `workflowId`.
@@ -219,6 +226,7 @@ export class PolicyViolationError extends Error {
 ```
 
 `packages/domain/src/ports.ts`:
+
 - Add `ProjectPolicy` to the type-import list from `@agent-foundry/contracts`.
 - After `WorkflowRepository`, add:
 
@@ -247,10 +255,12 @@ git commit -m "feat(contracts,domain): ProjectPolicy schema, policy run record a
 ### Task 2: Model router rejects policy-forbidden providers (parallel-safe)
 
 **Files:**
+
 - Modify: `packages/model-router/src/score-router.ts:65-76` (`rejectReason`)
 - Test: `packages/model-router/src/score-router.test.ts`
 
 **Interfaces:**
+
 - Consumes: `TaskProfile.policy` from Task 1.
 - Produces: rejection reason string format `provider <p> is forbidden by policy <id>@v<version>` recorded in `RouteDecision.rejected` (already persisted with every attempt → auditable).
 
@@ -259,7 +269,10 @@ git commit -m "feat(contracts,domain): ProjectPolicy schema, policy run record a
 ```ts
 it('rejects providers forbidden by policy with an auditable reason', async () => {
   const router = new ScoreBasedModelRouter(
-    [model({ id: 'claude-model', provider: 'claude' }), model({ id: 'codex-model', provider: 'codex' })],
+    [
+      model({ id: 'claude-model', provider: 'claude' }),
+      model({ id: 'codex-model', provider: 'codex' }),
+    ],
     metrics,
   );
   const decision = await router.route(
@@ -273,7 +286,10 @@ it('rejects providers forbidden by policy with an auditable reason', async () =>
 });
 
 it('throws when policy forbids every provider, listing the policy rejections', async () => {
-  const router = new ScoreBasedModelRouter([model({ id: 'claude-model', provider: 'claude' })], metrics);
+  const router = new ScoreBasedModelRouter(
+    [model({ id: 'claude-model', provider: 'claude' })],
+    metrics,
+  );
   await expect(
     router.route(profile({ policy: { id: 'strict', version: 2, allowedProviders: ['codex'] } })),
   ).rejects.toThrow(/forbidden by policy strict@v2/);
@@ -288,9 +304,9 @@ Expected: FAIL — no rejection entry / selected is claude-model.
 - [ ] **Step 3: Implement** — in `rejectReason` (`score-router.ts:65`), first check:
 
 ```ts
-    if (profile.policy && !profile.policy.allowedProviders.includes(model.provider)) {
-      return `provider ${model.provider} is forbidden by policy ${profile.policy.id}@v${profile.policy.version}`;
-    }
+if (profile.policy && !profile.policy.allowedProviders.includes(model.provider)) {
+  return `provider ${model.provider} is forbidden by policy ${profile.policy.id}@v${profile.policy.version}`;
+}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -310,10 +326,12 @@ git commit -m "feat(model-router): reject policy-forbidden providers with audita
 ### Task 3: Verifier enforces command allowlist and forbidden dependencies (parallel-safe)
 
 **Files:**
+
 - Modify: `packages/executors/src/verifier.ts`
 - Test: `packages/executors/src/verifier.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ProjectPolicy` from Task 1; `VerificationService` input `policy` from Task 1.
 - Produces: two synthetic `VerificationCommandResult` behaviors inside the existing `VerificationReport` (no report schema change):
   - Disallowed script → `{ name: <script>, command: 'policy', exitCode: 1, stderr: "Script '<s>' is not allowed by policy <id>@v<version>." }`, script **never executed**.
@@ -341,7 +359,7 @@ it('blocks scripts outside the policy allowlist without executing them', async (
   expect(report.approved).toBe(false);
   const blocked = report.commands.find((command) => command.name === 'evil');
   expect(blocked).toMatchObject({ command: 'policy', exitCode: 1 });
-  expect(blocked?.stderr).toContain("not allowed by policy strict@v2");
+  expect(blocked?.stderr).toContain('not allowed by policy strict@v2');
   await expect(access(join(workspacePath, 'evil-ran'))).rejects.toThrow(); // never executed
 });
 
@@ -374,7 +392,9 @@ it('passes the dependency check when nothing forbidden is declared', async () =>
 
 it('runs unrestricted when no policy is provided (existing behavior unchanged)', async () => {
   const report = await verifier.verify({ workspacePath, scripts: [], includeGitDiffCheck: false });
-  expect(report.commands.find((command) => command.name === 'policy-dependency-check')).toBeUndefined();
+  expect(
+    report.commands.find((command) => command.name === 'policy-dependency-check'),
+  ).toBeUndefined();
 });
 ```
 
@@ -392,25 +412,25 @@ Add to imports: `type ProjectPolicy` from `@agent-foundry/contracts`.
 In the scripts loop (`verifier.ts:56`), before the missing-script branch:
 
 ```ts
-      if (input.policy?.allowedCommands && !input.policy.allowedCommands.includes(script)) {
-        commands.push({
-          name: script,
-          command: 'policy',
-          args: [],
-          exitCode: 1,
-          durationMs: 0,
-          stdout: '',
-          stderr: `Script '${script}' is not allowed by policy ${input.policy.id}@v${input.policy.version}.`,
-          skipped: false,
-        });
-        continue;
-      }
+if (input.policy?.allowedCommands && !input.policy.allowedCommands.includes(script)) {
+  commands.push({
+    name: script,
+    command: 'policy',
+    args: [],
+    exitCode: 1,
+    durationMs: 0,
+    stdout: '',
+    stderr: `Script '${script}' is not allowed by policy ${input.policy.id}@v${input.policy.version}.`,
+    skipped: false,
+  });
+  continue;
+}
 ```
 
 After the scripts loop, before the git-diff block:
 
 ```ts
-    if (input.policy) commands.push(dependencyPolicyCheck(input.policy, packageJson));
+if (input.policy) commands.push(dependencyPolicyCheck(input.policy, packageJson));
 ```
 
 Module-level function (near `detectPackageManager`):
@@ -426,7 +446,9 @@ function dependencyPolicyCheck(
     const section = packageJson[field];
     return isRecord(section) ? Object.keys(section) : [];
   });
-  const violations = [...new Set(declared.filter((name) => policy.forbiddenDependencies.includes(name)))].sort();
+  const violations = [
+    ...new Set(declared.filter((name) => policy.forbiddenDependencies.includes(name))),
+  ].sort();
   return {
     name: 'policy-dependency-check',
     command: 'policy',
@@ -462,11 +484,13 @@ git commit -m "feat(executors): verifier enforces policy command allowlist and f
 ### Task 4: YamlPolicyRepository in persistence (parallel-safe)
 
 **Files:**
+
 - Create: `packages/persistence/src/policy-repository.ts`
 - Create: `packages/persistence/src/policy-repository.test.ts`
 - Modify: `packages/persistence/src/index.ts` (export)
 
 **Interfaces:**
+
 - Consumes: `ProjectPolicySchema` (Task 1), `PolicyRepository` port (Task 1), `safeSegment` from `packages/persistence/src/fs-utils.ts`, `NotFoundError` from domain.
 - Produces: `class YamlPolicyRepository implements PolicyRepository { constructor(policiesDir: string); get(policyId: string): Promise<ProjectPolicy> }`.
 
@@ -575,6 +599,7 @@ git commit -m "feat(persistence): YamlPolicyRepository loading versioned policie
 ### Task 5: Orchestrator enforcement — stamp hash, block mid-run change, requiredStack, threading (parallel-safe)
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/idempotency.ts` (add `policyHash`)
 - Modify: `packages/orchestrator/src/task-profiler.ts`
 - Modify: `packages/orchestrator/src/workflow-orchestrator.ts`
@@ -584,6 +609,7 @@ git commit -m "feat(persistence): YamlPolicyRepository loading versioned policie
 - Create: `packages/orchestrator/src/policy-enforcement.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ProjectPolicy`, `PolicyRecord`, `PolicyRepository`, `PolicyViolationError`, `Project.policyId`, `WorkflowRun.policy`, `RunPauseSnapshot.policyHash`, `TaskProfile.policy` (Task 1).
 - Produces:
   - `policyHash(policy: ProjectPolicy): string` exported from `idempotency.ts` (sha256 of stable stringify — same helpers as `workflowHash`).
@@ -692,7 +718,7 @@ describe('policy enforcement', () => {
 });
 ```
 
-Note on the mid-run test: the terminal-status early return at `workflow-orchestrator.ts:112-118` fires before policy checks, so the "redelivery blocks" assertion needs the first walk to leave the run non-terminal. If the gated walk completes the run, restructure: keep a second gated step (`review: 'gated'`) so the change lands while `run-1` is still `running`, then release everything and assert the *policy check on the next step boundary* fails the run. Whichever structure is used, the observable contract is fixed: a policy content change during a live run ends in `status: 'failed'`, a `policy.violation` event, a thrown `PolicyViolationError`, and a successful retry-fork under the new policy. Implementers may adjust gating mechanics, not the contract. (Checking the hash at **every step boundary** — inside `executeStep` — rather than only at `runProject` entry is the required implementation for exactly this reason.)
+Note on the mid-run test: the terminal-status early return at `workflow-orchestrator.ts:112-118` fires before policy checks, so the "redelivery blocks" assertion needs the first walk to leave the run non-terminal. If the gated walk completes the run, restructure: keep a second gated step (`review: 'gated'`) so the change lands while `run-1` is still `running`, then release everything and assert the _policy check on the next step boundary_ fails the run. Whichever structure is used, the observable contract is fixed: a policy content change during a live run ends in `status: 'failed'`, a `policy.violation` event, a thrown `PolicyViolationError`, and a successful retry-fork under the new policy. Implementers may adjust gating mechanics, not the contract. (Checking the hash at **every step boundary** — inside `executeStep` — rather than only at `runProject` entry is the required implementation for exactly this reason.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -732,13 +758,13 @@ Input type gains `policy?: ProjectPolicy | undefined;`. In the returned object, 
 2. `runProject` (line 99): after `const workflow = await this.workflows.get(...)`:
 
 ```ts
-    const policy = await this.policies.get(project.policyId ?? 'default');
+const policy = await this.policies.get(project.policyId ?? 'default');
 ```
 
 3. Inside the `try` block, before the `for (const node of workflow.nodes)` loop:
 
 ```ts
-      await this.enforceRunPolicy(run.id, project, workflow, policy);
+await this.enforceRunPolicy(run.id, project, workflow, policy);
 ```
 
 4. New private method (place near `pauseSnapshot`):
@@ -793,21 +819,21 @@ Input type gains `policy?: ProjectPolicy | undefined;`. In the returned object, 
 6. **Step-boundary check:** at the top of `executeStep` (after the `pause_requested` check, line ~552), re-verify the policy hash so a change mid-run blocks at the next boundary:
 
 ```ts
-    if (run.policy && run.policy.hash !== policyHash(policy)) {
-      const current = await this.policies.get(project.policyId ?? 'default');
-      const message =
-        `Policy ${current.id} changed (v${run.policy.version} → v${current.version}) while run ${runId} was in flight. ` +
-        'Retry the project to fork a new run under the current policy.';
-      await this.emit(project.id, 'policy.violation', message, {
-        runId,
-        nodeId,
-        data: { field: 'policyHash', expected: run.policy.hash, actual: policyHash(current) },
-      });
-      throw new PolicyViolationError(message, ['policy-changed-mid-run']);
-    }
+if (run.policy && run.policy.hash !== policyHash(policy)) {
+  const current = await this.policies.get(project.policyId ?? 'default');
+  const message =
+    `Policy ${current.id} changed (v${run.policy.version} → v${current.version}) while run ${runId} was in flight. ` +
+    'Retry the project to fork a new run under the current policy.';
+  await this.emit(project.id, 'policy.violation', message, {
+    runId,
+    nodeId,
+    data: { field: 'policyHash', expected: run.policy.hash, actual: policyHash(current) },
+  });
+  throw new PolicyViolationError(message, ['policy-changed-mid-run']);
+}
 ```
 
-   Wait — `policy` here is the object resolved at `runProject` entry, so comparing it to itself can't detect a change. The step-boundary check must **re-resolve**: `const current = await this.policies.get(project.policyId ?? 'default');` first, then compare `run.policy.hash !== policyHash(current)`. Implement it that way (the snippet above shows the emit/throw shape; the comparison uses `current`).
+Wait — `policy` here is the object resolved at `runProject` entry, so comparing it to itself can't detect a change. The step-boundary check must **re-resolve**: `const current = await this.policies.get(project.policyId ?? 'default');` first, then compare `run.policy.hash !== policyHash(current)`. Implement it that way (the snippet above shows the emit/throw shape; the comparison uses `current`).
 
 7. `executeAgentStep`: `const profile = buildTaskProfile({ step, harness, artifacts: inputArtifacts, policy });`
 
@@ -822,18 +848,18 @@ Input type gains `policy?: ProjectPolicy | undefined;`. In the returned object, 
 3. `resumeDiagnostics` (line 609): after the harness-version check:
 
 ```ts
-    if (snapshot.policyHash) {
-      const project = await this.requireProject(run.projectId);
-      const policy = await this.policies.get(project.policyId ?? 'default');
-      const actualPolicyHash = policyHash(policy);
-      if (actualPolicyHash !== snapshot.policyHash) {
-        diagnostics.push({
-          field: 'policyVersion',
-          expected: snapshot.policyHash,
-          actual: actualPolicyHash,
-        });
-      }
-    }
+if (snapshot.policyHash) {
+  const project = await this.requireProject(run.projectId);
+  const policy = await this.policies.get(project.policyId ?? 'default');
+  const actualPolicyHash = policyHash(policy);
+  if (actualPolicyHash !== snapshot.policyHash) {
+    diagnostics.push({
+      field: 'policyVersion',
+      expected: snapshot.policyHash,
+      actual: actualPolicyHash,
+    });
+  }
+}
 ```
 
 - [ ] **Step 7: Harness support** — `packages/orchestrator/src/testing/harness.ts`:
@@ -878,12 +904,14 @@ git commit -m "feat(orchestrator): resolve, stamp and enforce ProjectPolicy acro
 ### Task 6: Composition wiring, default policy file, config (after Tasks 4+5)
 
 **Files:**
+
 - Modify: `packages/composition/src/config.ts`
 - Modify: `packages/composition/src/runtime.ts`
 - Modify: `packages/composition/src/config.test.ts`
 - Create: `policies/default.yaml`
 
 **Interfaces:**
+
 - Consumes: `YamlPolicyRepository` (Task 4), new constructor slots (Task 5).
 - Produces: `RuntimeConfig.policiesDir: string` (env `POLICIES_DIR`, default `policies`); `Runtime.policies: YamlPolicyRepository`.
 
@@ -935,6 +963,7 @@ git commit -m "feat(composition): wire YamlPolicyRepository and ship permissive 
 ### Task 7: ADR, full gate, PR, review loop, evidence
 
 **Files:**
+
 - Create: `docs/adr/0014-project-policy-enforcement.md`
 
 - [ ] **Step 1: Write ADR** `docs/adr/0014-project-policy-enforcement.md` following `docs/adr/0000-template.md` format (check its headings and mirror them). Content to cover: context (hard constraints can't live in prompts — issue #15); decision (per-project versioned YAML policies in `policies/`, selected by `CreateProjectRequest.policyId`, content-hash pinned per run; enforcement points: router pre-execution, orchestrator run-start + step boundaries, verifier post-execution); consequences (mid-run policy edits require project retry = fork; exact-name dependency matching only — lockfile scan deferred; single `policies/` dir, no per-project policy storage); rollback (revert wiring — optional fields on persisted entities mean old data keeps parsing; removing the feature requires no migration).

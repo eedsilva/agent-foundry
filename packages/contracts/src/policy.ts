@@ -12,7 +12,10 @@ export const ProjectPolicySchema = z.object({
   id: PathSegmentSchema,
   version: z.number().int().positive(),
   requiredStack: PathSegmentSchema.optional(),
-  allowedProviders: z.array(ProviderSchema.exclude(['mock'])).min(1).optional(),
+  allowedProviders: z
+    .array(ProviderSchema.exclude(['mock']))
+    .min(1)
+    .optional(),
   forbiddenDependencies: z.array(z.string().min(1)).default([]),
   allowedCommands: z.array(z.string().min(1)).min(1).optional(),
 });

@@ -99,7 +99,7 @@ describe('WorkspaceVerifier', () => {
         private: true,
         scripts: {
           lint: 'node -e ""',
-          evil: 'node -e "require(\'fs\').writeFileSync(\'evil-ran\',\'\')"',
+          evil: "node -e \"require('fs').writeFileSync('evil-ran','')\"",
         },
       }),
     );
