@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { QueueJob } from '@agent-foundry/contracts';
 import { LeaseLostError, type Clock } from '@agent-foundry/domain';
+import { atomicWriteJson, readJson } from './fs-utils.js';
 import { FileJobQueue } from './job-queue.js';
 
 const temporaryDirectories: string[] = [];
@@ -73,11 +74,18 @@ describe('FileJobQueue lease semantics', () => {
     const dataDir = await temporaryDataDir();
     const clock = new FakeClock(new Date(createdAt));
     const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
-    await queue.enqueue(baseJob());
+    await queue.enqueue({
+      ...baseJob(),
+      attempts: 2,
+      lastError: 'recovered state',
+      availableAt: '2026-07-14T12:00:10.000Z',
+    });
     await queue.enqueue({ ...baseJob(), projectId: 'project-2' });
 
+    clock.advanceMs(10_000);
     const claimed = await queue.claim('worker-a');
     expect(claimed?.projectId).toBe('project-1');
+    expect(claimed).toMatchObject({ attempts: 2, lastError: 'recovered state' });
     expect(await queue.claim('worker-b')).toBeNull();
   });
 
@@ -94,6 +102,63 @@ describe('FileJobQueue lease semantics', () => {
     await expect(queue.heartbeat(claimed, 'worker-a')).resolves.toMatchObject({
       projectId: 'project-1',
       lease: { workerId: 'worker-a' },
+    });
+  });
+
+  it('successful ack removes a same-id pending duplicate created during processing', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue(baseJob());
+    const claimed = (await queue.claim('worker-a'))!;
+    await atomicWriteJson(join(dataDir, 'queue', 'pending', 'job-1.json'), {
+      ...baseJob(),
+      projectId: 'duplicate-project',
+    });
+
+    await queue.ack(claimed, 'worker-a');
+
+    expect(await queue.claim('worker-b')).toBeNull();
+  });
+
+  it('nack overwrites a same-id pending duplicate with authoritative retry state', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue(baseJob());
+    const claimed = (await queue.claim('worker-a'))!;
+    await atomicWriteJson(join(dataDir, 'queue', 'pending', 'job-1.json'), {
+      ...baseJob(),
+      projectId: 'duplicate-project',
+    });
+
+    await queue.nack(claimed, 'worker-a', new Error('retry me'));
+    clock.advanceMs(10_000);
+
+    expect(await queue.claim('worker-b')).toMatchObject({
+      projectId: 'project-1',
+      attempts: 1,
+      lastError: 'retry me',
+    });
+  });
+
+  it('expired-lease recovery overwrites a same-id pending duplicate with fenced state', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue(baseJob());
+    const claimed = (await queue.claim('worker-a'))!;
+    await atomicWriteJson(join(dataDir, 'queue', 'pending', 'job-1.json'), {
+      ...baseJob(),
+      projectId: 'duplicate-project',
+    });
+    clock.advanceMs(61_000);
+
+    await queue.reapExpired();
+
+    expect(await queue.claim('worker-b')).toMatchObject({
+      projectId: 'project-1',
+      leaseEpoch: claimed.leaseEpoch + 1,
     });
   });
 
@@ -207,6 +272,16 @@ describe('FileJobQueue lease semantics', () => {
     await expect(queue.nack(workerB, 'worker-a', new Error('wrong worker'))).rejects.toThrow(
       LeaseLostError,
     );
+
+    const authoritativePending = {
+      ...baseJob(),
+      attempts: 2,
+      lastError: 'authoritative recovery',
+    };
+    const pendingPath = join(dataDir, 'queue', 'pending', 'job-1.json');
+    await atomicWriteJson(pendingPath, authoritativePending);
+    await expect(queue.ack(workerA, 'worker-a')).rejects.toThrow(LeaseLostError);
+    await expect(readJson(pendingPath)).resolves.toMatchObject(authoritativePending);
   });
 
   it('clears the lease and returns a nacked job to pending with backoff', async () => {

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { QueueJobSchema, type QueueJob } from '@agent-foundry/contracts';
 import { LeaseLostError, type Clock, type JobQueue } from '@agent-foundry/domain';
 import {
+  atomicCreateJson,
   atomicWriteJson,
   ensureDir,
   exists,
@@ -38,12 +39,11 @@ export class FileJobQueue implements JobQueue {
     if (await exists(pendingPath)) return;
     if (await this.isProcessing(id)) return;
 
-    await atomicWriteJson(pendingPath, parsed);
-
-    // A worker can claim between the processing check and publication. If
-    // another publisher recreated pending in that window, keep the active
-    // lease and remove only the duplicate runnable copy.
-    if (await this.isProcessing(id)) await rm(pendingPath, { force: true });
+    // Create-if-absent preserves any retry/nack/reap file that won the
+    // destination. A claim between the checks and publication may leave a
+    // transient same-id pending copy; ack removes it, while nack/reap
+    // overwrite it with their advanced state.
+    await atomicCreateJson(pendingPath, parsed);
   }
 
   async claim(workerId: string): Promise<QueueJob | null> {
@@ -102,6 +102,7 @@ export class FileJobQueue implements JobQueue {
     const completed = this.dir('completed');
     await ensureDir(completed);
     await rename(from, join(completed, `${safeSegment(job.id)}.json`));
+    await rm(join(this.dir('pending'), `${safeSegment(job.id)}.json`), { force: true });
   }
 
   async nack(job: QueueJob, workerId: string, error: Error): Promise<void> {
