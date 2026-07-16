@@ -91,8 +91,8 @@ export const DecideApprovalRequestSchema = z
     actor: ActorRefSchema.optional(),
     note: z.string().trim().min(1).optional(),
   })
-  .refine((input) => Boolean(input.actor || input.decidedBy), {
-    message: 'actor or decidedBy is required',
+  .refine((input) => Boolean(input.actor) !== Boolean(input.decidedBy), {
+    message: 'exactly one identity form is required: actor or decidedBy',
     path: ['actor'],
   })
   .refine((input) => input.action !== 'request-changes' || Boolean(input.note), {

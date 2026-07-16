@@ -38,6 +38,16 @@ describe('DecideApprovalRequestSchema (#14)', () => {
     ).toBe('legacy-ed');
   });
 
+  it('rejects ambiguous actor and decidedBy input', () => {
+    expect(() =>
+      DecideApprovalRequestSchema.parse({
+        action: 'approve',
+        actor: { kind: 'user', id: 'ed', displayName: 'Ed' },
+        decidedBy: 'someone-else',
+      }),
+    ).toThrow(/exactly one identity/);
+  });
+
   it('parses a deterministic run audit response', () => {
     const timestamp = '2026-07-14T12:00:00.000Z';
     const audit = RunAuditExportSchema.parse({

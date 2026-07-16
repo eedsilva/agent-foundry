@@ -217,6 +217,21 @@ describe('approval review API (#14)', () => {
     expect(response.status).toBe(400);
   });
 
+  it('rejects ambiguous actor and decidedBy input', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    expect(await runtime.worker.runOnce()).toBe(true);
+    const runId = await currentRunId(baseUrl, projectId);
+    const [entry] = await listApprovals(baseUrl, runId);
+
+    const response = await decide(baseUrl, runId, entry!.request.id, {
+      action: 'approve',
+      actor: { kind: 'user', id: 'ed', displayName: 'Ed' },
+      decidedBy: 'someone-else',
+    });
+    expect(response.status).toBe(400);
+  });
+
   it('request-changes rewinds to the architecture step, writes a repair artifact, and re-halts', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
@@ -230,6 +245,13 @@ describe('approval review API (#14)', () => {
       note: 'tighten the boundaries; token=plain-token-value',
     });
     expect(response.status).toBe(202);
+    const decisionResponse = (await response.json()) as {
+      decision: { decidedBy: string; actor: { id: string; displayName?: string } };
+    };
+    expect(decisionResponse.decision).toMatchObject({
+      decidedBy: 'Ed',
+      actor: { id: 'ed', displayName: 'Ed' },
+    });
 
     expect(await runtime.worker.runOnce()).toBe(true);
     const approvals = await listApprovals(baseUrl, runId);
@@ -255,7 +277,12 @@ describe('approval review API (#14)', () => {
     const auditResponse = await fetch(`${baseUrl}/runs/${runId}/audit`);
     expect(auditResponse.status).toBe(200);
     const audit = (await auditResponse.json()) as {
-      entries: Array<{ kind: string; id: string; timestamp: string }>;
+      entries: Array<{
+        kind: string;
+        id: string;
+        timestamp: string;
+        decision?: { decidedBy: string; actor?: { id: string; displayName?: string } };
+      }>;
     };
     expect(audit.entries.map((item) => item.kind)).toEqual([
       'approval-request',
@@ -269,6 +296,12 @@ describe('approval review API (#14)', () => {
           left.timestamp.localeCompare(right.timestamp) || left.id.localeCompare(right.id),
       ),
     ).toEqual(audit.entries);
+    expect(audit.entries.find((item) => item.kind === 'approval-decision')?.decision).toMatchObject(
+      {
+        decidedBy: 'Ed',
+        actor: { id: 'ed', displayName: 'Ed' },
+      },
+    );
   });
 
   it('returns 409 with the settled decision when two differing decisions race', async () => {

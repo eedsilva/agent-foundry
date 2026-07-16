@@ -28,10 +28,12 @@ substitute for filesystem protection.
 
 ## Migration and rollback
 
-All added decision, artifact metadata, and retry fields are optional on read. Existing data needs
-no migration. Rolling back the application ignores the optional fields and leaves feedback
-artifact revisions intact; stop workers before rollback so an older worker cannot replay a queued
-repair without understanding its feedback reference. Preserve a `DATA_DIR` snapshot as usual.
+Existing data needs no migration: the new reader accepts old decisions without `actor` and runs
+without `feedbackArtifact`. That compatibility is one-way. Pre-upgrade strict schemas cannot read
+records written with the new `actor` or `feedbackArtifact` fields, so a code-only downgrade is not
+safe. Before upgrading, snapshot `DATA_DIR`. To downgrade, stop every worker first, restore that
+pre-upgrade `DATA_DIR` snapshot, and only then start the older application. Do not run old and new
+workers against the same data directory.
 
 ## Consequences
 

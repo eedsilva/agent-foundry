@@ -144,9 +144,11 @@ Use `GET /runs/:runId/audit` para exportar a sequência determinística de pedid
 feedback. Para reproduzir um reparo, confira a referência `feedbackArtifact` do run/attempt e leia
 a revisão correspondente no artifact store; não use automaticamente a revisão mais recente.
 
-Não há backfill: decisões antigas sem `actor` continuam legíveis. Em rollback, preserve
-`DATA_DIR`, pare workers antes de trocar a versão e trate os novos campos opcionais como dados que
-o binário antigo ignora. Detalhes no ADR 0015.
+Não há backfill: o leitor novo aceita decisões antigas sem `actor`. Essa compatibilidade é somente
+new-reader/old-data: schemas estritos antigos não leem registros novos com `actor` ou
+`feedbackArtifact`. Antes do upgrade, faça snapshot de `DATA_DIR`. Para downgrade, pare todos os
+workers, restaure o snapshot pré-upgrade de `DATA_DIR` e só então inicie o binário antigo. Nunca
+altere somente o código nem misture workers antigos e novos no mesmo diretório. Detalhes no ADR 0015.
 
 ## Atualização de CLIs
 

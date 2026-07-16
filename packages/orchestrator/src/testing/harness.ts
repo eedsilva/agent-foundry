@@ -169,6 +169,7 @@ export class SequentialIds implements IdGenerator {
 
 export class InMemoryProjects implements ProjectRepository {
   private readonly store = new Map<string, Project>();
+  onBeforeUpdate: ((project: Project) => void) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   create(project: Project): Promise<void> {
     checkPower(this.power);
@@ -181,6 +182,7 @@ export class InMemoryProjects implements ProjectRepository {
   }
   update(project: Project, expectedVersion: number): Promise<Project> {
     checkPower(this.power);
+    this.onBeforeUpdate?.(project);
     const existing = this.store.get(project.id);
     if (!existing) throw new Error(`project ${project.id} missing`);
     if (existing.version !== expectedVersion) {
@@ -197,6 +199,7 @@ export class InMemoryProjects implements ProjectRepository {
 
 export class InMemoryRuns implements WorkflowRunRepository {
   private readonly store = new Map<string, WorkflowRun>();
+  onBeforeUpdate: ((run: WorkflowRun) => void) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   create(run: WorkflowRun): Promise<void> {
     checkPower(this.power);
@@ -212,6 +215,7 @@ export class InMemoryRuns implements WorkflowRunRepository {
   }
   update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
     checkPower(this.power);
+    this.onBeforeUpdate?.(run);
     const existing = this.store.get(run.id);
     if (!existing) throw new Error(`run ${run.id} missing`);
     if (existing.version !== expectedVersion) {

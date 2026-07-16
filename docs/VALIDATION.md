@@ -260,6 +260,10 @@ to the two affected `approval-gate.test.ts` cases.
 Issue #17 adds typed actor identity, redacted persisted feedback, exact retry/prompt provenance,
 filesystem reconstruction, and a deterministic run audit export (ADR 0015).
 
+Compatibility is new-reader/old-data only. Before an upgrade, snapshot `DATA_DIR`; a downgrade
+requires stopping all workers and restoring that pre-upgrade snapshot before starting the older
+binary, because its strict schemas cannot read new `actor` or `feedbackArtifact` fields.
+
 Focused TDD evidence:
 
 - Contract/redaction RED failed because `ActorRefSchema`, `FeedbackArtifactSchema`,

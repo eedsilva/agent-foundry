@@ -124,7 +124,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
       note: 'please add tests; Authorization: Bearer abcdef1234567890ABCDEF',
     });
     expect(decided.decision).toMatchObject({
-      decidedBy: 'ed',
+      decidedBy: 'Ed',
       actor: { kind: 'user', id: 'ed', displayName: 'Ed' },
       note: 'please add tests; Authorization: [REDACTED]',
     });
@@ -152,6 +152,14 @@ describe('approval gates halt the run for a human decision (#13)', () => {
       actor: { kind: 'user', id: 'ed' },
       sourceDecisionId: decided.decision.id,
     });
+    expect(
+      harness.events.events.find((event) => event.type === 'run.approval_decided')?.data,
+    ).toMatchObject({ decidedBy: 'Ed' });
+    expect(
+      (await harness.service.exportRunAudit('run-1')).entries.find(
+        (entry) => entry.kind === 'approval-decision',
+      ),
+    ).toMatchObject({ decision: { decidedBy: 'Ed', actor: { id: 'ed', displayName: 'Ed' } } });
     const activeImplement = harness.stepRuns
       .byStepId('run-1', 'implement')
       .find((step) => !step.invalidatedAt)!;
@@ -165,6 +173,22 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     const approvals = await harness.service.listApprovals('run-1');
     expect(approvals).toHaveLength(2);
     expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+  });
+
+  it('rejects ambiguous actor and decidedBy service input', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+
+    await expect(
+      harness.service.decideApproval('run-1', entry!.request.id, {
+        action: 'approve',
+        actor: { kind: 'user', id: 'ed', displayName: 'Ed' },
+        decidedBy: 'someone-else',
+      }),
+    ).rejects.toThrow(/exactly one identity/);
+    expect((await harness.service.listApprovals('run-1'))[0]?.decision).toBeNull();
   });
 
   it('stores one feedback artifact when identical request-changes decisions race', async () => {
@@ -267,6 +291,100 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     });
     expect(again.run.status).toBe('queued');
     expect(harness.enqueued).toHaveLength(1);
+  });
+
+  it('recovers request-changes after invalidation completes but the retry update crashes', async () => {
+    const harness = makeHarness({}, undefined, {
+      gate: {
+        actions: ['approve', 'request-changes'],
+        returnToStepId: 'implement',
+        repairArtifact: 'repair-notes',
+      },
+    });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    const { request } = entry!;
+    let failQueuedUpdate = true;
+    harness.runs.onBeforeUpdate = (candidate) => {
+      if (failQueuedUpdate && candidate.status === 'queued') {
+        failQueuedUpdate = false;
+        throw new Error('simulated run update failure');
+      }
+    };
+
+    await expect(
+      harness.service.decideApproval('run-1', request.id, {
+        action: 'request-changes',
+        decidedBy: 'ed',
+        note: 'add a regression test',
+      }),
+    ).rejects.toThrow('simulated run update failure');
+    harness.runs.onBeforeUpdate = undefined;
+
+    const [settled] = await harness.service.listApprovals('run-1');
+    expect(settled!.decision).not.toBeNull();
+    expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+    const invalidationReason = `approval-request-changes:${settled!.decision!.id}`;
+    expect(harness.stepRuns.byStepId('run-1', 'implement')[0]).toMatchObject({
+      invalidationReason,
+    });
+
+    const recovered = await harness.service.decideApproval('run-1', request.id, {
+      action: 'request-changes',
+      decidedBy: 'ed',
+      note: 'add a regression test',
+    });
+    expect(recovered.run).toMatchObject({ status: 'queued', retry: { stepId: 'implement' } });
+    expect(harness.enqueued).toHaveLength(1);
+    expect(harness.artifacts.named('repair-notes')).toHaveLength(1);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    expect(harness.executor.started('implement')).toBe(2);
+    expect(harness.artifacts.named('repair-notes')).toHaveLength(1);
+    expect(harness.events.types().filter((type) => type === 'run.approval_decided')).toHaveLength(
+      1,
+    );
+  });
+
+  it('requeues a settled queued approval after the project requeue update crashes', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    let failProjectRequeue = true;
+    harness.projects.onBeforeUpdate = (candidate) => {
+      if (failProjectRequeue && candidate.status === 'queued') {
+        failProjectRequeue = false;
+        throw new Error('simulated project requeue failure');
+      }
+    };
+
+    await expect(
+      harness.service.decideApproval('run-1', entry!.request.id, {
+        action: 'approve',
+        decidedBy: 'ed',
+      }),
+    ).rejects.toThrow('simulated project requeue failure');
+    harness.projects.onBeforeUpdate = undefined;
+    expect((await harness.runs.get('run-1'))?.status).toBe('queued');
+    expect((await harness.projects.get('project-1'))?.status).toBe('awaiting_approval');
+    expect(harness.enqueued).toHaveLength(0);
+
+    const recovered = await harness.service.decideApproval('run-1', entry!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    expect(recovered.run.status).toBe('queued');
+    expect((await harness.projects.get('project-1'))?.status).toBe('queued');
+    expect(harness.enqueued).toHaveLength(1);
+
+    await harness.service.decideApproval('run-1', entry!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    expect(harness.enqueued).toHaveLength(1);
+    expect(await harness.service.listApprovals('run-1')).toHaveLength(1);
   });
 
   it('rejects deciding an action the request does not allow', async () => {
