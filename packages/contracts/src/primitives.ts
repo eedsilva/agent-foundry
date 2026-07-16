@@ -11,6 +11,9 @@ export type PathSegment = z.infer<typeof PathSegmentSchema>;
 export const ProviderSchema = z.enum(['codex', 'claude', 'agy', 'mock']);
 export type Provider = z.infer<typeof ProviderSchema>;
 
+export const PackageManagerSchema = z.enum(['npm', 'pnpm', 'yarn', 'bun', 'unknown']);
+export type PackageManager = z.infer<typeof PackageManagerSchema>;
+
 export const AgentRoleSchema = z.enum([
   'planner',
   'plan-reviewer',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PreviewCommandPlanSchema,
   PreviewSessionReferenceSchema,
   PreviewSessionSchema,
   type PreviewSession,
@@ -133,5 +134,50 @@ describe('preview references on run artifacts', () => {
       },
     });
     expect(reference.evidence.screenshots).toHaveLength(1);
+  });
+});
+
+describe('PreviewCommandPlanSchema', () => {
+  it('accepts a resolved plan with per-command results and optional versions', () => {
+    const plan = PreviewCommandPlanSchema.parse({
+      packageManager: 'pnpm',
+      install: { ok: true, command: 'pnpm', args: ['install', '--frozen-lockfile'] },
+      build: { ok: true, command: 'pnpm', args: ['run', 'build'] },
+      dev: { ok: false, reason: "package.json is missing a 'dev' script required for dev." },
+      versions: { node: 'v22.0.0', packageManager: '8.15.4' },
+      detectedAt: createdAt,
+    });
+    expect(plan.dev).toEqual({
+      ok: false,
+      reason: "package.json is missing a 'dev' script required for dev.",
+    });
+  });
+
+  it('rejects an install result missing a command when ok is true', () => {
+    expect(() =>
+      PreviewCommandPlanSchema.parse({
+        packageManager: 'npm',
+        install: { ok: true },
+        build: { ok: true, command: 'npm', args: ['run', 'build'] },
+        dev: { ok: true, command: 'npm', args: ['run', 'dev'] },
+        detectedAt: createdAt,
+      }),
+    ).toThrow();
+  });
+});
+
+describe('PreviewSessionSchema commandPlan', () => {
+  it('accepts an optional commandPlan on a preparing session', () => {
+    const session = PreviewSessionSchema.parse({
+      ...baseSession(),
+      commandPlan: {
+        packageManager: 'npm',
+        install: { ok: true, command: 'npm', args: ['ci'] },
+        build: { ok: true, command: 'npm', args: ['run', 'build'] },
+        dev: { ok: true, command: 'npm', args: ['run', 'dev'] },
+        detectedAt: createdAt,
+      },
+    });
+    expect(session.commandPlan?.packageManager).toBe('npm');
   });
 });

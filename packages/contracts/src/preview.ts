@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PathSegmentSchema } from './primitives.js';
+import { PackageManagerSchema, PathSegmentSchema } from './primitives.js';
 import { ArtifactReferenceSchema, EntityVersionSchema, RunErrorSchema } from './run.js';
 
 export const PreviewSessionStatusSchema = z.enum([
@@ -53,6 +53,43 @@ export const PreviewWorkspaceRefSchema = z
   .strict();
 export type PreviewWorkspaceRef = z.infer<typeof PreviewWorkspaceRefSchema>;
 
+export const PreviewCommandResultSchema = z.discriminatedUnion('ok', [
+  z
+    .object({
+      ok: z.literal(true),
+      command: z.string().min(1),
+      args: z.array(z.string()).default([]),
+    })
+    .strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      reason: z.string().min(1),
+    })
+    .strict(),
+]);
+export type PreviewCommandResult = z.infer<typeof PreviewCommandResultSchema>;
+
+export const PreviewToolVersionsSchema = z
+  .object({
+    node: z.string().min(1),
+    packageManager: z.string().min(1).optional(),
+  })
+  .strict();
+export type PreviewToolVersions = z.infer<typeof PreviewToolVersionsSchema>;
+
+export const PreviewCommandPlanSchema = z
+  .object({
+    packageManager: PackageManagerSchema,
+    install: PreviewCommandResultSchema,
+    build: PreviewCommandResultSchema,
+    dev: PreviewCommandResultSchema,
+    versions: PreviewToolVersionsSchema.optional(),
+    detectedAt: z.string().datetime(),
+  })
+  .strict();
+export type PreviewCommandPlan = z.infer<typeof PreviewCommandPlanSchema>;
+
 export const PreviewSessionSchema = z
   .object({
     id: PathSegmentSchema,
@@ -70,6 +107,7 @@ export const PreviewSessionSchema = z
     startedAt: z.string().datetime().optional(),
     completedAt: z.string().datetime().optional(),
     error: RunErrorSchema.optional(),
+    commandPlan: PreviewCommandPlanSchema.optional(),
   })
   .strict()
   .superRefine((session, context) => {

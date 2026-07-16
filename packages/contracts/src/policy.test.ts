@@ -32,6 +32,16 @@ describe('ProjectPolicySchema', () => {
       ProjectPolicySchema.parse({ schemaVersion: '1', id: 'p', version: 1, allowedCommands: [] }),
     ).toThrow();
   });
+
+  it('accepts previewCommands overrides for build and dev script names', () => {
+    const policy = ProjectPolicySchema.parse({
+      schemaVersion: '1',
+      id: 'custom-scripts',
+      version: 1,
+      previewCommands: { build: 'compile', dev: 'serve' },
+    });
+    expect(policy.previewCommands).toEqual({ build: 'compile', dev: 'serve' });
+  });
 });
 
 describe('PolicyRecordSchema', () => {

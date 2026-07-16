@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PathSegmentSchema, ProjectStatusSchema, ProviderSchema } from './primitives.js';
+import { PackageManagerSchema, PathSegmentSchema, ProjectStatusSchema, ProviderSchema } from './primitives.js';
 import { RouteDecisionSchema } from './model.js';
 
 export const ProjectSchema = z.object({
@@ -128,7 +128,7 @@ export type VerificationCommandResult = z.infer<typeof VerificationCommandResult
 export const VerificationReportSchema = z.object({
   schemaVersion: z.literal('1'),
   approved: z.boolean(),
-  packageManager: z.enum(['npm', 'pnpm', 'yarn', 'bun', 'unknown']),
+  packageManager: PackageManagerSchema,
   summary: z.string(),
   commands: z.array(VerificationCommandResultSchema),
   createdAt: z.string().datetime(),
