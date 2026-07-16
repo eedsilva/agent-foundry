@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import {
   VerificationReportSchema,
+  type ProjectPolicy,
   type VerificationCommandResult,
   type VerificationReport,
 } from '@agent-foundry/contracts';
@@ -26,6 +27,7 @@ export class WorkspaceVerifier implements VerificationService {
       workspacePath: string;
       scripts: string[];
       includeGitDiffCheck: boolean;
+      policy?: ProjectPolicy | undefined;
     },
     signal?: AbortSignal,
   ): Promise<VerificationReport> {
@@ -55,6 +57,19 @@ export class WorkspaceVerifier implements VerificationService {
     const scripts = isRecord(packageJson.scripts) ? packageJson.scripts : {};
     for (const script of input.scripts) {
       if (signal?.aborted) throw new RunCancelledError();
+      if (input.policy?.allowedCommands && !input.policy.allowedCommands.includes(script)) {
+        commands.push({
+          name: script,
+          command: 'policy',
+          args: [],
+          exitCode: 1,
+          durationMs: 0,
+          stdout: '',
+          stderr: `Script '${script}' is not allowed by policy ${input.policy.id}@v${input.policy.version}.`,
+          skipped: false,
+        });
+        continue;
+      }
       if (typeof scripts[script] !== 'string') {
         commands.push({
           name: script,
@@ -70,6 +85,8 @@ export class WorkspaceVerifier implements VerificationService {
       }
       commands.push(await this.runScript(packageManager, script, input.workspacePath, signal));
     }
+
+    if (input.policy) commands.push(dependencyPolicyCheck(input.policy, packageJson));
 
     if (input.includeGitDiffCheck) {
       if (signal?.aborted) throw new RunCancelledError();
@@ -194,6 +211,34 @@ async function detectPackageManager(cwd: string): Promise<VerificationReport['pa
     return 'bun';
   if (await pathExists(join(cwd, 'package-lock.json'))) return 'npm';
   return 'npm';
+}
+
+// ponytail: exact-name match over package.json manifests only; scan the
+// lockfile for transitive dependencies if policy evasion ever matters.
+function dependencyPolicyCheck(
+  policy: ProjectPolicy,
+  packageJson: Record<string, unknown>,
+): VerificationCommandResult {
+  const declared = ['dependencies', 'devDependencies', 'optionalDependencies'].flatMap((field) => {
+    const section = packageJson[field];
+    return isRecord(section) ? Object.keys(section) : [];
+  });
+  const violations = [
+    ...new Set(declared.filter((name) => policy.forbiddenDependencies.includes(name))),
+  ].sort();
+  return {
+    name: 'policy-dependency-check',
+    command: 'policy',
+    args: [],
+    exitCode: violations.length === 0 ? 0 : 1,
+    durationMs: 0,
+    stdout: '',
+    stderr:
+      violations.length === 0
+        ? ''
+        : `Forbidden dependencies declared: ${violations.join(', ')} (policy ${policy.id}@v${policy.version}).`,
+    skipped: false,
+  };
 }
 
 async function readPackageJson(cwd: string): Promise<Record<string, unknown> | null> {
