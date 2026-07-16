@@ -71,6 +71,12 @@ export class PreviewService {
     session = await this.runner.start(session);
     const token = mintToken();
     this.sessions.set(session.id, { session, token });
+    if (isPreviewSessionTerminal(session.status)) {
+      // The runner can fail synchronously (e.g. the dev command crashes on
+      // spawn) and already transitions to a terminal status itself; skip the
+      // health poll and don't try to re-transition an already-terminal session.
+      return { session, url: '' };
+    }
 
     const healthy = await this.waitForHealthy(session);
     session = healthy

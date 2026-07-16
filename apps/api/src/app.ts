@@ -246,5 +246,24 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     return reply.status(202).send({ project });
   });
 
+  app.post('/projects/:projectId/preview', async (request, reply) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const project = await runtime.projects.get(projectId);
+    if (!project) throw new NotFoundError(`Project ${projectId} not found`);
+    await runtime.workspaces.ensure(projectId);
+    const { session, url } = await runtime.previewService.start({
+      workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+    });
+    return reply.status(202).send({ session, url });
+  });
+
+  app.post('/projects/:projectId/preview/:sessionId/stop', async (request, reply) => {
+    const { sessionId } = z
+      .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
+      .parse(request.params);
+    const session = await runtime.previewService.stop(sessionId);
+    return reply.status(202).send({ session });
+  });
+
   return app;
 }

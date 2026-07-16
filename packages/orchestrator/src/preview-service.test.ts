@@ -64,6 +64,19 @@ class NeverHealthyPreviewRunner extends InMemoryPreviewRunner {
   }
 }
 
+/** Crashes synchronously, like NodePreviewRunner does when the dev command exits immediately. */
+class CrashesOnStartPreviewRunner extends InMemoryPreviewRunner {
+  override async start(session: PreviewSession): Promise<PreviewSession> {
+    return {
+      ...session,
+      status: 'failed',
+      error: { name: 'PreviewStartError', code: 'PREVIEW_START_FAILED', message: 'boom' },
+      completedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+}
+
 function buildService(
   clock: FixedClock = new FixedClock(new Date('2026-01-01T00:00:00.000Z')),
   configOverrides: Partial<PreviewServiceConfig> = {},
@@ -147,6 +160,20 @@ describe('PreviewService', () => {
     });
     expect(session.status).toBe('failed');
     expect(session.error?.name).toBe('PreviewUnhealthyError');
+    expect(url).toBe('');
+  });
+
+  // Regression test found via a real NodePreviewRunner integration test (Task 6): when a dev
+  // command crashes on spawn, runner.start() already returns a terminal ('failed') session.
+  // start() used to keep going into waitForHealthy() and then try to transition
+  // failed -> failed, which threw InvalidStateTransitionError instead of surfacing the failure.
+  it('returns the failed session as-is when the runner fails synchronously in start()', async () => {
+    const { service } = buildService(undefined, {}, new CrashesOnStartPreviewRunner());
+    const { session, url } = await service.start({
+      workspaceRef: { projectId: 'proj-1', workspacePath: '/tmp/proj-1' },
+    });
+    expect(session.status).toBe('failed');
+    expect(session.error?.code).toBe('PREVIEW_START_FAILED');
     expect(url).toBe('');
   });
 });
