@@ -1562,13 +1562,28 @@ export class WorkflowOrchestrator {
     retryCreatedAt?: string,
   ): Promise<ExplicitModelRoute | undefined> {
     if (retry) {
+      let modelId = retry.modelId;
+      if (!modelId) {
+        const matches = (await this.router.catalog()).filter(
+          (candidate) =>
+            candidate.enabled &&
+            candidate.provider === retry.provider &&
+            candidate.model === retry.model,
+        );
+        if (matches.length !== 1) {
+          throw new ExecutionError(
+            `Legacy retry override ${retry.provider}/${retry.model} matched ${matches.length} enabled catalog models`,
+          );
+        }
+        modelId = matches[0]!.id;
+      }
       return {
-        modelId: retry.modelId,
+        modelId,
         provider: retry.provider,
         model: retry.model,
         provenance: {
           source: 'retry',
-          modelId: retry.modelId,
+          modelId,
           provider: retry.provider,
           model: retry.model,
           actor: retry.actor ?? { kind: 'system', id: 'legacy-retry' },

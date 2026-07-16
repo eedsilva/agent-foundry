@@ -1,11 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { completeRun, liveStepRun, makeHarness, seedRun } from './testing/harness.js';
+import {
+  completeRun,
+  liveStepRun,
+  makeHarness,
+  MODELS,
+  seedRun,
+  type Harness,
+} from './testing/harness.js';
 
 const audit = {
   actor: { kind: 'user' as const, id: 'ed' },
   reason: 'Pin the verified model',
   estimatedImpact: 'More reliable output',
 };
+
+async function persistLegacyRetry(
+  harness: Harness,
+  override: { provider: 'codex'; model: string },
+): Promise<void> {
+  await completeRun(harness);
+  const implement = liveStepRun(harness, 'implement');
+  const queued = await harness.service.retryStep('run-1', implement.id, {
+    mode: 'preserve',
+    override: {
+      modelId: 'model-1',
+      provider: 'codex',
+      model: 'test-model',
+      ...audit,
+    },
+  });
+  await harness.runs.update({ ...queued, retry: { ...queued.retry!, override } }, queued.version);
+}
 
 describe('audited model override resolution', () => {
   it('rejects a step scope that does not identify an agent step in the run workflow', async () => {
@@ -83,7 +108,9 @@ describe('audited model override resolution', () => {
   });
 
   it('uses an audited retry pin before a matching step pin', async () => {
-    const harness = makeHarness();
+    const harness = makeHarness({}, undefined, {
+      models: [...MODELS, { ...MODELS[0]!, id: 'duplicate-model' }],
+    });
     await completeRun(harness);
     const implement = liveStepRun(harness, 'implement');
     await harness.service.createModelOverride('run-1', {
@@ -126,33 +153,48 @@ describe('audited model override resolution', () => {
   });
 
   it('keeps a legacy retry pin visible with explicit compatibility provenance', async () => {
-    const harness = makeHarness();
-    await completeRun(harness);
-    const implement = liveStepRun(harness, 'implement');
-    const queued = await harness.service.retryStep('run-1', implement.id, {
-      mode: 'preserve',
-      override: { modelId: 'model-2', provider: 'codex', model: 'alt-model', ...audit },
+    const harness = makeHarness({}, undefined, {
+      models: [...MODELS, { ...MODELS[1]!, id: 'disabled-duplicate', enabled: false }],
     });
-    await harness.runs.update(
-      {
-        ...queued,
-        retry: {
-          ...queued.retry!,
-          override: { modelId: 'model-2', provider: 'codex', model: 'alt-model' },
-        },
-      },
-      queued.version,
-    );
+    await persistLegacyRetry(harness, { provider: 'codex', model: 'alt-model' });
 
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
     const retried = liveStepRun(harness, 'implement');
     const attempt = (await harness.stepAttempts.list('run-1', retried.id))[0];
+    expect(attempt?.modelId).toBe('model-2');
     expect(attempt?.routeDecision?.override).toMatchObject({
       source: 'retry',
+      modelId: 'model-2',
       actor: { kind: 'system', id: 'legacy-retry' },
       reason: 'Legacy retry override without a recorded reason',
       estimatedImpact: 'Not recorded in legacy retry directive',
     });
+  });
+
+  it('fails before creating an attempt when a legacy retry tuple is absent', async () => {
+    const harness = makeHarness();
+    await persistLegacyRetry(harness, { provider: 'codex', model: 'removed-model' });
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /matched 0 enabled catalog models/,
+    );
+
+    const retried = liveStepRun(harness, 'implement');
+    expect(await harness.stepAttempts.list('run-1', retried.id)).toEqual([]);
+  });
+
+  it('fails before creating an attempt when a legacy retry tuple is ambiguous', async () => {
+    const harness = makeHarness({}, undefined, {
+      models: [...MODELS, { ...MODELS[1]!, id: 'duplicate-model' }],
+    });
+    await persistLegacyRetry(harness, { provider: 'codex', model: 'alt-model' });
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /matched 2 enabled catalog models/,
+    );
+
+    const retried = liveStepRun(harness, 'implement');
+    expect(await harness.stepAttempts.list('run-1', retried.id)).toEqual([]);
   });
 });

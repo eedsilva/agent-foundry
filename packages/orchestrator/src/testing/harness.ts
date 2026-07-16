@@ -102,7 +102,7 @@ const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   ],
 });
 
-const MODELS: ModelDefinition[] = [
+export const MODELS: ModelDefinition[] = [
   ModelDefinitionSchema.parse({
     id: 'model-1',
     provider: 'codex',
@@ -743,6 +743,7 @@ export function makeHarness(
     fallback?: boolean;
     gate?: GateOptions;
     policy?: ProjectPolicy;
+    models?: ModelDefinition[];
     workflow?: WorkflowDefinition;
     verification?: () => VerificationReport | Promise<VerificationReport>;
   } = {},
@@ -751,6 +752,7 @@ export function makeHarness(
   const ids = new SequentialIds();
   const executor = new ControllableExecutor(behaviors, stores.workspaces);
   const policies = new InMemoryPolicies(opts.policy ?? DEFAULT_POLICY);
+  const models = opts.models ?? MODELS;
   // Fallback recovery needs the mutating step to offer a second candidate.
   // A gate opt inserts an approval-gate node reviewing the review artifact,
   // between 'review' and 'verify', for approval-gate.test.ts.
@@ -803,7 +805,7 @@ export function makeHarness(
   };
   const router: ModelRouter = {
     route: (profile, explicit) => {
-      const selected = explicit ? MODELS.find((model) => model.id === explicit.modelId) : MODELS[0];
+      const selected = explicit ? models.find((model) => model.id === explicit.modelId) : models[0];
       if (!selected) return Promise.reject(new ExecutionError('Override model is not in catalog'));
       if (
         explicit &&
@@ -834,7 +836,7 @@ export function makeHarness(
             !explicit && opts.fallback
               ? [
                   {
-                    model: MODELS[1]!,
+                    model: models[1]!,
                     score: {
                       capability: 0.5,
                       context: 0.5,
@@ -854,7 +856,7 @@ export function makeHarness(
         }),
       );
     },
-    catalog: () => Promise.resolve(MODELS),
+    catalog: () => Promise.resolve(models),
   };
   const metricsRecords: Parameters<MetricsRepository['record']>[0][] = [];
   const metrics: MetricsRepository = {
