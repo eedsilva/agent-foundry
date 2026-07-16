@@ -198,3 +198,59 @@ and ADR 0011 rather than adding new control flow. See ADR 0012 for the design.
   production build.
 - `npm run doctor` passed in mock mode.
 - `npm run check` completed successfully: Prettier, ESLint with zero warnings, architecture and roadmap validation, TypeScript, Vitest with 26 files and 217 tests, 42 Node script tests, and all package, API, worker, and Next.js production builds.
+
+## Approval review API and UI — 2026-07-15
+
+Issue #14 builds on the approval-gate domain model from #13 (ADR 0012): a review UI on the
+project page, and two API-level fixes the acceptance criteria required — `request-changes` now
+rejects a missing comment, and a genuinely conflicting decision (two different actions recorded
+or raced for the same approval request) now returns `409` with the settled decision instead of
+either silently succeeding with the wrong action or falling through to a generic `500`. See the
+"Decision update" section appended to ADR 0012 for the conflict-resolution rule.
+
+### Coverage
+
+- `packages/contracts/src/api.test.ts` (new): `DecideApprovalRequestSchema` rejects
+  `request-changes` without a `note`, accepts it with one, and leaves `approve`/`reject`
+  unaffected.
+- `packages/orchestrator/src/approval-gate.test.ts` (2 new cases, 9 total): a second
+  `decideApproval` call with a different `action` after the run already moved on throws
+  `ApprovalConflictError` carrying the settled decision; a genuinely concurrent
+  `Promise.allSettled` pair of conflicting `decideApproval` calls on the same request resolves to
+  exactly one success and one `ApprovalConflictError`. The existing approve/reject tests also now
+  assert the project-level status (not just the run's), which is what caught the bug below.
+- `apps/api/src/approvals.test.ts` (new, 5 tests): end-to-end HTTP coverage against a
+  self-contained fixture workflow (an architecture-review gate and a release-review gate) loaded
+  via a `WORKFLOWS_DIR` override — approve through both gates to completion; reject at the release
+  gate ends the run as `rejected`; `request-changes` without a note is `400`; `request-changes`
+  rewinds the architecture step, writes the repair artifact, and re-halts with a fresh request; a
+  genuine two-caller race on one request returns one `202` and one `409` with the settled
+  decision.
+- Manual browser walkthrough against a live dev server (isolated `DATA_DIR`/`WORKFLOWS_DIR`, mock
+  executor) driving the same shape of fixture workflow through the actual UI: opened the pending
+  architecture-approval artifact, submitted `request-changes` with a comment (the required-comment
+  validation and the downstream-rewind preview text both matched the API's behavior), confirmed
+  the rewound run re-halted with a fresh request while the prior one displayed its recorded
+  decision, compared revisions via the diff toggle, approved through to the release gate,
+  confirmed the `VerificationReport` artifact rendered as a pass/fail checklist instead of raw
+  JSON, and rejected the release gate to inspect the terminal-state UI.
+
+### Bug found during the manual walkthrough
+
+`WorkflowOrchestrator`'s `projectStatusForRun` (added by #13) never mapped the run statuses
+`awaiting_approval` or `rejected` to the matching `Project` statuses — it silently fell back to
+`running` for both. No existing test caught it because none asserted `project.status`, only
+`run.status`. The project record (and therefore the web UI's header pill and its polling loop,
+which stops once the project is "terminal") was wrong for the entire duration of every approval
+wait and after every rejection. Fixed in `workflow-orchestrator.ts`; regression assertions added
+to the two affected `approval-gate.test.ts` cases.
+
+### Verification performed
+
+- `npm run typecheck`, `npm run lint:code`, `npm run format:check`, and `npm run architecture:check`
+  all passed across the full workspace.
+- `npm run test:unit` passed: 36 files, 285 tests.
+- `npm run build` passed for all TypeScript packages, the API, the worker, and the Next.js web
+  production build.
+- `/ponytail:ponytail-review` flagged one finding (a hand-rolled `VerificationReport` duck-type
+  check reinventing the already-exported `VerificationReportSchema`); applied before opening the PR.
