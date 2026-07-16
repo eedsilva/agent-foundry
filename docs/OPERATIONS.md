@@ -114,6 +114,7 @@ Reexecutar um projeto (`POST /projects/:id/retry`) continua criando um novo `Wor
 {
   "mode": "invalidate",
   "override": {
+    "modelId": "codex-gpt-5",
     "provider": "codex",
     "model": "gpt-5",
     "actor": { "kind": "user", "id": "operator-1" },
@@ -125,13 +126,14 @@ Reexecutar um projeto (`POST /projects/:id/retry`) continua criando um novo `Wor
 
 ## Overrides auditados de modelo
 
-Crie pins de run e step em `POST /runs/:runId/model-overrides`. Provider e modelo devem existir no
-catálogo ativo; o servidor persiste o `modelId` resolvido e rejeita drift posterior do tuple
-provider/model. Exemplos:
+Crie pins de run e step em `POST /runs/:runId/model-overrides`. `modelId`, provider e modelo devem
+identificar exatamente a mesma entrada habilitada no catálogo ativo; isso preserva a identidade
+quando duas entradas compartilham provider/model e rejeita drift posterior do tuple. Exemplos:
 
 ```json
 {
   "scope": { "kind": "run" },
+  "modelId": "codex-gpt-5",
   "provider": "codex",
   "model": "gpt-5",
   "actor": { "kind": "user", "id": "operator-1", "displayName": "Operator" },
@@ -143,6 +145,7 @@ provider/model. Exemplos:
 ```json
 {
   "scope": { "kind": "step", "nodeId": "quality", "stepId": "repair" },
+  "modelId": "claude-sonnet",
   "provider": "claude",
   "model": "sonnet",
   "actor": { "kind": "worker", "id": "release-controller" },

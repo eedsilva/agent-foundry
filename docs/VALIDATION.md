@@ -307,7 +307,9 @@ completed repair ceilings, approval resets the repair count, persisted pause/app
 excluded, persisted `running` time across restart is counted fail-safe, and cancellation wins
 ceiling races. Override-focused suites cover all actor kinds through `ActorRef`, immutable sequence
 ordering across restart/concurrency, retry > step > run precedence, fallback suppression, catalog
-drift, and every unchanged hard routing constraint.
+drift, exact selection between duplicate provider/model tuples, rejection of non-agent retry pins,
+and every unchanged hard routing constraint. Legacy retry tuples without `modelId` resolve only
+when one enabled catalog entry matches; ambiguous tuples fail closed.
 
 ### Security, compatibility, migration, and rollback
 
@@ -347,7 +349,7 @@ product source and were removed after capture. The clean rerun passed:
 - Roadmap validation passed for 16 milestones, 114 tasks, and 131 managed issues; its 8 tests,
   GitHub configuration check, and rendered-roadmap synchronization passed.
 - TypeScript project references passed.
-- Vitest passed 48 files / 411 tests; Node script tests passed 42 / 42.
+- Vitest passed 48 files / 422 tests; Node script tests passed 42 / 42.
 - All eight packages, the API, the worker, and the Next.js production application built.
 
 `npm run doctor` passed in mock mode with Node 22.22.3, Git 2.50.1, the harness/workflow/catalog,
@@ -358,6 +360,11 @@ The two 1440×1537 browser captures above were visually inspected. The first sho
 run/step pin fields. The second shows the native retry-pin modal with required runtime model,
 actor, reason, and estimated-impact controls. They contain deterministic fixture data and no user
 or credential data.
+
+An independent whole-branch correctness review approved the final implementation with no open
+findings after fixes for terminal lifecycle races, exact duplicate-model identity, legacy retry
+identity resolution, and the exact post-stop four-hour boundary. Its focused regression run passed
+8 files / 94 tests.
 
 Post-PR Ponytail and code-simplifier results remain a publication gate and must be appended only
 after those reviews run.

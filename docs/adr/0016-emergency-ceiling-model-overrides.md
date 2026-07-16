@@ -44,17 +44,18 @@ wins; an independently moved draft is never deleted.
 
 ## Security
 
-New API writes require actor, reason, and estimated impact. These audit strings are redacted before
-persistence. Pins cannot grant provider, context, or workspace-write capability and cannot bypass
-ProjectPolicy. `DATA_DIR` and generated Git workspaces still contain operational metadata and
-provider output and require filesystem access controls. Do not publish raw run files or draft
-contents as evidence.
+New API writes require the exact catalog `modelId` tuple, actor, reason, and estimated impact.
+These audit strings are redacted before persistence. Pins cannot grant provider, context, or
+workspace-write capability and cannot bypass ProjectPolicy. `DATA_DIR` and generated Git
+workspaces still contain operational metadata and provider output and require filesystem access
+controls. Do not publish raw run files or draft contents as evidence.
 
 ## Migration and rollback
 
 There is no destructive migration or backfill. New readers accept runs without `execution`, old
-retry directives without audit fields, and legacy workflow budgets. New model-override records and
-execution state are written only as the feature is used.
+retry directives without audit fields or `modelId`, and legacy workflow budgets. A legacy retry
+tuple resolves only when it names one enabled catalog entry; zero or multiple matches fail closed.
+New model-override records and execution state are written only as the feature is used.
 
 Before upgrade, stop workers and snapshot `DATA_DIR`, including generated workspaces and their Git
 refs. Do not mix old and new workers. For downgrade, stop workers, preserve any required
