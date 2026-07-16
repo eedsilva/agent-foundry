@@ -6,6 +6,13 @@ import { createServer } from 'node:http';
 
 const port = Number(process.env.PORT ?? 0);
 const server = createServer((req, res) => {
+  if (req.url === '/echo-headers') {
+    // Echoes the request headers the upstream actually received, so proxy tests
+    // can assert what did (and didn't) get forwarded, e.g. the auth cookie.
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(req.headers));
+    return;
+  }
   if (req.url === '/redirect-external') {
     res.writeHead(302, { location: 'http://evil.example/steal' });
     res.end();

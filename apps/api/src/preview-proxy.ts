@@ -74,7 +74,7 @@ async function handleHttp(
       port: resolved.port,
       method: request.method,
       path: upstreamPath + search,
-      headers: sanitizeRequestHeaders(request.headers),
+      headers: sanitizeRequestHeaders(request.headers, sessionId),
     },
     (upstreamRes) => respondFromUpstream(upstreamRes, raw, sessionId, resolved.port, cookieValue),
   );
@@ -136,9 +136,20 @@ async function handleUpgrade(
   const upstream = connect(resolved.port, '127.0.0.1', () => {
     const requestLine = `${req.method} ${rest || '/'}${search} HTTP/1.1\r\n`;
     const headerLines = Object.entries(req.headers)
-      .filter(([key]) => !HOP_BY_HOP.has(key.toLowerCase()) || key.toLowerCase() === 'upgrade')
-      .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
-      .concat('Connection: Upgrade')
+      .filter(([key]) => {
+        const lower = key.toLowerCase();
+        // Drop hop-by-hop headers (except Upgrade) and the client Host; both are
+        // overridden below so the untrusted upstream never sees the client's Host.
+        return (!HOP_BY_HOP.has(lower) || lower === 'upgrade') && lower !== 'host';
+      })
+      .flatMap(([key, value]) => {
+        if (key.toLowerCase() === 'cookie') {
+          const cookie = stripPreviewCookie(value, sessionId);
+          return cookie ? [`cookie: ${cookie}`] : [];
+        }
+        return [`${key}: ${Array.isArray(value) ? value.join(', ') : value}`];
+      })
+      .concat('Host: 127.0.0.1', 'Connection: Upgrade')
       .join('\r\n');
     upstream.write(requestLine + headerLines + '\r\n\r\n');
     if (head.length) upstream.write(head);
@@ -165,6 +176,24 @@ function readCookieToken(cookieHeader: string | undefined, sessionId: string): s
   return undefined;
 }
 
+/** Drops the proxy's own pv_<sessionId> auth cookie from a Cookie header before
+ * it reaches the untrusted upstream, while preserving any other cookies the
+ * previewed app set for itself. Returns undefined when nothing else remains, so
+ * the caller can omit the Cookie header entirely. */
+function stripPreviewCookie(
+  cookieHeader: string | string[] | undefined,
+  sessionId: string,
+): string | undefined {
+  if (cookieHeader === undefined) return undefined;
+  const flat = Array.isArray(cookieHeader) ? cookieHeader.join('; ') : cookieHeader;
+  const name = `pv_${sessionId}`;
+  const kept = flat
+    .split(';')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && part.split('=')[0]?.trim() !== name);
+  return kept.length ? kept.join('; ') : undefined;
+}
+
 // ponytail: URLSearchParams re-encodes the surviving params (spec-normalized);
 // exact byte preservation isn't needed for a loopback preview proxy.
 function strippedSearch(params: URLSearchParams): string {
@@ -176,16 +205,26 @@ function strippedSearch(params: URLSearchParams): string {
 
 function sanitizeRequestHeaders(
   headers: FastifyRequest['headers'],
+  sessionId: string,
 ): Record<string, string | string[]> {
   const result: Record<string, string | string[]> = {};
   for (const [key, value] of Object.entries(headers)) {
     if (value === undefined || HOP_BY_HOP.has(key.toLowerCase()) || key.toLowerCase() === 'host')
       continue;
+    if (key.toLowerCase() === 'cookie') {
+      const cookie = stripPreviewCookie(value, sessionId);
+      if (cookie) result.cookie = cookie;
+      continue;
+    }
     result[key] = value;
   }
   result.host = '127.0.0.1';
   return result;
 }
+
+// Response headers that can carry an absolute URL with the internal upstream
+// port; all are run through the same containment logic so none leaks the port.
+const URL_BEARING_HEADERS = ['location', 'content-location', 'refresh', 'link'];
 
 function sanitizeResponseHeaders(
   headers: IncomingMessage['headers'],
@@ -197,9 +236,11 @@ function sanitizeResponseHeaders(
     if (value === undefined || HOP_BY_HOP.has(key.toLowerCase())) continue;
     result[key] = value;
   }
-  const location = headers.location;
-  if (typeof location === 'string') {
-    result.location = rewriteLocation(location, sessionId, upstreamPort);
+  for (const name of URL_BEARING_HEADERS) {
+    const value = headers[name];
+    if (typeof value === 'string') {
+      result[name] = rewriteLocation(value, sessionId, upstreamPort);
+    }
   }
   return result;
 }

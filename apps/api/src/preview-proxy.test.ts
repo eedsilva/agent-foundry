@@ -102,6 +102,41 @@ describe('preview reverse proxy', () => {
     expect(await responseB.text()).toContain('ok:');
   }, 20_000);
 
+  it('does not forward the proxy auth cookie to the untrusted upstream', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const started = await startPreview(baseUrl, runtime, 'cookie-leak');
+    const target = new URL(started.url);
+    const token = target.searchParams.get('token') as string;
+    // Simulate a real browser follow-on request: the initial navigation already
+    // set pv_<sessionId>=<token>, so the browser now attaches it on every
+    // subsequent same-path request. The upstream must never receive it, while
+    // any other cookie the previewed app set for itself still passes through.
+    const body = await new Promise<string>((resolvePromise, reject) => {
+      const req = httpRequest(
+        {
+          host: target.hostname,
+          port: target.port,
+          path: `/preview/${started.session.id}/echo-headers`,
+          headers: {
+            host: target.host,
+            cookie: `pv_${started.session.id}=${token}; app_pref=keep`,
+          },
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk) => (data += chunk));
+          res.on('end', () => resolvePromise(data));
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    const received = JSON.parse(body) as Record<string, string>;
+    expect(body).not.toContain(token); // token absent from the entire echoed request
+    expect(received.cookie ?? '').not.toContain(token);
+    expect(received.cookie ?? '').toContain('app_pref=keep'); // other cookies survive
+  }, 20_000);
+
   it('rejects a request with a mismatched Host header', async () => {
     const { baseUrl, runtime } = await startApi();
     const started = await startPreview(baseUrl, runtime, 'host');
