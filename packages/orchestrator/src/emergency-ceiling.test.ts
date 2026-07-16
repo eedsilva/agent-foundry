@@ -526,6 +526,103 @@ describe('emergency ceiling accounting', () => {
     expect((await harness.runs.get('run-1'))?.execution?.activeSince).toBeUndefined();
   });
 
+  it('finalizes an expired restarted run whose initial checkpoint was never persisted', async () => {
+    const clock = new TestClock();
+    const stores = makeStores(clock);
+    const seeded = makeHarness({}, stores, { workflow: ONE_AGENT });
+    await seedRun(seeded);
+    const run = await stores.runs.get('run-1');
+    await stores.runs.update(
+      {
+        ...transitionWorkflowRun(run!, 'running', clock.now()),
+        execution: {
+          activeElapsedMs: 0,
+          activeSince: clock.now().toISOString(),
+          consecutiveRepairs: 0,
+        },
+      },
+      run!.version,
+    );
+    clock.advance(14_400_000);
+
+    const restarted = makeHarness({}, stores, { workflow: ONE_AGENT });
+    await expect(
+      restarted.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toBeInstanceOf(EmergencyCeilingError);
+
+    expect(await stores.runs.get('run-1')).toMatchObject({
+      status: 'failed',
+      error: { code: 'EMERGENCY_CEILING' },
+      execution: {
+        lastVerifiedCheckpoint: 'initial-head',
+        ceiling: { reason: 'active-time', draftBranch: 'draft/run-1' },
+      },
+    });
+    expect(stores.workspaces.current).toBe('initial-head');
+    expect(stores.events.types()).toContain('run.emergency_ceiling_reached');
+  });
+
+  it('lets cancellation win after the final boundary check', async () => {
+    const stores = makeStores();
+    const harness = makeHarness({}, stores, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    stores.runs.onAfterUpdate = async (candidate) => {
+      if (
+        candidate.status !== 'running' ||
+        candidate.execution?.activeSince ||
+        harness.executor.started('work') === 0
+      )
+        return;
+      stores.runs.onAfterUpdate = undefined;
+      await harness.service.cancelRun('run-1');
+    };
+
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).resolves.toBeUndefined();
+
+    expect((await stores.runs.get('run-1'))?.status).toBe('cancelled');
+    expect(stores.events.types()).not.toContain('project.completed');
+  });
+
+  it('finalizes a ceiling persisted after the final boundary check', async () => {
+    const clock = new TestClock();
+    const stores = makeStores(clock);
+    const harness = makeHarness({}, stores, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    stores.runs.onAfterUpdate = async (candidate) => {
+      if (
+        candidate.status !== 'running' ||
+        candidate.execution?.activeSince ||
+        harness.executor.started('work') === 0
+      )
+        return;
+      stores.runs.onAfterUpdate = undefined;
+      await stores.runs.update(
+        {
+          ...candidate,
+          execution: {
+            ...candidate.execution!,
+            ceiling: { reason: 'active-time', reachedAt: clock.now().toISOString() },
+          },
+        },
+        candidate.version,
+      );
+    };
+
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toBeInstanceOf(EmergencyCeilingError);
+
+    expect(await stores.runs.get('run-1')).toMatchObject({
+      status: 'failed',
+      error: { code: 'EMERGENCY_CEILING' },
+      execution: { ceiling: { draftBranch: 'draft/run-1' } },
+    });
+    expect(stores.events.types()).not.toContain('project.completed');
+    expect(stores.events.types()).toContain('run.emergency_ceiling_reached');
+  });
+
   it('advances the verified checkpoint only after an approved verification result', async () => {
     const stores = makeStores();
     const harness = makeHarness({}, stores, {

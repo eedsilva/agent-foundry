@@ -142,30 +142,27 @@ export class WorkflowOrchestrator {
       await this.finalizePause(run.id, projectId, workflow);
       return;
     }
-    if (run.execution?.ceiling) {
-      const error = new EmergencyCeilingError(run.id, run.execution.ceiling.reason);
-      await this.finalizeEmergencyCeiling(run.id, projectId);
-      throw error;
-    }
-    if (run.status !== 'running') {
-      run = await this.runs.update(
-        transitionWorkflowRun(run, 'running', this.clock.now()),
-        run.version,
-      );
-    }
-    run = await this.startActiveExecution(run.id);
-    await this.assertExecutionMayContinue(run.id);
-    await this.syncProjectSummary(run);
-    await this.emit(projectId, 'project.started', `Workflow ${workflow.id} started.`, {
-      runId: run.id,
-      dedupeKey: `${run.id}:project.started`,
-    });
-
     const cancellation = new AbortController();
     const stopWatching = this.watchForCancellation(run.id, cancellation);
     try {
       await this.workspaces.ensureGit(projectId);
       run = await this.ensureInitialVerifiedCheckpoint(run.id, projectId);
+      if (run.execution?.ceiling) {
+        throw new EmergencyCeilingError(run.id, run.execution.ceiling.reason);
+      }
+      if (run.status !== 'running') {
+        run = await this.runs.update(
+          transitionWorkflowRun(run, 'running', this.clock.now()),
+          run.version,
+        );
+      }
+      run = await this.startActiveExecution(run.id);
+      await this.assertExecutionMayContinue(run.id, cancellation.signal);
+      await this.syncProjectSummary(run);
+      await this.emit(projectId, 'project.started', `Workflow ${workflow.id} started.`, {
+        runId: run.id,
+        dedupeKey: `${run.id}:project.started`,
+      });
       run = await this.enforceRunPolicy(run, project, workflow);
       for (const node of workflow.nodes) {
         throwIfCancelled(cancellation.signal, run.id);
@@ -183,11 +180,7 @@ export class WorkflowOrchestrator {
         });
       }
       await this.assertExecutionMayContinue(run.id, cancellation.signal);
-      const latest = await this.stopActiveExecution(run.id);
-      run = await this.runs.update(
-        transitionWorkflowRun(latest, 'completed', this.clock.now()),
-        latest.version,
-      );
+      run = await this.completeRun(run.id);
       await this.syncProjectSummary(run);
       // No dedupe key here: a terminal run early-returns on redelivery, and a
       // step retry legitimately completes the same run a second time.
@@ -257,6 +250,28 @@ export class WorkflowOrchestrator {
       const { activeSince: _activeSince, ...inactive } = execution;
       return { ...inactive, activeElapsedMs };
     });
+  }
+
+  private async completeRun(runId: string): Promise<WorkflowRun> {
+    await this.stopActiveExecution(runId);
+    for (;;) {
+      const run = await this.requireRun(runId);
+      if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+        throw new RunCancelledError(runId);
+      }
+      if (run.execution?.ceiling) {
+        throw new EmergencyCeilingError(runId, run.execution.ceiling.reason);
+      }
+      if (run.status === 'completed') return run;
+      try {
+        return await this.runs.update(
+          transitionWorkflowRun(run, 'completed', this.clock.now()),
+          run.version,
+        );
+      } catch (error) {
+        if (!(error instanceof VersionConflictError)) throw error;
+      }
+    }
   }
 
   private async assertExecutionMayContinue(runId: string, signal?: AbortSignal): Promise<void> {
