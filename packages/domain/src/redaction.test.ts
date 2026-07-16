@@ -34,6 +34,26 @@ describe('redactString', () => {
   it('leaves ordinary text untouched', () => {
     expect(redactString('node.completed em 3s')).toBe('node.completed em 3s');
   });
+
+  it('redacts raw and quoted structured assignments including complete cookie chains', () => {
+    const output = redactString(
+      [
+        'access_token=plain-secret',
+        '{"access_token":"json-secret"}',
+        'authorization="Bearer quoted-secret"',
+        'Cookie=session=a; csrf=b',
+      ].join('\n'),
+    );
+
+    expect(output).toBe(
+      [
+        'access_token=[REDACTED]',
+        '{"access_token":"[REDACTED]"}',
+        'authorization="[REDACTED]"',
+        'Cookie=[REDACTED]',
+      ].join('\n'),
+    );
+  });
 });
 
 describe('normalizeApprovalDecision', () => {
@@ -51,6 +71,36 @@ describe('normalizeApprovalDecision', () => {
     expect(ApprovalDecisionSchema.parse(normalized).actor).toEqual({
       kind: 'user',
       id: 'unknown',
+    });
+  });
+
+  it('redacts structured secrets in identity fields and notes', () => {
+    const normalized = normalizeApprovalDecision({
+      id: 'decision-1',
+      requestId: 'approval-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      action: 'request-changes',
+      decidedBy: 'authorization="Bearer identity-secret"',
+      actor: {
+        kind: 'user',
+        id: '{"access_token":"actor-secret"}',
+        displayName: 'Cookie=session=name; csrf=actor-csrf',
+      },
+      note: 'access_token=note-secret',
+      decidedAt: '2026-07-14T12:00:00.000Z',
+    });
+
+    expect(JSON.stringify(normalized)).not.toMatch(
+      /identity-secret|actor-secret|actor-csrf|note-secret/,
+    );
+    expect(normalized).toMatchObject({
+      decidedBy: 'authorization="[REDACTED]"',
+      actor: {
+        id: '{"access_token":"[REDACTED]"}',
+        displayName: 'Cookie=[REDACTED]',
+      },
+      note: 'access_token=[REDACTED]',
     });
   });
 });

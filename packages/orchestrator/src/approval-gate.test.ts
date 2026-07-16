@@ -120,16 +120,27 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     const { request } = entry!;
     const rawActorId = 'ghp_abcdefghijklmnopqrst1234';
     const rawDisplayName = 'Cookie: session=actor-cookie; token=actor-token';
+    const rawStructuredSecrets = [
+      '{"access_token":"json-secret"}',
+      'authorization="Bearer quoted-secret"',
+      'Cookie=session=a; csrf=b',
+    ].join('\n');
+    const redactedNote = [
+      'please add tests; Authorization: [REDACTED]',
+      '{"access_token":"[REDACTED]"}',
+      'authorization="[REDACTED]"',
+      'Cookie=[REDACTED]',
+    ].join('\n');
 
     const decided = await harness.service.decideApproval('run-1', request.id, {
       action: 'request-changes',
       actor: { kind: 'user', id: rawActorId, displayName: rawDisplayName },
-      note: 'please add tests; Authorization: Bearer abcdef1234567890ABCDEF',
+      note: `please add tests; Authorization: Bearer abcdef1234567890ABCDEF\n${rawStructuredSecrets}`,
     });
     expect(decided.decision).toMatchObject({
       decidedBy: 'Cookie: [REDACTED]',
       actor: { kind: 'user', id: '[REDACTED]', displayName: 'Cookie: [REDACTED]' },
-      note: 'please add tests; Authorization: [REDACTED]',
+      note: redactedNote,
     });
     expect(ApprovalDecisionSchema.parse(decided.decision)).toEqual(decided.decision);
     expect(await harness.approvalDecisions.get('run-1', request.id)).toEqual(decided.decision);
@@ -145,7 +156,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     const feedback = harness.artifacts.named('repair-notes')[0]!;
     expect(feedback.content).toMatchObject({
       schemaVersion: '1',
-      note: 'please add tests; Authorization: [REDACTED]',
+      note: redactedNote,
       actor: { kind: 'user', id: '[REDACTED]', displayName: 'Cookie: [REDACTED]' },
       sourceRequestId: request.id,
       sourceDecisionId: decided.decision.id,
@@ -172,6 +183,9 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     });
     expect(JSON.stringify({ decision: decided.decision, feedback })).not.toContain(rawActorId);
     expect(JSON.stringify({ decision: decided.decision, feedback })).not.toContain('actor-cookie');
+    expect(JSON.stringify({ decision: decided.decision, feedback })).not.toMatch(
+      /json-secret|quoted-secret|csrf=b/,
+    );
     const activeImplement = harness.stepRuns
       .byStepId('run-1', 'implement')
       .find((step) => !step.invalidatedAt)!;
