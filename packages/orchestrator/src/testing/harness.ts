@@ -839,6 +839,7 @@ export function makeHarness(
     ...stores,
     ids,
     executor,
+    workflow,
     orchestrator,
     service,
     enqueued,

@@ -53,11 +53,25 @@ export function normalizeApprovalDecision(
   decision: ApprovalDecision | null,
 ): ApprovalDecision | null {
   if (!decision) return null;
+  const decidedBy = redactIdentity(decision.decidedBy);
   return {
     ...decision,
-    actor: decision.actor ?? { kind: 'user', id: decision.decidedBy.trim() || 'unknown' },
+    decidedBy,
+    actor: decision.actor
+      ? {
+          kind: decision.actor.kind,
+          id: redactIdentity(decision.actor.id),
+          ...(decision.actor.displayName !== undefined
+            ? { displayName: redactIdentity(decision.actor.displayName) }
+            : {}),
+        }
+      : { kind: 'user', id: decidedBy },
     ...(decision.note !== undefined ? { note: redactString(decision.note) } : {}),
   };
+}
+
+function redactIdentity(value: string): string {
+  return redactString(value).trim() || 'unknown';
 }
 
 export function redactEvent(event: ProjectEvent): ProjectEvent {

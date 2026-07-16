@@ -635,17 +635,24 @@ export class WorkflowOrchestrator {
       directive.stepId === step.id &&
       (directive.iteration ?? null) === (iteration ?? null);
     if (isRetryTarget && directive.feedbackArtifact) {
+      const feedbackReference = directive.feedbackArtifact;
       const feedback = await this.artifacts.getRevision(
         project.id,
-        directive.feedbackArtifact.name,
-        directive.feedbackArtifact.revision,
+        feedbackReference.name,
+        feedbackReference.revision,
       );
-      if (!feedback || feedback.metadata.sha256 !== directive.feedbackArtifact.sha256) {
+      if (!feedback || feedback.metadata.sha256 !== feedbackReference.sha256) {
         throw new NotFoundError(
-          `Feedback artifact ${directive.feedbackArtifact.name} revision ${directive.feedbackArtifact.revision} not found`,
+          `Feedback artifact ${feedbackReference.name} revision ${feedbackReference.revision} not found`,
         );
       }
-      inputArtifacts = [...inputArtifacts, feedback];
+      const alreadyLoaded = inputArtifacts.some(
+        (artifact) =>
+          artifact.metadata.name === feedbackReference.name &&
+          artifact.metadata.revision === feedbackReference.revision &&
+          artifact.metadata.sha256 === feedbackReference.sha256,
+      );
+      if (!alreadyLoaded) inputArtifacts = [...inputArtifacts, feedback];
     }
     const idempotencyKey = stepIdempotencyKey({
       runId,

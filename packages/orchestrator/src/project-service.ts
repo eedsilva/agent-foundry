@@ -483,7 +483,7 @@ export class ProjectService {
         throw new ValidationError(`Run ${runId} is ${run.status}; no pending approval to decide.`);
       }
       const actor: ActorRef = input.actor ?? { kind: 'user', id: input.decidedBy! };
-      const candidate: ApprovalDecision = {
+      const candidate = normalizeApprovalDecision({
         id: this.ids.next(),
         requestId,
         runId,
@@ -493,7 +493,7 @@ export class ProjectService {
         actor,
         ...(input.note ? { note: redactUnknown(input.note) as string } : {}),
         decidedAt: this.clock.now().toISOString(),
-      };
+      })!;
       try {
         await this.approvalDecisions.create(candidate);
         decision = candidate;
