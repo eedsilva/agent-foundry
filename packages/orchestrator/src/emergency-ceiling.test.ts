@@ -623,6 +623,38 @@ describe('emergency ceiling accounting', () => {
     expect(stores.events.types()).toContain('run.emergency_ceiling_reached');
   });
 
+  it('ceilings when stopping active time reaches exactly four hours', async () => {
+    const clock = new TestClock();
+    const stores = makeStores(clock);
+    const harness = makeHarness({ work: 'gated' }, stores, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await waitUntil(() => harness.executor.started('work') === 1);
+    clock.advance(14_399_999);
+    stores.runs.onAfterUpdate = async (candidate) => {
+      if (candidate.status !== 'running' || candidate.execution?.activeSince) return;
+      stores.runs.onAfterUpdate = undefined;
+      clock.advance(1);
+      await stores.runs.update(
+        {
+          ...candidate,
+          execution: { ...candidate.execution!, activeElapsedMs: 14_400_000 },
+        },
+        candidate.version,
+      );
+    };
+    harness.executor.release('work');
+
+    await expect(running).rejects.toBeInstanceOf(EmergencyCeilingError);
+
+    expect(await stores.runs.get('run-1')).toMatchObject({
+      status: 'failed',
+      error: { code: 'EMERGENCY_CEILING' },
+      execution: { activeElapsedMs: 14_400_000, ceiling: { reason: 'active-time' } },
+    });
+    expect(stores.events.types()).not.toContain('project.completed');
+  });
+
   it('advances the verified checkpoint only after an approved verification result', async () => {
     const stores = makeStores();
     const harness = makeHarness({}, stores, {

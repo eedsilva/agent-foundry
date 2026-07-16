@@ -254,6 +254,7 @@ export class WorkflowOrchestrator {
 
   private async completeRun(runId: string): Promise<WorkflowRun> {
     await this.stopActiveExecution(runId);
+    await this.assertExecutionMayContinue(runId);
     for (;;) {
       const run = await this.requireRun(runId);
       if (run.status === 'cancel_requested' || run.status === 'cancelled') {
