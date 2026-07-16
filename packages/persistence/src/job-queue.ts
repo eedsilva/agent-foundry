@@ -9,7 +9,6 @@ import {
   readJson,
   readJsonOrNull,
   safeSegment,
-  withDirectoryLock,
 } from './fs-utils.js';
 
 const SYSTEM_CLOCK: Clock = { now: () => new Date() };
@@ -35,15 +34,16 @@ export class FileJobQueue implements JobQueue {
     const parsed = QueueJobSchema.parse(job);
     const id = safeSegment(parsed.id);
     const pendingPath = join(this.dir('pending'), `${id}.json`);
-    const lockPath = join(this.dataDir, 'queue', 'enqueue-locks', `${id}.lock`);
-    await withDirectoryLock(lockPath, async () => {
-      await Promise.all([ensureDir(this.dir('pending')), ensureDir(this.dir('processing'))]);
-      if (await exists(pendingPath)) return;
-      const processingPrefix = `${id}.`;
-      const processing = await readdir(this.dir('processing'));
-      if (processing.some((entry) => entry.startsWith(processingPrefix))) return;
-      await atomicWriteJson(pendingPath, parsed);
-    });
+    await Promise.all([ensureDir(this.dir('pending')), ensureDir(this.dir('processing'))]);
+    if (await exists(pendingPath)) return;
+    if (await this.isProcessing(id)) return;
+
+    await atomicWriteJson(pendingPath, parsed);
+
+    // A worker can claim between the processing check and publication. If
+    // another publisher recreated pending in that window, keep the active
+    // lease and remove only the duplicate runnable copy.
+    if (await this.isProcessing(id)) await rm(pendingPath, { force: true });
   }
 
   async claim(workerId: string): Promise<QueueJob | null> {
@@ -205,5 +205,10 @@ export class FileJobQueue implements JobQueue {
 
   private processingPath(jobId: string, workerId: string): string {
     return join(this.dir('processing'), `${safeSegment(jobId)}.${safeSegment(workerId)}.json`);
+  }
+
+  private async isProcessing(jobId: string): Promise<boolean> {
+    const prefix = `${safeSegment(jobId)}.`;
+    return (await readdir(this.dir('processing'))).some((entry) => entry.startsWith(prefix));
   }
 }

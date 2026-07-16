@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import YAML from 'yaml';
@@ -33,7 +33,7 @@ export async function readJsonOrNull<T>(path: string): Promise<T | null> {
 
 export async function atomicWriteJson(path: string, value: unknown): Promise<void> {
   await ensureDir(dirname(path));
-  const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const handle = await open(temp, 'w');
   try {
     await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, 'utf8');

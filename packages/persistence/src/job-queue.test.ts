@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -46,6 +46,29 @@ function baseJob(id = 'job-1'): QueueJob {
 }
 
 describe('FileJobQueue lease semantics', () => {
+  it('publishes despite an orphaned enqueue lock directory from a hard crash', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await mkdir(join(dataDir, 'queue', 'enqueue-locks', 'job-1.lock'), { recursive: true });
+
+    await queue.enqueue(baseJob());
+
+    expect((await queue.claim('worker-a'))?.id).toBe('job-1');
+    expect(await queue.claim('worker-b')).toBeNull();
+  }, 15_000);
+
+  it('publishes one pending job when identical enqueues race', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+
+    await Promise.all([queue.enqueue(baseJob()), queue.enqueue(baseJob())]);
+
+    expect((await queue.claim('worker-a'))?.id).toBe('job-1');
+    expect(await queue.claim('worker-b')).toBeNull();
+  });
+
   it('keeps the first pending job when the same id is enqueued again', async () => {
     const dataDir = await temporaryDataDir();
     const clock = new FakeClock(new Date(createdAt));
