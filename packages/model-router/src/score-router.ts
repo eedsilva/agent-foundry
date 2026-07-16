@@ -9,7 +9,7 @@ import type {
   TaskKind,
   TaskProfile,
 } from '@agent-foundry/contracts';
-import type { MetricsRepository, ModelRouter } from '@agent-foundry/domain';
+import type { ExplicitModelRoute, MetricsRepository, ModelRouter } from '@agent-foundry/domain';
 
 export class ScoreBasedModelRouter implements ModelRouter {
   constructor(
@@ -23,11 +23,22 @@ export class ScoreBasedModelRouter implements ModelRouter {
     return [...this.models];
   }
 
-  async route(profile: TaskProfile): Promise<RouteDecision> {
+  async route(profile: TaskProfile, explicit?: ExplicitModelRoute): Promise<RouteDecision> {
     const rejected: Array<{ modelId: string; reason: string }> = [];
     const ranked: RankedModel[] = [];
 
+    if (explicit) {
+      const current = this.models.find((model) => model.id === explicit.modelId);
+      if (!current) throw new Error(`Override model ${explicit.modelId} is not in the catalog`);
+      if (current.provider !== explicit.provider || current.model !== explicit.model) {
+        throw new Error(
+          `Override model ${explicit.modelId} catalog tuple changed: expected ${explicit.provider}/${explicit.model}, found ${current.provider}/${current.model}`,
+        );
+      }
+    }
+
     for (const model of this.models) {
+      if (explicit && model.id !== explicit.modelId) continue;
       const rejection = this.rejectReason(model, profile);
       if (rejection) {
         rejected.push({ modelId: model.id, reason: rejection });
@@ -57,7 +68,8 @@ export class ScoreBasedModelRouter implements ModelRouter {
       createdAt: new Date().toISOString(),
       profile,
       selected,
-      fallbacks: diverseFallbacks(ranked, selected, 3),
+      fallbacks: explicit ? [] : diverseFallbacks(ranked, selected, 3),
+      ...(explicit?.provenance ? { override: explicit.provenance } : {}),
       rejected,
     };
   }

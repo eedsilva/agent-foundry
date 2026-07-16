@@ -80,6 +80,18 @@ Antes do score, um candidato é rejeitado quando:
 
 Restrições duras não devem virar penalidades suaves. Um modelo incapaz não fica adequado por ganhar pontos em velocidade.
 
+## Pins explícitos auditados
+
+Pins de retry, step e run usam o mesmo caminho de validação do roteamento automático. A
+precedência é `retry > step mais novo > run mais novo`. O record guarda o tuple resolvido do
+catálogo, o ator, motivo e impacto estimado; `RouteDecision.override` torna a escolha aplicada
+visível no artifact.
+
+Um pin explícito retorna exatamente um candidato e `fallbacks: []`. Ele não transforma restrições
+duras em preferências: modelo desabilitado, drift de `modelId/provider/model`, provider proibido
+por ProjectPolicy ou pelo step, contexto insuficiente e falta de capacidade de escrita continuam
+rejeitando a rota antes da execução.
+
 ## Score
 
 O score final normaliza os pesos da tarefa:
@@ -144,7 +156,7 @@ A execução bem-sucedida mede apenas funcionamento. O quality gate mede utilida
 
 ## Fallback
 
-A rota contém o selecionado e até três fallbacks. Os primeiros fallbacks priorizam providers ainda não usados, para reduzir falhas correlacionadas de uma única CLI. O step limita quantas tentativas podem ocorrer.
+A rota automática contém o selecionado e até três fallbacks. Os primeiros fallbacks priorizam providers ainda não usados, para reduzir falhas correlacionadas de uma única CLI. Todos os candidatos dessa lista finita podem ser tentados uma vez; `maxAttempts` permanece legível em workflows antigos, mas não corta essa lista. Uma rota com pin explícito não tem fallback.
 
 Para tarefas mutáveis:
 

@@ -16,6 +16,7 @@ import {
   FileEventStore,
   FileJobQueue,
   FileMetricsRepository,
+  FileModelOverrideRepository,
   FileProjectRepository,
   FileStepAttemptRepository,
   FileStepRunRepository,
@@ -45,6 +46,7 @@ export interface Runtime {
   events: FileEventStore;
   queue: FileJobQueue;
   metrics: FileMetricsRepository;
+  modelOverrides: FileModelOverrideRepository;
   workflows: YamlWorkflowRepository;
   policies: YamlPolicyRepository;
   harness: VersionedHarnessRepository;
@@ -74,6 +76,7 @@ export async function createRuntime(
   const events = new FileEventStore(config.dataDir);
   const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
   const metrics = new FileMetricsRepository(config.dataDir);
+  const modelOverrides = new FileModelOverrideRepository(config.dataDir);
   const workflows = new YamlWorkflowRepository(config.workflowsDir);
   const policies = new YamlPolicyRepository(config.policiesDir);
   const harness = new VersionedHarnessRepository(config.harnessDir);
@@ -116,6 +119,7 @@ export async function createRuntime(
     clock,
     ids,
     { agentTimeoutMs: config.agentTimeoutMs, cancelPollIntervalMs: config.cancelPollIntervalMs },
+    modelOverrides,
   );
   const projectService = new ProjectService(
     projects,
@@ -134,6 +138,7 @@ export async function createRuntime(
     workspaces,
     clock,
     ids,
+    modelOverrides,
   );
   const worker = new WorkerLoop(queue, orchestrator, {
     workerId: config.workerId,
@@ -156,6 +161,7 @@ export async function createRuntime(
     events,
     queue,
     metrics,
+    modelOverrides,
     workflows,
     policies,
     harness,

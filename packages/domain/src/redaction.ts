@@ -1,4 +1,4 @@
-import type { ProjectEvent } from '@agent-foundry/contracts';
+import type { ApprovalDecision, ProjectEvent } from '@agent-foundry/contracts';
 
 const SENSITIVE_WORD =
   /^(?:token|secret|secrets|password|passwd|credential|credentials|authorization|auth|bearer|cookie|cookies|session|apikey)$/i;
@@ -10,6 +10,12 @@ const VALUE_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9._-]{8,}\b/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
 ];
+const QUOTED_SECRET =
+  /((?:["']?(?:authorization|(?:[a-z][a-z0-9]*[_-]?)?token|cookie)["']?)\s*[:=]\s*)(["'])([^\r\n]*?)\2/gi;
+const COOKIE_HEADER = /(\bcookie\s*:\s*).*$/gim;
+const COOKIE_ASSIGNMENT = /(\bcookie\s*=\s*)(?!["']).*$/gim;
+const RAW_SECRET =
+  /(\b(?:authorization|(?:[a-z][a-z0-9]*[_-]?)?token)\s*[:=]\s*)(?!["'])(?:basic\s+|bearer\s+)?[^\s,;]+/gi;
 
 const KEY_PREFIXES = new Set(['api', 'access', 'private']);
 
@@ -21,7 +27,12 @@ function isSensitiveKey(key: string): boolean {
 }
 
 export function redactString(value: string): string {
-  return VALUE_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[REDACTED]'), value);
+  const assignments = value
+    .replace(QUOTED_SECRET, '$1$2[REDACTED]$2')
+    .replace(COOKIE_HEADER, '$1[REDACTED]')
+    .replace(COOKIE_ASSIGNMENT, '$1[REDACTED]')
+    .replace(RAW_SECRET, '$1[REDACTED]');
+  return VALUE_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[REDACTED]'), assignments);
 }
 
 function redactValue(value: unknown, depth: number): unknown {
@@ -39,10 +50,39 @@ function redactValue(value: unknown, depth: number): unknown {
   return value;
 }
 
+export function redactUnknown(value: unknown): unknown {
+  return redactValue(value, 0);
+}
+
+export function normalizeApprovalDecision(
+  decision: ApprovalDecision | null,
+): ApprovalDecision | null {
+  if (!decision) return null;
+  const decidedBy = redactIdentity(decision.decidedBy);
+  return {
+    ...decision,
+    decidedBy,
+    actor: decision.actor
+      ? {
+          kind: decision.actor.kind,
+          id: redactIdentity(decision.actor.id),
+          ...(decision.actor.displayName !== undefined
+            ? { displayName: redactIdentity(decision.actor.displayName) }
+            : {}),
+        }
+      : { kind: 'user', id: decidedBy },
+    ...(decision.note !== undefined ? { note: redactString(decision.note) } : {}),
+  };
+}
+
+function redactIdentity(value: string): string {
+  return redactString(value).trim() || 'unknown';
+}
+
 export function redactEvent(event: ProjectEvent): ProjectEvent {
   return {
     ...event,
     message: redactString(event.message),
-    data: redactValue(event.data, 0) as ProjectEvent['data'],
+    data: redactUnknown(event.data) as ProjectEvent['data'],
   };
 }

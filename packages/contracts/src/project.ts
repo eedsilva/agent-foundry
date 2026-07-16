@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   PackageManagerSchema,
+  ActorRefSchema,
   PathSegmentSchema,
   ProjectStatusSchema,
   ProviderSchema,
@@ -32,6 +33,9 @@ export const ArtifactMetadataSchema = z.object({
   runId: PathSegmentSchema.optional(),
   stepRunId: PathSegmentSchema.optional(),
   attemptId: PathSegmentSchema.optional(),
+  kind: z.literal('feedback').optional(),
+  actor: ActorRefSchema.optional(),
+  sourceDecisionId: PathSegmentSchema.optional(),
   routeDecision: RouteDecisionSchema.optional(),
   idempotencyKey: z
     .string()
@@ -47,6 +51,20 @@ export const StoredArtifactSchema = z.object({
 });
 export type StoredArtifact = z.infer<typeof StoredArtifactSchema>;
 
+export const FeedbackArtifactSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    actor: ActorRefSchema,
+    sourceRequestId: PathSegmentSchema,
+    sourceDecisionId: PathSegmentSchema,
+    runId: PathSegmentSchema,
+    stepRunId: PathSegmentSchema,
+    note: z.string(),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+export type FeedbackArtifact = z.infer<typeof FeedbackArtifactSchema>;
+
 export const ProjectEventSchema = z.object({
   id: PathSegmentSchema,
   projectId: PathSegmentSchema,
@@ -58,6 +76,7 @@ export const ProjectEventSchema = z.object({
     'project.failed',
     'run.cancel_requested',
     'run.cancelled',
+    'run.emergency_ceiling_reached',
     'run.pause_requested',
     'run.paused',
     'run.resume_requested',

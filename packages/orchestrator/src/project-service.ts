@@ -2,19 +2,27 @@ import type {
   ApprovalAction,
   ApprovalDecision,
   ApprovalRequest,
+  ActorRef,
+  ArtifactReference,
+  CreateModelOverrideRequest,
   CreateProjectRequest,
+  ModelOverrideRecord,
+  ModelDefinition,
   Project,
   ProjectDetailResponse,
   ProjectEvent,
+  Provider,
   QueueJob,
   RetryPlanResponse,
   RetryStepRequest,
   RunDetailResponse,
+  RunAuditExport,
   RunRetryDirective,
   StepRun,
   WorkflowDefinition,
   WorkflowRun,
 } from '@agent-foundry/contracts';
+import { FeedbackArtifactSchema } from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
   ApprovalRequestRepository,
@@ -25,6 +33,7 @@ import type {
   IdGenerator,
   JobQueue,
   ModelRouter,
+  ModelOverrideRepository,
   PolicyRepository,
   ProjectRepository,
   ResumeDiagnostic,
@@ -40,6 +49,8 @@ import {
   ResumeBlockedError,
   ValidationError,
   VersionConflictError,
+  normalizeApprovalDecision,
+  redactString,
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
 import { policyHash, workflowHash } from './idempotency.js';
@@ -62,7 +73,38 @@ export class ProjectService {
     private readonly workspaces: WorkspaceManager,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly modelOverrides?: ModelOverrideRepository,
   ) {}
+
+  async createModelOverride(
+    runId: string,
+    input: CreateModelOverrideRequest,
+  ): Promise<ModelOverrideRecord> {
+    const run = await this.requireRun(runId);
+    if (!this.modelOverrides) throw new Error('Model override repository is not configured');
+    const scope = input.scope;
+    if (scope.kind === 'step') {
+      const workflow = await this.workflows.get(run.workflowId);
+      if (!isAgentStep(workflow, scope.nodeId, scope.stepId)) {
+        throw new ValidationError(
+          `Scope ${scope.nodeId}/${scope.stepId} does not identify an agent step in workflow ${workflow.id}.`,
+        );
+      }
+    }
+    const match = await this.resolveCatalogModel(input.modelId, input.provider, input.model);
+    const audit = redactOverrideAudit(input);
+    const override: Omit<ModelOverrideRecord, 'sequence'> = {
+      id: this.ids.next(),
+      runId,
+      scope: input.scope,
+      modelId: match.id,
+      provider: match.provider,
+      model: match.model,
+      ...audit,
+      createdAt: this.clock.now().toISOString(),
+    };
+    return this.modelOverrides.create(override);
+  }
 
   async create(input: CreateProjectRequest): Promise<Project> {
     await this.workflows.get(input.workflowId);
@@ -318,18 +360,24 @@ export class ProjectService {
 
     let override: RunRetryDirective['override'];
     if (input.override) {
-      const catalog = await this.router.catalog();
-      const match = catalog.find(
-        (model) =>
-          model.provider === input.override?.provider &&
-          (model.model === input.override.model || model.id === input.override.model),
-      );
-      if (!match) {
+      const workflow = await this.workflows.get(run.workflowId);
+      if (!isAgentStep(workflow, target.nodeId, target.stepId)) {
         throw new ValidationError(
-          `No catalog model matches ${input.override.provider}/${input.override.model}.`,
+          `Step run ${stepRunId} is not an agent step; only agent steps support model overrides.`,
         );
       }
-      override = { modelId: match.id, provider: match.provider, model: match.model };
+      const match = await this.resolveCatalogModel(
+        input.override.modelId,
+        input.override.provider,
+        input.override.model,
+      );
+      const audit = redactOverrideAudit(input.override);
+      override = {
+        modelId: match.id,
+        provider: match.provider,
+        model: match.model,
+        ...audit,
+      };
     }
 
     const { run: updated, invalidatedStepRunIds } = await this.invalidateFromStep(
@@ -366,9 +414,54 @@ export class ProjectService {
     return Promise.all(
       requests.map(async (request) => ({
         request,
-        decision: await this.approvalDecisions.get(runId, request.id),
+        decision: normalizeApprovalDecision(await this.approvalDecisions.get(runId, request.id)),
       })),
     );
+  }
+
+  async exportRunAudit(runId: string): Promise<RunAuditExport> {
+    const run = await this.requireRun(runId);
+    const requests = await this.approvalRequests.list(runId);
+    const entries: RunAuditExport['entries'] = requests.map((request) => ({
+      kind: 'approval-request',
+      id: request.id,
+      timestamp: request.createdAt,
+      request,
+    }));
+    for (const request of requests) {
+      const decision = normalizeApprovalDecision(
+        await this.approvalDecisions.get(runId, request.id),
+      );
+      if (decision) {
+        entries.push({
+          kind: 'approval-decision',
+          id: decision.id,
+          timestamp: decision.decidedAt,
+          decision,
+        });
+      }
+    }
+    for (const metadata of await this.artifacts.listMetadata(run.projectId)) {
+      if (metadata.kind !== 'feedback' || metadata.runId !== runId) continue;
+      const artifact = await this.artifacts.getRevision(
+        run.projectId,
+        metadata.name,
+        metadata.revision,
+      );
+      if (artifact) {
+        entries.push({
+          kind: 'feedback',
+          id: `${metadata.name}-${metadata.revision}`,
+          timestamp: metadata.createdAt,
+          artifact,
+        });
+      }
+    }
+    entries.sort(
+      (left, right) =>
+        left.timestamp.localeCompare(right.timestamp) || left.id.localeCompare(right.id),
+    );
+    return { schemaVersion: '1', runId, entries };
   }
 
   /**
@@ -382,14 +475,22 @@ export class ProjectService {
   async decideApproval(
     runId: string,
     requestId: string,
-    input: { action: ApprovalAction; decidedBy: string; note?: string | undefined },
+    input: {
+      action: ApprovalAction;
+      actor?: ActorRef | undefined;
+      decidedBy?: string | undefined;
+      note?: string | undefined;
+    },
   ): Promise<{ run: WorkflowRun; decision: ApprovalDecision }> {
+    if (Boolean(input.actor) === Boolean(input.decidedBy)) {
+      throw new ValidationError('exactly one identity form is required: actor or decidedBy');
+    }
     const run = await this.requireRun(runId);
     const request = await this.approvalRequests.get(runId, requestId);
     if (!request)
       throw new NotFoundError(`Approval request ${requestId} not found in run ${runId}`);
 
-    let decision = await this.approvalDecisions.get(runId, requestId);
+    let decision = normalizeApprovalDecision(await this.approvalDecisions.get(runId, requestId));
     if (decision) {
       // A decision already exists. A different requested action is a real
       // conflict (two reviewers disagreed) regardless of what the run has
@@ -398,12 +499,22 @@ export class ProjectService {
       if (decision.action !== input.action) {
         throw new ApprovalConflictError(runId, requestId, decision);
       }
+      if (run.currentStepRunId !== request.stepRunId) return { run, decision };
       // Same action: if the run already moved past awaiting approval, this
       // is a true repeat — return it, no further action. If the run is
       // still parked, a prior call recorded the decision but crashed before
       // requeuing; fall through and finish that instead of silently
       // no-op'ing on the retry.
-      if (run.status !== 'awaiting_approval') return { run, decision };
+      if (run.status !== 'awaiting_approval') {
+        // The run update is durable before the project/job requeue. If a
+        // process dies in that window, the same settled decision repairs the
+        // project summary and queue entry exactly once.
+        if (run.status === 'queued') {
+          await this.requeueProject(run.projectId, runId, this.approvalJobId(runId, decision.id));
+          await this.appendApprovalDecisionEvent(run, requestId, decision);
+        }
+        return { run, decision };
+      }
     } else {
       if (!request.allowedActions.includes(input.action)) {
         throw new ValidationError(
@@ -413,23 +524,27 @@ export class ProjectService {
       if (run.status !== 'awaiting_approval') {
         throw new ValidationError(`Run ${runId} is ${run.status}; no pending approval to decide.`);
       }
-      const candidate: ApprovalDecision = {
+      const actor: ActorRef = input.actor ?? { kind: 'user', id: input.decidedBy! };
+      const candidate = normalizeApprovalDecision({
         id: this.ids.next(),
         requestId,
         runId,
         stepRunId: request.stepRunId,
         action: input.action,
-        decidedBy: input.decidedBy,
+        decidedBy: input.actor ? (input.actor.displayName ?? input.actor.id) : input.decidedBy!,
+        actor,
         ...(input.note ? { note: input.note } : {}),
         decidedAt: this.clock.now().toISOString(),
-      };
+      })!;
       try {
         await this.approvalDecisions.create(candidate);
         decision = candidate;
       } catch (cause) {
         // Lost a simultaneous-write race: another decision was recorded
         // between our read and our write. Resolve against what actually won.
-        const settled = await this.approvalDecisions.get(runId, requestId);
+        const settled = normalizeApprovalDecision(
+          await this.approvalDecisions.get(runId, requestId),
+        );
         if (!settled) throw cause;
         if (settled.action !== input.action) {
           throw new ApprovalConflictError(runId, requestId, settled);
@@ -459,36 +574,59 @@ export class ProjectService {
         throw new ValidationError(`Approval gate ${node.id} has no returnToStepId configured.`);
       }
       const allSteps = await this.stepRuns.list(runId);
-      const target = allSteps.find(
-        (step) => step.nodeId === node.returnToStepId && !step.invalidatedAt,
-      );
+      const invalidationReason = `approval-${decision.action}:${decision.id}`;
+      const target =
+        allSteps.find((step) => step.nodeId === node.returnToStepId && !step.invalidatedAt) ??
+        allSteps.find(
+          (step) =>
+            step.nodeId === node.returnToStepId && step.invalidationReason === invalidationReason,
+        );
       if (!target) {
         throw new NotFoundError(
           `Step for returnToStepId ${node.returnToStepId} not found in run ${runId}`,
         );
       }
-      const downstream = this.downstreamOf(workflow, allSteps, target);
+      const downstream = this.downstreamOf(
+        workflow,
+        allSteps,
+        target,
+        Boolean(target.invalidatedAt),
+      );
 
+      let feedbackArtifact: ArtifactReference | undefined;
       if (decision.action === 'request-changes' && node.repairArtifact) {
-        // ponytail: re-running after a crash here writes a second identical
-        // revision (artifact puts aren't keyed for reuse the way steps are);
-        // narrow, accepted crash window per ADR 0011, add a key if it bites.
-        await this.artifacts.put({
+        const stored = await this.artifacts.put({
           projectId: run.projectId,
           name: node.repairArtifact,
-          content: {
+          content: FeedbackArtifactSchema.parse({
+            schemaVersion: '1',
+            actor: decision.actor ?? { kind: 'user', id: decision.decidedBy },
+            sourceRequestId: request.id,
+            sourceDecisionId: decision.id,
+            runId,
+            stepRunId: request.stepRunId,
             note: decision.note ?? '',
-            decidedBy: decision.decidedBy,
-            decidedAt: decision.decidedAt,
-          },
+            createdAt: decision.decidedAt,
+          }),
           createdBy: `approval-gate:${node.id}`,
           runId,
+          stepRunId: request.stepRunId,
+          kind: 'feedback',
+          actor: decision.actor ?? { kind: 'user', id: decision.decidedBy },
+          sourceDecisionId: decision.id,
         });
+        feedbackArtifact = {
+          name: stored.metadata.name,
+          revision: stored.metadata.revision,
+          sha256: stored.metadata.sha256,
+        };
       }
 
       ({ run: updatedRun } = await this.invalidateFromStep(run, target, downstream, {
         mode: 'invalidate',
-        reason: `approval-${decision.action}`,
+        reason: invalidationReason,
+        queueJobId: this.approvalJobId(runId, decision.id),
+        ...(feedbackArtifact ? { feedbackArtifact } : {}),
       }));
     } else {
       updatedRun = await this.runs.update(
@@ -498,16 +636,10 @@ export class ProjectService {
         transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: undefined }),
         run.version,
       );
-      await this.requeueProject(run.projectId, runId);
+      await this.requeueProject(run.projectId, runId, this.approvalJobId(runId, decision.id));
     }
 
-    await this.appendEvent(
-      run.projectId,
-      'run.approval_decided',
-      `${decision.action} recorded for approval ${requestId}.`,
-      runId,
-      { requestId, action: decision.action, decidedBy: decision.decidedBy },
-    );
+    await this.appendApprovalDecisionEvent(run, requestId, decision);
     return { run: updatedRun, decision };
   }
 
@@ -537,6 +669,7 @@ export class ProjectService {
     workflow: WorkflowDefinition,
     allSteps: StepRun[],
     target: StepRun,
+    includeInvalidated = false,
   ): StepRun[] {
     const nodeOrder = new Map(workflow.nodes.map((node, index) => [node.id, index]));
     const position = (step: StepRun): [number, number, string, string] => [
@@ -547,7 +680,7 @@ export class ProjectService {
     ];
     const targetPosition = position(target);
     return allSteps.filter((step) => {
-      if (step.id === target.id || step.invalidatedAt) return false;
+      if (step.id === target.id || (!includeInvalidated && step.invalidatedAt)) return false;
       const stepPosition = position(step);
       for (let index = 0; index < targetPosition.length; index += 1) {
         if (stepPosition[index]! > targetPosition[index]!) return true;
@@ -570,6 +703,8 @@ export class ProjectService {
     options: {
       mode: RunRetryDirective['mode'];
       override?: RunRetryDirective['override'];
+      feedbackArtifact?: ArtifactReference;
+      queueJobId?: string;
       reason: string;
     },
   ): Promise<{ run: WorkflowRun; invalidatedStepRunIds: string[] }> {
@@ -577,10 +712,11 @@ export class ProjectService {
     const checkpoint = attempts.filter((attempt) => attempt.checkpoint).at(-1)?.checkpoint;
     const now = this.clock.now().toISOString();
 
-    await this.invalidateStepRun(target, options.reason, now);
+    if (!target.invalidatedAt) await this.invalidateStepRun(target, options.reason, now);
     const invalidatedStepRunIds: string[] = [];
     if (options.mode === 'invalidate') {
       for (const step of downstream) {
+        if (step.invalidatedAt) continue;
         await this.invalidateStepRun(step, `invalidated-by-${options.reason}`, now);
         invalidatedStepRunIds.push(step.id);
       }
@@ -594,13 +730,14 @@ export class ProjectService {
       mode: options.mode,
       ...(options.override ? { override: options.override } : {}),
       ...(checkpoint ? { checkpoint } : {}),
+      ...(options.feedbackArtifact ? { feedbackArtifact: options.feedbackArtifact } : {}),
       requestedAt: now,
     };
     const updated = await this.runs.update(
       transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: directive }),
       run.version,
     );
-    await this.requeueProject(run.projectId, run.id);
+    await this.requeueProject(run.projectId, run.id, options.queueJobId);
     return { run: updated, invalidatedStepRunIds };
   }
 
@@ -673,19 +810,21 @@ export class ProjectService {
     return diagnostics;
   }
 
-  private async requeueProject(projectId: string, runId: string): Promise<void> {
+  private async requeueProject(projectId: string, runId: string, jobId?: string): Promise<void> {
     const project = await this.requireProject(projectId);
     const now = this.clock.now().toISOString();
-    const updated: Project = {
-      ...project,
-      status: 'queued',
-      updatedAt: now,
-      currentRunId: runId,
-    };
-    delete updated.error;
-    await this.projects.update(updated, project.version);
+    if (project.status !== 'queued' || project.currentRunId !== runId) {
+      const updated: Project = {
+        ...project,
+        status: 'queued',
+        updatedAt: now,
+        currentRunId: runId,
+      };
+      delete updated.error;
+      await this.projects.update(updated, project.version);
+    }
     await this.queue.enqueue({
-      id: this.ids.next(),
+      id: jobId ?? `run-project-${runId}`,
       type: 'run-project',
       projectId,
       workflowId: project.workflowId,
@@ -698,10 +837,56 @@ export class ProjectService {
     });
   }
 
+  private approvalJobId(runId: string, decisionId: string): string {
+    return `run-project-${runId}-approval-${decisionId}`;
+  }
+
+  private async appendApprovalDecisionEvent(
+    run: WorkflowRun,
+    requestId: string,
+    decision: ApprovalDecision,
+  ): Promise<void> {
+    await this.appendEvent(
+      run.projectId,
+      'run.approval_decided',
+      `${decision.action} recorded for approval ${requestId}.`,
+      run.id,
+      {
+        requestId,
+        action: decision.action,
+        decidedBy: decision.decidedBy,
+        ...(decision.actor ? { actor: decision.actor } : {}),
+      },
+      `approval-decision:${decision.id}`,
+    );
+  }
+
   private async requireRun(runId: string): Promise<WorkflowRun> {
     const run = await this.runs.get(runId);
     if (!run) throw new NotFoundError(`Workflow run ${runId} not found`);
     return run;
+  }
+
+  private async resolveCatalogModel(
+    modelId: string,
+    provider: Provider,
+    model: string,
+  ): Promise<ModelDefinition> {
+    const match = (await this.router.catalog()).find((candidate) => candidate.id === modelId);
+    if (!match || !match.enabled) {
+      throw new ValidationError(`Catalog model ${modelId} is not enabled.`);
+    }
+    if (!match.model.trim()) {
+      throw new ValidationError(
+        `Catalog model ${match.id} does not resolve to an explicit model; configure its provider model first.`,
+      );
+    }
+    if (match.provider !== provider || match.model !== model) {
+      throw new ValidationError(
+        `Override model ${modelId} catalog tuple changed: expected ${provider}/${model}, found ${match.provider}/${match.model}.`,
+      );
+    }
+    return match;
   }
 
   private async requireProject(projectId: string): Promise<Project> {
@@ -716,6 +901,7 @@ export class ProjectService {
     message: string,
     runId?: string,
     data: Record<string, unknown> = {},
+    dedupeKey?: string,
   ): Promise<void> {
     await this.events.append({
       id: this.ids.next(),
@@ -725,6 +911,36 @@ export class ProjectService {
       ...(runId ? { runId } : {}),
       message,
       data,
+      ...(dedupeKey ? { dedupeKey } : {}),
     });
   }
+}
+
+function isAgentStep(workflow: WorkflowDefinition, nodeId: string, stepId: string): boolean {
+  const node = workflow.nodes.find((candidate) => candidate.id === nodeId);
+  return (
+    (node?.type === 'agent' && node.id === stepId) ||
+    (node?.type === 'quality-loop' &&
+      [node.setup, node.check, node.repair].some(
+        (step) => step?.type === 'agent' && step.id === stepId,
+      ))
+  );
+}
+
+function redactOverrideAudit(input: { actor: ActorRef; reason: string; estimatedImpact: string }): {
+  actor: ActorRef;
+  reason: string;
+  estimatedImpact: string;
+} {
+  return {
+    actor: {
+      ...input.actor,
+      id: redactString(input.actor.id).trim() || '[REDACTED]',
+      ...(input.actor.displayName
+        ? { displayName: redactString(input.actor.displayName).trim() || '[REDACTED]' }
+        : {}),
+    },
+    reason: redactString(input.reason).trim() || '[REDACTED]',
+    estimatedImpact: redactString(input.estimatedImpact).trim() || '[REDACTED]',
+  };
 }

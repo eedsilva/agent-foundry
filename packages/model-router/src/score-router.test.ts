@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { ModelDefinition, ModelMetric, TaskProfile } from '@agent-foundry/contracts';
+import type {
+  ModelDefinition,
+  ModelMetric,
+  RouteOverrideProvenance,
+  TaskProfile,
+} from '@agent-foundry/contracts';
 import type { MetricsRepository } from '@agent-foundry/domain';
 import { ScoreBasedModelRouter } from './score-router.js';
 
@@ -50,6 +55,18 @@ const profile: TaskProfile = {
   mutatesWorkspace: true,
   priorities: { quality: 0.7, speed: 0.1, cost: 0.05, reliability: 0.15 },
   preferredTags: ['coding'],
+};
+
+const override: RouteOverrideProvenance = {
+  source: 'run',
+  overrideId: 'override-1',
+  modelId: 'pinned',
+  provider: 'codex',
+  model: 'gpt-5',
+  actor: { kind: 'user', id: 'ed' },
+  reason: 'Use the verified model',
+  estimatedImpact: 'More reliable output',
+  createdAt: '2026-07-16T12:00:00.000Z',
 };
 
 describe('ScoreBasedModelRouter', () => {
@@ -218,5 +235,76 @@ describe('ScoreBasedModelRouter', () => {
     expect(route.rejected).toEqual([
       expect.objectContaining({ modelId: 'small', reason: expect.stringContaining('context') }),
     ]);
+  });
+
+  it('routes an explicit model as the only candidate and retains its provenance', async () => {
+    const router = new ScoreBasedModelRouter(
+      [
+        model('automatic', { provider: 'claude' }),
+        model('pinned', { provider: 'codex', model: 'gpt-5' }),
+      ],
+      new MemoryMetrics(),
+    );
+
+    const route = await router.route(profile, {
+      modelId: 'pinned',
+      provider: 'codex',
+      model: 'gpt-5',
+      provenance: override,
+    });
+
+    expect(route.selected.model.id).toBe('pinned');
+    expect(route.fallbacks).toEqual([]);
+    expect(route.override).toEqual(override);
+  });
+
+  it('fails closed when a pinned catalog id now resolves to a different tuple', async () => {
+    const router = new ScoreBasedModelRouter(
+      [model('pinned', { provider: 'codex', model: 'gpt-5.1' })],
+      new MemoryMetrics(),
+    );
+
+    await expect(
+      router.route(profile, {
+        modelId: 'pinned',
+        provider: 'codex',
+        model: 'gpt-5',
+        provenance: override,
+      }),
+    ).rejects.toThrow(/catalog tuple changed.*codex\/gpt-5.*codex\/gpt-5.1/);
+  });
+
+  it.each([
+    [
+      'project policy',
+      { policy: { id: 'strict', version: 1, allowedProviders: ['claude'] as const } },
+      /forbidden by policy/,
+    ],
+    ['step provider', { allowedProviders: ['claude'] as const }, /not allowed/],
+    ['context capacity', { estimatedContextTokens: 200_000 }, /context/],
+    ['workspace writes', { mutatesWorkspace: true }, /cannot mutate/],
+  ])('rejects an explicit model that violates %s constraints', async (_label, change, message) => {
+    const pinned = model('pinned', {
+      provider: 'codex',
+      model: 'gpt-5',
+      maxContextTokens: 100_000,
+      canWriteWorkspace: false,
+    });
+    const router = new ScoreBasedModelRouter([pinned], new MemoryMetrics());
+    const constrainedProfile = {
+      ...profile,
+      mutatesWorkspace: false,
+      estimatedContextTokens: 20_000,
+      ...change,
+    } as TaskProfile;
+
+    await expect(
+      router.route(constrainedProfile, {
+        modelId: 'pinned',
+        provider: 'codex',
+        model: 'gpt-5',
+        provenance: override,
+      }),
+    ).rejects.toThrow(message);
   });
 });
