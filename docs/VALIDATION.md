@@ -373,3 +373,40 @@ validation, defaults, styling, submission, and async behavior (net -27 lines). I
 verification passed 12 / 12 tests, root typecheck, the web production build, page ESLint, Prettier,
 and `git diff --check`. The second Ponytail pass returned `Lean already. Ship.` with no further
 complexity findings.
+
+## Approval gates, policy and emergency-ceiling E2E — 2026-07-16
+
+Issue #18 (`v03-policy-e2e`) closes the v0.3 "Human Control" milestone by proving its four acceptance
+criteria against the real orchestrator and API, not just their individual unit suites. Criteria 1 and 2
+were already fully proven end-to-end when `v03-approval-api-ui` (#158) shipped; criteria 3 and 4 had no
+composed test and are covered by one new fixture added for this issue.
+
+### Matrix
+
+| Acceptance criterion                                                          | Covering test                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run pauses at an approval gate, receives `request-changes`, and resumes       | `apps/api/src/approvals.test.ts` — `'request-changes rewinds to the architecture step, writes a repair artifact, and re-halts'`                                                                                                                                  |
+| Two concurrent decisions on one approval never both take effect               | `apps/api/src/approvals.test.ts` — `'returns 409 with the settled decision when two differing decisions race'`; `packages/orchestrator/src/approval-gate.test.ts` — `'conflicts (#14) a genuinely simultaneous pair of differing decisions: one wins, one 409s'` |
+| A policy violation blocks the release even though a reviewer approved         | `packages/orchestrator/src/policy-release-e2e.test.ts` — `'blocks the release after the LLM reviewer approves when deterministic policy verification never passes, and the emergency ceiling preserves resumable state'`                                         |
+| The emergency ceiling stops a pathological loop and preserves resumable state | same test as above (`policy-release-e2e.test.ts`); unit-level ceiling mechanics already covered by `packages/orchestrator/src/emergency-ceiling.test.ts`                                                                                                         |
+
+### Composed scenario
+
+`policy-release-e2e.test.ts` chains two `quality-loop` nodes: an LLM code-review gate that approves on
+its first iteration (proving a reviewer said yes), followed by a deterministic verification gate wired
+to a `ProjectPolicy` with a forbidden dependency. A bare `verify` node is advisory only and never blocks
+a run; only a `quality-loop`'s repair cycle can, and that cycle is unbounded in code except for the
+emergency ceiling. With verification fixed to never approve, the run loops through 10 consecutive
+repairs and the ceiling fires: the run fails with `EmergencyCeilingError`, a draft branch preserves the
+unmerged work, and `lastVerifiedCheckpoint` stays at the last good state — proving both that policy
+blocks the release despite the earlier approval, and that the budget ceiling prevents an infinite loop
+while leaving the run in a resumable state. A control test with the same fixture and a policy-satisfying
+verification result completes normally, ruling out a fixture bug as the cause of the block.
+
+### Boundaries of this coverage
+
+These are orchestrator-level tests against the harness's fake `VerificationService` (`opts.verification`),
+consistent with every other test in this directory — `packages/orchestrator` cannot import the real
+`WorkspaceVerifier` (architecture boundary). The real `forbiddenDependencies` check logic is unit-tested
+separately in `packages/executors/src/verifier.test.ts`. Web UI coverage for approvals and the emergency
+ceiling already exists as Playwright evidence from issues #14 and #16; no new UI work was needed here.
