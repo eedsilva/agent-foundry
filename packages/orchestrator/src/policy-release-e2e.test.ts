@@ -6,7 +6,7 @@ import {
   type VerificationReport,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
-import { makeHarness, seedRun } from './testing/harness.js';
+import { completeRun, makeHarness, seedRun } from './testing/harness.js';
 
 // Issue #18 (v03-policy-e2e): a bare `type: verify` node is advisory only
 // (workflow-orchestrator.ts advances the checkpoint on approval and does
@@ -99,28 +99,13 @@ const POLICY: ProjectPolicy = ProjectPolicySchema.parse({
   forbiddenDependencies: ['left-pad'],
 });
 
-function verificationReport(approved: boolean): VerificationReport {
+function failingVerificationReport(): VerificationReport {
   return {
     schemaVersion: '1',
-    approved,
+    approved: false,
     packageManager: 'npm',
-    summary: approved
-      ? 'All configured deterministic checks passed.'
-      : '1 configured check(s) failed: policy-dependency-check',
-    commands: approved
-      ? []
-      : [
-          {
-            name: 'policy-dependency-check',
-            command: 'policy',
-            args: [],
-            exitCode: 1,
-            durationMs: 0,
-            stdout: '',
-            stderr: `Forbidden dependencies declared: left-pad (policy ${POLICY.id}@v${POLICY.version}).`,
-            skipped: false,
-          },
-        ],
+    summary: 'policy-dependency-check failed',
+    commands: [],
     createdAt: new Date().toISOString(),
   };
 }
@@ -130,7 +115,7 @@ describe('policy-gated release blocks despite an approved review, and the emerge
     const harness = makeHarness({}, undefined, {
       workflow: RELEASE_WORKFLOW,
       policy: POLICY,
-      verification: () => verificationReport(false),
+      verification: failingVerificationReport,
     });
     await seedRun(harness);
 
@@ -168,16 +153,11 @@ describe('policy-gated release blocks despite an approved review, and the emerge
   });
 
   it('completes normally when deterministic verification satisfies the same policy (control case)', async () => {
-    const harness = makeHarness({}, undefined, {
-      workflow: RELEASE_WORKFLOW,
-      policy: POLICY,
-      verification: () => verificationReport(true),
-    });
-    await seedRun(harness);
+    // No `verification` override: the harness default already returns an
+    // approved report (testing/harness.ts), same as a policy-satisfying check.
+    const harness = makeHarness({}, undefined, { workflow: RELEASE_WORKFLOW, policy: POLICY });
+    await completeRun(harness);
 
-    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-
-    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
     expect(harness.executor.started('repair-verification')).toBe(0);
     expect(harness.events.types().filter((type) => type === 'quality.approved')).toHaveLength(2);
   });
