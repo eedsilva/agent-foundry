@@ -5,14 +5,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type {
   AgentExecutionRequest,
   AgentExecutionResult,
+  BrowserVerificationReport,
   ExecutorHealth,
+  PreviewSession,
   QueueJob,
 } from '@agent-foundry/contracts';
 import { SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
-import { MockAgentExecutor } from '@agent-foundry/executors';
-import { ConversationService } from '@agent-foundry/orchestrator';
+import { MockAgentExecutor, PlaywrightBrowserVerifier } from '@agent-foundry/executors';
+import { BrowserVerificationCoordinator, ConversationService } from '@agent-foundry/orchestrator';
 import { FileConversationRepository } from '@agent-foundry/persistence';
-import { createRuntime } from './runtime.js';
+import { createRuntime, type Runtime } from './runtime.js';
 
 const RESTART_APPROVAL_WORKFLOW = `
 schemaVersion: '1'
@@ -39,10 +41,43 @@ nodes:
     repairArtifact: plan.repair-notes
 `;
 
+class BrowserPlanExecutor implements AgentExecutor {
+  readonly provider = 'mock';
+
+  constructor(private readonly delegate: AgentExecutor = new MockAgentExecutor()) {}
+
+  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    const result = await this.delegate.execute(request);
+    if (request.stepId !== 'plan-browser-test') return result;
+    const output = {
+      ...result.output,
+      data: {
+        schemaVersion: '1' as const,
+        id: 'critical-crud',
+        title: 'Critical CRUD journey',
+        viewport: { width: 1280, height: 720 },
+        steps: [
+          {
+            id: 'open-root',
+            title: 'Open the app',
+            action: { kind: 'goto' as const, path: '/' },
+            assertions: [],
+          },
+        ],
+      },
+    };
+    return { ...result, output, stdout: JSON.stringify(output) };
+  }
+
+  health(): Promise<ExecutorHealth> {
+    return this.delegate.health();
+  }
+}
+
 class FailFirstExecutor implements AgentExecutor {
   readonly provider = 'mock';
   private calls = 0;
-  private readonly delegate = new MockAgentExecutor();
+  private readonly delegate = new BrowserPlanExecutor();
 
   async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
     this.calls += 1;
@@ -74,7 +109,84 @@ afterEach(async () => {
   );
 });
 
+function configureMockBrowserRuntime(runtime: Runtime): void {
+  Object.defineProperty(runtime.executors, 'executor', {
+    value: new BrowserPlanExecutor(),
+    configurable: true,
+  });
+  let sequence = 0;
+  const previewSessions = new Map<string, PreviewSession>();
+  Object.defineProperty(runtime.previewService, 'start', {
+    configurable: true,
+    value: (input: { workspaceRef: PreviewSession['workspaceRef']; runId?: string }) => {
+      sequence += 1;
+      const now = '2026-07-17T12:00:00.000Z';
+      const session: PreviewSession = {
+        id: `preview-${sequence}`,
+        ...(input.runId ? { runId: input.runId } : {}),
+        workspaceRef: input.workspaceRef,
+        status: 'running',
+        version: 3,
+        url: `http://127.0.0.1:4000/preview/preview-${sequence}/?token=secret`,
+        process: { command: 'npm', args: ['run', 'dev'], port: 3000 + sequence },
+        health: { state: 'healthy', checkedAt: now, consecutiveFailures: 0 },
+        ttl: { seconds: 1800, expiresAt: '2026-07-17T12:30:00.000Z' },
+        restartCount: 0,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+      };
+      previewSessions.set(session.id, session);
+      return Promise.resolve({ session, url: session.url! });
+    },
+  });
+  Object.defineProperty(runtime.previewService, 'stop', {
+    configurable: true,
+    value: (sessionId: string) => {
+      const session = previewSessions.get(sessionId);
+      if (!session) return Promise.reject(new Error(`Unknown preview ${sessionId}`));
+      return Promise.resolve({
+        ...session,
+        status: 'stopped' as const,
+        updatedAt: '2026-07-17T12:00:01.000Z',
+        completedAt: '2026-07-17T12:00:01.000Z',
+      });
+    },
+  });
+  Object.defineProperty(runtime.browserVerifier, 'verify', {
+    configurable: true,
+    value: (input: Parameters<typeof runtime.browserVerifier.verify>[0]) =>
+      Promise.resolve({
+        schemaVersion: '1',
+        approved: true,
+        summary: 'Mock browser verification passed.',
+        planArtifact: input.planArtifact,
+        previewSession: {
+          ...input.session,
+          url: input.session.url?.replace(/\?.*$/, ''),
+        },
+        steps: [],
+      } satisfies BrowserVerificationReport),
+  });
+}
+
 describe('mock runtime', () => {
+  it('composes the Playwright browser verifier through the preview coordinator', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-browser-runtime-'));
+    temporaryDirectories.push(dataDir);
+    const rootDir = resolve(import.meta.dirname, '../../..');
+    const runtime = await createRuntime({
+      ...process.env,
+      REPO_ROOT: rootDir,
+      DATA_DIR: dataDir,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+    });
+
+    expect(runtime.browserVerifier).toBeInstanceOf(PlaywrightBrowserVerifier);
+    expect(runtime.browserVerification).toBeInstanceOf(BrowserVerificationCoordinator);
+  });
+
   it('rejects project export when a canonical conversation is stored under another project', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-cross-paired-conversation-'));
     temporaryDirectories.push(dataDir);
@@ -221,6 +333,7 @@ describe('mock runtime', () => {
       AUTO_INSTALL_DEPENDENCIES: 'false',
       WORKER_ID: 'integration-worker',
     });
+    configureMockBrowserRuntime(runtime);
 
     const project = await runtime.projectService.create({
       name: 'Integration sample',
@@ -301,6 +414,8 @@ describe('mock runtime', () => {
       'implementation.report',
       'code.review',
       'verification.report',
+      'browser-test.plan',
+      'browser-verification.report',
       'release.review',
       'decision-log',
     ]) {
@@ -363,6 +478,7 @@ describe('mock runtime', () => {
       AUTO_INSTALL_DEPENDENCIES: 'false',
       WORKER_ID: 'fallback-worker',
     });
+    configureMockBrowserRuntime(runtime);
     Object.defineProperty(runtime.executors, 'executor', { value: new FailFirstExecutor() });
 
     const project = await runtime.projectService.create({
@@ -455,6 +571,7 @@ describe('mock runtime', () => {
       AUTO_INSTALL_DEPENDENCIES: 'false',
       WORKER_ID: 'legacy-job-worker',
     });
+    configureMockBrowserRuntime(runtime);
     const createdAt = '2026-07-14T12:00:00.000Z';
     await runtime.workspaces.ensure('legacy-project');
     await runtime.workspaces.writePrd(

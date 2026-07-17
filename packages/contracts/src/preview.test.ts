@@ -144,6 +144,34 @@ describe('preview references on run artifacts', () => {
     expect(attempt.previewSessionId).toBe('preview-1');
   });
 
+  it('identifies browser verification attempts without accepting arbitrary internal models', () => {
+    const attempt = {
+      id: 'attempt-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      sequence: 1,
+      executorKind: 'verification' as const,
+      provider: 'internal' as const,
+      model: 'browser-verifier',
+      status: 'running' as const,
+      version: 1,
+      createdAt,
+      updatedAt: createdAt,
+      startedAt: createdAt,
+      context: {
+        projectId: 'project-1',
+        workflowId: 'web-app-v1',
+        nodeId: 'browser-verification',
+        stepId: 'verify-browser',
+      },
+    };
+
+    expect(StepAttemptSchema.safeParse(attempt).success).toBe(true);
+    expect(StepAttemptSchema.safeParse({ ...attempt, model: 'other-verifier' }).success).toBe(
+      false,
+    );
+  });
+
   it('carries session evidence as artifact references', () => {
     const reference = PreviewSessionReferenceSchema.parse({
       sessionId: 'preview-1',
@@ -394,7 +422,8 @@ describe('browser verification contracts', () => {
     const schema = BrowserTestPlanSchema;
     expect(schema.safeParse({ ...plan, steps: [] }).success).toBe(false);
     expect(
-      schema.safeParse({ ...plan, steps: Array.from({ length: 101 }, () => plan.steps[0]) }).success,
+      schema.safeParse({ ...plan, steps: Array.from({ length: 101 }, () => plan.steps[0]) })
+        .success,
     ).toBe(false);
     expect(schema.safeParse({ ...plan, steps: plan.steps.slice(1) }).success).toBe(false);
   });
@@ -456,9 +485,7 @@ describe('browser verification contracts', () => {
         url: 'http://127.0.0.1:3100',
         evidence: {
           logs: { name: 'preview-logs', revision: 1, sha256: 'b'.repeat(64) },
-          screenshots: [
-            { name: 'delete-failure', revision: 1, sha256: 'c'.repeat(64) },
-          ],
+          screenshots: [{ name: 'delete-failure', revision: 1, sha256: 'c'.repeat(64) }],
           trace: { name: 'browser-trace', revision: 1, sha256: 'd'.repeat(64) },
         },
       },

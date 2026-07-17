@@ -17,7 +17,14 @@ describe('YamlWorkflowRepository', () => {
       resolve(import.meta.dirname, '../../../workflows'),
     );
     const workflow = await repository.get('web-app-v1');
-    expect(workflow.nodes).toHaveLength(5);
+    expect(workflow.nodes.map((node) => node.id)).toEqual([
+      'plan-gate',
+      'architecture-gate',
+      'implementation-gate',
+      'deterministic-verification',
+      'browser-verification',
+      'release-assessment',
+    ]);
   });
 
   it('rejects a step that consumes an artifact not guaranteed by earlier nodes', async () => {

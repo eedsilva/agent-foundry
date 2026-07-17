@@ -112,6 +112,7 @@ export function transitionStepAttempt(
       | 'outputArtifacts'
       | 'routeDecision'
       | 'commit'
+      | 'previewSessionId'
     >
   > = {},
 ): StepAttempt {

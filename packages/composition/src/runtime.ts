@@ -6,6 +6,7 @@ import {
   ClaudeCliExecutor,
   AgyCliExecutor,
   WorkspaceVerifier,
+  PlaywrightBrowserVerifier,
   NodePreviewRunner,
 } from '@agent-foundry/executors';
 import { VersionedHarnessRepository } from '@agent-foundry/harness';
@@ -37,6 +38,7 @@ import {
   WorkerLoop,
   WorkflowOrchestrator,
   PreviewService,
+  BrowserVerificationCoordinator,
 } from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
@@ -62,6 +64,8 @@ export interface Runtime {
   router: ScoreBasedModelRouter;
   executors: StaticExecutorRegistry | MockExecutorRegistry;
   verifier: WorkspaceVerifier;
+  browserVerifier: PlaywrightBrowserVerifier;
+  browserVerification: BrowserVerificationCoordinator;
   projectService: ProjectService;
   conversationService: ConversationService;
   orchestrator: WorkflowOrchestrator;
@@ -140,6 +144,8 @@ export async function createRuntime(
       maxRestarts: config.previewMaxRestarts,
     },
   );
+  const browserVerifier = new PlaywrightBrowserVerifier();
+  const browserVerification = new BrowserVerificationCoordinator(previewService, browserVerifier);
   const orchestrator = new WorkflowOrchestrator(
     projects,
     runs,
@@ -161,6 +167,7 @@ export async function createRuntime(
     ids,
     { agentTimeoutMs: config.agentTimeoutMs, cancelPollIntervalMs: config.cancelPollIntervalMs },
     modelOverrides,
+    browserVerification,
   );
   const projectService = new ProjectService(
     projects,
@@ -219,6 +226,8 @@ export async function createRuntime(
     router,
     executors,
     verifier,
+    browserVerifier,
+    browserVerification,
     projectService,
     conversationService,
     orchestrator,

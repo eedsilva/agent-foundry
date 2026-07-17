@@ -40,7 +40,11 @@ export function stepIdempotencyKey(input: {
   const policy =
     input.step.type === 'agent'
       ? { maxAttempts: input.step.maxAttempts, mutatesWorkspace: input.step.mutatesWorkspace }
-      : { scripts: input.step.scripts, includeGitDiffCheck: input.step.includeGitDiffCheck };
+      : {
+          scripts: input.step.scripts,
+          includeGitDiffCheck: input.step.includeGitDiffCheck,
+          browserTestPlanArtifact: input.step.browserTestPlanArtifact,
+        };
   return sha256(
     stableStringify({
       runId: input.runId,

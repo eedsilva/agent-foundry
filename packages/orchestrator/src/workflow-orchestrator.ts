@@ -70,6 +70,7 @@ import {
   workflowHash,
 } from './idempotency.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
+import type { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -108,6 +109,7 @@ export class WorkflowOrchestrator {
     private readonly ids: IdGenerator,
     private readonly options: OrchestratorOptions,
     private readonly modelOverrides?: ModelOverrideRepository,
+    private readonly browserVerification?: BrowserVerificationCoordinator,
   ) {}
 
   async runProject(projectId: string, workflowId?: string, requestedRunId?: string): Promise<void> {
@@ -913,8 +915,19 @@ export class WorkflowOrchestrator {
       throw await this.policyChanged(project.id, runId, run.policy, policy, currentHash, nodeId);
     }
 
+    const browserPlan =
+      step.type === 'verify' && step.browserTestPlanArtifact
+        ? await this.artifacts.getLatest(project.id, step.browserTestPlanArtifact)
+        : null;
+    if (step.type === 'verify' && step.browserTestPlanArtifact && !browserPlan) {
+      throw new NotFoundError(`Missing input artifact(s): ${step.browserTestPlanArtifact}`);
+    }
     let inputArtifacts =
-      step.type === 'agent' ? await this.loadInputArtifacts(project.id, step.inputArtifacts) : [];
+      step.type === 'agent'
+        ? await this.loadInputArtifacts(project.id, step.inputArtifacts)
+        : browserPlan
+          ? [browserPlan]
+          : [];
     const directive = run.retry;
     const isRetryTarget =
       directive !== undefined &&
@@ -1009,6 +1022,7 @@ export class WorkflowOrchestrator {
               signal,
               idempotencyKey,
               iteration,
+              browserPlan ?? undefined,
             );
       stepRun = await this.stepRuns.update(
         transitionStepRun(stepRun, 'completed', this.clock.now()),
@@ -1192,7 +1206,22 @@ export class WorkflowOrchestrator {
     signal: AbortSignal,
     idempotencyKey: string,
     iteration?: number,
+    browserPlan?: StoredArtifact,
   ): Promise<StoredArtifact> {
+    if (browserPlan) {
+      return this.executeBrowserVerifyStep(
+        project,
+        workflow,
+        step,
+        runId,
+        stepRun,
+        policy,
+        signal,
+        idempotencyKey,
+        browserPlan,
+        iteration,
+      );
+    }
     const timestamp = this.clock.now().toISOString();
     let attempt: StepAttempt = {
       id: this.ids.next(),
@@ -1254,6 +1283,112 @@ export class WorkflowOrchestrator {
       attempt = await this.stepAttempts.update(
         transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
           durationMs: Date.now() - startedAt,
+          outputArtifacts: [artifactReference(artifact)],
+        }),
+        attempt.version,
+      );
+      await this.emit(project.id, 'verification.completed', report.summary, {
+        nodeId: step.id,
+        runId,
+        data: { approved: report.approved, attemptId: attempt.id },
+      });
+      await this.emitArtifactCreated(project.id, artifact, step.id, runId);
+      return artifact;
+    } catch (caught) {
+      const error = await this.classifyFailure(runId, signal, caught);
+      if (attempt.status === 'running') {
+        const cancelled = isCancellation(error, signal);
+        await this.stepAttempts.update(
+          transitionStepAttempt(attempt, cancelled ? 'cancelled' : 'failed', this.clock.now(), {
+            durationMs: Date.now() - startedAt,
+            ...(cancelled ? {} : { error: runError(error) }),
+          }),
+          attempt.version,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async executeBrowserVerifyStep(
+    project: Project,
+    workflow: WorkflowDefinition,
+    step: VerifyStep,
+    runId: string,
+    stepRun: StepRun,
+    policy: ProjectPolicy,
+    signal: AbortSignal,
+    idempotencyKey: string,
+    browserPlan: StoredArtifact,
+    iteration?: number,
+  ): Promise<StoredArtifact> {
+    if (!this.browserVerification) {
+      throw new ExecutionError('Browser verification is not configured');
+    }
+    const timestamp = this.clock.now().toISOString();
+    const planReference = artifactReference(browserPlan);
+    let attempt: StepAttempt = {
+      id: this.ids.next(),
+      runId,
+      stepRunId: stepRun.id,
+      sequence: 1,
+      executorKind: 'verification',
+      provider: 'internal',
+      model: 'browser-verifier',
+      context: {
+        projectId: project.id,
+        workflowId: workflow.id,
+        nodeId: stepRun.nodeId,
+        stepId: step.id,
+        ...(iteration ? { iteration } : {}),
+      },
+      status: 'running',
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      startedAt: timestamp,
+      inputArtifacts: [planReference],
+      outputArtifacts: [],
+    };
+    await this.stepAttempts.create(attempt);
+    const startedAt = Date.now();
+    try {
+      const report = await this.browserVerification.verify(
+        {
+          projectId: project.id,
+          workspacePath: this.workspaces.workspacePath(project.id),
+          runId,
+          plan: browserPlan,
+          allowedOrigins: policy.browserAllowedOrigins ?? [],
+        },
+        signal,
+      );
+      throwIfCancelled(signal, runId);
+      await this.assertExecutionMayContinue(runId, signal);
+      if (report.approved) {
+        const checkpoint = await this.workspaces.checkpoint(
+          project.id,
+          `${step.id}-${runId}-verified`,
+        );
+        await this.updateExecution(runId, (run) => ({
+          ...(run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
+          lastVerifiedCheckpoint: checkpoint,
+        }));
+      }
+      const artifact = await this.artifacts.put({
+        projectId: project.id,
+        name: step.outputArtifact,
+        content: report,
+        createdBy: `verifier:${step.id}`,
+        runId,
+        stepRunId: stepRun.id,
+        attemptId: attempt.id,
+        idempotencyKey,
+      });
+      attempt = await this.stepAttempts.update(
+        transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
+          durationMs: Date.now() - startedAt,
+          previewSessionId: report.previewSession.sessionId,
           outputArtifacts: [artifactReference(artifact)],
         }),
         attempt.version,

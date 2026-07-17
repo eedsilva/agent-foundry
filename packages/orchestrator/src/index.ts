@@ -3,6 +3,7 @@ export * from './task-profiler.js';
 export * from './project-service.js';
 export * from './preview-service.js';
 export * from './conversation-service.js';
+export * from './browser-verification-coordinator.js';
 export * from './workflow-orchestrator.js';
 export * from './worker-loop.js';
 export * from './queue-lease-reaper.js';

@@ -53,6 +53,7 @@ import {
   type WorkspaceManager,
 } from '@agent-foundry/domain';
 import { ProjectService } from '../project-service.js';
+import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
 import { WorkflowOrchestrator } from '../workflow-orchestrator.js';
 
 const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
@@ -746,6 +747,7 @@ export function makeHarness(
     models?: ModelDefinition[];
     workflow?: WorkflowDefinition;
     verification?: () => VerificationReport | Promise<VerificationReport>;
+    browserVerification?: BrowserVerificationCoordinator;
   } = {},
 ) {
   const stores = existing ?? makeStores();
@@ -910,6 +912,7 @@ export function makeHarness(
     ids,
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
     stores.modelOverrides,
+    opts.browserVerification,
   );
   const service = new ProjectService(
     stores.projects,
