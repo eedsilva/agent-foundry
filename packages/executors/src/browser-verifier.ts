@@ -210,7 +210,8 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       settleWork();
     };
     const hasPendingWork = (): boolean =>
-      pendingPages.size !== 0 || [...pendingRequests].some((request) => !ignoredRequests.has(request));
+      pendingPages.size !== 0 ||
+      [...pendingRequests].some((request) => !ignoredRequests.has(request));
     const settleWork = (): void => {
       if (hasPendingWork()) return;
       for (const settle of workSettlers) settle();

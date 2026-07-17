@@ -86,10 +86,7 @@ function validateStepInputs(
   workflowId: string,
 ): void {
   if (step.type === 'verify') {
-    if (
-      step.browserTestPlanArtifact &&
-      !availableArtifacts.has(step.browserTestPlanArtifact)
-    ) {
+    if (step.browserTestPlanArtifact && !availableArtifacts.has(step.browserTestPlanArtifact)) {
       throw new Error(
         `Workflow ${workflowId} step ${step.id} references unavailable artifact ${step.browserTestPlanArtifact}`,
       );

@@ -28,6 +28,7 @@
 ### Task 1: Contracts and workflow validation
 
 **Files:**
+
 - Modify: `packages/contracts/src/preview.ts`
 - Modify: `packages/contracts/src/preview.test.ts`
 - Modify: `packages/contracts/src/policy.ts`
@@ -40,6 +41,7 @@
 - Modify: `packages/persistence/src/workflow-repository.test.ts`
 
 **Interfaces:**
+
 - Consumes: existing `AgentArtifactSchema`, `ArtifactReferenceSchema`, `PreviewSessionReferenceSchema`, `ProjectPolicySchema`, and `VerifyStepSchema` conventions.
 - Produces: `BrowserTestPlanSchema`, `BrowserTestPlanArtifactSchema`, `BrowserVerificationReportSchema`, inferred public types, `ProjectPolicy.browserAllowedOrigins?: string[]`, `VerifyStep.browserTestPlanArtifact?: string`, and `BrowserVerifier.verify({ planArtifact, planContent, session, allowedOrigins }, signal)`.
 
@@ -59,14 +61,19 @@
       id: 'crud',
       title: 'CRUD',
       viewport: { width: 1280, height: 720 },
-      steps: [{
-        id: 'open',
-        title: 'Open app',
-        action: { kind: 'goto', path: '/' },
-        assertions: [{ kind: 'url', path: '/' }],
-      }],
+      steps: [
+        {
+          id: 'open',
+          title: 'Open app',
+          action: { kind: 'goto', path: '/' },
+          assertions: [{ kind: 'url', path: '/' }],
+        },
+      ],
     },
-    decisions: [], assumptions: [], risks: [], nextActions: [],
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    nextActions: [],
   };
   ```
 
@@ -108,7 +115,8 @@
       finalUrl?: string;
       error?: string;
       observations: Array<{
-        kind: 'console-error' | 'request-failed' | 'http-error' | 'uncaught-exception' | 'policy-block';
+        kind:
+          'console-error' | 'request-failed' | 'http-error' | 'uncaught-exception' | 'policy-block';
         message: string;
         url?: string;
         timestamp: string;
@@ -151,6 +159,7 @@
 ### Task 2: Deterministic Playwright executor
 
 **Files:**
+
 - Create: `packages/executors/src/browser-verifier.ts`
 - Create: `packages/executors/src/browser-verifier.test.ts`
 - Modify: `packages/executors/src/index.ts`
@@ -159,6 +168,7 @@
 - Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
+
 - Consumes: Task 1 `BrowserVerifier`, plan/report schemas, artifact reference, and preview-session reference.
 - Produces: exported `PlaywrightBrowserVerifier implements BrowserVerifier`, with no generated-code execution and deterministic redacted JSON evidence.
 
@@ -214,6 +224,7 @@
 ### Task 3: Preview, workflow, and repair integration
 
 **Files:**
+
 - Create: `packages/orchestrator/src/browser-verification-coordinator.ts`
 - Create: `packages/orchestrator/src/browser-verification-coordinator.test.ts`
 - Modify: `packages/orchestrator/src/index.ts`
@@ -226,6 +237,7 @@
 - Modify: `workflows/web-app-v1.yaml`
 
 **Interfaces:**
+
 - Consumes: existing `PreviewService.start/stop`, exact artifact revisions, Task 1 `BrowserVerifier`, Task 2 `PlaywrightBrowserVerifier`, and current quality-loop/idempotency/attempt machinery.
 - Produces: `BrowserVerificationCoordinator.verify(...)`, browser-mode orchestration, and a reproducible browser quality loop in `web-app-v1.yaml`.
 
@@ -292,7 +304,8 @@
       taskKind: repair
       title: Repair browser verification failures
       instructions: Reproduce each failed step from the exact browser plan and report, repair the root cause, and retain the plan unchanged for the rerun.
-      inputArtifacts: [prd, plan.current, architecture.current, browser-test.plan, browser-verification.report]
+      inputArtifacts:
+        [prd, plan.current, architecture.current, browser-test.plan, browser-verification.report]
       outputArtifact: browser-verification.fix
       mutatesWorkspace: true
       harnessTags: [repair, browser, testing]
@@ -327,6 +340,7 @@
 ### Task 4: Documentation and branch verification
 
 **Files:**
+
 - Create: `docs/adr/0019-declarative-browser-verification.md`
 - Modify: `docs/adr/README.md`
 - Modify: `docs/OPERATIONS.md`
@@ -335,6 +349,7 @@
 - Modify: `docs/VALIDATION.md`
 
 **Interfaces:**
+
 - Consumes: the implemented plan/report schemas, policy boundary, runtime flow, focused-test names, and CI installation command.
 - Produces: operator/security/architecture/validation evidence and rollback guidance for issue #32.
 

@@ -414,7 +414,9 @@ describe('PlaywrightBrowserVerifier', () => {
         return;
       }
       response.setHeader('content-type', 'text/html');
-      response.end(`<h1>Fixture</h1><button onclick="fetch('/preview/preview-1/late-failure')">Trigger failure</button>`);
+      response.end(
+        `<h1>Fixture</h1><button onclick="fetch('/preview/preview-1/late-failure')">Trigger failure</button>`,
+      );
     });
 
     const report = await verify(
@@ -568,7 +570,9 @@ describe('PlaywrightBrowserVerifier', () => {
         return;
       }
       response.setHeader('content-type', 'text/html');
-      response.end(`<button onclick="fetch('/preview/preview-1/late-failure')">Trigger failure</button>`);
+      response.end(
+        `<button onclick="fetch('/preview/preview-1/late-failure')">Trigger failure</button>`,
+      );
     });
 
     const report = await verify(
@@ -603,7 +607,9 @@ describe('PlaywrightBrowserVerifier', () => {
         return;
       }
       response.setHeader('content-type', 'text/html');
-      response.end(`<h1>Fixture</h1><script>fetch('/preview/preview-1/late-goto-failure')</script>`);
+      response.end(
+        `<h1>Fixture</h1><script>fetch('/preview/preview-1/late-goto-failure')</script>`,
+      );
     });
 
     const report = await verify(
@@ -627,7 +633,9 @@ describe('PlaywrightBrowserVerifier', () => {
       if (request.url === '/popup-error.js') {
         setTimeout(() => {
           response.setHeader('content-type', 'text/javascript');
-          response.end(`console.error('allowed popup console failure'); throw new Error('allowed popup exception');`);
+          response.end(
+            `console.error('allowed popup console failure'); throw new Error('allowed popup exception');`,
+          );
         }, 50);
         return;
       }
@@ -672,7 +680,9 @@ describe('PlaywrightBrowserVerifier', () => {
     });
     const origin = await serve((_request, response) => {
       response.setHeader('content-type', 'text/html');
-      response.end(`<a href="${forbiddenOrigin}/sentinel" target="_blank" onclick="event.preventDefault()">Stay here</a>`);
+      response.end(
+        `<a href="${forbiddenOrigin}/sentinel" target="_blank" onclick="event.preventDefault()">Stay here</a>`,
+      );
     });
 
     const report = await verify(
@@ -718,7 +728,9 @@ describe('PlaywrightBrowserVerifier', () => {
           id: 'open',
           title: 'Open created resource',
           action: { kind: 'goto', path: '/' },
-          assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading', name: 'Created' } }],
+          assertions: [
+            { kind: 'visible', locator: { kind: 'role', role: 'heading', name: 'Created' } },
+          ],
         },
       ]),
     );
@@ -741,7 +753,9 @@ describe('PlaywrightBrowserVerifier', () => {
           id: 'open',
           title: 'Open polling fixture',
           action: { kind: 'goto', path: '/' },
-          assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading', name: 'Polling' } }],
+          assertions: [
+            { kind: 'visible', locator: { kind: 'role', role: 'heading', name: 'Polling' } },
+          ],
         },
       ]),
     );
@@ -774,18 +788,25 @@ describe('PlaywrightBrowserVerifier', () => {
         ...[0, 1, 2, 3].map((index) => ({
           id: `wait-${index}`,
           title: `Wait for marker ${index}`,
-          action: { kind: 'fill' as const, locator: { kind: 'label' as const, text: 'Name' }, value: String(index) },
+          action: {
+            kind: 'fill' as const,
+            locator: { kind: 'label' as const, text: 'Name' },
+            value: String(index),
+          },
           assertions: [
-            { kind: 'visible' as const, locator: { kind: 'testId' as const, testId: `ready-${index}` } },
+            {
+              kind: 'visible' as const,
+              locator: { kind: 'testId' as const, testId: `ready-${index}` },
+            },
           ],
         })),
       ]),
     );
 
     expect(report.approved).toBe(true);
-    expect(report.steps.flatMap(({ observations }) => observations).map(({ kind }) => kind)).not.toContain(
-      'request-failed',
-    );
+    expect(
+      report.steps.flatMap(({ observations }) => observations).map(({ kind }) => kind),
+    ).not.toContain('request-failed');
   }, 55_000);
 
   it('caps observations at 100', async () => {
