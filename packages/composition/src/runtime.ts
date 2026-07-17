@@ -14,6 +14,7 @@ import {
   FileApprovalDecisionRepository,
   FileApprovalRequestRepository,
   FileArtifactStore,
+  FileConversationRepository,
   FileEventStore,
   FileJobQueue,
   FileMetricsRepository,
@@ -30,6 +31,7 @@ import {
   YamlWorkflowRepository,
 } from '@agent-foundry/persistence';
 import {
+  ConversationService,
   ProjectService,
   QueueLeaseReaper,
   WorkerLoop,
@@ -48,6 +50,7 @@ export interface Runtime {
   approvalRequests: FileApprovalRequestRepository;
   approvalDecisions: FileApprovalDecisionRepository;
   artifacts: FileArtifactStore;
+  conversations: FileConversationRepository;
   events: FileEventStore;
   queue: FileJobQueue;
   metrics: FileMetricsRepository;
@@ -60,6 +63,7 @@ export interface Runtime {
   executors: StaticExecutorRegistry | MockExecutorRegistry;
   verifier: WorkspaceVerifier;
   projectService: ProjectService;
+  conversationService: ConversationService;
   orchestrator: WorkflowOrchestrator;
   worker: WorkerLoop;
   leaseReaper: QueueLeaseReaper;
@@ -83,6 +87,7 @@ export async function createRuntime(
   const approvalRequests = new FileApprovalRequestRepository(config.dataDir);
   const approvalDecisions = new FileApprovalDecisionRepository(config.dataDir);
   const artifacts = new FileArtifactStore(config.dataDir);
+  const conversations = new FileConversationRepository(config.dataDir);
   const events = new FileEventStore(config.dataDir);
   const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
   const metrics = new FileMetricsRepository(config.dataDir);
@@ -176,6 +181,14 @@ export async function createRuntime(
     ids,
     modelOverrides,
   );
+  const conversationService = new ConversationService(
+    projects,
+    runs,
+    artifacts,
+    conversations,
+    clock,
+    ids,
+  );
   const worker = new WorkerLoop(queue, orchestrator, {
     workerId: config.workerId,
     pollIntervalMs: config.workerPollIntervalMs,
@@ -194,6 +207,7 @@ export async function createRuntime(
     approvalRequests,
     approvalDecisions,
     artifacts,
+    conversations,
     events,
     queue,
     metrics,
@@ -206,6 +220,7 @@ export async function createRuntime(
     executors,
     verifier,
     projectService,
+    conversationService,
     orchestrator,
     worker,
     leaseReaper,
