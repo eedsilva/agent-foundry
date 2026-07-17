@@ -577,6 +577,19 @@ export class FakeWorkspaces implements WorkspaceManager {
   head(): Promise<string | null> {
     return Promise.resolve(this.current);
   }
+  diff(_projectId: string, fromRef: string, toRef: string): Promise<string> {
+    return Promise.resolve(`diff --fake ${fromRef}..${toRef}`);
+  }
+  restoreTree(_projectId: string, ref: string): Promise<void> {
+    this.current = ref;
+    this.dirty = true;
+    return Promise.resolve();
+  }
+  readonly branches: string[] = [];
+  createBranch(_projectId: string, ref: string, name: string): Promise<string> {
+    this.branches.push(name);
+    return Promise.resolve(ref);
+  }
   touch(): void {
     this.dirty = true;
   }
@@ -922,6 +935,7 @@ export function makeHarness(
     ids,
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
     stores.modelOverrides,
+    undefined,
     opts.browserVerification,
   );
   const service = new ProjectService(

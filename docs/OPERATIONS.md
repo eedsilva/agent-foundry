@@ -151,6 +151,22 @@ O proxy:
 - Bloqueia redirecionamentos para URLs externas, evitando que um servidor de dev comprometido redirecione através da origem de proxy confiável.
 - Mantém a sessão restrita a loopback: conexões de máquinas remotas são rejeitadas.
 
+## Versionamento de projeto
+
+`ProjectVersion` é um ledger imutável sobre o histórico git do workspace: cada versão aponta para um commit, artifacts (última revisão por nome) e, quando aplicável, a run/step/attempt que a produziu. Hoje uma versão `kind: 'run'` é registrada automaticamente após cada step mutável commitar (`workflow-orchestrator.ts`); quando o domínio de Conversation (issue #36) chegar, versões passam a ser registradas por Operation aprovada em vez de por step — a mesma API de registro, sem mudança de forma.
+
+```bash
+GET  /projects/:projectId/versions
+GET  /projects/:projectId/versions/compare?from=<versionId>&to=<versionId>
+POST /projects/:projectId/versions/:versionId/revert
+POST /projects/:projectId/versions/:versionId/branch
+POST /projects/:projectId/versions/:versionId/protect
+```
+
+`compare` retorna um `git diff` bruto entre os commits das duas versões; não há parser semântico de schema/config, a UI apenas colore linhas por prefixo `+`/`-`. `revert` nunca reescreve nem apaga a versão original: restaura a árvore do commit alvo e cria um novo commit e uma nova versão (`kind: 'revert'`) apontando para o `parentVersionId`. `branch` cria uma branch git independente a partir do commit da versão de origem sem mover HEAD nem a branch atual, e também registra uma nova versão (`kind: 'branch'`). `protect` alterna a flag `protected` de uma versão; ela é a única mutação permitida em um registro já criado — todo outro campo é imutável e rejeitado por `FileProjectVersionRepository.update`.
+
+Não existe hoje nenhum job de limpeza/retenção no codebase — `protected` fica gravado para um job futuro consultar, mas nada ainda apaga versões antigas. Sequências (`sequence`) assumem um único escritor por projeto, a mesma premissa já usada por `StepAttempt.sequence`; não há arbitragem de reserva para múltiplos escritores concorrentes no mesmo projeto.
+
 ### Verificação no navegador
 
 O quality loop `browser-verification` cria `browser-test.plan` (um `AgentArtifact` versionado) e

@@ -109,7 +109,7 @@
     "v03-policy-e2e": {
       "number": 18,
       "title": "[v0.3] Cobrir approval gates e políticas com testes end-to-end",
-      "lastAppliedBodySha256": "c96700cb41ec7d196e27f771da650669de0bc3331cfdb6293fa72738a2679bcb",
+      "lastAppliedBodySha256": "90048d84e3433509e23b698059d5e17cfc3f44eb69315c4a7930d9ee68d604aa",
       "legacyBodySha256": "c7daed0e364810517ad22f6d988ef935d02f58b56a9bf96b939bd4369972c2d8"
     },
     "epic-v0.4": {
@@ -205,7 +205,7 @@
     "v05-preview-ui-e2e": {
       "number": 34,
       "title": "[v0.5] Construir painel de preview responsivo e fechar golden flow end-to-end",
-      "lastAppliedBodySha256": "8b04e6d16974ac6536490749d405e23cc24fd737f49683da9dfbe0f015469125",
+      "lastAppliedBodySha256": "8aedd07f5bb1b140d5577dcf843f638e4c6c42f854842530e3e2d95ea65ab092",
       "legacyBodySha256": "72f4d1d97e6c9df8cc09dbe0a637d8cd9851cb1a29218b414b5892b69f438c90"
     },
     "epic-v0.6": {
@@ -259,7 +259,7 @@
     "v06-knowledge-attachments-shell": {
       "number": 43,
       "title": "[v0.6] Adicionar knowledge files, imagens e shell de três painéis do builder",
-      "lastAppliedBodySha256": "6341627d323a29d6557f606dd425f5bea3223ce4e345305bf41434b733737548",
+      "lastAppliedBodySha256": "f9a9c98a203c038306eb09eeba575c63f7f4d8e45ce24dbd4a2980862e4e8fd5",
       "legacyBodySha256": "12fb0089428c59952cb59f1c436b03788deb71d6c829d321d53343ce6229a383"
     },
     "epic-v0.7": {
@@ -307,7 +307,7 @@
     "v07-threat-model": {
       "number": 51,
       "title": "[v0.7] Publicar threat model e suíte adversarial de isolamento",
-      "lastAppliedBodySha256": "dfad97583380c1f45c3476c8bffb66d075c30f2b651f6d34b442c577c6df6003",
+      "lastAppliedBodySha256": "d643cd64ba2300dfc2058e695b5ee10c75a9581d166faf86d865d114232b7b18",
       "legacyBodySha256": "2e761fd78278719674e756f8ccedef0403e8a397f16acb265de91030db5d0c76"
     },
     "epic-v0.8": {
@@ -355,7 +355,7 @@
     "v08-ops-migration": {
       "number": 59,
       "title": "[v0.8] Entregar backup, restore, retenção e migração do storage local",
-      "lastAppliedBodySha256": "4d93e26a30b72662908b9ba970ef3cdcf17831c81dffa2cbf914daa22fb2b723",
+      "lastAppliedBodySha256": "267301a79ae38ee717e331618944d4500ffeed1a12cd55ad15ecf944f7bfb1fd",
       "legacyBodySha256": "0fcd83fa890f1645345cf0f34f957c32ee28549d86c00ce36609006f471822db"
     },
     "epic-v0.9": {
@@ -403,7 +403,7 @@
     "v09-router-dashboard": {
       "number": 67,
       "title": "[v0.9] Construir dashboard de router e registry de experimentos",
-      "lastAppliedBodySha256": "711ee5c3efb18a72bf5105dffb639f46279f18fd3f6a8b8ac49ed685b23ac8b3",
+      "lastAppliedBodySha256": "abdc5f5743333e9e331c675625220ef3523f44ba60c13a05553f7ca3a9fd1a98",
       "legacyBodySha256": "5ba3d4183a965a0e04ec1b2a300e1e9c2bfcb9151987db651ddcb99260b72324"
     },
     "epic-v0.10": {
@@ -415,7 +415,7 @@
     "v010-environment-provisioner": {
       "number": 69,
       "title": "[v0.10] Implementar runtime Supabase Docker isolado por projeto",
-      "lastAppliedBodySha256": "9b36e7788f46afbb3ce58a2283c13733b947b9b7c1c7696af7af3c1a60a53be9",
+      "lastAppliedBodySha256": "a5ef8b6ed54d0f9388c92a257fff141d401963c96aab84281bbce249ef378d8a",
       "legacyBodySha256": "e9bb99bc7bc0e4df061a62ec76d0a49d20747d32f6b35559dc91e13fb989568b"
     },
     "v010-database": {
@@ -433,7 +433,7 @@
     "v010-storage": {
       "number": 72,
       "title": "[v0.10] Provisionar Supabase Storage local com policies e uploads seguros",
-      "lastAppliedBodySha256": "7cd97965f7aeec7ad33936b48678080fea145660e180e54f49d0610accdd81a4",
+      "lastAppliedBodySha256": "7a7736c6b2536b3287a99d9dad542a99bebcb9a796f4b3847fad7fe419e24452",
       "legacyBodySha256": "e280b2afe953eb8324897cd8740c03264c8b7b598e4c3c78635931f8719689be"
     },
     "v010-functions": {
@@ -457,7 +457,7 @@
     "v010-fullstack-reference": {
       "number": 76,
       "title": "[v0.10] Entregar Issue Radar como app de referência full-stack local",
-      "lastAppliedBodySha256": "6a3e65be1cffc9aeb84be2259c5954dbcffa795d8b6cac17a175b3d84d5bf876",
+      "lastAppliedBodySha256": "9644be3130df8a3cc78f2c676ea8a090d95cb276c875020829cdbb4c41468f1b",
       "legacyBodySha256": "b73a924d673fb035047ded50e03d78a7d6189ec07f19c349904bbe2268df27eb"
     },
     "epic-v0.11": {
@@ -481,7 +481,7 @@
     "v011-github-app": {
       "number": 80,
       "title": "[v0.11] Adicionar conexão GitHub opcional sobre o repositório Git local",
-      "lastAppliedBodySha256": "b52512add81a4a6cc5fb407f29140f03b96f54e1acbe2c828c991777ba19a337",
+      "lastAppliedBodySha256": "7ec5312a3bdd5ec7541b9ce3ced1997313691313f73a953555ef3aaa366999db",
       "legacyBodySha256": "e70f2eae3485d98647564caba96a7f3c549ccb56024b7c84fe3ac19ed8ce82b9"
     },
     "v011-github-sync": {
@@ -505,7 +505,7 @@
     "v011-release-ui-e2e": {
       "number": 84,
       "title": "[v0.11] Construir painel de releases, VPS, backups e GitHub opcional",
-      "lastAppliedBodySha256": "02fc8c66d7b07bca37e3ac596fdc1243ce1c4195901eb15748d158e41435310d",
+      "lastAppliedBodySha256": "acbf289c3b7c18de1b2dd35ce58530126fba49b85a2d3ecf8cff9d2f756b455d",
       "legacyBodySha256": "0e6b12309aca258fe8cc7441818c903d53170813c96945e2749d08a2f2d0763c"
     },
     "epic-v0.12": {
@@ -559,7 +559,7 @@
     "v012-governance-e2e": {
       "number": 93,
       "title": "[v0.12] Entregar audit, abuse controls, data rights e suíte multi-tenant",
-      "lastAppliedBodySha256": "66f57a33680f683dd1a84a0d77ee37f4ed2c336b833a18bf615b30e3cb2674a3",
+      "lastAppliedBodySha256": "4fcc48831e0f4c45f4dad53d64804dfb59fb3923e21528360352bb7807431f2e",
       "legacyBodySha256": "ad575e4e7c1d0b72f0d43d15e6ce5bf79291477dfaff072a3eca2dad002c5981"
     },
     "epic-v1.0": {
@@ -583,7 +583,7 @@
     "v100-security-privacy": {
       "number": 100,
       "title": "[v1.0] Concluir security review e threat assessment do builder pessoal",
-      "lastAppliedBodySha256": "2c757dc744d9ede797223225200510753c4fb328928fb1788df3f69d78acdd00",
+      "lastAppliedBodySha256": "a0abc029bc2ac7a7212f11743da5e2542b0b315614a0dfeffadfd76415f7bc17",
       "legacyBodySha256": "6c4e842fb32c35a68eef3b58531e0567776cce1dd3388c581fb8ecf52fed3eba"
     },
     "epic-foundation": {
@@ -704,7 +704,7 @@
     "v200-abuse-security": {
       "number": 130,
       "title": "[v2.0] Concluir abuse review, pentest e incident readiness",
-      "lastAppliedBodySha256": "f609f5b315fe301c812686300490d443aea9318a59741c639d0fadfbaea5f9e2"
+      "lastAppliedBodySha256": "22492ce5393428dc14199eebce91ad3ee6b3b2c81fdd99dc70ea915276b2457b"
     },
     "v200-billing-reconciliation": {
       "number": 131,
@@ -757,5 +757,5 @@
       "lastAppliedBodySha256": "60ebd5d80116a678b106f80c524c9580bf1a6f4fe544d698b249648fe738f375"
     }
   },
-  "appliedAt": "2026-07-13T20:48:26.635Z"
+  "appliedAt": "2026-07-17T21:55:25.058Z"
 }

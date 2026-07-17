@@ -67,6 +67,7 @@ import {
   transitionWorkflowRun,
   VersionConflictError,
 } from '@agent-foundry/domain';
+import type { ProjectVersionService } from './project-version-service.js';
 import { buildTaskProfile } from './task-profiler.js';
 import {
   approvalGateIdempotencyKey,
@@ -117,6 +118,7 @@ export class WorkflowOrchestrator {
     private readonly ids: IdGenerator,
     private readonly options: OrchestratorOptions,
     private readonly modelOverrides?: ModelOverrideRepository,
+    private readonly versions?: ProjectVersionService,
     private readonly browserVerification?: BrowserVerificationCoordinator,
   ) {}
 
@@ -1708,6 +1710,15 @@ export class WorkflowOrchestrator {
             attemptId: attempt.id,
           },
         });
+        if (commit && this.versions) {
+          await this.versions.recordFromStep({
+            projectId: project.id,
+            runId,
+            stepRunId: stepRun.id,
+            attemptId: attempt.id,
+            commit,
+          });
+        }
         return artifact;
       } catch (caught) {
         const error = await this.classifyFailure(runId, signal, caught);

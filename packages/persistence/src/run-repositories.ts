@@ -168,7 +168,7 @@ export class FileStepAttemptRepository implements StepAttemptRepository {
   }
 }
 
-async function createVersioned<T extends { id: string; version: number }>(
+export async function createVersioned<T extends { id: string; version: number }>(
   path: string,
   value: T,
   schema: ZodType<T>,
@@ -183,17 +183,19 @@ async function createVersioned<T extends { id: string; version: number }>(
   });
 }
 
-async function readVersioned<T>(path: string, schema: ZodType<T>): Promise<T | null> {
+export async function readVersioned<T>(path: string, schema: ZodType<T>): Promise<T | null> {
   const value = await readJsonOrNull<unknown>(path);
   return value === null ? null : schema.parse(value);
 }
 
-async function updateVersioned<T extends { id: string; version: number }>(
+export async function updateVersioned<T extends { id: string; version: number }>(
   path: string,
   value: T,
   expectedVersion: number,
   schema: ZodType<T>,
   entity: string,
+  /** Runs inside the directory lock, right after reading the current record — the only race-free place to guard invariants beyond the version CAS. */
+  validate?: (existing: T, next: T) => void,
 ): Promise<T> {
   if (value.version !== expectedVersion) {
     throw new VersionConflictError(entity, value.id, expectedVersion, value.version);
@@ -204,6 +206,7 @@ async function updateVersioned<T extends { id: string; version: number }>(
     if (existing.version !== expectedVersion) {
       throw new VersionConflictError(entity, value.id, expectedVersion, existing.version);
     }
+    validate?.(existing, value);
     const updated = schema.parse({ ...value, version: expectedVersion + 1 });
     await atomicWriteJson(path, updated);
     return updated;

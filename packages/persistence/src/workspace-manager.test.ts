@@ -162,3 +162,126 @@ describe('FileWorkspaceManager.preserveDraft', () => {
     );
   });
 });
+
+describe('FileWorkspaceManager version primitives', () => {
+  it('diff returns a non-empty diff between two commits with different content and an empty diff comparing a ref to itself', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'work.txt'), 'first\n');
+    const first = await manager.checkpoint(projectId, 'first');
+    await writeFile(join(workspace, 'work.txt'), 'second\n');
+    const second = await manager.checkpoint(projectId, 'second');
+
+    const changed = await manager.diff(projectId, first, second);
+    const unchanged = await manager.diff(projectId, second, second);
+
+    expect(changed).not.toBe('');
+    expect(changed).toContain('work.txt');
+    expect(unchanged).toBe('');
+  });
+
+  it('restoreTree puts old file content back in the working tree without moving HEAD', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'work.txt'), 'old\n');
+    const old = await manager.checkpoint(projectId, 'old');
+    await writeFile(join(workspace, 'work.txt'), 'new\n');
+    const latest = await manager.checkpoint(projectId, 'new');
+
+    await manager.restoreTree(projectId, old);
+
+    expect(await readFile(join(workspace, 'work.txt'), 'utf8')).toBe('old\n');
+    expect(await manager.head(projectId)).toBe(latest);
+  });
+
+  it('restoreTree removes a file that was added after the target ref', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'a.txt'), 'a\n');
+    const old = await manager.checkpoint(projectId, 'a-only');
+    await writeFile(join(workspace, 'b.txt'), 'b\n');
+    await manager.checkpoint(projectId, 'adds-b');
+
+    await manager.restoreTree(projectId, old);
+
+    await expect(readFile(join(workspace, 'b.txt'), 'utf8')).rejects.toThrow();
+    expect(await readFile(join(workspace, 'a.txt'), 'utf8')).toBe('a\n');
+  });
+
+  it('createBranch creates a branch pointing at an old commit without moving the current branch', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'work.txt'), 'old\n');
+    const old = await manager.checkpoint(projectId, 'old');
+    await writeFile(join(workspace, 'work.txt'), 'new\n');
+    const latest = await manager.checkpoint(projectId, 'new');
+
+    const result = await manager.createBranch(projectId, old, 'revert-branch-1');
+
+    expect(result).toBe(old);
+    expect(await manager.head(projectId)).toBe(latest);
+    expect((await execa('git', ['rev-parse', 'revert-branch-1'], { cwd: workspace })).stdout).toBe(
+      old,
+    );
+  });
+
+  it('createBranch accepts a hierarchical name containing a slash', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'work.txt'), 'old\n');
+    const old = await manager.checkpoint(projectId, 'old');
+
+    const result = await manager.createBranch(projectId, old, 'branch/my-feature');
+
+    expect(result).toBe(old);
+    expect(
+      (await execa('git', ['rev-parse', 'branch/my-feature'], { cwd: workspace })).stdout,
+    ).toBe(old);
+  });
+
+  it('createBranch rejects a name that escapes the refs namespace', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'work.txt'), 'old\n');
+    const old = await manager.checkpoint(projectId, 'old');
+
+    await expect(manager.createBranch(projectId, old, '../escape')).rejects.toThrow();
+    await expect(manager.createBranch(projectId, old, 'a/../../escape')).rejects.toThrow();
+  });
+});

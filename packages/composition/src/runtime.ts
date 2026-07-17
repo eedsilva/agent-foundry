@@ -24,6 +24,7 @@ import {
   FilePreviewLifecycleLock,
   FilePreviewLogRepository,
   FilePreviewSessionRepository,
+  FileProjectVersionRepository,
   FileStepAttemptRepository,
   FileStepRunRepository,
   FileWorkflowRunRepository,
@@ -34,6 +35,7 @@ import {
 import {
   ConversationService,
   ProjectService,
+  ProjectVersionService,
   QueueLeaseReaper,
   WorkerLoop,
   WorkflowOrchestrator,
@@ -78,6 +80,8 @@ export interface Runtime {
   previewLogs: FilePreviewLogRepository;
   previewLifecycleLock: FilePreviewLifecycleLock;
   previewService: PreviewService;
+  projectVersions: FileProjectVersionRepository;
+  projectVersionService: ProjectVersionService;
 }
 
 export async function createRuntime(
@@ -146,6 +150,14 @@ export async function createRuntime(
       maxRestarts: config.previewMaxRestarts,
     },
   );
+  const projectVersions = new FileProjectVersionRepository(config.dataDir);
+  const projectVersionService = new ProjectVersionService(
+    projectVersions,
+    workspaces,
+    artifacts,
+    clock,
+    ids,
+  );
   const browserVerifier = new PlaywrightBrowserVerifier();
   const browserVerification =
     config.executorMode === 'mock'
@@ -172,6 +184,7 @@ export async function createRuntime(
     ids,
     { agentTimeoutMs: config.agentTimeoutMs, cancelPollIntervalMs: config.cancelPollIntervalMs },
     modelOverrides,
+    projectVersionService,
     browserVerification,
   );
   const projectService = new ProjectService(
@@ -243,6 +256,8 @@ export async function createRuntime(
     previewLogs,
     previewLifecycleLock,
     previewService,
+    projectVersions,
+    projectVersionService,
   };
 }
 

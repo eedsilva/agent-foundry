@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
 import {
+  BranchVersionRequestSchema,
   CreateProjectRequestSchema,
   CreateModelOverrideRequestSchema,
   CreateAttachmentRequestSchema,
@@ -11,6 +12,7 @@ import {
   DecideApprovalRequestSchema,
   PathSegmentSchema,
   RetryStepRequestSchema,
+  SetVersionProtectedRequestSchema,
 } from '@agent-foundry/contracts';
 import {
   ApprovalConflictError,
@@ -219,6 +221,57 @@ export async function buildApp(
   app.get('/projects/:projectId/export', async (request) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
     return runtime.conversationService.export(projectId);
+  });
+
+  app.get('/projects/:projectId/versions', async (request) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const { limit } = z
+      .object({ limit: z.coerce.number().int().min(1).max(200).default(50) })
+      .parse(request.query);
+    return { versions: await runtime.projectVersionService.list(projectId, limit) };
+  });
+
+  app.get('/projects/:projectId/versions/compare', async (request) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const { from, to } = z
+      .object({ from: PathSegmentSchema, to: PathSegmentSchema })
+      .parse(request.query);
+    return runtime.projectVersionService.compare(projectId, from, to);
+  });
+
+  app.post('/projects/:projectId/versions/:versionId/revert', async (request, reply) => {
+    const { projectId, versionId } = z
+      .object({ projectId: PathSegmentSchema, versionId: PathSegmentSchema })
+      .parse(request.params);
+    const version = await runtime.projectVersionService.revert(projectId, versionId);
+    return reply.status(202).send({ version });
+  });
+
+  app.post('/projects/:projectId/versions/:versionId/branch', async (request, reply) => {
+    const { projectId, versionId } = z
+      .object({ projectId: PathSegmentSchema, versionId: PathSegmentSchema })
+      .parse(request.params);
+    const input = BranchVersionRequestSchema.parse(request.body ?? {});
+    const { branchName, version } = await runtime.projectVersionService.branchFrom(
+      projectId,
+      versionId,
+      input.label,
+    );
+    return reply.status(202).send({ branchName, version });
+  });
+
+  app.post('/projects/:projectId/versions/:versionId/protect', async (request) => {
+    const { projectId, versionId } = z
+      .object({ projectId: PathSegmentSchema, versionId: PathSegmentSchema })
+      .parse(request.params);
+    const input = SetVersionProtectedRequestSchema.parse(request.body);
+    return {
+      version: await runtime.projectVersionService.setProtected(
+        projectId,
+        versionId,
+        input.protected,
+      ),
+    };
   });
 
   app.get('/projects/:projectId/events/stream', async (request, reply) => {

@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0020 Declarative browser verification behind the domain port](0020-declarative-browser-verification.md).
+Latest: [0021 Project version ledger](0021-project-version-ledger.md).

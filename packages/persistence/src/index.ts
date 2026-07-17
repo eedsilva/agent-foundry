@@ -12,3 +12,4 @@ export * from './approval-repositories.js';
 export * from './model-override-repository.js';
 export * from './preview-repositories.js';
 export * from './conversation-repository.js';
+export * from './project-version-repository.js';

@@ -7,6 +7,7 @@ import type {
   DecideApprovalResponse,
   Project,
   ProjectDetailResponse,
+  ProjectVersion,
   ResumeBlockedResponse,
   RetryPlanResponse,
   RetryStepRequest,
@@ -165,4 +166,56 @@ export function getArtifact(
 export async function listWorkflows(): Promise<WorkflowDefinition[]> {
   const response = await api<{ workflows: WorkflowDefinition[] }>('/workflows');
   return response.workflows;
+}
+
+export async function listVersions(projectId: string, limit?: number): Promise<ProjectVersion[]> {
+  const query = limit ? `?limit=${limit}` : '';
+  const response = await api<{ versions: ProjectVersion[] }>(
+    `/projects/${encodeURIComponent(projectId)}/versions${query}`,
+  );
+  return response.versions;
+}
+
+export function compareVersions(
+  projectId: string,
+  from: string,
+  to: string,
+): Promise<{ diff: string }> {
+  return api<{ diff: string }>(
+    `/projects/${encodeURIComponent(projectId)}/versions/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+  );
+}
+
+export async function revertToVersion(
+  projectId: string,
+  versionId: string,
+): Promise<ProjectVersion> {
+  const response = await api<{ version: ProjectVersion }>(
+    `/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}/revert`,
+    { method: 'POST' },
+  );
+  return response.version;
+}
+
+export function branchFromVersion(
+  projectId: string,
+  versionId: string,
+  label?: string,
+): Promise<{ branchName: string; version: ProjectVersion }> {
+  return api<{ branchName: string; version: ProjectVersion }>(
+    `/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}/branch`,
+    { method: 'POST', body: JSON.stringify({ label }) },
+  );
+}
+
+export async function setVersionProtected(
+  projectId: string,
+  versionId: string,
+  protectedFlag: boolean,
+): Promise<ProjectVersion> {
+  const response = await api<{ version: ProjectVersion }>(
+    `/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}/protect`,
+    { method: 'POST', body: JSON.stringify({ protected: protectedFlag }) },
+  );
+  return response.version;
 }

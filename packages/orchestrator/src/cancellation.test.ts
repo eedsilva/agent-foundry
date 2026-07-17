@@ -360,6 +360,15 @@ class FakeWorkspaces implements WorkspaceManager {
   head(): Promise<string | null> {
     return Promise.resolve('initial-head');
   }
+  diff(_projectId: string, fromRef: string, toRef: string): Promise<string> {
+    return Promise.resolve(`diff --fake ${fromRef}..${toRef}`);
+  }
+  restoreTree(): Promise<void> {
+    return Promise.resolve();
+  }
+  createBranch(_projectId: string, ref: string): Promise<string> {
+    return Promise.resolve(ref);
+  }
 }
 
 type ExecutorBehavior = 'instant' | 'reject-on-abort' | 'resolve-on-abort';

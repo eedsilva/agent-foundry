@@ -1183,7 +1183,9 @@
             "model:claude-sonnet-5",
             "model:gpt-5.6-sol"
           ],
-          "tests": [],
+          "tests": [
+            "E2E cobre pausa em arquitetura, request changes, decisões concorrentes, violação de policy e ceiling."
+          ],
           "outOfScope": [],
           "dependsOn": ["v03-approval-api-ui", "v03-project-policies", "v03-budgets-overrides"]
         }
@@ -1876,7 +1878,9 @@
             "model:claude-sonnet-5",
             "model:gpt-5.6-sol"
           ],
-          "tests": [],
+          "tests": [
+            "E2E do golden flow: change request, preview, viewports, browser tests, aprovação de diff e axe."
+          ],
           "outOfScope": [],
           "dependsOn": ["v05-preview-artifacts"]
         }
@@ -2148,7 +2152,9 @@
             "model:claude-sonnet-5",
             "model:gpt-5.6-sol"
           ],
-          "tests": [],
+          "tests": [
+            "E2E do golden flow: anexar referência, planejar, construir, editar visualmente, reverter e reconstruir."
+          ],
           "outOfScope": [],
           "dependsOn": ["v06-chat-operations", "v06-chat-streaming", "v06-visual-patches"]
         }
@@ -2181,8 +2187,14 @@
           "key": "v010-environment-provisioner",
           "title": "Implementar runtime Supabase Docker isolado por projeto",
           "summary": "Cada app greenfield precisa de um Compose project local reproduzível, isolado e controlável pelo builder.",
-          "touchpoints": ["packages/contracts", "packages/domain", "packages/orchestrator"],
+          "touchpoints": [
+            "packages/contracts",
+            "packages/domain",
+            "packages/orchestrator",
+            "packages/platform"
+          ],
           "acceptance": [
+            "Cria o package packages/platform com dependências declaradas no architecture check; os demais tasks de v0.10 e v0.11 constroem sobre ele.",
             "AppEnvironment registra Compose name, ports, network, volumes, endpoints e health.",
             "Lifecycle suporta initialize, start, stop, inspect, migrate, seed, health e cleanup.",
             "Dois projetos não compartilham rede, database, auth secrets ou volumes.",
@@ -2273,7 +2285,7 @@
           ],
           "tests": ["Upload autorizado, oversized, tipo proibido e acesso cruzado."],
           "outOfScope": [],
-          "dependsOn": []
+          "dependsOn": ["v010-environment-provisioner"]
         },
         {
           "key": "v010-functions",
@@ -2376,7 +2388,9 @@
             "model:claude-haiku-4-5",
             "model:gpt-5.6-sol"
           ],
-          "tests": [],
+          "tests": [
+            "Golden journey do Issue Radar: chat, auth, CRUD, filtros, attachment, RLS negativa e export documentado."
+          ],
           "outOfScope": [],
           "dependsOn": [
             "v010-database",
@@ -2472,6 +2486,7 @@
           "summary": "GitHub adiciona remote, mas nunca vira requisito ou source of truth do Personal v1.",
           "touchpoints": ["packages/integrations", "apps/api", "apps/web", "packages/platform"],
           "acceptance": [
+            "Cria o package packages/integrations com dependências declaradas no architecture check quando ainda não existir.",
             "Projeto funciona integralmente sem GitHub ou internet.",
             "Usuário pode adicionar ou remover remote GitHub autenticado localmente.",
             "Credencial não entra em prompt, artifact, URL persistida ou env do agente.",
@@ -2601,7 +2616,9 @@
             "model:claude-haiku-4-5",
             "model:gpt-5.6-sol"
           ],
-          "tests": [],
+          "tests": [
+            "E2E do golden flow: publicar Issue Radar, domínio opcional com TLS, backup verificado no Mac e app rollback."
+          ],
           "outOfScope": [],
           "dependsOn": ["v011-publish-domains", "v011-github-sync", "v011-reference-connectors"]
         }
@@ -2742,7 +2759,9 @@
             "model:claude-fable-5",
             "model:gpt-5.6-sol"
           ],
-          "tests": [],
+          "tests": [
+            "Checklist do threat model com evidência por item e status de cada finding critical/high."
+          ],
           "outOfScope": [
             "Pentest de tenant isolation, abuse controls e vulnerability disclosure pública — Hosted v2."
           ],
@@ -2953,7 +2972,9 @@
             "model:claude-fable-5",
             "model:gpt-5.6-sol"
           ],
-          "tests": [],
+          "tests": [
+            "Suíte adversarial executa cada cenário do threat model e registra evidência e riscos residuais."
+          ],
           "outOfScope": [],
           "dependsOn": ["v07-network-policy", "v07-secret-broker", "v07-cache-supply-chain"]
         }
@@ -3158,7 +3179,9 @@
             "model:claude-haiku-4-5",
             "model:gpt-5.6-sol"
           ],
-          "tests": [],
+          "tests": [
+            "Import de data/ real com relatório idempotente, restore drill do runbook, chaos e load baseline."
+          ],
           "outOfScope": [],
           "dependsOn": [
             "v08-postgres",
@@ -3398,7 +3421,9 @@
             "model:claude-fable-5",
             "model:gpt-5.6-sol"
           ],
-          "tests": [],
+          "tests": [
+            "Suíte multi-tenant E2E com isolamento negativo, abuse controls, export/delete e offboarding."
+          ],
           "outOfScope": [],
           "dependsOn": [
             "v012-tenant-isolation",
@@ -3477,7 +3502,7 @@
           "key": "v200-abuse-security",
           "title": "Concluir abuse review, pentest e incident readiness",
           "summary": "Um coding agent público combina execução de código, secrets e entrada hostil. Launch sem abuse review e resposta a incidente seria negligência.",
-          "touchpoints": ["docs/security", "runbooks", "packages/sandbox"],
+          "touchpoints": ["docs/security", "runbooks", "packages/executors"],
           "acceptance": [
             "Threat model e abuse cases estão atualizados.",
             "Pentest externo ou independente foi concluído.",
@@ -3794,7 +3819,9 @@
             "model:claude-sonnet-5",
             "model:gpt-5.6-sol"
           ],
-          "tests": [],
+          "tests": [
+            "E2E do dashboard com filtros, experimento registrado com stop rule e regression gate contra baseline."
+          ],
           "outOfScope": [],
           "dependsOn": ["v09-benchmark-runner", "v09-confidence-routing", "v09-exploration-health"]
         }
