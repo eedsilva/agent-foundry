@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -93,7 +93,8 @@ describe('withRecoverableDirectoryLock', () => {
     let acquired = false;
 
     const operation = withRecoverableDirectoryLock(
-      lockPath,
+      root,
+      ['resource.lock'],
       async () => {
         acquired = true;
       },
@@ -112,7 +113,7 @@ describe('withRecoverableDirectoryLock', () => {
   it('emits valid owner metadata while holding the lock', async () => {
     const root = await temporaryDirectory();
     const lockPath = join(root, 'resource.lock');
-    await withRecoverableDirectoryLock(lockPath, async () => {
+    await withRecoverableDirectoryLock(root, ['resource.lock'], async () => {
       const owner = JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')) as Record<
         string,
         unknown
@@ -124,5 +125,45 @@ describe('withRecoverableDirectoryLock', () => {
       expect(new Date(owner.acquiredAt as string).toISOString()).toBe(owner.acquiredAt);
     });
     await expect(stat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each(['..', 'nested/path', '/absolute', 'nested\\path', ''])(
+    'rejects unsafe lock segment %j without touching the filesystem',
+    async (segment) => {
+      const root = await temporaryDirectory();
+      const before = await readdir(root);
+      let called = false;
+
+      await expect(
+        withRecoverableDirectoryLock(root, ['locks', segment], async () => {
+          called = true;
+        }),
+      ).rejects.toThrow('Unsafe path segment');
+
+      expect(called).toBe(false);
+      expect(await readdir(root)).toEqual(before);
+    },
+  );
+
+  it('cannot escape the trusted root through traversal segments', async () => {
+    const container = await temporaryDirectory();
+    const root = join(container, 'trusted');
+    const escapedPath = join(container, 'escaped.lock');
+    await mkdir(root);
+
+    await expect(
+      withRecoverableDirectoryLock(root, ['..', 'escaped.lock'], async () => undefined),
+    ).rejects.toThrow('Unsafe path segment');
+
+    await expect(stat(escapedPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it('rejects an empty lock path', async () => {
+    const root = await temporaryDirectory();
+    await expect(withRecoverableDirectoryLock(root, [], async () => undefined)).rejects.toThrow(
+      'A lock path segment is required',
+    );
+    expect(await readdir(root)).toEqual([]);
   });
 });

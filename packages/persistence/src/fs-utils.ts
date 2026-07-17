@@ -11,7 +11,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import YAML from 'yaml';
 import { NotFoundError } from '@agent-foundry/domain';
 
@@ -142,10 +142,16 @@ export function sha256(value: string): string {
 }
 
 export function safeSegment(value: string): string {
-  if (value === '.' || value === '..' || !/^[a-zA-Z0-9._-]+$/.test(value)) {
+  const segment = basename(value);
+  if (
+    segment !== value ||
+    segment === '.' ||
+    segment === '..' ||
+    !/^[a-zA-Z0-9._-]+$/.test(segment)
+  ) {
     throw new Error(`Unsafe path segment: ${value}`);
   }
-  return value;
+  return segment;
 }
 
 export async function withDirectoryLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
@@ -182,11 +188,18 @@ export interface DirectoryLockOptions {
   ownerWriteGraceMs?: number;
 }
 
+/**
+ * Runs an operation while holding a recoverable lock below a trusted storage root.
+ * Every relative path component is validated here so callers cannot supply a full path.
+ */
 export async function withRecoverableDirectoryLock<T>(
-  lockPath: string,
+  trustedRoot: string,
+  lockSegments: readonly string[],
   fn: () => Promise<T>,
   options: DirectoryLockOptions = {},
 ): Promise<T> {
+  if (lockSegments.length === 0) throw new Error('A lock path segment is required');
+  const lockPath = join(trustedRoot, ...lockSegments.map(safeSegment));
   await ensureDir(dirname(lockPath));
   const ownerPath = join(lockPath, 'owner.json');
   const owner: DirectoryLockOwner = {

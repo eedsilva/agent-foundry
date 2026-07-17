@@ -53,12 +53,16 @@ export class FilePreviewLifecycleLock implements PreviewLifecycleLock {
   }
 
   async withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-    const lockPath = join(this.dataDir, 'previews', safeSegment(sessionId), '.lifecycle.lock');
-    return withRecoverableDirectoryLock(lockPath, operation, {
-      acquisitionTimeoutMs: this.acquisitionTimeoutMs,
-      pollIntervalMs: this.pollIntervalMs,
-      ownerWriteGraceMs: this.ownerWriteGraceMs,
-    });
+    return withRecoverableDirectoryLock(
+      this.dataDir,
+      ['previews', sessionId, '.lifecycle.lock'],
+      operation,
+      {
+        acquisitionTimeoutMs: this.acquisitionTimeoutMs,
+        pollIntervalMs: this.pollIntervalMs,
+        ownerWriteGraceMs: this.ownerWriteGraceMs,
+      },
+    );
   }
 }
 
@@ -71,12 +75,16 @@ export class FilePreviewSessionRepository implements PreviewSessionRepository {
       throw new Error(`New preview-session ${parsed.session.id} must start at version 1`);
     }
     const path = this.pathFor(parsed.session.id);
-    await withRecoverableDirectoryLock(`${path}.lock`, async () => {
-      if ((await readJsonOrNull(path)) !== null) {
-        throw new Error(`preview-session ${parsed.session.id} already exists`);
-      }
-      await atomicWriteJson(path, parsed);
-    });
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['previews', parsed.session.id, 'session.json.lock'],
+      async () => {
+        if ((await readJsonOrNull(path)) !== null) {
+          throw new Error(`preview-session ${parsed.session.id} already exists`);
+        }
+        await atomicWriteJson(path, parsed);
+      },
+    );
   }
 
   async get(sessionId: string): Promise<PreviewSessionRecord | null> {
@@ -109,23 +117,27 @@ export class FilePreviewSessionRepository implements PreviewSessionRepository {
       );
     }
     const path = this.pathFor(session.id);
-    return withRecoverableDirectoryLock(`${path}.lock`, async () => {
-      const current = await this.get(session.id);
-      if (!current) throw new Error(`preview-session ${session.id} does not exist`);
-      if (current.session.version !== expectedVersion) {
-        throw new VersionConflictError(
-          'preview-session',
-          session.id,
-          expectedVersion,
-          current.session.version,
+    return withRecoverableDirectoryLock(
+      this.dataDir,
+      ['previews', session.id, 'session.json.lock'],
+      async () => {
+        const current = await this.get(session.id);
+        if (!current) throw new Error(`preview-session ${session.id} does not exist`);
+        if (current.session.version !== expectedVersion) {
+          throw new VersionConflictError(
+            'preview-session',
+            session.id,
+            expectedVersion,
+            current.session.version,
+          );
+        }
+        const updated = sanitizeSession(
+          PreviewSessionSchema.parse({ ...session, version: expectedVersion + 1 }),
         );
-      }
-      const updated = sanitizeSession(
-        PreviewSessionSchema.parse({ ...session, version: expectedVersion + 1 }),
-      );
-      await atomicWriteJson(path, { session: updated, tokenDigest: current.tokenDigest });
-      return updated;
-    });
+        await atomicWriteJson(path, { session: updated, tokenDigest: current.tokenDigest });
+        return updated;
+      },
+    );
   }
 
   private pathFor(sessionId: string): string {
@@ -144,21 +156,25 @@ export class FilePreviewLogRepository implements PreviewLogRepository {
     entry: Omit<PreviewLogEntry, 'cursor'>,
   ): Promise<PreviewLogEntry> {
     const path = this.pathFor(sessionId);
-    return withRecoverableDirectoryLock(`${path}.lock`, async () => {
-      const file = await this.read(path);
-      const parsed = PreviewLogEntrySchema.parse({
-        ...entry,
-        message: redactString(entry.message),
-        cursor: file.nextCursor + 1,
-      });
-      file.nextCursor = parsed.cursor;
-      file.entries.push(parsed);
-      while (file.entries.length > 0 && encodedBytes(file) > this.maxBytes) {
-        file.truncatedThroughCursor = file.entries.shift()!.cursor;
-      }
-      await atomicWriteJson(path, file);
-      return parsed;
-    });
+    return withRecoverableDirectoryLock(
+      this.dataDir,
+      ['previews', sessionId, 'logs.json.lock'],
+      async () => {
+        const file = await this.read(path);
+        const parsed = PreviewLogEntrySchema.parse({
+          ...entry,
+          message: redactString(entry.message),
+          cursor: file.nextCursor + 1,
+        });
+        file.nextCursor = parsed.cursor;
+        file.entries.push(parsed);
+        while (file.entries.length > 0 && encodedBytes(file) > this.maxBytes) {
+          file.truncatedThroughCursor = file.entries.shift()!.cursor;
+        }
+        await atomicWriteJson(path, file);
+        return parsed;
+      },
+    );
   }
 
   async list(
