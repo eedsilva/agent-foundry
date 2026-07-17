@@ -65,6 +65,22 @@ describe('conversation aggregate contracts (#36)', () => {
     expect(() => AttachmentSchema.parse({ ...attachment, sizeBytes: -1 })).toThrow();
   });
 
+  it('rejects attachment access for a different project', () => {
+    expect(() =>
+      AttachmentSchema.parse({
+        id: 'attachment-1',
+        projectId: 'project-1',
+        conversationId: 'conversation-1',
+        kind: 'file',
+        mediaType: 'text/plain',
+        sha256: 'a'.repeat(64),
+        sizeBytes: 42,
+        access: { scope: 'project', projectId: 'project-2' },
+        createdAt,
+      }),
+    ).toThrow();
+  });
+
   it('parses every operation kind and optional aggregate links', () => {
     const operation = {
       id: 'operation-1',

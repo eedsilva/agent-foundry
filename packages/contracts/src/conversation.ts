@@ -50,7 +50,11 @@ export const AttachmentSchema = z
     access: z.object({ scope: z.literal('project'), projectId: PathSegmentSchema }).strict(),
     createdAt: z.string().datetime(),
   })
-  .strict();
+  .strict()
+  .refine((attachment) => attachment.access.projectId === attachment.projectId, {
+    message: 'Must match attachment projectId',
+    path: ['access', 'projectId'],
+  });
 export type Attachment = z.infer<typeof AttachmentSchema>;
 
 export const OperationKindSchema = z.enum(['plan', 'build', 'explain', 'repair', 'visual-edit']);

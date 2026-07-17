@@ -26,13 +26,15 @@ import {
   WorkflowRunSchema,
 } from './run.js';
 
-export const CreateAttachmentRequestSchema = AttachmentSchema.pick({
-  kind: true,
-  name: true,
-  mediaType: true,
-  sha256: true,
-  sizeBytes: true,
-});
+export const CreateAttachmentRequestSchema = z
+  .object({
+    kind: AttachmentSchema.shape.kind,
+    name: AttachmentSchema.shape.name,
+    mediaType: AttachmentSchema.shape.mediaType,
+    sha256: AttachmentSchema.shape.sha256,
+    sizeBytes: AttachmentSchema.shape.sizeBytes,
+  })
+  .strict();
 export type CreateAttachmentRequest = z.infer<typeof CreateAttachmentRequestSchema>;
 
 export const CreateAttachmentResponseSchema = z.object({ attachment: AttachmentSchema }).strict();
