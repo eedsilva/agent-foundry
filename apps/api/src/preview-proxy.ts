@@ -166,10 +166,22 @@ async function handleUpgrade(
     if (head.length) upstreamSocket.write(head);
     upstreamSocket.pipe(socket);
     socket.pipe(upstreamSocket);
-    // Post-upgrade the live pair is socket<->upstreamSocket; tear the other down
-    // if either errors so a client disconnect can't leak the upstream socket.
-    upstreamSocket.on('error', () => socket.destroy());
-    socket.on('error', () => upstreamSocket.destroy());
+    // Post-upgrade the live pair is socket<->upstreamSocket; tear the other
+    // down whenever either side goes away, for ANY reason. A clean client
+    // disconnect only fires 'end' (a half-close FIN) on this socket, not
+    // 'close'/'error' — listening only for those left the writable side fed
+    // by upstreamSocket.pipe(socket) open forever, so upstreamSocket (and so
+    // the whole HTTP server) never fully closed, hanging server.close().
+    const teardown = (): void => {
+      upstreamSocket.destroy();
+      socket.destroy();
+    };
+    upstreamSocket.once('error', teardown);
+    upstreamSocket.once('close', teardown);
+    upstreamSocket.once('end', teardown);
+    socket.once('error', teardown);
+    socket.once('close', teardown);
+    socket.once('end', teardown);
   });
   upstreamReq.on('response', (upstreamRes) => {
     // Upstream answered a normal response instead of upgrading; relay it
