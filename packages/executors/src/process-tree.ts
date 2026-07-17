@@ -19,18 +19,29 @@ export async function terminateProcessTree(
   subprocess: ProcessTree,
   graceMs = 2_000,
 ): Promise<void> {
+  let settled = false;
+  void Promise.resolve(subprocess).then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
   killProcessTree(subprocess, 'SIGTERM');
-  let graceTimer: NodeJS.Timeout | undefined;
-  const exited = await Promise.race([
-    Promise.resolve(subprocess).then(
-      () => true,
-      () => true,
-    ),
-    new Promise<false>((resolve) => {
-      graceTimer = setTimeout(() => resolve(false), graceMs);
-      graceTimer.unref?.();
-    }),
-  ]);
-  if (graceTimer) clearTimeout(graceTimer);
-  if (!exited) killProcessTree(subprocess, 'SIGKILL');
+  const deadline = Date.now() + graceMs;
+  while (processTreeAlive(subprocess, settled) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(25, deadline - Date.now())));
+  }
+  if (processTreeAlive(subprocess, settled)) killProcessTree(subprocess, 'SIGKILL');
+}
+
+function processTreeAlive(subprocess: ProcessTree, settled: boolean): boolean {
+  if (subprocess.pid === undefined || process.platform === 'win32') return !settled;
+  try {
+    process.kill(-subprocess.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }

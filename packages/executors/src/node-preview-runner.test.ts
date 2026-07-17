@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { connect, createServer } from 'node:net';
@@ -59,6 +59,54 @@ class InMemoryPreviewLogRepository implements PreviewLogRepository {
         nextCursor: entries.at(-1)?.cursor ?? options.cursor ?? 0,
       }),
     );
+  }
+}
+
+class RejectFirstLogRepository implements PreviewLogRepository {
+  private readonly persisted = new InMemoryPreviewLogRepository();
+  private rejected = false;
+
+  append(sessionId: string, entry: Omit<PreviewLogEntry, 'cursor'>): Promise<PreviewLogEntry> {
+    if (!this.rejected) {
+      this.rejected = true;
+      return Promise.reject(new Error('log persistence unavailable'));
+    }
+    return this.persisted.append(sessionId, entry);
+  }
+
+  list(sessionId: string, options?: { cursor?: number; limit?: number }): Promise<PreviewLogPage> {
+    return this.persisted.list(sessionId, options);
+  }
+}
+
+class BlockingTailLogRepository implements PreviewLogRepository {
+  private readonly persisted = new InMemoryPreviewLogRepository();
+  private releaseTail!: () => void;
+  private tailStartedResolve!: () => void;
+  readonly tailStarted = new Promise<void>((resolve) => {
+    this.tailStartedResolve = resolve;
+  });
+  private readonly tailReleased = new Promise<void>((resolve) => {
+    this.releaseTail = resolve;
+  });
+
+  async append(
+    sessionId: string,
+    entry: Omit<PreviewLogEntry, 'cursor'>,
+  ): Promise<PreviewLogEntry> {
+    if (entry.message === 'fixture stopping') {
+      this.tailStartedResolve();
+      await this.tailReleased;
+    }
+    return this.persisted.append(sessionId, entry);
+  }
+
+  list(sessionId: string, options?: { cursor?: number; limit?: number }): Promise<PreviewLogPage> {
+    return this.persisted.list(sessionId, options);
+  }
+
+  release(): void {
+    this.releaseTail();
   }
 }
 
@@ -197,6 +245,122 @@ describe('NodePreviewRunner', () => {
     expect(page.entries.every((entry) => entry.timestamp.length > 0)).toBe(true);
     await runner.stop(session);
   }, 10_000);
+
+  it('drops one failed log append without retaining raw output or breaking later appends', async () => {
+    const repository = new RejectFirstLogRepository();
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000, logRepository: repository });
+    let session = await newSession('sess-log-failure');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
+      },
+    };
+    session = await runner.start(session);
+    try {
+      const page = await runner.logs(session);
+      expect(page.entries.length).toBeGreaterThan(0);
+      expect(page.entries.some((entry) => entry.message === 'fixture stderr')).toBe(true);
+      expect(page.entries.some((entry) => entry.message.includes('VITE fixture'))).toBe(false);
+    } finally {
+      await runner.stop(session);
+    }
+  }, 10_000);
+
+  it('drains pending tail log writes before stop deletes process tracking', async () => {
+    const repository = new BlockingTailLogRepository();
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000, logRepository: repository });
+    let session = await newSession('sess-tail-drain');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
+      },
+    };
+    session = await runner.start(session);
+    let stopped = false;
+    const stop = runner.stop(session).then((result) => {
+      stopped = true;
+      return result;
+    });
+
+    try {
+      await repository.tailStarted;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(stopped).toBe(false);
+    } finally {
+      repository.release();
+      await stop;
+    }
+    await expect(runner.logs(session)).resolves.toMatchObject({
+      entries: expect.arrayContaining([expect.objectContaining({ message: 'fixture stopping' })]),
+    });
+  }, 10_000);
+
+  it('closes a successful HTTP probe response whose body never ends', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'preview-http-probe-'));
+    temporaryDirectories.push(directory);
+    const responseCloseFile = join(directory, 'response-closed');
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000, healthPath: '/never-ending' });
+    let session = await newSession('sess-http-close');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: {
+          ok: true,
+          command: 'node',
+          args: [FIXTURE_SCRIPT, `--response-close-file=${responseCloseFile}`],
+        },
+      },
+    };
+    session = await runner.start(session);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await expect(access(responseCloseFile)).resolves.toBeUndefined();
+    } finally {
+      await runner.stop(session);
+    }
+  }, 10_000);
+
+  it.runIf(process.platform !== 'win32')(
+    'cleans a crashed first attempt process group before the single respawn',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'preview-first-attempt-'));
+      temporaryDirectories.push(directory);
+      const markerFile = join(directory, 'first-exited');
+      const pidFile = join(directory, 'pids');
+      const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
+      let session = await newSession('sess-first-attempt');
+      session = await runner.prepare(session);
+      session = {
+        ...session,
+        commandPlan: {
+          ...session.commandPlan!,
+          dev: {
+            ok: true,
+            command: 'node',
+            args: [FIXTURE_SCRIPT, `--exit-first=${markerFile}`, `--append-grandchild=${pidFile}`],
+          },
+        },
+      };
+      session = await runner.start(session);
+      const pids = (await readFile(pidFile, 'utf8')).trim().split(/\s+/).map(Number);
+      strayPids.push(...pids);
+      expect(pids).toHaveLength(4);
+
+      await runner.stop(session);
+
+      await vi.waitFor(() => expect(pids.every((pid) => !isAlive(pid))).toBe(true));
+      strayPids.splice(0);
+    },
+    10_000,
+  );
 
   it.runIf(process.platform !== 'win32')(
     'SIGTERMs then SIGKILLs the complete preview process tree',

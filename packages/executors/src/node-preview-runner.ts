@@ -145,6 +145,7 @@ export class NodePreviewRunner implements PreviewRunner {
     if (!entry) return;
     if (entry.exited) killProcessTree(entry.child, 'SIGKILL');
     else await terminateProcessTree(entry.child);
+    await entry.logWrites;
     this.processes.delete(sessionId);
   }
 
@@ -160,8 +161,12 @@ export class NodePreviewRunner implements PreviewRunner {
       });
     }
     let attempt = await this.attemptSpawn(session, dev);
-    if (attempt.crashedImmediately) attempt = await this.attemptSpawn(session, dev); // single retry on bind conflict
     if (attempt.crashedImmediately) {
+      await this.killTracked(session.id);
+      attempt = await this.attemptSpawn(session, dev); // single retry on bind conflict
+    }
+    if (attempt.crashedImmediately) {
+      await this.killTracked(session.id);
       return transitionPreviewSession(session, 'failed', this.clock.now(), {
         error: {
           name: 'PreviewStartError',
@@ -211,12 +216,17 @@ export class NodePreviewRunner implements PreviewRunner {
       (data: Buffer): void => {
         const text = data.toString('utf8');
         detectedPort ??= detectPortFromOutput(text);
-        if (!this.logRepository) return;
+        const repository = this.logRepository;
+        if (!repository) return;
         const timestamp = this.clock.now().toISOString();
         const lines = text.split('\n').filter(Boolean);
         entry.logWrites = entry.logWrites.then(async () => {
           for (const message of lines) {
-            await this.logRepository!.append(session.id, { stream, message, timestamp });
+            try {
+              await repository.append(session.id, { stream, message, timestamp });
+            } catch {
+              // The repository is the redaction boundary; drop failed raw output instead of buffering it.
+            }
           }
         });
       };
@@ -240,12 +250,12 @@ export class NodePreviewRunner implements PreviewRunner {
 async function httpProbe(port: number, path: string): Promise<boolean> {
   return new Promise((resolvePromise) => {
     const request = get({ port, host: '127.0.0.1', path }, (response) => {
-      response.resume();
-      resolvePromise(
+      const healthy =
         response.statusCode !== undefined &&
-          response.statusCode >= 200 &&
-          response.statusCode < 300,
-      );
+        response.statusCode >= 200 &&
+        response.statusCode < 300;
+      response.destroy();
+      resolvePromise(healthy);
     });
     request.once('error', () => resolvePromise(false));
     request.setTimeout(500, () => {

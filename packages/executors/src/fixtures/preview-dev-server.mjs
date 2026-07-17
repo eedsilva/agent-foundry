@@ -4,11 +4,18 @@
 // upgrades on /ws so proxy tests can prove bytes flow both ways.
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 
 const port = Number(process.env.PORT ?? 0);
 const args = new Map(process.argv.slice(2).map((arg) => arg.split('=', 2)));
 const server = createServer((req, res) => {
+  if (req.url === '/never-ending') {
+    const responseCloseFile = args.get('--response-close-file');
+    if (responseCloseFile) res.once('close', () => writeFileSync(responseCloseFile, 'closed'));
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.write('ok');
+    return;
+  }
   if (req.url === '/not-ready') {
     res.writeHead(503, { 'content-type': 'text/plain' });
     res.end('not ready');
@@ -52,9 +59,20 @@ server.listen(port, '127.0.0.1', () => {
   if (args.has('--exit-after-ready')) setTimeout(() => process.exit(1), 100);
 });
 const pidFile = args.get('--spawn-grandchild');
-if (pidFile) {
+const appendPidFile = args.get('--append-grandchild');
+if (pidFile || appendPidFile) {
   const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);']);
-  writeFileSync(pidFile, `${process.pid} ${grandchild.pid}`);
+  if (pidFile) writeFileSync(pidFile, `${process.pid} ${grandchild.pid}`);
+  if (appendPidFile) appendFileSync(appendPidFile, `${process.pid} ${grandchild.pid}\n`);
+}
+const exitFirstMarker = args.get('--exit-first');
+if (exitFirstMarker && !existsSync(exitFirstMarker)) {
+  writeFileSync(exitFirstMarker, 'exited');
+  setImmediate(() => process.exit(1));
 }
 if (args.has('--ignore-sigterm')) process.on('SIGTERM', () => {});
-else process.on('SIGTERM', () => server.close(() => process.exit(0)));
+else
+  process.on('SIGTERM', () => {
+    console.error('fixture stopping');
+    server.close(() => process.exit(0));
+  });
