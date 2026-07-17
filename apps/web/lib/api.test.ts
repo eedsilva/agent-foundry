@@ -75,9 +75,7 @@ describe('project version API client', () => {
   });
 
   it('reverts to a version', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse({ version }));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ version }));
 
     const result = await revertToVersion('project-1', 'version-1');
 

@@ -154,9 +154,7 @@ function makeOrchestrator(versions?: ProjectVersionService) {
   return { projects, runs, stepRuns, artifacts, events, workspaces, clock, orchestrator };
 }
 
-async function seedRun(
-  stores: ReturnType<typeof makeOrchestrator>,
-): Promise<void> {
+async function seedRun(stores: ReturnType<typeof makeOrchestrator>): Promise<void> {
   const now = stores.clock.now().toISOString();
   await stores.projects.create({
     id: 'project-1',

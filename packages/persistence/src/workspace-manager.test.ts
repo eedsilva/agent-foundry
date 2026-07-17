@@ -224,8 +224,8 @@ describe('FileWorkspaceManager version primitives', () => {
 
     expect(result).toBe(old);
     expect(await manager.head(projectId)).toBe(latest);
-    expect(
-      (await execa('git', ['rev-parse', 'revert-branch-1'], { cwd: workspace })).stdout,
-    ).toBe(old);
+    expect((await execa('git', ['rev-parse', 'revert-branch-1'], { cwd: workspace })).stdout).toBe(
+      old,
+    );
   });
 });

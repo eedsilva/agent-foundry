@@ -118,7 +118,11 @@ describe('project version API', () => {
   });
 
   it('branches from a version with an optional label', async () => {
-    const version = makeVersion({ kind: 'branch', parentVersionId: 'version-1', branchName: 'wip' });
+    const version = makeVersion({
+      kind: 'branch',
+      parentVersionId: 'version-1',
+      branchName: 'wip',
+    });
     const { runtime, projectVersionService } = buildFakeRuntime({
       branchFrom: vi.fn().mockResolvedValue({ branchName: 'wip', version }),
     });
@@ -132,11 +136,7 @@ describe('project version API', () => {
 
     expect(response.statusCode, response.body).toBe(202);
     expect(response.json()).toEqual({ branchName: 'wip', version });
-    expect(projectVersionService.branchFrom).toHaveBeenCalledWith(
-      'project-1',
-      'version-1',
-      'wip',
-    );
+    expect(projectVersionService.branchFrom).toHaveBeenCalledWith('project-1', 'version-1', 'wip');
     await app.close();
   });
 
@@ -173,11 +173,7 @@ describe('project version API', () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toEqual({ version });
-    expect(projectVersionService.setProtected).toHaveBeenCalledWith(
-      'project-1',
-      'version-1',
-      true,
-    );
+    expect(projectVersionService.setProtected).toHaveBeenCalledWith('project-1', 'version-1', true);
     await app.close();
   });
 

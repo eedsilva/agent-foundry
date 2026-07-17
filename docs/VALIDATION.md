@@ -458,14 +458,14 @@ without ever rewriting history.
 
 ### Matrix
 
-| Acceptance criterion                                                    | Covering test                                                                                                                                        |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ProjectVersion points at commit, run, and artifacts                      | `packages/contracts/src/project-version.test.ts`; `packages/orchestrator/src/project-version-service.test.ts` — `recordFromStep` cases              |
-| Each mutating step commit creates exactly one version                   | `packages/orchestrator/src/workflow-orchestrator.test.ts` — hook fires once for a mutating step, never for a non-mutating one                        |
-| Compare shows a diff between two versions                                | `packages/persistence/src/workspace-manager.test.ts` — `diff`; `packages/orchestrator/src/project-version-service.test.ts` — `compare`; `apps/api/src/project-versions.test.ts` |
-| Revert creates a new version, never rewrites history                     | `packages/orchestrator/src/project-version-service.test.ts` — `revert` leaves the source version's stored record untouched                           |
-| Branch from a version creates an independent baseline                   | `packages/persistence/src/workspace-manager.test.ts` — `createBranch` doesn't move the current branch; `project-version-service.test.ts` — `branchFrom` never calls `commit`/`restoreTree` |
-| Protected version survives a concurrent-update conflict                  | `packages/persistence/src/project-version-repository.test.ts` — stale `expectedVersion` rejection and immutable-field-on-update rejection            |
+| Acceptance criterion                                    | Covering test                                                                                                                                                                              |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ProjectVersion points at commit, run, and artifacts     | `packages/contracts/src/project-version.test.ts`; `packages/orchestrator/src/project-version-service.test.ts` — `recordFromStep` cases                                                     |
+| Each mutating step commit creates exactly one version   | `packages/orchestrator/src/workflow-orchestrator.test.ts` — hook fires once for a mutating step, never for a non-mutating one                                                              |
+| Compare shows a diff between two versions               | `packages/persistence/src/workspace-manager.test.ts` — `diff`; `packages/orchestrator/src/project-version-service.test.ts` — `compare`; `apps/api/src/project-versions.test.ts`            |
+| Revert creates a new version, never rewrites history    | `packages/orchestrator/src/project-version-service.test.ts` — `revert` leaves the source version's stored record untouched                                                                 |
+| Branch from a version creates an independent baseline   | `packages/persistence/src/workspace-manager.test.ts` — `createBranch` doesn't move the current branch; `project-version-service.test.ts` — `branchFrom` never calls `commit`/`restoreTree` |
+| Protected version survives a concurrent-update conflict | `packages/persistence/src/project-version-repository.test.ts` — stale `expectedVersion` rejection and immutable-field-on-update rejection                                                  |
 
 ### Boundaries of this coverage
 

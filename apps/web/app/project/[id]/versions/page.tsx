@@ -195,7 +195,11 @@ export default function ProjectVersionsPage({ params }: { params: Promise<{ id: 
               <span
                 key={index}
                 className={
-                  line.startsWith('+') ? 'diffAdded' : line.startsWith('-') ? 'diffRemoved' : undefined
+                  line.startsWith('+')
+                    ? 'diffAdded'
+                    : line.startsWith('-')
+                      ? 'diffRemoved'
+                      : undefined
                 }
               >
                 {line}
