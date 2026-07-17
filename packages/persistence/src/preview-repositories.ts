@@ -90,7 +90,9 @@ export class FilePreviewSessionRepository implements PreviewSessionRepository {
           current.session.version,
         );
       }
-      const updated = PreviewSessionSchema.parse({ ...session, version: expectedVersion + 1 });
+      const updated = sanitizeSession(
+        PreviewSessionSchema.parse({ ...session, version: expectedVersion + 1 }),
+      );
       await atomicWriteJson(path, { session: updated, tokenDigest: current.tokenDigest });
       return updated;
     });
@@ -133,11 +135,10 @@ export class FilePreviewLogRepository implements PreviewLogRepository {
     sessionId: string,
     options: { cursor?: number; limit?: number } = {},
   ): Promise<PreviewLogPage> {
-    const cursor = options.cursor ?? 0;
+    const cursor = validCursor(options.cursor ?? 0);
+    const limit = validLimit(options.limit ?? 200);
     const file = await this.read(this.pathFor(sessionId));
-    const entries = file.entries
-      .filter((entry) => entry.cursor > cursor)
-      .slice(0, options.limit ?? 200);
+    const entries = file.entries.filter((entry) => entry.cursor > cursor).slice(0, limit);
     const page: PreviewLogPage = {
       entries,
       nextCursor: entries.at(-1)?.cursor ?? Math.max(cursor, file.truncatedThroughCursor),
@@ -165,11 +166,34 @@ export class FilePreviewLogRepository implements PreviewLogRepository {
 
 function parseRecord(value: unknown): PreviewSessionRecord {
   const record = value as Partial<PreviewSessionRecord>;
-  const session = PreviewSessionSchema.parse(record.session);
+  const session = sanitizeSession(PreviewSessionSchema.parse(record.session));
   if (!record.tokenDigest || !TOKEN_DIGEST.test(record.tokenDigest)) {
     throw new Error(`Invalid token digest for preview-session ${session.id}`);
   }
   return { session, tokenDigest: record.tokenDigest };
+}
+
+function sanitizeSession(session: PreviewSession): PreviewSession {
+  if (!session.url) return session;
+  const url = new URL(session.url);
+  for (const key of [...url.searchParams.keys()]) {
+    if (key.toLowerCase() === 'token') url.searchParams.delete(key);
+  }
+  return { ...session, url: url.toString() };
+}
+
+function validCursor(value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error('Preview log cursor must be a nonnegative integer');
+  }
+  return value;
+}
+
+function validLimit(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > 200) {
+    throw new Error('Preview log limit must be an integer between 1 and 200');
+  }
+  return value;
 }
 
 function encodedBytes(file: LogFile): number {

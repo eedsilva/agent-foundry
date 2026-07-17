@@ -212,6 +212,28 @@ describe('preview lifecycle diagnostics', () => {
     ).toThrow();
   });
 
+  it('rejects a next cursor before the last delivered entry', () => {
+    expect(() =>
+      PreviewLogPageSchema.parse({
+        entries: [
+          { cursor: 4, stream: 'stdout', message: 'first', timestamp: createdAt },
+          { cursor: 5, stream: 'stderr', message: 'second', timestamp: startedAt },
+        ],
+        nextCursor: 4,
+      }),
+    ).toThrow();
+  });
+
+  it('accepts empty pages at a truncated high-water cursor', () => {
+    expect(
+      PreviewLogPageSchema.parse({
+        entries: [],
+        nextCursor: 8,
+        truncatedBeforeCursor: 9,
+      }),
+    ).toEqual({ entries: [], nextCursor: 8, truncatedBeforeCursor: 9 });
+  });
+
   it('parses strict repair diagnostics with bounded log evidence', () => {
     const diagnostic = PreviewFailureDiagnosticSchema.parse({
       schemaVersion: '1',

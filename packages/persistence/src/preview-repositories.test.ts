@@ -36,6 +36,18 @@ function session(id = 'preview-1'): PreviewSession {
   };
 }
 
+function runningSession(url: string): PreviewSession {
+  return {
+    ...session(),
+    status: 'running',
+    url,
+    process: { command: 'npm', args: ['run', 'dev'], pid: 1234, port: 3100 },
+    health: { state: 'healthy', checkedAt: createdAt, consecutiveFailures: 0 },
+    ttl: { seconds: 1_800, expiresAt: '2026-07-16T12:30:00.000Z' },
+    startedAt: createdAt,
+  };
+}
+
 describe('FilePreviewSessionRepository', () => {
   it('stores a versioned session with only its SHA-256 token digest', async () => {
     const dataDir = await temporaryDataDir();
@@ -52,6 +64,49 @@ describe('FilePreviewSessionRepository', () => {
     );
     expect(persisted).toContain(tokenDigest);
     expect(persisted).not.toContain(rawToken);
+  });
+
+  it('removes raw URL tokens before create and update reach disk or reads', async () => {
+    const dataDir = await temporaryDataDir();
+    const repository = new FilePreviewSessionRepository(dataDir);
+    const tokenDigest = 'a'.repeat(64);
+    const createToken = 'raw-create-token';
+    const updateToken = 'raw-update-token';
+
+    await repository.create({
+      session: runningSession(
+        `http://127.0.0.1:3100/preview/preview-1/?token=${createToken}&view=mobile`,
+      ),
+      tokenDigest,
+    });
+
+    const created = await repository.get('preview-1');
+    expect(created?.session.url).toBe('http://127.0.0.1:3100/preview/preview-1/?view=mobile');
+    expect(JSON.stringify(created)).not.toContain(createToken);
+    expect(
+      await readFile(join(dataDir, 'previews', 'preview-1', 'session.json'), 'utf8'),
+    ).not.toContain(createToken);
+
+    const updated = await repository.update(
+      {
+        ...runningSession(
+          `http://127.0.0.1:3100/preview/preview-1/?token=${updateToken}&view=desktop`,
+        ),
+        restartCount: 1,
+      },
+      1,
+    );
+    expect(updated.url).toBe('http://127.0.0.1:3100/preview/preview-1/?view=desktop');
+
+    const persisted = await readFile(
+      join(dataDir, 'previews', 'preview-1', 'session.json'),
+      'utf8',
+    );
+    expect(persisted).not.toContain(createToken);
+    expect(persisted).not.toContain(updateToken);
+    expect((await repository.get('preview-1'))?.session.url).toBe(
+      'http://127.0.0.1:3100/preview/preview-1/?view=desktop',
+    );
   });
 
   it('allows exactly one optimistic update and lists only active sessions', async () => {
@@ -155,5 +210,18 @@ describe('FilePreviewLogRepository', () => {
     expect(page.entries).toEqual([]);
     expect(page.nextCursor).toBe(1);
     expect(page.truncatedBeforeCursor).toBe(2);
+  });
+
+  it('rejects invalid cursor and limit options at the repository boundary', async () => {
+    const repository = new FilePreviewLogRepository(await temporaryDataDir());
+
+    await expect(repository.list('preview-1', { cursor: -1 })).rejects.toThrow(/cursor/i);
+    await expect(repository.list('preview-1', { cursor: 1.5 })).rejects.toThrow(/cursor/i);
+    await expect(repository.list('preview-1', { cursor: Number.NaN })).rejects.toThrow(/cursor/i);
+    await expect(repository.list('preview-1', { limit: 0 })).rejects.toThrow(/limit/i);
+    await expect(repository.list('preview-1', { limit: -1 })).rejects.toThrow(/limit/i);
+    await expect(repository.list('preview-1', { limit: 201 })).rejects.toThrow(/limit/i);
+    await expect(repository.list('preview-1', { limit: 1.5 })).rejects.toThrow(/limit/i);
+    await expect(repository.list('preview-1', { limit: Number.NaN })).rejects.toThrow(/limit/i);
   });
 });

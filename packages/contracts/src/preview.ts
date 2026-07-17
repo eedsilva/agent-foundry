@@ -230,6 +230,14 @@ export const PreviewLogPageSchema = z
         });
       }
     }
+    const lastCursor = page.entries.at(-1)?.cursor;
+    if (lastCursor !== undefined && page.nextCursor < lastCursor) {
+      context.addIssue({
+        code: 'custom',
+        path: ['nextCursor'],
+        message: 'nextCursor cannot precede the last delivered log entry',
+      });
+    }
   });
 export type PreviewLogPage = z.infer<typeof PreviewLogPageSchema>;
 
