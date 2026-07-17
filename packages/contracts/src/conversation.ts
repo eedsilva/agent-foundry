@@ -44,7 +44,11 @@ export const AttachmentSchema = z
     conversationId: PathSegmentSchema,
     kind: AttachmentKindSchema,
     name: z.string().trim().min(1).optional(),
-    mediaType: z.string().trim().min(1),
+    mediaType: z
+      .string()
+      .max(127)
+      .regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+\/[A-Za-z0-9!#$%&'*+.^_`|~-]+$/)
+      .transform((value) => value.toLowerCase()),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     sizeBytes: z.number().int().nonnegative(),
     access: z.object({ scope: z.literal('project'), projectId: PathSegmentSchema }).strict(),

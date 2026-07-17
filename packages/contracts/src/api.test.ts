@@ -58,12 +58,20 @@ describe('conversation HTTP contracts (#36)', () => {
       CreateAttachmentRequestSchema.parse({
         kind: 'image',
         name: ' design.png ',
-        mediaType: ' image/png ',
+        mediaType: 'image/png',
         sha256: attachment.sha256,
         sizeBytes: 5,
       }),
     ).toMatchObject({ name: 'design.png', mediaType: 'image/png' });
     expect(CreateAttachmentResponseSchema.parse({ attachment }).attachment).toEqual(attachment);
+    expect(() =>
+      CreateAttachmentRequestSchema.parse({
+        kind: 'file',
+        mediaType: 'text/plain; token=raw-secret',
+        sha256: attachment.sha256,
+        sizeBytes: 5,
+      }),
+    ).toThrow();
 
     expect(
       CreateMessageRequestSchema.parse({ role: 'user', content: message.content }).content,

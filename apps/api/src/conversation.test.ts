@@ -1,4 +1,4 @@
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -99,6 +99,43 @@ async function readMessageSse(
   return { messages, ids, abort: () => controller.abort() };
 }
 
+async function listMessagePages(baseUrl: string, projectId: string): Promise<Message[]> {
+  const messages: Message[] = [];
+  let cursor = 0;
+  for (;;) {
+    const response = await fetch(
+      `${baseUrl}/projects/${projectId}/conversation?limit=200&cursor=${cursor}`,
+    );
+    expect(response.status).toBe(200);
+    const page = (await response.json()) as { messages: Message[]; nextCursor: number | null };
+    messages.push(...page.messages);
+    if (page.nextCursor === null) return messages;
+    cursor = page.nextCursor;
+  }
+}
+
+async function seedMessages(dataDir: string, projectId: string, count: number): Promise<void> {
+  const root = join(dataDir, 'projects', projectId, 'conversation');
+  await mkdir(root, { recursive: true });
+  const messages = Array.from({ length: count }, (_, index): Message => {
+    const sequence = index + 1;
+    return {
+      id: `message-${sequence}`,
+      projectId,
+      conversationId: projectId,
+      role: 'user',
+      content: [{ type: 'text', text: `message ${sequence}` }],
+      sequence,
+      createdAt: '2026-07-17T12:00:00.000Z',
+    };
+  });
+  await writeFile(
+    join(root, 'messages.jsonl'),
+    `${messages.map((message) => JSON.stringify(message)).join('\n')}\n`,
+    'utf8',
+  );
+}
+
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close().catch(() => undefined)));
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -168,6 +205,26 @@ describe('conversation API', () => {
 
     expect(denied.status).toBe(400);
     expect((await denied.json()) as object).toMatchObject({ error: 'ValidationError' });
+  });
+
+  it('rejects parameterized attachment media types before persistence and export', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime);
+
+    const response = await post(baseUrl, `/projects/${projectId}/conversation/attachments`, {
+      kind: 'file',
+      mediaType: 'text/plain; token=raw-secret',
+      sha256: 'f'.repeat(64),
+      sizeBytes: 10,
+    });
+    expect(response.status).toBe(400);
+    expect(await runtime.conversations.listAttachments(projectId)).toEqual([]);
+
+    const exported = await fetch(`${baseUrl}/projects/${projectId}/export`);
+    const body = await exported.text();
+    expect(exported.status).toBe(200);
+    expect(JSON.parse(body)).toMatchObject({ attachments: [] });
+    expect(body).not.toContain('raw-secret');
   });
 
   it('returns concurrent messages in stable cursor pages', async () => {
@@ -306,5 +363,25 @@ describe('conversation API', () => {
     read.abort();
 
     expect(read.ids).toEqual([2, 3]);
+  });
+
+  it('replays beyond one 500-message batch exactly across reconnect and HTTP pages', async () => {
+    const { baseUrl, runtime, dataDir } = await startApi();
+    const projectId = await createProject(runtime);
+    await seedMessages(dataDir, projectId, 503);
+
+    const stream = `${baseUrl}/projects/${projectId}/conversation/stream`;
+    const first = await readMessageSse(stream, {}, 500);
+    first.abort();
+    const second = await readMessageSse(stream, { 'last-event-id': String(first.ids.at(-1)!) }, 3);
+    second.abort();
+
+    const expected = await listMessagePages(baseUrl, projectId);
+    const combined = [...first.messages, ...second.messages];
+    expect(combined.map((message) => message.sequence)).toEqual(
+      expected.map((message) => message.sequence),
+    );
+    expect(combined.map((message) => message.id)).toEqual(expected.map((message) => message.id));
+    expect(new Set(combined.map((message) => message.sequence)).size).toBe(503);
   });
 });

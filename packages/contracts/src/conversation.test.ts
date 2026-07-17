@@ -48,7 +48,7 @@ describe('conversation aggregate contracts (#36)', () => {
       conversationId: 'conversation-1',
       kind: 'image',
       name: ' mockup.png ',
-      mediaType: ' image/png ',
+      mediaType: 'image/png',
       sha256: 'a'.repeat(64),
       sizeBytes: 42,
       access: { scope: 'project', projectId: 'project-1' },
@@ -63,6 +63,34 @@ describe('conversation aggregate contracts (#36)', () => {
     expect(AttachmentSchema.parse({ ...attachment, kind: 'file' }).kind).toBe('file');
     expect(() => AttachmentSchema.parse({ ...attachment, sha256: 'A'.repeat(64) })).toThrow();
     expect(() => AttachmentSchema.parse({ ...attachment, sizeBytes: -1 })).toThrow();
+  });
+
+  it('accepts bare MIME types and rejects parameters, whitespace, and controls', () => {
+    const attachment = {
+      id: 'attachment-1',
+      projectId: 'project-1',
+      conversationId: 'conversation-1',
+      kind: 'file',
+      mediaType: 'text/plain',
+      sha256: 'a'.repeat(64),
+      sizeBytes: 42,
+      access: { scope: 'project', projectId: 'project-1' },
+      createdAt,
+    };
+    expect(
+      ['text/plain', 'image/png', 'Application/Vnd.Foo+Json'].map(
+        (mediaType) => AttachmentSchema.parse({ ...attachment, mediaType }).mediaType,
+      ),
+    ).toEqual(['text/plain', 'image/png', 'application/vnd.foo+json']);
+    for (const mediaType of [
+      'text/plain; token=raw-secret',
+      ' text/plain',
+      'text /plain',
+      'text/plain\n',
+      `${'a'.repeat(64)}/${'b'.repeat(64)}`,
+    ]) {
+      expect(() => AttachmentSchema.parse({ ...attachment, mediaType })).toThrow();
+    }
   });
 
   it('rejects attachment access for a different project', () => {
