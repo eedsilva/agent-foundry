@@ -1,16 +1,20 @@
 import cors from '@fastify/cors';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
 import {
   CreateProjectRequestSchema,
   CreateModelOverrideRequestSchema,
+  CreateAttachmentRequestSchema,
+  CreateMessageRequestSchema,
+  CreateOperationRequestSchema,
   DecideApprovalRequestSchema,
   PathSegmentSchema,
   RetryStepRequestSchema,
 } from '@agent-foundry/contracts';
 import {
   ApprovalConflictError,
+  IdempotencyConflictError,
   InvalidStateTransitionError,
   NotFoundError,
   PreviewAccessDeniedError,
@@ -71,6 +75,9 @@ export async function buildApp(
     }
     if (error instanceof ValidationError) {
       return reply.status(400).send({ error: error.name, message: error.message });
+    }
+    if (error instanceof IdempotencyConflictError) {
+      return reply.status(409).send({ error: error.name, message: error.message });
     }
     if (error instanceof PreviewAccessDeniedError) {
       return reply.status(403).send({ error: error.name, message: error.message });
@@ -141,6 +148,79 @@ export async function buildApp(
     return runtime.projectService.getArtifact(projectId, name, revision);
   });
 
+  app.get('/projects/:projectId/conversation', async (request) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const { cursor, limit } = z
+      .object({
+        cursor: CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).optional(),
+        limit: CanonicalDecimalSchema.pipe(z.number().int().min(1).max(200)).optional(),
+      })
+      .parse(request.query);
+    return runtime.conversationService.get(projectId, {
+      ...(cursor !== undefined ? { cursor } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    });
+  });
+
+  app.post('/projects/:projectId/conversation/attachments', async (request, reply) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const input = CreateAttachmentRequestSchema.parse(request.body);
+    const attachment = await runtime.conversationService.createAttachment(projectId, input);
+    return reply.status(201).send({ attachment });
+  });
+
+  app.post('/projects/:projectId/conversation/messages', async (request, reply) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const input = CreateMessageRequestSchema.parse(request.body);
+    const message = await runtime.conversationService.createMessage(projectId, input);
+    return reply.status(201).send({ message });
+  });
+
+  app.post(
+    '/projects/:projectId/conversation/messages/:messageId/operations',
+    async (request, reply) => {
+      const { projectId, messageId } = z
+        .object({ projectId: PathSegmentSchema, messageId: PathSegmentSchema })
+        .parse(request.params);
+      const input = CreateOperationRequestSchema.parse(request.body);
+      const operation = await runtime.conversationService.createOperation(
+        projectId,
+        messageId,
+        input,
+      );
+      return reply.status(201).send({ operation });
+    },
+  );
+
+  app.get('/projects/:projectId/conversation/stream', async (request, reply) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const { cursor } = z
+      .object({ cursor: CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).optional() })
+      .parse(request.query);
+    const project = await runtime.projects.get(projectId);
+    if (!project) throw new NotFoundError(`Project ${projectId} not found`);
+    const header = request.headers['last-event-id'];
+    const lastSequence =
+      cursor ??
+      (typeof header === 'string' && header
+        ? CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).parse(header)
+        : 0);
+    await streamSse(
+      request,
+      reply,
+      allowedOrigins,
+      lastSequence,
+      (after) =>
+        runtime.conversationService.listMessages(projectId, { cursor: after ?? 0, limit: 500 }),
+      (message) => message.sequence,
+    );
+  });
+
+  app.get('/projects/:projectId/export', async (request) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    return runtime.conversationService.export(projectId);
+  });
+
   app.get('/projects/:projectId/events/stream', async (request, reply) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
     const { cursor } = z.object({ cursor: z.string().min(1).optional() }).parse(request.query);
@@ -148,60 +228,16 @@ export async function buildApp(
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
 
     const lastEventId = request.headers['last-event-id'];
-    let lastId =
+    const lastId =
       cursor ?? (typeof lastEventId === 'string' && lastEventId ? lastEventId : undefined);
-
-    reply.hijack();
-    const raw = reply.raw;
-    const origin = request.headers.origin;
-    raw.writeHead(200, {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-      connection: 'keep-alive',
-      ...(origin && allowedOrigins.includes(origin)
-        ? { 'access-control-allow-origin': origin }
-        : {}),
-    });
-    raw.write(': connected\n\n');
-
-    let poll: NodeJS.Timeout | undefined;
-    let heartbeat: NodeJS.Timeout | undefined;
-    const cleanup = (): void => {
-      if (poll) clearInterval(poll);
-      if (heartbeat) clearInterval(heartbeat);
-      raw.end();
-    };
-    // Register before the first await so a disconnect during that await still fires cleanup.
-    request.raw.on('close', cleanup);
-
-    let sending = false;
-    const send = async (): Promise<void> => {
-      if (sending) return;
-      sending = true;
-      try {
-        const batch = await runtime.events.list(projectId, 500, lastId);
-        for (const event of batch) {
-          if (raw.writableEnded) break;
-          raw.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
-          lastId = event.id;
-        }
-      } finally {
-        sending = false;
-      }
-    };
-    try {
-      await send();
-    } catch {
-      cleanup();
-      return;
-    }
-    if (!raw.writableEnded) {
-      // ponytail: 1s file-tail poll; swap for an in-process bus + fs notification if latency ever matters
-      poll = setInterval(() => void send().catch(() => undefined), 1_000);
-      heartbeat = setInterval(() => raw.write(': ping\n\n'), 15_000);
-      poll.unref?.();
-      heartbeat.unref?.();
-    }
+    await streamSse(
+      request,
+      reply,
+      allowedOrigins,
+      lastId,
+      (after) => runtime.events.list(projectId, 500, after),
+      (event) => event.id,
+    );
   });
 
   app.post('/runs/:runId/cancel', async (request, reply) => {
@@ -313,6 +349,66 @@ export async function buildApp(
   registerPreviewProxy(app, runtime);
 
   return app;
+}
+
+async function streamSse<T, Cursor extends string | number>(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  allowedOrigins: string[],
+  initialCursor: Cursor | undefined,
+  list: (cursor: Cursor | undefined) => Promise<T[]>,
+  cursorFor: (item: T) => Cursor,
+): Promise<void> {
+  let cursor = initialCursor;
+  reply.hijack();
+  const raw = reply.raw;
+  const origin = request.headers.origin;
+  raw.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-cache',
+    connection: 'keep-alive',
+    ...(origin && allowedOrigins.includes(origin) ? { 'access-control-allow-origin': origin } : {}),
+  });
+  raw.write(': connected\n\n');
+
+  let poll: NodeJS.Timeout | undefined;
+  let heartbeat: NodeJS.Timeout | undefined;
+  const cleanup = (): void => {
+    if (poll) clearInterval(poll);
+    if (heartbeat) clearInterval(heartbeat);
+    raw.end();
+  };
+  // Register before the first await so a disconnect during that await still cleans up.
+  request.raw.on('close', cleanup);
+
+  let sending = false;
+  const send = async (): Promise<void> => {
+    if (sending) return;
+    sending = true;
+    try {
+      for (const item of await list(cursor)) {
+        if (raw.writableEnded) break;
+        const id = cursorFor(item);
+        raw.write(`id: ${id}\ndata: ${JSON.stringify(item)}\n\n`);
+        cursor = id;
+      }
+    } finally {
+      sending = false;
+    }
+  };
+  try {
+    await send();
+  } catch {
+    cleanup();
+    return;
+  }
+  if (!raw.writableEnded) {
+    // ponytail: 1s file-tail poll; swap for an in-process bus + fs notification if latency matters
+    poll = setInterval(() => void send().catch(() => undefined), 1_000);
+    heartbeat = setInterval(() => raw.write(': ping\n\n'), 15_000);
+    poll.unref?.();
+    heartbeat.unref?.();
+  }
 }
 
 function serializeRequest(request: unknown) {
