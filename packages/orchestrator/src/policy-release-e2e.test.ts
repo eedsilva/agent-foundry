@@ -3,6 +3,7 @@ import {
   BrowserVerificationReportSchema,
   ProjectPolicySchema,
   WorkflowDefinitionSchema,
+  type AgentArtifact,
   type BrowserVerificationReport,
   type PreviewSession,
   type ProjectPolicy,
@@ -117,6 +118,15 @@ const BROWSER_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
       type: 'quality-loop',
       title: 'Browser verification',
       maxIterations: 3,
+      setup: {
+        id: 'plan-browser-test',
+        type: 'agent',
+        role: 'tester',
+        taskKind: 'verification',
+        title: 'Plan browser verification',
+        instructions: 'Define the exact browser journey.',
+        outputArtifact: 'browser-test.plan',
+      },
       check: {
         id: 'verify-browser',
         type: 'verify',
@@ -168,7 +178,51 @@ const BROWSER_PLAN = {
   assumptions: [],
   risks: [],
   nextActions: [],
-};
+} satisfies AgentArtifact;
+
+function browserCoordinator(verify: BrowserVerifier['verify']) {
+  const stopped: string[] = [];
+  const sessions = new Map<string, PreviewSession>();
+  let sequence = 0;
+  const previews = {
+    start: ({ workspaceRef, runId }: Parameters<PreviewService['start']>[0]) => {
+      sequence += 1;
+      const now = '2026-07-17T12:00:00.000Z';
+      const session: PreviewSession = {
+        id: `preview-${sequence}`,
+        ...(runId ? { runId } : {}),
+        workspaceRef,
+        status: 'running',
+        version: 3,
+        url: `http://127.0.0.1:4000/preview/preview-${sequence}/?token=secret`,
+        process: { command: 'npm', args: ['run', 'dev'], port: 3000 + sequence },
+        health: { state: 'healthy', checkedAt: now, consecutiveFailures: 0 },
+        ttl: { seconds: 1800, expiresAt: '2026-07-17T12:30:00.000Z' },
+        restartCount: 0,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+      };
+      sessions.set(session.id, session);
+      return Promise.resolve({ session, url: session.url! });
+    },
+    stop: (sessionId: string) => {
+      const session = sessions.get(sessionId);
+      if (!session) return Promise.reject(new Error(`Unknown preview ${sessionId}`));
+      stopped.push(sessionId);
+      return Promise.resolve({
+        ...session,
+        status: 'stopped' as const,
+        updatedAt: '2026-07-17T12:00:01.000Z',
+        completedAt: '2026-07-17T12:00:01.000Z',
+      });
+    },
+  } satisfies Pick<PreviewService, 'start' | 'stop'>;
+  return {
+    coordinator: new BrowserVerificationCoordinator(previews, { verify }),
+    stopped,
+  };
+}
 
 function failingVerificationReport(): VerificationReport {
   return {
@@ -275,44 +329,51 @@ describe('browser verification orchestration (#32)', () => {
         });
       },
     } satisfies Pick<PreviewService, 'start' | 'stop'>;
+    let addNewerPlan = (): Promise<void> => Promise.resolve();
     const browserVerifier: BrowserVerifier = {
-      verify: (input) => {
+      verify: async (input) => {
         verifierInputs.push(input);
+        if (verifierInputs.length === 1) await addNewerPlan();
         const approved = verifierInputs.length > 1;
-        return Promise.resolve(
-          BrowserVerificationReportSchema.parse({
-            schemaVersion: '1',
-            approved,
-            summary: approved ? 'Browser verification passed.' : 'Browser verification failed.',
-            planArtifact: input.planArtifact,
-            previewSession: {
-              ...input.session,
-              url: input.session.url?.replace(/\?.*$/, ''),
-            },
-            steps: [],
-          }) satisfies BrowserVerificationReport,
-        );
+        return BrowserVerificationReportSchema.parse({
+          schemaVersion: '1',
+          approved,
+          summary: approved ? 'Browser verification passed.' : 'Browser verification failed.',
+          planArtifact: input.planArtifact,
+          previewSession: {
+            ...input.session,
+            url: input.session.url?.replace(/\?.*$/, ''),
+          },
+          steps: [],
+        }) satisfies BrowserVerificationReport;
       },
     };
     const browserVerification = new BrowserVerificationCoordinator(previews, browserVerifier);
     const harness = makeHarness({}, undefined, {
       workflow: BROWSER_WORKFLOW,
       browserVerification,
+      agentOutput: (request) => (request.stepId === 'plan-browser-test' ? BROWSER_PLAN : undefined),
     });
     await seedRun(harness);
-    const storedPlan = await harness.artifacts.put({
-      projectId: 'project-1',
-      name: 'browser-test.plan',
-      content: BROWSER_PLAN,
-      createdBy: 'tester',
-    });
+    let revisedPlan: Awaited<ReturnType<typeof harness.artifacts.put>> | undefined;
+    addNewerPlan = async () => {
+      revisedPlan = await harness.artifacts.put({
+        projectId: 'project-1',
+        name: 'browser-test.plan',
+        content: { ...BROWSER_PLAN, summary: 'Newer plan that must not replace the setup plan.' },
+        createdBy: 'tester',
+      });
+    };
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    const [storedPlan] = harness.artifacts.named('browser-test.plan');
+    if (!storedPlan || !revisedPlan) throw new Error('Expected both browser plan revisions');
     const planReference = {
       name: storedPlan.metadata.name,
       revision: storedPlan.metadata.revision,
       sha256: storedPlan.metadata.sha256,
     };
-
-    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
     const browserStepRuns = harness.stepRuns.byStepId('run-1', 'verify-browser');
     const browserAttempts = (
@@ -375,32 +436,106 @@ describe('browser verification orchestration (#32)', () => {
 
     const completed = await harness.runs.get('run-1');
     if (!completed) throw new Error('Expected completed run');
+    const reusedBefore = harness.events.events.filter(
+      (event) => event.type === 'step.reused',
+    ).length;
     const replay = { ...completed, status: 'running' as const };
     delete replay.completedAt;
     await harness.runs.update(replay, completed.version);
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
     expect(verifierInputs).toHaveLength(2);
-    expect(harness.events.types()).toContain('step.reused');
-
-    const revisedPlan = await harness.artifacts.put({
-      projectId: 'project-1',
-      name: 'browser-test.plan',
-      content: { ...BROWSER_PLAN, summary: 'Revised plan envelope.' },
-      createdBy: 'tester',
-    });
-    const replayed = await harness.runs.get('run-1');
-    if (!replayed) throw new Error('Expected replayed run');
-    const changedInputReplay = { ...replayed, status: 'running' as const };
-    delete changedInputReplay.completedAt;
-    await harness.runs.update(changedInputReplay, replayed.version);
-    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-
-    expect(verifierInputs).toHaveLength(3);
-    expect(verifierInputs[2]?.planArtifact).toEqual({
-      name: revisedPlan.metadata.name,
+    expect(
+      harness.events.events
+        .filter((event) => event.type === 'step.reused')
+        .slice(reusedBefore)
+        .map((event) => event.message),
+    ).toEqual([
+      expect.stringContaining('plan-browser-test reused'),
+      expect.stringContaining('verify-browser reused browser-verification.report r1'),
+      expect.stringContaining('repair-browser reused'),
+      expect.stringContaining('verify-browser reused browser-verification.report r2'),
+    ]);
+    expect(harness.artifacts.named('browser-test.plan').at(-1)?.metadata).toMatchObject({
       revision: revisedPlan.metadata.revision,
       sha256: revisedPlan.metadata.sha256,
     });
-    expect(stopped).toEqual(['preview-1', 'preview-2', 'preview-3']);
+    expect(verifierInputs.every((input) => input.planArtifact.revision === 1)).toBe(true);
+    expect(stopped).toEqual(['preview-1', 'preview-2']);
   });
+
+  it('retains the preview session on a browser attempt when verification throws', async () => {
+    const browser = browserCoordinator(() => Promise.reject(new Error('browser crashed')));
+    const harness = makeHarness({}, undefined, {
+      workflow: BROWSER_WORKFLOW,
+      browserVerification: browser.coordinator,
+      agentOutput: (request) => (request.stepId === 'plan-browser-test' ? BROWSER_PLAN : undefined),
+    });
+    await seedRun(harness);
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      'browser crashed',
+    );
+
+    const [stepRun] = harness.stepRuns.byStepId('run-1', 'verify-browser');
+    const [attempt] = await harness.stepAttempts.list('run-1', stepRun!.id);
+    expect(attempt).toMatchObject({
+      status: 'failed',
+      model: 'browser-verifier',
+      previewSessionId: 'preview-1',
+    });
+    expect(browser.stopped).toEqual(['preview-1']);
+  });
+
+  it.each(['report-artifact', 'attempt-success'] as const)(
+    'does not advance the verified checkpoint when %s persistence fails',
+    async (failure) => {
+      const browser = browserCoordinator((input) =>
+        Promise.resolve(
+          BrowserVerificationReportSchema.parse({
+            schemaVersion: '1',
+            approved: true,
+            summary: 'Browser verification passed.',
+            planArtifact: input.planArtifact,
+            previewSession: {
+              ...input.session,
+              url: input.session.url?.replace(/\?.*$/, ''),
+            },
+            steps: [],
+          }),
+        ),
+      );
+      const harness = makeHarness({}, undefined, {
+        workflow: BROWSER_WORKFLOW,
+        browserVerification: browser.coordinator,
+        agentOutput: (request) =>
+          request.stepId === 'plan-browser-test' ? BROWSER_PLAN : undefined,
+      });
+      await seedRun(harness);
+      if (failure === 'report-artifact') {
+        harness.artifacts.onAfterPut = (name) => {
+          if (name !== 'browser-verification.report') return;
+          harness.artifacts.onAfterPut = undefined;
+          throw new Error('report persistence failed');
+        };
+      } else {
+        harness.stepAttempts.onBeforeUpdate = (attempt) => {
+          if (attempt.model !== 'browser-verifier' || attempt.status !== 'succeeded') return;
+          harness.stepAttempts.onBeforeUpdate = undefined;
+          throw new Error('attempt persistence failed');
+        };
+      }
+
+      await expect(
+        harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+      ).rejects.toThrow(
+        `${failure === 'report-artifact' ? 'report' : 'attempt'} persistence failed`,
+      );
+
+      expect(harness.workspaces.checkpoints).toEqual([]);
+      expect((await harness.runs.get('run-1'))?.execution?.lastVerifiedCheckpoint).toBe(
+        'initial-head',
+      );
+      expect(browser.stopped).toEqual(['preview-1']);
+    },
+  );
 });

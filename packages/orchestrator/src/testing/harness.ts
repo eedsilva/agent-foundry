@@ -310,6 +310,7 @@ export class InMemoryStepRuns implements StepRunRepository {
 
 export class InMemoryStepAttempts implements StepAttemptRepository {
   readonly store = new Map<string, StepAttempt>();
+  onBeforeUpdate?: ((attempt: StepAttempt) => void) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   create(attempt: StepAttempt): Promise<void> {
     checkPower(this.power);
@@ -329,6 +330,7 @@ export class InMemoryStepAttempts implements StepAttemptRepository {
   }
   update(attempt: StepAttempt, expectedVersion: number): Promise<StepAttempt> {
     checkPower(this.power);
+    this.onBeforeUpdate?.(attempt);
     const key = `${attempt.runId}/${attempt.stepRunId}/${attempt.id}`;
     const existing = this.store.get(key);
     if (!existing) throw new Error(`attempt ${key} missing`);
@@ -617,6 +619,9 @@ export class ControllableExecutor implements AgentExecutor {
   constructor(
     private readonly behaviors: Record<string, StepBehavior>,
     private readonly workspaces: FakeWorkspaces,
+    private readonly output?: (
+      request: AgentExecutionRequest,
+    ) => AgentExecutionResult['output'] | undefined,
   ) {}
 
   execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult> {
@@ -681,7 +686,7 @@ export class ControllableExecutor implements AgentExecutor {
       durationMs: 1,
       stdout: '',
       stderr: '',
-      output: {
+      output: this.output?.(request) ?? {
         schemaVersion: '1',
         status: 'completed',
         summary: `${request.stepId} done.`,
@@ -748,11 +753,12 @@ export function makeHarness(
     workflow?: WorkflowDefinition;
     verification?: () => VerificationReport | Promise<VerificationReport>;
     browserVerification?: BrowserVerificationCoordinator;
+    agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
   } = {},
 ) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
-  const executor = new ControllableExecutor(behaviors, stores.workspaces);
+  const executor = new ControllableExecutor(behaviors, stores.workspaces, opts.agentOutput);
   const policies = new InMemoryPolicies(opts.policy ?? DEFAULT_POLICY);
   const models = opts.models ?? MODELS;
   // Fallback recovery needs the mutating step to offer a second candidate.

@@ -3,6 +3,7 @@ import type {
   AgentExecutionResult,
   AgentStep,
   ApprovalGateStep,
+  ArtifactReference,
   ExecutableStep,
   Project,
   ProjectEvent,
@@ -828,6 +829,7 @@ export class WorkflowOrchestrator {
     signal: AbortSignal,
   ): Promise<StoredArtifact> {
     let qualitySubject: StoredArtifact | null = null;
+    let browserPlan: ArtifactReference | undefined;
     if (node.setup) {
       const setupArtifact = await this.executeStep(
         project,
@@ -839,6 +841,12 @@ export class WorkflowOrchestrator {
         1,
       );
       if (node.setup.type === 'agent') qualitySubject = setupArtifact;
+      if (
+        node.check.type === 'verify' &&
+        node.check.browserTestPlanArtifact === setupArtifact.metadata.name
+      ) {
+        browserPlan = artifactReference(setupArtifact);
+      }
     }
 
     let latest: StoredArtifact | null = null;
@@ -852,8 +860,9 @@ export class WorkflowOrchestrator {
         node.id,
         signal,
         iteration,
+        browserPlan ? [browserPlan] : [],
       );
-      const approved = await this.conditionApproved(project.id, node);
+      const approved = this.conditionApproved(latest, node);
       if (qualitySubject) await this.recordQualityOutcome(qualitySubject, approved);
       if (approved) {
         await this.resetConsecutiveRepairs(runId);
@@ -880,14 +889,14 @@ export class WorkflowOrchestrator {
         node.id,
         signal,
         iteration,
+        [...(browserPlan ? [browserPlan] : []), artifactReference(latest)],
       );
       await this.recordCompletedRepair(runId, node.id, node.repair.id, iteration, signal);
     }
   }
 
-  private async conditionApproved(projectId: string, node: QualityLoopStep): Promise<boolean> {
-    const artifact = await this.artifacts.getLatest(projectId, node.approval.artifact);
-    if (!artifact) return false;
+  private conditionApproved(artifact: StoredArtifact, node: QualityLoopStep): boolean {
+    if (artifact.metadata.name !== node.approval.artifact) return false;
     return getValueAtPath(artifact.content, node.approval.path) === node.approval.equals;
   }
 
@@ -899,6 +908,7 @@ export class WorkflowOrchestrator {
     nodeId: string,
     signal: AbortSignal,
     iteration?: number,
+    pinnedArtifacts: ArtifactReference[] = [],
   ): Promise<StoredArtifact> {
     throwIfCancelled(signal, runId);
     await this.assertExecutionMayContinue(runId, signal);
@@ -915,16 +925,22 @@ export class WorkflowOrchestrator {
       throw await this.policyChanged(project.id, runId, run.policy, policy, currentHash, nodeId);
     }
 
+    const pinnedBrowserPlan =
+      step.type === 'verify' && step.browserTestPlanArtifact
+        ? pinnedArtifacts.find((artifact) => artifact.name === step.browserTestPlanArtifact)
+        : undefined;
     const browserPlan =
       step.type === 'verify' && step.browserTestPlanArtifact
-        ? await this.artifacts.getLatest(project.id, step.browserTestPlanArtifact)
+        ? pinnedBrowserPlan
+          ? await this.loadArtifactReference(project.id, pinnedBrowserPlan)
+          : await this.artifacts.getLatest(project.id, step.browserTestPlanArtifact)
         : null;
     if (step.type === 'verify' && step.browserTestPlanArtifact && !browserPlan) {
       throw new NotFoundError(`Missing input artifact(s): ${step.browserTestPlanArtifact}`);
     }
     let inputArtifacts =
       step.type === 'agent'
-        ? await this.loadInputArtifacts(project.id, step.inputArtifacts)
+        ? await this.loadInputArtifacts(project.id, step.inputArtifacts, pinnedArtifacts)
         : browserPlan
           ? [browserPlan]
           : [];
@@ -1362,19 +1378,19 @@ export class WorkflowOrchestrator {
           allowedOrigins: policy.browserAllowedOrigins ?? [],
         },
         signal,
+        async (previewSessionId) => {
+          attempt = await this.stepAttempts.update(
+            {
+              ...attempt,
+              previewSessionId,
+              updatedAt: this.clock.now().toISOString(),
+            },
+            attempt.version,
+          );
+        },
       );
       throwIfCancelled(signal, runId);
       await this.assertExecutionMayContinue(runId, signal);
-      if (report.approved) {
-        const checkpoint = await this.workspaces.checkpoint(
-          project.id,
-          `${step.id}-${runId}-verified`,
-        );
-        await this.updateExecution(runId, (run) => ({
-          ...(run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
-          lastVerifiedCheckpoint: checkpoint,
-        }));
-      }
       const artifact = await this.artifacts.put({
         projectId: project.id,
         name: step.outputArtifact,
@@ -1388,11 +1404,20 @@ export class WorkflowOrchestrator {
       attempt = await this.stepAttempts.update(
         transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
           durationMs: Date.now() - startedAt,
-          previewSessionId: report.previewSession.sessionId,
           outputArtifacts: [artifactReference(artifact)],
         }),
         attempt.version,
       );
+      if (report.approved) {
+        const checkpoint = await this.workspaces.checkpoint(
+          project.id,
+          `${step.id}-${runId}-verified`,
+        );
+        await this.updateExecution(runId, (run) => ({
+          ...(run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
+          lastVerifiedCheckpoint: checkpoint,
+        }));
+      }
       await this.emit(project.id, 'verification.completed', report.summary, {
         nodeId: step.id,
         runId,
@@ -1809,13 +1834,39 @@ export class WorkflowOrchestrator {
     return result;
   }
 
-  private async loadInputArtifacts(projectId: string, names: string[]): Promise<StoredArtifact[]> {
+  private async loadInputArtifacts(
+    projectId: string,
+    names: string[],
+    pinnedArtifacts: ArtifactReference[] = [],
+  ): Promise<StoredArtifact[]> {
     const artifacts = await Promise.all(
-      names.map((name) => this.artifacts.getLatest(projectId, name)),
+      names.map((name) => {
+        const pinned = pinnedArtifacts.find((artifact) => artifact.name === name);
+        return pinned
+          ? this.loadArtifactReference(projectId, pinned)
+          : this.artifacts.getLatest(projectId, name);
+      }),
     );
     const missing = names.filter((_name, index) => artifacts[index] === null);
     if (missing.length) throw new NotFoundError(`Missing input artifact(s): ${missing.join(', ')}`);
     return artifacts.filter((artifact): artifact is StoredArtifact => artifact !== null);
+  }
+
+  private async loadArtifactReference(
+    projectId: string,
+    reference: ArtifactReference,
+  ): Promise<StoredArtifact> {
+    const artifact = await this.artifacts.getRevision(
+      projectId,
+      reference.name,
+      reference.revision,
+    );
+    if (!artifact || artifact.metadata.sha256 !== reference.sha256) {
+      throw new NotFoundError(
+        `Artifact ${reference.name} revision ${reference.revision} not found`,
+      );
+    }
+    return artifact;
   }
 
   private async recordQualityOutcome(artifact: StoredArtifact, approved: boolean): Promise<void> {

@@ -26,6 +26,7 @@ export class BrowserVerificationCoordinator {
   async verify(
     input: BrowserVerificationInput,
     signal: AbortSignal,
+    onSessionStarted?: (sessionId: string) => Promise<void>,
   ): Promise<BrowserVerificationReport> {
     const started = await this.previews.start({
       workspaceRef: { projectId: input.projectId, workspacePath: input.workspacePath },
@@ -40,6 +41,7 @@ export class BrowserVerificationCoordinator {
     const planArtifact = artifactReference(input.plan);
 
     try {
+      await onSessionStarted?.(started.session.id);
       const parsed = BrowserTestPlanArtifactSchema.safeParse(input.plan.content);
       if (!parsed.success) {
         return BrowserVerificationReportSchema.parse({
