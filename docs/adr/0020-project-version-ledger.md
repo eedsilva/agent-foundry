@@ -1,4 +1,4 @@
-# ADR 0019: ProjectVersion as an explicit ledger over existing git primitives
+# ADR 0020: ProjectVersion as an explicit ledger over existing git primitives
 
 - Status: Accepted
 - Date: 2026-07-17
