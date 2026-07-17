@@ -27,6 +27,54 @@ The final attempt to query npm's remote audit endpoint failed because DNS resolu
 
 Docker Compose configuration is included, but Docker was not installed in the validation environment, so the image itself was not built here.
 
+## Declarative browser verification — 2026-07-17
+
+Issue #32 adds a Chromium-backed quality loop without changing the existing workspace-verification
+path. The browser plan and report contracts are version 1; the report is JSON-only, redacts preview
+tokens, caps observations at 100, and links its plan by immutable artifact reference. Browser mode
+requires a plan artifact and disables workspace scripts and `git diff --check`; a failed report is
+given to repair together with the exact initial plan revision before the same plan reruns.
+
+Focused acceptance evidence passed: 8 files / 91 tests.
+
+```bash
+npx vitest run \
+  packages/contracts/src/preview.test.ts \
+  packages/contracts/src/policy.test.ts \
+  packages/contracts/src/workflow.test.ts \
+  packages/persistence/src/workflow-repository.test.ts \
+  packages/executors/src/browser-verifier.test.ts \
+  packages/orchestrator/src/browser-verification-coordinator.test.ts \
+  packages/orchestrator/src/policy-release-e2e.test.ts \
+  packages/composition/src/runtime.integration.test.ts
+```
+
+The coverage includes plan/schema rejection, exact origin policy, no mixed browser/workspace
+verification, persisted workflow validation, preview start/stop coordination, failure -> repair ->
+same-plan rerun across restart, composition wiring, real Chromium CRUD, token redaction, request and
+WebSocket policy blocks, diagnostics, observation cap, timeout cleanup, and cancellation cleanup.
+
+Install Chromium locally with `npx playwright install chromium`. CI installs the same browser with
+`npx playwright install --with-deps chromium` before `npm test`. The issue #32 branch gate is:
+
+```bash
+npm run format:check
+npm run lint
+npm run architecture:check
+npm run roadmap:check
+npm run typecheck
+npm test
+npm run build
+npm run doctor
+git diff --check
+```
+
+Migration is compatibility-on-read: missing `browserAllowedOrigins` keeps the policy to the trusted
+preview prefix, and missing `browserTestPlanArtifact` retains workspace verification. No backfill is
+needed. Rollback removes the browser quality-loop node and runtime wiring while workspace
+verification remains available. This does not add binary screenshots/traces (issue #33) or strong
+process/network isolation (issue #120).
+
 ## Durable preview lifecycle — 2026-07-16
 
 Issue #31 replaces process-local preview state with versioned files and adds API-owned health/reaping plus redacted cursor logs. Evidence is split by boundary:

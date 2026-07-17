@@ -67,6 +67,7 @@ Traduz uma requisição uniforme para argumentos de cada CLI. Também inclui:
 - executor mock;
 - registry;
 - verifier do workspace.
+- `PlaywrightBrowserVerifier`, implementação Chromium do port `BrowserVerifier`.
 
 ### `packages/orchestrator`
 
@@ -84,6 +85,10 @@ Coordena tudo. O motor:
 - coleta métricas;
 - avalia quality loops;
 - avança o estado do projeto.
+
+`BrowserVerificationCoordinator` inicia uma sessão de preview, passa o plano e as origens permitidas
+ao port, e sempre para a sessão. O orquestrador persiste o report como artifact normal e associa o
+attempt ao `previewSessionId`; não conhece Playwright.
 
 ### `packages/composition`
 
@@ -238,6 +243,18 @@ Um `quality-loop` possui:
 - `maxIterations`, para impedir loops infinitos.
 
 A aprovação do reviewer também vira feedback de qualidade para o modelo que produziu o artefato revisado. Isso é melhor que medir apenas exit code, porque uma CLI pode terminar com sucesso e entregar lixo impecavelmente formatado.
+
+O loop `browser-verification` é uma variante declarativa: `setup` produz `browser-test.plan`; o
+`check` `verify-browser` referencia esse artifact e não pode misturar scripts de workspace nem
+`git diff --check`; `repair-browser` recebe o report falho e a referência pinada ao plano. A referência
+inicial (`name`, `revision`, `sha256`) é preservada entre iterações, então falha -> reparo -> rerun
+executa a mesma jornada. O report version-1 contém `approved`, resumo, referência do plano, sessão de
+preview sanitizada e steps com observações (`console-error`, `request-failed`, `http-error`,
+`uncaught-exception`, `policy-block`).
+
+O plano version-1 é um envelope `AgentArtifact` com viewport e até 100 steps. Cada step usa somente
+`goto`, `click` ou `fill` e assertions `visible`, `hidden`, `containsText` ou `url`; o primeiro é
+`goto`. Não há JavaScript arbitrário no contrato.
 
 ## Atomicidade e concorrência
 
