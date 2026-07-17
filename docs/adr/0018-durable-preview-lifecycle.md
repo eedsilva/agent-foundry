@@ -14,11 +14,13 @@ Preview state is stored under `DATA_DIR/previews/<sessionId>/`: `session.json` c
 
 `FilePreviewSessionRepository` provides optimistic version updates, `FilePreviewLogRepository` provides cursor pages and bounded retention, and `FilePreviewLifecycleLock` serializes lifecycle operations across processes. `NodePreviewRunner` owns HTTP probing, log capture, process detection, and process-tree termination. `PreviewService` owns state transitions, TTL, consecutive-failure policy, at most two restarts by default, deduplicated lifecycle events, and one deterministic `reap()` sweep. It never enqueues repair.
 
-The API process is the sole scheduler owner. It calls one `PreviewService.reap()` per `PREVIEW_REAP_INTERVAL_MS` tick, skips a tick while the prior sweep is running, logs aggregate failures, unreferences the timer, and clears it on Fastify close. The standalone and inline workers have no preview scheduler.
+The singleton API entrypoint is the sole scheduler owner; generic `buildApp()` construction never registers it. The entrypoint calls one `PreviewService.reap()` per `PREVIEW_REAP_INTERVAL_MS` tick, skips a tick while the prior sweep is running, logs aggregate failures, unreferences the timer, and clears it during shutdown. Shutdown awaits the caught active sweep before closing Fastify and exiting. The standalone and inline workers have no preview scheduler.
 
-The public logs endpoint is `GET /projects/:projectId/preview/:sessionId/logs`. It accepts an optional nonnegative integer `cursor` and `limit` from 1 through 200 (repository default 200). Logs and stop both load the durable session first and return `404` when its project does not match the route, so knowing a session ID does not grant cross-project access. Existing start and stop response bodies remain unchanged. Start associates `project.currentRunId` when present.
+The public logs endpoint is `GET /projects/:projectId/preview/:sessionId/logs`. It accepts optional canonical decimal text for a nonnegative `cursor` and `limit` from 1 through 200 (repository default 200); coercible noncanonical forms are rejected. Logs and stop both load the durable session first and return `404` when its project does not match the route, so knowing a session ID does not grant cross-project access. Existing start and stop response bodies remain unchanged. Start associates `project.currentRunId` when present.
 
 Defaults are `PREVIEW_STARTUP_TIMEOUT_MS=10000`, `PREVIEW_HEALTH_PATH=/`, `PREVIEW_HEALTH_INTERVAL_MS=1000`, `PREVIEW_HEALTH_FAILURE_THRESHOLD=3`, `PREVIEW_MAX_RESTARTS=2`, `PREVIEW_REAP_INTERVAL_MS=5000`, and `PREVIEW_LOG_MAX_BYTES=1000000`; `PREVIEW_TTL_SECONDS=1800` remains unchanged.
+
+Startup has two sequential windows using `PREVIEW_STARTUP_TIMEOUT_MS`: the runner's spawn/port-confirmation window followed by the service's HTTP-health window. The default worst case is therefore about 20 seconds, excluding dependency installation.
 
 Lifecycle lock recovery assumes all processes sharing `DATA_DIR` share the host PID namespace. Liveness uses the persisted PID and the operating system's process check. Sharing one data directory across hosts or isolated PID namespaces is unsupported; PID reuse can conservatively retain a stale lock until an operator verifies and removes it.
 
@@ -33,7 +35,7 @@ Lifecycle lock recovery assumes all processes sharing `DATA_DIR` share the host 
 
 API restart now converges active sessions through the next reap tick. Logs can lose old entries when their configured byte ceiling is reached; `truncatedBeforeCursor` makes that loss explicit. A sweep continues across session failures and raises one `AggregateError`, which the API logs without overlapping the next in-flight sweep. Disk usage remains bounded per log file but session metadata, events, and diagnostic artifacts still require normal `DATA_DIR` backup/retention.
 
-Security remains local/trusted-operator only: loopback proxy controls from ADR 0017 still apply, access tokens are digest-only at rest, project ownership is checked at logs/stop boundaries, and persisted diagnostic material must be protected as sensitive even after redaction.
+Security remains local/trusted-operator only: loopback proxy controls from ADR 0017 still apply, access tokens are digest-only at rest, and a centralized request serializer redacts case-insensitive/encoded `token` query keys before access logging while retaining other URL data. Project ownership is checked at logs/stop boundaries, and persisted diagnostic material must be protected as sensitive even after redaction.
 
 ## Migration, rollback, and recovery
 

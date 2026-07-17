@@ -82,7 +82,7 @@ A prévia em tempo real permite que desenvolvedores testem mudanças no projeto 
 POST /projects/:projectId/preview
 ```
 
-Inicia uma sessão de preview: reserva uma porta, instala dependências, inicia o servidor de dev, sonda a saúde HTTP e, quando saudável, retorna a sessão e uma URL de proxy com token (`/preview/:sessionId/?token=<token>`). O `currentRunId` do projeto, quando presente, é associado à sessão e aos seus eventos/diagnósticos. O token criptograficamente aleatório só aparece na resposta e no cookie; apenas seu SHA-256 é persistido.
+Inicia uma sessão de preview: reserva uma porta, instala dependências, inicia o servidor de dev, sonda a saúde HTTP e, quando saudável, retorna a sessão e uma URL de proxy com token (`/preview/:sessionId/?token=<token>`). O `currentRunId` do projeto, quando presente, é associado à sessão e aos seus eventos/diagnósticos. O token criptograficamente aleatório só aparece na resposta e no cookie; apenas seu SHA-256 é persistido. O serializer central dos access logs substitui valores de qualquer query key `token` (case-insensitive, inclusive key percent-encoded) antes da primeira emissão, preservando os demais dados da URL.
 
 ```bash
 POST /projects/:projectId/preview/:sessionId/stop
@@ -94,9 +94,9 @@ Interrompe explicitamente uma sessão, terminando o processo do servidor de dese
 GET /projects/:projectId/preview/:sessionId/logs?cursor=0&limit=200
 ```
 
-Retorna stdout/stderr estruturado depois do cursor informado. `cursor` é um inteiro não negativo e `limit` aceita 1–200 (padrão 200). Logs e stop retornam `404` quando a sessão não pertence ao projeto da URL, evitando acesso cruzado entre projetos.
+Retorna stdout/stderr estruturado depois do cursor informado. `cursor` aceita somente texto decimal canônico não negativo (`0`, `1`, ...), e `limit` somente decimal canônico de 1–200 (padrão 200); vazio, whitespace, sinal, zero à esquerda, hexadecimal, notação científica e fração são rejeitados. Logs e stop retornam `404` quando a sessão não pertence ao projeto da URL, evitando acesso cruzado entre projetos.
 
-Sessões expiram automaticamente após `PREVIEW_TTL_SECONDS` segundos (padrão 1800). O processo da API, nunca o worker, executa uma varredura determinística a cada `PREVIEW_REAP_INTERVAL_MS`; varreduras não se sobrepõem, erros agregados são registrados e o timer é encerrado com a API. Após expiração, tentativas de proxy retornam `403`.
+Sessões expiram automaticamente após `PREVIEW_TTL_SECONDS` segundos (padrão 1800). Somente o entrypoint singleton do processo da API, nunca `buildApp` nem o worker, registra uma varredura determinística a cada `PREVIEW_REAP_INTERVAL_MS`; varreduras não se sobrepõem, erros agregados são registrados e o timer é encerrado no shutdown. Se uma varredura estiver ativa, o shutdown aguarda seu resultado já tratado antes de fechar a API e sair. Após expiração, tentativas de proxy retornam `403`.
 
 ### Configuração e armazenamento
 
@@ -110,6 +110,8 @@ Sessões expiram automaticamente após `PREVIEW_TTL_SECONDS` segundos (padrão 1
 | `PREVIEW_MAX_RESTARTS`             | `2`       | reinícios automáticos antes da falha terminal  |
 | `PREVIEW_REAP_INTERVAL_MS`         | `5000`    | intervalo da varredura no processo da API      |
 | `PREVIEW_LOG_MAX_BYTES`            | `1000000` | retenção máxima aproximada por arquivo de logs |
+
+O timeout de startup é aplicado em duas janelas sequenciais: primeiro o runner aguarda a confirmação do processo/porta após o spawn; depois o serviço aguarda a sonda HTTP em `PREVIEW_HEALTH_PATH`. Cada janela usa `PREVIEW_STARTUP_TIMEOUT_MS`, portanto o pior caso padrão é aproximadamente 20 segundos, além do tempo de instalação.
 
 Cada sessão usa `DATA_DIR/previews/<sessionId>/session.json` e `logs.json`. Escritas usam locks de diretório; `.lifecycle.lock/owner.json` serializa start/stop/reap entre processos. O arquivo de sessão contém estado versionado e digest do token, nunca o token bruto. O arquivo de logs usa cursores monotônicos, remove entradas antigas para respeitar `PREVIEW_LOG_MAX_BYTES` e aplica `redactString` antes da gravação. Falha terminal grava o artifact redigido `preview-failure-<sessionId>` e eventos deduplicados `preview.crashed`, `preview.restarted`, `preview.failed` e `preview.reaped`; não agenda reparo automaticamente.
 

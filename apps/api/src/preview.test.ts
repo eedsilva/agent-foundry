@@ -15,7 +15,9 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-async function startApi(): Promise<{ baseUrl: string; runtime: Runtime }> {
+async function startApi(options?: {
+  loggerStream?: { write(message: string): void };
+}): Promise<{ baseUrl: string; runtime: Runtime }> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-preview-'));
   dirs.push(dataDir);
   const runtime = await createRuntime({
@@ -27,7 +29,7 @@ async function startApi(): Promise<{ baseUrl: string; runtime: Runtime }> {
     WORKER_ID: 'preview-worker',
     PREVIEW_TTL_SECONDS: '60',
   });
-  const app = await buildApp(runtime);
+  const app = await buildApp(runtime, options);
   apps.push(app);
   const baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
   return { baseUrl, runtime };
@@ -127,20 +129,65 @@ describe('preview routes', () => {
     });
   });
 
-  it.each(['cursor=-1', 'cursor=1.5', 'limit=0', 'limit=201'])(
-    'rejects invalid %s',
-    async (query) => {
-      const { baseUrl, runtime } = await startApi();
-      const projectId = await createProject(baseUrl);
-      const session = await createStoredSession(runtime, projectId);
+  it.each([
+    'cursor=',
+    'cursor=%20',
+    'cursor=-1',
+    'cursor=%2B1',
+    'cursor=01',
+    'cursor=0x10',
+    'cursor=1e2',
+    'cursor=1.5',
+    'limit=',
+    'limit=%2B1',
+    'limit=01',
+    'limit=1e2',
+    'limit=0',
+    'limit=201',
+  ])('rejects invalid %s', async (query) => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const session = await createStoredSession(runtime, projectId);
 
-      const response = await fetch(
-        `${baseUrl}/projects/${projectId}/preview/${session.id}/logs?${query}`,
-      );
+    const response = await fetch(
+      `${baseUrl}/projects/${projectId}/preview/${session.id}/logs?${query}`,
+    );
 
-      expect(response.status).toBe(400);
-    },
-  );
+    expect(response.status).toBe(400);
+  });
+
+  it('accepts canonical cursor and limit decimals at their boundaries', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const session = await createStoredSession(runtime, projectId);
+
+    const response = await fetch(
+      `${baseUrl}/projects/${projectId}/preview/${session.id}/logs?cursor=0&limit=200`,
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it('redacts case-insensitive and encoded token query keys from access logs', async () => {
+    const lines: string[] = [];
+    const { baseUrl } = await startApi({
+      loggerStream: { write: (message) => lines.push(message) },
+    });
+    const rawToken = 'raw-secret-token';
+    const encodedKeyToken = 'encoded-key-secret';
+
+    await fetch(
+      `${baseUrl}/preview/unknown/?ToKeN=${rawToken}&%74oken=${encodedKeyToken}&keep=yes`,
+    );
+
+    const output = lines.join('');
+    expect(output).toContain('keep=yes');
+    expect(output).toContain('REDACTED');
+    expect(output).not.toContain(rawToken);
+    expect(output).not.toContain(encodedKeyToken);
+    expect(output).not.toContain(encodeURIComponent(rawToken));
+    expect(output).not.toContain(encodeURIComponent(encodedKeyToken));
+  });
 
   it('does not expose or stop a preview through another project', async () => {
     const { baseUrl, runtime } = await startApi();
@@ -175,7 +222,7 @@ describe('preview routes', () => {
 });
 
 describe('preview reaper schedule', () => {
-  it('runs one non-overlapping sweep per interval and reports aggregate errors', async () => {
+  it('is not started by generic app construction', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-preview-reaper-'));
     dirs.push(dataDir);
     const runtime = await createRuntime({
@@ -185,34 +232,15 @@ describe('preview reaper schedule', () => {
       EXECUTOR_MODE: 'mock',
       PREVIEW_REAP_INTERVAL_MS: '10',
     });
-    let finish!: () => void;
-    const firstSweep = new Promise<void>((resolveSweep) => {
-      finish = resolveSweep;
-    });
-    const reap = vi
-      .spyOn(runtime.previewService, 'reap')
-      .mockReturnValueOnce(firstSweep.then(() => 0))
-      .mockRejectedValueOnce(new AggregateError([new Error('broken session')], 'sweep failed'));
+    const reap = vi.spyOn(runtime.previewService, 'reap');
     vi.useFakeTimers();
     const app = await buildApp(runtime);
     apps.push(app);
-    const logError = vi.spyOn(app.log, 'error');
 
     await vi.advanceTimersByTimeAsync(30);
-    expect(reap).toHaveBeenCalledTimes(1);
-    finish();
-    await firstSweep;
-    await vi.advanceTimersByTimeAsync(10);
-    await vi.runAllTicks();
-    expect(reap).toHaveBeenCalledTimes(2);
-    expect(logError).toHaveBeenCalledWith(
-      expect.any(AggregateError),
-      'Preview reaper sweep failed',
-    );
+    expect(reap).not.toHaveBeenCalled();
 
     await app.close();
-    await vi.advanceTimersByTimeAsync(20);
-    expect(reap).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
   });
 });

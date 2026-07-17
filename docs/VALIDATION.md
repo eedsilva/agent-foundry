@@ -36,9 +36,10 @@ Issue #31 replaces process-local preview state with versioned files and adds API
 - `packages/executors/src/node-preview-runner.test.ts` validates HTTP health, persisted stdout/stderr, independent crash detection, restart, and process-tree termination.
 - `packages/orchestrator/src/preview-service.test.ts` validates startup windows, health thresholds, bounded restarts, TTL/orphan reaping, concurrent lifecycle calls, deduplicated events/artifacts, and redacted failure diagnostics.
 - `packages/composition/src/config.test.ts` pins all eight preview lifecycle defaults and overrides.
-- `apps/api/src/preview.test.ts` validates start/stop compatibility, current-run association, cursor/limit validation, project ownership, non-overlapping reap ticks, aggregate-error logging, and timer cleanup on close.
+- `apps/api/src/preview.test.ts` validates start/stop compatibility, current-run association, canonical cursor/limit validation, project ownership, access-log token redaction, and absence of scheduler registration in generic app construction.
+- `apps/api/src/preview-reaper.test.ts` validates non-overlapping reap ticks, aggregate-error logging, timer cleanup, and shutdown waiting for a caught active rejected sweep before API close.
 
-The storage boundary is `DATA_DIR/previews/<sessionId>/`; raw access tokens are excluded from it. The log API returns only entries belonging to a session owned by the path project, with `cursor >= 0` and `1 <= limit <= 200`. The API owns the only scheduler; worker processes do not run preview sweeps.
+The storage boundary is `DATA_DIR/previews/<sessionId>/`; raw access tokens are excluded from it and from access logs. The log API returns only entries belonging to a session owned by the path project, with canonical decimal `cursor >= 0` and `1 <= limit <= 200`. The singleton API entrypoint owns the only scheduler; generic app instances and worker processes do not run preview sweeps.
 
 Migration coverage intentionally has no legacy fixture because the previous implementation persisted no preview sessions. Operational evidence requires stopping old preview processes before upgrade. Rollback/recovery and the same-host PID-lock assumption are recorded in `OPERATIONS.md` and ADR 0018.
 

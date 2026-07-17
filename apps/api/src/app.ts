@@ -19,10 +19,34 @@ import {
 } from '@agent-foundry/domain';
 import { registerPreviewProxy } from './preview-proxy.js';
 
-export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
+interface BuildAppOptions {
+  loggerStream?: { write(message: string): void };
+}
+
+interface LoggableRequest {
+  method?: string;
+  url?: string;
+  host?: string;
+  ip?: string;
+  headers?: { host?: string };
+  socket?: { remoteAddress?: string; remotePort?: number };
+  raw?: LoggableRequest;
+}
+
+const CanonicalDecimalSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d*)$/)
+  .transform(Number);
+
+export async function buildApp(
+  runtime: Runtime,
+  options: BuildAppOptions = {},
+): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
+      serializers: { req: serializeRequest },
+      ...(options.loggerStream ? { stream: options.loggerStream } : {}),
     },
     bodyLimit: 1_000_000,
   });
@@ -33,20 +57,6 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     origin: allowedOrigins,
     methods: ['GET', 'POST', 'OPTIONS'],
   });
-
-  let reaping = false;
-  const previewReaper = setInterval(() => {
-    if (reaping) return;
-    reaping = true;
-    void runtime.previewService
-      .reap()
-      .catch((error: unknown) => app.log.error(error, 'Preview reaper sweep failed'))
-      .finally(() => {
-        reaping = false;
-      });
-  }, runtime.config.previewReapIntervalMs);
-  previewReaper.unref();
-  app.addHook('onClose', async () => clearInterval(previewReaper));
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
@@ -292,8 +302,8 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
       .parse(request.params);
     const { cursor, limit } = z
       .object({
-        cursor: z.coerce.number().int().nonnegative().optional(),
-        limit: z.coerce.number().int().min(1).max(200).optional(),
+        cursor: CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).optional(),
+        limit: CanonicalDecimalSchema.pipe(z.number().int().min(1).max(200)).optional(),
       })
       .parse(request.query);
     await requireProjectSession(runtime, projectId, sessionId);
@@ -303,6 +313,32 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
   registerPreviewProxy(app, runtime);
 
   return app;
+}
+
+function serializeRequest(request: unknown) {
+  const value = request as LoggableRequest;
+  const raw = value.raw ?? value;
+  const method = value.method ?? raw.method;
+  const host = value.host ?? value.headers?.host ?? raw.headers?.host;
+  const remoteAddress = value.ip ?? value.socket?.remoteAddress ?? raw.socket?.remoteAddress;
+  const remotePort = value.socket?.remotePort ?? raw.socket?.remotePort;
+  return {
+    ...(method ? { method } : {}),
+    url: sanitizeRequestUrl(value.url ?? raw.url ?? ''),
+    ...(host ? { host } : {}),
+    ...(remoteAddress ? { remoteAddress } : {}),
+    ...(remotePort !== undefined ? { remotePort } : {}),
+  };
+}
+
+export function sanitizeRequestUrl(url: string): string {
+  const queryStart = url.indexOf('?');
+  if (queryStart < 0) return url;
+  const params = new URLSearchParams(url.slice(queryStart + 1));
+  for (const key of [...params.keys()]) {
+    if (key.toLowerCase() === 'token') params.set(key, '[REDACTED]');
+  }
+  return `${url.slice(0, queryStart)}?${params.toString()}`;
 }
 
 async function requireProjectSession(
