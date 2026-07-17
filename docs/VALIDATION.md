@@ -525,7 +525,7 @@ ceiling already exists as Playwright evidence from issues #14 and #16; no new UI
 ## ProjectVersion ledger — 2026-07-17
 
 Issue #40 (`v06-version-history`) adds an explicit, immutable `ProjectVersion` ledger over the existing
-git checkpoint/commit primitives (ADR 0020): list, compare, revert, and branch from any recorded version
+git checkpoint/commit primitives (ADR 0021): list, compare, revert, and branch from any recorded version
 without ever rewriting history.
 
 ### Matrix
@@ -542,7 +542,7 @@ without ever rewriting history.
 ### Boundaries of this coverage
 
 `protected` is stored but nothing enforces it yet — no cleanup/retention job exists anywhere in this
-codebase (see ADR 0020); a future GC job must check the flag. Version recording is hooked at the
+codebase (see ADR 0021); a future GC job must check the flag. Version recording is hooked at the
 mutating-step level, not per-Operation — the Conversation domain (issue #36) that introduces `Operation`
 was developed in parallel and had not landed on this branch. `compare` returns a raw unified diff; there
 is no semantic schema/config diff parser, consistent with the ADR's stated scope cut. Web panel coverage

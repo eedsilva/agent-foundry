@@ -62,7 +62,7 @@ export class ProjectVersionService {
    * revert or branch while a run is actively executing a mutating step can
    * corrupt that step's checkpoint semantics. Upgrade path: guard on the
    * project having no in-flight run, or take a per-project workspace lock,
-   * if concurrent use becomes real (see ADR 0020).
+   * if concurrent use becomes real (see ADR 0021).
    */
   async revert(projectId: string, toVersionId: string): Promise<ProjectVersion> {
     const target = await this.requireVersion(projectId, toVersionId);

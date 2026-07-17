@@ -935,6 +935,7 @@ export function makeHarness(
     ids,
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
     stores.modelOverrides,
+    undefined,
     opts.browserVerification,
   );
   const service = new ProjectService(
