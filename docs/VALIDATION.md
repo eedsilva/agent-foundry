@@ -449,3 +449,31 @@ consistent with every other test in this directory — `packages/orchestrator` c
 `WorkspaceVerifier` (architecture boundary). The real `forbiddenDependencies` check logic is unit-tested
 separately in `packages/executors/src/verifier.test.ts`. Web UI coverage for approvals and the emergency
 ceiling already exists as Playwright evidence from issues #14 and #16; no new UI work was needed here.
+
+## ProjectVersion ledger — 2026-07-17
+
+Issue #40 (`v06-version-history`) adds an explicit, immutable `ProjectVersion` ledger over the existing
+git checkpoint/commit primitives (ADR 0019): list, compare, revert, and branch from any recorded version
+without ever rewriting history.
+
+### Matrix
+
+| Acceptance criterion                                                    | Covering test                                                                                                                                        |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ProjectVersion points at commit, run, and artifacts                      | `packages/contracts/src/project-version.test.ts`; `packages/orchestrator/src/project-version-service.test.ts` — `recordFromStep` cases              |
+| Each mutating step commit creates exactly one version                   | `packages/orchestrator/src/workflow-orchestrator.test.ts` — hook fires once for a mutating step, never for a non-mutating one                        |
+| Compare shows a diff between two versions                                | `packages/persistence/src/workspace-manager.test.ts` — `diff`; `packages/orchestrator/src/project-version-service.test.ts` — `compare`; `apps/api/src/project-versions.test.ts` |
+| Revert creates a new version, never rewrites history                     | `packages/orchestrator/src/project-version-service.test.ts` — `revert` leaves the source version's stored record untouched                           |
+| Branch from a version creates an independent baseline                   | `packages/persistence/src/workspace-manager.test.ts` — `createBranch` doesn't move the current branch; `project-version-service.test.ts` — `branchFrom` never calls `commit`/`restoreTree` |
+| Protected version survives a concurrent-update conflict                  | `packages/persistence/src/project-version-repository.test.ts` — stale `expectedVersion` rejection and immutable-field-on-update rejection            |
+
+### Boundaries of this coverage
+
+`protected` is stored but nothing enforces it yet — no cleanup/retention job exists anywhere in this
+codebase (see ADR 0019); a future GC job must check the flag. Version recording is hooked at the
+mutating-step level, not per-Operation — the Conversation domain (issue #36) that introduces `Operation`
+was developed in parallel and had not landed on this branch. `compare` returns a raw unified diff; there
+is no semantic schema/config diff parser, consistent with the ADR's stated scope cut. Web panel coverage
+is limited to the routes and client functions (`apps/web/lib/api.test.ts`); the panel component itself
+has no automated test, matching this app's existing UI-coverage level (manual/Playwright evidence only
+where it already exists, e.g. issues #14 and #16).
