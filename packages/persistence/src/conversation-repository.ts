@@ -23,7 +23,7 @@ import {
   readJsonLines,
   readJsonOrNull,
   safeSegment,
-  withDirectoryLock,
+  withRecoverableDirectoryLock,
 } from './fs-utils.js';
 
 export class FileConversationRepository implements ConversationRepository {
@@ -34,7 +34,7 @@ export class FileConversationRepository implements ConversationRepository {
     if (parsed.id !== parsed.projectId) {
       throw new ValidationError('Conversation id must match projectId');
     }
-    await withDirectoryLock(this.lockFor(parsed.projectId), async () => {
+    await this.withLock(parsed.projectId, async () => {
       const existing = await this.getConversation(parsed.projectId);
       if (existing) {
         if (JSON.stringify(existing) !== JSON.stringify(parsed)) {
@@ -53,7 +53,7 @@ export class FileConversationRepository implements ConversationRepository {
 
   async appendMessage(message: Omit<Message, 'sequence'>): Promise<Message> {
     const projectId = safeSegment(message.projectId);
-    return withDirectoryLock(this.lockFor(projectId), async () => {
+    return this.withLock(projectId, async () => {
       await this.requireConversation(projectId, message.conversationId);
       const existing = await this.readMessages(projectId);
       if (existing.some((item) => item.id === message.id)) {
@@ -93,7 +93,7 @@ export class FileConversationRepository implements ConversationRepository {
       ...parsed,
       ...(parsed.name !== undefined ? { name: redactString(parsed.name) } : {}),
     });
-    return withDirectoryLock(this.lockFor(parsed.projectId), async () => {
+    return this.withLock(parsed.projectId, async () => {
       await this.requireConversation(parsed.projectId, parsed.conversationId);
       const existing = await this.readAttachments(parsed.projectId);
       if (existing.some((item) => item.id === parsed.id)) {
@@ -119,9 +119,10 @@ export class FileConversationRepository implements ConversationRepository {
 
   async createOperation(operation: Operation): Promise<Operation> {
     const parsed = OperationSchema.parse(operation);
-    return withDirectoryLock(this.lockFor(parsed.projectId), async () => {
+    return this.withLock(parsed.projectId, async () => {
       await this.requireConversation(parsed.projectId, parsed.conversationId);
-      // ponytail: full-file idempotency scan; add a key index if operation volume makes this hot.
+      // ponytail: full-file JSONL scans; add sequence, attachment/id, pagination, and
+      // idempotency indexes if measured volume makes them hot.
       const operations = await this.readOperations(parsed.projectId);
       const existing = operations.find((item) => item.idempotencyKey === parsed.idempotencyKey);
       if (existing) {
@@ -169,8 +170,12 @@ export class FileConversationRepository implements ConversationRepository {
     return join(this.dataDir, 'projects', safeSegment(projectId), 'conversation');
   }
 
-  private lockFor(projectId: string): string {
-    return join(this.rootFor(projectId), '.lock');
+  private withLock<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
+    return withRecoverableDirectoryLock(
+      this.dataDir,
+      ['projects', safeSegment(projectId), 'conversation', '.lock'],
+      operation,
+    );
   }
 
   private conversationPath(projectId: string): string {

@@ -120,6 +120,21 @@ export class ConversationService {
   ): Promise<Operation> {
     const project = await this.requireProject(projectId);
     const parsed = CreateOperationRequestSchema.parse(input);
+    const candidate = OperationSchema.parse({
+      id: this.ids.next(),
+      projectId,
+      conversationId: projectId,
+      messageId,
+      ...parsed,
+      createdAt: this.clock.now().toISOString(),
+    });
+    if (
+      (await this.conversations.listOperations(projectId)).some(
+        (operation) => operation.idempotencyKey === parsed.idempotencyKey,
+      )
+    ) {
+      return this.conversations.createOperation(candidate);
+    }
     const message = (await this.conversations.listMessages(projectId)).find(
       (item) => item.id === messageId,
     );
@@ -149,16 +164,7 @@ export class ConversationService {
       }
     }
     await this.ensureConversation(project);
-    return this.conversations.createOperation(
-      OperationSchema.parse({
-        id: this.ids.next(),
-        projectId,
-        conversationId: projectId,
-        messageId,
-        ...parsed,
-        createdAt: this.clock.now().toISOString(),
-      }),
-    );
+    return this.conversations.createOperation(candidate);
   }
 
   async export(projectId: string): Promise<ProjectExportResponse> {

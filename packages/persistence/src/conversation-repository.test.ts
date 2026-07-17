@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -57,6 +57,25 @@ function operation(overrides: Partial<Operation> = {}): Operation {
 }
 
 describe('FileConversationRepository', () => {
+  it('recovers an abandoned conversation lock before creating the aggregate', async () => {
+    const dataDir = await temporaryDataDir();
+    const lockPath = join(dataDir, 'projects', 'project-1', 'conversation', '.lock');
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(
+      join(lockPath, 'owner.json'),
+      JSON.stringify({
+        token: '11111111-1111-4111-8111-111111111111',
+        pid: 2_147_483_647,
+        acquiredAt: new Date().toISOString(),
+      }),
+    );
+
+    const repository = new FileConversationRepository(dataDir);
+    await repository.createConversation(conversation);
+
+    await expect(repository.getConversation('project-1')).resolves.toEqual(conversation);
+  }, 12_000);
+
   it('assigns contiguous message sequences under concurrent appends and paginates stably', async () => {
     const repository = new FileConversationRepository(await temporaryDataDir());
     await repository.createConversation(conversation);

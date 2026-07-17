@@ -168,6 +168,13 @@ describe('ConversationService', () => {
 
     await expect(
       service.createOperation(project.id, message.id, { ...input, runId: 'missing-run' }),
+    ).rejects.toBeInstanceOf(IdempotencyConflictError);
+    await expect(
+      service.createOperation(project.id, message.id, {
+        ...input,
+        idempotencyKey: 'f'.repeat(64),
+        runId: 'missing-run',
+      }),
     ).rejects.toBeInstanceOf(NotFoundError);
     await expect(
       service.createOperation(project.id, message.id, {
