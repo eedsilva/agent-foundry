@@ -53,6 +53,7 @@ import {
   type WorkspaceManager,
 } from '@agent-foundry/domain';
 import { ProjectService } from '../project-service.js';
+import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
 import { WorkflowOrchestrator } from '../workflow-orchestrator.js';
 
 const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
@@ -309,6 +310,7 @@ export class InMemoryStepRuns implements StepRunRepository {
 
 export class InMemoryStepAttempts implements StepAttemptRepository {
   readonly store = new Map<string, StepAttempt>();
+  onBeforeUpdate?: ((attempt: StepAttempt) => void) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   create(attempt: StepAttempt): Promise<void> {
     checkPower(this.power);
@@ -328,6 +330,7 @@ export class InMemoryStepAttempts implements StepAttemptRepository {
   }
   update(attempt: StepAttempt, expectedVersion: number): Promise<StepAttempt> {
     checkPower(this.power);
+    this.onBeforeUpdate?.(attempt);
     const key = `${attempt.runId}/${attempt.stepRunId}/${attempt.id}`;
     const existing = this.store.get(key);
     if (!existing) throw new Error(`attempt ${key} missing`);
@@ -397,11 +400,15 @@ export class InMemoryArtifacts implements ArtifactStore {
   constructor(private readonly power: PowerSwitch) {}
   put(input: Parameters<ArtifactStore['put']>[0]): Promise<StoredArtifact> {
     checkPower(this.power);
-    const existing = input.sourceDecisionId
+    const existing = input.idempotencyKey
       ? this.named(input.name).find(
-          (artifact) => artifact.metadata.sourceDecisionId === input.sourceDecisionId,
+          (artifact) => artifact.metadata.idempotencyKey === input.idempotencyKey,
         )
-      : undefined;
+      : input.sourceDecisionId
+        ? this.named(input.name).find(
+            (artifact) => artifact.metadata.sourceDecisionId === input.sourceDecisionId,
+          )
+        : undefined;
     if (existing) return Promise.resolve(existing);
     const revision = this.named(input.name).length + 1;
     const metadata: ArtifactMetadata = {
@@ -629,6 +636,9 @@ export class ControllableExecutor implements AgentExecutor {
   constructor(
     private readonly behaviors: Record<string, StepBehavior>,
     private readonly workspaces: FakeWorkspaces,
+    private readonly output?: (
+      request: AgentExecutionRequest,
+    ) => AgentExecutionResult['output'] | undefined,
   ) {}
 
   execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult> {
@@ -693,7 +703,7 @@ export class ControllableExecutor implements AgentExecutor {
       durationMs: 1,
       stdout: '',
       stderr: '',
-      output: {
+      output: this.output?.(request) ?? {
         schemaVersion: '1',
         status: 'completed',
         summary: `${request.stepId} done.`,
@@ -759,11 +769,13 @@ export function makeHarness(
     models?: ModelDefinition[];
     workflow?: WorkflowDefinition;
     verification?: () => VerificationReport | Promise<VerificationReport>;
+    browserVerification?: BrowserVerificationCoordinator;
+    agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
   } = {},
 ) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
-  const executor = new ControllableExecutor(behaviors, stores.workspaces);
+  const executor = new ControllableExecutor(behaviors, stores.workspaces, opts.agentOutput);
   const policies = new InMemoryPolicies(opts.policy ?? DEFAULT_POLICY);
   const models = opts.models ?? MODELS;
   // Fallback recovery needs the mutating step to offer a second candidate.
@@ -923,6 +935,7 @@ export function makeHarness(
     ids,
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
     stores.modelOverrides,
+    opts.browserVerification,
   );
   const service = new ProjectService(
     stores.projects,

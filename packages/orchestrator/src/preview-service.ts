@@ -130,30 +130,35 @@ export class PreviewService {
         session = await this.finalizeFailure(this.stageFailure(session, 'start'));
         return { session, url: '' };
       }
-      session = await this.persist(session);
+      try {
+        session = await this.persist(session);
 
-      const health = await this.waitForHealthy(session);
-      if (health.state !== 'healthy') {
-        const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
-          failurePhase: 'health',
-          health,
-          error: {
-            name: 'PreviewUnhealthyError',
-            code: 'PREVIEW_UNHEALTHY',
-            message: 'Dev server did not become healthy in time.',
-          },
+        const health = await this.waitForHealthy(session);
+        if (health.state !== 'healthy') {
+          const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
+            failurePhase: 'health',
+            health,
+            error: {
+              name: 'PreviewUnhealthyError',
+              code: 'PREVIEW_UNHEALTHY',
+              message: 'Dev server did not become healthy in time.',
+            },
+          });
+          session = await this.finalizeFailure(failing);
+          return { session, url: '' };
+        }
+
+        const url = this.buildUrl(session.id, token);
+        const running = transitionPreviewSession(session, 'running', this.clock.now(), {
+          url,
+          health: { ...health, consecutiveFailures: 0 },
         });
-        session = await this.finalizeFailure(failing);
-        return { session, url: '' };
+        session = await this.persist(running);
+        return { session: { ...session, url }, url };
+      } catch (error) {
+        await this.cleanupStartedPreview(session, error);
+        throw error;
       }
-
-      const url = this.buildUrl(session.id, token);
-      const running = transitionPreviewSession(session, 'running', this.clock.now(), {
-        url,
-        health: { ...health, consecutiveFailures: 0 },
-      });
-      session = await this.persist(running);
-      return { session: { ...session, url }, url };
     });
   }
 
@@ -364,6 +369,33 @@ export class PreviewService {
       'terminal',
     );
     return this.persist(transitionPreviewSession(session, 'failed', failedAt));
+  }
+
+  private async cleanupStartedPreview(session: PreviewSession, error: unknown): Promise<void> {
+    try {
+      const current = await this.sessions.get(session.id);
+      const active = current?.session ?? session;
+      if (isPreviewSessionTerminal(active.status)) return;
+      if (active.status === 'failing') {
+        await this.runner.stop(active);
+        return;
+      }
+      const failing = transitionPreviewSession(active, 'failing', this.clock.now(), {
+        failurePhase: 'start',
+        error: {
+          name: 'PreviewStartError',
+          code: 'PREVIEW_START_FAILED',
+          message: error instanceof Error ? error.message : 'Preview startup failed.',
+        },
+      });
+      await this.finalizeFailure(failing);
+    } catch {
+      try {
+        await this.runner.stop(session);
+      } catch {
+        // Preserve the original startup failure; lifecycle recovery can retry cleanup.
+      }
+    }
   }
 
   private async writeFailureDiagnostic(

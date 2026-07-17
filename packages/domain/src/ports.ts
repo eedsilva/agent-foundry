@@ -7,6 +7,8 @@ import type {
   Attachment,
   ArtifactMetadata,
   Conversation,
+  ArtifactReference,
+  BrowserVerificationReport,
   ExecutorHealth,
   ModelDefinition,
   ModelMetric,
@@ -17,6 +19,7 @@ import type {
   PreviewLogEntry,
   PreviewLogPage,
   PreviewSession,
+  PreviewSessionReference,
   Project,
   ProjectPolicy,
   ProjectEvent,
@@ -233,6 +236,18 @@ export interface PreviewRunner {
   ): Promise<PreviewLogPage>;
   restart(session: PreviewSession): Promise<PreviewSession>;
   stop(session: PreviewSession): Promise<PreviewSession>;
+}
+
+export interface BrowserVerifier {
+  verify(
+    input: {
+      planArtifact: ArtifactReference;
+      planContent: unknown;
+      session: PreviewSessionReference;
+      allowedOrigins: string[];
+    },
+    signal: AbortSignal,
+  ): Promise<BrowserVerificationReport>;
 }
 
 export interface PreviewSessionRecord {

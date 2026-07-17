@@ -6,6 +6,7 @@ import {
   ClaudeCliExecutor,
   AgyCliExecutor,
   WorkspaceVerifier,
+  PlaywrightBrowserVerifier,
   NodePreviewRunner,
 } from '@agent-foundry/executors';
 import { VersionedHarnessRepository } from '@agent-foundry/harness';
@@ -39,8 +40,11 @@ import {
   WorkerLoop,
   WorkflowOrchestrator,
   PreviewService,
+  BrowserVerificationCoordinator,
 } from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
+import type { BrowserVerifier } from '@agent-foundry/domain';
+import { BrowserTestPlanArtifactSchema, type PreviewSession } from '@agent-foundry/contracts';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
 
 export interface Runtime {
@@ -64,6 +68,8 @@ export interface Runtime {
   router: ScoreBasedModelRouter;
   executors: StaticExecutorRegistry | MockExecutorRegistry;
   verifier: WorkspaceVerifier;
+  browserVerifier: PlaywrightBrowserVerifier;
+  browserVerification: BrowserVerificationCoordinator;
   projectService: ProjectService;
   conversationService: ConversationService;
   orchestrator: WorkflowOrchestrator;
@@ -152,6 +158,11 @@ export async function createRuntime(
     clock,
     ids,
   );
+  const browserVerifier = new PlaywrightBrowserVerifier();
+  const browserVerification =
+    config.executorMode === 'mock'
+      ? mockBrowserVerificationCoordinator()
+      : new BrowserVerificationCoordinator(previewService, browserVerifier);
   const orchestrator = new WorkflowOrchestrator(
     projects,
     runs,
@@ -174,6 +185,7 @@ export async function createRuntime(
     { agentTimeoutMs: config.agentTimeoutMs, cancelPollIntervalMs: config.cancelPollIntervalMs },
     modelOverrides,
     projectVersionService,
+    browserVerification,
   );
   const projectService = new ProjectService(
     projects,
@@ -232,6 +244,8 @@ export async function createRuntime(
     router,
     executors,
     verifier,
+    browserVerifier,
+    browserVerification,
     projectService,
     conversationService,
     orchestrator,
@@ -245,4 +259,67 @@ export async function createRuntime(
     projectVersions,
     projectVersionService,
   };
+}
+
+function mockBrowserVerificationCoordinator(): BrowserVerificationCoordinator {
+  let sequence = 0;
+  const sessions = new Map<string, PreviewSession>();
+  const previews: Pick<PreviewService, 'start' | 'stop'> = {
+    start: (input) => {
+      sequence += 1;
+      const now = new Date().toISOString();
+      const id = `mock-preview-${sequence}`;
+      const session: PreviewSession = {
+        id,
+        ...(input.runId ? { runId: input.runId } : {}),
+        workspaceRef: input.workspaceRef,
+        status: 'running',
+        version: 1,
+        url: `http://127.0.0.1/preview/${id}/?token=mock`,
+        process: { command: 'mock-preview', args: [], port: 80 },
+        health: { state: 'healthy', checkedAt: now, consecutiveFailures: 0 },
+        ttl: { seconds: 1800, expiresAt: new Date(Date.now() + 1_800_000).toISOString() },
+        restartCount: 0,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+      };
+      sessions.set(id, session);
+      return Promise.resolve({ session, url: session.url! });
+    },
+    stop: (sessionId) => {
+      const session = sessions.get(sessionId);
+      if (!session) return Promise.reject(new Error(`Unknown mock preview ${sessionId}`));
+      const now = new Date().toISOString();
+      return Promise.resolve({
+        ...session,
+        status: 'stopped',
+        updatedAt: now,
+        completedAt: now,
+      });
+    },
+  };
+  const verifier: BrowserVerifier = {
+    verify: (input) => {
+      const plan = BrowserTestPlanArtifactSchema.parse(input.planContent).data;
+      return Promise.resolve({
+        schemaVersion: '1',
+        approved: true,
+        summary: 'Mock browser verification passed.',
+        planArtifact: input.planArtifact,
+        previewSession: {
+          ...input.session,
+          url: input.session.url?.replace(/\?.*$/, ''),
+        },
+        steps: plan.steps.map((step) => ({
+          stepId: step.id,
+          title: step.title,
+          status: 'passed',
+          durationMs: 0,
+          observations: [],
+        })),
+      });
+    },
+  };
+  return new BrowserVerificationCoordinator(previews, verifier);
 }

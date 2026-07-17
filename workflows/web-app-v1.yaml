@@ -233,6 +233,48 @@ nodes:
       path: approved
       equals: true
 
+  - id: browser-verification
+    type: quality-loop
+    title: Browser verification gate
+    maxIterations: 3
+    setup:
+      id: plan-browser-test
+      type: agent
+      role: tester
+      taskKind: verification
+      title: Define the reproducible browser test plan
+      instructions: Produce a schemaVersion 1 declarative browser test plan for the critical CRUD journey. Use only relative app paths, supported semantic locators, actions, and assertions.
+      inputArtifacts: [prd, plan.current, architecture.current, code.review, verification.report]
+      outputArtifact: browser-test.plan
+      mutatesWorkspace: false
+      harnessTags: [testing, browser]
+      maxAttempts: 3
+    check:
+      id: verify-browser
+      type: verify
+      title: Run the declarative browser test plan
+      outputArtifact: browser-verification.report
+      browserTestPlanArtifact: browser-test.plan
+      scripts: []
+      includeGitDiffCheck: false
+    repair:
+      id: repair-browser
+      type: agent
+      role: fixer
+      taskKind: repair
+      title: Repair browser verification failures
+      instructions: Reproduce each failed step from the exact browser plan and report, repair the root cause, and retain the plan unchanged for the rerun.
+      inputArtifacts:
+        [prd, plan.current, architecture.current, browser-test.plan, browser-verification.report]
+      outputArtifact: browser-verification.fix
+      mutatesWorkspace: true
+      harnessTags: [repair, browser, testing]
+      maxAttempts: 3
+    approval:
+      artifact: browser-verification.report
+      path: approved
+      equals: true
+
   - id: release-assessment
     type: quality-loop
     title: Final release-readiness assessment
@@ -247,7 +289,16 @@ nodes:
         Inspect the actual repository and deterministic verification report. Exercise critical paths and failure
         paths that static checks may miss. Confirm the implementation satisfies the PRD and acceptance criteria.
         Put the final release verdict in approved and provide concrete evidence for it.
-      inputArtifacts: [prd, plan.current, architecture.current, code.review, verification.report]
+      inputArtifacts:
+        [
+          prd,
+          plan.current,
+          architecture.current,
+          code.review,
+          verification.report,
+          browser-test.plan,
+          browser-verification.report,
+        ]
       outputArtifact: release.review
       mutatesWorkspace: false
       harnessTags: [testing, release, review]

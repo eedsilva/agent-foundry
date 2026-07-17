@@ -324,11 +324,14 @@ export const StepAttemptSchema = z
       });
     }
     if (attempt.executorKind === 'verification') {
-      if (attempt.provider !== 'internal' || attempt.model !== 'workspace-verifier') {
+      if (
+        attempt.provider !== 'internal' ||
+        !['workspace-verifier', 'browser-verifier'].includes(attempt.model)
+      ) {
         context.addIssue({
           code: 'custom',
           path: ['provider'],
-          message: 'Verification attempts use internal/workspace-verifier',
+          message: 'Verification attempts use an internal verifier',
         });
       }
     } else if (attempt.provider === 'internal') {

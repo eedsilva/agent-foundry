@@ -166,6 +166,53 @@ POST /projects/:projectId/versions/:versionId/protect
 `compare` retorna um `git diff` bruto entre os commits das duas versões; não há parser semântico de schema/config, a UI apenas colore linhas por prefixo `+`/`-`. `revert` nunca reescreve nem apaga a versão original: restaura a árvore do commit alvo e cria um novo commit e uma nova versão (`kind: 'revert'`) apontando para o `parentVersionId`. `branch` cria uma branch git independente a partir do commit da versão de origem sem mover HEAD nem a branch atual, e também registra uma nova versão (`kind: 'branch'`). `protect` alterna a flag `protected` de uma versão; ela é a única mutação permitida em um registro já criado — todo outro campo é imutável e rejeitado por `FileProjectVersionRepository.update`.
 
 Não existe hoje nenhum job de limpeza/retenção no codebase — `protected` fica gravado para um job futuro consultar, mas nada ainda apaga versões antigas. Sequências (`sequence`) assumem um único escritor por projeto, a mesma premissa já usada por `StepAttempt.sequence`; não há arbitragem de reserva para múltiplos escritores concorrentes no mesmo projeto.
+### Verificação no navegador
+
+O quality loop `browser-verification` cria `browser-test.plan` (um `AgentArtifact` versionado) e
+executa-o em Chromium headless através da porta `BrowserVerifier`; o orquestrador não importa
+Playwright. Instale o browser localmente antes da evidência:
+
+```bash
+npx playwright install chromium
+```
+
+O job `test` de CI executa `npx playwright install --with-deps chromium` depois de `npm ci` e antes
+de `npm test`. Não substitua por instalação de todos os browsers: o runtime só usa Chromium.
+
+O plano aceita no máximo 100 passos, começa com `goto` e usa somente paths relativos, locators
+semânticos e ações/assertions declarativas. Cada ação, assertion e espera de requests tem 10 s; a
+execução inteira tem 60 s. A sessão de preview é sempre parada ao terminar, falhar, expirar o timeout
+ou ser cancelada. `console.error`, exceção não capturada, request falho, HTTP >= 400 e bloqueio de
+política entram como observações; qualquer um torna o relatório não aprovado. Há no máximo 100
+observações, para manter o JSON de diagnóstico limitado.
+
+O mesmo validador de path é usado pelo contrato e pelo executor. Ele rejeita traversal literal ou
+codificado, network paths codificados, barra invertida, controles e percent-encoding aninhado antes
+de resolver a URL; depois disso o executor ainda confirma o prefixo exato da sessão. A instrumentação
+estática do executor acompanha `setTimeout` one-shot de até 1.000 ms em todas as páginas e popups,
+inclusive handlers string executados nativamente pelo Chromium, e drena esses timers antes do próximo
+step. `setInterval`, `requestAnimationFrame` e timers acima de 1.000 ms não são aguardados para evitar
+hang em polling; erros disparados por eles podem ficar fora da atribuição determinística do step.
+
+O JSON Schema entregue ao provider expressa o primeiro `goto`, bounds, unions, viewport e padrão de
+path. IDs únicos por propriedade não são expressáveis no JSON Schema padrão: a extensão
+`x-agent-foundry-runtime-validation.uniqueStepIds` aponta para a validação Zod autoritativa executada
+antes do Chromium. Saída inválida do provider gera report reprovado reproduzível.
+
+O relatório `browser-verification.report` referencia o plano por `{ name, revision, sha256 }`, inclui
+a sessão de preview sem token e registra steps, duração, erro e observações. Quando falha, o reparo
+recebe esse relatório e a mesma revisão de `browser-test.plan`; o rerun não gera nem troca o plano.
+Screenshots e traces não são capturados neste fluxo: evidência binária é escopo da issue #33.
+
+`browserAllowedOrigins` é opcional na policy. Sem ele, o navegador só pode usar a origem e o prefixo
+exato `/preview/<sessionId>/` da sessão (incluindo WebSocket correspondente). Uma origem adicional
+deve ser HTTP(S) e idêntica a `URL.origin`; paths, query, fragmentos e wildcards são inválidos. Isso
+não relaxa o proxy: o preview continua acessível somente em loopback conforme ADR 0017.
+
+Migração é somente de leitura: policies sem `browserAllowedOrigins` e steps sem
+`browserTestPlanArtifact` continuam como antes, usando verificação de workspace. Para rollback,
+remova o nó `browser-verification` do workflow e o wiring de runtime/coordinator; a qualidade de
+workspace continua. Preserve reports e attempts existentes para investigação, sem backfill.
 
 ## Recovery manual da fila
 

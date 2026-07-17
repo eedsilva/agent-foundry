@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { WorkflowDefinitionSchema, type WorkflowDefinition } from '@agent-foundry/contracts';
+import {
+  WorkflowDefinitionSchema,
+  type AgentArtifact,
+  type WorkflowDefinition,
+} from '@agent-foundry/contracts';
 import { EmergencyCeilingError, type Clock, transitionWorkflowRun } from '@agent-foundry/domain';
 import { makeHarness, makeStores, seedRun, type Stores } from './testing/harness.js';
 
@@ -61,7 +65,7 @@ const QUALITY_LOOP = workflow([
       taskKind: 'code-review',
       title: 'Check',
       instructions: 'Check.',
-      outputArtifact: 'check',
+      outputArtifact: 'quality-signal',
     },
     repair: {
       id: 'repair',
@@ -76,7 +80,33 @@ const QUALITY_LOOP = workflow([
   },
 ]);
 
-async function putApproval(stores: Stores): Promise<void> {
+const APPROVED_CHECK: AgentArtifact = {
+  schemaVersion: '1',
+  status: 'completed',
+  summary: 'Quality check approved.',
+  approved: true,
+  data: {},
+  decisions: [],
+  assumptions: [],
+  risks: [],
+  nextActions: [],
+};
+
+function makeQualityHarness(behaviors: Parameters<typeof makeHarness>[0], stores?: Stores) {
+  let approved = false;
+  const harness = makeHarness(behaviors, stores, {
+    workflow: QUALITY_LOOP,
+    agentOutput: (request) => (request.stepId === 'check' && approved ? APPROVED_CHECK : undefined),
+  });
+  return {
+    harness,
+    approveNextCheck: (): void => {
+      approved = true;
+    },
+  };
+}
+
+async function putUnrelatedApproval(stores: Stores): Promise<void> {
   await stores.artifacts.put({
     projectId: 'project-1',
     name: 'quality-signal',
@@ -273,15 +303,22 @@ describe('emergency ceiling accounting', () => {
     expect((await harness.runs.get('run-1'))?.status).toBe('completed');
   });
 
-  it('continues a quality loop past legacy maxIterations', async () => {
-    const harness = makeHarness({ check: 'gated' }, undefined, { workflow: QUALITY_LOOP });
+  it('ignores a globally latest approval and continues until the current check approves', async () => {
+    const { harness, approveNextCheck } = makeQualityHarness({ check: 'gated' });
     await seedRun(harness);
+    let injectedApproval = false;
+    harness.artifacts.onAfterPut = (name) => {
+      if (name !== 'quality-signal' || injectedApproval) return;
+      injectedApproval = true;
+      void putUnrelatedApproval(harness);
+    };
     const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
     await waitUntil(() => harness.executor.started('check') === 1);
     harness.executor.release('check');
     await waitUntil(() => harness.executor.started('check') === 2);
-    await putApproval(harness);
+    expect(harness.executor.started('repair')).toBe(1);
+    approveNextCheck();
     harness.executor.release('check');
     await running;
 
@@ -344,12 +381,12 @@ describe('emergency ceiling accounting', () => {
     const counted = (await stores.runs.get('run-1'))?.execution?.countedRepairStepRunIds;
     expect(counted).toHaveLength(3);
 
-    const restarted = makeHarness({ check: 'gated' }, stores, { workflow: QUALITY_LOOP });
+    const { harness: restarted, approveNextCheck } = makeQualityHarness({ check: 'gated' }, stores);
     const resumed = restarted.orchestrator.runProject('project-1', undefined, 'run-1');
     await waitUntil(() => restarted.executor.started('check') === 1);
     expect((await stores.runs.get('run-1'))?.execution?.consecutiveRepairs).toBe(3);
     expect((await stores.runs.get('run-1'))?.execution?.countedRepairStepRunIds).toEqual(counted);
-    await putApproval(stores);
+    approveNextCheck();
     restarted.executor.release('check');
     await resumed;
 
@@ -360,14 +397,14 @@ describe('emergency ceiling accounting', () => {
   });
 
   it('resets consecutive repairs after successful quality approval', async () => {
-    const harness = makeHarness({}, undefined, { workflow: QUALITY_LOOP });
+    const { harness, approveNextCheck } = makeQualityHarness({});
     await seedRun(harness);
     const run = await harness.runs.get('run-1');
     await harness.runs.update(
       { ...run!, execution: { activeElapsedMs: 0, consecutiveRepairs: 9 } },
       run!.version,
     );
-    await putApproval(harness);
+    approveNextCheck();
 
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 

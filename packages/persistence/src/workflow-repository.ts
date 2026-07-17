@@ -85,7 +85,14 @@ function validateStepInputs(
   availableArtifacts: Set<string>,
   workflowId: string,
 ): void {
-  if (step.type !== 'agent') return;
+  if (step.type === 'verify') {
+    if (step.browserTestPlanArtifact && !availableArtifacts.has(step.browserTestPlanArtifact)) {
+      throw new Error(
+        `Workflow ${workflowId} step ${step.id} references unavailable artifact ${step.browserTestPlanArtifact}`,
+      );
+    }
+    return;
+  }
   const missing = step.inputArtifacts.filter((artifact) => !availableArtifacts.has(artifact));
   if (missing.length > 0) {
     throw new Error(
