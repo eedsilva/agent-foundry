@@ -43,6 +43,29 @@ The storage boundary is `DATA_DIR/previews/<sessionId>/`; raw access tokens are 
 
 Migration coverage intentionally has no legacy fixture because the previous implementation persisted no preview sessions. Operational evidence requires stopping old preview processes before upgrade. Rollback/recovery and the same-host PID-lock assumption are recorded in `OPERATIONS.md` and ADR 0018.
 
+## Persistent conversation domain — 2026-07-17
+
+Issue #36 adds one lazy canonical conversation per project with ordered messages, project-scoped attachment metadata, idempotent operation records, persisted SSE replay, and a schema-version-1 project export. The implementation deliberately excludes attachment blobs/UI (#43), conversation classification (#38), and operation execution lifecycle (#39).
+
+Deterministic evidence is split by boundary:
+
+- `packages/contracts/src/conversation.test.ts` and `packages/contracts/src/api.test.ts` validate roles, content variants, operation kinds/links, canonical `conversation.id === projectId`, project-scoped attachment access, bare lowercased MIME types, create requests, pages, and exports.
+- `packages/persistence/src/fs-utils.test.ts` validates that path existence returns false only for `ENOENT` and rethrows deterministic `ENOTDIR` corruption.
+- `packages/persistence/src/conversation-repository.test.ts` validates malformed and cross-paired persisted-conversation rejection, filesystem reconstruction, corrupt-path failure instead of empty legacy state, concurrent contiguous sequence assignment, stable exclusive cursors, write-time redaction, recoverable locking, interrupted atomic replacement with harmless orphan temp state, a coherent aggregate snapshot against a blocked writer, legacy snapshot reads without directory creation, and same/different-input operation idempotency semantics.
+- `packages/orchestrator/src/conversation-service.test.ts` validates lazy read without migration/write, cross-project attachment rejection, missing-run and artifact-hash mismatch rejection, paging, and export through the repository snapshot with operation-to-message referential consistency. `packages/composition/src/runtime.integration.test.ts` additionally proves export rejects a canonical conversation stored under another project and deterministic `ENOTDIR` conversation storage.
+- `apps/api/src/conversation.test.ts` validates routes, empty message text and negative cursor rejection, parameterized attachment media-type rejection, cross-project attachment denial, concurrent retries, `409` conflicts, redacted disk/export data, query-over-header SSE precedence, restart replay without duplicates, and replay beyond the 500-message poll batch.
+- `apps/api/src/events-stream.test.ts` remains green, proving the shared SSE helper preserves the existing project-event stream.
+
+The persisted layout is `DATA_DIR/projects/<projectId>/conversation/{conversation.json,messages.jsonl,attachments.jsonl,operations.jsonl}`. JSONL records are logically append-only but physically published by atomic complete-file replacement under the conversation lock. Message sequences are positive. HTTP and SSE cursors are exclusive nonnegative sequence numbers; cursor `0` starts at the first message, and `?cursor=` wins over `Last-Event-ID`. Export reads one lock-protected aggregate snapshot. Existing projects derive their conversation on reads and exports, then persist it on the first conversation write without backfill or read-time directory creation.
+
+Project scoping is an aggregate integrity check, not caller authentication. Attachment records contain only client-declared metadata with bare MIME `type/subtype`; no blob is stored or inspected. Redaction is best-effort and occurs before writing message text/data and attachment names, so tests assert both exported and raw persisted records exclude their seeded secret values.
+
+Full-gate results on this branch:
+
+- `npm run check` passed Prettier, ESLint, the 11-workspace architecture check and its two tests, roadmap validation for 16 milestones / 114 tasks / 131 managed issues plus eight roadmap/governance tests, TypeScript, 64 Vitest files / 605 tests, 42 Node script tests, all eight package builds, API, worker, and the Next.js production build.
+- `npm run doctor` passed in mock mode.
+- `git diff --check` passed.
+
 ## Real provider canary baseline — 2026-07-14
 
 The versioned v0.2 baseline invoked Codex, Claude Code and AGY independently for planning, greenfield implementation and repository repair. All nine runs passed. Planning produced no diff; every mutation scenario passed `node --test`, `git diff --check` and its exact file allowlist.

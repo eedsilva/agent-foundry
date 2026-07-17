@@ -4,11 +4,15 @@ import type {
   AgentRole,
   ApprovalDecision,
   ApprovalRequest,
+  Attachment,
   ArtifactMetadata,
+  Conversation,
   ExecutorHealth,
   ModelDefinition,
   ModelMetric,
   ModelOverrideRecord,
+  Message,
+  Operation,
   PreviewHealth,
   PreviewLogEntry,
   PreviewLogPage,
@@ -34,6 +38,29 @@ export interface ProjectRepository {
   get(projectId: string): Promise<Project | null>;
   update(project: Project, expectedVersion: number): Promise<Project>;
   list(limit?: number): Promise<Project[]>;
+}
+
+export interface ConversationRepository {
+  createConversation(conversation: Conversation): Promise<void>;
+  getConversation(projectId: string): Promise<Conversation | null>;
+  getSnapshot(projectId: string): Promise<ConversationSnapshot>;
+  appendMessage(message: Omit<Message, 'sequence'>): Promise<Message>;
+  listMessages(
+    projectId: string,
+    options?: { cursor?: number; limit?: number },
+  ): Promise<Message[]>;
+  createAttachment(attachment: Attachment): Promise<Attachment>;
+  getAttachment(projectId: string, attachmentId: string): Promise<Attachment | null>;
+  listAttachments(projectId: string): Promise<Attachment[]>;
+  createOperation(operation: Operation): Promise<Operation>;
+  listOperations(projectId: string): Promise<Operation[]>;
+}
+
+export interface ConversationSnapshot {
+  conversation: Conversation | null;
+  messages: Message[];
+  attachments: Attachment[];
+  operations: Operation[];
 }
 
 export interface WorkflowRunRepository {

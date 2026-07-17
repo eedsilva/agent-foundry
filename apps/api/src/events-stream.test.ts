@@ -56,6 +56,7 @@ async function readSse(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const response = await fetch(url, { headers, signal: controller.signal });
+  expect(response.status).toBe(200);
   expect(response.headers.get('content-type')).toContain('text/event-stream');
   const events: ProjectEvent[] = [];
   const abort = (): void => controller.abort();

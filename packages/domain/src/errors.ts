@@ -8,6 +8,14 @@ export class ValidationError extends Error {
   override readonly name = 'ValidationError';
 }
 
+export class IdempotencyConflictError extends Error {
+  override readonly name = 'IdempotencyConflictError';
+
+  constructor(readonly idempotencyKey: string) {
+    super(`Idempotency key ${idempotencyKey} was already used with different input`);
+  }
+}
+
 export class QueueError extends Error {
   override readonly name = 'QueueError';
 }

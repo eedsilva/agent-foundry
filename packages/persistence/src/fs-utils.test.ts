@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { safeSegment, withRecoverableDirectoryLock } from './fs-utils.js';
+import { exists, safeSegment, withRecoverableDirectoryLock } from './fs-utils.js';
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -16,6 +16,21 @@ async function temporaryDirectory(): Promise<string> {
   temporaryDirectories.push(path);
   return path;
 }
+
+describe('exists', () => {
+  it('returns false for a missing path', async () => {
+    const root = await temporaryDirectory();
+    await expect(exists(join(root, 'missing'))).resolves.toBe(false);
+  });
+
+  it('rethrows non-ENOENT stat failures', async () => {
+    const root = await temporaryDirectory();
+    const parentFile = join(root, 'not-a-directory');
+    await writeFile(parentFile, 'corrupt path shape');
+
+    await expect(exists(join(parentFile, 'child'))).rejects.toMatchObject({ code: 'ENOTDIR' });
+  });
+});
 
 describe('safeSegment', () => {
   it('accepts identifiers used by projects and artifacts', () => {

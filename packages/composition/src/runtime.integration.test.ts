@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,8 +8,10 @@ import type {
   ExecutorHealth,
   QueueJob,
 } from '@agent-foundry/contracts';
-import type { AgentExecutor } from '@agent-foundry/domain';
+import { SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor } from '@agent-foundry/executors';
+import { ConversationService } from '@agent-foundry/orchestrator';
+import { FileConversationRepository } from '@agent-foundry/persistence';
 import { createRuntime } from './runtime.js';
 
 const RESTART_APPROVAL_WORKFLOW = `
@@ -73,6 +75,64 @@ afterEach(async () => {
 });
 
 describe('mock runtime', () => {
+  it('rejects project export when a canonical conversation is stored under another project', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-cross-paired-conversation-'));
+    temporaryDirectories.push(dataDir);
+    const runtime = await createRuntime({
+      ...process.env,
+      REPO_ROOT: resolve(import.meta.dirname, '../../..'),
+      DATA_DIR: dataDir,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+    });
+    const project = await runtime.projectService.create({
+      name: 'Cross-paired conversation',
+      workflowId: 'web-app-v1',
+      prd: 'Build a persistent project whose exported conversation identity stays canonical.',
+    });
+    const root = join(dataDir, 'projects', project.id, 'conversation');
+    await mkdir(root);
+    await writeFile(
+      join(root, 'conversation.json'),
+      `${JSON.stringify({
+        id: 'project-2',
+        projectId: 'project-2',
+        createdAt: project.createdAt,
+      })}\n`,
+    );
+
+    await expect(runtime.conversationService.export(project.id)).rejects.toThrow();
+  });
+
+  it('rejects project export when the conversation storage path is corrupt', async () => {
+    const projectDataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-export-project-'));
+    const conversationDataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-export-corrupt-'));
+    temporaryDirectories.push(projectDataDir, conversationDataDir);
+    const runtime = await createRuntime({
+      ...process.env,
+      REPO_ROOT: resolve(import.meta.dirname, '../../..'),
+      DATA_DIR: projectDataDir,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+    });
+    const project = await runtime.projectService.create({
+      name: 'Corrupt conversation storage',
+      workflowId: 'web-app-v1',
+      prd: 'Build a persistent project whose export fails closed on corrupt conversation storage.',
+    });
+    await writeFile(join(conversationDataDir, 'projects'), 'corrupt path shape');
+    const service = new ConversationService(
+      runtime.projects,
+      runtime.runs,
+      runtime.artifacts,
+      new FileConversationRepository(conversationDataDir),
+      new SystemClock(),
+      new UlidGenerator(),
+    );
+
+    await expect(service.export(project.id)).rejects.toMatchObject({ code: 'ENOTDIR' });
+  });
+
   it('restarts from disk with the exact redacted feedback revision in the repair attempt', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-feedback-restart-'));
     const workflowsDir = await mkdtemp(join(tmpdir(), 'agent-foundry-feedback-workflows-'));

@@ -13,12 +13,74 @@ import {
 import { ActorRefSchema, PathSegmentSchema, ProviderSchema } from './primitives.js';
 import { ApprovalActionSchema } from './workflow.js';
 import {
+  AttachmentSchema,
+  ConversationSchema,
+  MessageSchema,
+  OperationSchema,
+} from './conversation.js';
+import {
   ApprovalDecisionSchema,
   ApprovalRequestSchema,
   StepAttemptSchema,
   StepRunSchema,
   WorkflowRunSchema,
 } from './run.js';
+
+export const CreateAttachmentRequestSchema = z
+  .object({
+    kind: AttachmentSchema.shape.kind,
+    name: AttachmentSchema.shape.name,
+    mediaType: AttachmentSchema.shape.mediaType,
+    sha256: AttachmentSchema.shape.sha256,
+    sizeBytes: AttachmentSchema.shape.sizeBytes,
+  })
+  .strict();
+export type CreateAttachmentRequest = z.infer<typeof CreateAttachmentRequestSchema>;
+
+export const CreateAttachmentResponseSchema = z.object({ attachment: AttachmentSchema }).strict();
+export type CreateAttachmentResponse = z.infer<typeof CreateAttachmentResponseSchema>;
+
+export const CreateMessageRequestSchema = MessageSchema.pick({ role: true, content: true });
+export type CreateMessageRequest = z.infer<typeof CreateMessageRequestSchema>;
+
+export const CreateMessageResponseSchema = z.object({ message: MessageSchema }).strict();
+export type CreateMessageResponse = z.infer<typeof CreateMessageResponseSchema>;
+
+export const CreateOperationRequestSchema = OperationSchema.pick({
+  kind: true,
+  idempotencyKey: true,
+  runId: true,
+  changeRequestId: true,
+  projectVersionId: true,
+  artifactReferences: true,
+});
+export type CreateOperationRequest = z.infer<typeof CreateOperationRequestSchema>;
+
+export const CreateOperationResponseSchema = z.object({ operation: OperationSchema }).strict();
+export type CreateOperationResponse = z.infer<typeof CreateOperationResponseSchema>;
+
+export const ConversationPageResponseSchema = z
+  .object({
+    conversation: ConversationSchema,
+    messages: z.array(MessageSchema),
+    attachments: z.array(AttachmentSchema),
+    operations: z.array(OperationSchema),
+    nextCursor: z.number().int().positive().nullable(),
+  })
+  .strict();
+export type ConversationPageResponse = z.infer<typeof ConversationPageResponseSchema>;
+
+export const ProjectExportResponseSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    project: ProjectSchema,
+    conversation: ConversationSchema,
+    messages: z.array(MessageSchema),
+    attachments: z.array(AttachmentSchema),
+    operations: z.array(OperationSchema),
+  })
+  .strict();
+export type ProjectExportResponse = z.infer<typeof ProjectExportResponseSchema>;
 
 export const CreateProjectRequestSchema = z.object({
   name: z.string().trim().min(1).max(120),

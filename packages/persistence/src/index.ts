@@ -11,3 +11,4 @@ export * from './run-repositories.js';
 export * from './approval-repositories.js';
 export * from './model-override-repository.js';
 export * from './preview-repositories.js';
+export * from './conversation-repository.js';

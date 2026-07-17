@@ -21,7 +21,7 @@ Cliente Next.js. Cria projetos, consulta o runtime, acompanha eventos, abre arte
 
 ### `apps/api`
 
-Camada HTTP Fastify. Valida entradas com Zod e delega ao `ProjectService`. Não contém lógica de workflow nem lógica de fornecedor.
+Camada HTTP Fastify. Valida entradas com Zod e delega aos serviços de projeto e conversa. Não contém lógica de workflow nem lógica de fornecedor.
 
 ### `apps/worker`
 
@@ -40,6 +40,7 @@ Portas para repositórios, fila, router, executores, verifier e workspace. Não 
 Implementações locais:
 
 - projeto em JSON;
+- conversa canônica por projeto, com mensagens, metadata de attachments e operações em JSON/JSONL;
 - runs, steps e attempts versionados em uma hierarquia própria;
 - eventos em JSONL;
 - artefatos revisionados com SHA-256;
@@ -193,6 +194,16 @@ StepAttempt: running -> succeeded | failed | cancelled
 `WorkflowRun`, `StepRun` e `StepAttempt` são a fonte de verdade. `Project.currentRunId`, `status`, `currentNodeId` e `error` são somente um resumo derivado para compatibilidade da API e da UI. Cada entidade possui `version`; updates usam compare-and-swap e rejeitam uma versão esperada obsoleta.
 
 No filesystem, o estado fica em `DATA_DIR/runs/<runId>/run.json`, com steps em `steps/<stepRunId>/step.json` e attempts em `steps/<stepRunId>/attempts/<attemptId>.json`. Contextos de executor usam a mesma identidade em `.orchestrator/runs/<runId>/steps/<stepRunId>/attempts/<attemptId>/`, evitando que attempts sobrescrevam requests anteriores.
+
+## Conversa persistida por projeto
+
+Cada projeto possui uma conversa canônica com `conversation.id === conversation.projectId === project.id`. Projetos anteriores derivam essa conversa de `project.id` e `project.createdAt` em leitura/export sem migração; o primeiro write da conversa cria `DATA_DIR/projects/<projectId>/conversation/conversation.json`.
+
+Mensagens, metadata de attachments e operações ficam, respectivamente, em `messages.jsonl`, `attachments.jsonl` e `operations.jsonl` no mesmo diretório. Um lock de diretório serializa writes e idempotência; cada atualização publica o JSONL completo por temp file + rename atômico. Cada mensagem recebe um `sequence` positivo e contíguo; páginas HTTP e replay SSE usam esse número como cursor exclusivo. No stream, `?cursor=` tem precedência sobre `Last-Event-ID`; na ausência de ambos, o cursor é `0`. O export lê conversation e os três JSONLs sob esse mesmo lock, formando um único snapshot sem criar storage para projetos legados.
+
+O aggregate contém apenas metadata de attachment, não o blob. `mediaType` aceita somente MIME bare `type/subtype`, sem parâmetros, e é normalizado para lowercase. Uma mensagem só referencia attachments do próprio projeto. Operações ligam a mensagem a referências tipadas e usam idempotency key por projeto: o mesmo input devolve o record original; input diferente responde `409`.
+
+Redaction acontece antes de persistir texto/data de mensagem e nome de attachment. O export schema v1 e o SSE leem esses mesmos records redigidos. Blobs e UI permanecem em #43; classificação da conversa em operação fica em #38; execução/lifecycle da operação fica em #39.
 
 ## Artefatos como protocolo de handoff
 
