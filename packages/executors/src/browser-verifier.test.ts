@@ -331,7 +331,7 @@ describe('PlaywrightBrowserVerifier', () => {
           assertions: [],
         },
       ]),
-      { allowedOrigins: [`${allowedOrigin}/ignored/path`] },
+      { allowedOrigins: [allowedOrigin] },
     );
 
     expect(allowedRequests).toBe(1);
@@ -340,6 +340,184 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(
       report.steps[0]?.observations.filter(({ kind }) => kind === 'policy-block'),
     ).toHaveLength(1);
+  });
+
+  it('fails closed when the supplied preview URL does not match the session prefix', async () => {
+    let requests = 0;
+    const origin = await serve((_request, response) => {
+      requests += 1;
+      response.end('<h1>Untrusted prefix</h1>');
+    });
+    const browserPlan = plan([
+      {
+        id: 'open',
+        title: 'Open fixture',
+        action: { kind: 'goto', path: '/' },
+        assertions: [],
+      },
+    ]);
+
+    const report = await new PlaywrightBrowserVerifier().verify(
+      {
+        planArtifact: PLAN_ARTIFACT,
+        planContent: artifact(browserPlan),
+        session: {
+          ...session(origin),
+          url: `${origin}/untrusted-prefix/?token=${TOKEN}`,
+        },
+        allowedOrigins: [],
+      },
+      new AbortController().signal,
+    );
+
+    expect(requests).toBe(0);
+    expect(report.approved).toBe(false);
+    expect(report.planValidationError).toMatch(/preview.*prefix/i);
+    expect(report.steps).toEqual([]);
+    expectRedacted(report);
+  });
+
+  it('fails closed on a path-bearing allowed-origin entry', async () => {
+    let allowedRequests = 0;
+    const allowedOrigin = await serve((_request, response) => {
+      allowedRequests += 1;
+      response.end('sentinel');
+    });
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<img src="${allowedOrigin}/sentinel">`);
+    });
+    const browserPlan = plan([
+      {
+        id: 'open',
+        title: 'Open fixture',
+        action: { kind: 'goto', path: '/' },
+        assertions: [],
+      },
+    ]);
+
+    const report = await verify(origin, browserPlan, {
+      allowedOrigins: [`${allowedOrigin}/broadened/path`],
+    });
+
+    expect(allowedRequests).toBe(0);
+    expect(report.approved).toBe(false);
+    expect(report.planValidationError).toMatch(/allowed origin/i);
+    expect(report.steps).toEqual([]);
+  });
+
+  it('records a delayed HTTP failure triggered by the final action', async () => {
+    const origin = await serve((request, response) => {
+      if (request.url === '/preview/preview-1/late-failure') {
+        response.statusCode = 500;
+        response.end('late failure');
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end(`<h1>Fixture</h1><script>
+        setTimeout(() => fetch('/preview/preview-1/late-failure'), 50);
+      </script>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading' } }],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(false);
+    expect(report.steps[0]?.observations.some(({ kind }) => kind === 'http-error')).toBe(true);
+  });
+
+  it('auto-waits for asynchronous text content', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<div data-testid="status">Pending</div><script>
+        setTimeout(() => document.querySelector('[data-testid=status]').textContent = 'Ready', 100);
+      </script>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [
+            {
+              kind: 'containsText',
+              locator: { kind: 'testId', testId: 'status' },
+              text: 'Ready',
+            },
+          ],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(true);
+    expect(report.steps[0]?.status).toBe('passed');
+  });
+
+  it('auto-waits for an asynchronous URL change', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<h1>Fixture</h1><script>
+        setTimeout(() => history.pushState({}, '', '/preview/preview-1/ready'), 100);
+      </script>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [{ kind: 'url', path: '/ready' }],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(true);
+    expect(report.steps[0]?.status).toBe('passed');
+  });
+
+  it('blocks a redirect to a forbidden origin before the sentinel receives it', async () => {
+    let sentinelRequests = 0;
+    const forbiddenOrigin = await serve((_request, response) => {
+      sentinelRequests += 1;
+      response.end('sentinel');
+    });
+    const origin = await serve((request, response) => {
+      if (request.url?.startsWith('/preview/preview-1/redirect')) {
+        response.statusCode = 302;
+        response.setHeader('location', `${forbiddenOrigin}/sentinel`);
+      }
+      response.end();
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Follow redirect',
+          action: { kind: 'goto', path: '/redirect' },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(sentinelRequests).toBe(0);
+    expect(report.approved).toBe(false);
+    expect(report.steps[0]?.observations.some(({ kind }) => kind === 'policy-block')).toBe(true);
   });
 
   it('caps observations at 100', async () => {

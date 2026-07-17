@@ -5,11 +5,19 @@ import {
   type BrowserVerificationReport,
 } from '@agent-foundry/contracts';
 import { RunCancelledError, type BrowserVerifier } from '@agent-foundry/domain';
-import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Locator,
+  type Page,
+  type Request,
+} from 'playwright';
 
 const ACTION_TIMEOUT_MS = 10_000;
 const RUN_TIMEOUT_MS = 60_000;
 const MAX_OBSERVATIONS = 100;
+const PASSIVE_EVENT_SETTLE_MS = 100;
 
 type Observation = BrowserVerificationReport['steps'][number]['observations'][number];
 type StepReport = BrowserVerificationReport['steps'][number];
@@ -62,11 +70,44 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
 
     const previewUrl = new URL(input.session.url);
     const token = previewToken;
-    const prefixUrl = new URL(previewUrl);
-    prefixUrl.search = '';
-    prefixUrl.hash = '';
-    if (!prefixUrl.pathname.endsWith('/')) prefixUrl.pathname += '/';
-    const allowedOrigins = new Set(input.allowedOrigins.map((origin) => new URL(origin).origin));
+    const prefixPath = `/preview/${encodeURIComponent(input.session.sessionId)}/`;
+    if (
+      !['http:', 'https:'].includes(previewUrl.protocol) ||
+      !previewUrl.pathname.startsWith(prefixPath)
+    ) {
+      return BrowserVerificationReportSchema.parse({
+        schemaVersion: '1',
+        approved: false,
+        summary: 'Browser test plan validation failed.',
+        planArtifact: input.planArtifact,
+        previewSession,
+        planValidationError: 'Preview session URL does not match the required preview prefix.',
+        steps: [],
+      });
+    }
+    const prefixUrl = new URL(prefixPath, previewUrl.origin);
+    let allowedOrigins: Set<string>;
+    try {
+      allowedOrigins = new Set(
+        input.allowedOrigins.map((entry) => {
+          const origin = new URL(entry);
+          if (!['http:', 'https:'].includes(origin.protocol) || entry !== origin.origin) {
+            throw new Error('Allowed origin entries must be exact HTTP(S) origins.');
+          }
+          return origin.origin;
+        }),
+      );
+    } catch {
+      return BrowserVerificationReportSchema.parse({
+        schemaVersion: '1',
+        approved: false,
+        summary: 'Browser test plan validation failed.',
+        planArtifact: input.planArtifact,
+        previewSession,
+        planValidationError: 'Allowed origin entries must be exact HTTP(S) origins.',
+        steps: [],
+      });
+    }
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
     const launch = chromium.launch({ headless: true });
@@ -124,15 +165,25 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     const page = await context.newPage();
     page.setDefaultTimeout(ACTION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(ACTION_TIMEOUT_MS);
-    let activeObservations: Observation[] | undefined;
+    let currentStepIndex = 0;
     let observationCount = 0;
-    const observe = (observation: Omit<Observation, 'timestamp'>): void => {
-      if (!activeObservations || observationCount >= MAX_OBSERVATIONS) return;
-      activeObservations.push({
-        ...observation,
-        message: redact(observation.message, token),
-        ...(observation.url ? { url: sanitizeUrl(observation.url, token) } : {}),
-        timestamp: new Date().toISOString(),
+    let passiveFailure = false;
+    const runObservations: Array<{ stepIndex: number; observation: Observation }> = [];
+    const requestSteps = new WeakMap<Request, number>();
+    const observe = (
+      observation: Omit<Observation, 'timestamp'>,
+      stepIndex = currentStepIndex,
+    ): void => {
+      passiveFailure = true;
+      if (observationCount >= MAX_OBSERVATIONS) return;
+      runObservations.push({
+        stepIndex,
+        observation: {
+          ...observation,
+          message: redact(observation.message, token),
+          ...(observation.url ? { url: sanitizeUrl(observation.url, token) } : {}),
+          timestamp: new Date().toISOString(),
+        },
       });
       observationCount += 1;
     };
@@ -148,17 +199,28 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       );
     };
 
-    await context.route('**/*', async (route) => {
-      const url = route.request().url();
-      if (permitted(url)) await route.continue();
-      else {
-        observe({
-          kind: 'policy-block',
-          message: `Blocked request to ${sanitizeUrl(url, token)}`,
-          url,
-        });
-        await route.abort('blockedbyclient');
+    page.on('request', (request) => requestSteps.set(request, currentStepIndex));
+    const cdp = await context.newCDPSession(page);
+    cdp.on('Fetch.requestPaused', (event: { requestId: string; request: { url: string } }) => {
+      const url = event.request.url;
+      if (permitted(url)) {
+        void cdp.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+        return;
       }
+      observe({
+        kind: 'policy-block',
+        message: `Blocked request to ${sanitizeUrl(url, token)}`,
+        url,
+      });
+      void cdp
+        .send('Fetch.failRequest', {
+          requestId: event.requestId,
+          errorReason: 'BlockedByClient',
+        })
+        .catch(() => {});
+    });
+    await cdp.send('Fetch.enable', {
+      patterns: [{ urlPattern: '*', requestStage: 'Request' }],
     });
     await context.routeWebSocket('**/*', async (webSocket) => {
       const url = webSocket.url();
@@ -174,19 +236,25 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     });
     page.on('response', (response) => {
       if (response.status() >= 400) {
-        observe({
-          kind: 'http-error',
-          message: `HTTP ${response.status()} ${sanitizeUrl(response.url(), token)}`,
-          url: response.url(),
-        });
+        observe(
+          {
+            kind: 'http-error',
+            message: `HTTP ${response.status()} ${sanitizeUrl(response.url(), token)}`,
+            url: response.url(),
+          },
+          requestSteps.get(response.request()),
+        );
       }
     });
     page.on('requestfailed', (request) => {
-      observe({
-        kind: 'request-failed',
-        message: `${request.failure()?.errorText ?? 'Request failed'}: ${sanitizeUrl(request.url(), token)}`,
-        url: request.url(),
-      });
+      observe(
+        {
+          kind: 'request-failed',
+          message: `${request.failure()?.errorText ?? 'Request failed'}: ${sanitizeUrl(request.url(), token)}`,
+          url: request.url(),
+        },
+        requestSteps.get(request),
+      );
     });
     page.on('console', (message) => {
       if (message.type() !== 'error') return;
@@ -214,8 +282,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         });
         continue;
       }
-      const observations: Observation[] = [];
-      activeObservations = observations;
+      currentStepIndex = index;
       const startedAt = performance.now();
       try {
         await this.executeAction(page, step.action, prefixUrl, token, index === 0);
@@ -228,7 +295,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           status: 'passed',
           durationMs: performance.now() - startedAt,
           finalUrl: sanitizeUrl(page.url(), token),
-          observations,
+          observations: [],
         });
       } catch (error) {
         failed = true;
@@ -239,19 +306,21 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           durationMs: performance.now() - startedAt,
           ...(page.url() !== 'about:blank' ? { finalUrl: sanitizeUrl(page.url(), token) } : {}),
           error: redact(errorMessage(error), token),
-          observations,
+          observations: [],
         });
       }
+      await page.waitForTimeout(PASSIVE_EVENT_SETTLE_MS);
     }
-    activeObservations = undefined;
-    const passiveFailures = steps.reduce((count, step) => count + step.observations.length, 0);
-    const approved = !failed && passiveFailures === 0;
+    for (const { stepIndex, observation } of runObservations) {
+      steps[stepIndex]?.observations.push(observation);
+    }
+    const approved = !failed && !passiveFailure;
     return BrowserVerificationReportSchema.parse({
       schemaVersion: '1',
       approved,
       summary: approved
         ? 'All browser verification steps passed.'
-        : `${failed ? 1 : 0} browser step failure(s) and ${passiveFailures} passive failure(s).`,
+        : `${failed ? 1 : 0} browser step failure(s) and ${runObservations.length} passive failure(s).`,
       planArtifact: input.planArtifact,
       previewSession,
       steps,
@@ -294,21 +363,14 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         await locator(page, assertion.locator).waitFor({ state: 'hidden' });
         return;
       case 'containsText': {
-        const target = locator(page, assertion.locator);
-        await target.waitFor({ state: 'attached' });
-        const text = await target.textContent();
-        if (!text?.includes(assertion.text)) {
-          throw new Error(
-            `Expected locator text to contain "${assertion.text}"; received "${text ?? ''}".`,
-          );
-        }
+        await locator(page, assertion.locator)
+          .filter({ hasText: assertion.text })
+          .waitFor({ state: 'attached' });
         return;
       }
       case 'url': {
         const expected = appPath(resolvePlanPath(prefixUrl, assertion.path), prefixUrl, token);
-        const actual = appPath(new URL(page.url()), prefixUrl, token);
-        if (actual !== expected)
-          throw new Error(`Expected URL path "${expected}"; received "${actual}".`);
+        await page.waitForURL((url) => appPath(url, prefixUrl, token) === expected);
       }
     }
   }
