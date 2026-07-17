@@ -285,7 +285,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           await route.abort('blockedbyclient');
           return;
         }
-        const response = await route.fetch({ maxRedirects: 0 });
+        const response = await route.fetch({ maxRedirects: 0, timeout: 0 });
         const location = [301, 302, 303, 307, 308].includes(response.status())
           ? response.headers().location
           : undefined;

@@ -750,6 +750,44 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps[0]?.status).toBe('passed');
   }, 15_000);
 
+  it('does not synthesize a failure after Playwright route fetch default timeout', async () => {
+    const origin = await serve((request, response) => {
+      if (request.url === '/preview/preview-1/poll') return;
+      response.setHeader('content-type', 'text/html');
+      response.end(`<h1>Fixture</h1><input aria-label="Name"><script>
+        fetch('/preview/preview-1/poll');
+        for (const [index, delay] of [17000, 24000, 31000, 38000].entries()) {
+          setTimeout(() => document.body.insertAdjacentHTML('beforeend', '<div data-testid="ready-' + index + '">Ready</div>'), delay);
+        }
+      </script>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading' } }],
+        },
+        ...[0, 1, 2, 3].map((index) => ({
+          id: `wait-${index}`,
+          title: `Wait for marker ${index}`,
+          action: { kind: 'fill' as const, locator: { kind: 'label' as const, text: 'Name' }, value: String(index) },
+          assertions: [
+            { kind: 'visible' as const, locator: { kind: 'testId' as const, testId: `ready-${index}` } },
+          ],
+        })),
+      ]),
+    );
+
+    expect(report.approved).toBe(true);
+    expect(report.steps.flatMap(({ observations }) => observations).map(({ kind }) => kind)).not.toContain(
+      'request-failed',
+    );
+  }, 55_000);
+
   it('caps observations at 100', async () => {
     const origin = await serve((_request, response) => {
       response.setHeader('content-type', 'text/html');
