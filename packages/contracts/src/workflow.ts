@@ -33,14 +33,22 @@ const AgentStepSchema = z.object({
 });
 export type AgentStep = z.infer<typeof AgentStepSchema>;
 
-const VerifyStepSchema = z.object({
-  id: PathSegmentSchema,
-  type: z.literal('verify'),
-  title: z.string().min(1),
-  outputArtifact: PathSegmentSchema,
-  scripts: z.array(z.string()).default(['typecheck', 'lint', 'test', 'build']),
-  includeGitDiffCheck: z.boolean().default(true),
-});
+const VerifyStepSchema = z
+  .object({
+    id: PathSegmentSchema,
+    type: z.literal('verify'),
+    title: z.string().min(1),
+    outputArtifact: PathSegmentSchema,
+    scripts: z.array(z.string()).default(['typecheck', 'lint', 'test', 'build']),
+    includeGitDiffCheck: z.boolean().default(true),
+    browserTestPlanArtifact: PathSegmentSchema.optional(),
+  })
+  .refine(
+    (step) =>
+      !step.browserTestPlanArtifact ||
+      (step.scripts.length === 0 && step.includeGitDiffCheck === false),
+    { message: 'Browser verification cannot include workspace checks' },
+  );
 export type VerifyStep = z.infer<typeof VerifyStepSchema>;
 
 export const ExecutableStepSchema = z.discriminatedUnion('type', [

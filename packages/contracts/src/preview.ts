@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AgentArtifactSchema } from './agent.js';
 import { PackageManagerSchema, PathSegmentSchema } from './primitives.js';
 import { ArtifactReferenceSchema, EntityVersionSchema, RunErrorSchema } from './run.js';
 
@@ -294,3 +295,122 @@ export const PreviewSessionReferenceSchema = z
   })
   .strict();
 export type PreviewSessionReference = z.infer<typeof PreviewSessionReferenceSchema>;
+
+const BrowserPathSchema = z
+  .string()
+  .refine((path) => path.startsWith('/') && !path.startsWith('//'));
+
+const BrowserLocatorSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('role'),
+      role: z.string().min(1),
+      name: z.string().min(1).optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal('label'), text: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('text'), text: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('testId'), testId: z.string().min(1) }).strict(),
+]);
+
+const BrowserActionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('goto'), path: BrowserPathSchema }).strict(),
+  z.object({ kind: z.literal('click'), locator: BrowserLocatorSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('fill'),
+      locator: BrowserLocatorSchema,
+      value: z.string(),
+    })
+    .strict(),
+]);
+
+const BrowserAssertionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('visible'), locator: BrowserLocatorSchema }).strict(),
+  z.object({ kind: z.literal('hidden'), locator: BrowserLocatorSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('containsText'),
+      locator: BrowserLocatorSchema,
+      text: z.string().min(1),
+    })
+    .strict(),
+  z.object({ kind: z.literal('url'), path: BrowserPathSchema }).strict(),
+]);
+
+export const BrowserTestPlanSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    id: PathSegmentSchema,
+    title: z.string().min(1),
+    viewport: z
+      .object({
+        width: z.number().int().min(1).max(10_000),
+        height: z.number().int().min(1).max(10_000),
+      })
+      .strict(),
+    steps: z
+      .array(
+        z
+          .object({
+            id: PathSegmentSchema,
+            title: z.string().min(1),
+            action: BrowserActionSchema,
+            assertions: z.array(BrowserAssertionSchema),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict()
+  .refine((plan) => plan.steps[0]?.action.kind === 'goto', {
+    message: 'The first browser test step must use goto',
+    path: ['steps', 0, 'action'],
+  });
+export type BrowserTestPlan = z.infer<typeof BrowserTestPlanSchema>;
+
+export const BrowserTestPlanArtifactSchema = AgentArtifactSchema.extend({
+  data: BrowserTestPlanSchema,
+});
+export type BrowserTestPlanArtifact = z.infer<typeof BrowserTestPlanArtifactSchema>;
+
+const BrowserObservationSchema = z
+  .object({
+    kind: z.enum([
+      'console-error',
+      'request-failed',
+      'http-error',
+      'uncaught-exception',
+      'policy-block',
+    ]),
+    message: z.string().min(1),
+    url: z.string().url().optional(),
+    timestamp: z.string().datetime(),
+  })
+  .strict();
+
+export const BrowserVerificationReportSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    approved: z.boolean(),
+    summary: z.string().min(1),
+    planArtifact: ArtifactReferenceSchema,
+    previewSession: PreviewSessionReferenceSchema,
+    planValidationError: z.string().min(1).optional(),
+    steps: z.array(
+      z
+        .object({
+          stepId: PathSegmentSchema,
+          title: z.string().min(1),
+          status: z.enum(['passed', 'failed', 'skipped']),
+          durationMs: z.number().nonnegative(),
+          finalUrl: z.string().url().optional(),
+          error: z.string().min(1).optional(),
+          observations: z.array(BrowserObservationSchema),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+export type BrowserVerificationReport = z.infer<typeof BrowserVerificationReportSchema>;

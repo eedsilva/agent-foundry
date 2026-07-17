@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BrowserTestPlanArtifactSchema,
+  BrowserTestPlanSchema,
+  BrowserVerificationReportSchema,
   PreviewCommandPlanSchema,
   PreviewFailureDiagnosticSchema,
   PreviewLogPageSchema,
@@ -290,5 +293,210 @@ describe('preview lifecycle diagnostics', () => {
     expect(() =>
       PreviewFailureDiagnosticSchema.parse({ ...diagnostic, rawToken: 'secret' }),
     ).toThrow();
+  });
+});
+
+describe('browser verification contracts', () => {
+  const plan = {
+    schemaVersion: '1',
+    id: 'crud',
+    title: 'CRUD',
+    viewport: { width: 1280, height: 720 },
+    steps: [
+      {
+        id: 'create',
+        title: 'Create an item',
+        action: { kind: 'goto', path: '/items' },
+        assertions: [
+          { kind: 'url', path: '/items' },
+          {
+            kind: 'visible',
+            locator: { kind: 'role', role: 'button', name: 'Create' },
+          },
+        ],
+      },
+      {
+        id: 'update',
+        title: 'Update the item',
+        action: {
+          kind: 'fill',
+          locator: { kind: 'label', text: 'Name' },
+          value: 'Updated item',
+        },
+        assertions: [
+          {
+            kind: 'containsText',
+            locator: { kind: 'testId', testId: 'item-row' },
+            text: 'Updated item',
+          },
+        ],
+      },
+      {
+        id: 'delete',
+        title: 'Delete the item',
+        action: {
+          kind: 'click',
+          locator: { kind: 'text', text: 'Delete' },
+        },
+        assertions: [
+          {
+            kind: 'hidden',
+            locator: { kind: 'text', text: 'Updated item' },
+          },
+        ],
+      },
+    ],
+  };
+
+  const artifact = {
+    schemaVersion: '1',
+    status: 'completed',
+    summary: 'CRUD browser plan',
+    data: plan,
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    nextActions: [],
+  };
+
+  it('parses a bounded CRUD plan with semantic locators, actions, assertions, and viewport', () => {
+    const parsed = BrowserTestPlanSchema.parse(plan);
+
+    expect(parsed.viewport).toEqual({ width: 1280, height: 720 });
+    expect(parsed.steps.map((step: { action: { kind: string } }) => step.action.kind)).toEqual([
+      'goto',
+      'fill',
+      'click',
+    ]);
+    expect(parsed.steps[0]?.action).toEqual({ kind: 'goto', path: '/items' });
+    expect(parsed.steps[0]?.assertions).toEqual([
+      { kind: 'url', path: '/items' },
+      { kind: 'visible', locator: { kind: 'role', role: 'button', name: 'Create' } },
+    ]);
+    expect(parsed.steps[1]?.action).toEqual({
+      kind: 'fill',
+      locator: { kind: 'label', text: 'Name' },
+      value: 'Updated item',
+    });
+    expect(parsed.steps[1]?.assertions[0]).toEqual({
+      kind: 'containsText',
+      locator: { kind: 'testId', testId: 'item-row' },
+      text: 'Updated item',
+    });
+    expect(parsed.steps[2]?.action).toEqual({
+      kind: 'click',
+      locator: { kind: 'text', text: 'Delete' },
+    });
+    expect(parsed.steps[2]?.assertions[0]?.kind).toBe('hidden');
+  });
+
+  it('requires between 1 and 100 steps and a first goto action', () => {
+    const schema = BrowserTestPlanSchema;
+    expect(schema.safeParse({ ...plan, steps: [] }).success).toBe(false);
+    expect(
+      schema.safeParse({ ...plan, steps: Array.from({ length: 101 }, () => plan.steps[0]) }).success,
+    ).toBe(false);
+    expect(schema.safeParse({ ...plan, steps: plan.steps.slice(1) }).success).toBe(false);
+  });
+
+  it.each(['items', '//example.test/items', 'https://example.test/items'])(
+    'rejects non-relative app path %s',
+    (path) => {
+      const schema = BrowserTestPlanSchema;
+      expect(
+        schema.safeParse({
+          ...plan,
+          steps: [{ ...plan.steps[0], action: { kind: 'goto', path } }],
+        }).success,
+      ).toBe(false);
+      expect(
+        schema.safeParse({
+          ...plan,
+          steps: [
+            {
+              ...plan.steps[0],
+              assertions: [{ kind: 'url', path }],
+            },
+          ],
+        }).success,
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    { width: 0, height: 720 },
+    { width: 10_001, height: 720 },
+    { width: 1280, height: 0 },
+    { width: 1280, height: 10_001 },
+    { width: 1280.5, height: 720 },
+  ])('rejects an out-of-range viewport $width x $height', (viewport) => {
+    expect(BrowserTestPlanSchema.safeParse({ ...plan, viewport }).success).toBe(false);
+  });
+
+  it('validates the browser plan inside the existing agent artifact envelope', () => {
+    const schema = BrowserTestPlanArtifactSchema;
+    expect(schema.parse(artifact).data.id).toBe('crud');
+    expect(schema.safeParse({ ...artifact, status: 'unknown' }).success).toBe(false);
+    expect(schema.safeParse({ ...artifact, summary: '' }).success).toBe(false);
+    expect(schema.safeParse({ ...artifact, data: { ...plan, unexpected: true } }).success).toBe(
+      false,
+    );
+  });
+
+  it('parses strict report references and per-step evidence', () => {
+    const schema = BrowserVerificationReportSchema;
+    const report = {
+      schemaVersion: '1',
+      approved: false,
+      summary: 'Delete failed',
+      planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+      previewSession: {
+        sessionId: 'preview-1',
+        status: 'stopped',
+        url: 'http://127.0.0.1:3100',
+        evidence: {
+          logs: { name: 'preview-logs', revision: 1, sha256: 'b'.repeat(64) },
+          screenshots: [
+            { name: 'delete-failure', revision: 1, sha256: 'c'.repeat(64) },
+          ],
+          trace: { name: 'browser-trace', revision: 1, sha256: 'd'.repeat(64) },
+        },
+      },
+      steps: [
+        {
+          stepId: 'delete',
+          title: 'Delete the item',
+          status: 'failed',
+          durationMs: 42,
+          finalUrl: 'http://127.0.0.1:3100/items',
+          error: 'Delete button remained visible',
+          observations: [
+            {
+              kind: 'console-error',
+              message: 'delete failed',
+              url: 'http://127.0.0.1:3100/items',
+              timestamp: createdAt,
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(schema.parse(report).steps[0]?.observations[0]?.kind).toBe('console-error');
+    expect(
+      schema.safeParse({
+        ...report,
+        planArtifact: { ...report.planArtifact, revision: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ...report,
+        previewSession: {
+          ...report.previewSession,
+          evidence: { ...report.previewSession.evidence, video: report.planArtifact },
+        },
+      }).success,
+    ).toBe(false);
   });
 });

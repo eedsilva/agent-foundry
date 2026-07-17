@@ -46,4 +46,77 @@ nodes:
     const repository = new YamlWorkflowRepository(directory);
     await expect(repository.get('bad')).rejects.toThrow('unavailable artifact');
   });
+
+  it('rejects a browser verifier whose plan is not guaranteed upstream', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-foundry-workflow-'));
+    temporaryDirectories.push(directory);
+    await writeFile(
+      join(directory, 'bad-browser.yaml'),
+      `schemaVersion: "1"
+id: bad-browser
+name: Bad browser workflow
+description: Browser plan is unavailable
+stack: nextjs
+nodes:
+  - id: verify-browser
+    type: verify
+    title: Verify browser
+    outputArtifact: browser-verification.report
+    browserTestPlanArtifact: browser-test.plan
+    scripts: []
+    includeGitDiffCheck: false
+`,
+    );
+
+    const repository = new YamlWorkflowRepository(directory);
+    await expect(repository.get('bad-browser')).rejects.toThrow(
+      'unavailable artifact browser-test.plan',
+    );
+  });
+
+  it('makes a browser verification report available to later agent steps', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-foundry-workflow-'));
+    temporaryDirectories.push(directory);
+    await writeFile(
+      join(directory, 'browser.yaml'),
+      `schemaVersion: "1"
+id: browser
+name: Browser workflow
+description: Valid browser artifact flow
+stack: nextjs
+nodes:
+  - id: plan-browser
+    type: agent
+    role: tester
+    taskKind: verification
+    title: Plan browser verification
+    instructions: Define a browser plan
+    inputArtifacts: [prd]
+    outputArtifact: browser-test.plan
+  - id: verify-browser
+    type: verify
+    title: Verify browser
+    outputArtifact: browser-verification.report
+    browserTestPlanArtifact: browser-test.plan
+    scripts: []
+    includeGitDiffCheck: false
+  - id: assess
+    type: agent
+    role: code-reviewer
+    taskKind: code-review
+    title: Assess browser verification
+    instructions: Assess the report
+    inputArtifacts: [browser-verification.report]
+    outputArtifact: release.assessment
+`,
+    );
+
+    const repository = new YamlWorkflowRepository(directory);
+    const workflow = await repository.get('browser');
+    expect(workflow.nodes.map((node) => node.id)).toEqual([
+      'plan-browser',
+      'verify-browser',
+      'assess',
+    ]);
+  });
 });

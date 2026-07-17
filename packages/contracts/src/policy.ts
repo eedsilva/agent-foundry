@@ -1,6 +1,19 @@
 import { z } from 'zod';
 import { PathSegmentSchema, ProviderSchema } from './primitives.js';
 
+const BrowserOriginSchema = z.string().refine((value) => {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      !url.hostname.includes('*') &&
+      url.origin === value
+    );
+  } catch {
+    return false;
+  }
+});
+
 /**
  * Hard constraints a project executes under, validated before (router,
  * stack) and after (verifier) execution. Absent optional fields mean
@@ -25,6 +38,7 @@ export const ProjectPolicySchema = z.object({
     })
     .strict()
     .optional(),
+  browserAllowedOrigins: z.array(BrowserOriginSchema).min(1).optional(),
 });
 export type ProjectPolicy = z.infer<typeof ProjectPolicySchema>;
 
