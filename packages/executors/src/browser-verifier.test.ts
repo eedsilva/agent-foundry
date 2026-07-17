@@ -520,6 +520,75 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps[0]?.observations.some(({ kind }) => kind === 'policy-block')).toBe(true);
   });
 
+  it('blocks a forbidden popup navigation before the sentinel receives it', async () => {
+    let sentinelRequests = 0;
+    const forbiddenOrigin = await serve((_request, response) => {
+      sentinelRequests += 1;
+      response.end('sentinel');
+    });
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<a href="${forbiddenOrigin}/sentinel" target="_blank">Open popup</a>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'popup',
+          title: 'Open popup',
+          action: { kind: 'click', locator: { kind: 'text', text: 'Open popup' } },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(sentinelRequests).toBe(0);
+    expect(report.approved).toBe(false);
+    expect(report.steps[1]?.observations.some(({ kind }) => kind === 'policy-block')).toBe(true);
+  });
+
+  it('waits for an allowed delayed HTTP failure triggered by the final action', async () => {
+    const origin = await serve((request, response) => {
+      if (request.url === '/preview/preview-1/late-failure') {
+        setTimeout(() => {
+          response.statusCode = 500;
+          response.end('late failure');
+        }, 350);
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end(`<button onclick="fetch('/preview/preview-1/late-failure')">Trigger failure</button>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'trigger',
+          title: 'Trigger delayed failure',
+          action: { kind: 'click', locator: { kind: 'text', text: 'Trigger failure' } },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(false);
+    expect(report.steps[1]?.observations.some(({ kind }) => kind === 'http-error')).toBe(true);
+  });
+
   it('caps observations at 100', async () => {
     const origin = await serve((_request, response) => {
       response.setHeader('content-type', 'text/html');

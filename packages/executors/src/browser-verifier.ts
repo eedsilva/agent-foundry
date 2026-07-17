@@ -17,7 +17,6 @@ import {
 const ACTION_TIMEOUT_MS = 10_000;
 const RUN_TIMEOUT_MS = 60_000;
 const MAX_OBSERVATIONS = 100;
-const PASSIVE_EVENT_SETTLE_MS = 100;
 
 type Observation = BrowserVerificationReport['steps'][number]['observations'][number];
 type StepReport = BrowserVerificationReport['steps'][number];
@@ -170,6 +169,9 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     let passiveFailure = false;
     const runObservations: Array<{ stepIndex: number; observation: Observation }> = [];
     const requestSteps = new WeakMap<Request, number>();
+    const pendingRequests = new Set<Request>();
+    const pendingPages = new Set<Page>();
+    const workSettlers = new Set<() => void>();
     const observe = (
       observation: Omit<Observation, 'timestamp'>,
       stepIndex = currentStepIndex,
@@ -198,29 +200,87 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         allowedOrigins.has(url.origin)
       );
     };
-
-    page.on('request', (request) => requestSteps.set(request, currentStepIndex));
-    const cdp = await context.newCDPSession(page);
-    cdp.on('Fetch.requestPaused', (event: { requestId: string; request: { url: string } }) => {
-      const url = event.request.url;
-      if (permitted(url)) {
-        void cdp.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
-        return;
-      }
-      observe({
-        kind: 'policy-block',
-        message: `Blocked request to ${sanitizeUrl(url, token)}`,
-        url,
+    const settleRequest = (request: Request): void => {
+      pendingRequests.delete(request);
+      settleWork();
+    };
+    const settlePage = (popup: Page): void => {
+      pendingPages.delete(popup);
+      settleWork();
+    };
+    const settleWork = (): void => {
+      if (pendingRequests.size !== 0 || pendingPages.size !== 0) return;
+      for (const settle of workSettlers) settle();
+      workSettlers.clear();
+    };
+    const waitForPendingRequests = async (): Promise<void> => {
+      if (pendingRequests.size === 0 && pendingPages.size === 0) return;
+      const timeout = AbortSignal.timeout(ACTION_TIMEOUT_MS);
+      await new Promise<void>((resolve, reject) => {
+        const settle = () => {
+          timeout.removeEventListener('abort', onTimeout);
+          resolve();
+        };
+        const onTimeout = () => {
+          workSettlers.delete(settle);
+          reject(new Error('Timed out waiting for browser requests to settle.'));
+        };
+        workSettlers.add(settle);
+        timeout.addEventListener('abort', onTimeout, { once: true });
       });
-      void cdp
-        .send('Fetch.failRequest', {
-          requestId: event.requestId,
-          errorReason: 'BlockedByClient',
-        })
-        .catch(() => {});
+    };
+
+    context.on('request', (request) => {
+      requestSteps.set(request, currentStepIndex);
+      pendingRequests.add(request);
     });
-    await cdp.send('Fetch.enable', {
-      patterns: [{ urlPattern: '*', requestStage: 'Request' }],
+    context.on('requestfinished', settleRequest);
+    context.on('requestfailed', (request) => {
+      observe(
+        {
+          kind: 'request-failed',
+          message: `${request.failure()?.errorText ?? 'Request failed'}: ${sanitizeUrl(request.url(), token)}`,
+          url: request.url(),
+        },
+        requestSteps.get(request),
+      );
+      settleRequest(request);
+    });
+    context.on('page', (popup) => {
+      pendingPages.add(popup);
+      void popup
+        .waitForLoadState('domcontentloaded', { timeout: ACTION_TIMEOUT_MS })
+        .catch(() => undefined)
+        .finally(() => settlePage(popup));
+    });
+    await context.route('**/*', async (route) => {
+      const url = route.request().url();
+      try {
+        if (!permitted(url)) {
+          observe({
+            kind: 'policy-block',
+            message: `Blocked request to ${sanitizeUrl(url, token)}`,
+            url,
+          });
+          await route.abort('blockedbyclient');
+          return;
+        }
+        const response = await route.fetch({ maxRedirects: 0, timeout: ACTION_TIMEOUT_MS });
+        const location = response.headers().location;
+        const redirect = location ? new URL(location, url).href : undefined;
+        if (redirect && !permitted(redirect)) {
+          observe({
+            kind: 'policy-block',
+            message: `Blocked request to ${sanitizeUrl(redirect, token)}`,
+            url: redirect,
+          });
+          await route.abort('blockedbyclient');
+          return;
+        }
+        await route.fulfill({ response });
+      } catch {
+        await route.abort('blockedbyclient').catch(() => undefined);
+      }
     });
     await context.routeWebSocket('**/*', async (webSocket) => {
       const url = webSocket.url();
@@ -234,7 +294,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         await webSocket.close({ code: 1008, reason: 'Blocked by browser verification policy' });
       }
     });
-    page.on('response', (response) => {
+    context.on('response', (response) => {
       if (response.status() >= 400) {
         observe(
           {
@@ -245,16 +305,6 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           requestSteps.get(response.request()),
         );
       }
-    });
-    page.on('requestfailed', (request) => {
-      observe(
-        {
-          kind: 'request-failed',
-          message: `${request.failure()?.errorText ?? 'Request failed'}: ${sanitizeUrl(request.url(), token)}`,
-          url: request.url(),
-        },
-        requestSteps.get(request),
-      );
     });
     page.on('console', (message) => {
       if (message.type() !== 'error') return;
@@ -289,6 +339,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         for (const assertion of step.assertions) {
           await this.executeAssertion(page, assertion, prefixUrl, token);
         }
+        await waitForPendingRequests();
         steps.push({
           stepId: step.id,
           title: step.title,
@@ -309,7 +360,6 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           observations: [],
         });
       }
-      await page.waitForTimeout(PASSIVE_EVENT_SETTLE_MS);
     }
     for (const { stepIndex, observation } of runObservations) {
       steps[stepIndex]?.observations.push(observation);
@@ -338,7 +388,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       case 'goto': {
         const url = resolvePlanPath(prefixUrl, action.path);
         if (initialNavigation && token) url.searchParams.set('token', token);
-        await page.goto(url.href);
+        await page.goto(url.href, { waitUntil: 'networkidle' });
         return;
       }
       case 'click':
