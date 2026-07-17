@@ -19,6 +19,9 @@ import {
   FileMetricsRepository,
   FileModelOverrideRepository,
   FileProjectRepository,
+  FilePreviewLifecycleLock,
+  FilePreviewLogRepository,
+  FilePreviewSessionRepository,
   FileStepAttemptRepository,
   FileStepRunRepository,
   FileWorkflowRunRepository,
@@ -61,6 +64,9 @@ export interface Runtime {
   worker: WorkerLoop;
   leaseReaper: QueueLeaseReaper;
   previewRunner: NodePreviewRunner;
+  previewSessions: FilePreviewSessionRepository;
+  previewLogs: FilePreviewLogRepository;
+  previewLifecycleLock: FilePreviewLifecycleLock;
   previewService: PreviewService;
 }
 
@@ -103,11 +109,32 @@ export async function createRuntime(
     timeoutMs: config.verificationTimeoutMs,
     maxOutputBytes: config.maxCliOutputBytes,
   });
-  const previewRunner = new NodePreviewRunner({ maxOutputBytes: config.maxCliOutputBytes });
-  const previewService = new PreviewService(previewRunner, clock, ids, {
-    previewBaseUrl: `http://${config.apiHost}:${config.apiPort}/preview`,
-    ttlSeconds: config.previewTtlSeconds,
+  const previewSessions = new FilePreviewSessionRepository(config.dataDir);
+  const previewLogs = new FilePreviewLogRepository(config.dataDir, config.previewLogMaxBytes);
+  const previewLifecycleLock = new FilePreviewLifecycleLock(config.dataDir);
+  const previewRunner = new NodePreviewRunner({
+    startupTimeoutMs: config.previewStartupTimeoutMs,
+    maxOutputBytes: config.maxCliOutputBytes,
+    healthPath: config.previewHealthPath,
+    logRepository: previewLogs,
   });
+  const previewService = new PreviewService(
+    previewRunner,
+    previewSessions,
+    previewLifecycleLock,
+    artifacts,
+    events,
+    clock,
+    ids,
+    {
+      previewBaseUrl: `http://${config.apiHost}:${config.apiPort}/preview`,
+      ttlSeconds: config.previewTtlSeconds,
+      startupTimeoutMs: config.previewStartupTimeoutMs,
+      healthIntervalMs: config.previewHealthIntervalMs,
+      healthFailureThreshold: config.previewHealthFailureThreshold,
+      maxRestarts: config.previewMaxRestarts,
+    },
+  );
   const orchestrator = new WorkflowOrchestrator(
     projects,
     runs,
@@ -183,6 +210,9 @@ export async function createRuntime(
     worker,
     leaseReaper,
     previewRunner,
+    previewSessions,
+    previewLogs,
+    previewLifecycleLock,
     previewService,
   };
 }

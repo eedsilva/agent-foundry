@@ -2,6 +2,7 @@ import {
   PreviewSessionSchema,
   type PreviewCommandPlan,
   type PreviewHealth,
+  type PreviewFailurePhase,
   type PreviewProcess,
   type PreviewSession,
   type PreviewSessionStatus,
@@ -10,10 +11,11 @@ import {
 import { InvalidStateTransitionError } from './errors.js';
 
 const previewSessionTransitions: Record<PreviewSessionStatus, readonly PreviewSessionStatus[]> = {
-  preparing: ['starting', 'failed', 'stopped'],
-  starting: ['running', 'failed', 'stopped'],
-  running: ['unhealthy', 'expired', 'failed', 'stopped'],
-  unhealthy: ['running', 'starting', 'expired', 'failed', 'stopped'],
+  preparing: ['starting', 'failing', 'failed', 'stopped'],
+  starting: ['running', 'failing', 'failed', 'stopped'],
+  running: ['unhealthy', 'failing', 'expired', 'failed', 'stopped'],
+  unhealthy: ['running', 'starting', 'failing', 'expired', 'failed', 'stopped'],
+  failing: ['failed', 'stopped'],
   stopped: [],
   failed: [],
   expired: [],
@@ -34,6 +36,7 @@ export function transitionPreviewSession(
     process?: PreviewProcess;
     health?: PreviewHealth;
     error?: RunError;
+    failurePhase?: PreviewFailurePhase;
   } = {},
 ): PreviewSession {
   if (!previewSessionTransitions[session.status].includes(status)) {
@@ -52,7 +55,8 @@ export function transitionPreviewSession(
     updated.restartCount = session.restartCount + 1;
   }
   if (isPreviewSessionTerminal(status)) updated.completedAt = timestamp;
-  if (status !== 'failed') delete updated.error;
+  if (status !== 'failed' && status !== 'failing') delete updated.error;
+  if (status !== 'failing') delete updated.failurePhase;
   return PreviewSessionSchema.parse(updated);
 }
 

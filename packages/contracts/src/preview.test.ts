@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   PreviewCommandPlanSchema,
+  PreviewFailureDiagnosticSchema,
+  PreviewLogPageSchema,
   PreviewSessionReferenceSchema,
   PreviewSessionSchema,
   type PreviewSession,
@@ -62,7 +64,7 @@ describe('PreviewSessionSchema', () => {
     expect(valid.process?.port).toBe(3100);
   });
 
-  it('requires completedAt on terminal states and error only when failed', () => {
+  it('requires completedAt on terminal states and error only in failure states', () => {
     const stoppedWithoutCompletion = { ...baseSession(), status: 'stopped' };
     expect(PreviewSessionSchema.safeParse(stoppedWithoutCompletion).success).toBe(false);
 
@@ -83,6 +85,22 @@ describe('PreviewSessionSchema', () => {
       error: { name: 'X', message: 'y' },
     };
     expect(PreviewSessionSchema.safeParse(errorWhileRunning).success).toBe(false);
+  });
+
+  it('requires an exact failure phase only while failure evidence is pending', () => {
+    const failing = {
+      ...baseSession(),
+      status: 'failing',
+      error: { name: 'PreviewStartError', code: 'PREVIEW_NO_DEV_COMMAND', message: 'failed' },
+    };
+
+    expect(PreviewSessionSchema.safeParse(failing).success).toBe(false);
+    expect(PreviewSessionSchema.parse({ ...failing, failurePhase: 'start' }).failurePhase).toBe(
+      'start',
+    );
+    expect(
+      PreviewSessionSchema.safeParse({ ...baseSession(), failurePhase: 'prepare' }).success,
+    ).toBe(false);
   });
 
   it('rejects expired sessions that never served', () => {
@@ -179,5 +197,98 @@ describe('PreviewSessionSchema commandPlan', () => {
       },
     });
     expect(session.commandPlan?.packageManager).toBe('npm');
+  });
+});
+
+describe('preview lifecycle diagnostics', () => {
+  it('parses cursor-based stdout and stderr log pages', () => {
+    const page = PreviewLogPageSchema.parse({
+      entries: [
+        { cursor: 4, stream: 'stdout', message: 'ready', timestamp: createdAt },
+        { cursor: 5, stream: 'stderr', message: 'warning', timestamp: startedAt },
+      ],
+      nextCursor: 5,
+      truncatedBeforeCursor: 4,
+    });
+
+    expect(page.entries.map((entry) => entry.stream)).toEqual(['stdout', 'stderr']);
+    expect(page.nextCursor).toBe(5);
+    expect(page.truncatedBeforeCursor).toBe(4);
+  });
+
+  it('rejects non-monotonic log entries', () => {
+    expect(() =>
+      PreviewLogPageSchema.parse({
+        entries: [
+          { cursor: 2, stream: 'stdout', message: 'second', timestamp: createdAt },
+          { cursor: 1, stream: 'stdout', message: 'first', timestamp: createdAt },
+        ],
+        nextCursor: 2,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a next cursor before the last delivered entry', () => {
+    expect(() =>
+      PreviewLogPageSchema.parse({
+        entries: [
+          { cursor: 4, stream: 'stdout', message: 'first', timestamp: createdAt },
+          { cursor: 5, stream: 'stderr', message: 'second', timestamp: startedAt },
+        ],
+        nextCursor: 4,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a next cursor after the last delivered entry', () => {
+    expect(() =>
+      PreviewLogPageSchema.parse({
+        entries: [
+          { cursor: 4, stream: 'stdout', message: 'first', timestamp: createdAt },
+          { cursor: 5, stream: 'stderr', message: 'second', timestamp: startedAt },
+        ],
+        nextCursor: 100,
+      }),
+    ).toThrow();
+  });
+
+  it('accepts empty pages at a truncated high-water cursor', () => {
+    expect(
+      PreviewLogPageSchema.parse({
+        entries: [],
+        nextCursor: 8,
+        truncatedBeforeCursor: 9,
+      }),
+    ).toEqual({ entries: [], nextCursor: 8, truncatedBeforeCursor: 9 });
+  });
+
+  it('parses strict repair diagnostics with bounded log evidence', () => {
+    const diagnostic = PreviewFailureDiagnosticSchema.parse({
+      schemaVersion: '1',
+      sessionId: 'preview-1',
+      projectId: 'project-1',
+      runId: 'run-1',
+      phase: 'runtime',
+      health: {
+        state: 'unhealthy',
+        checkedAt: startedAt,
+        detail: 'process exited',
+        consecutiveFailures: 3,
+      },
+      restartCount: 2,
+      error: { name: 'PreviewCrashLoop', message: 'restart limit reached', exitCode: 1 },
+      logs: {
+        entries: [{ cursor: 9, stream: 'stderr', message: 'build failed', timestamp: startedAt }],
+        nextCursor: 9,
+        truncatedBeforeCursor: 9,
+      },
+      failedAt: startedAt,
+    });
+
+    expect(diagnostic.phase).toBe('runtime');
+    expect(diagnostic.logs.entries[0]?.stream).toBe('stderr');
+    expect(() =>
+      PreviewFailureDiagnosticSchema.parse({ ...diagnostic, rawToken: 'secret' }),
+    ).toThrow();
   });
 });

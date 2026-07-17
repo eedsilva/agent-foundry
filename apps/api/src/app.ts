@@ -19,10 +19,34 @@ import {
 } from '@agent-foundry/domain';
 import { registerPreviewProxy } from './preview-proxy.js';
 
-export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
+interface BuildAppOptions {
+  loggerStream?: { write(message: string): void };
+}
+
+interface LoggableRequest {
+  method?: string;
+  url?: string;
+  host?: string;
+  ip?: string;
+  headers?: { host?: string };
+  socket?: { remoteAddress?: string; remotePort?: number };
+  raw?: LoggableRequest;
+}
+
+const CanonicalDecimalSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d*)$/)
+  .transform(Number);
+
+export async function buildApp(
+  runtime: Runtime,
+  options: BuildAppOptions = {},
+): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
+      serializers: { req: serializeRequest },
+      ...(options.loggerStream ? { stream: options.loggerStream } : {}),
     },
     bodyLimit: 1_000_000,
   });
@@ -258,19 +282,72 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     await runtime.workspaces.ensure(projectId);
     const { session, url } = await runtime.previewService.start({
       workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+      ...(project.currentRunId ? { runId: project.currentRunId } : {}),
     });
     return reply.status(202).send({ session, url });
   });
 
   app.post('/projects/:projectId/preview/:sessionId/stop', async (request, reply) => {
-    const { sessionId } = z
+    const { projectId, sessionId } = z
       .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
       .parse(request.params);
+    await requireProjectSession(runtime, projectId, sessionId);
     const session = await runtime.previewService.stop(sessionId);
     return reply.status(202).send({ session });
+  });
+
+  app.get('/projects/:projectId/preview/:sessionId/logs', async (request) => {
+    const { projectId, sessionId } = z
+      .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
+      .parse(request.params);
+    const { cursor, limit } = z
+      .object({
+        cursor: CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).optional(),
+        limit: CanonicalDecimalSchema.pipe(z.number().int().min(1).max(200)).optional(),
+      })
+      .parse(request.query);
+    await requireProjectSession(runtime, projectId, sessionId);
+    return runtime.previewService.logs(sessionId, cursor, limit);
   });
 
   registerPreviewProxy(app, runtime);
 
   return app;
+}
+
+function serializeRequest(request: unknown) {
+  const value = request as LoggableRequest;
+  const raw = value.raw ?? value;
+  const method = value.method ?? raw.method;
+  const host = value.host ?? value.headers?.host ?? raw.headers?.host;
+  const remoteAddress = value.ip ?? value.socket?.remoteAddress ?? raw.socket?.remoteAddress;
+  const remotePort = value.socket?.remotePort ?? raw.socket?.remotePort;
+  return {
+    ...(method ? { method } : {}),
+    url: sanitizeRequestUrl(value.url ?? raw.url ?? ''),
+    ...(host ? { host } : {}),
+    ...(remoteAddress ? { remoteAddress } : {}),
+    ...(remotePort !== undefined ? { remotePort } : {}),
+  };
+}
+
+export function sanitizeRequestUrl(url: string): string {
+  const queryStart = url.indexOf('?');
+  if (queryStart < 0) return url;
+  const params = new URLSearchParams(url.slice(queryStart + 1));
+  for (const key of [...params.keys()]) {
+    if (key.toLowerCase() === 'token') params.set(key, '[REDACTED]');
+  }
+  return `${url.slice(0, queryStart)}?${params.toString()}`;
+}
+
+async function requireProjectSession(
+  runtime: Runtime,
+  projectId: string,
+  sessionId: string,
+): Promise<void> {
+  const record = await runtime.previewSessions.get(sessionId);
+  if (!record || record.session.workspaceRef.projectId !== projectId) {
+    throw new NotFoundError(`Preview session ${sessionId} not found for project ${projectId}.`);
+  }
 }

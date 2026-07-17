@@ -7,6 +7,7 @@ export const PreviewSessionStatusSchema = z.enum([
   'starting',
   'running',
   'unhealthy',
+  'failing',
   'stopped',
   'failed',
   'expired',
@@ -15,6 +16,9 @@ export type PreviewSessionStatus = z.infer<typeof PreviewSessionStatusSchema>;
 
 export const PreviewHealthStateSchema = z.enum(['unknown', 'healthy', 'unhealthy']);
 export type PreviewHealthState = z.infer<typeof PreviewHealthStateSchema>;
+
+export const PreviewFailurePhaseSchema = z.enum(['prepare', 'start', 'health', 'runtime', 'reap']);
+export type PreviewFailurePhase = z.infer<typeof PreviewFailurePhaseSchema>;
 
 export const PreviewHealthSchema = z
   .object({
@@ -107,6 +111,7 @@ export const PreviewSessionSchema = z
     startedAt: z.string().datetime().optional(),
     completedAt: z.string().datetime().optional(),
     error: RunErrorSchema.optional(),
+    failurePhase: PreviewFailurePhaseSchema.optional(),
     commandPlan: PreviewCommandPlanSchema.optional(),
   })
   .strict()
@@ -165,18 +170,32 @@ export const PreviewSessionSchema = z
         message: 'Non-terminal session cannot have completedAt',
       });
     }
-    if (session.status === 'failed' && !session.error) {
+    if ((session.status === 'failed' || session.status === 'failing') && !session.error) {
       context.addIssue({
         code: 'custom',
         path: ['error'],
         message: 'Failed session requires error',
       });
     }
-    if (session.status !== 'failed' && session.error) {
+    if (session.status !== 'failed' && session.status !== 'failing' && session.error) {
       context.addIssue({
         code: 'custom',
         path: ['error'],
-        message: 'Only failed sessions may retain an error',
+        message: 'Only failing or failed sessions may retain an error',
+      });
+    }
+    if (session.status === 'failing' && !session.failurePhase) {
+      context.addIssue({
+        code: 'custom',
+        path: ['failurePhase'],
+        message: 'Failing session requires its exact failure phase',
+      });
+    }
+    if (session.status !== 'failing' && session.failurePhase) {
+      context.addIssue({
+        code: 'custom',
+        path: ['failurePhase'],
+        message: 'Only a failing session may retain failurePhase',
       });
     }
     if (session.updatedAt < session.createdAt) {
@@ -202,6 +221,60 @@ export const PreviewSessionSchema = z
     }
   });
 export type PreviewSession = z.infer<typeof PreviewSessionSchema>;
+
+export const PreviewLogEntrySchema = z
+  .object({
+    cursor: z.number().int().positive(),
+    stream: z.enum(['stdout', 'stderr']),
+    message: z.string(),
+    timestamp: z.string().datetime(),
+  })
+  .strict();
+export type PreviewLogEntry = z.infer<typeof PreviewLogEntrySchema>;
+
+export const PreviewLogPageSchema = z
+  .object({
+    entries: z.array(PreviewLogEntrySchema),
+    nextCursor: z.number().int().nonnegative(),
+    truncatedBeforeCursor: z.number().int().positive().optional(),
+  })
+  .strict()
+  .superRefine((page, context) => {
+    for (let index = 1; index < page.entries.length; index += 1) {
+      if (page.entries[index]!.cursor <= page.entries[index - 1]!.cursor) {
+        context.addIssue({
+          code: 'custom',
+          path: ['entries', index, 'cursor'],
+          message: 'Log cursors must be strictly increasing',
+        });
+      }
+    }
+    const lastCursor = page.entries.at(-1)?.cursor;
+    if (lastCursor !== undefined && page.nextCursor !== lastCursor) {
+      context.addIssue({
+        code: 'custom',
+        path: ['nextCursor'],
+        message: 'nextCursor must equal the last delivered log entry cursor',
+      });
+    }
+  });
+export type PreviewLogPage = z.infer<typeof PreviewLogPageSchema>;
+
+export const PreviewFailureDiagnosticSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    sessionId: PathSegmentSchema,
+    projectId: PathSegmentSchema,
+    runId: PathSegmentSchema.optional(),
+    phase: PreviewFailurePhaseSchema,
+    health: PreviewHealthSchema,
+    restartCount: z.number().int().nonnegative(),
+    error: RunErrorSchema,
+    logs: PreviewLogPageSchema,
+    failedAt: z.string().datetime(),
+  })
+  .strict();
+export type PreviewFailureDiagnostic = z.infer<typeof PreviewFailureDiagnosticSchema>;
 
 export const PreviewEvidenceSchema = z
   .object({

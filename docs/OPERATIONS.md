@@ -82,7 +82,7 @@ A prévia em tempo real permite que desenvolvedores testem mudanças no projeto 
 POST /projects/:projectId/preview
 ```
 
-Inicia uma sessão de preview: reserva uma porta, instala dependências, inicia o servidor de dev, sonda a saúde TCP e, quando saudável, retorna a sessão e uma URL de proxy com token (`/preview/:sessionId/?token=<token>`). Cada sessão recebe um token criptograficamente aleatório armazenado em memória.
+Inicia uma sessão de preview: reserva uma porta, instala dependências, inicia o servidor de dev, sonda a saúde HTTP e, quando saudável, retorna a sessão e uma URL de proxy com token (`/preview/:sessionId/?token=<token>`). O `currentRunId` do projeto, quando presente, é associado à sessão e aos seus eventos/diagnósticos. O token criptograficamente aleatório só aparece na resposta e no cookie; apenas seu SHA-256 é persistido. O serializer central dos access logs substitui valores de qualquer query key `token` (case-insensitive, inclusive key percent-encoded) antes da primeira emissão, preservando os demais dados da URL.
 
 ```bash
 POST /projects/:projectId/preview/:sessionId/stop
@@ -90,7 +90,47 @@ POST /projects/:projectId/preview/:sessionId/stop
 
 Interrompe explicitamente uma sessão, terminando o processo do servidor de desenvolvimento.
 
-Sessões expiram automaticamente após `PREVIEW_TTL_SECONDS` segundos (padrão 1800). Após expiração, tentativas de acesso retornam `403`.
+```bash
+GET /projects/:projectId/preview/:sessionId/logs?cursor=0&limit=200
+```
+
+Retorna stdout/stderr estruturado depois do cursor informado. `cursor` aceita somente texto decimal canônico não negativo (`0`, `1`, ...), e `limit` somente decimal canônico de 1–200 (padrão 200); vazio, whitespace, sinal, zero à esquerda, hexadecimal, notação científica e fração são rejeitados. Logs e stop retornam `404` quando a sessão não pertence ao projeto da URL, evitando acesso cruzado entre projetos.
+
+Sessões expiram automaticamente após `PREVIEW_TTL_SECONDS` segundos (padrão 1800). Somente o entrypoint singleton do processo da API, nunca `buildApp` nem o worker, registra uma varredura determinística a cada `PREVIEW_REAP_INTERVAL_MS`; varreduras não se sobrepõem e erros agregados são registrados. O scheduler liga um `stop()` idempotente ao hook `onClose` do Fastify: qualquer chamada a `app.close()` cancela ticks futuros e aguarda uma varredura ativa já tratada antes de concluir. Após expiração, tentativas de proxy retornam `403`.
+
+### Configuração e armazenamento
+
+| Variável                           | Padrão    | Função                                         |
+| ---------------------------------- | --------- | ---------------------------------------------- |
+| `PREVIEW_TTL_SECONDS`              | `1800`    | validade da sessão saudável                    |
+| `PREVIEW_STARTUP_TIMEOUT_MS`       | `10000`   | janela para o servidor ficar saudável          |
+| `PREVIEW_HEALTH_PATH`              | `/`       | caminho da sonda HTTP                          |
+| `PREVIEW_HEALTH_INTERVAL_MS`       | `1000`    | intervalo entre sondas                         |
+| `PREVIEW_HEALTH_FAILURE_THRESHOLD` | `3`       | falhas consecutivas antes de reiniciar         |
+| `PREVIEW_MAX_RESTARTS`             | `2`       | reinícios automáticos antes da falha terminal  |
+| `PREVIEW_REAP_INTERVAL_MS`         | `5000`    | intervalo da varredura no processo da API      |
+| `PREVIEW_LOG_MAX_BYTES`            | `1000000` | retenção máxima aproximada por arquivo de logs |
+
+O timeout de startup é aplicado em duas janelas sequenciais: primeiro o runner aguarda a confirmação do processo/porta após o spawn; depois o serviço aguarda a sonda HTTP em `PREVIEW_HEALTH_PATH`. Cada janela usa `PREVIEW_STARTUP_TIMEOUT_MS`, portanto o pior caso padrão é aproximadamente 20 segundos, além do tempo de instalação.
+
+Cada sessão usa `DATA_DIR/previews/<sessionId>/session.json` e `logs.json`. Escritas usam locks de diretório com `owner.json` (PID positivo e token UUID único), inclusive os locks de sessão/log e `.lifecycle.lock`; owner morto ou metadata malformada e antiga são recuperados, um PID vivo nunca é desalojado apenas pela idade, e somente o token proprietário remove o lock. O arquivo de sessão contém estado versionado e digest do token, nunca o token bruto. `health.detail`, `error.message` e motivos de falha do plano de comandos passam por redaction antes da gravação; IDs, referências, paths e comandos necessários à recuperação permanecem exatos. O arquivo de logs usa cursores monotônicos, remove entradas antigas para respeitar `PREVIEW_LOG_MAX_BYTES` e aplica `redactString` antes da gravação. Falha terminal grava o artifact redigido `preview-failure-<sessionId>` com as 200 entradas disponíveis mais recentes e eventos deduplicados `preview.crashed`, `preview.restarted`, `preview.failed` e `preview.reaped`; não agenda reparo automaticamente.
+
+`DATA_DIR`, logs, artifacts e cookies de preview continuam sendo dados sensíveis. Preview é restrito a loopback e a operador confiável; não é isolamento forte para código hostil. A recuperação de lock considera `pid` vivo no mesmo host (`process.kill(pid, 0)`). Portanto, todos os processos que compartilham `DATA_DIR` devem enxergar o mesmo namespace de PID; não compartilhe esse diretório entre containers/hosts com namespaces diferentes. Reuso extremo de PID pode manter um lock órfão até intervenção manual.
+
+### Migração, rollback e recovery
+
+Não há sessão legada para migrar: previews anteriores eram somente em memória. Antes do upgrade, pare previews/processos antigos e a API; sessões em memória desaparecem e novas sessões começam no formato durável. Não crie backfill inventando PID, token ou estado.
+
+Para rollback, pare a API e os processos de preview, preserve um snapshot de `DATA_DIR/previews`, restaure o snapshot anterior ao upgrade quando necessário e só então inicie o binário antigo. A versão antiga ignora a nova árvore, mas não encerra PIDs persistidos; rollback apenas de código pode deixar servidores órfãos.
+
+Diagnóstico e recuperação:
+
+1. consulte o endpoint de logs, `session.json`, eventos do projeto e `preview-failure-<sessionId>`; não publique esses dados sem nova revisão de segredo;
+2. confirme que o PID persistido ainda corresponde ao comando e workspace esperados antes de encerrá-lo;
+3. pare a API e faça snapshot de `DATA_DIR/previews` antes de editar estado;
+4. remova `.lifecycle.lock` manualmente somente depois de confirmar que o owner PID está morto no mesmo host;
+5. reinicie a API: uma varredura imediata reaplica TTL, detecta órfãos/crashes, reinicia dentro do limite ou produz diagnóstico terminal; os ticks seguintes mantêm a convergência;
+6. se a persistência estiver corrompida, preserve-a para análise e restaure o snapshot; não apague a árvore inteira durante investigação.
 
 ### Proxy
 

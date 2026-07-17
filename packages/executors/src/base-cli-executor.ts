@@ -10,6 +10,7 @@ import type {
 import type { AgentExecutor } from '@agent-foundry/domain';
 import { ExecutionError, RunCancelledError, errorMessage } from '@agent-foundry/domain';
 import { extractExecutedModel, extractUsage, parseAgentArtifact } from './json-output.js';
+import { killProcessTree, terminateProcessTree } from './process-tree.js';
 
 export interface CliInvocation {
   command: string;
@@ -93,7 +94,6 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     signal?: AbortSignal,
   ): Promise<AgentExecutionResult> {
     let result: CliResult;
-    let graceTimer: NodeJS.Timeout | undefined;
     let onAbort: (() => void) | undefined;
 
     try {
@@ -112,9 +112,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
       }) as unknown as CliSubprocess;
       if (signal) {
         onAbort = () => {
-          killProcessTree(subprocess, 'SIGTERM');
-          graceTimer = setTimeout(() => killProcessTree(subprocess, 'SIGKILL'), this.killGraceMs);
-          graceTimer.unref?.();
+          void terminateProcessTree(subprocess, this.killGraceMs);
         };
         if (signal.aborted) onAbort();
         else signal.addEventListener('abort', onAbort, { once: true });
@@ -132,7 +130,6 @@ export abstract class BaseCliExecutor implements AgentExecutor {
       );
     } finally {
       if (signal && onAbort) signal.removeEventListener('abort', onAbort);
-      if (graceTimer) clearTimeout(graceTimer);
     }
 
     if (signal?.aborted) throw new RunCancelledError(request.runId);
@@ -235,18 +232,6 @@ function waitForCliResult(subprocess: CliSubprocess, hardTimeoutMs: number): Pro
       (error: unknown) => finish(() => reject(error)),
     );
   });
-}
-
-function killProcessTree(subprocess: CliSubprocess, signal: NodeJS.Signals): void {
-  if (subprocess.pid !== undefined && process.platform !== 'win32') {
-    try {
-      process.kill(-subprocess.pid, signal);
-      return;
-    } catch {
-      // Group already gone or the child is not a group leader; fall back to a direct kill.
-    }
-  }
-  subprocess.kill?.(signal);
 }
 
 function outputText(value: unknown): string {
