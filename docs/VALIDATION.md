@@ -27,6 +27,21 @@ The final attempt to query npm's remote audit endpoint failed because DNS resolu
 
 Docker Compose configuration is included, but Docker was not installed in the validation environment, so the image itself was not built here.
 
+## Durable preview lifecycle — 2026-07-16
+
+Issue #31 replaces process-local preview state with versioned files and adds API-owned health/reaping plus redacted cursor logs. Evidence is split by boundary:
+
+- `packages/contracts/src/preview.test.ts` validates durable sessions, structured log pages, and failure diagnostics.
+- `packages/persistence/src/preview-repositories.test.ts` validates optimistic updates, digest-only token storage, redaction before disk, pagination/truncation, and stale-lock recovery.
+- `packages/executors/src/node-preview-runner.test.ts` validates HTTP health, persisted stdout/stderr, independent crash detection, restart, and process-tree termination.
+- `packages/orchestrator/src/preview-service.test.ts` validates startup windows, health thresholds, bounded restarts, TTL/orphan reaping, concurrent lifecycle calls, deduplicated events/artifacts, and redacted failure diagnostics.
+- `packages/composition/src/config.test.ts` pins all eight preview lifecycle defaults and overrides.
+- `apps/api/src/preview.test.ts` validates start/stop compatibility, current-run association, cursor/limit validation, project ownership, non-overlapping reap ticks, aggregate-error logging, and timer cleanup on close.
+
+The storage boundary is `DATA_DIR/previews/<sessionId>/`; raw access tokens are excluded from it. The log API returns only entries belonging to a session owned by the path project, with `cursor >= 0` and `1 <= limit <= 200`. The API owns the only scheduler; worker processes do not run preview sweeps.
+
+Migration coverage intentionally has no legacy fixture because the previous implementation persisted no preview sessions. Operational evidence requires stopping old preview processes before upgrade. Rollback/recovery and the same-host PID-lock assumption are recorded in `OPERATIONS.md` and ADR 0018.
+
 ## Real provider canary baseline — 2026-07-14
 
 The versioned v0.2 baseline invoked Codex, Claude Code and AGY independently for planning, greenfield implementation and repository repair. All nine runs passed. Planning produced no diff; every mutation scenario passed `node --test`, `git diff --check` and its exact file allowlist.

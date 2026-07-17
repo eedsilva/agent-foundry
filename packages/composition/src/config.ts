@@ -34,6 +34,13 @@ const ConfigSchema = z.object({
   GIT_AUTHOR_NAME: z.string().default('Agent Foundry'),
   GIT_AUTHOR_EMAIL: z.string().email().default('agent-foundry@localhost'),
   PREVIEW_TTL_SECONDS: z.coerce.number().int().positive().default(1_800),
+  PREVIEW_STARTUP_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  PREVIEW_HEALTH_PATH: z.string().startsWith('/').default('/'),
+  PREVIEW_HEALTH_INTERVAL_MS: z.coerce.number().int().positive().default(1_000),
+  PREVIEW_HEALTH_FAILURE_THRESHOLD: z.coerce.number().int().positive().default(3),
+  PREVIEW_MAX_RESTARTS: z.coerce.number().int().nonnegative().default(2),
+  PREVIEW_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(5_000),
+  PREVIEW_LOG_MAX_BYTES: z.coerce.number().int().positive().default(1_000_000),
 });
 
 export interface RuntimeConfig {
@@ -63,6 +70,13 @@ export interface RuntimeConfig {
   gitAuthorName: string;
   gitAuthorEmail: string;
   previewTtlSeconds: number;
+  previewStartupTimeoutMs: number;
+  previewHealthPath: string;
+  previewHealthIntervalMs: number;
+  previewHealthFailureThreshold: number;
+  previewMaxRestarts: number;
+  previewReapIntervalMs: number;
+  previewLogMaxBytes: number;
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -110,6 +124,13 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     gitAuthorName: parsed.GIT_AUTHOR_NAME,
     gitAuthorEmail: parsed.GIT_AUTHOR_EMAIL,
     previewTtlSeconds: parsed.PREVIEW_TTL_SECONDS,
+    previewStartupTimeoutMs: parsed.PREVIEW_STARTUP_TIMEOUT_MS,
+    previewHealthPath: parsed.PREVIEW_HEALTH_PATH,
+    previewHealthIntervalMs: parsed.PREVIEW_HEALTH_INTERVAL_MS,
+    previewHealthFailureThreshold: parsed.PREVIEW_HEALTH_FAILURE_THRESHOLD,
+    previewMaxRestarts: parsed.PREVIEW_MAX_RESTARTS,
+    previewReapIntervalMs: parsed.PREVIEW_REAP_INTERVAL_MS,
+    previewLogMaxBytes: parsed.PREVIEW_LOG_MAX_BYTES,
   };
 }
 

@@ -1,7 +1,8 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { PreviewSession } from '@agent-foundry/contracts';
 import type { FastifyInstance } from 'fastify';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
@@ -43,6 +44,24 @@ async function createProject(baseUrl: string): Promise<string> {
   return project.id;
 }
 
+async function createStoredSession(runtime: Runtime, projectId: string): Promise<PreviewSession> {
+  const now = new Date().toISOString();
+  const session: PreviewSession = {
+    id: `preview-${projectId}`,
+    workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+    status: 'stopped',
+    version: 1,
+    health: { state: 'unknown', consecutiveFailures: 0 },
+    ttl: { seconds: 60 },
+    restartCount: 0,
+    createdAt: now,
+    updatedAt: now,
+    completedAt: now,
+  };
+  await runtime.previewSessions.create({ session, tokenDigest: 'a'.repeat(64) });
+  return session;
+}
+
 describe('preview routes', () => {
   it('starts and stops a preview session for a project', async () => {
     const { baseUrl, runtime } = await startApi();
@@ -80,5 +99,120 @@ describe('preview routes', () => {
       method: 'POST',
     });
     expect(response.status).toBe(404);
+  });
+
+  it('returns cursor-paginated preview logs with a default limit', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const session = await createStoredSession(runtime, projectId);
+    await runtime.previewLogs.append(session.id, {
+      timestamp: new Date().toISOString(),
+      stream: 'stdout',
+      message: 'first',
+    });
+    await runtime.previewLogs.append(session.id, {
+      timestamp: new Date().toISOString(),
+      stream: 'stderr',
+      message: 'second',
+    });
+
+    const response = await fetch(
+      `${baseUrl}/projects/${projectId}/preview/${session.id}/logs?cursor=1`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      entries: [{ cursor: 2, stream: 'stderr', message: 'second' }],
+      nextCursor: 2,
+    });
+  });
+
+  it.each(['cursor=-1', 'cursor=1.5', 'limit=0', 'limit=201'])(
+    'rejects invalid %s',
+    async (query) => {
+      const { baseUrl, runtime } = await startApi();
+      const projectId = await createProject(baseUrl);
+      const session = await createStoredSession(runtime, projectId);
+
+      const response = await fetch(
+        `${baseUrl}/projects/${projectId}/preview/${session.id}/logs?${query}`,
+      );
+
+      expect(response.status).toBe(400);
+    },
+  );
+
+  it('does not expose or stop a preview through another project', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const ownerId = await createProject(baseUrl);
+    const otherId = await createProject(baseUrl);
+    const session = await createStoredSession(runtime, ownerId);
+
+    const logs = await fetch(`${baseUrl}/projects/${otherId}/preview/${session.id}/logs`);
+    const stop = await fetch(`${baseUrl}/projects/${otherId}/preview/${session.id}/stop`, {
+      method: 'POST',
+    });
+
+    expect(logs.status).toBe(404);
+    expect(stop.status).toBe(404);
+  });
+
+  it('passes the project current run to preview start', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const project = await runtime.projects.get(projectId);
+    expect(project?.currentRunId).toBeDefined();
+    const start = vi.spyOn(runtime.previewService, 'start').mockResolvedValue({
+      session: await createStoredSession(runtime, projectId),
+      url: 'http://127.0.0.1/preview',
+    });
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview`, { method: 'POST' });
+
+    expect(response.status).toBe(202);
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ runId: project!.currentRunId }));
+  });
+});
+
+describe('preview reaper schedule', () => {
+  it('runs one non-overlapping sweep per interval and reports aggregate errors', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-preview-reaper-'));
+    dirs.push(dataDir);
+    const runtime = await createRuntime({
+      ...process.env,
+      REPO_ROOT: resolve(import.meta.dirname, '../../..'),
+      DATA_DIR: dataDir,
+      EXECUTOR_MODE: 'mock',
+      PREVIEW_REAP_INTERVAL_MS: '10',
+    });
+    let finish!: () => void;
+    const firstSweep = new Promise<void>((resolveSweep) => {
+      finish = resolveSweep;
+    });
+    const reap = vi
+      .spyOn(runtime.previewService, 'reap')
+      .mockReturnValueOnce(firstSweep.then(() => 0))
+      .mockRejectedValueOnce(new AggregateError([new Error('broken session')], 'sweep failed'));
+    vi.useFakeTimers();
+    const app = await buildApp(runtime);
+    apps.push(app);
+    const logError = vi.spyOn(app.log, 'error');
+
+    await vi.advanceTimersByTimeAsync(30);
+    expect(reap).toHaveBeenCalledTimes(1);
+    finish();
+    await firstSweep;
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.runAllTicks();
+    expect(reap).toHaveBeenCalledTimes(2);
+    expect(logError).toHaveBeenCalledWith(
+      expect.any(AggregateError),
+      'Preview reaper sweep failed',
+    );
+
+    await app.close();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(reap).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 });

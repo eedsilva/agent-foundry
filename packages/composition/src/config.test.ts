@@ -45,9 +45,42 @@ describe('policies directory', () => {
 });
 
 describe('preview service configuration', () => {
-  it('defaults PREVIEW_TTL_SECONDS to 1800 and honors an override', () => {
-    expect(loadRuntimeConfig(base).previewTtlSeconds).toBe(1_800);
-    expect(loadRuntimeConfig({ ...base, PREVIEW_TTL_SECONDS: '60' }).previewTtlSeconds).toBe(60);
+  it('uses the preview lifecycle defaults', () => {
+    expect(loadRuntimeConfig(base)).toMatchObject({
+      previewTtlSeconds: 1_800,
+      previewStartupTimeoutMs: 10_000,
+      previewHealthPath: '/',
+      previewHealthIntervalMs: 1_000,
+      previewHealthFailureThreshold: 3,
+      previewMaxRestarts: 2,
+      previewReapIntervalMs: 5_000,
+      previewLogMaxBytes: 1_000_000,
+    });
+  });
+
+  it('honors preview lifecycle overrides', () => {
+    expect(
+      loadRuntimeConfig({
+        ...base,
+        PREVIEW_TTL_SECONDS: '60',
+        PREVIEW_STARTUP_TIMEOUT_MS: '20',
+        PREVIEW_HEALTH_PATH: '/healthz',
+        PREVIEW_HEALTH_INTERVAL_MS: '30',
+        PREVIEW_HEALTH_FAILURE_THRESHOLD: '4',
+        PREVIEW_MAX_RESTARTS: '5',
+        PREVIEW_REAP_INTERVAL_MS: '40',
+        PREVIEW_LOG_MAX_BYTES: '50',
+      }),
+    ).toMatchObject({
+      previewTtlSeconds: 60,
+      previewStartupTimeoutMs: 20,
+      previewHealthPath: '/healthz',
+      previewHealthIntervalMs: 30,
+      previewHealthFailureThreshold: 4,
+      previewMaxRestarts: 5,
+      previewReapIntervalMs: 40,
+      previewLogMaxBytes: 50,
+    });
   });
 });
 

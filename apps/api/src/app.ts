@@ -34,6 +34,20 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     methods: ['GET', 'POST', 'OPTIONS'],
   });
 
+  let reaping = false;
+  const previewReaper = setInterval(() => {
+    if (reaping) return;
+    reaping = true;
+    void runtime.previewService
+      .reap()
+      .catch((error: unknown) => app.log.error(error, 'Preview reaper sweep failed'))
+      .finally(() => {
+        reaping = false;
+      });
+  }, runtime.config.previewReapIntervalMs);
+  previewReaper.unref();
+  app.addHook('onClose', async () => clearInterval(previewReaper));
+
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
       return reply.status(400).send({
@@ -258,19 +272,46 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     await runtime.workspaces.ensure(projectId);
     const { session, url } = await runtime.previewService.start({
       workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+      ...(project.currentRunId ? { runId: project.currentRunId } : {}),
     });
     return reply.status(202).send({ session, url });
   });
 
   app.post('/projects/:projectId/preview/:sessionId/stop', async (request, reply) => {
-    const { sessionId } = z
+    const { projectId, sessionId } = z
       .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
       .parse(request.params);
+    await requireProjectSession(runtime, projectId, sessionId);
     const session = await runtime.previewService.stop(sessionId);
     return reply.status(202).send({ session });
+  });
+
+  app.get('/projects/:projectId/preview/:sessionId/logs', async (request) => {
+    const { projectId, sessionId } = z
+      .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
+      .parse(request.params);
+    const { cursor, limit } = z
+      .object({
+        cursor: z.coerce.number().int().nonnegative().optional(),
+        limit: z.coerce.number().int().min(1).max(200).optional(),
+      })
+      .parse(request.query);
+    await requireProjectSession(runtime, projectId, sessionId);
+    return runtime.previewService.logs(sessionId, cursor, limit);
   });
 
   registerPreviewProxy(app, runtime);
 
   return app;
+}
+
+async function requireProjectSession(
+  runtime: Runtime,
+  projectId: string,
+  sessionId: string,
+): Promise<void> {
+  const record = await runtime.previewSessions.get(sessionId);
+  if (!record || record.session.workspaceRef.projectId !== projectId) {
+    throw new NotFoundError(`Preview session ${sessionId} not found for project ${projectId}.`);
+  }
 }
