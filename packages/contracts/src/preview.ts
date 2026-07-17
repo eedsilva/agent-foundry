@@ -296,21 +296,28 @@ export const PreviewSessionReferenceSchema = z
   .strict();
 export type PreviewSessionReference = z.infer<typeof PreviewSessionReferenceSchema>;
 
-const BrowserPathSchema = z.string().refine((path) => {
-  if (!path.startsWith('/') || path.startsWith('//') || /[\\\u0000-\u001f\u007f]/u.test(path)) {
-    return false;
+export const BROWSER_PATH_PATTERN =
+  '^/(?!/)(?!\\.\\.(?:/|[?#]|$))(?![^?#]*/\\.\\.(?:/|[?#]|$))(?!.*\\\\)(?!.*[\\u0000-\\u001F\\u007F])(?![^?#]*%(?:25|2[eEfF]|5[cC]|0[0-9A-Fa-f]|1[0-9A-Fa-f]|7[fF])).*$';
+const BrowserPathPattern = new RegExp(BROWSER_PATH_PATTERN, 'u');
+
+export function isSafeBrowserPath(path: string): boolean {
+  let candidate = path;
+  while (BrowserPathPattern.test(candidate)) {
+    try {
+      const decoded = decodeURIComponent(candidate);
+      if (decoded === candidate) return true;
+      candidate = decoded;
+    } catch {
+      return false;
+    }
   }
-  try {
-    const decoded = decodeURIComponent(path);
-    const pathname = decoded.split(/[?#]/u, 1)[0] ?? '';
-    return (
-      !/[\\\u0000-\u001f\u007f]/u.test(decoded) &&
-      !pathname.split('/').some((segment) => segment === '..')
-    );
-  } catch {
-    return false;
-  }
-});
+  return false;
+}
+
+const BrowserPathSchema = z
+  .string()
+  .regex(BrowserPathPattern)
+  .refine(isSafeBrowserPath, { message: 'Browser path must stay within the preview session' });
 
 export const BrowserRoleSchema = z.enum([
   'alert',
@@ -488,9 +495,52 @@ export const BrowserTestPlanArtifactSchema = AgentArtifactSchema.extend({
   data: BrowserTestPlanSchema,
 });
 export type BrowserTestPlanArtifact = z.infer<typeof BrowserTestPlanArtifactSchema>;
+interface MutableJsonSchema {
+  [key: string]: unknown;
+  const?: unknown;
+  description?: string;
+  items: MutableJsonSchema;
+  oneOf: MutableJsonSchema[];
+  pattern?: string;
+  prefixItems?: MutableJsonSchema[];
+  properties: Record<string, MutableJsonSchema>;
+}
+
+const browserTestPlanArtifactJsonSchema = z.toJSONSchema(
+  BrowserTestPlanArtifactSchema,
+) as unknown as MutableJsonSchema;
+const browserPlanDataJsonSchema = browserTestPlanArtifactJsonSchema.properties.data;
+const browserStepsJsonSchema = browserPlanDataJsonSchema?.properties.steps;
+const browserActionJsonSchema = browserStepsJsonSchema?.items.properties.action;
+if (!browserStepsJsonSchema || !browserActionJsonSchema) {
+  throw new Error('Browser test plan JSON schema is missing its step action schema.');
+}
+const firstGotoActionJsonSchema = browserActionJsonSchema.oneOf.find(
+  (candidate) => candidate.properties.kind?.const === 'goto',
+);
+if (!firstGotoActionJsonSchema) {
+  throw new Error('Browser test plan JSON schema is missing its goto action schema.');
+}
+browserStepsJsonSchema.description =
+  'Ordered browser steps. The first action is goto; step ids are unique under authoritative runtime validation.';
+browserStepsJsonSchema.prefixItems = [
+  {
+    type: 'object',
+    properties: { action: firstGotoActionJsonSchema },
+    required: ['action'],
+  } as unknown as MutableJsonSchema,
+];
 export const BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA = {
   $id: 'https://agent-foundry.dev/schemas/browser-test-plan-artifact-v1.json',
-  ...z.toJSONSchema(BrowserTestPlanArtifactSchema),
+  ...browserTestPlanArtifactJsonSchema,
+  'x-agent-foundry-runtime-validation': {
+    uniqueStepIds: {
+      path: 'data.steps[*].id',
+      enforcedBy: 'BrowserTestPlanArtifactSchema',
+      description:
+        'Standard JSON Schema cannot express uniqueness by object property; the runtime Zod parse rejects duplicate step ids.',
+    },
+  },
 };
 
 const BrowserObservationSchema = z

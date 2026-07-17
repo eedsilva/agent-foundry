@@ -517,6 +517,65 @@ describe('browser verification orchestration (#32)', () => {
     expect(browser.stopped).toEqual(['preview-1']);
   });
 
+  it.each([
+    [
+      'first action is not goto',
+      {
+        ...BROWSER_PLAN,
+        data: {
+          ...BROWSER_PLAN.data,
+          steps: [
+            {
+              ...BROWSER_PLAN.data.steps[0],
+              action: { kind: 'click', locator: { by: 'text', text: 'Create' } },
+            },
+          ],
+        },
+      },
+    ],
+    [
+      'step ids are duplicated',
+      {
+        ...BROWSER_PLAN,
+        data: {
+          ...BROWSER_PLAN.data,
+          steps: [BROWSER_PLAN.data.steps[0], { ...BROWSER_PLAN.data.steps[0] }],
+        },
+      },
+    ],
+  ] as const)(
+    'persists provider output where %s as a reproducible failed browser report',
+    async (_case, invalidPlan) => {
+      const browser = browserCoordinator(() => {
+        throw new Error('runtime verifier must not receive an invalid plan');
+      });
+      const harness = makeHarness({}, undefined, {
+        workflow: BROWSER_WORKFLOW,
+        browserVerification: browser.coordinator,
+        agentOutput: (request) =>
+          request.stepId === 'plan-browser-test' ? invalidPlan : undefined,
+      });
+      await seedRun(harness);
+
+      await expect(
+        harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+      ).rejects.toThrow('consecutive-repairs emergency ceiling');
+
+      const reports = harness.artifacts.named('browser-verification.report');
+      expect(reports).toHaveLength(10);
+      for (const report of reports) {
+        expect(report.content).toMatchObject({
+          approved: false,
+          summary: 'Browser test plan validation failed.',
+          planValidationError: expect.any(String),
+          steps: [],
+        });
+      }
+      expect(browser.started).toBe(10);
+      expect(browser.stopped).toHaveLength(10);
+    },
+  );
+
   it.each(['report-artifact', 'attempt-success'] as const)(
     'does not advance the verified checkpoint when %s persistence fails',
     async (failure) => {

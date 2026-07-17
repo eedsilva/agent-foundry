@@ -487,33 +487,39 @@ describe('PlaywrightBrowserVerifier', () => {
     ).toHaveLength(2);
   });
 
-  it.each(['/../admin', '/%2e%2e/admin', '/\\evil.example/', '/\thttps://evil.example/'])(
-    'rejects plan path %j before it can escape the preview prefix',
-    async (path) => {
-      let requests = 0;
-      const origin = await serve((_request, response) => {
-        requests += 1;
-        response.end('sentinel');
-      });
+  it.each([
+    '/../admin',
+    '/%2e%2e/admin',
+    '/%252e%252e/admin',
+    '/%25252e%25252e/admin',
+    '/.%252e/admin',
+    '/%2f%2fevil.test/',
+    '/\\evil.example/',
+    '/\thttps://evil.example/',
+  ])('rejects plan path %j before it can escape the preview prefix', async (path) => {
+    let requests = 0;
+    const origin = await serve((_request, response) => {
+      requests += 1;
+      response.end('sentinel');
+    });
 
-      const report = await verify(
-        origin,
-        plan([
-          {
-            id: 'open',
-            title: 'Attempt escape',
-            action: { kind: 'goto', path },
-            assertions: [],
-          },
-        ]),
-      );
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Attempt escape',
+          action: { kind: 'goto', path },
+          assertions: [],
+        },
+      ]),
+    );
 
-      expect(requests).toBe(0);
-      expect(report.approved).toBe(false);
-      expect(report.planValidationError).toBeTruthy();
-      expect(report.steps).toEqual([]);
-    },
-  );
+    expect(requests).toBe(0);
+    expect(report.approved).toBe(false);
+    expect(report.planValidationError).toBeTruthy();
+    expect(report.steps).toEqual([]);
+  });
 
   it('fails closed when the supplied preview URL does not match the session prefix', async () => {
     let requests = 0;
@@ -664,12 +670,13 @@ describe('PlaywrightBrowserVerifier', () => {
   });
 
   it.each([
-    ['console-error', 'click', `console.error('delayed console failure')`],
-    ['uncaught-exception', 'click', `throw new Error('delayed page failure')`],
-    ['console-error', 'fill', `console.error('delayed fill failure')`],
+    ['console-error', 'click', 700, `console.error('delayed console failure')`],
+    ['uncaught-exception', 'click', 700, `throw new Error('delayed page failure')`],
+    ['console-error', 'fill', 700, `console.error('delayed fill failure')`],
+    ['console-error', 'click', 1_000, `console.error('boundary console failure')`],
   ] as const)(
-    'attributes a delayed %s from %s to its initiating step before later side effects',
-    async (observationKind, actionKind, delayedFailure) => {
+    'attributes a delayed %s from %s at %d ms to its initiating step before later side effects',
+    async (observationKind, actionKind, delayMs, delayedFailure) => {
       let laterSideEffects = 0;
       const origin = await serve((request, response) => {
         if (request.url === '/preview/preview-1/later-side-effect') {
@@ -679,8 +686,8 @@ describe('PlaywrightBrowserVerifier', () => {
         }
         response.setHeader('content-type', 'text/html');
         response.end(`
-          <button onclick="setTimeout(() => { ${delayedFailure} }, 500)">Trigger failure</button>
-          <input aria-label="Failure input" oninput="setTimeout(() => { ${delayedFailure} }, 500)">
+          <button onclick="setTimeout(() => { ${delayedFailure} }, ${delayMs})">Trigger failure</button>
+          <input aria-label="Failure input" oninput="setTimeout(() => { ${delayedFailure} }, ${delayMs})">
           <button onclick="fetch('/preview/preview-1/later-side-effect')">Later side effect</button>
         `);
       });
@@ -722,6 +729,164 @@ describe('PlaywrightBrowserVerifier', () => {
       expect(report.steps[0]?.observations).toEqual([]);
     },
   );
+
+  it('does not wait for timers above the declared one-second attribution boundary', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<h1>Fixture</h1><script>
+        setTimeout(() => console.error('outside supported attribution window'), 10_001);
+      </script>`);
+    });
+    const startedAt = performance.now();
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [{ kind: 'visible', locator: { by: 'role', role: 'heading' } }],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(true);
+    expect(performance.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  it('attributes a 700 ms console timer from goto before a later side effect', async () => {
+    let laterSideEffects = 0;
+    const origin = await serve((request, response) => {
+      if (request.url === '/preview/preview-1/later-side-effect') {
+        laterSideEffects += 1;
+        response.end('unexpected');
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end(`
+        <button onclick="fetch('/preview/preview-1/later-side-effect')">Later side effect</button>
+        <script>setTimeout(() => console.error('goto timer failure'), 700)</script>
+      `);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open delayed-failure fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'side-effect',
+          title: 'Perform later side effect',
+          action: { kind: 'click', locator: { by: 'text', text: 'Later side effect' } },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(laterSideEffects).toBe(0);
+    expect(report.steps.map(({ status }) => status)).toEqual(['failed', 'skipped']);
+    expect(report.steps[0]?.observations.some(({ kind }) => kind === 'console-error')).toBe(true);
+  });
+
+  it('tracks a supported string timer handler without evaluating it in the executor', async () => {
+    let laterSideEffects = 0;
+    const origin = await serve((request, response) => {
+      if (request.url === '/preview/preview-1/later-side-effect') {
+        laterSideEffects += 1;
+        response.end('unexpected');
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end(`
+        <button onclick="setTimeout(&quot;console.error('string timer failure')&quot;, 700)">Trigger failure</button>
+        <button onclick="fetch('/preview/preview-1/later-side-effect')">Later side effect</button>
+      `);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'failure',
+          title: 'Trigger string timer failure',
+          action: { kind: 'click', locator: { by: 'text', text: 'Trigger failure' } },
+          assertions: [],
+        },
+        {
+          id: 'side-effect',
+          title: 'Perform later side effect',
+          action: { kind: 'click', locator: { by: 'text', text: 'Later side effect' } },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(laterSideEffects).toBe(0);
+    expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed', 'skipped']);
+    expect(report.steps[1]?.observations.some(({ kind }) => kind === 'console-error')).toBe(true);
+  });
+
+  it('waits for supported timers in a popup before a later main-page side effect', async () => {
+    let laterSideEffects = 0;
+    const origin = await serve((request, response) => {
+      if (request.url === '/preview/preview-1/popup') {
+        response.setHeader('content-type', 'text/html');
+        response.end(
+          `<script>setTimeout(() => console.error('popup timer failure'), 700)</script>`,
+        );
+        return;
+      }
+      if (request.url === '/preview/preview-1/later-side-effect') {
+        laterSideEffects += 1;
+        response.end('unexpected');
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end(`
+        <button onclick="window.open('/preview/preview-1/popup')">Open popup</button>
+        <button onclick="fetch('/preview/preview-1/later-side-effect')">Later side effect</button>
+      `);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'popup',
+          title: 'Open delayed-failure popup',
+          action: { kind: 'click', locator: { by: 'text', text: 'Open popup' } },
+          assertions: [],
+        },
+        {
+          id: 'side-effect',
+          title: 'Perform later side effect',
+          action: { kind: 'click', locator: { by: 'text', text: 'Later side effect' } },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(laterSideEffects).toBe(0);
+    expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed', 'skipped']);
+    expect(report.steps[1]?.observations.some(({ kind }) => kind === 'console-error')).toBe(true);
+  });
 
   it('auto-waits for asynchronous text content', async () => {
     const origin = await serve((_request, response) => {

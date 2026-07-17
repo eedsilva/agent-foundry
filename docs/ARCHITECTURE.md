@@ -254,7 +254,10 @@ preview sanitizada e steps com observações (`console-error`, `request-failed`,
 
 O plano version-1 é um envelope `AgentArtifact` com viewport e até 100 steps. Cada step usa somente
 `goto`, `click` ou `fill` e assertions `visible`, `hidden`, `containsText` ou `url`; o primeiro é
-`goto`. Não há JavaScript arbitrário no contrato.
+`goto`. O schema enviado ao provider expressa os invariantes compatíveis com JSON Schema e declara
+IDs únicos em uma extensão de validação runtime, pois o padrão não suporta unicidade por propriedade.
+O parser Zod continua autoritativo. Não há JavaScript arbitrário no contrato; a única instrumentação
+no browser é estática e pertence ao executor para drenar timers one-shot limitados.
 
 ## Atomicidade e concorrência
 

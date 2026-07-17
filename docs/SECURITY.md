@@ -135,6 +135,13 @@ sessão de preview e origens HTTP(S) explicitamente listadas pela policy, mas pr
 continuam escopo da issue #120. Mantenha a API/proxy em loopback e trate `browserAllowedOrigins` como
 allowlist de segurança, nunca como configuração de conveniência.
 
+Paths do plano passam pelo mesmo validador no contrato e no executor. Traversal e network paths
+literais, codificados ou percent-encoded em múltiplas camadas, além de barras invertidas e controles,
+são rejeitados antes de qualquer request; a URL resolvida ainda precisa permanecer no prefixo exato.
+A instrumentação de quiescência é código estático do executor, não JavaScript vindo do plano. Ela
+acompanha somente timers one-shot de até 1.000 ms; esse limite melhora atribuição de falhas sem
+transformar intervals ou polling do app em um bloqueio ilimitado.
+
 ## Checklist antes de abrir a rede
 
 - autenticação e autorização por rota;

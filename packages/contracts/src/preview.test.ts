@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
   BrowserActionSchema,
   BrowserAssertionSchema,
   BrowserLocatorSchema,
@@ -491,6 +492,10 @@ describe('browser verification contracts', () => {
     'https://example.test/items',
     '/../admin',
     '/%2e%2e/admin',
+    '/%252e%252e/admin',
+    '/%25252e%25252e/admin',
+    '/.%252e/admin',
+    '/%2f%2fevil.test/',
     '/\\evil.example/',
     '\u0000https://evil.example/items',
     '/\thttps://evil.example/items',
@@ -513,6 +518,42 @@ describe('browser verification contracts', () => {
         ],
       }).success,
     ).toBe(false);
+  });
+
+  it('publishes provider-visible path, first-goto, and runtime uniqueness constraints', () => {
+    const data = BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA.properties.data!;
+    const steps = data.properties.steps!;
+    const action = steps.items.properties.action!;
+    const goto = action.oneOf.find((candidate) => candidate.properties.kind?.const === 'goto');
+    const pathPattern = goto?.properties.path?.pattern;
+
+    expect(pathPattern).toBeTypeOf('string');
+    if (typeof pathPattern !== 'string') throw new Error('Expected browser path pattern');
+    for (const path of [
+      'items',
+      '//evil.test/',
+      '/../admin',
+      '/%252e%252e/admin',
+      '/%25252e%25252e/admin',
+      '/.%252e/admin',
+      '/%2f%2fevil.test/',
+      '/\\evil.test/',
+      '/\tevil.test/',
+    ]) {
+      expect(new RegExp(pathPattern).test(path), path).toBe(false);
+    }
+    expect(steps.prefixItems?.[0]).toMatchObject({
+      properties: { action: { properties: { kind: { const: 'goto' } } } },
+    });
+    expect(BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA).toMatchObject({
+      'x-agent-foundry-runtime-validation': {
+        uniqueStepIds: {
+          path: 'data.steps[*].id',
+          enforcedBy: 'BrowserTestPlanArtifactSchema',
+        },
+      },
+    });
+    expect(steps.description).toMatch(/unique.*runtime/i);
   });
 
   it.each([

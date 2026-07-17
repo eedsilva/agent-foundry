@@ -171,6 +171,19 @@ ou ser cancelada. `console.error`, exceção não capturada, request falho, HTTP
 política entram como observações; qualquer um torna o relatório não aprovado. Há no máximo 100
 observações, para manter o JSON de diagnóstico limitado.
 
+O mesmo validador de path é usado pelo contrato e pelo executor. Ele rejeita traversal literal ou
+codificado, network paths codificados, barra invertida, controles e percent-encoding aninhado antes
+de resolver a URL; depois disso o executor ainda confirma o prefixo exato da sessão. A instrumentação
+estática do executor acompanha `setTimeout` one-shot de até 1.000 ms em todas as páginas e popups,
+inclusive handlers string executados nativamente pelo Chromium, e drena esses timers antes do próximo
+step. `setInterval`, `requestAnimationFrame` e timers acima de 1.000 ms não são aguardados para evitar
+hang em polling; erros disparados por eles podem ficar fora da atribuição determinística do step.
+
+O JSON Schema entregue ao provider expressa o primeiro `goto`, bounds, unions, viewport e padrão de
+path. IDs únicos por propriedade não são expressáveis no JSON Schema padrão: a extensão
+`x-agent-foundry-runtime-validation.uniqueStepIds` aponta para a validação Zod autoritativa executada
+antes do Chromium. Saída inválida do provider gera report reprovado reproduzível.
+
 O relatório `browser-verification.report` referencia o plano por `{ name, revision, sha256 }`, inclui
 a sessão de preview sem token e registra steps, duração, erro e observações. Quando falha, o reparo
 recebe esse relatório e a mesma revisão de `browser-test.plan`; o rerun não gera nem troca o plano.

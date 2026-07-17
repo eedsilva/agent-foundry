@@ -35,7 +35,8 @@ tokens, caps observations at 100, and links its plan by immutable artifact refer
 requires a plan artifact and disables workspace scripts and `git diff --check`; a failed report is
 given to repair together with the exact initial plan revision before the same plan reruns.
 
-Focused acceptance evidence passed: 8 files / 115 tests.
+Focused acceptance evidence passed: 8 files / 131 tests. The adjacent run-control, approval, browser
+coordination, and policy-release regression command passed 4 files / 47 tests.
 
 ```bash
 npx vitest run \
@@ -56,11 +57,26 @@ failures, token redaction, request and WebSocket policy blocks, diagnostics, obs
 cleanup, and cancellation cleanup.
 
 The preview origin is always constrained to the exact `/preview/<sessionId>/` prefix, even if that
-origin is also present in `browserAllowedOrigins`; contract and runtime checks reject traversal,
-backslashes, and control characters before navigation. Each action has a bounded 550 ms passive-error
-settling window so delayed console errors and uncaught exceptions fail their initiating step before
-later side effects run. Errors scheduled beyond that boundary are outside the deterministic signal
-window; the existing 60-second whole-run ceiling remains authoritative.
+origin is also present in `browserAllowedOrigins`. Contracts and the executor share one path
+validator: it rejects literal or encoded traversal, encoded network paths, backslashes, controls,
+and nested percent encoding, then rechecks each decoded layer before navigation. The executor also
+verifies the resolved URL against the exact prefix.
+
+Executor-owned initialization tracks one-shot `setTimeout` callbacks, including native string
+handlers, on every open page. A step waits for pending requests, popups, and tracked timers to drain,
+so console errors and uncaught exceptions scheduled up to and including 1,000 ms are attributed to
+their initiating step before a later side effect can run. The executor never evaluates a string
+handler itself; Chromium runs the original handler and a companion native timer marks completion.
+Intervals, animation-frame callbacks, and one-shot timers over 1,000 ms are deliberately not awaited
+because waiting for application long polling would make verification unbounded. Those signals may
+fall outside deterministic step attribution; the 10-second Playwright/pending-work bounds and
+60-second whole-run ceiling remain authoritative.
+
+The provider-facing draft-2020-12 schema carries the path pattern and `prefixItems` first-`goto`
+constraint. JSON Schema cannot express uniqueness by one property of array objects, so a namespaced
+`x-agent-foundry-runtime-validation.uniqueStepIds` extension documents that
+`BrowserTestPlanArtifactSchema` performs the authoritative duplicate-id check. Invalid provider
+output becomes a versioned failed report rather than reaching Chromium.
 
 Install Chromium locally with `npx playwright install chromium`. CI installs the same browser with
 `npx playwright install --with-deps chromium` before `npm test`. The issue #32 branch gate is:

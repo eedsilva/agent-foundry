@@ -18,6 +18,10 @@ The verifier permits only the exact `/preview/<sessionId>/` prefix on the previe
 
 Each action/assertion and pending-request wait has a 10-second limit; the browser run has a 60-second ceiling. Service workers are blocked. Console errors, uncaught exceptions, failed requests, HTTP responses at or above 400, and policy blocks are observations and make the report unapproved. Observations are capped at 100. URLs and messages redact the preview token before the JSON report is persisted; the report retains only a sanitized session URL and versioned artifact references. It does not capture binary evidence. Screenshots/traces are deferred to issue #33; stronger process and network isolation is deferred to issue #120.
 
+Contracts and execution share one browser-path validator. It rejects nested percent encoding and dangerous literal or encoded path forms, decodes to stability, and the executor independently checks the resolved URL against the exact session prefix. The provider JSON Schema encodes bounds, exact unions, path patterns, and the first-step `goto` rule. Unique step ids by object property are not expressible in standard JSON Schema, so the schema carries a deterministic `x-agent-foundry-runtime-validation.uniqueStepIds` extension and the runtime Zod parse remains authoritative.
+
+Static executor-owned initialization tracks one-shot `setTimeout` callbacks on all pages, including native string handlers, through an inclusive 1,000 ms delay. Steps drain this tracked work before advancing. Intervals, animation frames, and timers above that delay are not awaited: this explicit boundary prevents application polling from hanging the verifier, but errors originating beyond it are not guaranteed deterministic step attribution.
+
 ## Alternatives considered
 
 - Imperative JavaScript in plans was rejected: it would turn an artifact into arbitrary browser-side execution and make review/replay less auditable.

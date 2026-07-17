@@ -1,6 +1,7 @@
 import {
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
+  isSafeBrowserPath,
   type BrowserLocator,
   type BrowserTestPlan,
   type BrowserVerificationReport,
@@ -19,7 +20,67 @@ import {
 const ACTION_TIMEOUT_MS = 10_000;
 const RUN_TIMEOUT_MS = 60_000;
 const MAX_OBSERVATIONS = 100;
-const PASSIVE_FAILURE_SETTLE_MS = 550;
+const MAX_TRACKED_TIMER_DELAY_MS = 1_000;
+const TIMER_TRACKER_KEY = '__agentFoundryBrowserVerifierTimers';
+
+interface TimerTrackerState {
+  pending: number;
+}
+
+function installTimerTracker(input: { key: string; maxDelayMs: number }): void {
+  const scope = globalThis as typeof globalThis & Record<string, unknown>;
+  if (scope[input.key]) return;
+  const state: TimerTrackerState = { pending: 0 };
+  const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis);
+  const tracked = new Set<number>();
+  const companionTimers = new Map<number, number>();
+  scope[input.key] = state;
+  globalThis.setTimeout = ((handler: TimerHandler, delay = 0, ...args: unknown[]) => {
+    const timeout = Number(delay);
+    if (!Number.isFinite(timeout) || timeout > input.maxDelayMs) {
+      return nativeSetTimeout(handler, delay, ...args);
+    }
+    let timerId = 0;
+    state.pending += 1;
+    const finish = () => {
+      if (!tracked.delete(timerId)) return;
+      companionTimers.delete(timerId);
+      state.pending -= 1;
+    };
+    if (typeof handler === 'function') {
+      timerId = nativeSetTimeout(
+        (...callbackArgs: unknown[]) => {
+          try {
+            handler(...callbackArgs);
+          } finally {
+            nativeSetTimeout(finish, 0);
+          }
+        },
+        Math.max(0, timeout),
+        ...args,
+      ) as unknown as number;
+    } else {
+      timerId = nativeSetTimeout(handler, Math.max(0, timeout), ...args) as unknown as number;
+      const companion = nativeSetTimeout(
+        () => nativeSetTimeout(finish, 0),
+        Math.max(0, timeout),
+      ) as unknown as number;
+      companionTimers.set(timerId, companion);
+    }
+    tracked.add(timerId);
+    return timerId;
+  }) as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = ((timerId: number | undefined) => {
+    if (timerId !== undefined && tracked.delete(timerId)) {
+      const companion = companionTimers.get(timerId);
+      if (companion !== undefined) nativeClearTimeout(companion);
+      companionTimers.delete(timerId);
+      state.pending -= 1;
+    }
+    nativeClearTimeout(timerId);
+  }) as typeof globalThis.clearTimeout;
+}
 
 type Observation = BrowserVerificationReport['steps'][number]['observations'][number];
 type StepReport = BrowserVerificationReport['steps'][number];
@@ -160,6 +221,10 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     input: Parameters<BrowserVerifier['verify']>[0],
     previewSession: Parameters<BrowserVerifier['verify']>[0]['session'],
   ): Promise<BrowserVerificationReport> {
+    await context.addInitScript(installTimerTracker, {
+      key: TIMER_TRACKER_KEY,
+      maxDelayMs: MAX_TRACKED_TIMER_DELAY_MS,
+    });
     const page = await context.newPage();
     page.setDefaultTimeout(ACTION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(ACTION_TIMEOUT_MS);
@@ -230,6 +295,57 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         timeout.addEventListener('abort', onTimeout, { once: true });
         settleWork();
       });
+    };
+    const timerCount = async (target: Page): Promise<number> => {
+      try {
+        return await target.evaluate(
+          (key) =>
+            (globalThis as typeof globalThis & Record<string, TimerTrackerState | undefined>)[key]
+              ?.pending ?? 0,
+          TIMER_TRACKER_KEY,
+        );
+      } catch (error) {
+        if (target.isClosed()) return 0;
+        throw error;
+      }
+    };
+    const waitForTrackedTimers = async (): Promise<void> => {
+      for (;;) {
+        for (const target of context.pages()) {
+          if (target.isClosed()) continue;
+          try {
+            await target.waitForFunction(
+              (key) =>
+                ((globalThis as typeof globalThis & Record<string, TimerTrackerState | undefined>)[
+                  key
+                ]?.pending ?? 0) === 0,
+              TIMER_TRACKER_KEY,
+              { polling: 'raf', timeout: ACTION_TIMEOUT_MS },
+            );
+          } catch (error) {
+            if (!target.isClosed()) throw error;
+          }
+        }
+        const openPages = context.pages().filter((target) => !target.isClosed());
+        await Promise.all(
+          openPages.map((target) =>
+            target
+              .evaluate(() => Promise.resolve())
+              .catch((error: unknown) => {
+                if (!target.isClosed()) throw error;
+              }),
+          ),
+        );
+        if ((await Promise.all(openPages.map(timerCount))).every((count) => count === 0)) return;
+      }
+    };
+    const waitForQuiescence = async (): Promise<void> => {
+      for (;;) {
+        await waitForPendingRequests();
+        await waitForTrackedTimers();
+        const timerCounts = await Promise.all(context.pages().map(timerCount));
+        if (!hasPendingWork() && timerCounts.every((count) => count === 0)) return;
+      }
     };
     const observePage = (target: Page, stepIndex: number): (() => void) => {
       const onConsole = (message: ConsoleMessage): void => {
@@ -367,11 +483,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         for (const assertion of step.assertions) {
           await this.executeAssertion(page, assertion, prefixUrl, token);
         }
-        if (step.action.kind === 'click') {
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        }
-        await waitForPendingRequests();
-        await new Promise<void>((resolve) => setTimeout(resolve, PASSIVE_FAILURE_SETTLE_MS));
+        await waitForQuiescence();
         if (passiveFailureSteps.has(index)) {
           failed = true;
         }
@@ -491,6 +603,9 @@ function locator(page: Page, target: BrowserLocator): Locator {
 }
 
 function resolvePlanPath(prefixUrl: URL, path: string): URL {
+  if (!isSafeBrowserPath(path)) {
+    throw new Error('Browser path escapes the preview session prefix.');
+  }
   const url = new URL(path.slice(1), prefixUrl);
   if (
     !['http:', 'https:'].includes(url.protocol) ||
