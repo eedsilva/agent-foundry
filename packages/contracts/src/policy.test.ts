@@ -42,6 +42,38 @@ describe('ProjectPolicySchema', () => {
     });
     expect(policy.previewCommands).toEqual({ build: 'compile', dev: 'serve' });
   });
+
+  it('accepts exact HTTP(S) browser origins', () => {
+    const policy = ProjectPolicySchema.parse({
+      schemaVersion: '1',
+      id: 'browser-origins',
+      version: 1,
+      browserAllowedOrigins: ['https://api.example.test', 'http://127.0.0.1:4100'],
+    });
+
+    expect(policy.browserAllowedOrigins).toEqual([
+      'https://api.example.test',
+      'http://127.0.0.1:4100',
+    ]);
+  });
+
+  it.each([
+    'https://api.example.test/path',
+    'https://user:password@api.example.test',
+    'https://api.example.test?token=secret',
+    'https://api.example.test#fragment',
+    'https://*.example.test',
+    'ftp://api.example.test',
+  ])('rejects non-exact browser origin %s', (browserAllowedOrigin) => {
+    expect(
+      ProjectPolicySchema.safeParse({
+        schemaVersion: '1',
+        id: 'browser-origins',
+        version: 1,
+        browserAllowedOrigins: [browserAllowedOrigin],
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('PolicyRecordSchema', () => {

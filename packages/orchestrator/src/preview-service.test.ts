@@ -58,6 +58,7 @@ class InMemoryEventStore implements EventStore {
 
 class InMemoryPreviewSessions implements PreviewSessionRepository {
   readonly records = new Map<string, PreviewSessionRecord>();
+  failNextUpdateForStatus?: PreviewSession['status'];
   async create(record: PreviewSessionRecord): Promise<void> {
     if (this.records.has(record.session.id)) throw new Error('duplicate session');
     this.records.set(record.session.id, { ...record, session: sanitize(record.session) });
@@ -71,6 +72,10 @@ class InMemoryPreviewSessions implements PreviewSessionRepository {
     );
   }
   async update(session: PreviewSession, expectedVersion: number): Promise<PreviewSession> {
+    if (this.failNextUpdateForStatus === session.status) {
+      delete this.failNextUpdateForStatus;
+      throw new Error(`persist ${session.status} failed`);
+    }
     const current = this.records.get(session.id)!;
     if (current.session.version !== expectedVersion || session.version !== expectedVersion) {
       throw new VersionConflictError(
@@ -280,6 +285,20 @@ describe('PreviewService durable lifecycle', () => {
     expect(stored?.session.url).not.toContain('token=');
     expect(stored?.tokenDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(stored)).not.toContain(new URL(url).searchParams.get('token')!);
+  });
+
+  it('stops and durably fails a runner when post-start session persistence throws', async () => {
+    const sessions = new InMemoryPreviewSessions();
+    sessions.failNextUpdateForStatus = 'starting';
+    const built = await buildService({ sessions });
+
+    await expect(start(built.service)).rejects.toThrow('persist starting failed');
+
+    expect(built.runner.stopCount).toBe(1);
+    expect((await sessions.get('id-1'))?.session).toMatchObject({
+      status: 'failed',
+      error: { code: 'PREVIEW_START_FAILED', message: 'persist starting failed' },
+    });
   });
 
   it('authenticates a presented token after a service restart without persisting the raw token', async () => {

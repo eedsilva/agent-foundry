@@ -54,3 +54,59 @@ describe('approval-gate workflow node', () => {
     expect(node.timeout).toEqual({ policy: 'auto-reject', afterMs: 3_600_000 });
   });
 });
+
+describe('verify workflow node', () => {
+  const BASE_VERIFY = {
+    id: 'verify',
+    type: 'verify' as const,
+    title: 'Verify the workspace',
+    outputArtifact: 'verification.report',
+  };
+
+  it('retains workspace verification defaults', () => {
+    const node = WorkflowNodeSchema.parse(BASE_VERIFY);
+    if (node.type !== 'verify') throw new Error('expected verify');
+    expect(node.scripts).toEqual(['typecheck', 'lint', 'test', 'build']);
+    expect(node.includeGitDiffCheck).toBe(true);
+    expect(node.browserTestPlanArtifact).toBeUndefined();
+  });
+
+  it('accepts browser verification only with workspace checks disabled', () => {
+    const node = WorkflowNodeSchema.parse({
+      ...BASE_VERIFY,
+      title: 'Verify the browser journey',
+      browserTestPlanArtifact: 'browser-test.plan',
+      scripts: [],
+      includeGitDiffCheck: false,
+    });
+    if (node.type !== 'verify') throw new Error('expected verify');
+    expect(node.browserTestPlanArtifact).toBe('browser-test.plan');
+    expect(node.scripts).toEqual([]);
+    expect(node.includeGitDiffCheck).toBe(false);
+  });
+
+  it('rejects browser verification mixed with workspace verification', () => {
+    expect(() =>
+      WorkflowNodeSchema.parse({
+        ...BASE_VERIFY,
+        browserTestPlanArtifact: 'browser-test.plan',
+      }),
+    ).toThrow();
+    expect(() =>
+      WorkflowNodeSchema.parse({
+        ...BASE_VERIFY,
+        browserTestPlanArtifact: 'browser-test.plan',
+        scripts: [],
+        includeGitDiffCheck: true,
+      }),
+    ).toThrow();
+    expect(() =>
+      WorkflowNodeSchema.parse({
+        ...BASE_VERIFY,
+        browserTestPlanArtifact: 'browser-test.plan',
+        scripts: ['test'],
+        includeGitDiffCheck: false,
+      }),
+    ).toThrow();
+  });
+});

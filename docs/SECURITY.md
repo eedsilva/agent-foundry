@@ -121,6 +121,27 @@ Referências de attachment, run e artifact são verificadas contra o projeto da 
 
 Uma idempotency key de operação é project-scoped. Retry com o mesmo input devolve o record original; reuso com input diferente falha com `409`, evitando que uma chave seja reinterpretada silenciosamente.
 
+## Verificação de browser
+
+O relatório de browser da issue #32 é evidência JSON limitada: URLs de sessão e mensagens de erro ou
+observação removem o token de preview antes de persistir, e o coletor guarda no máximo 100
+observações. O token bruto continua material transitório da URL/cookie do proxy; não deve aparecer em
+planos, reports, events, logs ou anexos de PR. O relatório aponta para plano e evidência por revisão
+imutável (`name`, `revision`, `sha256`), não copia o token nem captura screenshot/trace. Evidência
+binária cabe à issue #33.
+
+O bloqueio de tráfego do verificador não é sandbox de rede: ele permite apenas o prefixo exato da
+sessão de preview e origens HTTP(S) explicitamente listadas pela policy, mas processo e egress fortes
+continuam escopo da issue #120. Mantenha a API/proxy em loopback e trate `browserAllowedOrigins` como
+allowlist de segurança, nunca como configuração de conveniência.
+
+Paths do plano passam pelo mesmo validador no contrato e no executor. Traversal e network paths
+literais, codificados ou percent-encoded em múltiplas camadas, além de barras invertidas e controles,
+são rejeitados antes de qualquer request; a URL resolvida ainda precisa permanecer no prefixo exato.
+A instrumentação de quiescência é código estático do executor, não JavaScript vindo do plano. Ela
+acompanha somente timers one-shot de até 1.000 ms; esse limite melhora atribuição de falhas sem
+transformar intervals ou polling do app em um bloqueio ilimitado.
+
 ## Checklist antes de abrir a rede
 
 - autenticação e autorização por rota;

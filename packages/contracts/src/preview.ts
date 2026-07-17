@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AgentArtifactSchema } from './agent.js';
 import { PackageManagerSchema, PathSegmentSchema } from './primitives.js';
 import { ArtifactReferenceSchema, EntityVersionSchema, RunErrorSchema } from './run.js';
 
@@ -294,3 +295,356 @@ export const PreviewSessionReferenceSchema = z
   })
   .strict();
 export type PreviewSessionReference = z.infer<typeof PreviewSessionReferenceSchema>;
+
+export const BROWSER_PATH_PATTERN =
+  '^/(?!/)(?!\\.\\.(?:/|[?#]|$))(?![^?#]*/\\.\\.(?:/|[?#]|$))(?!.*\\\\)(?!.*[\\u0000-\\u001F\\u007F])(?![^?#]*%(?:25|2[eEfF]|5[cC]|0[0-9A-Fa-f]|1[0-9A-Fa-f]|7[fF])).*$';
+const BrowserPathPattern = new RegExp(BROWSER_PATH_PATTERN, 'u');
+
+export function isSafeBrowserPath(path: string): boolean {
+  let candidate = path;
+  while (BrowserPathPattern.test(candidate)) {
+    try {
+      const decoded = decodeURIComponent(candidate);
+      if (decoded === candidate) return true;
+      candidate = decoded;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+const BrowserPathSchema = z
+  .string()
+  .regex(BrowserPathPattern)
+  .refine(isSafeBrowserPath, { message: 'Browser path must stay within the preview session' });
+
+export const BrowserRoleSchema = z.enum([
+  'alert',
+  'alertdialog',
+  'application',
+  'article',
+  'banner',
+  'blockquote',
+  'button',
+  'caption',
+  'cell',
+  'checkbox',
+  'code',
+  'columnheader',
+  'combobox',
+  'complementary',
+  'contentinfo',
+  'definition',
+  'deletion',
+  'dialog',
+  'directory',
+  'document',
+  'emphasis',
+  'feed',
+  'figure',
+  'form',
+  'generic',
+  'grid',
+  'gridcell',
+  'group',
+  'heading',
+  'img',
+  'insertion',
+  'link',
+  'list',
+  'listbox',
+  'listitem',
+  'log',
+  'main',
+  'marquee',
+  'math',
+  'meter',
+  'menu',
+  'menubar',
+  'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'navigation',
+  'none',
+  'note',
+  'option',
+  'paragraph',
+  'presentation',
+  'progressbar',
+  'radio',
+  'radiogroup',
+  'region',
+  'row',
+  'rowgroup',
+  'rowheader',
+  'scrollbar',
+  'search',
+  'searchbox',
+  'separator',
+  'slider',
+  'spinbutton',
+  'status',
+  'strong',
+  'subscript',
+  'superscript',
+  'switch',
+  'tab',
+  'table',
+  'tablist',
+  'tabpanel',
+  'term',
+  'textbox',
+  'time',
+  'timer',
+  'toolbar',
+  'tooltip',
+  'tree',
+  'treegrid',
+  'treeitem',
+]);
+export type BrowserRole = z.infer<typeof BrowserRoleSchema>;
+
+export const BrowserLocatorSchema = z.discriminatedUnion('by', [
+  z
+    .object({
+      by: z.literal('role'),
+      role: BrowserRoleSchema,
+      name: z.string().min(1).optional(),
+      exact: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      by: z.literal('label'),
+      label: z.string().min(1),
+      exact: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({ by: z.literal('text'), text: z.string().min(1), exact: z.boolean().optional() })
+    .strict(),
+  z.object({ by: z.literal('testId'), testId: z.string().min(1) }).strict(),
+]);
+export type BrowserLocator = z.infer<typeof BrowserLocatorSchema>;
+
+export const BrowserActionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('goto'), path: BrowserPathSchema }).strict(),
+  z.object({ kind: z.literal('click'), locator: BrowserLocatorSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('fill'),
+      locator: BrowserLocatorSchema,
+      value: z.string(),
+    })
+    .strict(),
+]);
+export type BrowserAction = z.infer<typeof BrowserActionSchema>;
+
+export const BrowserAssertionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('visible'), locator: BrowserLocatorSchema }).strict(),
+  z.object({ kind: z.literal('hidden'), locator: BrowserLocatorSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('containsText'),
+      locator: BrowserLocatorSchema,
+      expected: z.string().min(1),
+    })
+    .strict(),
+  z.object({ kind: z.literal('url'), path: BrowserPathSchema }).strict(),
+]);
+export type BrowserAssertion = z.infer<typeof BrowserAssertionSchema>;
+
+export const BrowserTestPlanSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    id: PathSegmentSchema,
+    title: z.string().min(1),
+    viewport: z
+      .object({
+        width: z.number().int().min(1).max(10_000),
+        height: z.number().int().min(1).max(10_000),
+      })
+      .strict(),
+    steps: z
+      .array(
+        z
+          .object({
+            id: PathSegmentSchema,
+            title: z.string().min(1),
+            action: BrowserActionSchema,
+            assertions: z.array(BrowserAssertionSchema),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict()
+  .refine((plan) => plan.steps[0]?.action.kind === 'goto', {
+    message: 'The first browser test step must use goto',
+    path: ['steps', 0, 'action'],
+  })
+  .refine((plan) => new Set(plan.steps.map((step) => step.id)).size === plan.steps.length, {
+    message: 'Browser test step ids must be unique',
+    path: ['steps'],
+  });
+export type BrowserTestPlan = z.infer<typeof BrowserTestPlanSchema>;
+
+export const BrowserTestPlanArtifactSchema = AgentArtifactSchema.extend({
+  data: BrowserTestPlanSchema,
+});
+export type BrowserTestPlanArtifact = z.infer<typeof BrowserTestPlanArtifactSchema>;
+interface MutableJsonSchema {
+  [key: string]: unknown;
+  allOf?: MutableJsonSchema[];
+  const?: unknown;
+  description?: string;
+  items: MutableJsonSchema;
+  oneOf: MutableJsonSchema[];
+  pattern?: string;
+  prefixItems?: MutableJsonSchema[];
+  properties: Record<string, MutableJsonSchema>;
+}
+
+const browserTestPlanArtifactJsonSchema = z.toJSONSchema(
+  BrowserTestPlanArtifactSchema,
+) as unknown as MutableJsonSchema;
+const browserPlanDataJsonSchema = browserTestPlanArtifactJsonSchema.properties.data;
+const browserStepsJsonSchema = browserPlanDataJsonSchema?.properties.steps;
+const browserActionJsonSchema = browserStepsJsonSchema?.items.properties.action;
+if (!browserStepsJsonSchema || !browserActionJsonSchema) {
+  throw new Error('Browser test plan JSON schema is missing its step action schema.');
+}
+const firstGotoActionJsonSchema = browserActionJsonSchema.oneOf.find(
+  (candidate) => candidate.properties.kind?.const === 'goto',
+);
+if (!firstGotoActionJsonSchema) {
+  throw new Error('Browser test plan JSON schema is missing its goto action schema.');
+}
+browserStepsJsonSchema.description =
+  'Ordered browser steps. The first action is goto; step ids are unique under authoritative runtime validation.';
+browserStepsJsonSchema.prefixItems = [
+  {
+    allOf: [
+      browserStepsJsonSchema.items,
+      {
+        type: 'object',
+        properties: { action: firstGotoActionJsonSchema },
+        required: ['action'],
+      } as unknown as MutableJsonSchema,
+    ],
+  } as unknown as MutableJsonSchema,
+];
+export const BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA = {
+  $id: 'https://agent-foundry.dev/schemas/browser-test-plan-artifact-v1.json',
+  ...browserTestPlanArtifactJsonSchema,
+  'x-agent-foundry-runtime-validation': {
+    uniqueStepIds: {
+      path: 'data.steps[*].id',
+      enforcedBy: 'BrowserTestPlanArtifactSchema',
+      description:
+        'Standard JSON Schema cannot express uniqueness by object property; the runtime Zod parse rejects duplicate step ids.',
+    },
+  },
+};
+
+const BrowserObservationSchema = z
+  .object({
+    kind: z.enum([
+      'console-error',
+      'request-failed',
+      'http-error',
+      'uncaught-exception',
+      'policy-block',
+    ]),
+    message: z.string().min(1),
+    url: z.string().url().optional(),
+    timestamp: z.string().datetime(),
+  })
+  .strict();
+
+export const BrowserVerificationReportSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    approved: z.boolean(),
+    summary: z.string().min(1),
+    planArtifact: ArtifactReferenceSchema,
+    previewSession: PreviewSessionReferenceSchema,
+    planValidationError: z.string().min(1).optional(),
+    steps: z.array(
+      z
+        .object({
+          stepId: PathSegmentSchema,
+          title: z.string().min(1),
+          status: z.enum(['passed', 'failed', 'skipped']),
+          durationMs: z.number().nonnegative(),
+          finalUrl: z.string().url().optional(),
+          error: z.string().min(1).optional(),
+          observations: z.array(BrowserObservationSchema),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .superRefine((report, context) => {
+    const observationCount = report.steps.reduce(
+      (total, step) => total + step.observations.length,
+      0,
+    );
+    if (observationCount > 100) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A browser report may contain at most 100 observations',
+        path: ['steps'],
+      });
+    }
+    for (const [index, step] of report.steps.entries()) {
+      if (step.status === 'passed' && (step.error || step.observations.length > 0)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'A passed browser step cannot contain failure evidence',
+          path: ['steps', index],
+        });
+      }
+      if (step.status === 'failed' && !step.error && step.observations.length === 0) {
+        context.addIssue({
+          code: 'custom',
+          message: 'A failed browser step requires failure evidence',
+          path: ['steps', index],
+        });
+      }
+      if (step.status === 'skipped' && (step.error || step.observations.length > 0)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'A skipped browser step cannot contain failure evidence',
+          path: ['steps', index],
+        });
+      }
+    }
+    if (!report.approved) return;
+    if (report.planValidationError) {
+      context.addIssue({
+        code: 'custom',
+        message: 'An approved browser report cannot contain a plan validation error',
+        path: ['planValidationError'],
+      });
+    }
+    if (report.steps.length === 0) {
+      context.addIssue({
+        code: 'custom',
+        message: 'An approved browser report must contain step evidence',
+        path: ['steps'],
+      });
+    }
+    for (const [index, step] of report.steps.entries()) {
+      if (step.status !== 'passed') {
+        context.addIssue({
+          code: 'custom',
+          message: 'Every step in an approved browser report must pass',
+          path: ['steps', index, 'status'],
+        });
+      }
+    }
+  });
+export type BrowserVerificationReport = z.infer<typeof BrowserVerificationReportSchema>;

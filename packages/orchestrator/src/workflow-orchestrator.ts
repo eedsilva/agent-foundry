@@ -1,8 +1,10 @@
 import type {
   AgentArtifact,
+  AgentExecutionRequest,
   AgentExecutionResult,
   AgentStep,
   ApprovalGateStep,
+  ArtifactReference,
   ExecutableStep,
   Project,
   ProjectEvent,
@@ -21,7 +23,10 @@ import type {
   WorkflowNode,
   WorkflowRun,
 } from '@agent-foundry/contracts';
-import { AGENT_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
+import {
+  AGENT_ARTIFACT_JSON_SCHEMA,
+  BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
+} from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
   ApprovalRequestRepository,
@@ -70,6 +75,10 @@ import {
   workflowHash,
 } from './idempotency.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
+import {
+  validateBrowserVerificationReportBinding,
+  type BrowserVerificationCoordinator,
+} from './browser-verification-coordinator.js';
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -108,6 +117,7 @@ export class WorkflowOrchestrator {
     private readonly ids: IdGenerator,
     private readonly options: OrchestratorOptions,
     private readonly modelOverrides?: ModelOverrideRepository,
+    private readonly browserVerification?: BrowserVerificationCoordinator,
   ) {}
 
   async runProject(projectId: string, workflowId?: string, requestedRunId?: string): Promise<void> {
@@ -826,6 +836,7 @@ export class WorkflowOrchestrator {
     signal: AbortSignal,
   ): Promise<StoredArtifact> {
     let qualitySubject: StoredArtifact | null = null;
+    let browserPlan: ArtifactReference | undefined;
     if (node.setup) {
       const setupArtifact = await this.executeStep(
         project,
@@ -837,6 +848,12 @@ export class WorkflowOrchestrator {
         1,
       );
       if (node.setup.type === 'agent') qualitySubject = setupArtifact;
+      if (
+        node.check.type === 'verify' &&
+        node.check.browserTestPlanArtifact === setupArtifact.metadata.name
+      ) {
+        browserPlan = artifactReference(setupArtifact);
+      }
     }
 
     let latest: StoredArtifact | null = null;
@@ -850,8 +867,9 @@ export class WorkflowOrchestrator {
         node.id,
         signal,
         iteration,
+        browserPlan ? [browserPlan] : [],
       );
-      const approved = await this.conditionApproved(project.id, node);
+      const approved = this.conditionApproved(latest, node);
       if (qualitySubject) await this.recordQualityOutcome(qualitySubject, approved);
       if (approved) {
         await this.resetConsecutiveRepairs(runId);
@@ -878,14 +896,14 @@ export class WorkflowOrchestrator {
         node.id,
         signal,
         iteration,
+        [...(browserPlan ? [browserPlan] : []), artifactReference(latest)],
       );
       await this.recordCompletedRepair(runId, node.id, node.repair.id, iteration, signal);
     }
   }
 
-  private async conditionApproved(projectId: string, node: QualityLoopStep): Promise<boolean> {
-    const artifact = await this.artifacts.getLatest(projectId, node.approval.artifact);
-    if (!artifact) return false;
+  private conditionApproved(artifact: StoredArtifact, node: QualityLoopStep): boolean {
+    if (artifact.metadata.name !== node.approval.artifact) return false;
     return getValueAtPath(artifact.content, node.approval.path) === node.approval.equals;
   }
 
@@ -897,6 +915,7 @@ export class WorkflowOrchestrator {
     nodeId: string,
     signal: AbortSignal,
     iteration?: number,
+    pinnedArtifacts: ArtifactReference[] = [],
   ): Promise<StoredArtifact> {
     throwIfCancelled(signal, runId);
     await this.assertExecutionMayContinue(runId, signal);
@@ -913,8 +932,25 @@ export class WorkflowOrchestrator {
       throw await this.policyChanged(project.id, runId, run.policy, policy, currentHash, nodeId);
     }
 
+    const pinnedBrowserPlan =
+      step.type === 'verify' && step.browserTestPlanArtifact
+        ? pinnedArtifacts.find((artifact) => artifact.name === step.browserTestPlanArtifact)
+        : undefined;
+    const browserPlan =
+      step.type === 'verify' && step.browserTestPlanArtifact
+        ? pinnedBrowserPlan
+          ? await this.loadArtifactReference(project.id, pinnedBrowserPlan)
+          : await this.artifacts.getLatest(project.id, step.browserTestPlanArtifact)
+        : null;
+    if (step.type === 'verify' && step.browserTestPlanArtifact && !browserPlan) {
+      throw new NotFoundError(`Missing input artifact(s): ${step.browserTestPlanArtifact}`);
+    }
     let inputArtifacts =
-      step.type === 'agent' ? await this.loadInputArtifacts(project.id, step.inputArtifacts) : [];
+      step.type === 'agent'
+        ? await this.loadInputArtifacts(project.id, step.inputArtifacts, pinnedArtifacts)
+        : browserPlan
+          ? [browserPlan]
+          : [];
     const directive = run.retry;
     const isRetryTarget =
       directive !== undefined &&
@@ -941,6 +977,15 @@ export class WorkflowOrchestrator {
       );
       if (!alreadyLoaded) inputArtifacts = [...inputArtifacts, feedback];
     }
+    const invalidatedByRetry =
+      directive?.mode === 'invalidate' &&
+      (await this.stepRuns.list(runId)).some(
+        (candidate) =>
+          candidate.nodeId === nodeId &&
+          candidate.stepId === step.id &&
+          (candidate.iteration ?? null) === (iteration ?? null) &&
+          candidate.invalidatedAt,
+      );
     const idempotencyKey = stepIdempotencyKey({
       runId,
       nodeId,
@@ -948,6 +993,19 @@ export class WorkflowOrchestrator {
       iteration,
       inputs: inputArtifacts.map(artifactReference),
     });
+    // Step identity stays input-derived so a completed retry remains reusable after its directive
+    // is cleared; output writes add the retry generation so the retry still creates a new revision.
+    const outputIdempotencyKey =
+      isRetryTarget || invalidatedByRetry
+        ? stepIdempotencyKey({
+            runId,
+            nodeId,
+            step,
+            iteration,
+            retryRequestedAt: directive?.requestedAt,
+            inputs: inputArtifacts.map(artifactReference),
+          })
+        : idempotencyKey;
 
     if (!isRetryTarget) {
       const reused = await this.reuseCompletedStep({
@@ -957,6 +1015,7 @@ export class WorkflowOrchestrator {
         nodeId,
         iteration,
         idempotencyKey,
+        outputIdempotencyKey,
         preserve: directive?.mode === 'preserve',
       });
       if (reused) return reused;
@@ -992,7 +1051,7 @@ export class WorkflowOrchestrator {
         step.type === 'agent'
           ? await this.executeAgentStep(project, workflow, step, runId, stepRun, policy, signal, {
               inputArtifacts,
-              idempotencyKey,
+              idempotencyKey: outputIdempotencyKey,
               ...(isRetryTarget && directive.override ? { override: directive.override } : {}),
               ...(isRetryTarget && directive.override
                 ? { overrideCreatedAt: directive.requestedAt }
@@ -1007,8 +1066,9 @@ export class WorkflowOrchestrator {
               stepRun,
               policy,
               signal,
-              idempotencyKey,
+              outputIdempotencyKey,
               iteration,
+              browserPlan ?? undefined,
             );
       stepRun = await this.stepRuns.update(
         transitionStepRun(stepRun, 'completed', this.clock.now()),
@@ -1049,9 +1109,19 @@ export class WorkflowOrchestrator {
     nodeId: string;
     iteration?: number | undefined;
     idempotencyKey: string;
+    outputIdempotencyKey: string;
     preserve: boolean;
   }): Promise<StoredArtifact | null> {
-    const { project, step, runId, nodeId, iteration, idempotencyKey, preserve } = input;
+    const {
+      project,
+      step,
+      runId,
+      nodeId,
+      iteration,
+      idempotencyKey,
+      outputIdempotencyKey,
+      preserve,
+    } = input;
     const siblings = (await this.stepRuns.list(runId)).filter(
       (candidate) =>
         candidate.nodeId === nodeId &&
@@ -1081,7 +1151,7 @@ export class WorkflowOrchestrator {
       const running = attempts.filter((attempt) => attempt.status === 'running');
       const orphan: StoredArtifact | null =
         !adopted && stale.idempotencyKey === idempotencyKey
-          ? await this.findArtifactByKey(project.id, step.outputArtifact, idempotencyKey)
+          ? await this.findArtifactByKey(project.id, step.outputArtifact, outputIdempotencyKey)
           : null;
       if (orphan) {
         const last = running.at(-1);
@@ -1192,7 +1262,22 @@ export class WorkflowOrchestrator {
     signal: AbortSignal,
     idempotencyKey: string,
     iteration?: number,
+    browserPlan?: StoredArtifact,
   ): Promise<StoredArtifact> {
+    if (browserPlan) {
+      return this.executeBrowserVerifyStep(
+        project,
+        workflow,
+        step,
+        runId,
+        stepRun,
+        policy,
+        signal,
+        idempotencyKey,
+        browserPlan,
+        iteration,
+      );
+    }
     const timestamp = this.clock.now().toISOString();
     let attempt: StepAttempt = {
       id: this.ids.next(),
@@ -1281,6 +1366,142 @@ export class WorkflowOrchestrator {
     }
   }
 
+  private async executeBrowserVerifyStep(
+    project: Project,
+    workflow: WorkflowDefinition,
+    step: VerifyStep,
+    runId: string,
+    stepRun: StepRun,
+    policy: ProjectPolicy,
+    signal: AbortSignal,
+    idempotencyKey: string,
+    browserPlan: StoredArtifact,
+    iteration?: number,
+  ): Promise<StoredArtifact> {
+    if (!this.browserVerification) {
+      throw new ExecutionError('Browser verification is not configured');
+    }
+    const timestamp = this.clock.now().toISOString();
+    const planReference = artifactReference(browserPlan);
+    let attempt: StepAttempt = {
+      id: this.ids.next(),
+      runId,
+      stepRunId: stepRun.id,
+      sequence: 1,
+      executorKind: 'verification',
+      provider: 'internal',
+      model: 'browser-verifier',
+      context: {
+        projectId: project.id,
+        workflowId: workflow.id,
+        nodeId: stepRun.nodeId,
+        stepId: step.id,
+        ...(iteration ? { iteration } : {}),
+      },
+      status: 'running',
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      startedAt: timestamp,
+      inputArtifacts: [planReference],
+      outputArtifacts: [],
+    };
+    await this.stepAttempts.create(attempt);
+    const startedAt = Date.now();
+    try {
+      let artifact = await this.findArtifactByKey(project.id, step.outputArtifact, idempotencyKey);
+      if (!artifact) {
+        const report = await this.browserVerification.verify(
+          {
+            projectId: project.id,
+            workspacePath: this.workspaces.workspacePath(project.id),
+            runId,
+            plan: browserPlan,
+            allowedOrigins: policy.browserAllowedOrigins ?? [],
+          },
+          signal,
+          async (previewSessionId) => {
+            attempt = await this.stepAttempts.update(
+              {
+                ...attempt,
+                previewSessionId,
+                updatedAt: this.clock.now().toISOString(),
+              },
+              attempt.version,
+            );
+          },
+        );
+        throwIfCancelled(signal, runId);
+        await this.assertExecutionMayContinue(runId, signal);
+        artifact = await this.artifacts.put({
+          projectId: project.id,
+          name: step.outputArtifact,
+          content: report,
+          createdBy: `verifier:${step.id}`,
+          runId,
+          stepRunId: stepRun.id,
+          attemptId: attempt.id,
+          idempotencyKey,
+        });
+      }
+      throwIfCancelled(signal, runId);
+      await this.assertExecutionMayContinue(runId, signal);
+      const sourceAttempt =
+        artifact.metadata.stepRunId && artifact.metadata.attemptId
+          ? await this.stepAttempts.get(
+              runId,
+              artifact.metadata.stepRunId,
+              artifact.metadata.attemptId,
+            )
+          : null;
+      if (!sourceAttempt?.previewSessionId) {
+        throw new Error('Browser verification report is missing its source preview session.');
+      }
+      const persistedReport = validateBrowserVerificationReportBinding(artifact.content, {
+        planArtifact: planReference,
+        planContent: browserPlan.content,
+        previewSessionId: sourceAttempt.previewSessionId,
+      });
+      attempt = await this.stepAttempts.update(
+        transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
+          durationMs: Date.now() - startedAt,
+          outputArtifacts: [artifactReference(artifact)],
+        }),
+        attempt.version,
+      );
+      if (persistedReport.approved) {
+        const checkpoint = await this.workspaces.checkpoint(
+          project.id,
+          `${step.id}-${runId}-verified`,
+        );
+        await this.updateExecution(runId, (run) => ({
+          ...(run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
+          lastVerifiedCheckpoint: checkpoint,
+        }));
+      }
+      await this.emit(project.id, 'verification.completed', persistedReport.summary, {
+        nodeId: step.id,
+        runId,
+        data: { approved: persistedReport.approved, attemptId: attempt.id },
+      });
+      await this.emitArtifactCreated(project.id, artifact, step.id, runId);
+      return artifact;
+    } catch (caught) {
+      const error = await this.classifyFailure(runId, signal, caught);
+      if (attempt.status === 'running') {
+        const cancelled = isCancellation(error, signal);
+        await this.stepAttempts.update(
+          transitionStepAttempt(attempt, cancelled ? 'cancelled' : 'failed', this.clock.now(), {
+            durationMs: Date.now() - startedAt,
+            ...(cancelled ? {} : { error: runError(error) }),
+          }),
+          attempt.version,
+        );
+      }
+      throw error;
+    }
+  }
+
   private async executeAgentStep(
     project: Project,
     workflow: WorkflowDefinition,
@@ -1311,6 +1532,9 @@ export class WorkflowOrchestrator {
       tags: step.harnessTags,
     });
     const profile = buildTaskProfile({ step, harness, artifacts: inputArtifacts, policy });
+    const outputSchema = workflowUsesBrowserPlan(workflow, step.outputArtifact)
+      ? BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA
+      : AGENT_ARTIFACT_JSON_SCHEMA;
     const explicit = await this.resolveModelPin(
       runId,
       stepRun.nodeId,
@@ -1416,7 +1640,7 @@ export class WorkflowOrchestrator {
           stepRunId: stepRun.id,
           attemptId: attempt.id,
           requestMarkdown,
-          outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+          outputSchema,
         });
         const result = await this.executeCandidate(
           project,
@@ -1426,6 +1650,7 @@ export class WorkflowOrchestrator {
           attempt.id,
           candidate,
           signal,
+          outputSchema,
         );
         await this.assertExecutionMayContinue(runId, signal);
         const commit = step.mutatesWorkspace
@@ -1629,6 +1854,7 @@ export class WorkflowOrchestrator {
     attemptId: string,
     candidate: RankedModel,
     signal: AbortSignal,
+    outputSchema: AgentExecutionRequest['outputSchema'],
   ): Promise<AgentExecutionResult> {
     await this.emit(project.id, 'agent.started', `${step.id} started on ${candidate.model.id}.`, {
       nodeId: step.id,
@@ -1651,7 +1877,7 @@ export class WorkflowOrchestrator {
         cwd: this.workspaces.workspacePath(project.id),
         mutatesWorkspace: step.mutatesWorkspace,
         timeoutMs: this.options.agentTimeoutMs,
-        outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+        outputSchema,
       },
       signal,
     );
@@ -1674,13 +1900,39 @@ export class WorkflowOrchestrator {
     return result;
   }
 
-  private async loadInputArtifacts(projectId: string, names: string[]): Promise<StoredArtifact[]> {
+  private async loadInputArtifacts(
+    projectId: string,
+    names: string[],
+    pinnedArtifacts: ArtifactReference[] = [],
+  ): Promise<StoredArtifact[]> {
     const artifacts = await Promise.all(
-      names.map((name) => this.artifacts.getLatest(projectId, name)),
+      names.map((name) => {
+        const pinned = pinnedArtifacts.find((artifact) => artifact.name === name);
+        return pinned
+          ? this.loadArtifactReference(projectId, pinned)
+          : this.artifacts.getLatest(projectId, name);
+      }),
     );
     const missing = names.filter((_name, index) => artifacts[index] === null);
     if (missing.length) throw new NotFoundError(`Missing input artifact(s): ${missing.join(', ')}`);
     return artifacts.filter((artifact): artifact is StoredArtifact => artifact !== null);
+  }
+
+  private async loadArtifactReference(
+    projectId: string,
+    reference: ArtifactReference,
+  ): Promise<StoredArtifact> {
+    const artifact = await this.artifacts.getRevision(
+      projectId,
+      reference.name,
+      reference.revision,
+    );
+    if (!artifact || artifact.metadata.sha256 !== reference.sha256) {
+      throw new NotFoundError(
+        `Artifact ${reference.name} revision ${reference.revision} not found`,
+      );
+    }
+    return artifact;
   }
 
   private async recordQualityOutcome(artifact: StoredArtifact, approved: boolean): Promise<void> {
@@ -1961,6 +2213,16 @@ function artifactReference(artifact: StoredArtifact) {
     revision: artifact.metadata.revision,
     sha256: artifact.metadata.sha256,
   };
+}
+
+function workflowUsesBrowserPlan(workflow: WorkflowDefinition, artifactName: string): boolean {
+  return workflow.nodes.some((node) => {
+    if (node.type === 'verify') return node.browserTestPlanArtifact === artifactName;
+    if (node.type !== 'quality-loop') return false;
+    return [node.setup, node.check].some(
+      (step) => step?.type === 'verify' && step.browserTestPlanArtifact === artifactName,
+    );
+  });
 }
 
 function throwIfCancelled(signal: AbortSignal, runId: string): void {

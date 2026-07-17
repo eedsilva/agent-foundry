@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import {
+  BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
+  BrowserActionSchema,
+  BrowserAssertionSchema,
+  BrowserLocatorSchema,
+  BrowserRoleSchema,
+  BrowserTestPlanArtifactSchema,
+  BrowserTestPlanSchema,
+  BrowserVerificationReportSchema,
   PreviewCommandPlanSchema,
   PreviewFailureDiagnosticSchema,
   PreviewLogPageSchema,
@@ -139,6 +148,34 @@ describe('preview references on run artifacts', () => {
       },
     });
     expect(attempt.previewSessionId).toBe('preview-1');
+  });
+
+  it('identifies browser verification attempts without accepting arbitrary internal models', () => {
+    const attempt = {
+      id: 'attempt-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      sequence: 1,
+      executorKind: 'verification' as const,
+      provider: 'internal' as const,
+      model: 'browser-verifier',
+      status: 'running' as const,
+      version: 1,
+      createdAt,
+      updatedAt: createdAt,
+      startedAt: createdAt,
+      context: {
+        projectId: 'project-1',
+        workflowId: 'web-app-v1',
+        nodeId: 'browser-verification',
+        stepId: 'verify-browser',
+      },
+    };
+
+    expect(StepAttemptSchema.safeParse(attempt).success).toBe(true);
+    expect(StepAttemptSchema.safeParse({ ...attempt, model: 'other-verifier' }).success).toBe(
+      false,
+    );
   });
 
   it('carries session evidence as artifact references', () => {
@@ -290,5 +327,488 @@ describe('preview lifecycle diagnostics', () => {
     expect(() =>
       PreviewFailureDiagnosticSchema.parse({ ...diagnostic, rawToken: 'secret' }),
     ).toThrow();
+  });
+});
+
+describe('browser verification contracts', () => {
+  const plan = {
+    schemaVersion: '1',
+    id: 'crud',
+    title: 'CRUD',
+    viewport: { width: 1280, height: 720 },
+    steps: [
+      {
+        id: 'create',
+        title: 'Create an item',
+        action: { kind: 'goto', path: '/items' },
+        assertions: [
+          { kind: 'url', path: '/items' },
+          {
+            kind: 'visible',
+            locator: { by: 'role', role: 'button', name: 'Create', exact: true },
+          },
+        ],
+      },
+      {
+        id: 'update',
+        title: 'Update the item',
+        action: {
+          kind: 'fill',
+          locator: { by: 'label', label: 'Name', exact: true },
+          value: 'Updated item',
+        },
+        assertions: [
+          {
+            kind: 'containsText',
+            locator: { by: 'testId', testId: 'item-row' },
+            expected: 'Updated item',
+          },
+        ],
+      },
+      {
+        id: 'delete',
+        title: 'Delete the item',
+        action: {
+          kind: 'click',
+          locator: { by: 'text', text: 'Delete', exact: true },
+        },
+        assertions: [
+          {
+            kind: 'hidden',
+            locator: { by: 'text', text: 'Updated item' },
+          },
+        ],
+      },
+    ],
+  };
+
+  const artifact = {
+    schemaVersion: '1',
+    status: 'completed',
+    summary: 'CRUD browser plan',
+    data: plan,
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    nextActions: [],
+  };
+
+  it('parses a bounded CRUD plan with semantic locators, actions, assertions, and viewport', () => {
+    const parsed = BrowserTestPlanSchema.parse(plan);
+
+    expect(parsed.viewport).toEqual({ width: 1280, height: 720 });
+    expect(parsed.steps.map((step: { action: { kind: string } }) => step.action.kind)).toEqual([
+      'goto',
+      'fill',
+      'click',
+    ]);
+    expect(parsed.steps[0]?.action).toEqual({ kind: 'goto', path: '/items' });
+    expect(parsed.steps[0]?.assertions).toEqual([
+      { kind: 'url', path: '/items' },
+      {
+        kind: 'visible',
+        locator: { by: 'role', role: 'button', name: 'Create', exact: true },
+      },
+    ]);
+    expect(parsed.steps[1]?.action).toEqual({
+      kind: 'fill',
+      locator: { by: 'label', label: 'Name', exact: true },
+      value: 'Updated item',
+    });
+    expect(parsed.steps[1]?.assertions[0]).toEqual({
+      kind: 'containsText',
+      locator: { by: 'testId', testId: 'item-row' },
+      expected: 'Updated item',
+    });
+    expect(parsed.steps[2]?.action).toEqual({
+      kind: 'click',
+      locator: { by: 'text', text: 'Delete', exact: true },
+    });
+    expect(parsed.steps[2]?.assertions[0]?.kind).toBe('hidden');
+  });
+
+  it('exports strict schemas for each public browser plan component', () => {
+    expect(BrowserRoleSchema.parse('button')).toBe('button');
+    expect(BrowserLocatorSchema.parse({ by: 'label', label: 'Name', exact: true })).toEqual({
+      by: 'label',
+      label: 'Name',
+      exact: true,
+    });
+    expect(
+      BrowserActionSchema.parse({
+        kind: 'click',
+        locator: { by: 'role', role: 'button', name: 'Create' },
+      }).kind,
+    ).toBe('click');
+    expect(
+      BrowserAssertionSchema.parse({
+        kind: 'containsText',
+        locator: { by: 'testId', testId: 'item-row' },
+        expected: 'Created item',
+      }).kind,
+    ).toBe('containsText');
+  });
+
+  it('requires between 1 and 100 steps and a first goto action', () => {
+    const schema = BrowserTestPlanSchema;
+    expect(schema.safeParse({ ...plan, steps: [] }).success).toBe(false);
+    expect(
+      schema.safeParse({ ...plan, steps: Array.from({ length: 101 }, () => plan.steps[0]) })
+        .success,
+    ).toBe(false);
+    expect(schema.safeParse({ ...plan, steps: plan.steps.slice(1) }).success).toBe(false);
+  });
+
+  it('rejects locator roles outside the version-1 Playwright role union', () => {
+    expect(
+      BrowserTestPlanSchema.safeParse({
+        ...plan,
+        steps: [
+          {
+            ...plan.steps[0],
+            assertions: [
+              {
+                kind: 'visible',
+                locator: { by: 'role', role: 'not-a-real-role' },
+              },
+            ],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects duplicate step ids', () => {
+    expect(
+      BrowserTestPlanSchema.safeParse({
+        ...plan,
+        steps: [plan.steps[0], { ...plan.steps[1], id: plan.steps[0]!.id }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    'items',
+    '//example.test/items',
+    'https://example.test/items',
+    '/../admin',
+    '/%2e%2e/admin',
+    '/%252e%252e/admin',
+    '/%25252e%25252e/admin',
+    '/.%252e/admin',
+    '/%2f%2fevil.test/',
+    '/\\evil.example/',
+    '\u0000https://evil.example/items',
+    '/\thttps://evil.example/items',
+  ])('rejects non-relative app path %s', (path) => {
+    const schema = BrowserTestPlanSchema;
+    expect(
+      schema.safeParse({
+        ...plan,
+        steps: [{ ...plan.steps[0], action: { kind: 'goto', path } }],
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ...plan,
+        steps: [
+          {
+            ...plan.steps[0],
+            assertions: [{ kind: 'url', path }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('publishes provider-visible path, first-goto, and runtime uniqueness constraints', () => {
+    const data = BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA.properties.data!;
+    const steps = data.properties.steps!;
+    const action = steps.items.properties.action!;
+    const goto = action.oneOf.find((candidate) => candidate.properties.kind?.const === 'goto');
+    const pathPattern = goto?.properties.path?.pattern;
+
+    expect(pathPattern).toBeTypeOf('string');
+    if (typeof pathPattern !== 'string') throw new Error('Expected browser path pattern');
+    for (const path of [
+      'items',
+      '//evil.test/',
+      '/../admin',
+      '/%252e%252e/admin',
+      '/%25252e%25252e/admin',
+      '/.%252e/admin',
+      '/%2f%2fevil.test/',
+      '/\\evil.test/',
+      '/\tevil.test/',
+    ]) {
+      expect(new RegExp(pathPattern).test(path), path).toBe(false);
+    }
+    expect(steps.prefixItems?.[0]).toMatchObject({
+      allOf: [
+        expect.any(Object),
+        { properties: { action: { properties: { kind: { const: 'goto' } } } } },
+      ],
+    });
+    expect(BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA).toMatchObject({
+      'x-agent-foundry-runtime-validation': {
+        uniqueStepIds: {
+          path: 'data.steps[*].id',
+          enforcedBy: 'BrowserTestPlanArtifactSchema',
+        },
+      },
+    });
+    expect(steps.description).toMatch(/unique.*runtime/i);
+  });
+
+  it.each([
+    ['missing id', 'id'],
+    ['missing title', 'title'],
+    ['missing assertions', 'assertions'],
+    ['an extra property', 'unexpected'],
+  ] as const)('keeps full provider validation on the first step with %s', (_case, property) => {
+    const validate = new Ajv2020({ strict: false }).compile(BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA);
+    const firstStep: Record<string, unknown> = { ...plan.steps[0] };
+    if (property === 'unexpected') firstStep[property] = true;
+    else delete firstStep[property];
+
+    expect(validate({ ...artifact, data: { ...plan, steps: [firstStep] } })).toBe(false);
+  });
+
+  it.each([
+    { width: 0, height: 720 },
+    { width: 10_001, height: 720 },
+    { width: 1280, height: 0 },
+    { width: 1280, height: 10_001 },
+    { width: 1280.5, height: 720 },
+  ])('rejects an out-of-range viewport $width x $height', (viewport) => {
+    expect(BrowserTestPlanSchema.safeParse({ ...plan, viewport }).success).toBe(false);
+  });
+
+  it('validates the browser plan inside the existing agent artifact envelope', () => {
+    const schema = BrowserTestPlanArtifactSchema;
+    expect(schema.parse(artifact).data.id).toBe('crud');
+    expect(schema.safeParse({ ...artifact, status: 'unknown' }).success).toBe(false);
+    expect(schema.safeParse({ ...artifact, summary: '' }).success).toBe(false);
+    expect(schema.safeParse({ ...artifact, data: { ...plan, unexpected: true } }).success).toBe(
+      false,
+    );
+  });
+
+  it('parses strict report references and per-step evidence', () => {
+    const schema = BrowserVerificationReportSchema;
+    const report = {
+      schemaVersion: '1',
+      approved: false,
+      summary: 'Delete failed',
+      planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+      previewSession: {
+        sessionId: 'preview-1',
+        status: 'stopped',
+        url: 'http://127.0.0.1:3100',
+        evidence: {
+          logs: { name: 'preview-logs', revision: 1, sha256: 'b'.repeat(64) },
+          screenshots: [{ name: 'delete-failure', revision: 1, sha256: 'c'.repeat(64) }],
+          trace: { name: 'browser-trace', revision: 1, sha256: 'd'.repeat(64) },
+        },
+      },
+      steps: [
+        {
+          stepId: 'delete',
+          title: 'Delete the item',
+          status: 'failed',
+          durationMs: 42,
+          finalUrl: 'http://127.0.0.1:3100/items',
+          error: 'Delete button remained visible',
+          observations: [
+            {
+              kind: 'console-error',
+              message: 'delete failed',
+              url: 'http://127.0.0.1:3100/items',
+              timestamp: createdAt,
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(schema.parse(report).steps[0]?.observations[0]?.kind).toBe('console-error');
+    expect(
+      schema.safeParse({
+        ...report,
+        planArtifact: { ...report.planArtifact, revision: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ...report,
+        previewSession: {
+          ...report.previewSession,
+          evidence: { ...report.previewSession.evidence, video: report.planArtifact },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    ['no steps', []],
+    [
+      'a failed step',
+      [
+        {
+          stepId: 'open',
+          title: 'Open fixture',
+          status: 'failed',
+          durationMs: 1,
+          error: 'failed',
+          observations: [],
+        },
+      ],
+    ],
+    [
+      'a skipped step',
+      [
+        {
+          stepId: 'open',
+          title: 'Open fixture',
+          status: 'skipped',
+          durationMs: 0,
+          observations: [],
+        },
+      ],
+    ],
+  ] as const)('rejects an approved report with %s', (_case, steps) => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: true,
+        summary: 'Contradictory approval',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        steps,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an approved report with a plan-validation error', () => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: true,
+        summary: 'Contradictory approval',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        planValidationError: 'invalid plan',
+        steps: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    ['an error', { error: 'stale failure', observations: [] }],
+    [
+      'an observation',
+      {
+        observations: [
+          {
+            kind: 'console-error',
+            message: 'stale failure',
+            timestamp: createdAt,
+          },
+        ],
+      },
+    ],
+  ] as const)('rejects a passed step with %s', (_case, evidence) => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: true,
+        summary: 'Contradictory approval',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        steps: [
+          {
+            stepId: 'open',
+            title: 'Open fixture',
+            status: 'passed',
+            durationMs: 1,
+            ...evidence,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a failed step without failure evidence', () => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: false,
+        summary: 'Missing failure evidence',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        steps: [
+          {
+            stepId: 'open',
+            title: 'Open fixture',
+            status: 'failed',
+            durationMs: 1,
+            observations: [],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('caps observations across the entire report', () => {
+    const observations = Array.from({ length: 51 }, (_, index) => ({
+      kind: 'console-error' as const,
+      message: `failure ${index}`,
+      timestamp: createdAt,
+    }));
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: false,
+        summary: 'Too many observations',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        steps: [
+          {
+            stepId: 'first',
+            title: 'First',
+            status: 'failed',
+            durationMs: 1,
+            observations,
+          },
+          {
+            stepId: 'second',
+            title: 'Second',
+            status: 'failed',
+            durationMs: 1,
+            observations,
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });
