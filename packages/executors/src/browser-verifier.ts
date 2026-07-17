@@ -1,6 +1,7 @@
 import {
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
+  type BrowserLocator,
   type BrowserTestPlan,
   type BrowserVerificationReport,
 } from '@agent-foundry/contracts';
@@ -20,11 +21,6 @@ const MAX_OBSERVATIONS = 100;
 
 type Observation = BrowserVerificationReport['steps'][number]['observations'][number];
 type StepReport = BrowserVerificationReport['steps'][number];
-type BrowserLocator = Exclude<
-  BrowserTestPlan['steps'][number]['action'],
-  { kind: 'goto' }
->['locator'];
-
 export class PlaywrightBrowserVerifier implements BrowserVerifier {
   async verify(
     input: Parameters<BrowserVerifier['verify']>[0],
@@ -168,6 +164,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     let currentStepIndex = 0;
     let observationCount = 0;
     let passiveFailure = false;
+    const passiveFailureSteps = new Set<number>();
     const runObservations: Array<{ stepIndex: number; observation: Observation }> = [];
     const requestSteps = new WeakMap<Request, number>();
     const pendingRequests = new Set<Request>();
@@ -179,6 +176,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       stepIndex = currentStepIndex,
     ): void => {
       passiveFailure = true;
+      passiveFailureSteps.add(stepIndex);
       if (observationCount >= MAX_OBSERVATIONS) return;
       runObservations.push({
         stepIndex,
@@ -356,12 +354,16 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
         await waitForPendingRequests();
+        if (passiveFailureSteps.has(index)) {
+          failed = true;
+        }
         steps.push({
           stepId: step.id,
           title: step.title,
-          status: 'passed',
+          status: failed ? 'failed' : 'passed',
           durationMs: performance.now() - startedAt,
           finalUrl: sanitizeUrl(page.url(), token),
+          ...(failed ? { error: 'Passive browser failure observed.' } : {}),
           observations: [],
         });
       } catch (error) {
@@ -379,6 +381,13 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     }
     for (const { stepIndex, observation } of runObservations) {
       steps[stepIndex]?.observations.push(observation);
+    }
+    for (const stepIndex of passiveFailureSteps) {
+      const step = steps[stepIndex];
+      if (step?.status === 'passed') {
+        step.status = 'failed';
+        step.error = 'Passive browser failure observed.';
+      }
     }
     const approved = !failed && !passiveFailure;
     return BrowserVerificationReportSchema.parse({
@@ -430,7 +439,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         return;
       case 'containsText': {
         await locator(page, assertion.locator)
-          .filter({ hasText: assertion.text })
+          .filter({ hasText: assertion.expected })
           .waitFor({ state: 'attached' });
         return;
       }
@@ -443,15 +452,19 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
 }
 
 function locator(page: Page, target: BrowserLocator): Locator {
-  switch (target.kind) {
+  switch (target.by) {
     case 'role':
-      return page.getByRole(target.role as Parameters<Page['getByRole']>[0], {
+      return page.getByRole(target.role, {
         ...(target.name ? { name: target.name } : {}),
+        ...(target.exact === undefined ? {} : { exact: target.exact }),
       });
     case 'label':
-      return page.getByLabel(target.text);
+      return page.getByLabel(
+        target.label,
+        target.exact === undefined ? {} : { exact: target.exact },
+      );
     case 'text':
-      return page.getByText(target.text);
+      return page.getByText(target.text, target.exact === undefined ? {} : { exact: target.exact });
     case 'testId':
       return page.getByTestId(target.testId);
   }

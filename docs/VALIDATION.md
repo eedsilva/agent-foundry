@@ -35,7 +35,7 @@ tokens, caps observations at 100, and links its plan by immutable artifact refer
 requires a plan artifact and disables workspace scripts and `git diff --check`; a failed report is
 given to repair together with the exact initial plan revision before the same plan reruns.
 
-Focused acceptance evidence passed: 8 files / 96 tests.
+Focused acceptance evidence passed: 8 files / 102 tests.
 
 ```bash
 npx vitest run \
@@ -51,8 +51,9 @@ npx vitest run \
 
 The coverage includes plan/schema rejection, exact origin policy, no mixed browser/workspace
 verification, persisted workflow validation, preview start/stop coordination, failure -> repair ->
-same-plan rerun across restart, composition wiring, real Chromium CRUD, token redaction, request and
-WebSocket policy blocks, diagnostics, observation cap, timeout cleanup, and cancellation cleanup.
+same-plan rerun, composition wiring, real Chromium CRUD, exact semantic locators, step-fatal passive
+failures, token redaction, request and WebSocket policy blocks, diagnostics, observation cap, timeout
+cleanup, and cancellation cleanup.
 
 Install Chromium locally with `npx playwright install chromium`. CI installs the same browser with
 `npx playwright install --with-deps chromium` before `npm test`. The issue #32 branch gate is:

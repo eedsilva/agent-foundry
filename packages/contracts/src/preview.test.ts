@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BrowserActionSchema,
+  BrowserAssertionSchema,
+  BrowserLocatorSchema,
+  BrowserRoleSchema,
   BrowserTestPlanArtifactSchema,
   BrowserTestPlanSchema,
   BrowserVerificationReportSchema,
@@ -339,7 +343,7 @@ describe('browser verification contracts', () => {
           { kind: 'url', path: '/items' },
           {
             kind: 'visible',
-            locator: { kind: 'role', role: 'button', name: 'Create' },
+            locator: { by: 'role', role: 'button', name: 'Create', exact: true },
           },
         ],
       },
@@ -348,14 +352,14 @@ describe('browser verification contracts', () => {
         title: 'Update the item',
         action: {
           kind: 'fill',
-          locator: { kind: 'label', text: 'Name' },
+          locator: { by: 'label', label: 'Name', exact: true },
           value: 'Updated item',
         },
         assertions: [
           {
             kind: 'containsText',
-            locator: { kind: 'testId', testId: 'item-row' },
-            text: 'Updated item',
+            locator: { by: 'testId', testId: 'item-row' },
+            expected: 'Updated item',
           },
         ],
       },
@@ -364,12 +368,12 @@ describe('browser verification contracts', () => {
         title: 'Delete the item',
         action: {
           kind: 'click',
-          locator: { kind: 'text', text: 'Delete' },
+          locator: { by: 'text', text: 'Delete', exact: true },
         },
         assertions: [
           {
             kind: 'hidden',
-            locator: { kind: 'text', text: 'Updated item' },
+            locator: { by: 'text', text: 'Updated item' },
           },
         ],
       },
@@ -399,23 +403,48 @@ describe('browser verification contracts', () => {
     expect(parsed.steps[0]?.action).toEqual({ kind: 'goto', path: '/items' });
     expect(parsed.steps[0]?.assertions).toEqual([
       { kind: 'url', path: '/items' },
-      { kind: 'visible', locator: { kind: 'role', role: 'button', name: 'Create' } },
+      {
+        kind: 'visible',
+        locator: { by: 'role', role: 'button', name: 'Create', exact: true },
+      },
     ]);
     expect(parsed.steps[1]?.action).toEqual({
       kind: 'fill',
-      locator: { kind: 'label', text: 'Name' },
+      locator: { by: 'label', label: 'Name', exact: true },
       value: 'Updated item',
     });
     expect(parsed.steps[1]?.assertions[0]).toEqual({
       kind: 'containsText',
-      locator: { kind: 'testId', testId: 'item-row' },
-      text: 'Updated item',
+      locator: { by: 'testId', testId: 'item-row' },
+      expected: 'Updated item',
     });
     expect(parsed.steps[2]?.action).toEqual({
       kind: 'click',
-      locator: { kind: 'text', text: 'Delete' },
+      locator: { by: 'text', text: 'Delete', exact: true },
     });
     expect(parsed.steps[2]?.assertions[0]?.kind).toBe('hidden');
+  });
+
+  it('exports strict schemas for each public browser plan component', () => {
+    expect(BrowserRoleSchema.parse('button')).toBe('button');
+    expect(BrowserLocatorSchema.parse({ by: 'label', label: 'Name', exact: true })).toEqual({
+      by: 'label',
+      label: 'Name',
+      exact: true,
+    });
+    expect(
+      BrowserActionSchema.parse({
+        kind: 'click',
+        locator: { by: 'role', role: 'button', name: 'Create' },
+      }).kind,
+    ).toBe('click');
+    expect(
+      BrowserAssertionSchema.parse({
+        kind: 'containsText',
+        locator: { by: 'testId', testId: 'item-row' },
+        expected: 'Created item',
+      }).kind,
+    ).toBe('containsText');
   });
 
   it('requires between 1 and 100 steps and a first goto action', () => {
@@ -426,6 +455,25 @@ describe('browser verification contracts', () => {
         .success,
     ).toBe(false);
     expect(schema.safeParse({ ...plan, steps: plan.steps.slice(1) }).success).toBe(false);
+  });
+
+  it('rejects locator roles outside the version-1 Playwright role union', () => {
+    expect(
+      BrowserTestPlanSchema.safeParse({
+        ...plan,
+        steps: [
+          {
+            ...plan.steps[0],
+            assertions: [
+              {
+                kind: 'visible',
+                locator: { by: 'role', role: 'not-a-real-role' },
+              },
+            ],
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects duplicate step ids', () => {

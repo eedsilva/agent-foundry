@@ -300,20 +300,116 @@ const BrowserPathSchema = z
   .string()
   .refine((path) => path.startsWith('/') && !path.startsWith('//'));
 
-const BrowserLocatorSchema = z.discriminatedUnion('kind', [
+export const BrowserRoleSchema = z.enum([
+  'alert',
+  'alertdialog',
+  'application',
+  'article',
+  'banner',
+  'blockquote',
+  'button',
+  'caption',
+  'cell',
+  'checkbox',
+  'code',
+  'columnheader',
+  'combobox',
+  'complementary',
+  'contentinfo',
+  'definition',
+  'deletion',
+  'dialog',
+  'directory',
+  'document',
+  'emphasis',
+  'feed',
+  'figure',
+  'form',
+  'generic',
+  'grid',
+  'gridcell',
+  'group',
+  'heading',
+  'img',
+  'insertion',
+  'link',
+  'list',
+  'listbox',
+  'listitem',
+  'log',
+  'main',
+  'marquee',
+  'math',
+  'meter',
+  'menu',
+  'menubar',
+  'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'navigation',
+  'none',
+  'note',
+  'option',
+  'paragraph',
+  'presentation',
+  'progressbar',
+  'radio',
+  'radiogroup',
+  'region',
+  'row',
+  'rowgroup',
+  'rowheader',
+  'scrollbar',
+  'search',
+  'searchbox',
+  'separator',
+  'slider',
+  'spinbutton',
+  'status',
+  'strong',
+  'subscript',
+  'superscript',
+  'switch',
+  'tab',
+  'table',
+  'tablist',
+  'tabpanel',
+  'term',
+  'textbox',
+  'time',
+  'timer',
+  'toolbar',
+  'tooltip',
+  'tree',
+  'treegrid',
+  'treeitem',
+]);
+export type BrowserRole = z.infer<typeof BrowserRoleSchema>;
+
+export const BrowserLocatorSchema = z.discriminatedUnion('by', [
   z
     .object({
-      kind: z.literal('role'),
-      role: z.string().min(1),
+      by: z.literal('role'),
+      role: BrowserRoleSchema,
       name: z.string().min(1).optional(),
+      exact: z.boolean().optional(),
     })
     .strict(),
-  z.object({ kind: z.literal('label'), text: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal('text'), text: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal('testId'), testId: z.string().min(1) }).strict(),
+  z
+    .object({
+      by: z.literal('label'),
+      label: z.string().min(1),
+      exact: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({ by: z.literal('text'), text: z.string().min(1), exact: z.boolean().optional() })
+    .strict(),
+  z.object({ by: z.literal('testId'), testId: z.string().min(1) }).strict(),
 ]);
+export type BrowserLocator = z.infer<typeof BrowserLocatorSchema>;
 
-const BrowserActionSchema = z.discriminatedUnion('kind', [
+export const BrowserActionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('goto'), path: BrowserPathSchema }).strict(),
   z.object({ kind: z.literal('click'), locator: BrowserLocatorSchema }).strict(),
   z
@@ -324,19 +420,21 @@ const BrowserActionSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
 ]);
+export type BrowserAction = z.infer<typeof BrowserActionSchema>;
 
-const BrowserAssertionSchema = z.discriminatedUnion('kind', [
+export const BrowserAssertionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('visible'), locator: BrowserLocatorSchema }).strict(),
   z.object({ kind: z.literal('hidden'), locator: BrowserLocatorSchema }).strict(),
   z
     .object({
       kind: z.literal('containsText'),
       locator: BrowserLocatorSchema,
-      text: z.string().min(1),
+      expected: z.string().min(1),
     })
     .strict(),
   z.object({ kind: z.literal('url'), path: BrowserPathSchema }).strict(),
 ]);
+export type BrowserAssertion = z.infer<typeof BrowserAssertionSchema>;
 
 export const BrowserTestPlanSchema = z
   .object({

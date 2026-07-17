@@ -126,7 +126,7 @@ describe('PlaywrightBrowserVerifier', () => {
           action: { kind: 'goto', path: '/items' },
           assertions: [
             { kind: 'url', path: '/items' },
-            { kind: 'visible', locator: { kind: 'label', text: 'Name' } },
+            { kind: 'visible', locator: { by: 'label', label: 'Name' } },
           ],
         },
         {
@@ -134,7 +134,7 @@ describe('PlaywrightBrowserVerifier', () => {
           title: 'Enter created name',
           action: {
             kind: 'fill',
-            locator: { kind: 'label', text: 'Name' },
+            locator: { by: 'label', label: 'Name' },
             value: 'Created item',
           },
           assertions: [],
@@ -142,12 +142,12 @@ describe('PlaywrightBrowserVerifier', () => {
         {
           id: 'create',
           title: 'Create item',
-          action: { kind: 'click', locator: { kind: 'role', role: 'button', name: 'Create' } },
+          action: { kind: 'click', locator: { by: 'role', role: 'button', name: 'Create' } },
           assertions: [
             {
               kind: 'containsText',
-              locator: { kind: 'testId', testId: 'item-row' },
-              text: 'Created item',
+              locator: { by: 'testId', testId: 'item-row' },
+              expected: 'Created item',
             },
           ],
         },
@@ -156,7 +156,7 @@ describe('PlaywrightBrowserVerifier', () => {
           title: 'Enter updated name',
           action: {
             kind: 'fill',
-            locator: { kind: 'label', text: 'Name' },
+            locator: { by: 'label', label: 'Name' },
             value: 'Updated item',
           },
           assertions: [],
@@ -164,27 +164,27 @@ describe('PlaywrightBrowserVerifier', () => {
         {
           id: 'update',
           title: 'Update item',
-          action: { kind: 'click', locator: { kind: 'text', text: 'Update' } },
+          action: { kind: 'click', locator: { by: 'text', text: 'Update' } },
           assertions: [
             {
               kind: 'containsText',
-              locator: { kind: 'testId', testId: 'item-row' },
-              text: 'Updated item',
+              locator: { by: 'testId', testId: 'item-row' },
+              expected: 'Updated item',
             },
           ],
         },
         {
           id: 'delete',
           title: 'Delete item',
-          action: { kind: 'click', locator: { kind: 'text', text: 'Delete' } },
-          assertions: [{ kind: 'hidden', locator: { kind: 'testId', testId: 'item-row' } }],
+          action: { kind: 'click', locator: { by: 'text', text: 'Delete' } },
+          assertions: [{ kind: 'hidden', locator: { by: 'testId', testId: 'item-row' } }],
         },
         {
           id: 'open-done',
           title: 'Open another plan path',
           action: { kind: 'goto', path: '/done' },
           assertions: [
-            { kind: 'visible', locator: { kind: 'role', role: 'heading', name: 'Done' } },
+            { kind: 'visible', locator: { by: 'role', role: 'heading', name: 'Done' } },
             { kind: 'url', path: '/done' },
           ],
         },
@@ -196,6 +196,61 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(requests[0]).toContain(`token=${TOKEN}`);
     expect(requests.at(-1)).toBe('/preview/preview-1/done');
     expectRedacted(report);
+  });
+
+  it('honors exact matching for role, label, and text locators', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`
+        <label>Name <input></label><label>Name details <input></label>
+        <button onclick="document.querySelector('[data-testid=result]').textContent = document.querySelector('input').value">Create</button>
+        <button>Create later</button>
+        <div>Ready</div><div>Ready later</div><div data-testid="result"></div>
+      `);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [
+            { kind: 'visible', locator: { by: 'label', label: 'Name', exact: true } },
+            { kind: 'visible', locator: { by: 'text', text: 'Ready', exact: true } },
+          ],
+        },
+        {
+          id: 'fill',
+          title: 'Fill exact field',
+          action: {
+            kind: 'fill',
+            locator: { by: 'label', label: 'Name', exact: true },
+            value: 'Created item',
+          },
+          assertions: [],
+        },
+        {
+          id: 'create',
+          title: 'Click exact button',
+          action: {
+            kind: 'click',
+            locator: { by: 'role', role: 'button', name: 'Create', exact: true },
+          },
+          assertions: [
+            {
+              kind: 'containsText',
+              locator: { by: 'testId', testId: 'result' },
+              expected: 'Created item',
+            },
+          ],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(true);
+    expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed', 'passed']);
   });
 
   it('fails a missing locator and skips every later step', async () => {
@@ -212,7 +267,7 @@ describe('PlaywrightBrowserVerifier', () => {
         {
           id: 'missing',
           title: 'Click missing button',
-          action: { kind: 'click', locator: { kind: 'text', text: 'Missing' } },
+          action: { kind: 'click', locator: { by: 'text', text: 'Missing' } },
           assertions: [],
         },
         {
@@ -252,7 +307,7 @@ describe('PlaywrightBrowserVerifier', () => {
     );
 
     expect(report.approved).toBe(false);
-    expect(report.steps[0]?.status).toBe('passed');
+    expect(report.steps[0]?.status).toBe('failed');
     expect(report.steps[0]?.observations.map(({ kind }) => kind)).toEqual(
       expect.arrayContaining(['http-error', 'console-error', 'uncaught-exception']),
     );
@@ -286,7 +341,7 @@ describe('PlaywrightBrowserVerifier', () => {
           title: 'Open fixture',
           action: { kind: 'goto', path: '/' },
           assertions: [
-            { kind: 'visible', locator: { kind: 'role', role: 'heading', name: 'Fixture' } },
+            { kind: 'visible', locator: { by: 'role', role: 'heading', name: 'Fixture' } },
           ],
         },
       ]),
@@ -295,7 +350,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(sentinelRequests).toBe(0);
     expect(sentinelUpgrades).toBe(0);
     expect(report.approved).toBe(false);
-    expect(report.steps[0]?.status).toBe('passed');
+    expect(report.steps[0]?.status).toBe('failed');
     expect(report.steps[0]?.observations.some(({ kind }) => kind === 'policy-block')).toBe(true);
     expect(
       report.steps[0]?.observations.some(
@@ -336,8 +391,8 @@ describe('PlaywrightBrowserVerifier', () => {
           assertions: [
             {
               kind: 'containsText',
-              locator: { kind: 'role', role: 'heading' },
-              text: 'Connected',
+              locator: { by: 'role', role: 'heading' },
+              expected: 'Connected',
             },
           ],
         },
@@ -472,18 +527,67 @@ describe('PlaywrightBrowserVerifier', () => {
           id: 'open',
           title: 'Open fixture',
           action: { kind: 'goto', path: '/' },
-          assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading' } }],
+          assertions: [{ kind: 'visible', locator: { by: 'role', role: 'heading' } }],
         },
         {
           id: 'trigger',
           title: 'Trigger failure',
-          action: { kind: 'click', locator: { kind: 'text', text: 'Trigger failure' } },
+          action: { kind: 'click', locator: { by: 'text', text: 'Trigger failure' } },
           assertions: [],
         },
       ]),
     );
 
     expect(report.approved).toBe(false);
+    expect(report.steps[1]?.observations.some(({ kind }) => kind === 'http-error')).toBe(true);
+  });
+
+  it('fails the active step on a passive failure and skips later side effects', async () => {
+    let laterSideEffects = 0;
+    const origin = await serve((request, response) => {
+      if (request.url === '/preview/preview-1/failure') {
+        response.statusCode = 500;
+        response.end('failed');
+        return;
+      }
+      if (request.url === '/preview/preview-1/later-side-effect') {
+        laterSideEffects += 1;
+        response.end('unexpected');
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end(`
+        <button onclick="fetch('/preview/preview-1/failure')">Trigger failure</button>
+        <button onclick="fetch('/preview/preview-1/later-side-effect')">Later side effect</button>
+      `);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'failure',
+          title: 'Trigger passive failure',
+          action: { kind: 'click', locator: { by: 'text', text: 'Trigger failure' } },
+          assertions: [],
+        },
+        {
+          id: 'side-effect',
+          title: 'Perform later side effect',
+          action: { kind: 'click', locator: { by: 'text', text: 'Later side effect' } },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(laterSideEffects).toBe(0);
+    expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed', 'skipped']);
     expect(report.steps[1]?.observations.some(({ kind }) => kind === 'http-error')).toBe(true);
   });
 
@@ -505,8 +609,8 @@ describe('PlaywrightBrowserVerifier', () => {
           assertions: [
             {
               kind: 'containsText',
-              locator: { kind: 'testId', testId: 'status' },
-              text: 'Ready',
+              locator: { by: 'testId', testId: 'status' },
+              expected: 'Ready',
             },
           ],
         },
@@ -595,7 +699,7 @@ describe('PlaywrightBrowserVerifier', () => {
         {
           id: 'popup',
           title: 'Open popup',
-          action: { kind: 'click', locator: { kind: 'text', text: 'Open popup' } },
+          action: { kind: 'click', locator: { by: 'text', text: 'Open popup' } },
           assertions: [],
         },
       ]),
@@ -633,7 +737,7 @@ describe('PlaywrightBrowserVerifier', () => {
         {
           id: 'trigger',
           title: 'Trigger delayed failure',
-          action: { kind: 'click', locator: { kind: 'text', text: 'Trigger failure' } },
+          action: { kind: 'click', locator: { by: 'text', text: 'Trigger failure' } },
           assertions: [],
         },
       ]),
@@ -665,7 +769,7 @@ describe('PlaywrightBrowserVerifier', () => {
           id: 'open',
           title: 'Open fixture',
           action: { kind: 'goto', path: '/' },
-          assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading' } }],
+          assertions: [{ kind: 'visible', locator: { by: 'role', role: 'heading' } }],
         },
       ]),
     );
@@ -705,7 +809,7 @@ describe('PlaywrightBrowserVerifier', () => {
         {
           id: 'popup',
           title: 'Open allowed popup',
-          action: { kind: 'click', locator: { kind: 'text', text: 'Open allowed popup' } },
+          action: { kind: 'click', locator: { by: 'text', text: 'Open allowed popup' } },
           assertions: [],
         },
       ]),
@@ -743,7 +847,7 @@ describe('PlaywrightBrowserVerifier', () => {
         {
           id: 'click',
           title: 'Stay on fixture',
-          action: { kind: 'click', locator: { kind: 'text', text: 'Stay here' } },
+          action: { kind: 'click', locator: { by: 'text', text: 'Stay here' } },
           assertions: [],
         },
       ]),
@@ -775,7 +879,7 @@ describe('PlaywrightBrowserVerifier', () => {
           title: 'Open created resource',
           action: { kind: 'goto', path: '/' },
           assertions: [
-            { kind: 'visible', locator: { kind: 'role', role: 'heading', name: 'Created' } },
+            { kind: 'visible', locator: { by: 'role', role: 'heading', name: 'Created' } },
           ],
         },
       ]),
@@ -800,7 +904,7 @@ describe('PlaywrightBrowserVerifier', () => {
           title: 'Open polling fixture',
           action: { kind: 'goto', path: '/' },
           assertions: [
-            { kind: 'visible', locator: { kind: 'role', role: 'heading', name: 'Polling' } },
+            { kind: 'visible', locator: { by: 'role', role: 'heading', name: 'Polling' } },
           ],
         },
       ]),
@@ -829,20 +933,20 @@ describe('PlaywrightBrowserVerifier', () => {
           id: 'open',
           title: 'Open fixture',
           action: { kind: 'goto', path: '/' },
-          assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading' } }],
+          assertions: [{ kind: 'visible', locator: { by: 'role', role: 'heading' } }],
         },
         ...[0, 1, 2, 3].map((index) => ({
           id: `wait-${index}`,
           title: `Wait for marker ${index}`,
           action: {
             kind: 'fill' as const,
-            locator: { kind: 'label' as const, text: 'Name' },
+            locator: { by: 'label' as const, label: 'Name' },
             value: String(index),
           },
           assertions: [
             {
               kind: 'visible' as const,
-              locator: { kind: 'testId' as const, testId: `ready-${index}` },
+              locator: { by: 'testId' as const, testId: `ready-${index}` },
             },
           ],
         })),
