@@ -136,10 +136,11 @@ describe('conversation aggregate contracts (#36)', () => {
 
   it('parses the canonical project conversation', () => {
     const conversation = {
-      id: 'conversation-1',
+      id: 'project-1',
       projectId: 'project-1',
       createdAt,
     };
     expect(ConversationSchema.parse(conversation)).toEqual(conversation);
+    expect(() => ConversationSchema.parse({ ...conversation, id: 'conversation-1' })).toThrow();
   });
 });

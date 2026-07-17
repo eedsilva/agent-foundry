@@ -202,6 +202,11 @@ describe('ConversationService', () => {
     expect(first.nextCursor).toBe(2);
     expect(second.messages.map((message) => message.sequence)).toEqual([3, 4]);
     expect(second.nextCursor).toBeNull();
+    await service.createOperation(project.id, first.messages[0]!.id, {
+      kind: 'build',
+      idempotencyKey: 'a'.repeat(64),
+      artifactReferences: [],
+    });
 
     const restarted = new ConversationService(
       projects,
@@ -215,6 +220,12 @@ describe('ConversationService', () => {
     expect(exported.schemaVersion).toBe('1');
     expect(exported.project).toEqual(project);
     expect(exported.messages.map((message) => message.sequence)).toEqual([1, 2, 3, 4]);
+    expect(
+      exported.operations.every((operation) =>
+        exported.messages.some((message) => message.id === operation.messageId),
+      ),
+    ).toBe(true);
+    expect(conversations.snapshotReads).toBe(1);
   });
 });
 
@@ -301,6 +312,7 @@ class MemoryArtifacts implements ArtifactStore {
 
 class MemoryConversations implements ConversationRepository {
   conversationCreates = 0;
+  snapshotReads = 0;
   private readonly conversations = new Map<string, Conversation>();
   private readonly messages: Message[] = [];
   private readonly attachments: Attachment[] = [];
@@ -314,6 +326,16 @@ class MemoryConversations implements ConversationRepository {
 
   getConversation(projectId: string): Promise<Conversation | null> {
     return Promise.resolve(this.conversations.get(projectId) ?? null);
+  }
+
+  getSnapshot(projectId: string) {
+    this.snapshotReads += 1;
+    return Promise.resolve({
+      conversation: this.conversations.get(projectId) ?? null,
+      messages: this.messages.filter((message) => message.projectId === projectId),
+      attachments: this.attachments.filter((attachment) => attachment.projectId === projectId),
+      operations: this.operations.filter((operation) => operation.projectId === projectId),
+    });
   }
 
   appendMessage(message: Omit<Message, 'sequence'>): Promise<Message> {

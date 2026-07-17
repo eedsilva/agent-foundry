@@ -18,7 +18,11 @@ export const ConversationSchema = z
     projectId: PathSegmentSchema,
     createdAt: z.string().datetime(),
   })
-  .strict();
+  .strict()
+  .refine((conversation) => conversation.id === conversation.projectId, {
+    message: 'Must match projectId',
+    path: ['id'],
+  });
 export type Conversation = z.infer<typeof ConversationSchema>;
 
 export const MessageSchema = z

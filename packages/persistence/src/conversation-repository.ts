@@ -16,10 +16,12 @@ import {
   redactString,
   redactUnknown,
   type ConversationRepository,
+  type ConversationSnapshot,
 } from '@agent-foundry/domain';
 import {
-  appendJsonLine,
   atomicWriteJson,
+  atomicWriteText,
+  exists,
   readJsonLines,
   readJsonOrNull,
   safeSegment,
@@ -27,13 +29,13 @@ import {
 } from './fs-utils.js';
 
 export class FileConversationRepository implements ConversationRepository {
-  constructor(private readonly dataDir: string) {}
+  constructor(
+    private readonly dataDir: string,
+    private readonly writeText: (path: string, value: string) => Promise<void> = atomicWriteText,
+  ) {}
 
   async createConversation(conversation: Conversation): Promise<void> {
     const parsed = ConversationSchema.parse(conversation);
-    if (parsed.id !== parsed.projectId) {
-      throw new ValidationError('Conversation id must match projectId');
-    }
     await this.withLock(parsed.projectId, async () => {
       const existing = await this.getConversation(parsed.projectId);
       if (existing) {
@@ -49,6 +51,19 @@ export class FileConversationRepository implements ConversationRepository {
   async getConversation(projectId: string): Promise<Conversation | null> {
     const value = await readJsonOrNull<unknown>(this.conversationPath(projectId));
     return value === null ? null : ConversationSchema.parse(value);
+  }
+
+  async getSnapshot(projectId: string): Promise<ConversationSnapshot> {
+    const safeProjectId = safeSegment(projectId);
+    if (!(await exists(this.rootFor(safeProjectId)))) {
+      return { conversation: null, messages: [], attachments: [], operations: [] };
+    }
+    return this.withLock(safeProjectId, async () => ({
+      conversation: await this.getConversation(safeProjectId),
+      messages: await this.readMessages(safeProjectId),
+      attachments: await this.readAttachments(safeProjectId),
+      operations: await this.readOperations(safeProjectId),
+    }));
   }
 
   async appendMessage(message: Omit<Message, 'sequence'>): Promise<Message> {
@@ -71,7 +86,7 @@ export class FileConversationRepository implements ConversationRepository {
           return block;
         }),
       });
-      await appendJsonLine(this.messagesPath(projectId), redacted);
+      await this.writeJsonLines(this.messagesPath(projectId), [...existing, redacted]);
       return redacted;
     });
   }
@@ -99,7 +114,7 @@ export class FileConversationRepository implements ConversationRepository {
       if (existing.some((item) => item.id === parsed.id)) {
         throw new Error(`Attachment ${parsed.id} already exists`);
       }
-      await appendJsonLine(this.attachmentsPath(parsed.projectId), redacted);
+      await this.writeJsonLines(this.attachmentsPath(parsed.projectId), [...existing, redacted]);
       return redacted;
     });
   }
@@ -131,7 +146,7 @@ export class FileConversationRepository implements ConversationRepository {
         }
         return existing;
       }
-      await appendJsonLine(this.operationsPath(parsed.projectId), parsed);
+      await this.writeJsonLines(this.operationsPath(parsed.projectId), [...operations, parsed]);
       return parsed;
     });
   }
@@ -164,6 +179,10 @@ export class FileConversationRepository implements ConversationRepository {
     return (await readJsonLines<unknown>(this.operationsPath(projectId))).map((value) =>
       OperationSchema.parse(value),
     );
+  }
+
+  private writeJsonLines(path: string, values: unknown[]): Promise<void> {
+    return this.writeText(path, `${values.map((value) => JSON.stringify(value)).join('\n')}\n`);
   }
 
   private rootFor(projectId: string): string {

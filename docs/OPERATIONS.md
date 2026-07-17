@@ -195,6 +195,8 @@ DATA_DIR/projects/<projectId>/conversation/
 └── operations.jsonl
 ```
 
+Os três JSONLs são append-only no modelo, mas cada write publica o arquivo completo por temp file sincronizado + rename atômico enquanto segura o lock da conversa. Assim, depois de crash, o path live contém o estado completo anterior ou o novo; arquivos `.tmp` órfãos não participam da reconstrução.
+
 Cada mensagem persistida recebe um `sequence` positivo. `GET /projects/:projectId/conversation?cursor=<sequence>&limit=<n>` usa um cursor não negativo e exclusivo: `cursor=0` começa na primeira mensagem, e os demais valores retornam mensagens depois do sequence informado. O default é `cursor=0`; `limit` tem default `50` e máximo `200`. `nextCursor` é o último sequence da página quando há mais mensagens. O response também inclui toda a metadata de attachments e operações da conversa.
 
 `GET /projects/:projectId/conversation/stream` emite mensagens persistidas com `id: <sequence>`. Para reconnect, envie `?cursor=<sequence>` ou `Last-Event-ID`; query vence o header. Ambos são cursores não negativos e exclusivos, e `0` começa na primeira mensagem. O servidor lê até 500 mensagens por poll de um segundo e envia heartbeat a cada 15 segundos. Como o cursor é exclusivo, reconnect após o último id recebido não repete esse frame.
@@ -203,7 +205,7 @@ Crie metadata em `POST /projects/:projectId/conversation/attachments` antes de r
 
 Ao criar uma operação em `POST /projects/:projectId/conversation/messages/:messageId/operations`, envie `idempotencyKey` com exatamente 64 caracteres hexadecimais minúsculos (`0-9`, `a-f`); formato inválido retorna `400`. Reuse a mesma chave somente para o mesmo input. Retry idêntico retorna a operação original; mudança de message, kind ou links com a mesma chave retorna `409`. O endpoint apenas persiste a operação tipada: classificação fica em #38 e execução/lifecycle em #39.
 
-Use `GET /projects/:projectId/export` para obter schema v1 com project, conversation e todos os messages, attachments e operations. Texto/data de mensagem e nome de attachment já foram redigidos no write, mas trate o export e todo `DATA_DIR` como sensíveis.
+Use `GET /projects/:projectId/export` para obter schema v1 com project e um snapshot coerente de conversation, messages, attachments e operations lido sob o lock da conversa. Um writer concorrente fica inteiro antes ou depois do snapshot; o export não inclui uma operação sem sua mensagem já persistida. Para projetos legados sem diretório `conversation/`, o snapshot vazio continua sem criar storage. Texto/data de mensagem e nome de attachment já foram redigidos no write, mas trate o export e todo `DATA_DIR` como sensíveis.
 
 Não há migração. Para rollback, pare API e outros writers do `DATA_DIR` e faça snapshot. O binário antigo ignora a árvore aditiva `conversation/`; ela pode permanecer sem uso para um upgrade posterior. Restaure o snapshot pré-upgrade somente quando precisar remover os novos records, e não misture writers antigos e novos.
 

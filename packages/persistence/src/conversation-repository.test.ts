@@ -1,10 +1,11 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Attachment, Conversation, Operation } from '@agent-foundry/contracts';
 import { IdempotencyConflictError } from '@agent-foundry/domain';
 import { FileConversationRepository } from './conversation-repository.js';
+import { atomicWriteText } from './fs-utils.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -57,6 +58,20 @@ function operation(overrides: Partial<Operation> = {}): Operation {
 }
 
 describe('FileConversationRepository', () => {
+  it('rejects a persisted conversation whose id differs from its project', async () => {
+    const dataDir = await temporaryDataDir();
+    const root = join(dataDir, 'projects', 'project-1', 'conversation');
+    await mkdir(root, { recursive: true });
+    await writeFile(
+      join(root, 'conversation.json'),
+      `${JSON.stringify({ ...conversation, id: 'other-conversation' })}\n`,
+    );
+
+    await expect(
+      new FileConversationRepository(dataDir).getConversation('project-1'),
+    ).rejects.toThrow();
+  });
+
   it('recovers an abandoned conversation lock before creating the aggregate', async () => {
     const dataDir = await temporaryDataDir();
     const lockPath = join(dataDir, 'projects', 'project-1', 'conversation', '.lock');
@@ -177,5 +192,107 @@ describe('FileConversationRepository', () => {
     );
     expect(persisted.join('\n')).not.toContain(secret);
     await expect(access(join(root, 'conversation.json'))).resolves.toBeUndefined();
+  });
+
+  it('keeps the prior JSONL reconstructable when atomic replacement is interrupted', async () => {
+    const dataDir = await temporaryDataDir();
+    const repository = new FileConversationRepository(dataDir);
+    await repository.createConversation(conversation);
+    await repository.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'first' }],
+      createdAt,
+    });
+
+    const interrupted = new FileConversationRepository(dataDir, async (path, value) => {
+      await writeFile(`${path}.interrupted.tmp`, value);
+      throw new Error('simulated interruption before rename');
+    });
+    await expect(
+      interrupted.appendMessage({
+        id: 'message-2',
+        projectId: 'project-1',
+        conversationId: 'project-1',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'second' }],
+        createdAt,
+      }),
+    ).rejects.toThrow('simulated interruption before rename');
+
+    const restarted = new FileConversationRepository(dataDir);
+    await expect(restarted.listMessages('project-1')).resolves.toMatchObject([
+      { id: 'message-1', sequence: 1 },
+    ]);
+    expect(await readdir(join(dataDir, 'projects', 'project-1', 'conversation'))).toContain(
+      'messages.jsonl.interrupted.tmp',
+    );
+
+    await restarted.appendMessage({
+      id: 'message-2',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'second' }],
+      createdAt,
+    });
+    await expect(restarted.listMessages('project-1')).resolves.toMatchObject([
+      { id: 'message-1', sequence: 1 },
+      { id: 'message-2', sequence: 2 },
+    ]);
+  });
+
+  it('takes one locked aggregate snapshot without creating legacy storage', async () => {
+    const legacyDataDir = await temporaryDataDir();
+    const legacy = new FileConversationRepository(legacyDataDir);
+    await expect(legacy.getSnapshot('legacy-project')).resolves.toEqual({
+      conversation: null,
+      messages: [],
+      attachments: [],
+      operations: [],
+    });
+    await expect(
+      access(join(legacyDataDir, 'projects', 'legacy-project', 'conversation')),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const dataDir = await temporaryDataDir();
+    let releaseOperation!: () => void;
+    const operationRelease = new Promise<void>((resolve) => {
+      releaseOperation = resolve;
+    });
+    let operationWriteStarted!: () => void;
+    const operationStarted = new Promise<void>((resolve) => {
+      operationWriteStarted = resolve;
+    });
+    const repository = new FileConversationRepository(dataDir, async (path, value) => {
+      if (path.endsWith('operations.jsonl')) {
+        operationWriteStarted();
+        await operationRelease;
+      }
+      await atomicWriteText(path, value);
+    });
+    await repository.createConversation(conversation);
+    await repository.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'build it' }],
+      createdAt,
+    });
+
+    const operationWrite = repository.createOperation(operation());
+    await operationStarted;
+    const snapshot = repository.getSnapshot('project-1');
+    releaseOperation();
+
+    await operationWrite;
+    const captured = await snapshot;
+    expect(captured.operations).toHaveLength(1);
+    expect(captured.messages.map((message) => message.id)).toContain(
+      captured.operations[0]!.messageId,
+    );
   });
 });

@@ -49,19 +49,19 @@ Issue #36 adds one lazy canonical conversation per project with ordered messages
 
 Deterministic evidence is split by boundary:
 
-- `packages/contracts/src/conversation.test.ts` and `packages/contracts/src/api.test.ts` validate roles, content variants, operation kinds/links, project-scoped attachment access, bare lowercased MIME types, create requests, pages, and exports.
-- `packages/persistence/src/conversation-repository.test.ts` validates filesystem reconstruction, concurrent contiguous sequence assignment, stable exclusive cursors, write-time redaction, recoverable locking, and same/different-input operation idempotency semantics.
-- `packages/orchestrator/src/conversation-service.test.ts` validates lazy read without migration/write, cross-project attachment rejection, missing-run and artifact-hash mismatch rejection, paging, and complete export.
+- `packages/contracts/src/conversation.test.ts` and `packages/contracts/src/api.test.ts` validate roles, content variants, operation kinds/links, canonical `conversation.id === projectId`, project-scoped attachment access, bare lowercased MIME types, create requests, pages, and exports.
+- `packages/persistence/src/conversation-repository.test.ts` validates malformed persisted-conversation rejection, filesystem reconstruction, concurrent contiguous sequence assignment, stable exclusive cursors, write-time redaction, recoverable locking, interrupted atomic replacement with harmless orphan temp state, a coherent aggregate snapshot against a blocked writer, legacy snapshot reads without directory creation, and same/different-input operation idempotency semantics.
+- `packages/orchestrator/src/conversation-service.test.ts` validates lazy read without migration/write, cross-project attachment rejection, missing-run and artifact-hash mismatch rejection, paging, and export through the repository snapshot with operation-to-message referential consistency.
 - `apps/api/src/conversation.test.ts` validates routes, empty message text and negative cursor rejection, parameterized attachment media-type rejection, cross-project attachment denial, concurrent retries, `409` conflicts, redacted disk/export data, query-over-header SSE precedence, restart replay without duplicates, and replay beyond the 500-message poll batch.
 - `apps/api/src/events-stream.test.ts` remains green, proving the shared SSE helper preserves the existing project-event stream.
 
-The persisted layout is `DATA_DIR/projects/<projectId>/conversation/{conversation.json,messages.jsonl,attachments.jsonl,operations.jsonl}`. Message sequences are positive. HTTP and SSE cursors are exclusive nonnegative sequence numbers; cursor `0` starts at the first message, and `?cursor=` wins over `Last-Event-ID`. Existing projects derive their conversation on reads and exports, then persist it on the first conversation write without backfill.
+The persisted layout is `DATA_DIR/projects/<projectId>/conversation/{conversation.json,messages.jsonl,attachments.jsonl,operations.jsonl}`. JSONL records are logically append-only but physically published by atomic complete-file replacement under the conversation lock. Message sequences are positive. HTTP and SSE cursors are exclusive nonnegative sequence numbers; cursor `0` starts at the first message, and `?cursor=` wins over `Last-Event-ID`. Export reads one lock-protected aggregate snapshot. Existing projects derive their conversation on reads and exports, then persist it on the first conversation write without backfill or read-time directory creation.
 
 Project scoping is an aggregate integrity check, not caller authentication. Attachment records contain only client-declared metadata with bare MIME `type/subtype`; no blob is stored or inspected. Redaction is best-effort and occurs before writing message text/data and attachment names, so tests assert both exported and raw persisted records exclude their seeded secret values.
 
 Full-gate results on this branch:
 
-- `npm run check` passed Prettier, ESLint, the 11-workspace architecture check and its two tests, roadmap validation for 16 milestones / 114 tasks / 131 managed issues plus eight roadmap/governance tests, TypeScript, 64 Vitest files / 596 tests, 42 Node script tests, all eight package builds, API, worker, and the Next.js production build.
+- `npm run check` passed Prettier, ESLint, the 11-workspace architecture check and its two tests, roadmap validation for 16 milestones / 114 tasks / 131 managed issues plus eight roadmap/governance tests, TypeScript, 64 Vitest files / 599 tests, 42 Node script tests, all eight package builds, API, worker, and the Next.js production build.
 - `npm run doctor` passed in mock mode.
 - `git diff --check` passed.
 

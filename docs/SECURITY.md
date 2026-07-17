@@ -113,7 +113,7 @@ Portanto, `DATA_DIR` pode conter dados sensíveis. Não o publique nem o envie i
 
 ## Conversas e attachments
 
-Texto e data blocks de mensagens e o nome opcional de attachments passam pelo redactor antes do append em `DATA_DIR/projects/<projectId>/conversation/`. A API, o replay SSE e o export leem os valores já redigidos. A proteção é best-effort: padrões ou nomes de campo desconhecidos podem atravessar o filtro, e redaction não corrige dados escritos anteriormente em outras árvores.
+Texto e data blocks de mensagens e o nome opcional de attachments passam pelo redactor antes da persistência em `DATA_DIR/projects/<projectId>/conversation/`. A API, o replay SSE e o export leem os valores já redigidos. A proteção é best-effort: padrões ou nomes de campo desconhecidos podem atravessar o filtro, e redaction não corrige dados escritos anteriormente em outras árvores.
 
 Attachments persistem somente metadata: kind, nome opcional, MIME bare `type/subtype` sem parâmetros, SHA-256, tamanho e access scope do projeto. Não existe upload nem armazenamento de blob neste slice (#43). MIME, hash e tamanho são declarações do cliente; não provam conteúdo seguro.
 

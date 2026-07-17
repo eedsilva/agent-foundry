@@ -17,7 +17,7 @@ import {
 
 const conversationCreatedAt = '2026-07-17T12:00:00.000Z';
 const conversation = {
-  id: 'conversation-1',
+  id: 'project-1',
   projectId: 'project-1',
   createdAt: conversationCreatedAt,
 };

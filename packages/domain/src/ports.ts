@@ -43,6 +43,7 @@ export interface ProjectRepository {
 export interface ConversationRepository {
   createConversation(conversation: Conversation): Promise<void>;
   getConversation(projectId: string): Promise<Conversation | null>;
+  getSnapshot(projectId: string): Promise<ConversationSnapshot>;
   appendMessage(message: Omit<Message, 'sequence'>): Promise<Message>;
   listMessages(
     projectId: string,
@@ -53,6 +54,13 @@ export interface ConversationRepository {
   listAttachments(projectId: string): Promise<Attachment[]>;
   createOperation(operation: Operation): Promise<Operation>;
   listOperations(projectId: string): Promise<Operation[]>;
+}
+
+export interface ConversationSnapshot {
+  conversation: Conversation | null;
+  messages: Message[];
+  attachments: Attachment[];
+  operations: Operation[];
 }
 
 export interface WorkflowRunRepository {

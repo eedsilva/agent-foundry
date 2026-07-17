@@ -169,13 +169,20 @@ export class ConversationService {
 
   async export(projectId: string): Promise<ProjectExportResponse> {
     const project = await this.requireProject(projectId);
+    const snapshot = await this.conversations.getSnapshot(projectId);
     return ProjectExportResponseSchema.parse({
       schemaVersion: '1',
       project,
-      conversation: await this.conversationFor(project),
-      messages: await this.conversations.listMessages(projectId),
-      attachments: await this.conversations.listAttachments(projectId),
-      operations: await this.conversations.listOperations(projectId),
+      conversation:
+        snapshot.conversation ??
+        ConversationSchema.parse({
+          id: project.id,
+          projectId: project.id,
+          createdAt: project.createdAt,
+        }),
+      messages: snapshot.messages,
+      attachments: snapshot.attachments,
+      operations: snapshot.operations,
     });
   }
 
