@@ -43,6 +43,28 @@ The storage boundary is `DATA_DIR/previews/<sessionId>/`; raw access tokens are 
 
 Migration coverage intentionally has no legacy fixture because the previous implementation persisted no preview sessions. Operational evidence requires stopping old preview processes before upgrade. Rollback/recovery and the same-host PID-lock assumption are recorded in `OPERATIONS.md` and ADR 0018.
 
+## Persistent conversation domain — 2026-07-17
+
+Issue #36 adds one lazy canonical conversation per project with ordered messages, project-scoped attachment metadata, idempotent operation records, persisted SSE replay, and a schema-version-1 project export. The implementation deliberately excludes attachment blobs/UI (#43), conversation classification (#38), and operation execution lifecycle (#39).
+
+Deterministic evidence is split by boundary:
+
+- `packages/contracts/src/conversation.test.ts` and `packages/contracts/src/api.test.ts` validate roles, content variants, operation kinds/links, project-scoped attachment access, bare lowercased MIME types, create requests, pages, and exports.
+- `packages/persistence/src/conversation-repository.test.ts` validates filesystem reconstruction, concurrent contiguous sequence assignment, stable exclusive cursors, duplicate protection, write-time redaction, recoverable locking, and same/different-input idempotency semantics.
+- `packages/orchestrator/src/conversation-service.test.ts` validates lazy read without migration/write, cross-project attachment/run/artifact rejection, paging, and complete export.
+- `apps/api/src/conversation.test.ts` validates routes, canonical cursor limits, cross-project denial, concurrent retries, `409` conflicts, redacted disk/export data, query-over-header SSE precedence, restart replay without duplicates, and replay beyond the 500-message poll batch.
+- `apps/api/src/events-stream.test.ts` remains green, proving the shared SSE helper preserves the existing project-event stream.
+
+The persisted layout is `DATA_DIR/projects/<projectId>/conversation/{conversation.json,messages.jsonl,attachments.jsonl,operations.jsonl}`. Message and SSE cursors are exclusive positive sequences; `?cursor=` wins over `Last-Event-ID`. Existing projects derive their conversation on reads and exports, then persist it on the first conversation write without backfill.
+
+Project scoping is an aggregate integrity check, not caller authentication. Attachment records contain only client-declared metadata with bare MIME `type/subtype`; no blob is stored or inspected. Redaction is best-effort and occurs before writing message text/data and attachment names, so tests assert both exported and raw persisted records exclude their seeded secret values.
+
+Full-gate results on this branch:
+
+- `npm run check` passed Prettier, ESLint, the 11-workspace architecture check and its two tests, roadmap validation for 16 milestones / 114 tasks / 131 managed issues plus eight roadmap/governance tests, TypeScript, 64 Vitest files / 596 tests, 42 Node script tests, all eight package builds, API, worker, and the Next.js production build.
+- `npm run doctor` passed in mock mode.
+- `git diff --check` passed.
+
 ## Real provider canary baseline — 2026-07-14
 
 The versioned v0.2 baseline invoked Codex, Claude Code and AGY independently for planning, greenfield implementation and repository repair. All nine runs passed. Planning produced no diff; every mutation scenario passed `node --test`, `git diff --check` and its exact file allowlist.
