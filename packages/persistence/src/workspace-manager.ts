@@ -9,6 +9,22 @@ export interface FileWorkspaceManagerOptions {
   gitAuthorEmail: string;
 }
 
+/**
+ * Git branch names may legitimately contain `/` for hierarchy (`branch/foo`),
+ * unlike a single filesystem path segment, so this validates each `/`-separated
+ * component with the same character class `safeSegment` uses instead of
+ * rejecting `/` outright.
+ */
+function safeBranchName(value: string): string {
+  const segments = value.split('/');
+  const safe = segments.every(
+    (segment) =>
+      segment !== '' && segment !== '.' && segment !== '..' && /^[a-zA-Z0-9._-]+$/.test(segment),
+  );
+  if (!safe) throw new Error(`Unsafe branch name: ${value}`);
+  return value;
+}
+
 export class FileWorkspaceManager implements WorkspaceManager {
   constructor(
     private readonly dataDir: string,
@@ -206,14 +222,18 @@ export class FileWorkspaceManager implements WorkspaceManager {
 
   async restoreTree(projectId: string, ref: string): Promise<void> {
     const cwd = this.workspacePath(projectId);
-    await execa('git', ['checkout', ref, '--', '.'], { cwd });
+    // `checkout ref -- .` only updates paths present in ref; it never deletes
+    // a path that exists in the working tree but not in ref. `read-tree
+    // --reset -u` replaces the index and working tree wholesale to match ref
+    // exactly (added, modified, and removed), without moving HEAD.
+    await execa('git', ['read-tree', '--reset', '-u', ref], { cwd });
   }
 
   async createBranch(projectId: string, ref: string, name: string): Promise<string> {
     const cwd = this.workspacePath(projectId);
-    await execa('git', ['branch', safeSegment(name), ref], { cwd });
-    const head = await execa('git', ['rev-parse', ref], { cwd });
-    return head.stdout.trim();
+    await execa('git', ['branch', safeBranchName(name), ref], { cwd });
+    const refSha = await execa('git', ['rev-parse', ref], { cwd });
+    return refSha.stdout.trim();
   }
 
   async readPrd(projectId: string): Promise<string> {

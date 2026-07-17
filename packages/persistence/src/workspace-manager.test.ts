@@ -206,6 +206,26 @@ describe('FileWorkspaceManager version primitives', () => {
     expect(await manager.head(projectId)).toBe(latest);
   });
 
+  it('restoreTree removes a file that was added after the target ref', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'a.txt'), 'a\n');
+    const old = await manager.checkpoint(projectId, 'a-only');
+    await writeFile(join(workspace, 'b.txt'), 'b\n');
+    await manager.checkpoint(projectId, 'adds-b');
+
+    await manager.restoreTree(projectId, old);
+
+    await expect(readFile(join(workspace, 'b.txt'), 'utf8')).rejects.toThrow();
+    expect(await readFile(join(workspace, 'a.txt'), 'utf8')).toBe('a\n');
+  });
+
   it('createBranch creates a branch pointing at an old commit without moving the current branch', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
     const manager = new FileWorkspaceManager(dataDir, {
@@ -227,5 +247,41 @@ describe('FileWorkspaceManager version primitives', () => {
     expect((await execa('git', ['rev-parse', 'revert-branch-1'], { cwd: workspace })).stdout).toBe(
       old,
     );
+  });
+
+  it('createBranch accepts a hierarchical name containing a slash', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'work.txt'), 'old\n');
+    const old = await manager.checkpoint(projectId, 'old');
+
+    const result = await manager.createBranch(projectId, old, 'branch/my-feature');
+
+    expect(result).toBe(old);
+    expect(
+      (await execa('git', ['rev-parse', 'branch/my-feature'], { cwd: workspace })).stdout,
+    ).toBe(old);
+  });
+
+  it('createBranch rejects a name that escapes the refs namespace', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'work.txt'), 'old\n');
+    const old = await manager.checkpoint(projectId, 'old');
+
+    await expect(manager.createBranch(projectId, old, '../escape')).rejects.toThrow();
+    await expect(manager.createBranch(projectId, old, 'a/../../escape')).rejects.toThrow();
   });
 });

@@ -8,7 +8,7 @@ import {
   type WorkspaceManager,
 } from '@agent-foundry/domain';
 
-interface RecordFromStepInput {
+export interface RecordFromStepInput {
   projectId: string;
   runId: string;
   stepRunId: string;
@@ -32,23 +32,14 @@ export class ProjectVersionService {
   ) {}
 
   async recordFromStep(input: RecordFromStepInput): Promise<ProjectVersion> {
-    const version: ProjectVersion = {
-      schemaVersion: '1',
-      id: this.ids.next(),
-      projectId: input.projectId,
-      sequence: await this.nextSequence(input.projectId),
-      kind: 'run',
+    const version = await this.buildVersion(input.projectId, 'run', {
       runId: input.runId,
       stepRunId: input.stepRunId,
       attemptId: input.attemptId,
       commit: input.commit,
       ...(input.previewSessionId ? { previewSessionId: input.previewSessionId } : {}),
-      artifacts: await this.artifactSnapshot(input.projectId),
       ...(input.label ? { label: input.label } : {}),
-      protected: false,
-      version: 1,
-      createdAt: this.clock.now().toISOString(),
-    };
+    });
     await this.versions.create(version);
     return version;
   }
@@ -67,25 +58,26 @@ export class ProjectVersionService {
     return { diff: await this.workspaces.diff(projectId, from.commit, to.commit) };
   }
 
+  /**
+   * ponytail: revert/branchFrom mutate the shared git working tree with no
+   * lock coordinating against an in-flight WorkflowOrchestrator step on the
+   * same project (checkpoint/commit/rollback have never been locked either —
+   * this app has always assumed one active mutator per project). Calling
+   * revert or branch while a run is actively executing a mutating step can
+   * corrupt that step's checkpoint semantics. Upgrade path: guard on the
+   * project having no in-flight run, or take a per-project workspace lock,
+   * if concurrent use becomes real (see ADR 0019).
+   */
   async revert(projectId: string, toVersionId: string): Promise<ProjectVersion> {
     const target = await this.requireVersion(projectId, toVersionId);
     await this.workspaces.restoreTree(projectId, target.commit);
     const commit =
       (await this.workspaces.commit(projectId, `revert to ${target.id}`)) ??
       (await this.workspaces.head(projectId))!;
-    const version: ProjectVersion = {
-      schemaVersion: '1',
-      id: this.ids.next(),
-      projectId,
-      sequence: await this.nextSequence(projectId),
-      kind: 'revert',
+    const version = await this.buildVersion(projectId, 'revert', {
       parentVersionId: toVersionId,
       commit,
-      artifacts: await this.artifactSnapshot(projectId),
-      protected: false,
-      version: 1,
-      createdAt: this.clock.now().toISOString(),
-    };
+    });
     await this.versions.create(version);
     return version;
   }
@@ -98,20 +90,11 @@ export class ProjectVersionService {
     const source = await this.requireVersion(projectId, fromVersionId);
     const branchName = label ? `branch/${label}` : `branch/version-${source.sequence}`;
     const commit = await this.workspaces.createBranch(projectId, source.commit, branchName);
-    const version: ProjectVersion = {
-      schemaVersion: '1',
-      id: this.ids.next(),
-      projectId,
-      sequence: await this.nextSequence(projectId),
-      kind: 'branch',
+    const version = await this.buildVersion(projectId, 'branch', {
       parentVersionId: fromVersionId,
       branchName,
       commit,
-      artifacts: await this.artifactSnapshot(projectId),
-      protected: false,
-      version: 1,
-      createdAt: this.clock.now().toISOString(),
-    };
+    });
     await this.versions.create(version);
     return { branchName, version };
   }
@@ -131,7 +114,38 @@ export class ProjectVersionService {
     return version;
   }
 
-  /** Trusts single-writer-per-project, same as StepAttempt.sequence elsewhere. */
+  /** Fills the scaffolding every ProjectVersion shares; callers supply only the kind-specific fields. */
+  private async buildVersion(
+    projectId: string,
+    kind: ProjectVersion['kind'],
+    fields: Partial<ProjectVersion> & { commit: string },
+  ): Promise<ProjectVersion> {
+    const [sequence, artifacts] = await Promise.all([
+      this.nextSequence(projectId),
+      this.artifactSnapshot(projectId),
+    ]);
+    return {
+      schemaVersion: '1',
+      id: this.ids.next(),
+      projectId,
+      sequence,
+      kind,
+      artifacts,
+      protected: false,
+      version: 1,
+      createdAt: this.clock.now().toISOString(),
+      ...fields,
+    } as ProjectVersion;
+  }
+
+  /**
+   * Trusts single-writer-per-project, same as StepAttempt.sequence elsewhere.
+   * ponytail: `list(projectId, 1)` scans every version file to find the
+   * latest one, so this is O(n) per write and O(n^2) over a project's
+   * lifetime. Acceptable at this app's scale (ADR 0003); upgrade to a
+   * monotonic-filename or counter-file scheme if a project's version count
+   * makes this measurable.
+   */
   private async nextSequence(projectId: string): Promise<number> {
     const [latest] = await this.versions.list(projectId, 1);
     return (latest?.sequence ?? 0) + 1;
