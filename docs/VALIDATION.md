@@ -33,11 +33,11 @@ Issue #31 replaces process-local preview state with versioned files and adds API
 
 - `packages/contracts/src/preview.test.ts` validates durable sessions, structured log pages, and failure diagnostics.
 - `packages/persistence/src/preview-repositories.test.ts` validates optimistic updates, digest-only token storage, redaction before disk, pagination/truncation, and stale-lock recovery.
-- `packages/executors/src/node-preview-runner.test.ts` validates HTTP health, persisted stdout/stderr, independent crash detection, restart, and process-tree termination.
+- `packages/executors/src/node-preview-runner.test.ts` validates HTTP health, persisted stdout/stderr, independent crash detection, restart, process-tree termination, and unconditional tracked-session cleanup after each test.
 - `packages/orchestrator/src/preview-service.test.ts` validates startup windows, health thresholds, bounded restarts, TTL/orphan reaping, concurrent lifecycle calls, deduplicated events/artifacts, and redacted failure diagnostics.
 - `packages/composition/src/config.test.ts` pins all eight preview lifecycle defaults and overrides.
 - `apps/api/src/preview.test.ts` validates start/stop compatibility, current-run association, canonical cursor/limit validation, project ownership, access-log token redaction, and absence of scheduler registration in generic app construction.
-- `apps/api/src/preview-reaper.test.ts` validates non-overlapping reap ticks, aggregate-error logging, timer cleanup, and shutdown waiting for a caught active rejected sweep before API close.
+- `apps/api/src/preview-reaper.test.ts` validates non-overlapping reap ticks, aggregate-error logging, idempotent timer cleanup, and direct Fastify close waiting for a caught active rejected sweep.
 
 The storage boundary is `DATA_DIR/previews/<sessionId>/`; raw access tokens are excluded from it and from access logs. The log API returns only entries belonging to a session owned by the path project, with canonical decimal `cursor >= 0` and `1 <= limit <= 200`. The singleton API entrypoint owns the only scheduler; generic app instances and worker processes do not run preview sweeps.
 

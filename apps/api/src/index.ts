@@ -14,11 +14,7 @@ if (runtime.config.executorMode === 'real' && runtime.config.allowUnsafeRemoteRe
 }
 
 const app = await buildApp(runtime);
-const previewReaper = startPreviewReaper(
-  runtime.previewService,
-  runtime.config.previewReapIntervalMs,
-  app.log,
-);
+startPreviewReaper(runtime.previewService, runtime.config.previewReapIntervalMs, app.log, app);
 
 const abortController = new AbortController();
 if (runtime.config.runWorkerInline) {
@@ -35,7 +31,6 @@ const shutdown = async (signal: string): Promise<void> => {
   abortController.abort();
   runtime.worker.stop();
   runtime.leaseReaper.stop();
-  await previewReaper.stop();
   await app.close();
   process.exit(0);
 };

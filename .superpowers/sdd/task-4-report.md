@@ -123,4 +123,38 @@ Result: 2 files / 24 tests passed.
 
 After validation, PIDs 41102, 95859, and 95892 were confirmed as PPID-1 process-group leaders running this worktree's `packages/executors/src/fixtures/preview-dev-server.mjs` from `agent-foundry-preview-runner-*` temporary directories. They predated this Task 4 cycle. Only those confirmed groups were terminated (SIGTERM, then conditional SIGKILL); all three are gone, and the clean full run left no persistent matching fixture.
 
-There is an existing test-cleanup gap outside Task 4's API scope: `node-preview-runner.test.ts` stops ordinary runner sessions only on the happy path, while its `afterEach` kills only PIDs explicitly added to `strayPids`. A failed/interrupted assertion before `runner.stop()` can therefore orphan an unregistered fixture. No executor test code was changed in this API wiring review fix.
+This audit exposed a test-cleanup gap: `node-preview-runner.test.ts` stopped ordinary runner sessions only on the happy path, while its `afterEach` killed only PIDs explicitly added to `strayPids`. The complete re-review cycle below closes that issue-level hygiene gap.
+
+## Complete re-review: RED/GREEN/REFACTOR
+
+### RED
+
+The scheduler regression starts a blocked sweep through the focused helper and calls `app.close()` directly, without manually stopping the schedule. Before the fix, close resolved immediately: 1 failed / 1 passed, with `closed` observed as `true` instead of `false`.
+
+The executor regression starts a real fixture server and deliberately omits an explicit stop. Before the common registry, the following test could still connect to that port: 1 failed / 15 passed. The deliberately exposed RED fixture was confirmed as this worktree's PID/process-group 9836 and terminated before implementation.
+
+### GREEN
+
+`startPreviewReaper` now requires the owning Fastify instance, binds its stop operation to `onClose`, and memoizes the stop promise so signal-driven/direct close and any explicit repeat stop share one settlement. The entrypoint relies on `app.close()` to run that hook; generic `buildApp()` remains timer-free.
+
+The executor suite now registers every start/restart before awaiting it and unconditionally stops tracked sessions in reverse order from `afterEach`. Cleanup continues across failures, retains descendant-PID fallback cleanup, removes temporary directories with `allSettled`, and reports an aggregate cleanup failure only after attempting every resource. Explicit per-test stops remain valid because runner stop is idempotent.
+
+Focused result:
+
+```bash
+npx vitest run apps/api/src/preview-reaper.test.ts packages/executors/src/node-preview-runner.test.ts --pool=threads --maxWorkers=1
+```
+
+Result: 2 files / 17 tests passed. A process audit immediately afterward found no worktree `preview-dev-server.mjs` fixture.
+
+### REFACTOR and final verification
+
+- Prettier normalized the focused changes; `git diff --check` remained clean.
+- Expanded preview matrix: 9 files / 120 tests passed, followed by a second zero-fixture process audit.
+- Root Prettier: all files matched.
+- Root ESLint: zero warnings/errors.
+- Root TypeScript project references: passed.
+- Full Vitest: 60 files / 547 tests passed.
+- Node script tests: 42 / 42 passed.
+- Doctor: mock environment ready; Node, Git, harness, workflows, catalog, Codex, Claude, and AGY checks passed.
+- Final `git diff --check`: passed.

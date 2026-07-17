@@ -96,7 +96,7 @@ GET /projects/:projectId/preview/:sessionId/logs?cursor=0&limit=200
 
 Retorna stdout/stderr estruturado depois do cursor informado. `cursor` aceita somente texto decimal canônico não negativo (`0`, `1`, ...), e `limit` somente decimal canônico de 1–200 (padrão 200); vazio, whitespace, sinal, zero à esquerda, hexadecimal, notação científica e fração são rejeitados. Logs e stop retornam `404` quando a sessão não pertence ao projeto da URL, evitando acesso cruzado entre projetos.
 
-Sessões expiram automaticamente após `PREVIEW_TTL_SECONDS` segundos (padrão 1800). Somente o entrypoint singleton do processo da API, nunca `buildApp` nem o worker, registra uma varredura determinística a cada `PREVIEW_REAP_INTERVAL_MS`; varreduras não se sobrepõem, erros agregados são registrados e o timer é encerrado no shutdown. Se uma varredura estiver ativa, o shutdown aguarda seu resultado já tratado antes de fechar a API e sair. Após expiração, tentativas de proxy retornam `403`.
+Sessões expiram automaticamente após `PREVIEW_TTL_SECONDS` segundos (padrão 1800). Somente o entrypoint singleton do processo da API, nunca `buildApp` nem o worker, registra uma varredura determinística a cada `PREVIEW_REAP_INTERVAL_MS`; varreduras não se sobrepõem e erros agregados são registrados. O scheduler liga um `stop()` idempotente ao hook `onClose` do Fastify: qualquer chamada a `app.close()` cancela ticks futuros e aguarda uma varredura ativa já tratada antes de concluir. Após expiração, tentativas de proxy retornam `403`.
 
 ### Configuração e armazenamento
 

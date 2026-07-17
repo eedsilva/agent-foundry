@@ -1,3 +1,5 @@
+import type { FastifyInstance } from 'fastify';
+
 interface PreviewReaperLogger {
   error(error: unknown, message: string): void;
 }
@@ -14,6 +16,7 @@ export function startPreviewReaper(
   service: PreviewReaperService,
   intervalMs: number,
   logger: PreviewReaperLogger,
+  app: FastifyInstance,
 ): PreviewReaperSchedule {
   let active: Promise<void> | undefined;
   const timer = setInterval(() => {
@@ -27,10 +30,17 @@ export function startPreviewReaper(
       });
   }, intervalMs);
   timer.unref();
-  return {
-    async stop() {
-      clearInterval(timer);
-      await active;
+
+  let stopPromise: Promise<void> | undefined;
+  const schedule: PreviewReaperSchedule = {
+    stop() {
+      stopPromise ??= (async () => {
+        clearInterval(timer);
+        await active;
+      })();
+      return stopPromise;
     },
   };
+  app.addHook('onClose', () => schedule.stop());
+  return schedule;
 }

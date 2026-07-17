@@ -16,7 +16,8 @@ describe('preview reaper schedule', () => {
       .mockRejectedValueOnce(new AggregateError([new Error('broken session')], 'sweep failed'));
     const logger = { error: vi.fn() };
     vi.useFakeTimers();
-    const schedule = startPreviewReaper({ reap }, 10, logger);
+    const app = Fastify();
+    const schedule = startPreviewReaper({ reap }, 10, logger, app);
 
     await vi.advanceTimersByTimeAsync(30);
     expect(reap).toHaveBeenCalledTimes(1);
@@ -31,11 +32,12 @@ describe('preview reaper schedule', () => {
     );
 
     await schedule.stop();
+    await app.close();
     await vi.advanceTimersByTimeAsync(20);
     expect(reap).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps API close pending until an active rejected sweep settles', async () => {
+  it('keeps direct API close pending until an active rejected sweep settles', async () => {
     let rejectSweep!: (error: Error) => void;
     const activeSweep = new Promise<number>((_resolve, reject) => {
       rejectSweep = reject;
@@ -43,29 +45,25 @@ describe('preview reaper schedule', () => {
     const reap = vi.fn().mockReturnValue(activeSweep);
     const logger = { error: vi.fn() };
     vi.useFakeTimers();
-    const schedule = startPreviewReaper({ reap }, 10, logger);
     const app = Fastify();
+    const schedule = startPreviewReaper({ reap }, 10, logger, app);
     await vi.advanceTimersByTimeAsync(10);
     expect(reap).toHaveBeenCalledTimes(1);
 
-    let schedulerStopped = false;
     let closed = false;
-    const shutdown = (async () => {
-      await schedule.stop();
-      schedulerStopped = true;
-      await app.close();
+    const close = app.close().then(() => {
       closed = true;
-    })();
+    });
     await vi.advanceTimersByTimeAsync(0);
-    expect(schedulerStopped).toBe(false);
     expect(closed).toBe(false);
 
     rejectSweep(new Error('late sweep failure'));
-    await shutdown;
+    await close;
     expect(closed).toBe(true);
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'late sweep failure' }),
       'Preview reaper sweep failed',
     );
+    await expect(schedule.stop()).resolves.toBeUndefined();
   });
 });

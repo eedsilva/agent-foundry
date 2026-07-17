@@ -24,16 +24,56 @@ const FIXTURE_SCRIPT = resolve(FIXTURE_DIR, 'preview-dev-server.mjs');
 // reinstalling node_modules mid-test-run (confirmed by direct reproduction).
 const temporaryDirectories: string[] = [];
 const strayPids: number[] = [];
-afterEach(async () => {
+const spawnedSessions: Array<{ runner: NodePreviewRunner; session: PreviewSession }> = [];
+
+afterEach(cleanupFixtures);
+
+async function cleanupFixtures(): Promise<void> {
+  const cleanupFailures: unknown[] = [];
+  for (const fixture of spawnedSessions.splice(0).reverse()) {
+    try {
+      await fixture.runner.stop(fixture.session);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+  }
   for (const pid of strayPids.splice(0)) {
     try {
       process.kill(pid, 'SIGKILL');
-    } catch {}
+    } catch (error) {
+      if (isAlive(pid)) cleanupFailures.push(error);
+    }
   }
-  await Promise.all(
+  const directoryResults = await Promise.allSettled(
     temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
-});
+  for (const result of directoryResults) {
+    if (result.status === 'rejected') cleanupFailures.push(result.reason);
+  }
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(cleanupFailures, 'Failed to clean preview runner test fixtures');
+  }
+}
+
+async function startTracked(
+  runner: NodePreviewRunner,
+  session: PreviewSession,
+): Promise<PreviewSession> {
+  const fixture = { runner, session };
+  spawnedSessions.push(fixture);
+  fixture.session = await runner.start(session);
+  return fixture.session;
+}
+
+async function restartTracked(
+  runner: NodePreviewRunner,
+  session: PreviewSession,
+): Promise<PreviewSession> {
+  const fixture = { runner, session };
+  spawnedSessions.push(fixture);
+  fixture.session = await runner.restart(session);
+  return fixture.session;
+}
 
 class InMemoryPreviewLogRepository implements PreviewLogRepository {
   private readonly entries = new Map<string, PreviewLogEntry[]>();
@@ -143,6 +183,25 @@ async function canConnect(port: number): Promise<boolean> {
 }
 
 describe('NodePreviewRunner', () => {
+  it('common cleanup stops a fixture when the test omits runner.stop', async () => {
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
+    let session = await newSession('sess-after-each-cleanup');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
+      },
+    };
+    session = await startTracked(runner, session);
+    const port = session.process!.port!;
+    expect(await canConnect(port)).toBe(true);
+
+    await cleanupFixtures();
+    expect(await canConnect(port)).toBe(false);
+  }, 10_000);
+
   it('starts the fixture dev server and reports it healthy on a distinct port', async () => {
     const runner = new NodePreviewRunner({
       startupTimeoutMs: 5_000,
@@ -159,7 +218,7 @@ describe('NodePreviewRunner', () => {
         dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
       },
     };
-    session = await runner.start(session);
+    session = await startTracked(runner, session);
     expect(session.status).toBe('starting');
     expect(session.process?.port).toBeGreaterThan(0);
 
@@ -181,7 +240,7 @@ describe('NodePreviewRunner', () => {
       startedAt: session.updatedAt,
       ttl: { ...session.ttl, expiresAt: new Date(Date.now() + 300_000).toISOString() },
     });
-    const restarted = await runner.restart(unhealthySession);
+    const restarted = await restartTracked(runner, unhealthySession);
     expect(restarted.status).toBe('starting');
     expect(restarted.process?.port).toBeGreaterThan(0);
     expect(await canConnect(session.process!.port!)).toBe(false); // old process killed
@@ -212,7 +271,7 @@ describe('NodePreviewRunner', () => {
         dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
       },
     };
-    session = await runner.start(session);
+    session = await startTracked(runner, session);
 
     expect(await canConnect(session.process!.port!)).toBe(true);
     await expect(runner.health(session)).resolves.toMatchObject({ state: 'unhealthy' });
@@ -233,7 +292,7 @@ describe('NodePreviewRunner', () => {
         dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
       },
     };
-    session = await runner.start(session);
+    session = await startTracked(runner, session);
 
     const page = await runner.logs(session);
     expect(page.entries).toEqual(
@@ -258,7 +317,7 @@ describe('NodePreviewRunner', () => {
         dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
       },
     };
-    session = await runner.start(session);
+    session = await startTracked(runner, session);
     try {
       const page = await runner.logs(session);
       expect(page.entries.length).toBeGreaterThan(0);
@@ -281,7 +340,7 @@ describe('NodePreviewRunner', () => {
         dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
       },
     };
-    session = await runner.start(session);
+    session = await startTracked(runner, session);
     let stopped = false;
     const stop = runner.stop(session).then((result) => {
       stopped = true;
@@ -319,7 +378,7 @@ describe('NodePreviewRunner', () => {
         },
       },
     };
-    session = await runner.start(session);
+    session = await startTracked(runner, session);
     try {
       await new Promise((resolve) => setTimeout(resolve, 100));
       await expect(access(responseCloseFile)).resolves.toBeUndefined();
@@ -349,7 +408,7 @@ describe('NodePreviewRunner', () => {
           },
         },
       };
-      session = await runner.start(session);
+      session = await startTracked(runner, session);
       const pids = (await readFile(pidFile, 'utf8')).trim().split(/\s+/).map(Number);
       strayPids.push(...pids);
       expect(pids).toHaveLength(4);
@@ -385,7 +444,7 @@ describe('NodePreviewRunner', () => {
           },
         },
       };
-      session = await runner.start(session);
+      session = await startTracked(runner, session);
       const [childPid, grandchildPid] = (await readFile(pidFile, 'utf8'))
         .trim()
         .split(' ')
@@ -426,7 +485,7 @@ describe('NodePreviewRunner', () => {
           dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
         },
       };
-      session = await runner.start(session);
+      session = await startTracked(runner, session);
       expect(session.process?.pid).toBeDefined();
       expect(await canConnect(session.process!.port!)).toBe(true);
 
@@ -451,7 +510,7 @@ describe('NodePreviewRunner', () => {
           dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
         },
       };
-      session = await original.start(session);
+      session = await startTracked(original, session);
       const oldPort = session.process!.port!;
       const unhealthy = PreviewSessionSchema.parse({
         ...session,
@@ -462,7 +521,7 @@ describe('NodePreviewRunner', () => {
       });
 
       const fresh = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
-      const restarted = await fresh.restart(unhealthy);
+      const restarted = await restartTracked(fresh, unhealthy);
 
       expect(await canConnect(oldPort)).toBe(false);
       await expect(fresh.health(restarted)).resolves.toMatchObject({ state: 'healthy' });
@@ -494,7 +553,7 @@ describe('NodePreviewRunner', () => {
           },
         },
       };
-      session = await runner.start(session);
+      session = await startTracked(runner, session);
       const [, grandchildPid] = (await readFile(pidFile, 'utf8')).trim().split(' ').map(Number);
       strayPids.push(grandchildPid!);
       await vi.waitFor(async () => {
@@ -524,7 +583,7 @@ describe('NodePreviewRunner', () => {
           dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
         },
       };
-      return runner.start(session);
+      return startTracked(runner, session);
     };
     const [a, b] = await Promise.all([build('sess-b'), build('sess-c')]);
     expect(a.process?.port).not.toBe(b.process?.port);
@@ -569,7 +628,7 @@ describe('NodePreviewRunner', () => {
         dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
       },
     };
-    session = await runner.start(session);
+    session = await startTracked(runner, session);
     expect(session.status).toBe('starting');
     expect(session.process?.port).toBe(freePort);
     await runner.stop(session);
@@ -586,7 +645,7 @@ describe('NodePreviewRunner', () => {
         dev: { ok: true, command: 'node', args: ['-e', 'process.exit(1)'] },
       },
     };
-    const result = await runner.start(session);
+    const result = await startTracked(runner, session);
     expect(result.status).toBe('failed');
     await runner.stop(result).catch(() => undefined);
   }, 15_000);
