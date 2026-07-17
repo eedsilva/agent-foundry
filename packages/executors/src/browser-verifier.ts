@@ -38,9 +38,10 @@ function installTimerTracker(input: { key: string; maxDelayMs: number }): void {
   const companionTimers = new Map<number, number>();
   scope[input.key] = state;
   globalThis.setTimeout = ((handler: TimerHandler, delay = 0, ...args: unknown[]) => {
-    const timeout = Number(delay);
-    if (!Number.isFinite(timeout) || timeout > input.maxDelayMs) {
-      return nativeSetTimeout(handler, delay, ...args);
+    const timeout = +(delay as number);
+    const effectiveTimeout = Number.isFinite(timeout) ? Math.max(0, timeout) : 0;
+    if (effectiveTimeout > input.maxDelayMs) {
+      return nativeSetTimeout(handler, timeout, ...args);
     }
     let timerId = 0;
     state.pending += 1;
@@ -58,36 +59,35 @@ function installTimerTracker(input: { key: string; maxDelayMs: number }): void {
             nativeSetTimeout(finish, 0);
           }
         },
-        Math.max(0, timeout),
+        timeout,
         ...args,
       ) as unknown as number;
     } else {
-      timerId = nativeSetTimeout(handler, Math.max(0, timeout), ...args) as unknown as number;
+      timerId = nativeSetTimeout(handler, timeout, ...args) as unknown as number;
       const companion = nativeSetTimeout(
         () => nativeSetTimeout(finish, 0),
-        Math.max(0, timeout),
+        timeout,
       ) as unknown as number;
       companionTimers.set(timerId, companion);
     }
     tracked.add(timerId);
     return timerId;
   }) as typeof globalThis.setTimeout;
-  const settleTimer = (timerId: unknown) => {
-    const normalized = Number(timerId);
+  const settleTimer = (timerId: unknown): number => {
+    const normalized = +(timerId as number);
     if (Number.isFinite(normalized) && tracked.delete(normalized)) {
       const companion = companionTimers.get(normalized);
       if (companion !== undefined) nativeClearTimeout(companion);
       companionTimers.delete(normalized);
       state.pending -= 1;
     }
+    return normalized;
   };
   globalThis.clearTimeout = ((timerId: number | undefined) => {
-    settleTimer(timerId);
-    nativeClearTimeout(timerId);
+    nativeClearTimeout(settleTimer(timerId));
   }) as typeof globalThis.clearTimeout;
   globalThis.clearInterval = ((timerId: number | undefined) => {
-    settleTimer(timerId);
-    nativeClearInterval(timerId);
+    nativeClearInterval(settleTimer(timerId));
   }) as typeof globalThis.clearInterval;
 }
 
@@ -518,7 +518,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       try {
         await this.executeAction(page, step.action, prefixUrl, token, index === 0);
         for (const assertion of step.assertions) {
-          await this.executeAssertion(page, assertion, prefixUrl, token);
+          await this.executeAssertion(page, assertion, prefixUrl);
         }
         await waitForQuiescence();
         if (passiveFailureSteps.has(index)) {
@@ -562,7 +562,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       approved,
       summary: approved
         ? 'All browser verification steps passed.'
-        : `${failed ? 1 : 0} browser step failure(s) and ${runObservations.length} passive failure(s).`,
+        : `${steps.filter((step) => step.status === 'failed').length} browser step failure(s) and ${runObservations.length} passive failure(s).`,
       planArtifact: input.planArtifact,
       previewSession,
       steps,
@@ -595,7 +595,6 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     page: Page,
     assertion: BrowserTestPlan['steps'][number]['assertions'][number],
     prefixUrl: URL,
-    token: string | null,
   ): Promise<void> {
     switch (assertion.kind) {
       case 'visible':
@@ -611,8 +610,12 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         return;
       }
       case 'url': {
-        const expected = appPath(resolvePlanPath(prefixUrl, assertion.path), prefixUrl, token);
-        await page.waitForURL((url) => appPath(url, prefixUrl, token) === expected);
+        const expected = resolvePlanPath(prefixUrl, assertion.path);
+        await page.waitForURL((url) => {
+          const actual = new URL(url);
+          actual.searchParams.delete('token');
+          return actual.href === expected.href;
+        });
       }
     }
   }
@@ -651,14 +654,6 @@ function resolvePlanPath(prefixUrl: URL, path: string): URL {
   }
   url.searchParams.delete('token');
   return url;
-}
-
-function appPath(url: URL, prefixUrl: URL, token: string | null): string {
-  const clean = new URL(sanitizeUrl(url.href, token));
-  const pathname = clean.pathname.startsWith(prefixUrl.pathname)
-    ? `/${clean.pathname.slice(prefixUrl.pathname.length)}`
-    : clean.pathname;
-  return `${pathname}${clean.search}${clean.hash}`;
 }
 
 function sanitizeUrl(rawUrl: string, token: string | null): string {

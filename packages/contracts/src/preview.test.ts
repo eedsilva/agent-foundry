@@ -710,4 +710,105 @@ describe('browser verification contracts', () => {
       }).success,
     ).toBe(false);
   });
+
+  it.each([
+    ['an error', { error: 'stale failure', observations: [] }],
+    [
+      'an observation',
+      {
+        observations: [
+          {
+            kind: 'console-error',
+            message: 'stale failure',
+            timestamp: createdAt,
+          },
+        ],
+      },
+    ],
+  ] as const)('rejects a passed step with %s', (_case, evidence) => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: true,
+        summary: 'Contradictory approval',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        steps: [
+          {
+            stepId: 'open',
+            title: 'Open fixture',
+            status: 'passed',
+            durationMs: 1,
+            ...evidence,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a failed step without failure evidence', () => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: false,
+        summary: 'Missing failure evidence',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        steps: [
+          {
+            stepId: 'open',
+            title: 'Open fixture',
+            status: 'failed',
+            durationMs: 1,
+            observations: [],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('caps observations across the entire report', () => {
+    const observations = Array.from({ length: 51 }, (_, index) => ({
+      kind: 'console-error' as const,
+      message: `failure ${index}`,
+      timestamp: createdAt,
+    }));
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: false,
+        summary: 'Too many observations',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        steps: [
+          {
+            stepId: 'first',
+            title: 'First',
+            status: 'failed',
+            durationMs: 1,
+            observations,
+          },
+          {
+            stepId: 'second',
+            title: 'Second',
+            status: 'failed',
+            durationMs: 1,
+            observations,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
 });

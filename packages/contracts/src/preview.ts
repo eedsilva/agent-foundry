@@ -588,6 +588,40 @@ export const BrowserVerificationReportSchema = z
   })
   .strict()
   .superRefine((report, context) => {
+    const observationCount = report.steps.reduce(
+      (total, step) => total + step.observations.length,
+      0,
+    );
+    if (observationCount > 100) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A browser report may contain at most 100 observations',
+        path: ['steps'],
+      });
+    }
+    for (const [index, step] of report.steps.entries()) {
+      if (step.status === 'passed' && (step.error || step.observations.length > 0)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'A passed browser step cannot contain failure evidence',
+          path: ['steps', index],
+        });
+      }
+      if (step.status === 'failed' && !step.error && step.observations.length === 0) {
+        context.addIssue({
+          code: 'custom',
+          message: 'A failed browser step requires failure evidence',
+          path: ['steps', index],
+        });
+      }
+      if (step.status === 'skipped' && (step.error || step.observations.length > 0)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'A skipped browser step cannot contain failure evidence',
+          path: ['steps', index],
+        });
+      }
+    }
     if (!report.approved) return;
     if (report.planValidationError) {
       context.addIssue({

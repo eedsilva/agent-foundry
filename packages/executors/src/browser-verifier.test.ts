@@ -1040,6 +1040,118 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed']);
   });
 
+  it('throws the native TypeError for a BigInt timeout delay', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`
+        <button onclick="let result = 'not-thrown'; try { setTimeout(() => {}, 1n); } catch (error) { result = error instanceof TypeError ? 'type-error' : 'wrong-error'; } document.querySelector('[data-testid=result]').textContent = result">Probe delay</button>
+        <div data-testid="result">pending</div>
+      `);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'probe',
+          title: 'Probe BigInt delay',
+          action: { kind: 'click', locator: { by: 'text', text: 'Probe delay' } },
+          assertions: [
+            {
+              kind: 'containsText',
+              locator: { by: 'testId', testId: 'result' },
+              expected: 'type-error',
+            },
+          ],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(true);
+  });
+
+  it('coerces a non-finite timeout delay once and keeps native scheduling', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`
+        <button onclick="let coercions = 0; const delay = { [Symbol.toPrimitive]() { coercions += 1; return coercions === 1 ? Infinity : 100; } }; setTimeout(() => { document.querySelector('[data-testid=result]').textContent = 'fired:' + coercions; }, delay)">Probe delay</button>
+        <div data-testid="result">pending</div>
+      `);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'probe',
+          title: 'Probe non-finite delay',
+          action: { kind: 'click', locator: { by: 'text', text: 'Probe delay' } },
+          assertions: [
+            {
+              kind: 'containsText',
+              locator: { by: 'testId', testId: 'result' },
+              expected: 'fired:1',
+            },
+          ],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(true);
+  });
+
+  it.each(['clearTimeout', 'clearInterval'] as const)(
+    'coerces a timer handle once when cancelled through %s',
+    async (clearMethod) => {
+      const origin = await serve((_request, response) => {
+        response.setHeader('content-type', 'text/html');
+        response.end(`
+          <button onclick="const timer = setTimeout(() => console.error('must stay cancelled'), 700); let coercions = 0; const handle = { [Symbol.toPrimitive]() { coercions += 1; return timer; } }; ${clearMethod}(handle); document.querySelector('[data-testid=result]').textContent = String(coercions)">Cancel timer</button>
+          <div data-testid="result">pending</div>
+        `);
+      });
+
+      const report = await verify(
+        origin,
+        plan([
+          {
+            id: 'open',
+            title: 'Open fixture',
+            action: { kind: 'goto', path: '/' },
+            assertions: [],
+          },
+          {
+            id: 'cancel',
+            title: 'Cancel timer',
+            action: { kind: 'click', locator: { by: 'text', text: 'Cancel timer' } },
+            assertions: [
+              {
+                kind: 'containsText',
+                locator: { by: 'testId', testId: 'result' },
+                expected: '1',
+              },
+            ],
+          },
+        ]),
+      );
+
+      expect(report.approved).toBe(true);
+      expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed']);
+    },
+  );
+
   it.each([
     ['clearInterval', 'clearInterval(timer)'],
     ['numeric-string clearTimeout', 'clearTimeout(String(timer))'],
@@ -1184,6 +1296,41 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.approved).toBe(true);
     expect(report.steps[0]?.status).toBe('passed');
   });
+
+  it('rejects a matching path on an explicitly allowed external origin', async () => {
+    const allowedOrigin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>External</h1>');
+    });
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<button onclick="location.href = '${allowedOrigin}/preview/preview-1/ready'">Leave preview</button>`,
+      );
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'external',
+          title: 'Navigate outside the preview origin',
+          action: { kind: 'click', locator: { by: 'text', text: 'Leave preview' } },
+          assertions: [{ kind: 'url', path: '/ready' }],
+        },
+      ]),
+      { allowedOrigins: [allowedOrigin] },
+    );
+
+    expect(report.approved).toBe(false);
+    expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed']);
+  }, 15_000);
 
   it('blocks a redirect to a forbidden origin before the sentinel receives it', async () => {
     let sentinelRequests = 0;
