@@ -1,5 +1,6 @@
-import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, readdir, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import {
   PreviewLogEntrySchema,
   PreviewLogPageSchema,
@@ -33,14 +34,88 @@ interface LogFile {
   entries: PreviewLogEntry[];
 }
 
-export class FilePreviewLifecycleLock implements PreviewLifecycleLock {
-  constructor(private readonly dataDir: string) {}
+interface LifecycleLockOwner {
+  token: string;
+  pid: number;
+  acquiredAt: string;
+}
 
-  withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-    return withDirectoryLock(
-      join(this.dataDir, 'previews', safeSegment(sessionId), '.lifecycle.lock'),
-      operation,
-    );
+interface PreviewLifecycleLockOptions {
+  acquisitionTimeoutMs?: number;
+  pollIntervalMs?: number;
+  ownerWriteGraceMs?: number;
+}
+
+const DEFAULT_LIFECYCLE_LOCK_TIMEOUT_MS = 180_000;
+const DEFAULT_LIFECYCLE_LOCK_POLL_MS = 25;
+const DEFAULT_OWNER_WRITE_GRACE_MS = 250;
+
+export class FilePreviewLifecycleLock implements PreviewLifecycleLock {
+  private readonly acquisitionTimeoutMs: number;
+  private readonly pollIntervalMs: number;
+  private readonly ownerWriteGraceMs: number;
+
+  constructor(
+    private readonly dataDir: string,
+    options: PreviewLifecycleLockOptions = {},
+  ) {
+    this.acquisitionTimeoutMs = options.acquisitionTimeoutMs ?? DEFAULT_LIFECYCLE_LOCK_TIMEOUT_MS;
+    this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_LIFECYCLE_LOCK_POLL_MS;
+    this.ownerWriteGraceMs = options.ownerWriteGraceMs ?? DEFAULT_OWNER_WRITE_GRACE_MS;
+  }
+
+  async withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const lockPath = join(this.dataDir, 'previews', safeSegment(sessionId), '.lifecycle.lock');
+    const ownerPath = join(lockPath, 'owner.json');
+    const owner: LifecycleLockOwner = {
+      token: randomUUID(),
+      pid: process.pid,
+      acquiredAt: new Date().toISOString(),
+    };
+    await ensureDir(dirname(lockPath));
+    const deadline = Date.now() + this.acquisitionTimeoutMs;
+    while (true) {
+      try {
+        await mkdir(lockPath);
+        try {
+          await writeFile(ownerPath, JSON.stringify(owner), { flag: 'wx' });
+        } catch (error) {
+          await rmdir(lockPath).catch(() => undefined);
+          throw error;
+        }
+        break;
+      } catch (error) {
+        if (!isAlreadyExists(error)) throw error;
+        await this.recoverDeadOwner(lockPath, ownerPath);
+        if (Date.now() >= deadline) {
+          throw new Error(`Timed out acquiring preview lifecycle lock ${lockPath}`);
+        }
+        await sleep(this.pollIntervalMs);
+      }
+    }
+    try {
+      return await operation();
+    } finally {
+      await releaseOwnedLock(lockPath, ownerPath, owner.token);
+    }
+  }
+
+  private async recoverDeadOwner(lockPath: string, ownerPath: string): Promise<void> {
+    const owner = await readLockOwner(ownerPath);
+    if (owner) {
+      if (!processAlive(owner.pid)) await releaseOwnedLock(lockPath, ownerPath, owner.token);
+      return;
+    }
+    try {
+      const lockStat = await stat(lockPath);
+      if (Date.now() - lockStat.mtimeMs < this.ownerWriteGraceMs) return;
+      await unlink(ownerPath).catch((error: unknown) => {
+        if (!isNotFound(error)) throw error;
+      });
+      await rmdir(lockPath);
+    } catch (error) {
+      if (!isNotFound(error) && !isNotEmpty(error)) throw error;
+    }
   }
 }
 
@@ -210,4 +285,59 @@ function validLimit(value: number): number {
 
 function encodedBytes(file: LogFile): number {
   return Buffer.byteLength(`${JSON.stringify(file, null, 2)}\n`);
+}
+
+async function readLockOwner(path: string): Promise<LifecycleLockOwner | null> {
+  try {
+    const value = JSON.parse(await readFile(path, 'utf8')) as Partial<LifecycleLockOwner>;
+    return typeof value.token === 'string' &&
+      Number.isInteger(value.pid) &&
+      typeof value.acquiredAt === 'string'
+      ? { token: value.token, pid: value.pid!, acquiredAt: value.acquiredAt }
+      : null;
+  } catch (error) {
+    if (isNotFound(error)) return null;
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
+async function releaseOwnedLock(lockPath: string, ownerPath: string, token: string): Promise<void> {
+  const owner = await readLockOwner(ownerPath);
+  if (owner?.token !== token) return;
+  try {
+    await unlink(ownerPath);
+    await rmdir(lockPath);
+  } catch (error) {
+    if (!isNotFound(error) && !isNotEmpty(error)) throw error;
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !isNodeError(error) || error.code !== 'ESRCH';
+  }
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return isNodeError(error) && error.code === 'EEXIST';
+}
+
+function isNotFound(error: unknown): boolean {
+  return isNodeError(error) && error.code === 'ENOENT';
+}
+
+function isNotEmpty(error: unknown): boolean {
+  return isNodeError(error) && error.code === 'ENOTEMPTY';
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -2,6 +2,7 @@ import {
   PreviewSessionSchema,
   type PreviewCommandPlan,
   type PreviewHealth,
+  type PreviewFailurePhase,
   type PreviewProcess,
   type PreviewSession,
   type PreviewSessionStatus,
@@ -35,6 +36,7 @@ export function transitionPreviewSession(
     process?: PreviewProcess;
     health?: PreviewHealth;
     error?: RunError;
+    failurePhase?: PreviewFailurePhase;
   } = {},
 ): PreviewSession {
   if (!previewSessionTransitions[session.status].includes(status)) {
@@ -54,6 +56,7 @@ export function transitionPreviewSession(
   }
   if (isPreviewSessionTerminal(status)) updated.completedAt = timestamp;
   if (status !== 'failed' && status !== 'failing') delete updated.error;
+  if (status !== 'failing') delete updated.failurePhase;
   return PreviewSessionSchema.parse(updated);
 }
 

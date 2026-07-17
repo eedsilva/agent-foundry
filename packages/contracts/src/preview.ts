@@ -17,6 +17,9 @@ export type PreviewSessionStatus = z.infer<typeof PreviewSessionStatusSchema>;
 export const PreviewHealthStateSchema = z.enum(['unknown', 'healthy', 'unhealthy']);
 export type PreviewHealthState = z.infer<typeof PreviewHealthStateSchema>;
 
+export const PreviewFailurePhaseSchema = z.enum(['prepare', 'start', 'health', 'runtime', 'reap']);
+export type PreviewFailurePhase = z.infer<typeof PreviewFailurePhaseSchema>;
+
 export const PreviewHealthSchema = z
   .object({
     state: PreviewHealthStateSchema,
@@ -108,6 +111,7 @@ export const PreviewSessionSchema = z
     startedAt: z.string().datetime().optional(),
     completedAt: z.string().datetime().optional(),
     error: RunErrorSchema.optional(),
+    failurePhase: PreviewFailurePhaseSchema.optional(),
     commandPlan: PreviewCommandPlanSchema.optional(),
   })
   .strict()
@@ -180,6 +184,20 @@ export const PreviewSessionSchema = z
         message: 'Only failing or failed sessions may retain an error',
       });
     }
+    if (session.status === 'failing' && !session.failurePhase) {
+      context.addIssue({
+        code: 'custom',
+        path: ['failurePhase'],
+        message: 'Failing session requires its exact failure phase',
+      });
+    }
+    if (session.status !== 'failing' && session.failurePhase) {
+      context.addIssue({
+        code: 'custom',
+        path: ['failurePhase'],
+        message: 'Only a failing session may retain failurePhase',
+      });
+    }
     if (session.updatedAt < session.createdAt) {
       context.addIssue({
         code: 'custom',
@@ -248,7 +266,7 @@ export const PreviewFailureDiagnosticSchema = z
     sessionId: PathSegmentSchema,
     projectId: PathSegmentSchema,
     runId: PathSegmentSchema.optional(),
-    phase: z.enum(['prepare', 'start', 'health', 'runtime', 'reap']),
+    phase: PreviewFailurePhaseSchema,
     health: PreviewHealthSchema,
     restartCount: z.number().int().nonnegative(),
     error: RunErrorSchema,

@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   PreviewFailureDiagnosticSchema,
   PreviewSessionSchema,
-  type PreviewFailureDiagnostic,
+  type PreviewFailurePhase,
   type PreviewHealth,
   type PreviewLogPage,
   type PreviewSession,
@@ -92,16 +92,42 @@ export class PreviewService {
       };
       await this.sessions.create({ session, tokenDigest: digestToken(token) });
 
-      session = await this.runner.prepare(session);
+      try {
+        session = await this.runner.prepare(session);
+      } catch (error) {
+        const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
+          failurePhase: 'prepare',
+          error: {
+            name: 'PreviewPrepareError',
+            code: 'PREVIEW_PREPARE_FAILED',
+            message: error instanceof Error ? error.message : 'Preview preparation failed.',
+          },
+        });
+        session = await this.finalizeFailure(failing);
+        return { session, url: '' };
+      }
       if (isPreviewSessionTerminal(session.status)) {
-        session = await this.finalizeFailure(this.stageFailure(session), 'prepare');
+        session = await this.finalizeFailure(this.stageFailure(session, 'prepare'));
         return { session, url: '' };
       }
       session = await this.persist(session);
 
-      session = await this.runner.start(session);
+      try {
+        session = await this.runner.start(session);
+      } catch (error) {
+        const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
+          failurePhase: 'start',
+          error: {
+            name: 'PreviewStartError',
+            code: 'PREVIEW_START_FAILED',
+            message: error instanceof Error ? error.message : 'Preview start failed.',
+          },
+        });
+        session = await this.finalizeFailure(failing);
+        return { session, url: '' };
+      }
       if (isPreviewSessionTerminal(session.status)) {
-        session = await this.finalizeFailure(this.stageFailure(session), 'start');
+        session = await this.finalizeFailure(this.stageFailure(session, 'start'));
         return { session, url: '' };
       }
       session = await this.persist(session);
@@ -109,6 +135,7 @@ export class PreviewService {
       const health = await this.waitForHealthy(session);
       if (health.state !== 'healthy') {
         const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
+          failurePhase: 'health',
           health,
           error: {
             name: 'PreviewUnhealthyError',
@@ -116,7 +143,7 @@ export class PreviewService {
             message: 'Dev server did not become healthy in time.',
           },
         });
-        session = await this.finalizeFailure(failing, 'health');
+        session = await this.finalizeFailure(failing);
         return { session, url: '' };
       }
 
@@ -135,7 +162,7 @@ export class PreviewService {
       const record = await this.requireSession(sessionId);
       if (isPreviewSessionTerminal(record.session.status)) return record.session;
       if (record.session.status === 'failing') {
-        return this.finalizeFailure(record.session, inferFailurePhase(record.session));
+        return this.finalizeFailure(record.session);
       }
       return this.persist(await this.runner.stop(record.session));
     });
@@ -201,7 +228,7 @@ export class PreviewService {
     let session = record.session;
 
     if (session.status === 'failing') {
-      await this.finalizeFailure(session, inferFailurePhase(session));
+      await this.finalizeFailure(session);
       return 1;
     }
 
@@ -252,6 +279,7 @@ export class PreviewService {
 
     if (session.restartCount >= this.maxRestarts) {
       const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
+        failurePhase: 'runtime',
         health,
         error: {
           name: 'PreviewCrashLoopError',
@@ -259,7 +287,7 @@ export class PreviewService {
           message: `Preview restart limit of ${this.maxRestarts} reached.`,
         },
       });
-      await this.finalizeFailure(failing, 'runtime');
+      await this.finalizeFailure(failing);
       return 1;
     }
 
@@ -274,6 +302,7 @@ export class PreviewService {
     } catch (error) {
       if (session.restartCount >= this.maxRestarts) {
         const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
+          failurePhase: 'runtime',
           health,
           error: {
             name: 'PreviewRestartError',
@@ -281,20 +310,21 @@ export class PreviewService {
             message: error instanceof Error ? error.message : 'Preview restart failed.',
           },
         });
-        await this.finalizeFailure(failing, 'runtime');
+        await this.finalizeFailure(failing);
         return 1;
       }
       throw error;
     }
     session = { ...restarted, restartCount: session.restartCount };
     if (isPreviewSessionTerminal(session.status)) {
-      await this.finalizeFailure(this.stageFailure(session), 'runtime');
+      await this.finalizeFailure(this.stageFailure(session, 'runtime'));
       return 1;
     }
     session = await this.persist(session);
     const restartedHealth = await this.waitForHealthy(session);
     if (restartedHealth.state !== 'healthy') {
       const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
+        failurePhase: 'health',
         health: restartedHealth,
         error: {
           name: 'PreviewUnhealthyError',
@@ -302,7 +332,7 @@ export class PreviewService {
           message: 'Restarted dev server did not become healthy in time.',
         },
       });
-      await this.finalizeFailure(failing, 'health');
+      await this.finalizeFailure(failing);
       return 1;
     }
     session = transitionPreviewSession(session, 'running', this.clock.now(), {
@@ -318,10 +348,7 @@ export class PreviewService {
     return 0;
   }
 
-  private async finalizeFailure(
-    failing: PreviewSession,
-    phase: PreviewFailureDiagnostic['phase'],
-  ): Promise<PreviewSession> {
+  private async finalizeFailure(failing: PreviewSession): Promise<PreviewSession> {
     const current = await this.requireSession(failing.id);
     let session = current.session;
     if (session.status !== 'failing') {
@@ -329,7 +356,7 @@ export class PreviewService {
     }
     await this.runner.stop(session);
     const failedAt = new Date(session.updatedAt);
-    await this.writeFailureDiagnostic(session, phase, failedAt);
+    await this.writeFailureDiagnostic(session, session.failurePhase!, failedAt);
     await this.emit(
       session,
       'preview.failed',
@@ -341,7 +368,7 @@ export class PreviewService {
 
   private async writeFailureDiagnostic(
     session: PreviewSession,
-    phase: PreviewFailureDiagnostic['phase'],
+    phase: PreviewFailurePhase,
     failedAt: Date,
   ): Promise<void> {
     const name = `preview-failure-${session.id}`;
@@ -420,11 +447,12 @@ export class PreviewService {
     return this.lifecycleLock.withSessionLock(sessionId, operation);
   }
 
-  private stageFailure(session: PreviewSession): PreviewSession {
+  private stageFailure(session: PreviewSession, failurePhase: PreviewFailurePhase): PreviewSession {
     const { completedAt: _completedAt, ...active } = session;
     return PreviewSessionSchema.parse({
       ...active,
       status: 'failing',
+      failurePhase,
       updatedAt: this.clock.now().toISOString(),
     });
   }
@@ -442,18 +470,4 @@ function constantTimeEquals(a: string, b: string): boolean {
   const bufferA = Buffer.from(a);
   const bufferB = Buffer.from(b);
   return bufferA.length === bufferB.length && timingSafeEqual(bufferA, bufferB);
-}
-
-function inferFailurePhase(session: PreviewSession): PreviewFailureDiagnostic['phase'] {
-  switch (session.error?.code) {
-    case 'PREVIEW_INSTALL_FAILED':
-    case 'PREVIEW_NO_DEV_COMMAND':
-      return 'prepare';
-    case 'PREVIEW_START_FAILED':
-      return 'start';
-    case 'PREVIEW_UNHEALTHY':
-      return 'health';
-    default:
-      return 'runtime';
-  }
 }

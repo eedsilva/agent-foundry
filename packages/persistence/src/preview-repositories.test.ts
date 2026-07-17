@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -78,6 +78,97 @@ describe('FilePreviewSessionRepository', () => {
     await Promise.all([left, right]);
 
     expect(order).toEqual(['left:start', 'left:end', 'right']);
+  });
+
+  it('reclaims a lifecycle lock whose recorded owner process is dead', async () => {
+    const dataDir = await temporaryDataDir();
+    const lockPath = join(dataDir, 'previews', 'preview-1', '.lifecycle.lock');
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(
+      join(lockPath, 'owner.json'),
+      JSON.stringify({ token: 'dead-owner', pid: 2_147_483_647, acquiredAt: createdAt }),
+    );
+    const lock = new FilePreviewLifecycleLock(dataDir, {
+      acquisitionTimeoutMs: 200,
+      pollIntervalMs: 5,
+      ownerWriteGraceMs: 5,
+    });
+
+    await expect(lock.withSessionLock('preview-1', async () => 'acquired')).resolves.toBe(
+      'acquired',
+    );
+  });
+
+  it('reclaims an abandoned partial owner write after the grace window', async () => {
+    const dataDir = await temporaryDataDir();
+    const lockPath = join(dataDir, 'previews', 'preview-1', '.lifecycle.lock');
+    const ownerPath = join(lockPath, 'owner.json');
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(ownerPath, '{');
+    const old = new Date(Date.now() - 1_000);
+    await utimes(lockPath, old, old);
+    const lock = new FilePreviewLifecycleLock(dataDir, {
+      acquisitionTimeoutMs: 200,
+      pollIntervalMs: 5,
+      ownerWriteGraceMs: 5,
+    });
+
+    await expect(lock.withSessionLock('preview-1', async () => 'acquired')).resolves.toBe(
+      'acquired',
+    );
+  });
+
+  it('waits for a healthy old owner instead of stealing or timing out', async () => {
+    const dataDir = await temporaryDataDir();
+    const options = {
+      acquisitionTimeoutMs: 250,
+      pollIntervalMs: 5,
+      ownerWriteGraceMs: 5,
+    };
+    const first = new FilePreviewLifecycleLock(dataDir, options);
+    const second = new FilePreviewLifecycleLock(dataDir, options);
+    const order: string[] = [];
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const left = first.withSessionLock('preview-1', async () => {
+      order.push('left');
+      await held;
+    });
+    await vi.waitFor(() => expect(order).toEqual(['left']));
+    const ownerPath = join(dataDir, 'previews', 'preview-1', '.lifecycle.lock', 'owner.json');
+    const owner = JSON.parse(await readFile(ownerPath, 'utf8')) as Record<string, unknown>;
+    await writeFile(ownerPath, JSON.stringify({ ...owner, acquiredAt: createdAt }));
+    const right = second.withSessionLock('preview-1', async () => order.push('right'));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(order).toEqual(['left']);
+    release();
+    await Promise.all([left, right]);
+    expect(order).toEqual(['left', 'right']);
+  });
+
+  it('does not remove a lock after its ownership token changes', async () => {
+    const dataDir = await temporaryDataDir();
+    const lockPath = join(dataDir, 'previews', 'preview-1', '.lifecycle.lock');
+    const ownerPath = join(lockPath, 'owner.json');
+    const lock = new FilePreviewLifecycleLock(dataDir);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const operation = lock.withSessionLock('preview-1', async () => held);
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(ownerPath, 'utf8'))).toHaveProperty('token'),
+    );
+    const successor = { token: 'successor-token', pid: process.pid, acquiredAt: createdAt };
+    await writeFile(ownerPath, JSON.stringify(successor));
+
+    release();
+    await operation;
+
+    expect(JSON.parse(await readFile(ownerPath, 'utf8'))).toEqual(successor);
   });
 
   it('stores a versioned session with only its SHA-256 token digest', async () => {

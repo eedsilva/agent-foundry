@@ -64,7 +64,7 @@ describe('PreviewSessionSchema', () => {
     expect(valid.process?.port).toBe(3100);
   });
 
-  it('requires completedAt on terminal states and error only when failed', () => {
+  it('requires completedAt on terminal states and error only in failure states', () => {
     const stoppedWithoutCompletion = { ...baseSession(), status: 'stopped' };
     expect(PreviewSessionSchema.safeParse(stoppedWithoutCompletion).success).toBe(false);
 
@@ -85,6 +85,22 @@ describe('PreviewSessionSchema', () => {
       error: { name: 'X', message: 'y' },
     };
     expect(PreviewSessionSchema.safeParse(errorWhileRunning).success).toBe(false);
+  });
+
+  it('requires an exact failure phase only while failure evidence is pending', () => {
+    const failing = {
+      ...baseSession(),
+      status: 'failing',
+      error: { name: 'PreviewStartError', code: 'PREVIEW_NO_DEV_COMMAND', message: 'failed' },
+    };
+
+    expect(PreviewSessionSchema.safeParse(failing).success).toBe(false);
+    expect(PreviewSessionSchema.parse({ ...failing, failurePhase: 'start' }).failurePhase).toBe(
+      'start',
+    );
+    expect(
+      PreviewSessionSchema.safeParse({ ...baseSession(), failurePhase: 'prepare' }).success,
+    ).toBe(false);
   });
 
   it('rejects expired sessions that never served', () => {

@@ -123,8 +123,16 @@ class FakePreviewRunner implements PreviewRunner {
   readonly stopFailures = new Set<string>();
   prepareFailureMessage?: string;
   restartFailureMessage?: string;
+  startFailureCode?: string;
+  restartFailureCode?: string;
+  prepareThrows = 0;
+  startThrows = 0;
 
   async prepare(session: PreviewSession): Promise<PreviewSession> {
+    if (this.prepareThrows > 0) {
+      this.prepareThrows -= 1;
+      throw new Error('prepare exploded');
+    }
     if (this.prepareFailureMessage) {
       return transitionPreviewSession(session, 'failed', new Date(session.updatedAt), {
         health: {
@@ -142,6 +150,19 @@ class FakePreviewRunner implements PreviewRunner {
     return session;
   }
   async start(session: PreviewSession): Promise<PreviewSession> {
+    if (this.startThrows > 0) {
+      this.startThrows -= 1;
+      throw new Error('start exploded');
+    }
+    if (this.startFailureCode) {
+      return transitionPreviewSession(session, 'failed', new Date(session.updatedAt), {
+        error: {
+          name: 'PreviewStartError',
+          code: this.startFailureCode,
+          message: 'start returned a terminal failure',
+        },
+      });
+    }
     return transitionPreviewSession(session, 'starting', new Date(session.updatedAt), {
       process: { command: 'node', args: [], port: 4100 },
     });
@@ -166,7 +187,7 @@ class FakePreviewRunner implements PreviewRunner {
       return transitionPreviewSession(session, 'failed', new Date(session.updatedAt), {
         error: {
           name: 'PreviewRuntimeError',
-          code: 'PREVIEW_RUNTIME_FAILED',
+          code: this.restartFailureCode ?? 'PREVIEW_RUNTIME_FAILED',
           message: this.restartFailureMessage,
         },
       });
@@ -559,4 +580,89 @@ describe('PreviewService durable lifecycle', () => {
       expect(serialized).toContain('[REDACTED]');
     },
   );
+
+  it.each(['prepare', 'start'] as const)(
+    'stages and replays a thrown %s exception as failure evidence',
+    async (phase) => {
+      const runner = new FakePreviewRunner();
+      if (phase === 'prepare') runner.prepareThrows = 1;
+      else runner.startThrows = 1;
+      const built = await buildService({ runner });
+      built.artifacts.onAfterPut = () => {
+        built.artifacts.onAfterPut = undefined;
+        throw new Error('interrupt after diagnostic');
+      };
+
+      await expect(start(built.service)).rejects.toThrow('interrupt after diagnostic');
+      expect((await built.sessions.get('id-1'))?.session).toMatchObject({
+        status: 'failing',
+        failurePhase: phase,
+        error: { code: phase === 'prepare' ? 'PREVIEW_PREPARE_FAILED' : 'PREVIEW_START_FAILED' },
+      });
+      const restarted = await buildService({
+        runner,
+        sessions: built.sessions,
+        artifacts: built.artifacts,
+        events: built.events,
+        clock: built.clock,
+        lifecycleLock: built.lifecycleLock,
+      });
+
+      await restarted.service.reap();
+
+      expect((await built.sessions.get('id-1'))?.session.status).toBe('failed');
+      expect(built.events.events.some((event) => event.type === 'preview.reaped')).toBe(false);
+      expect(
+        PreviewFailureDiagnosticSchema.parse(
+          (await built.artifacts.getLatest('project-1', 'preview-failure-id-1'))?.content,
+        ).phase,
+      ).toBe(phase);
+    },
+  );
+
+  it('preserves start phase for PREVIEW_NO_DEV_COMMAND across artifact interruption', async () => {
+    const runner = new FakePreviewRunner();
+    runner.startFailureCode = 'PREVIEW_NO_DEV_COMMAND';
+    const built = await buildService({ runner });
+    built.artifacts.onAfterPut = () => {
+      built.artifacts.onAfterPut = undefined;
+      throw new Error('interrupt start evidence');
+    };
+
+    await expect(start(built.service)).rejects.toThrow('interrupt start evidence');
+    expect((await built.sessions.get('id-1'))?.session.failurePhase).toBe('start');
+    await built.service.reap();
+
+    expect(
+      PreviewFailureDiagnosticSchema.parse(
+        (await built.artifacts.getLatest('project-1', 'preview-failure-id-1'))?.content,
+      ).phase,
+    ).toBe('start');
+  });
+
+  it('preserves runtime phase for PREVIEW_START_FAILED across artifact interruption', async () => {
+    const runner = new FakePreviewRunner();
+    runner.restartFailureMessage = 'restart returned terminal failure';
+    runner.restartFailureCode = 'PREVIEW_START_FAILED';
+    runner.healthResponses = [
+      { state: 'healthy', consecutiveFailures: 0 },
+      { state: 'unhealthy', consecutiveFailures: 1 },
+    ];
+    const built = await buildService({ runner, config: { healthFailureThreshold: 1 } });
+    const { session } = await start(built.service);
+    built.artifacts.onAfterPut = () => {
+      built.artifacts.onAfterPut = undefined;
+      throw new Error('interrupt runtime evidence');
+    };
+
+    await expect(built.service.reap()).rejects.toBeInstanceOf(AggregateError);
+    expect((await built.sessions.get(session.id))?.session.failurePhase).toBe('runtime');
+    await built.service.reap();
+
+    expect(
+      PreviewFailureDiagnosticSchema.parse(
+        (await built.artifacts.getLatest('project-1', `preview-failure-${session.id}`))?.content,
+      ).phase,
+    ).toBe('runtime');
+  });
 });
