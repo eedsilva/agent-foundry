@@ -1,4 +1,4 @@
-# ADR 0019: Declarative browser verification behind the domain port
+# ADR 0020: Declarative browser verification behind the domain port
 
 - Status: Accepted
 - Date: 2026-07-17

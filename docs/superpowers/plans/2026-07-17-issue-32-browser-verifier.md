@@ -341,7 +341,7 @@
 
 **Files:**
 
-- Create: `docs/adr/0019-declarative-browser-verification.md`
+- Create: `docs/adr/0020-declarative-browser-verification.md`
 - Modify: `docs/adr/README.md`
 - Modify: `docs/OPERATIONS.md`
 - Modify: `docs/SECURITY.md`
@@ -353,7 +353,7 @@
 - Consumes: the implemented plan/report schemas, policy boundary, runtime flow, focused-test names, and CI installation command.
 - Produces: operator/security/architecture/validation evidence and rollback guidance for issue #32.
 
-- [ ] **Step 1: Write ADR 0019**
+- [ ] **Step 1: Write ADR 0020**
 
   Record context, decision, consequences, and rejected alternatives. State that browser tests are versioned declarative artifacts; Chromium runs only behind the domain port; preview traffic is limited to trusted loopback plus exact policy origins; JSON evidence is redacted and capped; binary evidence remains issue #33; stronger process/network isolation remains issue #120.
 
