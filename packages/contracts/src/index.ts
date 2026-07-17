@@ -4,6 +4,7 @@ export * from './model.js';
 export * from './policy.js';
 export * from './workflow.js';
 export * from './project.js';
+export * from './conversation.js';
 export * from './api.js';
 export * from './canary.js';
 export * from './run.js';
