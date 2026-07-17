@@ -203,6 +203,52 @@ export const PreviewSessionSchema = z
   });
 export type PreviewSession = z.infer<typeof PreviewSessionSchema>;
 
+export const PreviewLogEntrySchema = z
+  .object({
+    cursor: z.number().int().positive(),
+    stream: z.enum(['stdout', 'stderr']),
+    message: z.string(),
+    timestamp: z.string().datetime(),
+  })
+  .strict();
+export type PreviewLogEntry = z.infer<typeof PreviewLogEntrySchema>;
+
+export const PreviewLogPageSchema = z
+  .object({
+    entries: z.array(PreviewLogEntrySchema),
+    nextCursor: z.number().int().nonnegative(),
+    truncatedBeforeCursor: z.number().int().positive().optional(),
+  })
+  .strict()
+  .superRefine((page, context) => {
+    for (let index = 1; index < page.entries.length; index += 1) {
+      if (page.entries[index]!.cursor <= page.entries[index - 1]!.cursor) {
+        context.addIssue({
+          code: 'custom',
+          path: ['entries', index, 'cursor'],
+          message: 'Log cursors must be strictly increasing',
+        });
+      }
+    }
+  });
+export type PreviewLogPage = z.infer<typeof PreviewLogPageSchema>;
+
+export const PreviewFailureDiagnosticSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    sessionId: PathSegmentSchema,
+    projectId: PathSegmentSchema,
+    runId: PathSegmentSchema.optional(),
+    phase: z.enum(['prepare', 'start', 'health', 'runtime', 'reap']),
+    health: PreviewHealthSchema,
+    restartCount: z.number().int().nonnegative(),
+    error: RunErrorSchema,
+    logs: PreviewLogPageSchema,
+    failedAt: z.string().datetime(),
+  })
+  .strict();
+export type PreviewFailureDiagnostic = z.infer<typeof PreviewFailureDiagnosticSchema>;
+
 export const PreviewEvidenceSchema = z
   .object({
     logs: ArtifactReferenceSchema.optional(),

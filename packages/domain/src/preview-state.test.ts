@@ -103,8 +103,8 @@ class FakePreviewRunner implements PreviewRunner {
     });
   }
 
-  logs(): Promise<string> {
-    return Promise.resolve('ready - started server on 127.0.0.1:3100\n');
+  logs(): Promise<import('@agent-foundry/contracts').PreviewLogPage> {
+    return Promise.resolve({ entries: [], nextCursor: 0 });
   }
 
   async restart(session: PreviewSession): Promise<PreviewSession> {

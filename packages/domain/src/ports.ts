@@ -10,6 +10,8 @@ import type {
   ModelMetric,
   ModelOverrideRecord,
   PreviewHealth,
+  PreviewLogEntry,
+  PreviewLogPage,
   PreviewSession,
   Project,
   ProjectPolicy,
@@ -197,9 +199,29 @@ export interface PreviewRunner {
   prepare(session: PreviewSession): Promise<PreviewSession>;
   start(session: PreviewSession): Promise<PreviewSession>;
   health(session: PreviewSession): Promise<PreviewHealth>;
-  logs(session: PreviewSession, options?: { tailLines?: number }): Promise<string>;
+  logs(
+    session: PreviewSession,
+    options?: { cursor?: number; limit?: number },
+  ): Promise<PreviewLogPage>;
   restart(session: PreviewSession): Promise<PreviewSession>;
   stop(session: PreviewSession): Promise<PreviewSession>;
+}
+
+export interface PreviewSessionRecord {
+  session: PreviewSession;
+  tokenDigest: string;
+}
+
+export interface PreviewSessionRepository {
+  create(record: PreviewSessionRecord): Promise<void>;
+  get(sessionId: string): Promise<PreviewSessionRecord | null>;
+  listActive(): Promise<PreviewSessionRecord[]>;
+  update(session: PreviewSession, expectedVersion: number): Promise<PreviewSession>;
+}
+
+export interface PreviewLogRepository {
+  append(sessionId: string, entry: Omit<PreviewLogEntry, 'cursor'>): Promise<PreviewLogEntry>;
+  list(sessionId: string, options?: { cursor?: number; limit?: number }): Promise<PreviewLogPage>;
 }
 
 export interface VerificationService {

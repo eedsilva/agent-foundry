@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   PreviewCommandPlanSchema,
+  PreviewFailureDiagnosticSchema,
+  PreviewLogPageSchema,
   PreviewSessionReferenceSchema,
   PreviewSessionSchema,
   type PreviewSession,
@@ -179,5 +181,64 @@ describe('PreviewSessionSchema commandPlan', () => {
       },
     });
     expect(session.commandPlan?.packageManager).toBe('npm');
+  });
+});
+
+describe('preview lifecycle diagnostics', () => {
+  it('parses cursor-based stdout and stderr log pages', () => {
+    const page = PreviewLogPageSchema.parse({
+      entries: [
+        { cursor: 4, stream: 'stdout', message: 'ready', timestamp: createdAt },
+        { cursor: 5, stream: 'stderr', message: 'warning', timestamp: startedAt },
+      ],
+      nextCursor: 5,
+      truncatedBeforeCursor: 4,
+    });
+
+    expect(page.entries.map((entry) => entry.stream)).toEqual(['stdout', 'stderr']);
+    expect(page.nextCursor).toBe(5);
+    expect(page.truncatedBeforeCursor).toBe(4);
+  });
+
+  it('rejects non-monotonic log entries', () => {
+    expect(() =>
+      PreviewLogPageSchema.parse({
+        entries: [
+          { cursor: 2, stream: 'stdout', message: 'second', timestamp: createdAt },
+          { cursor: 1, stream: 'stdout', message: 'first', timestamp: createdAt },
+        ],
+        nextCursor: 2,
+      }),
+    ).toThrow();
+  });
+
+  it('parses strict repair diagnostics with bounded log evidence', () => {
+    const diagnostic = PreviewFailureDiagnosticSchema.parse({
+      schemaVersion: '1',
+      sessionId: 'preview-1',
+      projectId: 'project-1',
+      runId: 'run-1',
+      phase: 'runtime',
+      health: {
+        state: 'unhealthy',
+        checkedAt: startedAt,
+        detail: 'process exited',
+        consecutiveFailures: 3,
+      },
+      restartCount: 2,
+      error: { name: 'PreviewCrashLoop', message: 'restart limit reached', exitCode: 1 },
+      logs: {
+        entries: [{ cursor: 9, stream: 'stderr', message: 'build failed', timestamp: startedAt }],
+        nextCursor: 9,
+        truncatedBeforeCursor: 9,
+      },
+      failedAt: startedAt,
+    });
+
+    expect(diagnostic.phase).toBe('runtime');
+    expect(diagnostic.logs.entries[0]?.stream).toBe('stderr');
+    expect(() =>
+      PreviewFailureDiagnosticSchema.parse({ ...diagnostic, rawToken: 'secret' }),
+    ).toThrow();
   });
 });
