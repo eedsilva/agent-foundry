@@ -296,9 +296,21 @@ export const PreviewSessionReferenceSchema = z
   .strict();
 export type PreviewSessionReference = z.infer<typeof PreviewSessionReferenceSchema>;
 
-const BrowserPathSchema = z
-  .string()
-  .refine((path) => path.startsWith('/') && !path.startsWith('//'));
+const BrowserPathSchema = z.string().refine((path) => {
+  if (!path.startsWith('/') || path.startsWith('//') || /[\\\u0000-\u001f\u007f]/u.test(path)) {
+    return false;
+  }
+  try {
+    const decoded = decodeURIComponent(path);
+    const pathname = decoded.split(/[?#]/u, 1)[0] ?? '';
+    return (
+      !/[\\\u0000-\u001f\u007f]/u.test(decoded) &&
+      !pathname.split('/').some((segment) => segment === '..')
+    );
+  } catch {
+    return false;
+  }
+});
 
 export const BrowserRoleSchema = z.enum([
   'alert',

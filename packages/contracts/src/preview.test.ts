@@ -485,29 +485,35 @@ describe('browser verification contracts', () => {
     ).toBe(false);
   });
 
-  it.each(['items', '//example.test/items', 'https://example.test/items'])(
-    'rejects non-relative app path %s',
-    (path) => {
-      const schema = BrowserTestPlanSchema;
-      expect(
-        schema.safeParse({
-          ...plan,
-          steps: [{ ...plan.steps[0], action: { kind: 'goto', path } }],
-        }).success,
-      ).toBe(false);
-      expect(
-        schema.safeParse({
-          ...plan,
-          steps: [
-            {
-              ...plan.steps[0],
-              assertions: [{ kind: 'url', path }],
-            },
-          ],
-        }).success,
-      ).toBe(false);
-    },
-  );
+  it.each([
+    'items',
+    '//example.test/items',
+    'https://example.test/items',
+    '/../admin',
+    '/%2e%2e/admin',
+    '/\\evil.example/',
+    '\u0000https://evil.example/items',
+    '/\thttps://evil.example/items',
+  ])('rejects non-relative app path %s', (path) => {
+    const schema = BrowserTestPlanSchema;
+    expect(
+      schema.safeParse({
+        ...plan,
+        steps: [{ ...plan.steps[0], action: { kind: 'goto', path } }],
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ...plan,
+        steps: [
+          {
+            ...plan.steps[0],
+            assertions: [{ kind: 'url', path }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
 
   it.each([
     { width: 0, height: 720 },

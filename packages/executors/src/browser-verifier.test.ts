@@ -443,6 +443,78 @@ describe('PlaywrightBrowserVerifier', () => {
     ).toHaveLength(1);
   });
 
+  it('never lets a preview-origin policy entry widen the exact HTTP or WebSocket prefix', async () => {
+    let outsidePrefixRequests = 0;
+    let outsidePrefixUpgrades = 0;
+    let origin = '';
+    origin = await serve((request, response) => {
+      if (request.url === '/outside-prefix') {
+        outsidePrefixRequests += 1;
+        response.end('outside');
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end(`<h1>Fixture</h1><img src="${origin}/outside-prefix"><script>
+        new WebSocket('${origin.replace('http:', 'ws:')}/outside-prefix');
+      </script>`);
+    });
+    servers.at(-1)!.on('upgrade', (_request, socket) => {
+      outsidePrefixUpgrades += 1;
+      socket.destroy();
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [
+            { kind: 'visible', locator: { by: 'role', role: 'heading', name: 'Fixture' } },
+          ],
+        },
+      ]),
+      { allowedOrigins: [origin] },
+    );
+
+    expect(outsidePrefixRequests).toBe(0);
+    expect(outsidePrefixUpgrades).toBe(0);
+    expect(report.approved).toBe(false);
+    expect(report.steps[0]?.status).toBe('failed');
+    expect(
+      report.steps[0]?.observations.filter(({ kind }) => kind === 'policy-block'),
+    ).toHaveLength(2);
+  });
+
+  it.each(['/../admin', '/%2e%2e/admin', '/\\evil.example/', '/\thttps://evil.example/'])(
+    'rejects plan path %j before it can escape the preview prefix',
+    async (path) => {
+      let requests = 0;
+      const origin = await serve((_request, response) => {
+        requests += 1;
+        response.end('sentinel');
+      });
+
+      const report = await verify(
+        origin,
+        plan([
+          {
+            id: 'open',
+            title: 'Attempt escape',
+            action: { kind: 'goto', path },
+            assertions: [],
+          },
+        ]),
+      );
+
+      expect(requests).toBe(0);
+      expect(report.approved).toBe(false);
+      expect(report.planValidationError).toBeTruthy();
+      expect(report.steps).toEqual([]);
+    },
+  );
+
   it('fails closed when the supplied preview URL does not match the session prefix', async () => {
     let requests = 0;
     const origin = await serve((_request, response) => {
@@ -590,6 +662,66 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed', 'skipped']);
     expect(report.steps[1]?.observations.some(({ kind }) => kind === 'http-error')).toBe(true);
   });
+
+  it.each([
+    ['console-error', 'click', `console.error('delayed console failure')`],
+    ['uncaught-exception', 'click', `throw new Error('delayed page failure')`],
+    ['console-error', 'fill', `console.error('delayed fill failure')`],
+  ] as const)(
+    'attributes a delayed %s from %s to its initiating step before later side effects',
+    async (observationKind, actionKind, delayedFailure) => {
+      let laterSideEffects = 0;
+      const origin = await serve((request, response) => {
+        if (request.url === '/preview/preview-1/later-side-effect') {
+          laterSideEffects += 1;
+          response.end('unexpected');
+          return;
+        }
+        response.setHeader('content-type', 'text/html');
+        response.end(`
+          <button onclick="setTimeout(() => { ${delayedFailure} }, 500)">Trigger failure</button>
+          <input aria-label="Failure input" oninput="setTimeout(() => { ${delayedFailure} }, 500)">
+          <button onclick="fetch('/preview/preview-1/later-side-effect')">Later side effect</button>
+        `);
+      });
+
+      const report = await verify(
+        origin,
+        plan([
+          {
+            id: 'open',
+            title: 'Open fixture',
+            action: { kind: 'goto', path: '/' },
+            assertions: [],
+          },
+          {
+            id: 'failure',
+            title: 'Trigger delayed failure',
+            action:
+              actionKind === 'click'
+                ? { kind: 'click', locator: { by: 'text', text: 'Trigger failure' } }
+                : {
+                    kind: 'fill',
+                    locator: { by: 'label', label: 'Failure input' },
+                    value: 'trigger',
+                  },
+            assertions: [],
+          },
+          {
+            id: 'side-effect',
+            title: 'Perform later side effect',
+            action: { kind: 'click', locator: { by: 'text', text: 'Later side effect' } },
+            assertions: [],
+          },
+        ]),
+      );
+
+      expect(laterSideEffects).toBe(0);
+      expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed', 'skipped']);
+      expect(report.steps[1]?.observations.some(({ kind }) => kind === observationKind)).toBe(true);
+      expect(report.steps[0]?.observations).toEqual([]);
+    },
+  );
 
   it('auto-waits for asynchronous text content', async () => {
     const origin = await serve((_request, response) => {

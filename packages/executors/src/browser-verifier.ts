@@ -10,6 +10,7 @@ import {
   chromium,
   type Browser,
   type BrowserContext,
+  type ConsoleMessage,
   type Locator,
   type Page,
   type Request,
@@ -18,6 +19,7 @@ import {
 const ACTION_TIMEOUT_MS = 10_000;
 const RUN_TIMEOUT_MS = 60_000;
 const MAX_OBSERVATIONS = 100;
+const PASSIVE_FAILURE_SETTLE_MS = 550;
 
 type Observation = BrowserVerificationReport['steps'][number]['observations'][number];
 type StepReport = BrowserVerificationReport['steps'][number];
@@ -161,7 +163,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     const page = await context.newPage();
     page.setDefaultTimeout(ACTION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(ACTION_TIMEOUT_MS);
-    let currentStepIndex = 0;
+    let activeStepIndex = 0;
     let observationCount = 0;
     let passiveFailure = false;
     const passiveFailureSteps = new Set<number>();
@@ -171,10 +173,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     const ignoredRequests = new WeakSet<Request>();
     const pendingPages = new Set<Page>();
     const workSettlers = new Set<() => void>();
-    const observe = (
-      observation: Omit<Observation, 'timestamp'>,
-      stepIndex = currentStepIndex,
-    ): void => {
+    const observe = (observation: Omit<Observation, 'timestamp'>, stepIndex: number): void => {
       passiveFailure = true;
       passiveFailureSteps.add(stepIndex);
       if (observationCount >= MAX_OBSERVATIONS) return;
@@ -195,10 +194,8 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       const previewOrigin =
         url.origin === prefixUrl.origin ||
         (url.protocol === prefixProtocol && url.host === prefixUrl.host);
-      return (
-        (previewOrigin && url.pathname.startsWith(prefixUrl.pathname)) ||
-        allowedOrigins.has(comparisonOrigin(url))
-      );
+      if (previewOrigin) return url.pathname.startsWith(prefixUrl.pathname);
+      return allowedOrigins.has(comparisonOrigin(url));
     };
     const settleRequest = (request: Request): void => {
       pendingRequests.delete(request);
@@ -234,23 +231,32 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         settleWork();
       });
     };
-    const observePage = (target: Page): void => {
-      target.on('console', (message) => {
+    const observePage = (target: Page, stepIndex: number): (() => void) => {
+      const onConsole = (message: ConsoleMessage): void => {
         if (message.type() !== 'error') return;
         const location = message.location().url;
-        observe({
-          kind: 'console-error',
-          message: message.text(),
-          ...(location ? { url: location } : {}),
-        });
-      });
-      target.on('pageerror', (error) => {
-        observe({ kind: 'uncaught-exception', message: error.message });
-      });
+        observe(
+          {
+            kind: 'console-error',
+            message: message.text(),
+            ...(location ? { url: location } : {}),
+          },
+          stepIndex,
+        );
+      };
+      const onPageError = (error: Error): void => {
+        observe({ kind: 'uncaught-exception', message: error.message }, stepIndex);
+      };
+      target.on('console', onConsole);
+      target.on('pageerror', onPageError);
+      return () => {
+        target.off('console', onConsole);
+        target.off('pageerror', onPageError);
+      };
     };
 
     context.on('request', (request) => {
-      requestSteps.set(request, currentStepIndex);
+      requestSteps.set(request, activeStepIndex);
       pendingRequests.add(request);
     });
     context.on('requestfinished', settleRequest);
@@ -261,12 +267,12 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           message: `${request.failure()?.errorText ?? 'Request failed'}: ${sanitizeUrl(request.url(), token)}`,
           url: request.url(),
         },
-        requestSteps.get(request),
+        requestSteps.get(request) ?? activeStepIndex,
       );
       settleRequest(request);
     });
     context.on('page', (popup) => {
-      observePage(popup);
+      observePage(popup, activeStepIndex);
       pendingPages.add(popup);
       void popup
         .waitForLoadState('domcontentloaded', { timeout: ACTION_TIMEOUT_MS })
@@ -274,14 +280,19 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         .finally(() => settlePage(popup));
     });
     await context.route('**/*', async (route) => {
-      const url = route.request().url();
+      const request = route.request();
+      const url = request.url();
+      const stepIndex = requestSteps.get(request) ?? activeStepIndex;
       try {
         if (!permitted(url)) {
-          observe({
-            kind: 'policy-block',
-            message: `Blocked request to ${sanitizeUrl(url, token)}`,
-            url,
-          });
+          observe(
+            {
+              kind: 'policy-block',
+              message: `Blocked request to ${sanitizeUrl(url, token)}`,
+              url,
+            },
+            stepIndex,
+          );
           await route.abort('blockedbyclient');
           return;
         }
@@ -291,11 +302,14 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           : undefined;
         const redirect = location ? new URL(location, url).href : undefined;
         if (redirect && !permitted(redirect)) {
-          observe({
-            kind: 'policy-block',
-            message: `Blocked request to ${sanitizeUrl(redirect, token)}`,
-            url: redirect,
-          });
+          observe(
+            {
+              kind: 'policy-block',
+              message: `Blocked request to ${sanitizeUrl(redirect, token)}`,
+              url: redirect,
+            },
+            stepIndex,
+          );
           await route.abort('blockedbyclient');
           return;
         }
@@ -306,13 +320,17 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     });
     await context.routeWebSocket('**/*', async (webSocket) => {
       const url = webSocket.url();
+      const stepIndex = activeStepIndex;
       if (permitted(url)) webSocket.connectToServer();
       else {
-        observe({
-          kind: 'policy-block',
-          message: `Blocked WebSocket to ${sanitizeUrl(url, token)}`,
-          url,
-        });
+        observe(
+          {
+            kind: 'policy-block',
+            message: `Blocked WebSocket to ${sanitizeUrl(url, token)}`,
+            url,
+          },
+          stepIndex,
+        );
         await webSocket.close({ code: 1008, reason: 'Blocked by browser verification policy' });
       }
     });
@@ -324,12 +342,10 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
             message: `HTTP ${response.status()} ${sanitizeUrl(response.url(), token)}`,
             url: response.url(),
           },
-          requestSteps.get(response.request()),
+          requestSteps.get(response.request()) ?? activeStepIndex,
         );
       }
     });
-    observePage(page);
-
     const steps: StepReport[] = [];
     let failed = false;
     for (const [index, step] of plan.steps.entries()) {
@@ -343,7 +359,8 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         });
         continue;
       }
-      currentStepIndex = index;
+      activeStepIndex = index;
+      const stopObservingPage = observePage(page, index);
       const startedAt = performance.now();
       try {
         await this.executeAction(page, step.action, prefixUrl, token, index === 0);
@@ -354,6 +371,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
         await waitForPendingRequests();
+        await new Promise<void>((resolve) => setTimeout(resolve, PASSIVE_FAILURE_SETTLE_MS));
         if (passiveFailureSteps.has(index)) {
           failed = true;
         }
@@ -377,6 +395,8 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           error: redact(errorMessage(error), token),
           observations: [],
         });
+      } finally {
+        stopObservingPage();
       }
     }
     for (const { stepIndex, observation } of runObservations) {
@@ -472,6 +492,13 @@ function locator(page: Page, target: BrowserLocator): Locator {
 
 function resolvePlanPath(prefixUrl: URL, path: string): URL {
   const url = new URL(path.slice(1), prefixUrl);
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.origin !== prefixUrl.origin ||
+    !url.pathname.startsWith(prefixUrl.pathname)
+  ) {
+    throw new Error('Browser path escapes the preview session prefix.');
+  }
   url.searchParams.delete('token');
   return url;
 }
