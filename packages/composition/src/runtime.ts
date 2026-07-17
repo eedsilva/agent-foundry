@@ -42,7 +42,7 @@ import {
 } from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
 import type { BrowserVerifier } from '@agent-foundry/domain';
-import type { PreviewSession } from '@agent-foundry/contracts';
+import { BrowserTestPlanArtifactSchema, type PreviewSession } from '@agent-foundry/contracts';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
 
 export interface Runtime {
@@ -285,8 +285,9 @@ function mockBrowserVerificationCoordinator(): BrowserVerificationCoordinator {
     },
   };
   const verifier: BrowserVerifier = {
-    verify: (input) =>
-      Promise.resolve({
+    verify: (input) => {
+      const plan = BrowserTestPlanArtifactSchema.parse(input.planContent).data;
+      return Promise.resolve({
         schemaVersion: '1',
         approved: true,
         summary: 'Mock browser verification passed.',
@@ -295,8 +296,15 @@ function mockBrowserVerificationCoordinator(): BrowserVerificationCoordinator {
           ...input.session,
           url: input.session.url?.replace(/\?.*$/, ''),
         },
-        steps: [],
-      }),
+        steps: plan.steps.map((step) => ({
+          stepId: step.id,
+          title: step.title,
+          status: 'passed',
+          durationMs: 0,
+          observations: [],
+        })),
+      });
+    },
   };
   return new BrowserVerificationCoordinator(previews, verifier);
 }
