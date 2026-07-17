@@ -255,3 +255,9 @@ export const RuntimeInfoResponseSchema = z.object({
   executors: z.array(ExecutorHealthSchema),
 });
 export type RuntimeInfoResponse = z.infer<typeof RuntimeInfoResponseSchema>;
+
+export const BranchVersionRequestSchema = z.object({ label: z.string().min(1).optional() });
+export type BranchVersionRequest = z.infer<typeof BranchVersionRequestSchema>;
+
+export const SetVersionProtectedRequestSchema = z.object({ protected: z.boolean() });
+export type SetVersionProtectedRequest = z.infer<typeof SetVersionProtectedRequestSchema>;
