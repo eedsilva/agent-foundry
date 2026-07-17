@@ -11,7 +11,6 @@ import {
 import {
   VersionConflictError,
   redactString,
-  redactUnknown,
   type PreviewLogRepository,
   type PreviewLifecycleLock,
   type PreviewSessionRecord,
@@ -205,12 +204,42 @@ function parseRecord(value: unknown): PreviewSessionRecord {
 }
 
 function sanitizeSession(session: PreviewSession): PreviewSession {
-  if (!session.url) return redactUnknown(session) as PreviewSession;
-  const url = new URL(session.url);
+  const url = session.url ? sanitizeUrl(session.url) : undefined;
+  const health = session.health.detail
+    ? { ...session.health, detail: redactString(session.health.detail) }
+    : session.health;
+  const error = session.error
+    ? { ...session.error, message: redactString(session.error.message) }
+    : undefined;
+  const commandPlan = session.commandPlan
+    ? {
+        ...session.commandPlan,
+        install: sanitizeCommandResult(session.commandPlan.install),
+        build: sanitizeCommandResult(session.commandPlan.build),
+        dev: sanitizeCommandResult(session.commandPlan.dev),
+      }
+    : undefined;
+  return PreviewSessionSchema.parse({
+    ...session,
+    ...(url ? { url } : {}),
+    health,
+    ...(error ? { error } : {}),
+    ...(commandPlan ? { commandPlan } : {}),
+  });
+}
+
+function sanitizeUrl(value: string): string {
+  const url = new URL(value);
   for (const key of [...url.searchParams.keys()]) {
     if (key.toLowerCase() === 'token') url.searchParams.delete(key);
   }
-  return redactUnknown({ ...session, url: url.toString() }) as PreviewSession;
+  return url.toString();
+}
+
+function sanitizeCommandResult(
+  result: NonNullable<PreviewSession['commandPlan']>['install'],
+): NonNullable<PreviewSession['commandPlan']>['install'] {
+  return result.ok ? result : { ...result, reason: redactString(result.reason) };
 }
 
 function validCursor(value: number): number {

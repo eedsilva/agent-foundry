@@ -174,6 +174,8 @@ interface DirectoryLockOwner {
   acquiredAt: string;
 }
 
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 export interface DirectoryLockOptions {
   acquisitionTimeoutMs?: number;
   pollIntervalMs?: number;
@@ -245,16 +247,31 @@ async function recoverAbandonedLock(
 
 async function readLockOwner(path: string): Promise<DirectoryLockOwner | null> {
   try {
-    const value = JSON.parse(await readFile(path, 'utf8')) as Partial<DirectoryLockOwner>;
-    return typeof value.token === 'string' &&
-      Number.isInteger(value.pid) &&
-      typeof value.acquiredAt === 'string'
-      ? { token: value.token, pid: value.pid!, acquiredAt: value.acquiredAt }
-      : null;
+    const value: unknown = JSON.parse(await readFile(path, 'utf8'));
+    return isDirectoryLockOwner(value) ? value : null;
   } catch (error) {
     if (isNotFound(error) || error instanceof SyntaxError) return null;
     throw error;
   }
+}
+
+function isDirectoryLockOwner(value: unknown): value is DirectoryLockOwner {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const owner = value as Partial<DirectoryLockOwner>;
+  return (
+    typeof owner.token === 'string' &&
+    UUID_V4.test(owner.token) &&
+    typeof owner.pid === 'number' &&
+    Number.isSafeInteger(owner.pid) &&
+    owner.pid > 0 &&
+    typeof owner.acquiredAt === 'string' &&
+    isCanonicalIsoTimestamp(owner.acquiredAt)
+  );
+}
+
+function isCanonicalIsoTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 async function releaseOwnedLock(lockPath: string, ownerPath: string, token: string): Promise<void> {

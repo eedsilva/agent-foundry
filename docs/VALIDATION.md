@@ -32,7 +32,7 @@ Docker Compose configuration is included, but Docker was not installed in the va
 Issue #31 replaces process-local preview state with versioned files and adds API-owned health/reaping plus redacted cursor logs. Evidence is split by boundary:
 
 - `packages/contracts/src/preview.test.ts` validates durable sessions, structured log pages, and failure diagnostics.
-- `packages/persistence/src/preview-repositories.test.ts` validates optimistic updates, digest-only token storage, whole-session redaction before disk, pagination/truncation, and dead/malformed repository-lock recovery without stealing live-owner locks.
+- `packages/persistence/src/preview-repositories.test.ts` validates optimistic updates, digest-only token storage, designated free-text redaction without changing recovery-critical structure, pagination/truncation, and dead/malformed repository-lock recovery without stealing live-owner locks.
 - `packages/executors/src/node-preview-runner.test.ts` validates HTTP health, persisted stdout/stderr, independent crash detection, restart, process-tree termination, and unconditional tracked-session cleanup after each test.
 - `packages/orchestrator/src/preview-service.test.ts` validates startup windows, health thresholds, bounded restarts, TTL/orphan reaping, concurrent lifecycle calls, deduplicated events/artifacts, and redacted failure diagnostics containing the retained 200-entry log tail.
 - `packages/composition/src/config.test.ts` pins all eight preview lifecycle defaults and overrides.

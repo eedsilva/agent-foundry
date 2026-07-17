@@ -96,7 +96,11 @@ describe('FilePreviewSessionRepository', () => {
     await mkdir(lockPath, { recursive: true });
     await writeFile(
       join(lockPath, 'owner.json'),
-      JSON.stringify({ token: 'dead-owner', pid: 2_147_483_647, acquiredAt: createdAt }),
+      JSON.stringify({
+        token: '11111111-1111-4111-8111-111111111111',
+        pid: 2_147_483_647,
+        acquiredAt: createdAt,
+      }),
     );
     const lock = new FilePreviewLifecycleLock(dataDir, {
       acquisitionTimeoutMs: 200,
@@ -172,7 +176,11 @@ describe('FilePreviewSessionRepository', () => {
     await vi.waitFor(async () =>
       expect(JSON.parse(await readFile(ownerPath, 'utf8'))).toHaveProperty('token'),
     );
-    const successor = { token: 'successor-token', pid: process.pid, acquiredAt: createdAt };
+    const successor = {
+      token: '22222222-2222-4222-8222-222222222222',
+      pid: process.pid,
+      acquiredAt: createdAt,
+    };
     await writeFile(ownerPath, JSON.stringify(successor));
 
     release();
@@ -205,7 +213,11 @@ describe('FilePreviewSessionRepository', () => {
     await mkdir(lockPath, { recursive: true });
     await writeFile(
       join(lockPath, 'owner.json'),
-      JSON.stringify({ token: 'dead-owner', pid: 2_147_483_647, acquiredAt: createdAt }),
+      JSON.stringify({
+        token: '11111111-1111-4111-8111-111111111111',
+        pid: 2_147_483_647,
+        acquiredAt: createdAt,
+      }),
     );
 
     await repository.create({ session: session(), tokenDigest: 'a'.repeat(64) });
@@ -213,36 +225,75 @@ describe('FilePreviewSessionRepository', () => {
     expect((await repository.get('preview-1'))?.session.id).toBe('preview-1');
   });
 
-  it('redacts all persisted session free text without mutating the caller', async () => {
+  it('redacts only designated free text while preserving recovery-critical structure', async () => {
     const dataDir = await temporaryDataDir();
     const repository = new FilePreviewSessionRepository(dataDir);
-    const secret = `ghp_${'b'.repeat(24)}`;
+    const secretPattern = `ghp_${'b'.repeat(24)}`;
     const input: PreviewSession = {
-      ...session(),
+      ...session(secretPattern),
+      runId: secretPattern,
+      workspaceRef: {
+        projectId: secretPattern,
+        workspacePath: `/tmp/${secretPattern}`,
+        gitRef: `refs/heads/${secretPattern}`,
+      },
       status: 'failing',
       failurePhase: 'runtime',
+      url: `http://127.0.0.1:3100/${secretPattern}?view=${secretPattern}`,
+      process: {
+        command: secretPattern,
+        args: [`--workspace=/tmp/${secretPattern}`],
+        pid: 1234,
+        port: 3100,
+      },
       health: {
         state: 'unhealthy',
         consecutiveFailures: 1,
-        detail: `password=${secret}`,
+        detail: `password=${secretPattern}`,
       },
       error: {
-        name: 'PreviewError',
-        code: 'PREVIEW_FAILED',
-        message: `Authorization: Bearer ${secret}`,
+        name: secretPattern,
+        code: secretPattern,
+        message: `Authorization: Bearer ${secretPattern}`,
+      },
+      commandPlan: {
+        packageManager: 'npm',
+        install: { ok: true, command: secretPattern, args: [secretPattern] },
+        build: { ok: false, reason: `token=${secretPattern}` },
+        dev: { ok: true, command: secretPattern, args: [secretPattern] },
+        versions: { node: secretPattern, packageManager: secretPattern },
+        detectedAt: createdAt,
       },
     };
 
-    await repository.create({ session: input, tokenDigest: 'a'.repeat(64) });
+    const tokenDigest = 'a'.repeat(64);
+    await repository.create({ session: input, tokenDigest });
 
     const persisted = await readFile(
-      join(dataDir, 'previews', 'preview-1', 'session.json'),
+      join(dataDir, 'previews', secretPattern, 'session.json'),
       'utf8',
     );
-    expect(persisted).not.toContain(secret);
     expect(persisted).toContain('[REDACTED]');
-    expect(input.health.detail).toContain(secret);
-    expect(input.error?.message).toContain(secret);
+    const stored = (await repository.get(secretPattern))!;
+    expect(stored.tokenDigest).toBe(tokenDigest);
+    expect(stored.session).toMatchObject({
+      id: secretPattern,
+      runId: secretPattern,
+      workspaceRef: input.workspaceRef,
+      url: input.url,
+      process: input.process,
+      error: { name: secretPattern, code: secretPattern, message: 'Authorization: [REDACTED]' },
+      commandPlan: {
+        install: { ok: true, command: secretPattern, args: [secretPattern] },
+        build: { ok: false, reason: 'token=[REDACTED]' },
+        dev: { ok: true, command: secretPattern, args: [secretPattern] },
+        versions: { node: secretPattern, packageManager: secretPattern },
+      },
+    });
+    expect(stored.session.health.detail).toBe('password=[REDACTED]');
+    expect(input.health.detail).toContain(secretPattern);
+    expect(input.error?.message).toContain(secretPattern);
+    expect(input.commandPlan?.build).toEqual({ ok: false, reason: `token=${secretPattern}` });
   });
 
   it('removes raw URL tokens before create and update reach disk or reads', async () => {
