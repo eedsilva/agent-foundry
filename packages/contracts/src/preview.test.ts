@@ -224,6 +224,18 @@ describe('preview lifecycle diagnostics', () => {
     ).toThrow();
   });
 
+  it('rejects a next cursor after the last delivered entry', () => {
+    expect(() =>
+      PreviewLogPageSchema.parse({
+        entries: [
+          { cursor: 4, stream: 'stdout', message: 'first', timestamp: createdAt },
+          { cursor: 5, stream: 'stderr', message: 'second', timestamp: startedAt },
+        ],
+        nextCursor: 100,
+      }),
+    ).toThrow();
+  });
+
   it('accepts empty pages at a truncated high-water cursor', () => {
     expect(
       PreviewLogPageSchema.parse({

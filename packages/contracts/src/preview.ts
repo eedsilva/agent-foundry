@@ -231,11 +231,11 @@ export const PreviewLogPageSchema = z
       }
     }
     const lastCursor = page.entries.at(-1)?.cursor;
-    if (lastCursor !== undefined && page.nextCursor < lastCursor) {
+    if (lastCursor !== undefined && page.nextCursor !== lastCursor) {
       context.addIssue({
         code: 'custom',
         path: ['nextCursor'],
-        message: 'nextCursor cannot precede the last delivered log entry',
+        message: 'nextCursor must equal the last delivered log entry cursor',
       });
     }
   });
