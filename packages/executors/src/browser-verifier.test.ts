@@ -593,13 +593,46 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps[1]?.observations.some(({ kind }) => kind === 'http-error')).toBe(true);
   });
 
-  it('records console errors and uncaught exceptions from an allowed popup', async () => {
-    const popupOrigin = await serve((_request, response) => {
+  it('records a delayed HTTP failure started by a goto action', async () => {
+    const origin = await serve((request, response) => {
+      if (request.url === '/preview/preview-1/late-goto-failure') {
+        setTimeout(() => {
+          response.statusCode = 500;
+          response.end('late failure');
+        }, 350);
+        return;
+      }
       response.setHeader('content-type', 'text/html');
-      response.end(`<script>
-        console.error('allowed popup console failure');
-        throw new Error('allowed popup exception');
-      </script>`);
+      response.end(`<h1>Fixture</h1><script>fetch('/preview/preview-1/late-goto-failure')</script>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading' } }],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(false);
+    expect(report.steps[0]?.observations.some(({ kind }) => kind === 'http-error')).toBe(true);
+  });
+
+  it('records console errors and uncaught exceptions from an allowed popup', async () => {
+    const popupOrigin = await serve((request, response) => {
+      if (request.url === '/popup-error.js') {
+        setTimeout(() => {
+          response.setHeader('content-type', 'text/javascript');
+          response.end(`console.error('allowed popup console failure'); throw new Error('allowed popup exception');`);
+        }, 50);
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end('<script src="/popup-error.js"></script>');
     });
     const origin = await serve((_request, response) => {
       response.setHeader('content-type', 'text/html');
@@ -630,6 +663,40 @@ describe('PlaywrightBrowserVerifier', () => {
       expect.arrayContaining(['console-error', 'uncaught-exception']),
     );
   });
+
+  it('does not wait for a prevented target blank click that opens no popup', async () => {
+    let sentinelRequests = 0;
+    const forbiddenOrigin = await serve((_request, response) => {
+      sentinelRequests += 1;
+      response.end('sentinel');
+    });
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<a href="${forbiddenOrigin}/sentinel" target="_blank" onclick="event.preventDefault()">Stay here</a>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'click',
+          title: 'Stay on fixture',
+          action: { kind: 'click', locator: { kind: 'text', text: 'Stay here' } },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(sentinelRequests).toBe(0);
+    expect(report.approved).toBe(true);
+    expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed']);
+  }, 15_000);
 
   it('permits a 201 Location header without following it as a redirect', async () => {
     let sentinelRequests = 0;

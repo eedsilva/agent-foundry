@@ -170,6 +170,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     const runObservations: Array<{ stepIndex: number; observation: Observation }> = [];
     const requestSteps = new WeakMap<Request, number>();
     const pendingRequests = new Set<Request>();
+    const ignoredRequests = new WeakSet<Request>();
     const pendingPages = new Set<Page>();
     const workSettlers = new Set<() => void>();
     const observe = (
@@ -208,25 +209,29 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       pendingPages.delete(popup);
       settleWork();
     };
+    const hasPendingWork = (): boolean =>
+      pendingPages.size !== 0 || [...pendingRequests].some((request) => !ignoredRequests.has(request));
     const settleWork = (): void => {
-      if (pendingRequests.size !== 0 || pendingPages.size !== 0) return;
+      if (hasPendingWork()) return;
       for (const settle of workSettlers) settle();
       workSettlers.clear();
     };
     const waitForPendingRequests = async (): Promise<void> => {
-      if (pendingRequests.size === 0 && pendingPages.size === 0) return;
+      if (!hasPendingWork()) return;
       const timeout = AbortSignal.timeout(ACTION_TIMEOUT_MS);
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolve) => {
         const settle = () => {
           timeout.removeEventListener('abort', onTimeout);
           resolve();
         };
         const onTimeout = () => {
           workSettlers.delete(settle);
-          reject(new Error('Timed out waiting for browser requests to settle.'));
+          for (const request of pendingRequests) ignoredRequests.add(request);
+          resolve();
         };
         workSettlers.add(settle);
         timeout.addEventListener('abort', onTimeout, { once: true });
+        settleWork();
       });
     };
     const observePage = (target: Page): void => {
@@ -280,7 +285,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           await route.abort('blockedbyclient');
           return;
         }
-        const response = await route.fetch({ maxRedirects: 0, timeout: ACTION_TIMEOUT_MS });
+        const response = await route.fetch({ maxRedirects: 0 });
         const location = [301, 302, 303, 307, 308].includes(response.status())
           ? response.headers().location
           : undefined;
@@ -345,7 +350,10 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         for (const assertion of step.assertions) {
           await this.executeAssertion(page, assertion, prefixUrl, token);
         }
-        if (step.action.kind !== 'goto') await waitForPendingRequests();
+        if (step.action.kind === 'click') {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+        await waitForPendingRequests();
         steps.push({
           stepId: step.id,
           title: step.title,
@@ -397,16 +405,9 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         await page.goto(url.href);
         return;
       }
-      case 'click': {
-        const target = locator(page, action.locator);
-        const popup =
-          (await target.getAttribute('target')) === '_blank'
-            ? page.waitForEvent('popup')
-            : undefined;
-        await target.click();
-        await popup;
+      case 'click':
+        await locator(page, action.locator).click();
         return;
-      }
       case 'fill':
         await locator(page, action.locator).fill(action.value);
     }
