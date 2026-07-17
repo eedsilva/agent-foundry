@@ -409,7 +409,7 @@ describe('persisted run contracts', () => {
     ).toThrow();
   });
 
-  it('requires deterministic verifier identity for verification attempts', () => {
+  it('requires an internal verifier identity for verification attempts', () => {
     expect(() =>
       StepAttemptSchema.parse({
         id: 'attempt-1',
@@ -433,7 +433,7 @@ describe('persisted run contracts', () => {
         inputArtifacts: [],
         outputArtifacts: [],
       }),
-    ).toThrow(/workspace-verifier/);
+    ).toThrow(/internal verifier/);
   });
 
   it('rejects reversed lifecycle timestamps and errors on successful entities', () => {
