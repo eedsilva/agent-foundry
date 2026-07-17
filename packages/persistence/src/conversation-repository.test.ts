@@ -72,6 +72,32 @@ describe('FileConversationRepository', () => {
     ).rejects.toThrow();
   });
 
+  it('rejects an internally canonical conversation stored under another project', async () => {
+    const dataDir = await temporaryDataDir();
+    const root = join(dataDir, 'projects', 'project-1', 'conversation');
+    await mkdir(root, { recursive: true });
+    await writeFile(
+      join(root, 'conversation.json'),
+      `${JSON.stringify({ ...conversation, id: 'project-2', projectId: 'project-2' })}\n`,
+    );
+    const repository = new FileConversationRepository(dataDir);
+
+    const reads = await Promise.allSettled([
+      repository.getConversation('project-1'),
+      repository.getSnapshot('project-1'),
+    ]);
+    expect(reads.map((result) => result.status)).toEqual(['rejected', 'rejected']);
+  });
+
+  it('does not treat an ENOTDIR conversation path as absent legacy storage', async () => {
+    const dataDir = await temporaryDataDir();
+    await writeFile(join(dataDir, 'projects'), 'corrupt path shape');
+
+    await expect(
+      new FileConversationRepository(dataDir).getSnapshot('project-1'),
+    ).rejects.toMatchObject({ code: 'ENOTDIR' });
+  });
+
   it('recovers an abandoned conversation lock before creating the aggregate', async () => {
     const dataDir = await temporaryDataDir();
     const lockPath = join(dataDir, 'projects', 'project-1', 'conversation', '.lock');

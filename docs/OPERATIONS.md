@@ -207,7 +207,7 @@ Ao criar uma operação em `POST /projects/:projectId/conversation/messages/:mes
 
 Use `GET /projects/:projectId/export` para obter schema v1 com project e um snapshot coerente de conversation, messages, attachments e operations lido sob o lock da conversa. Um writer concorrente fica inteiro antes ou depois do snapshot; o export não inclui uma operação sem sua mensagem já persistida. Para projetos legados sem diretório `conversation/`, o snapshot vazio continua sem criar storage. Texto/data de mensagem e nome de attachment já foram redigidos no write, mas trate o export e todo `DATA_DIR` como sensíveis.
 
-Não há migração. Para rollback, pare API e outros writers do `DATA_DIR` e faça snapshot. O binário antigo ignora a árvore aditiva `conversation/`; ela pode permanecer sem uso para um upgrade posterior. Restaure o snapshot pré-upgrade somente quando precisar remover os novos records, e não misture writers antigos e novos.
+Não há migração. Ausência real de `conversation/` (`ENOENT`) ativa a derivação legacy; corrupção de path, como um parent que virou arquivo (`ENOTDIR`), falha o read/export em vez de produzir snapshot vazio. O `id` e `projectId` de `conversation.json` também precisam corresponder ao diretório do projeto. Para rollback, pare API e outros writers do `DATA_DIR` e faça snapshot. O binário antigo ignora a árvore aditiva `conversation/`; ela pode permanecer sem uso para um upgrade posterior. Restaure o snapshot pré-upgrade somente quando precisar remover os novos records, e não misture writers antigos e novos.
 
 ## Controles de execução (pause, resume, retry de step)
 

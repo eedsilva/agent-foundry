@@ -50,8 +50,9 @@ Issue #36 adds one lazy canonical conversation per project with ordered messages
 Deterministic evidence is split by boundary:
 
 - `packages/contracts/src/conversation.test.ts` and `packages/contracts/src/api.test.ts` validate roles, content variants, operation kinds/links, canonical `conversation.id === projectId`, project-scoped attachment access, bare lowercased MIME types, create requests, pages, and exports.
-- `packages/persistence/src/conversation-repository.test.ts` validates malformed persisted-conversation rejection, filesystem reconstruction, concurrent contiguous sequence assignment, stable exclusive cursors, write-time redaction, recoverable locking, interrupted atomic replacement with harmless orphan temp state, a coherent aggregate snapshot against a blocked writer, legacy snapshot reads without directory creation, and same/different-input operation idempotency semantics.
-- `packages/orchestrator/src/conversation-service.test.ts` validates lazy read without migration/write, cross-project attachment rejection, missing-run and artifact-hash mismatch rejection, paging, and export through the repository snapshot with operation-to-message referential consistency.
+- `packages/persistence/src/fs-utils.test.ts` validates that path existence returns false only for `ENOENT` and rethrows deterministic `ENOTDIR` corruption.
+- `packages/persistence/src/conversation-repository.test.ts` validates malformed and cross-paired persisted-conversation rejection, filesystem reconstruction, corrupt-path failure instead of empty legacy state, concurrent contiguous sequence assignment, stable exclusive cursors, write-time redaction, recoverable locking, interrupted atomic replacement with harmless orphan temp state, a coherent aggregate snapshot against a blocked writer, legacy snapshot reads without directory creation, and same/different-input operation idempotency semantics.
+- `packages/orchestrator/src/conversation-service.test.ts` validates lazy read without migration/write, cross-project attachment rejection, missing-run and artifact-hash mismatch rejection, paging, and export through the repository snapshot with operation-to-message referential consistency. `packages/composition/src/runtime.integration.test.ts` additionally proves export rejects a canonical conversation stored under another project and deterministic `ENOTDIR` conversation storage.
 - `apps/api/src/conversation.test.ts` validates routes, empty message text and negative cursor rejection, parameterized attachment media-type rejection, cross-project attachment denial, concurrent retries, `409` conflicts, redacted disk/export data, query-over-header SSE precedence, restart replay without duplicates, and replay beyond the 500-message poll batch.
 - `apps/api/src/events-stream.test.ts` remains green, proving the shared SSE helper preserves the existing project-event stream.
 
@@ -61,7 +62,7 @@ Project scoping is an aggregate integrity check, not caller authentication. Atta
 
 Full-gate results on this branch:
 
-- `npm run check` passed Prettier, ESLint, the 11-workspace architecture check and its two tests, roadmap validation for 16 milestones / 114 tasks / 131 managed issues plus eight roadmap/governance tests, TypeScript, 64 Vitest files / 599 tests, 42 Node script tests, all eight package builds, API, worker, and the Next.js production build.
+- `npm run check` passed Prettier, ESLint, the 11-workspace architecture check and its two tests, roadmap validation for 16 milestones / 114 tasks / 131 managed issues plus eight roadmap/governance tests, TypeScript, 64 Vitest files / 605 tests, 42 Node script tests, all eight package builds, API, worker, and the Next.js production build.
 - `npm run doctor` passed in mock mode.
 - `git diff --check` passed.
 

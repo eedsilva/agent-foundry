@@ -49,8 +49,14 @@ export class FileConversationRepository implements ConversationRepository {
   }
 
   async getConversation(projectId: string): Promise<Conversation | null> {
-    const value = await readJsonOrNull<unknown>(this.conversationPath(projectId));
-    return value === null ? null : ConversationSchema.parse(value);
+    const safeProjectId = safeSegment(projectId);
+    const value = await readJsonOrNull<unknown>(this.conversationPath(safeProjectId));
+    if (value === null) return null;
+    const conversation = ConversationSchema.parse(value);
+    if (conversation.id !== safeProjectId || conversation.projectId !== safeProjectId) {
+      throw new ValidationError('Conversation identity does not match requested project');
+    }
+    return conversation;
   }
 
   async getSnapshot(projectId: string): Promise<ConversationSnapshot> {

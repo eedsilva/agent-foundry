@@ -12,7 +12,7 @@ The runtime already uses project-scoped filesystem persistence, directory locks,
 
 ## Decision
 
-Each project has one canonical conversation whose `id` and `projectId` both equal the project id and whose `createdAt` is the project's creation time. A legacy project with no conversation files derives that value on reads and exports without writing or migrating data. The first conversation write persists it.
+Each project has one canonical conversation whose `id` and `projectId` both equal the project id and whose `createdAt` is the project's creation time. Reconstruction also requires those fields to match the project directory being read, so an internally canonical record cannot be paired with another project by moving its file. A legacy project with no conversation files derives that value on reads and exports without writing or migrating data. Only a genuinely absent path (`ENOENT`) uses that legacy path; structural filesystem errors fail closed. The first conversation write persists it.
 
 The aggregate is stored beneath `DATA_DIR/projects/<projectId>/conversation/`:
 
@@ -47,6 +47,6 @@ Redaction is irreversible and applies only at new write time; this change does n
 
 ## Validation and rollback
 
-Contract tests cover roles, content blocks, bare media types, canonical conversation identity, project access, requests, pages, and exports. Persistence and service tests cover concurrent contiguous sequences, stable pagination, lazy legacy derivation without directory creation, interrupted atomic replacement and orphan-temp reconstruction, coherent export snapshots against a blocked writer, cross-project rejection, idempotent same-input replay, different-input conflicts, and write-time redaction. API tests cover HTTP `409`, complete secret-safe export, query/header cursor precedence, restart-safe SSE replay, and replay beyond one 500-message batch while preserving the existing project-event stream.
+Contract tests cover roles, content blocks, bare media types, canonical conversation identity, project access, requests, pages, and exports. Persistence and service tests cover requested-directory identity, non-`ENOENT` filesystem failures, concurrent contiguous sequences, stable pagination, lazy legacy derivation without directory creation, interrupted atomic replacement and orphan-temp reconstruction, coherent export snapshots against a blocked writer, cross-project rejection, idempotent same-input replay, different-input conflicts, and write-time redaction. API tests cover HTTP `409`, complete secret-safe export, query/header cursor precedence, restart-safe SSE replay, and replay beyond one 500-message batch while preserving the existing project-event stream.
 
 Before rollback, stop processes that can write the shared `DATA_DIR` and snapshot it. The change does not rewrite project records or require a migration; an older binary leaves the additive `projects/<projectId>/conversation/` files unused. Preserve those files for a later upgrade or restore the pre-upgrade snapshot if the conversation records must be removed. Do not run old and new writers concurrently against the same directory.
