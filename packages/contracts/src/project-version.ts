@@ -26,7 +26,6 @@ export const ProjectVersionSchema = z
     branchName: z.string().min(1).optional(),
     previewSessionId: PathSegmentSchema.optional(),
     artifacts: z.array(ArtifactReferenceSchema).default([]),
-    label: z.string().min(1).optional(),
     protected: z.boolean().default(false),
     version: EntityVersionSchema,
     createdAt: z.string().datetime(),

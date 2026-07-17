@@ -14,8 +14,6 @@ export interface RecordFromStepInput {
   stepRunId: string;
   attemptId: string;
   commit: string;
-  previewSessionId?: string;
-  label?: string;
 }
 
 /**
@@ -37,8 +35,6 @@ export class ProjectVersionService {
       stepRunId: input.stepRunId,
       attemptId: input.attemptId,
       commit: input.commit,
-      ...(input.previewSessionId ? { previewSessionId: input.previewSessionId } : {}),
-      ...(input.label ? { label: input.label } : {}),
     });
     await this.versions.create(version);
     return version;

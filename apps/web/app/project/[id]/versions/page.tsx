@@ -12,6 +12,10 @@ import {
 
 const rowStyle = { display: 'flex', alignItems: 'center', gap: '0.75rem' } as const;
 
+function toMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 export default function ProjectVersionsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [versions, setVersions] = useState<ProjectVersion[]>([]);
@@ -26,7 +30,7 @@ export default function ProjectVersionsPage({ params }: { params: Promise<{ id: 
     try {
       setVersions(await listVersions(id));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(toMessage(cause));
     }
   }
 
@@ -37,7 +41,7 @@ export default function ProjectVersionsPage({ params }: { params: Promise<{ id: 
         if (active) setVersions(next);
       })
       .catch((cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+        if (active) setError(toMessage(cause));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -64,7 +68,7 @@ export default function ProjectVersionsPage({ params }: { params: Promise<{ id: 
       const result = await compareVersions(id, from, to);
       setDiff(result.diff);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(toMessage(cause));
     } finally {
       setComparing(false);
     }
@@ -77,7 +81,7 @@ export default function ProjectVersionsPage({ params }: { params: Promise<{ id: 
       await revertToVersion(id, versionId);
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(toMessage(cause));
     } finally {
       setBusyId(null);
     }
@@ -92,7 +96,7 @@ export default function ProjectVersionsPage({ params }: { params: Promise<{ id: 
       await branchFromVersion(id, versionId, label || undefined);
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(toMessage(cause));
     } finally {
       setBusyId(null);
     }
@@ -105,13 +109,11 @@ export default function ProjectVersionsPage({ params }: { params: Promise<{ id: 
       await setVersionProtected(id, version.id, !version.protected);
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(toMessage(cause));
     } finally {
       setBusyId(null);
     }
   }
-
-  const sortedVersions = [...versions].sort((a, b) => b.sequence - a.sequence);
 
   return (
     <div className="shell">
@@ -137,11 +139,11 @@ export default function ProjectVersionsPage({ params }: { params: Promise<{ id: 
 
         {loading ? (
           <p className="hint">Carregando versões…</p>
-        ) : sortedVersions.length === 0 ? (
+        ) : versions.length === 0 ? (
           <p className="emptyState">Nenhuma versão registrada ainda.</p>
         ) : (
           <div style={{ display: 'grid', gap: '10px' }}>
-            {sortedVersions.map((version) => (
+            {versions.map((version) => (
               <div key={version.id} style={rowStyle}>
                 <input
                   type="checkbox"
@@ -150,7 +152,6 @@ export default function ProjectVersionsPage({ params }: { params: Promise<{ id: 
                   onChange={() => toggleSelect(version.id)}
                 />
                 <div style={{ flex: 1 }}>
-                  <strong>{version.label ?? version.kind}</strong>{' '}
                   <span className="pill">{version.kind}</span>{' '}
                   {version.protected ? <span className="pill">protegida</span> : null}
                   <div className="hint">
