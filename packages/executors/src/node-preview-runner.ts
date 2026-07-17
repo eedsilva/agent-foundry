@@ -1,6 +1,12 @@
 import { execa } from 'execa';
-import { connect } from 'node:net';
-import type { PreviewHealth, PreviewProcess, PreviewSession } from '@agent-foundry/contracts';
+import { get } from 'node:http';
+import type {
+  PreviewHealth,
+  PreviewLogEntry,
+  PreviewLogPage,
+  PreviewProcess,
+  PreviewSession,
+} from '@agent-foundry/contracts';
 import {
   isPreviewSessionTerminal,
   recordPreviewCommandPlan,
@@ -8,16 +14,20 @@ import {
   transitionPreviewSession,
   SystemClock,
   type Clock,
+  type PreviewLogRepository,
   type PreviewRunner,
 } from '@agent-foundry/domain';
 import { resolvePreviewCommandPlan, runReproducibleInstall } from './preview-command-plan.js';
 import { detectPortFromOutput, reservePreviewPort } from './preview-port.js';
+import { killProcessTree, terminateProcessTree } from './process-tree.js';
 
 export interface NodePreviewRunnerOptions {
   reservePort?: () => Promise<number>;
   startupTimeoutMs?: number;
   maxOutputBytes?: number;
   clock?: Clock;
+  healthPath?: string;
+  logRepository?: PreviewLogRepository;
 }
 
 // execa's ResultPromise<Options> return type varies per call site's options
@@ -34,7 +44,7 @@ interface DevServerProcess extends PromiseLike<unknown> {
 interface ProcessEntry {
   child: DevServerProcess;
   port: number;
-  logs: string[];
+  logWrites: Promise<void>;
   exited: boolean;
 }
 
@@ -43,21 +53,21 @@ interface ProcessEntry {
 // instead of doubling to ~20s when a dev server hangs without ever crashing.
 const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
 const DEFAULT_INSTALL_TIMEOUT_MS = 120_000;
-const DEFAULT_LOG_BUFFER_LINES = 500;
 const POLL_INTERVAL_MS = 100;
 const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
 
 /**
  * Mechanism-only PreviewRunner: reserves/detects a port, spawns the dev
- * command, and does a single TCP-connect health probe. Configurable startup
- * windows, HTTP-level health, crash/restart policy, and log
- * cursor/redaction are v05-preview-lifecycle's job, not this one's.
+ * command, persists structured output, probes HTTP readiness, and terminates
+ * the complete process tree. Restart policy remains an orchestrator concern.
  */
 export class NodePreviewRunner implements PreviewRunner {
   private readonly reservePort: () => Promise<number>;
   private readonly startupTimeoutMs: number;
   private readonly maxOutputBytes: number;
   private readonly clock: Clock;
+  private readonly healthPath: string;
+  private readonly logRepository: PreviewLogRepository | undefined;
   private readonly processes = new Map<string, ProcessEntry>();
 
   constructor(options: NodePreviewRunnerOptions = {}) {
@@ -65,6 +75,8 @@ export class NodePreviewRunner implements PreviewRunner {
     this.startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
     this.maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
     this.clock = options.clock ?? new SystemClock();
+    this.healthPath = options.healthPath ?? '/';
+    this.logRepository = options.logRepository;
   }
 
   async prepare(session: PreviewSession): Promise<PreviewSession> {
@@ -105,7 +117,7 @@ export class NodePreviewRunner implements PreviewRunner {
         detail: 'process not running',
       };
     }
-    const reachable = await tcpProbe(entry.port);
+    const reachable = await httpProbe(entry.port, this.healthPath);
     return {
       state: reachable ? 'healthy' : 'unhealthy',
       checkedAt: now,
@@ -113,29 +125,26 @@ export class NodePreviewRunner implements PreviewRunner {
     };
   }
 
-  async logs(session: PreviewSession, options: { tailLines?: number } = {}): Promise<string> {
+  async logs(
+    session: PreviewSession,
+    options: { cursor?: number; limit?: number } = {},
+  ): Promise<PreviewLogPage> {
     const entry = this.processes.get(session.id);
-    if (!entry) return '';
-    const lines = options.tailLines ? entry.logs.slice(-options.tailLines) : entry.logs;
-    return lines.join('\n');
+    await entry?.logWrites;
+    return this.logRepository?.list(session.id, options) ?? { entries: [], nextCursor: 0 };
   }
 
   async stop(session: PreviewSession): Promise<PreviewSession> {
-    if (isPreviewSessionTerminal(session.status)) return session;
     await this.killTracked(session.id);
+    if (isPreviewSessionTerminal(session.status)) return session;
     return stopPreviewSession(session, this.clock.now());
   }
 
   private async killTracked(sessionId: string): Promise<void> {
     const entry = this.processes.get(sessionId);
     if (!entry) return;
-    if (!entry.exited) {
-      entry.child.kill('SIGTERM');
-      await Promise.race([
-        Promise.resolve(entry.child).catch(() => undefined),
-        new Promise((resolveTimeout) => setTimeout(resolveTimeout, 2_000)),
-      ]);
-    }
+    if (entry.exited) killProcessTree(entry.child, 'SIGKILL');
+    else await terminateProcessTree(entry.child);
     this.processes.delete(sessionId);
   }
 
@@ -179,26 +188,46 @@ export class NodePreviewRunner implements PreviewRunner {
       cwd: session.workspaceRef.workspacePath,
       env: { ...process.env, PORT: String(reservedPort), HOST: '127.0.0.1' },
       reject: false,
+      detached: process.platform !== 'win32',
     }) as unknown as DevServerProcess;
-    const entry: ProcessEntry = { child, port: reservedPort, logs: [], exited: false };
-    this.processes.set(session.id, entry);
-    void child.then(() => {
-      entry.exited = true;
-    });
-    let detectedPort: number | undefined;
-    const captureAndDetect = (data: Buffer): void => {
-      const text = data.toString('utf8');
-      appendLog(entry, DEFAULT_LOG_BUFFER_LINES, text);
-      detectedPort ??= detectPortFromOutput(text);
+    const entry: ProcessEntry = {
+      child,
+      port: reservedPort,
+      logWrites: Promise.resolve(),
+      exited: false,
     };
-    child.stdout?.on('data', captureAndDetect);
-    child.stderr?.on('data', captureAndDetect);
+    this.processes.set(session.id, entry);
+    void child.then(
+      () => {
+        entry.exited = true;
+      },
+      () => {
+        entry.exited = true;
+      },
+    );
+    let detectedPort: number | undefined;
+    const capture =
+      (stream: PreviewLogEntry['stream']) =>
+      (data: Buffer): void => {
+        const text = data.toString('utf8');
+        detectedPort ??= detectPortFromOutput(text);
+        if (!this.logRepository) return;
+        const timestamp = this.clock.now().toISOString();
+        const lines = text.split('\n').filter(Boolean);
+        entry.logWrites = entry.logWrites.then(async () => {
+          for (const message of lines) {
+            await this.logRepository!.append(session.id, { stream, message, timestamp });
+          }
+        });
+      };
+    child.stdout?.on('data', capture('stdout'));
+    child.stderr?.on('data', capture('stderr'));
 
     const deadline = Date.now() + this.startupTimeoutMs;
     while (Date.now() < deadline) {
       if (entry.exited) return { port: reservedPort, pid: undefined, crashedImmediately: true };
       const candidate = detectedPort ?? reservedPort;
-      if (await tcpProbe(candidate)) {
+      if (await httpProbe(candidate, this.healthPath)) {
         entry.port = candidate;
         return { port: candidate, pid: child.pid, crashedImmediately: false };
       }
@@ -208,25 +237,19 @@ export class NodePreviewRunner implements PreviewRunner {
   }
 }
 
-function appendLog(entry: ProcessEntry, maxLines: number, text: string): void {
-  for (const line of text.split('\n')) {
-    if (!line) continue;
-    entry.logs.push(line);
-  }
-  if (entry.logs.length > maxLines) entry.logs.splice(0, entry.logs.length - maxLines);
-}
-
-async function tcpProbe(port: number): Promise<boolean> {
+async function httpProbe(port: number, path: string): Promise<boolean> {
   return new Promise((resolvePromise) => {
-    const socket = connect({ port, host: '127.0.0.1', timeout: 500 });
-    socket.once('connect', () => {
-      socket.destroy();
-      resolvePromise(true);
+    const request = get({ port, host: '127.0.0.1', path }, (response) => {
+      response.resume();
+      resolvePromise(
+        response.statusCode !== undefined &&
+          response.statusCode >= 200 &&
+          response.statusCode < 300,
+      );
     });
-    socket.once('error', () => resolvePromise(false));
-    socket.once('timeout', () => {
-      socket.destroy();
-      resolvePromise(false);
+    request.once('error', () => resolvePromise(false));
+    request.setTimeout(500, () => {
+      request.destroy();
     });
   });
 }

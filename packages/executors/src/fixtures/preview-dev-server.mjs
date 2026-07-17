@@ -3,9 +3,17 @@
 // banner, serves "ok" on GET /, and accepts (but does not frame) WebSocket
 // upgrades on /ws so proxy tests can prove bytes flow both ways.
 import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 
 const port = Number(process.env.PORT ?? 0);
+const args = new Map(process.argv.slice(2).map((arg) => arg.split('=', 2)));
 const server = createServer((req, res) => {
+  if (req.url === '/not-ready') {
+    res.writeHead(503, { 'content-type': 'text/plain' });
+    res.end('not ready');
+    return;
+  }
   if (req.url === '/echo-headers') {
     // Echoes the request headers the upstream actually received, so proxy tests
     // can assert what did (and didn't) get forwarded, e.g. the auth cookie.
@@ -40,5 +48,13 @@ server.on('upgrade', (req, socket) => {
 server.listen(port, '127.0.0.1', () => {
   const bound = server.address();
   console.log(`  VITE fixture  ready\n\n  ➜  Local:   http://127.0.0.1:${bound.port}/\n`);
+  console.error('fixture stderr');
+  if (args.has('--exit-after-ready')) setTimeout(() => process.exit(1), 100);
 });
-process.on('SIGTERM', () => server.close(() => process.exit(0)));
+const pidFile = args.get('--spawn-grandchild');
+if (pidFile) {
+  const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);']);
+  writeFileSync(pidFile, `${process.pid} ${grandchild.pid}`);
+}
+if (args.has('--ignore-sigterm')) process.on('SIGTERM', () => {});
+else process.on('SIGTERM', () => server.close(() => process.exit(0)));
