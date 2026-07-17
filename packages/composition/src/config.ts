@@ -33,6 +33,7 @@ const ConfigSchema = z.object({
   QUEUE_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
   GIT_AUTHOR_NAME: z.string().default('Agent Foundry'),
   GIT_AUTHOR_EMAIL: z.string().email().default('agent-foundry@localhost'),
+  PREVIEW_TTL_SECONDS: z.coerce.number().int().positive().default(1_800),
 });
 
 export interface RuntimeConfig {
@@ -61,6 +62,7 @@ export interface RuntimeConfig {
   queueReapIntervalMs: number;
   gitAuthorName: string;
   gitAuthorEmail: string;
+  previewTtlSeconds: number;
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -107,6 +109,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     queueReapIntervalMs: parsed.QUEUE_REAP_INTERVAL_MS,
     gitAuthorName: parsed.GIT_AUTHOR_NAME,
     gitAuthorEmail: parsed.GIT_AUTHOR_EMAIL,
+    previewTtlSeconds: parsed.PREVIEW_TTL_SECONDS,
   };
 }
 

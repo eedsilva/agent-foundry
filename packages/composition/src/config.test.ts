@@ -44,6 +44,13 @@ describe('policies directory', () => {
   });
 });
 
+describe('preview service configuration', () => {
+  it('defaults PREVIEW_TTL_SECONDS to 1800 and honors an override', () => {
+    expect(loadRuntimeConfig(base).previewTtlSeconds).toBe(1_800);
+    expect(loadRuntimeConfig({ ...base, PREVIEW_TTL_SECONDS: '60' }).previewTtlSeconds).toBe(60);
+  });
+});
+
 describe('isLoopbackHost', () => {
   it.each(['localhost', 'LOCALHOST', '127.0.0.1', '127.9.8.7', '::1', '[::1]'])(
     'accepts %s',

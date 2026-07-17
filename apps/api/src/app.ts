@@ -13,9 +13,11 @@ import {
   ApprovalConflictError,
   InvalidStateTransitionError,
   NotFoundError,
+  PreviewAccessDeniedError,
   ResumeBlockedError,
   ValidationError,
 } from '@agent-foundry/domain';
+import { registerPreviewProxy } from './preview-proxy.js';
 
 export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
   const app = Fastify({
@@ -45,6 +47,9 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     }
     if (error instanceof ValidationError) {
       return reply.status(400).send({ error: error.name, message: error.message });
+    }
+    if (error instanceof PreviewAccessDeniedError) {
+      return reply.status(403).send({ error: error.name, message: error.message });
     }
     if (error instanceof ResumeBlockedError) {
       return reply.status(409).send({
@@ -245,6 +250,27 @@ export async function buildApp(runtime: Runtime): Promise<FastifyInstance> {
     const project = await runtime.projectService.retry(projectId);
     return reply.status(202).send({ project });
   });
+
+  app.post('/projects/:projectId/preview', async (request, reply) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const project = await runtime.projects.get(projectId);
+    if (!project) throw new NotFoundError(`Project ${projectId} not found`);
+    await runtime.workspaces.ensure(projectId);
+    const { session, url } = await runtime.previewService.start({
+      workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+    });
+    return reply.status(202).send({ session, url });
+  });
+
+  app.post('/projects/:projectId/preview/:sessionId/stop', async (request, reply) => {
+    const { sessionId } = z
+      .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
+      .parse(request.params);
+    const session = await runtime.previewService.stop(sessionId);
+    return reply.status(202).send({ session });
+  });
+
+  registerPreviewProxy(app, runtime);
 
   return app;
 }
