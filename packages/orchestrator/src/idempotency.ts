@@ -35,6 +35,7 @@ export function stepIdempotencyKey(input: {
   nodeId: string;
   step: ExecutableStep;
   iteration?: number | undefined;
+  retryRequestedAt?: string | undefined;
   inputs: ArtifactReference[];
 }): string {
   const policy =
@@ -52,6 +53,7 @@ export function stepIdempotencyKey(input: {
       stepId: input.step.id,
       stepType: input.step.type,
       iteration: input.iteration ?? null,
+      retryRequestedAt: input.retryRequestedAt ?? null,
       policy,
       inputs: input.inputs,
     }),

@@ -975,6 +975,15 @@ export class WorkflowOrchestrator {
       );
       if (!alreadyLoaded) inputArtifacts = [...inputArtifacts, feedback];
     }
+    const invalidatedByRetry =
+      directive?.mode === 'invalidate' &&
+      (await this.stepRuns.list(runId)).some(
+        (candidate) =>
+          candidate.nodeId === nodeId &&
+          candidate.stepId === step.id &&
+          (candidate.iteration ?? null) === (iteration ?? null) &&
+          candidate.invalidatedAt,
+      );
     const idempotencyKey = stepIdempotencyKey({
       runId,
       nodeId,
@@ -982,6 +991,19 @@ export class WorkflowOrchestrator {
       iteration,
       inputs: inputArtifacts.map(artifactReference),
     });
+    // Step identity stays input-derived so a completed retry remains reusable after its directive
+    // is cleared; output writes add the retry generation so the retry still creates a new revision.
+    const outputIdempotencyKey =
+      isRetryTarget || invalidatedByRetry
+        ? stepIdempotencyKey({
+            runId,
+            nodeId,
+            step,
+            iteration,
+            retryRequestedAt: directive?.requestedAt,
+            inputs: inputArtifacts.map(artifactReference),
+          })
+        : idempotencyKey;
 
     if (!isRetryTarget) {
       const reused = await this.reuseCompletedStep({
@@ -991,6 +1013,7 @@ export class WorkflowOrchestrator {
         nodeId,
         iteration,
         idempotencyKey,
+        outputIdempotencyKey,
         preserve: directive?.mode === 'preserve',
       });
       if (reused) return reused;
@@ -1026,7 +1049,7 @@ export class WorkflowOrchestrator {
         step.type === 'agent'
           ? await this.executeAgentStep(project, workflow, step, runId, stepRun, policy, signal, {
               inputArtifacts,
-              idempotencyKey,
+              idempotencyKey: outputIdempotencyKey,
               ...(isRetryTarget && directive.override ? { override: directive.override } : {}),
               ...(isRetryTarget && directive.override
                 ? { overrideCreatedAt: directive.requestedAt }
@@ -1041,7 +1064,7 @@ export class WorkflowOrchestrator {
               stepRun,
               policy,
               signal,
-              idempotencyKey,
+              outputIdempotencyKey,
               iteration,
               browserPlan ?? undefined,
             );
@@ -1084,9 +1107,19 @@ export class WorkflowOrchestrator {
     nodeId: string;
     iteration?: number | undefined;
     idempotencyKey: string;
+    outputIdempotencyKey: string;
     preserve: boolean;
   }): Promise<StoredArtifact | null> {
-    const { project, step, runId, nodeId, iteration, idempotencyKey, preserve } = input;
+    const {
+      project,
+      step,
+      runId,
+      nodeId,
+      iteration,
+      idempotencyKey,
+      outputIdempotencyKey,
+      preserve,
+    } = input;
     const siblings = (await this.stepRuns.list(runId)).filter(
       (candidate) =>
         candidate.nodeId === nodeId &&
@@ -1116,7 +1149,7 @@ export class WorkflowOrchestrator {
       const running = attempts.filter((attempt) => attempt.status === 'running');
       const orphan: StoredArtifact | null =
         !adopted && stale.idempotencyKey === idempotencyKey
-          ? await this.findArtifactByKey(project.id, step.outputArtifact, idempotencyKey)
+          ? await this.findArtifactByKey(project.id, step.outputArtifact, outputIdempotencyKey)
           : null;
       if (orphan) {
         const last = running.at(-1);
@@ -1374,38 +1407,43 @@ export class WorkflowOrchestrator {
     await this.stepAttempts.create(attempt);
     const startedAt = Date.now();
     try {
-      const report = await this.browserVerification.verify(
-        {
+      let artifact = await this.findArtifactByKey(project.id, step.outputArtifact, idempotencyKey);
+      if (!artifact) {
+        const report = await this.browserVerification.verify(
+          {
+            projectId: project.id,
+            workspacePath: this.workspaces.workspacePath(project.id),
+            runId,
+            plan: browserPlan,
+            allowedOrigins: policy.browserAllowedOrigins ?? [],
+          },
+          signal,
+          async (previewSessionId) => {
+            attempt = await this.stepAttempts.update(
+              {
+                ...attempt,
+                previewSessionId,
+                updatedAt: this.clock.now().toISOString(),
+              },
+              attempt.version,
+            );
+          },
+        );
+        throwIfCancelled(signal, runId);
+        await this.assertExecutionMayContinue(runId, signal);
+        artifact = await this.artifacts.put({
           projectId: project.id,
-          workspacePath: this.workspaces.workspacePath(project.id),
+          name: step.outputArtifact,
+          content: report,
+          createdBy: `verifier:${step.id}`,
           runId,
-          plan: browserPlan,
-          allowedOrigins: policy.browserAllowedOrigins ?? [],
-        },
-        signal,
-        async (previewSessionId) => {
-          attempt = await this.stepAttempts.update(
-            {
-              ...attempt,
-              previewSessionId,
-              updatedAt: this.clock.now().toISOString(),
-            },
-            attempt.version,
-          );
-        },
-      );
+          stepRunId: stepRun.id,
+          attemptId: attempt.id,
+          idempotencyKey,
+        });
+      }
       throwIfCancelled(signal, runId);
       await this.assertExecutionMayContinue(runId, signal);
-      const artifact = await this.artifacts.put({
-        projectId: project.id,
-        name: step.outputArtifact,
-        content: report,
-        createdBy: `verifier:${step.id}`,
-        runId,
-        stepRunId: stepRun.id,
-        attemptId: attempt.id,
-        idempotencyKey,
-      });
       const persistedReport = BrowserVerificationReportSchema.parse(artifact.content);
       attempt = await this.stepAttempts.update(
         transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {

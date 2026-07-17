@@ -35,7 +35,7 @@ tokens, caps observations at 100, and links its plan by immutable artifact refer
 requires a plan artifact and disables workspace scripts and `git diff --check`; a failed report is
 given to repair together with the exact initial plan revision before the same plan reruns.
 
-Focused acceptance evidence passed: 8 files / 91 tests.
+Focused acceptance evidence passed: 8 files / 96 tests.
 
 ```bash
 npx vitest run \

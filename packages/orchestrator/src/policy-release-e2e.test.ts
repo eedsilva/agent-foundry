@@ -223,6 +223,9 @@ function browserCoordinator(verify: BrowserVerifier['verify']) {
   } satisfies Pick<PreviewService, 'start' | 'stop'>;
   return {
     coordinator: new BrowserVerificationCoordinator(previews, { verify }),
+    get started() {
+      return sequence;
+    },
     stopped,
   };
 }
@@ -635,6 +638,8 @@ describe('browser verification orchestration (#32)', () => {
       });
       if (failure === 'checkpoint') {
         expect(reports).toHaveLength(1);
+        expect(browser.started).toBe(1);
+        expect(verifierCalls).toBe(1);
         expect(harness.executor.started('repair-browser')).toBe(0);
         expect(harness.workspaces.checkpoints).toEqual(['initial-head']);
       } else {
