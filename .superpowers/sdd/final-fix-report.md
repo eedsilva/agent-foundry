@@ -113,3 +113,64 @@ Result: exit 0 in mock mode; Node, Git, harness, workflows, model catalog, Codex
 ## Concerns
 
 Full-file scan plus replacement is intentionally O(n) per write and remains suitable only for the local filesystem MVP. The documented upgrade path is an index or another store when measured volume makes the path hot. No other concern remains.
+
+---
+
+## Second final-review fix: storage identity and fail-closed existence
+
+Implementation commit: `65e88008e3f0abeebd781b5324bc525452e53136` (`fix(persistence): reject mismatched conversation storage`)
+
+### RED evidence
+
+The new persistence tests were applied to an isolated worktree at the immediately preceding commit (`2bbd449`) without the production fix, then run against that pre-fix source.
+
+```bash
+LOG_LEVEL=silent npm run test:unit -- packages/persistence/src/fs-utils.test.ts packages/persistence/src/conversation-repository.test.ts
+```
+
+Result: exit 1; 2 files failed, 3 tests failed, and 34 tests passed.
+
+- An internally canonical `conversation.json` for `project-2` stored in `project-1` fulfilled both `getConversation('project-1')` and `getSnapshot('project-1')` instead of rejecting.
+- `getSnapshot` returned the empty legacy aggregate when `projects` was a file (`ENOTDIR`).
+- `exists` resolved `false` for that same `ENOTDIR` instead of rethrowing it.
+
+This reconstruction used deterministic fixture files only; it used no sleeps, polling, or filesystem timing assumptions. The temporary worktree was removed after the test.
+
+### GREEN evidence
+
+```bash
+LOG_LEVEL=silent npm run test:unit -- packages/contracts/src/conversation.test.ts packages/contracts/src/api.test.ts packages/persistence/src/fs-utils.test.ts packages/persistence/src/conversation-repository.test.ts packages/orchestrator/src/conversation-service.test.ts packages/composition/src/runtime.integration.test.ts apps/api/src/conversation.test.ts apps/api/src/events-stream.test.ts
+```
+
+Result: exit 0; 8 files passed and 81 tests passed.
+
+- Repository tests cover direct `getConversation` and `getSnapshot` rejection for a cross-paired, internally canonical record.
+- Composition coverage proves `ConversationService.export` rejects that same malformed on-disk identity, and that an `ENOTDIR` conversation path fails through export rather than becoming a legacy empty export.
+- `exists` returns `false` only for `ENOENT`; `ENOTDIR` and other `stat` errors are rethrown. Its only other caller, workspace `.gitignore` setup, now also fails closed for corrupt or inaccessible paths.
+
+### Final checks
+
+The commands below exited 0:
+
+```bash
+npm run typecheck
+npm run build
+npm run lint
+npx prettier --check packages/persistence/src/fs-utils.ts packages/persistence/src/fs-utils.test.ts packages/persistence/src/conversation-repository.ts packages/persistence/src/conversation-repository.test.ts packages/composition/src/runtime.integration.test.ts docs/adr/0019-conversation-domain.md docs/OPERATIONS.md docs/VALIDATION.md
+git diff --check
+git diff --check origin/main...HEAD
+npm run doctor
+```
+
+The fresh `npm run check` attempt passed formatting, ESLint, architecture (11 workspaces and 2 tests), roadmap/governance (16 milestones, 114 tasks, 131 managed issues, and 8 tests), and TypeScript before the tool terminal terminated its single-worker full-Vitest process after about 150 seconds (exit 143). No test assertion failed. The focused current tests above, preflight build, and the branch's prior recorded full-gate evidence remain green, but this completion pass does not claim a new full-gate exit 0. `npm run doctor` passed in mock mode with Node, Git, harness, workflows, model catalog, Codex, Claude, and AGY ready.
+
+### Final self-review
+
+- The repository check follows schema parsing, so the shared `id === projectId` contract remains enforced; the added comparison binds that canonical record to the requested directory without a second schema or migration.
+- `getSnapshot` is the legacy-empty entrypoint affected by `exists`; its `ENOENT` fast path remains read-only, while `ENOTDIR`, permission failures, and other corruption propagate.
+- `ConversationService.export` makes exactly one repository snapshot read, so its rejection behavior is inherited without extra service logic.
+- No production code was changed during this completion pass, no dependency was added, `.superpowers/sdd/progress.md` was untouched, and nothing was pushed.
+
+## Concerns
+
+No new concern. The documented full-file JSONL scan/replacement remains the intentional local-filesystem MVP ceiling.
