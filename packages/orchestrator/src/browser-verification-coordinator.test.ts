@@ -81,7 +81,15 @@ function report(): BrowserVerificationReport {
       url: 'http://127.0.0.1:4000/preview/preview-1/',
       evidence: { screenshots: [] },
     },
-    steps: [],
+    steps: [
+      {
+        stepId: 'open-items',
+        title: 'Open items',
+        status: 'passed',
+        durationMs: 1,
+        observations: [],
+      },
+    ],
   });
 }
 
@@ -117,6 +125,37 @@ describe('BrowserVerificationCoordinator', () => {
 
     await expect(coordinator.verify(input, new AbortController().signal)).resolves.toEqual(
       report(),
+    );
+    expect(stopped).toEqual(['preview-1']);
+  });
+
+  it.each([
+    [
+      'plan artifact',
+      (value: BrowserVerificationReport) => ({
+        ...value,
+        planArtifact: { ...value.planArtifact, revision: 3 },
+      }),
+    ],
+    [
+      'preview session',
+      (value: BrowserVerificationReport) => ({
+        ...value,
+        previewSession: { ...value.previewSession, sessionId: 'preview-2' },
+      }),
+    ],
+    [
+      'step sequence',
+      (value: BrowserVerificationReport) => ({
+        ...value,
+        steps: [{ ...value.steps[0]!, stepId: 'different-step' }],
+      }),
+    ],
+  ] as const)('rejects verifier evidence bound to a different %s', async (_case, mutate) => {
+    const { coordinator, stopped } = setup(() => Promise.resolve(mutate(report())));
+
+    await expect(coordinator.verify(input, new AbortController().signal)).rejects.toThrow(
+      /browser verification report/i,
     );
     expect(stopped).toEqual(['preview-1']);
   });

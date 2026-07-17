@@ -497,6 +497,7 @@ export const BrowserTestPlanArtifactSchema = AgentArtifactSchema.extend({
 export type BrowserTestPlanArtifact = z.infer<typeof BrowserTestPlanArtifactSchema>;
 interface MutableJsonSchema {
   [key: string]: unknown;
+  allOf?: MutableJsonSchema[];
   const?: unknown;
   description?: string;
   items: MutableJsonSchema;
@@ -525,9 +526,14 @@ browserStepsJsonSchema.description =
   'Ordered browser steps. The first action is goto; step ids are unique under authoritative runtime validation.';
 browserStepsJsonSchema.prefixItems = [
   {
-    type: 'object',
-    properties: { action: firstGotoActionJsonSchema },
-    required: ['action'],
+    allOf: [
+      browserStepsJsonSchema.items,
+      {
+        type: 'object',
+        properties: { action: firstGotoActionJsonSchema },
+        required: ['action'],
+      } as unknown as MutableJsonSchema,
+    ],
   } as unknown as MutableJsonSchema,
 ];
 export const BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA = {
@@ -580,5 +586,31 @@ export const BrowserVerificationReportSchema = z
         .strict(),
     ),
   })
-  .strict();
+  .strict()
+  .superRefine((report, context) => {
+    if (!report.approved) return;
+    if (report.planValidationError) {
+      context.addIssue({
+        code: 'custom',
+        message: 'An approved browser report cannot contain a plan validation error',
+        path: ['planValidationError'],
+      });
+    }
+    if (report.steps.length === 0) {
+      context.addIssue({
+        code: 'custom',
+        message: 'An approved browser report must contain step evidence',
+        path: ['steps'],
+      });
+    }
+    for (const [index, step] of report.steps.entries()) {
+      if (step.status !== 'passed') {
+        context.addIssue({
+          code: 'custom',
+          message: 'Every step in an approved browser report must pass',
+          path: ['steps', index, 'status'],
+        });
+      }
+    }
+  });
 export type BrowserVerificationReport = z.infer<typeof BrowserVerificationReportSchema>;

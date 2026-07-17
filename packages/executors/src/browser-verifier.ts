@@ -33,6 +33,7 @@ function installTimerTracker(input: { key: string; maxDelayMs: number }): void {
   const state: TimerTrackerState = { pending: 0 };
   const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
   const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis);
+  const nativeClearInterval = globalThis.clearInterval.bind(globalThis);
   const tracked = new Set<number>();
   const companionTimers = new Map<number, number>();
   scope[input.key] = state;
@@ -52,7 +53,7 @@ function installTimerTracker(input: { key: string; maxDelayMs: number }): void {
       timerId = nativeSetTimeout(
         (...callbackArgs: unknown[]) => {
           try {
-            handler(...callbackArgs);
+            Reflect.apply(handler, globalThis, callbackArgs);
           } finally {
             nativeSetTimeout(finish, 0);
           }
@@ -71,15 +72,23 @@ function installTimerTracker(input: { key: string; maxDelayMs: number }): void {
     tracked.add(timerId);
     return timerId;
   }) as typeof globalThis.setTimeout;
-  globalThis.clearTimeout = ((timerId: number | undefined) => {
-    if (timerId !== undefined && tracked.delete(timerId)) {
-      const companion = companionTimers.get(timerId);
+  const settleTimer = (timerId: unknown) => {
+    const normalized = Number(timerId);
+    if (Number.isFinite(normalized) && tracked.delete(normalized)) {
+      const companion = companionTimers.get(normalized);
       if (companion !== undefined) nativeClearTimeout(companion);
-      companionTimers.delete(timerId);
+      companionTimers.delete(normalized);
       state.pending -= 1;
     }
+  };
+  globalThis.clearTimeout = ((timerId: number | undefined) => {
+    settleTimer(timerId);
     nativeClearTimeout(timerId);
   }) as typeof globalThis.clearTimeout;
+  globalThis.clearInterval = ((timerId: number | undefined) => {
+    settleTimer(timerId);
+    nativeClearInterval(timerId);
+  }) as typeof globalThis.clearInterval;
 }
 
 type Observation = BrowserVerificationReport['steps'][number]['observations'][number];
@@ -259,7 +268,10 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       const previewOrigin =
         url.origin === prefixUrl.origin ||
         (url.protocol === prefixProtocol && url.host === prefixUrl.host);
-      if (previewOrigin) return url.pathname.startsWith(prefixUrl.pathname);
+      if (previewOrigin) {
+        if (!url.pathname.startsWith(prefixUrl.pathname)) return false;
+        return isSafeBrowserPath(`/${url.pathname.slice(prefixUrl.pathname.length)}`);
+      }
       return allowedOrigins.has(comparisonOrigin(url));
     };
     const settleRequest = (request: Request): void => {
@@ -296,47 +308,76 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         settleWork();
       });
     };
-    const timerCount = async (target: Page): Promise<number> => {
-      try {
-        return await target.evaluate(
-          (key) =>
-            (globalThis as typeof globalThis & Record<string, TimerTrackerState | undefined>)[key]
-              ?.pending ?? 0,
-          TIMER_TRACKER_KEY,
-        );
-      } catch (error) {
-        if (target.isClosed()) return 0;
-        throw error;
+    const retryDuringNavigation = async <T>(
+      target: Page,
+      deadline: number,
+      operation: () => Promise<T>,
+      closedValue: T,
+    ): Promise<T> => {
+      for (;;) {
+        try {
+          return await operation();
+        } catch (error) {
+          if (target.isClosed()) return closedValue;
+          if (!isTransientExecutionContextError(error) || Date.now() >= deadline) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
       }
     };
+    const timerCount = (
+      target: Page,
+      deadline = Date.now() + ACTION_TIMEOUT_MS,
+    ): Promise<number> => {
+      return retryDuringNavigation(
+        target,
+        deadline,
+        () =>
+          target.evaluate(
+            (key) =>
+              (globalThis as typeof globalThis & Record<string, TimerTrackerState | undefined>)[key]
+                ?.pending ?? 0,
+            TIMER_TRACKER_KEY,
+          ),
+        0,
+      );
+    };
     const waitForTrackedTimers = async (): Promise<void> => {
+      const deadline = Date.now() + ACTION_TIMEOUT_MS;
       for (;;) {
         for (const target of context.pages()) {
           if (target.isClosed()) continue;
-          try {
-            await target.waitForFunction(
-              (key) =>
-                ((globalThis as typeof globalThis & Record<string, TimerTrackerState | undefined>)[
-                  key
-                ]?.pending ?? 0) === 0,
-              TIMER_TRACKER_KEY,
-              { polling: 'raf', timeout: ACTION_TIMEOUT_MS },
-            );
-          } catch (error) {
-            if (!target.isClosed()) throw error;
-          }
+          await retryDuringNavigation(
+            target,
+            deadline,
+            () =>
+              target.waitForFunction(
+                (key) =>
+                  ((
+                    globalThis as typeof globalThis & Record<string, TimerTrackerState | undefined>
+                  )[key]?.pending ?? 0) === 0,
+                TIMER_TRACKER_KEY,
+                { polling: 'raf', timeout: Math.max(1, deadline - Date.now()) },
+              ),
+            undefined,
+          );
         }
         const openPages = context.pages().filter((target) => !target.isClosed());
         await Promise.all(
           openPages.map((target) =>
-            target
-              .evaluate(() => Promise.resolve())
-              .catch((error: unknown) => {
-                if (!target.isClosed()) throw error;
-              }),
+            retryDuringNavigation(
+              target,
+              deadline,
+              () => target.evaluate(() => Promise.resolve()),
+              undefined,
+            ),
           ),
         );
-        if ((await Promise.all(openPages.map(timerCount))).every((count) => count === 0)) return;
+        if (
+          (await Promise.all(openPages.map((target) => timerCount(target, deadline)))).every(
+            (count) => count === 0,
+          )
+        )
+          return;
       }
     };
     const waitForQuiescence = async (): Promise<void> => {
@@ -347,7 +388,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         if (!hasPendingWork() && timerCounts.every((count) => count === 0)) return;
       }
     };
-    const observePage = (target: Page, stepIndex: number): (() => void) => {
+    const observePage = (target: Page): void => {
       const onConsole = (message: ConsoleMessage): void => {
         if (message.type() !== 'error') return;
         const location = message.location().url;
@@ -357,20 +398,17 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
             message: message.text(),
             ...(location ? { url: location } : {}),
           },
-          stepIndex,
+          activeStepIndex,
         );
       };
       const onPageError = (error: Error): void => {
-        observe({ kind: 'uncaught-exception', message: error.message }, stepIndex);
+        observe({ kind: 'uncaught-exception', message: error.message }, activeStepIndex);
       };
       target.on('console', onConsole);
       target.on('pageerror', onPageError);
-      return () => {
-        target.off('console', onConsole);
-        target.off('pageerror', onPageError);
-      };
     };
 
+    observePage(page);
     context.on('request', (request) => {
       requestSteps.set(request, activeStepIndex);
       pendingRequests.add(request);
@@ -388,7 +426,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       settleRequest(request);
     });
     context.on('page', (popup) => {
-      observePage(popup, activeStepIndex);
+      observePage(popup);
       pendingPages.add(popup);
       void popup
         .waitForLoadState('domcontentloaded', { timeout: ACTION_TIMEOUT_MS })
@@ -476,7 +514,6 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         continue;
       }
       activeStepIndex = index;
-      const stopObservingPage = observePage(page, index);
       const startedAt = performance.now();
       try {
         await this.executeAction(page, step.action, prefixUrl, token, index === 0);
@@ -507,8 +544,6 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           error: redact(errorMessage(error), token),
           observations: [],
         });
-      } finally {
-        stopObservingPage();
       }
     }
     for (const { stepIndex, observation } of runObservations) {
@@ -639,6 +674,12 @@ function redact(value: string, token: string | null): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isTransientExecutionContextError(error: unknown): boolean {
+  return /execution context was destroyed|cannot find context with specified id|frame was detached/i.test(
+    errorMessage(error),
+  );
 }
 
 function comparisonOrigin(url: URL): string {

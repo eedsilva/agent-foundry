@@ -26,7 +26,6 @@ import type {
 import {
   AGENT_ARTIFACT_JSON_SCHEMA,
   BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
-  BrowserVerificationReportSchema,
 } from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
@@ -76,7 +75,10 @@ import {
   workflowHash,
 } from './idempotency.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
-import type { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
+import {
+  validateBrowserVerificationReportBinding,
+  type BrowserVerificationCoordinator,
+} from './browser-verification-coordinator.js';
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -1444,7 +1446,22 @@ export class WorkflowOrchestrator {
       }
       throwIfCancelled(signal, runId);
       await this.assertExecutionMayContinue(runId, signal);
-      const persistedReport = BrowserVerificationReportSchema.parse(artifact.content);
+      const sourceAttempt =
+        artifact.metadata.stepRunId && artifact.metadata.attemptId
+          ? await this.stepAttempts.get(
+              runId,
+              artifact.metadata.stepRunId,
+              artifact.metadata.attemptId,
+            )
+          : null;
+      if (!sourceAttempt?.previewSessionId) {
+        throw new Error('Browser verification report is missing its source preview session.');
+      }
+      const persistedReport = validateBrowserVerificationReportBinding(artifact.content, {
+        planArtifact: planReference,
+        planContent: browserPlan.content,
+        previewSessionId: sourceAttempt.previewSessionId,
+      });
       attempt = await this.stepAttempts.update(
         transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
           durationMs: Date.now() - startedAt,

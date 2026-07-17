@@ -183,6 +183,19 @@ const BROWSER_PLAN = {
   nextActions: [],
 } satisfies AgentArtifact;
 
+function browserReportSteps(approved: boolean): BrowserVerificationReport['steps'] {
+  return [
+    {
+      stepId: 'open-items',
+      title: 'Open items',
+      status: approved ? 'passed' : 'failed',
+      durationMs: 1,
+      ...(approved ? {} : { error: 'Browser verification failed.' }),
+      observations: [],
+    },
+  ];
+}
+
 function browserCoordinator(verify: BrowserVerifier['verify']) {
   const stopped: string[] = [];
   const sessions = new Map<string, PreviewSession>();
@@ -350,7 +363,7 @@ describe('browser verification orchestration (#32)', () => {
             ...input.session,
             url: input.session.url?.replace(/\?.*$/, ''),
           },
-          steps: [],
+          steps: browserReportSteps(approved),
         }) satisfies BrowserVerificationReport;
       },
     };
@@ -590,7 +603,7 @@ describe('browser verification orchestration (#32)', () => {
               ...input.session,
               url: input.session.url?.replace(/\?.*$/, ''),
             },
-            steps: [],
+            steps: browserReportSteps(true),
           }),
         ),
       );
@@ -649,7 +662,7 @@ describe('browser verification orchestration (#32)', () => {
               ...input.session,
               url: input.session.url?.replace(/\?.*$/, ''),
             },
-            steps: [],
+            steps: browserReportSteps(approved),
           }),
         );
       });
@@ -707,6 +720,79 @@ describe('browser verification orchestration (#32)', () => {
         );
         expect(harness.executor.started('repair-browser')).toBe(1);
       }
+    },
+  );
+
+  it.each([
+    [
+      'plan revision',
+      (report: BrowserVerificationReport) => ({
+        ...report,
+        planArtifact: { ...report.planArtifact, revision: 999 },
+      }),
+    ],
+    [
+      'preview session',
+      (report: BrowserVerificationReport) => ({
+        ...report,
+        previewSession: { ...report.previewSession, sessionId: 'forged-preview' },
+      }),
+    ],
+    [
+      'step sequence',
+      (report: BrowserVerificationReport) => ({
+        ...report,
+        steps: [{ ...report.steps[0]!, stepId: 'forged-step' }],
+      }),
+    ],
+  ] as const)(
+    'rejects an adversarial persisted approval with a different %s',
+    async (_case, mutate) => {
+      const browser = browserCoordinator((input) =>
+        Promise.resolve(
+          BrowserVerificationReportSchema.parse({
+            schemaVersion: '1',
+            approved: true,
+            summary: 'Persisted browser approval.',
+            planArtifact: input.planArtifact,
+            previewSession: {
+              ...input.session,
+              url: input.session.url?.replace(/\?.*$/, ''),
+            },
+            steps: browserReportSteps(true),
+          }),
+        ),
+      );
+      const harness = makeHarness({}, undefined, {
+        workflow: BROWSER_WORKFLOW,
+        browserVerification: browser.coordinator,
+        agentOutput: (request) =>
+          request.stepId === 'plan-browser-test' ? BROWSER_PLAN : undefined,
+      });
+      await seedRun(harness);
+      harness.workspaces.onBeforeCheckpoint = () => {
+        harness.workspaces.onBeforeCheckpoint = undefined;
+        throw new Error('checkpoint persistence failed');
+      };
+
+      await expect(
+        harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+      ).rejects.toThrow('checkpoint persistence failed');
+      const [stored] = harness.artifacts.named('browser-verification.report');
+      if (!stored) throw new Error('Expected persisted browser report');
+      stored.content = mutate(stored.content as BrowserVerificationReport);
+      const failedRun = await harness.runs.get('run-1');
+      if (!failedRun) throw new Error('Expected failed run');
+      const { error: _error, completedAt: _completedAt, ...retryable } = failedRun;
+      await harness.runs.update(
+        { ...retryable, status: 'running', updatedAt: new Date().toISOString() },
+        failedRun.version,
+      );
+
+      await expect(
+        harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+      ).rejects.toThrow(/browser verification report/i);
+      expect(harness.workspaces.checkpoints).toEqual([]);
     },
   );
 });

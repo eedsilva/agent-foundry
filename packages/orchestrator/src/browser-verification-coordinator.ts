@@ -1,9 +1,11 @@
+import { isDeepStrictEqual } from 'node:util';
 import {
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
   PreviewSessionReferenceSchema,
   type ArtifactReference,
   type BrowserVerificationReport,
+  type PreviewSessionReference,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
 import type { BrowserVerifier } from '@agent-foundry/domain';
@@ -38,6 +40,10 @@ export class BrowserVerificationCoordinator {
       ...(started.url ? { url: started.url } : {}),
       evidence: { screenshots: [] },
     });
+    const publicSession = PreviewSessionReferenceSchema.parse({
+      ...session,
+      ...(session.url ? { url: publicUrl(session.url) } : {}),
+    });
     const planArtifact = artifactReference(input.plan);
     let verificationFailed = false;
     let verificationError: unknown;
@@ -51,10 +57,7 @@ export class BrowserVerificationCoordinator {
           approved: false,
           summary: 'Browser test plan validation failed.',
           planArtifact,
-          previewSession: {
-            ...session,
-            ...(session.url ? { url: publicUrl(session.url) } : {}),
-          },
+          previewSession: publicSession,
           planValidationError: parsed.error.issues
             .map((issue) => `${issue.path.join('.') || 'plan'}: ${issue.message}`)
             .join('; '),
@@ -62,14 +65,21 @@ export class BrowserVerificationCoordinator {
         });
       }
 
-      return await this.verifier.verify(
+      return validateBrowserVerificationReportBinding(
+        await this.verifier.verify(
+          {
+            planArtifact,
+            planContent: input.plan.content,
+            session,
+            allowedOrigins: input.allowedOrigins,
+          },
+          signal,
+        ),
         {
           planArtifact,
           planContent: input.plan.content,
-          session,
-          allowedOrigins: input.allowedOrigins,
+          previewSession: publicSession,
         },
-        signal,
       );
     } catch (error) {
       verificationFailed = true;
@@ -89,6 +99,34 @@ export class BrowserVerificationCoordinator {
       }
     }
   }
+}
+
+export function validateBrowserVerificationReportBinding(
+  report: unknown,
+  expected: {
+    planArtifact: ArtifactReference;
+    planContent: unknown;
+    previewSession?: PreviewSessionReference;
+    previewSessionId?: string;
+  },
+): BrowserVerificationReport {
+  const parsedReport = BrowserVerificationReportSchema.parse(report);
+  const parsedPlan = BrowserTestPlanArtifactSchema.safeParse(expected.planContent);
+  const expectedSteps = parsedPlan.success
+    ? parsedPlan.data.data.steps.map(({ id: stepId, title }) => ({ stepId, title }))
+    : [];
+  const actualSteps = parsedReport.steps.map(({ stepId, title }) => ({ stepId, title }));
+  if (
+    !isDeepStrictEqual(parsedReport.planArtifact, expected.planArtifact) ||
+    (expected.previewSession &&
+      !isDeepStrictEqual(parsedReport.previewSession, expected.previewSession)) ||
+    (expected.previewSessionId &&
+      parsedReport.previewSession.sessionId !== expected.previewSessionId) ||
+    !isDeepStrictEqual(actualSteps, expectedSteps)
+  ) {
+    throw new Error('Browser verification report is not bound to the requested plan and session.');
+  }
+  return parsedReport;
 }
 
 function artifactReference(artifact: StoredArtifact): ArtifactReference {

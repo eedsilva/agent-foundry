@@ -487,6 +487,54 @@ describe('PlaywrightBrowserVerifier', () => {
     ).toHaveLength(2);
   });
 
+  it('blocks repeatedly encoded preview-relative HTTP, redirect, and WebSocket traffic', async () => {
+    let sentinelRequests = 0;
+    let sentinelUpgrades = 0;
+    let origin = '';
+    origin = await serve((request, response) => {
+      if (request.url?.includes('%252e%252e/sentinel')) {
+        sentinelRequests += 1;
+        response.end('escaped');
+        return;
+      }
+      if (request.url === '/preview/preview-1/redirect') {
+        response.statusCode = 302;
+        response.setHeader('location', '/preview/preview-1/%252e%252e/sentinel');
+        response.end();
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end(`
+        <img src="/preview/preview-1/%252e%252e/sentinel">
+        <iframe src="/preview/preview-1/redirect"></iframe>
+        <script>new WebSocket('${origin.replace('http:', 'ws:')}/preview/preview-1/%252e%252e/sentinel')</script>
+      `);
+    });
+    servers.at(-1)!.on('upgrade', (_request, socket) => {
+      sentinelUpgrades += 1;
+      socket.destroy();
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open encoded fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(sentinelRequests).toBe(0);
+    expect(sentinelUpgrades).toBe(0);
+    expect(report.approved).toBe(false);
+    expect(
+      report.steps[0]?.observations.filter(({ kind }) => kind === 'policy-block').length,
+    ).toBeGreaterThanOrEqual(3);
+  });
+
   it.each([
     '/../admin',
     '/%2e%2e/admin',
@@ -887,6 +935,201 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed', 'skipped']);
     expect(report.steps[1]?.observations.some(({ kind }) => kind === 'console-error')).toBe(true);
   });
+
+  it('attributes a late popup error to the active step and skips its later side effect', async () => {
+    let laterSideEffects = 0;
+    const origin = await serve((request, response) => {
+      if (request.url === '/preview/preview-1/popup') {
+        response.setHeader('content-type', 'text/html');
+        response.end(
+          `<script>setTimeout(() => console.error('late popup failure'), 1100)</script>`,
+        );
+        return;
+      }
+      if (request.url === '/preview/preview-1/wait') {
+        setTimeout(() => response.end('waited'), 1400);
+        return;
+      }
+      if (request.url === '/preview/preview-1/later-side-effect') {
+        laterSideEffects += 1;
+        response.end('unexpected');
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end(`
+        <button onclick="window.open('/preview/preview-1/popup')">Open popup</button>
+        <button onclick="fetch('/preview/preview-1/wait')">Wait</button>
+        <button onclick="fetch('/preview/preview-1/later-side-effect')">Later side effect</button>
+      `);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'popup',
+          title: 'Open popup',
+          action: { kind: 'click', locator: { by: 'text', text: 'Open popup' } },
+          assertions: [],
+        },
+        {
+          id: 'wait',
+          title: 'Wait while popup fails',
+          action: { kind: 'click', locator: { by: 'text', text: 'Wait' } },
+          assertions: [],
+        },
+        {
+          id: 'side-effect',
+          title: 'Perform later side effect',
+          action: { kind: 'click', locator: { by: 'text', text: 'Later side effect' } },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(laterSideEffects).toBe(0);
+    expect(report.steps.map(({ status }) => status)).toEqual([
+      'passed',
+      'passed',
+      'failed',
+      'skipped',
+    ]);
+    expect(report.steps[2]?.observations.some(({ kind }) => kind === 'console-error')).toBe(true);
+  });
+
+  it('preserves the browser receiver for strict timeout callbacks', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`
+        <button onclick="setTimeout(function () { 'use strict'; document.querySelector('[data-testid=result]').textContent = this === window ? 'window' : 'wrong'; }, 100)">Check receiver</button>
+        <div data-testid="result">pending</div>
+      `);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'receiver',
+          title: 'Check timeout receiver',
+          action: { kind: 'click', locator: { by: 'text', text: 'Check receiver' } },
+          assertions: [
+            {
+              kind: 'containsText',
+              locator: { by: 'testId', testId: 'result' },
+              expected: 'window',
+            },
+          ],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(true);
+    expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed']);
+  });
+
+  it.each([
+    ['clearInterval', 'clearInterval(timer)'],
+    ['numeric-string clearTimeout', 'clearTimeout(String(timer))'],
+  ] as const)(
+    'settles a tracked timeout cancelled through %s',
+    async (_case, cancellation) => {
+      const origin = await serve((_request, response) => {
+        response.setHeader('content-type', 'text/html');
+        response.end(`
+        <button onclick="const timer = setTimeout(() => console.error('must stay cancelled'), 700); ${cancellation}; document.querySelector('[data-testid=result]').textContent = 'cancelled'">Cancel timer</button>
+        <div data-testid="result">pending</div>
+      `);
+      });
+
+      const report = await verify(
+        origin,
+        plan([
+          {
+            id: 'open',
+            title: 'Open fixture',
+            action: { kind: 'goto', path: '/' },
+            assertions: [],
+          },
+          {
+            id: 'cancel',
+            title: 'Cancel timeout',
+            action: { kind: 'click', locator: { by: 'text', text: 'Cancel timer' } },
+            assertions: [
+              {
+                kind: 'containsText',
+                locator: { by: 'testId', testId: 'result' },
+                expected: 'cancelled',
+              },
+            ],
+          },
+        ]),
+      );
+
+      expect(report.approved).toBe(true);
+      expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed']);
+    },
+    15_000,
+  );
+
+  it.each(['main page', 'popup'] as const)(
+    'retries timer quiescence when the %s navigates',
+    async (target) => {
+      const origin = await serve((request, response) => {
+        response.setHeader('content-type', 'text/html');
+        if (request.url?.endsWith('/ready')) {
+          setTimeout(() => response.end('<h1>Ready</h1>'), 400);
+          return;
+        }
+        if (request.url?.endsWith('/popup')) {
+          response.end(
+            `<script>setTimeout(() => location.href = '/preview/preview-1/ready', 300)</script>`,
+          );
+          return;
+        }
+        response.end(`
+          <button onclick="${
+            target === 'main page'
+              ? "setTimeout(() => location.href = '/preview/preview-1/ready', 300)"
+              : "window.open('/preview/preview-1/popup')"
+          }">Navigate</button>
+        `);
+      });
+
+      const report = await verify(
+        origin,
+        plan([
+          {
+            id: 'open',
+            title: 'Open fixture',
+            action: { kind: 'goto', path: '/' },
+            assertions: [],
+          },
+          {
+            id: 'navigate',
+            title: 'Navigate from a timer',
+            action: { kind: 'click', locator: { by: 'text', text: 'Navigate' } },
+            assertions: [],
+          },
+        ]),
+      );
+
+      expect(report.approved).toBe(true);
+      expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed']);
+    },
+  );
 
   it('auto-waits for asynchronous text content', async () => {
     const origin = await serve((_request, response) => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import {
   BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
   BrowserActionSchema,
@@ -543,7 +544,10 @@ describe('browser verification contracts', () => {
       expect(new RegExp(pathPattern).test(path), path).toBe(false);
     }
     expect(steps.prefixItems?.[0]).toMatchObject({
-      properties: { action: { properties: { kind: { const: 'goto' } } } },
+      allOf: [
+        expect.any(Object),
+        { properties: { action: { properties: { kind: { const: 'goto' } } } } },
+      ],
     });
     expect(BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA).toMatchObject({
       'x-agent-foundry-runtime-validation': {
@@ -554,6 +558,20 @@ describe('browser verification contracts', () => {
       },
     });
     expect(steps.description).toMatch(/unique.*runtime/i);
+  });
+
+  it.each([
+    ['missing id', 'id'],
+    ['missing title', 'title'],
+    ['missing assertions', 'assertions'],
+    ['an extra property', 'unexpected'],
+  ] as const)('keeps full provider validation on the first step with %s', (_case, property) => {
+    const validate = new Ajv2020({ strict: false }).compile(BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA);
+    const firstStep: Record<string, unknown> = { ...plan.steps[0] };
+    if (property === 'unexpected') firstStep[property] = true;
+    else delete firstStep[property];
+
+    expect(validate({ ...artifact, data: { ...plan, steps: [firstStep] } })).toBe(false);
   });
 
   it.each([
@@ -627,6 +645,68 @@ describe('browser verification contracts', () => {
           ...report.previewSession,
           evidence: { ...report.previewSession.evidence, video: report.planArtifact },
         },
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    ['no steps', []],
+    [
+      'a failed step',
+      [
+        {
+          stepId: 'open',
+          title: 'Open fixture',
+          status: 'failed',
+          durationMs: 1,
+          error: 'failed',
+          observations: [],
+        },
+      ],
+    ],
+    [
+      'a skipped step',
+      [
+        {
+          stepId: 'open',
+          title: 'Open fixture',
+          status: 'skipped',
+          durationMs: 0,
+          observations: [],
+        },
+      ],
+    ],
+  ] as const)('rejects an approved report with %s', (_case, steps) => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: true,
+        summary: 'Contradictory approval',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        steps,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an approved report with a plan-validation error', () => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: true,
+        summary: 'Contradictory approval',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        planValidationError: 'invalid plan',
+        steps: [],
       }).success,
     ).toBe(false);
   });
