@@ -198,6 +198,24 @@ export class FileWorkspaceManager implements WorkspaceManager {
     return head.exitCode === 0 ? head.stdout.trim() : null;
   }
 
+  async diff(projectId: string, fromRef: string, toRef: string): Promise<string> {
+    const cwd = this.workspacePath(projectId);
+    const result = await execa('git', ['diff', fromRef, toRef], { cwd });
+    return result.stdout;
+  }
+
+  async restoreTree(projectId: string, ref: string): Promise<void> {
+    const cwd = this.workspacePath(projectId);
+    await execa('git', ['checkout', ref, '--', '.'], { cwd });
+  }
+
+  async createBranch(projectId: string, ref: string, name: string): Promise<string> {
+    const cwd = this.workspacePath(projectId);
+    await execa('git', ['branch', safeSegment(name), ref], { cwd });
+    const head = await execa('git', ['rev-parse', ref], { cwd });
+    return head.stdout.trim();
+  }
+
   async readPrd(projectId: string): Promise<string> {
     return readFile(join(this.workspacePath(projectId), 'PRD.md'), 'utf8');
   }
