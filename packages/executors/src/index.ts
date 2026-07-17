@@ -10,3 +10,4 @@ export * from './package-manager.js';
 export * from './preview-command-plan.js';
 export * from './preview-port.js';
 export * from './node-preview-runner.js';
+export * from './browser-verifier.js';
