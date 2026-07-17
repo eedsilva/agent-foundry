@@ -414,9 +414,7 @@ describe('PlaywrightBrowserVerifier', () => {
         return;
       }
       response.setHeader('content-type', 'text/html');
-      response.end(`<h1>Fixture</h1><script>
-        setTimeout(() => fetch('/preview/preview-1/late-failure'), 50);
-      </script>`);
+      response.end(`<h1>Fixture</h1><button onclick="fetch('/preview/preview-1/late-failure')">Trigger failure</button>`);
     });
 
     const report = await verify(
@@ -428,11 +426,17 @@ describe('PlaywrightBrowserVerifier', () => {
           action: { kind: 'goto', path: '/' },
           assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading' } }],
         },
+        {
+          id: 'trigger',
+          title: 'Trigger failure',
+          action: { kind: 'click', locator: { kind: 'text', text: 'Trigger failure' } },
+          assertions: [],
+        },
       ]),
     );
 
     expect(report.approved).toBe(false);
-    expect(report.steps[0]?.observations.some(({ kind }) => kind === 'http-error')).toBe(true);
+    expect(report.steps[1]?.observations.some(({ kind }) => kind === 'http-error')).toBe(true);
   });
 
   it('auto-waits for asynchronous text content', async () => {
@@ -588,6 +592,96 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.approved).toBe(false);
     expect(report.steps[1]?.observations.some(({ kind }) => kind === 'http-error')).toBe(true);
   });
+
+  it('records console errors and uncaught exceptions from an allowed popup', async () => {
+    const popupOrigin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<script>
+        console.error('allowed popup console failure');
+        throw new Error('allowed popup exception');
+      </script>`);
+    });
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<a href="${popupOrigin}/popup" target="_blank">Open allowed popup</a>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'popup',
+          title: 'Open allowed popup',
+          action: { kind: 'click', locator: { kind: 'text', text: 'Open allowed popup' } },
+          assertions: [],
+        },
+      ]),
+      { allowedOrigins: [popupOrigin] },
+    );
+
+    expect(report.approved).toBe(false);
+    expect(report.steps[1]?.observations.map(({ kind }) => kind)).toEqual(
+      expect.arrayContaining(['console-error', 'uncaught-exception']),
+    );
+  });
+
+  it('permits a 201 Location header without following it as a redirect', async () => {
+    let sentinelRequests = 0;
+    const forbiddenOrigin = await serve((_request, response) => {
+      sentinelRequests += 1;
+      response.end('sentinel');
+    });
+    const origin = await serve((_request, response) => {
+      response.statusCode = 201;
+      response.setHeader('location', `${forbiddenOrigin}/sentinel`);
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>Created</h1>');
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open created resource',
+          action: { kind: 'goto', path: '/' },
+          assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading', name: 'Created' } }],
+        },
+      ]),
+    );
+
+    expect(sentinelRequests).toBe(0);
+    expect(report.approved).toBe(true);
+  });
+
+  it('loads a page that starts a long-lived polling request', async () => {
+    const origin = await serve((request, response) => {
+      if (request.url === '/preview/preview-1/poll') return;
+      response.setHeader('content-type', 'text/html');
+      response.end(`<h1>Polling</h1><script>fetch('/preview/preview-1/poll')</script>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open polling fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [{ kind: 'visible', locator: { kind: 'role', role: 'heading', name: 'Polling' } }],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(true);
+    expect(report.steps[0]?.status).toBe('passed');
+  }, 15_000);
 
   it('caps observations at 100', async () => {
     const origin = await serve((_request, response) => {

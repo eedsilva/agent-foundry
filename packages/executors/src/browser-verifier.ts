@@ -229,6 +229,20 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         timeout.addEventListener('abort', onTimeout, { once: true });
       });
     };
+    const observePage = (target: Page): void => {
+      target.on('console', (message) => {
+        if (message.type() !== 'error') return;
+        const location = message.location().url;
+        observe({
+          kind: 'console-error',
+          message: message.text(),
+          ...(location ? { url: location } : {}),
+        });
+      });
+      target.on('pageerror', (error) => {
+        observe({ kind: 'uncaught-exception', message: error.message });
+      });
+    };
 
     context.on('request', (request) => {
       requestSteps.set(request, currentStepIndex);
@@ -247,6 +261,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       settleRequest(request);
     });
     context.on('page', (popup) => {
+      observePage(popup);
       pendingPages.add(popup);
       void popup
         .waitForLoadState('domcontentloaded', { timeout: ACTION_TIMEOUT_MS })
@@ -266,7 +281,9 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           return;
         }
         const response = await route.fetch({ maxRedirects: 0, timeout: ACTION_TIMEOUT_MS });
-        const location = response.headers().location;
+        const location = [301, 302, 303, 307, 308].includes(response.status())
+          ? response.headers().location
+          : undefined;
         const redirect = location ? new URL(location, url).href : undefined;
         if (redirect && !permitted(redirect)) {
           observe({
@@ -306,18 +323,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         );
       }
     });
-    page.on('console', (message) => {
-      if (message.type() !== 'error') return;
-      const location = message.location().url;
-      observe({
-        kind: 'console-error',
-        message: message.text(),
-        ...(location ? { url: location } : {}),
-      });
-    });
-    page.on('pageerror', (error) => {
-      observe({ kind: 'uncaught-exception', message: error.message });
-    });
+    observePage(page);
 
     const steps: StepReport[] = [];
     let failed = false;
@@ -339,7 +345,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         for (const assertion of step.assertions) {
           await this.executeAssertion(page, assertion, prefixUrl, token);
         }
-        await waitForPendingRequests();
+        if (step.action.kind !== 'goto') await waitForPendingRequests();
         steps.push({
           stepId: step.id,
           title: step.title,
@@ -388,12 +394,19 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       case 'goto': {
         const url = resolvePlanPath(prefixUrl, action.path);
         if (initialNavigation && token) url.searchParams.set('token', token);
-        await page.goto(url.href, { waitUntil: 'networkidle' });
+        await page.goto(url.href);
         return;
       }
-      case 'click':
-        await locator(page, action.locator).click();
+      case 'click': {
+        const target = locator(page, action.locator);
+        const popup =
+          (await target.getAttribute('target')) === '_blank'
+            ? page.waitForEvent('popup')
+            : undefined;
+        await target.click();
+        await popup;
         return;
+      }
       case 'fill':
         await locator(page, action.locator).fill(action.value);
     }
