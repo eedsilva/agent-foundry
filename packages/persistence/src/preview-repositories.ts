@@ -12,6 +12,7 @@ import {
   VersionConflictError,
   redactString,
   type PreviewLogRepository,
+  type PreviewLifecycleLock,
   type PreviewSessionRecord,
   type PreviewSessionRepository,
 } from '@agent-foundry/domain';
@@ -30,6 +31,17 @@ interface LogFile {
   nextCursor: number;
   truncatedThroughCursor: number;
   entries: PreviewLogEntry[];
+}
+
+export class FilePreviewLifecycleLock implements PreviewLifecycleLock {
+  constructor(private readonly dataDir: string) {}
+
+  withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    return withDirectoryLock(
+      join(this.dataDir, 'previews', safeSegment(sessionId), '.lifecycle.lock'),
+      operation,
+    );
+  }
 }
 
 export class FilePreviewSessionRepository implements PreviewSessionRepository {

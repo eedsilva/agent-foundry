@@ -57,4 +57,22 @@ describe('FileArtifactStore feedback metadata', () => {
     expect(left).toEqual(right);
     await expect(store.listMetadata('project-1', 'repair-notes')).resolves.toHaveLength(1);
   });
+
+  it('returns one revision for concurrent writes with the same artifact idempotency key', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-artifact-idempotency-'));
+    dirs.push(dataDir);
+    const store = new FileArtifactStore(dataDir);
+    const input = {
+      projectId: 'project-1',
+      name: 'preview-failure-session-1',
+      content: { schemaVersion: '1', error: 'failed' },
+      createdBy: 'preview-service',
+      idempotencyKey: 'a'.repeat(64),
+    };
+
+    const [left, right] = await Promise.all([store.put(input), store.put(input)]);
+
+    expect(left).toEqual(right);
+    await expect(store.listMetadata('project-1', input.name)).resolves.toHaveLength(1);
+  });
 });

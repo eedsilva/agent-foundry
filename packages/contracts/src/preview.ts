@@ -7,6 +7,7 @@ export const PreviewSessionStatusSchema = z.enum([
   'starting',
   'running',
   'unhealthy',
+  'failing',
   'stopped',
   'failed',
   'expired',
@@ -165,18 +166,18 @@ export const PreviewSessionSchema = z
         message: 'Non-terminal session cannot have completedAt',
       });
     }
-    if (session.status === 'failed' && !session.error) {
+    if ((session.status === 'failed' || session.status === 'failing') && !session.error) {
       context.addIssue({
         code: 'custom',
         path: ['error'],
         message: 'Failed session requires error',
       });
     }
-    if (session.status !== 'failed' && session.error) {
+    if (session.status !== 'failed' && session.status !== 'failing' && session.error) {
       context.addIssue({
         code: 'custom',
         path: ['error'],
-        message: 'Only failed sessions may retain an error',
+        message: 'Only failing or failed sessions may retain an error',
       });
     }
     if (session.updatedAt < session.createdAt) {

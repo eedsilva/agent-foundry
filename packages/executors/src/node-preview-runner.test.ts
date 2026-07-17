@@ -414,6 +414,64 @@ describe('NodePreviewRunner', () => {
   );
 
   it.runIf(process.platform !== 'win32')(
+    'stops a persisted process tree from a fresh runner after an API restart',
+    async () => {
+      const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
+      let session = await newSession('sess-persisted-tree');
+      session = await runner.prepare(session);
+      session = {
+        ...session,
+        commandPlan: {
+          ...session.commandPlan!,
+          dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
+        },
+      };
+      session = await runner.start(session);
+      expect(session.process?.pid).toBeDefined();
+      expect(await canConnect(session.process!.port!)).toBe(true);
+
+      const stopped = await new NodePreviewRunner().stop(session);
+
+      expect(stopped.status).toBe('stopped');
+      await vi.waitFor(async () => expect(await canConnect(session.process!.port!)).toBe(false));
+    },
+    10_000,
+  );
+
+  it.runIf(process.platform !== 'win32')(
+    'kills the persisted process tree before a fresh runner replaces it',
+    async () => {
+      const original = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
+      let session = await newSession('sess-persisted-restart');
+      session = await original.prepare(session);
+      session = {
+        ...session,
+        commandPlan: {
+          ...session.commandPlan!,
+          dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
+        },
+      };
+      session = await original.start(session);
+      const oldPort = session.process!.port!;
+      const unhealthy = PreviewSessionSchema.parse({
+        ...session,
+        status: 'unhealthy',
+        url: `http://127.0.0.1:${oldPort}/`,
+        startedAt: session.updatedAt,
+        ttl: { ...session.ttl, expiresAt: new Date(Date.now() + 300_000).toISOString() },
+      });
+
+      const fresh = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
+      const restarted = await fresh.restart(unhealthy);
+
+      expect(await canConnect(oldPort)).toBe(false);
+      await expect(fresh.health(restarted)).resolves.toMatchObject({ state: 'healthy' });
+      await fresh.stop(restarted);
+    },
+    10_000,
+  );
+
+  it.runIf(process.platform !== 'win32')(
     'kills descendants left behind when the preview process exits first',
     async () => {
       const directory = await mkdtemp(join(tmpdir(), 'preview-orphan-tree-'));

@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   PreviewFailureDiagnosticSchema,
+  PreviewSessionSchema,
   type PreviewFailureDiagnostic,
   type PreviewHealth,
   type PreviewLogPage,
@@ -14,12 +15,15 @@ import {
   expirePreviewSession,
   isPreviewSessionExpired,
   isPreviewSessionTerminal,
+  redactString,
+  redactUnknown,
   transitionPreviewSession,
   type ArtifactStore,
   type Clock,
   type EventStore,
   type IdGenerator,
   type PreviewRunner,
+  type PreviewLifecycleLock,
   type PreviewSessionRepository,
 } from '@agent-foundry/domain';
 
@@ -53,11 +57,10 @@ export class PreviewService {
   private readonly healthIntervalMs: number;
   private readonly healthFailureThreshold: number;
   private readonly maxRestarts: number;
-  private readonly locks = new Map<string, Promise<void>>();
-
   constructor(
     private readonly runner: PreviewRunner,
     private readonly sessions: PreviewSessionRepository,
+    private readonly lifecycleLock: PreviewLifecycleLock,
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
     private readonly clock: Clock,
@@ -91,21 +94,21 @@ export class PreviewService {
 
       session = await this.runner.prepare(session);
       if (isPreviewSessionTerminal(session.status)) {
-        session = await this.finalizeFailure(session, 'prepare');
+        session = await this.finalizeFailure(this.stageFailure(session), 'prepare');
         return { session, url: '' };
       }
       session = await this.persist(session);
 
       session = await this.runner.start(session);
       if (isPreviewSessionTerminal(session.status)) {
-        session = await this.finalizeFailure(session, 'start');
+        session = await this.finalizeFailure(this.stageFailure(session), 'start');
         return { session, url: '' };
       }
       session = await this.persist(session);
 
       const health = await this.waitForHealthy(session);
       if (health.state !== 'healthy') {
-        const failed = transitionPreviewSession(session, 'failed', this.clock.now(), {
+        const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
           health,
           error: {
             name: 'PreviewUnhealthyError',
@@ -113,7 +116,7 @@ export class PreviewService {
             message: 'Dev server did not become healthy in time.',
           },
         });
-        session = await this.finalizeFailure(failed, 'health');
+        session = await this.finalizeFailure(failing, 'health');
         return { session, url: '' };
       }
 
@@ -131,6 +134,9 @@ export class PreviewService {
     return this.withSessionLock(sessionId, async () => {
       const record = await this.requireSession(sessionId);
       if (isPreviewSessionTerminal(record.session.status)) return record.session;
+      if (record.session.status === 'failing') {
+        return this.finalizeFailure(record.session, inferFailurePhase(record.session));
+      }
       return this.persist(await this.runner.stop(record.session));
     });
   }
@@ -147,6 +153,9 @@ export class PreviewService {
     return this.withSessionLock(sessionId, async () => {
       const record = await this.requireSession(sessionId);
       let session = record.session;
+      if (session.status === 'failing') {
+        throw new PreviewAccessDeniedError(sessionId, 'session failure is being finalized');
+      }
       if (
         !isPreviewSessionTerminal(session.status) &&
         isPreviewSessionExpired(session, this.clock.now())
@@ -172,11 +181,17 @@ export class PreviewService {
   async reap(): Promise<number> {
     const active = await this.sessions.listActive();
     let reaped = 0;
+    const failures: unknown[] = [];
     for (const record of active) {
-      reaped += await this.withSessionLock(record.session.id, async () =>
-        this.reapSession(record.session.id),
-      );
+      try {
+        reaped += await this.withSessionLock(record.session.id, async () =>
+          this.reapSession(record.session.id),
+        );
+      } catch (error) {
+        failures.push(error);
+      }
     }
+    if (failures.length > 0) throw new AggregateError(failures, 'Preview lifecycle sweep failed.');
     return reaped;
   }
 
@@ -184,6 +199,11 @@ export class PreviewService {
     const record = await this.sessions.get(sessionId);
     if (!record || isPreviewSessionTerminal(record.session.status)) return 0;
     let session = record.session;
+
+    if (session.status === 'failing') {
+      await this.finalizeFailure(session, inferFailurePhase(session));
+      return 1;
+    }
 
     if (isPreviewSessionExpired(session, this.clock.now())) {
       await this.runner.stop(session);
@@ -231,8 +251,7 @@ export class PreviewService {
     );
 
     if (session.restartCount >= this.maxRestarts) {
-      await this.runner.stop(session);
-      const failed = transitionPreviewSession(session, 'failed', this.clock.now(), {
+      const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
         health,
         error: {
           name: 'PreviewCrashLoopError',
@@ -240,19 +259,42 @@ export class PreviewService {
           message: `Preview restart limit of ${this.maxRestarts} reached.`,
         },
       });
-      await this.finalizeFailure(failed, 'runtime', true);
+      await this.finalizeFailure(failing, 'runtime');
       return 1;
     }
 
-    session = await this.runner.restart(session);
+    session = await this.persist({
+      ...session,
+      restartCount: session.restartCount + 1,
+      updatedAt: this.clock.now().toISOString(),
+    });
+    let restarted: PreviewSession;
+    try {
+      restarted = await this.runner.restart(session);
+    } catch (error) {
+      if (session.restartCount >= this.maxRestarts) {
+        const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
+          health,
+          error: {
+            name: 'PreviewRestartError',
+            code: 'PREVIEW_RESTART_FAILED',
+            message: error instanceof Error ? error.message : 'Preview restart failed.',
+          },
+        });
+        await this.finalizeFailure(failing, 'runtime');
+        return 1;
+      }
+      throw error;
+    }
+    session = { ...restarted, restartCount: session.restartCount };
     if (isPreviewSessionTerminal(session.status)) {
-      await this.finalizeFailure(session, 'runtime');
+      await this.finalizeFailure(this.stageFailure(session), 'runtime');
       return 1;
     }
     session = await this.persist(session);
     const restartedHealth = await this.waitForHealthy(session);
     if (restartedHealth.state !== 'healthy') {
-      const failed = transitionPreviewSession(session, 'failed', this.clock.now(), {
+      const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
         health: restartedHealth,
         error: {
           name: 'PreviewUnhealthyError',
@@ -260,7 +302,7 @@ export class PreviewService {
           message: 'Restarted dev server did not become healthy in time.',
         },
       });
-      await this.finalizeFailure(failed, 'health');
+      await this.finalizeFailure(failing, 'health');
       return 1;
     }
     session = transitionPreviewSession(session, 'running', this.clock.now(), {
@@ -277,40 +319,49 @@ export class PreviewService {
   }
 
   private async finalizeFailure(
-    failed: PreviewSession,
+    failing: PreviewSession,
     phase: PreviewFailureDiagnostic['phase'],
-    alreadyStopped = false,
   ): Promise<PreviewSession> {
-    if (!alreadyStopped) await this.runner.stop(failed);
-    const session = await this.persist(failed);
+    const current = await this.requireSession(failing.id);
+    let session = current.session;
+    if (session.status !== 'failing') {
+      session = await this.persist({ ...failing, version: session.version });
+    }
+    await this.runner.stop(session);
+    const failedAt = new Date(session.updatedAt);
+    await this.writeFailureDiagnostic(session, phase, failedAt);
     await this.emit(
       session,
       'preview.failed',
       session.error?.message ?? 'preview failed',
       'terminal',
     );
-    await this.writeFailureDiagnostic(session, phase);
-    return session;
+    return this.persist(transitionPreviewSession(session, 'failed', failedAt));
   }
 
   private async writeFailureDiagnostic(
     session: PreviewSession,
     phase: PreviewFailureDiagnostic['phase'],
+    failedAt: Date,
   ): Promise<void> {
     const name = `preview-failure-${session.id}`;
     if (await this.artifacts.getLatest(session.workspaceRef.projectId, name)) return;
     const logs = await this.runner.logs(session, { limit: DIAGNOSTIC_LOG_LIMIT });
+    const redactedLogs: PreviewLogPage = {
+      ...logs,
+      entries: logs.entries.map((entry) => ({ ...entry, message: redactString(entry.message) })),
+    };
     const diagnostic = PreviewFailureDiagnosticSchema.parse({
       schemaVersion: '1',
       sessionId: session.id,
       projectId: session.workspaceRef.projectId,
       ...(session.runId ? { runId: session.runId } : {}),
       phase,
-      health: session.health,
+      health: redactUnknown(session.health),
       restartCount: session.restartCount,
-      error: session.error,
-      logs,
-      failedAt: session.completedAt,
+      error: redactUnknown(session.error),
+      logs: redactedLogs,
+      failedAt: failedAt.toISOString(),
     });
     await this.artifacts.put({
       projectId: session.workspaceRef.projectId,
@@ -366,20 +417,16 @@ export class PreviewService {
   }
 
   private async withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.locks.get(sessionId) ?? Promise.resolve();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
+    return this.lifecycleLock.withSessionLock(sessionId, operation);
+  }
+
+  private stageFailure(session: PreviewSession): PreviewSession {
+    const { completedAt: _completedAt, ...active } = session;
+    return PreviewSessionSchema.parse({
+      ...active,
+      status: 'failing',
+      updatedAt: this.clock.now().toISOString(),
     });
-    const tail = previous.then(() => gate);
-    this.locks.set(sessionId, tail);
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      release();
-      if (this.locks.get(sessionId) === tail) this.locks.delete(sessionId);
-    }
   }
 }
 
@@ -395,4 +442,18 @@ function constantTimeEquals(a: string, b: string): boolean {
   const bufferA = Buffer.from(a);
   const bufferB = Buffer.from(b);
   return bufferA.length === bufferB.length && timingSafeEqual(bufferA, bufferB);
+}
+
+function inferFailurePhase(session: PreviewSession): PreviewFailureDiagnostic['phase'] {
+  switch (session.error?.code) {
+    case 'PREVIEW_INSTALL_FAILED':
+    case 'PREVIEW_NO_DEV_COMMAND':
+      return 'prepare';
+    case 'PREVIEW_START_FAILED':
+      return 'start';
+    case 'PREVIEW_UNHEALTHY':
+      return 'health';
+    default:
+      return 'runtime';
+  }
 }

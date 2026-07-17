@@ -9,6 +9,7 @@ import {
 } from '@agent-foundry/contracts';
 import {
   PreviewAccessDeniedError,
+  VersionConflictError,
   transitionPreviewSession,
   type Clock,
   type EventStore,
@@ -40,8 +41,13 @@ class SequentialIds implements IdGenerator {
 
 class InMemoryEventStore implements EventStore {
   readonly events: ProjectEvent[] = [];
+  failPreviewFailedOnce = false;
   async append(event: ProjectEvent): Promise<void> {
     const parsed = ProjectEventSchema.parse(event);
+    if (parsed.type === 'preview.failed' && this.failPreviewFailedOnce) {
+      this.failPreviewFailedOnce = false;
+      throw new Error('event store unavailable');
+    }
     if (parsed.dedupeKey && this.events.some((item) => item.dedupeKey === parsed.dedupeKey)) return;
     this.events.push(parsed);
   }
@@ -53,6 +59,7 @@ class InMemoryEventStore implements EventStore {
 class InMemoryPreviewSessions implements PreviewSessionRepository {
   readonly records = new Map<string, PreviewSessionRecord>();
   async create(record: PreviewSessionRecord): Promise<void> {
+    if (this.records.has(record.session.id)) throw new Error('duplicate session');
     this.records.set(record.session.id, { ...record, session: sanitize(record.session) });
   }
   async get(sessionId: string): Promise<PreviewSessionRecord | null> {
@@ -64,10 +71,38 @@ class InMemoryPreviewSessions implements PreviewSessionRepository {
     );
   }
   async update(session: PreviewSession, expectedVersion: number): Promise<PreviewSession> {
-    const updated = sanitize({ ...session, version: expectedVersion + 1 });
     const current = this.records.get(session.id)!;
+    if (current.session.version !== expectedVersion || session.version !== expectedVersion) {
+      throw new VersionConflictError(
+        'preview-session',
+        session.id,
+        expectedVersion,
+        current.session.version,
+      );
+    }
+    const updated = sanitize({ ...session, version: expectedVersion + 1 });
     this.records.set(session.id, { session: updated, tokenDigest: current.tokenDigest });
     return updated;
+  }
+}
+
+class SharedLifecycleLock {
+  private readonly tails = new Map<string, Promise<void>>();
+  async withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => gate);
+    this.tails.set(sessionId, tail);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.tails.get(sessionId) === tail) this.tails.delete(sessionId);
+    }
   }
 }
 
@@ -83,8 +118,27 @@ class FakePreviewRunner implements PreviewRunner {
   logsPage: PreviewLogPage = { entries: [], nextCursor: 0 };
   stopCount = 0;
   restartCount = 0;
+  restartThrows = 0;
+  logsThrows = 0;
+  readonly stopFailures = new Set<string>();
+  prepareFailureMessage?: string;
+  restartFailureMessage?: string;
 
   async prepare(session: PreviewSession): Promise<PreviewSession> {
+    if (this.prepareFailureMessage) {
+      return transitionPreviewSession(session, 'failed', new Date(session.updatedAt), {
+        health: {
+          state: 'unhealthy',
+          detail: this.prepareFailureMessage,
+          consecutiveFailures: 1,
+        },
+        error: {
+          name: 'PreviewInstallError',
+          code: 'PREVIEW_INSTALL_FAILED',
+          message: this.prepareFailureMessage,
+        },
+      });
+    }
     return session;
   }
   async start(session: PreviewSession): Promise<PreviewSession> {
@@ -96,16 +150,34 @@ class FakePreviewRunner implements PreviewRunner {
     return this.healthResponses.shift() ?? { state: 'healthy', consecutiveFailures: 0 };
   }
   async logs(): Promise<PreviewLogPage> {
+    if (this.logsThrows > 0) {
+      this.logsThrows -= 1;
+      throw new Error('log store unavailable');
+    }
     return this.logsPage;
   }
   async restart(session: PreviewSession): Promise<PreviewSession> {
     this.restartCount += 1;
+    if (this.restartThrows > 0) {
+      this.restartThrows -= 1;
+      throw new Error(`restart ${this.restartCount} failed`);
+    }
+    if (this.restartFailureMessage) {
+      return transitionPreviewSession(session, 'failed', new Date(session.updatedAt), {
+        error: {
+          name: 'PreviewRuntimeError',
+          code: 'PREVIEW_RUNTIME_FAILED',
+          message: this.restartFailureMessage,
+        },
+      });
+    }
     return transitionPreviewSession(session, 'starting', new Date(session.updatedAt), {
       process: { command: 'node', args: [], port: 4100 + this.restartCount },
     });
   }
   async stop(session: PreviewSession): Promise<PreviewSession> {
     this.stopCount += 1;
+    if (this.stopFailures.delete(session.id)) throw new Error(`stop ${session.id} failed`);
     if (
       session.status === 'stopped' ||
       session.status === 'failed' ||
@@ -124,6 +196,7 @@ async function buildService(
     events?: InMemoryEventStore;
     sessions?: InMemoryPreviewSessions;
     artifacts?: InMemoryArtifacts;
+    lifecycleLock?: SharedLifecycleLock;
     config?: Partial<PreviewServiceConfig>;
   } = {},
 ) {
@@ -132,9 +205,11 @@ async function buildService(
   const events = options.events ?? new InMemoryEventStore();
   const sessions = options.sessions ?? new InMemoryPreviewSessions();
   const artifacts = options.artifacts ?? new InMemoryArtifacts({ on: true });
+  const lifecycleLock = options.lifecycleLock ?? new SharedLifecycleLock();
   const service = new PreviewService(
     runner,
     sessions,
+    lifecycleLock,
     artifacts,
     events,
     clock,
@@ -146,7 +221,7 @@ async function buildService(
       ...options.config,
     },
   );
-  return { service, runner, clock, events, sessions, artifacts };
+  return { service, runner, clock, events, sessions, artifacts, lifecycleLock };
 }
 
 async function start(service: PreviewService, runId?: string) {
@@ -322,4 +397,166 @@ describe('PreviewService durable lifecycle', () => {
 
     await expect(service.logs(session.id, 10, 25)).resolves.toEqual(runner.logsPage);
   });
+
+  it('serializes lifecycle side effects across two service instances sharing storage', async () => {
+    const runner = new FakePreviewRunner();
+    runner.healthResponses = [
+      { state: 'healthy', consecutiveFailures: 0 },
+      { state: 'unhealthy', consecutiveFailures: 1 },
+      { state: 'healthy', consecutiveFailures: 0 },
+    ];
+    const first = await buildService({
+      runner,
+      config: { healthFailureThreshold: 1, maxRestarts: 1 },
+    });
+    const second = await buildService({
+      runner,
+      sessions: first.sessions,
+      artifacts: first.artifacts,
+      events: first.events,
+      clock: first.clock,
+      lifecycleLock: first.lifecycleLock,
+      config: { healthFailureThreshold: 1, maxRestarts: 1 },
+    });
+    const { session } = await start(first.service, 'run-1');
+
+    await Promise.all([first.service.reap(), second.service.reap()]);
+    runner.healthResponses = [{ state: 'unhealthy', consecutiveFailures: 1 }];
+    await Promise.all([first.service.reap(), second.service.reap()]);
+
+    expect(runner.restartCount).toBe(1);
+    expect(runner.stopCount).toBe(1);
+    expect(first.events.events.map((event) => event.type)).toEqual([
+      'preview.crashed',
+      'preview.restarted',
+      'preview.crashed',
+      'preview.failed',
+    ]);
+    expect(
+      await first.artifacts.listMetadata('project-1', `preview-failure-${session.id}`),
+    ).toHaveLength(1);
+    expect((await first.sessions.get(session.id))?.session.status).toBe('failed');
+  });
+
+  it('continues a sweep after one session fails and surfaces the collected errors', async () => {
+    const built = await buildService();
+    const first = await start(built.service);
+    const second = await start(built.service);
+    built.clock.advance(61_000);
+    built.runner.stopFailures.add(first.session.id);
+
+    await expect(built.service.reap()).rejects.toBeInstanceOf(AggregateError);
+
+    expect((await built.sessions.get(first.session.id))?.session.status).toBe('running');
+    expect((await built.sessions.get(second.session.id))?.session.status).toBe('expired');
+  });
+
+  it('reserves thrown restart attempts durably and fails after exactly two attempts', async () => {
+    const runner = new FakePreviewRunner();
+    runner.restartThrows = 2;
+    runner.healthResponses = [
+      { state: 'healthy', consecutiveFailures: 0 },
+      { state: 'unhealthy', consecutiveFailures: 1 },
+      { state: 'unhealthy', consecutiveFailures: 1 },
+    ];
+    const built = await buildService({
+      runner,
+      config: { healthFailureThreshold: 1, maxRestarts: 2 },
+    });
+    const { session } = await start(built.service);
+
+    await expect(built.service.reap()).rejects.toBeInstanceOf(AggregateError);
+    expect((await built.sessions.get(session.id))?.session.restartCount).toBe(1);
+    await built.service.reap();
+
+    expect(runner.restartCount).toBe(2);
+    expect((await built.sessions.get(session.id))?.session).toMatchObject({
+      status: 'failed',
+      restartCount: 2,
+      error: { code: 'PREVIEW_RESTART_FAILED' },
+    });
+    expect(
+      await built.artifacts.listMetadata('project-1', `preview-failure-${session.id}`),
+    ).toHaveLength(1);
+  });
+
+  it.each(['event', 'logs', 'artifact'] as const)(
+    'replays incomplete %s evidence before making failure terminal',
+    async (failure) => {
+      const runner = new FakePreviewRunner();
+      runner.healthResponses = [{ state: 'unhealthy', consecutiveFailures: 1 }];
+      const built = await buildService({ runner, config: { startupTimeoutMs: 0 } });
+      if (failure === 'event') built.events.failPreviewFailedOnce = true;
+      if (failure === 'logs') runner.logsThrows = 1;
+      if (failure === 'artifact') {
+        built.artifacts.onAfterPut = () => {
+          built.artifacts.onAfterPut = undefined;
+          throw new Error('artifact store interrupted after put');
+        };
+      }
+
+      await expect(start(built.service)).rejects.toThrow();
+      expect((await built.sessions.get('id-1'))?.session.status).toBe('failing');
+      const restarted = await buildService({
+        runner,
+        sessions: built.sessions,
+        artifacts: built.artifacts,
+        events: built.events,
+        clock: built.clock,
+        lifecycleLock: built.lifecycleLock,
+        config: { startupTimeoutMs: 0 },
+      });
+
+      await restarted.service.reap();
+
+      expect((await built.sessions.get('id-1'))?.session.status).toBe('failed');
+      expect(built.events.events.filter((event) => event.type === 'preview.failed')).toHaveLength(
+        1,
+      );
+      expect(await built.artifacts.listMetadata('project-1', 'preview-failure-id-1')).toHaveLength(
+        1,
+      );
+    },
+  );
+
+  it.each(['install', 'runtime'] as const)(
+    'redacts secrets from %s failure diagnostics at the artifact boundary',
+    async (phase) => {
+      const secret = `ghp_${'a'.repeat(24)}`;
+      const runner = new FakePreviewRunner();
+      runner.logsPage = {
+        entries: [
+          {
+            cursor: 1,
+            stream: 'stderr',
+            message: `Authorization: Bearer ${secret}`,
+            timestamp: '2026-07-16T12:00:00.000Z',
+          },
+        ],
+        nextCursor: 1,
+      };
+      if (phase === 'install') runner.prepareFailureMessage = `token=${secret}`;
+      else {
+        runner.restartFailureMessage = `Authorization: Bearer ${secret}`;
+        runner.healthResponses = [
+          { state: 'healthy', consecutiveFailures: 0 },
+          { state: 'unhealthy', detail: `token=${secret}`, consecutiveFailures: 1 },
+        ];
+      }
+      const built = await buildService({
+        runner,
+        config: { healthFailureThreshold: 1 },
+      });
+      const result = await start(built.service);
+      if (phase === 'runtime') await built.service.reap();
+
+      const artifact = await built.artifacts.getLatest(
+        'project-1',
+        `preview-failure-${result.session.id}`,
+      );
+      const serialized = JSON.stringify(artifact);
+      expect(serialized).not.toContain(secret);
+      expect(serialized).toContain('[REDACTED]');
+    },
+  );
 });

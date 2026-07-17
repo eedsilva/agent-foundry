@@ -2,10 +2,14 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PreviewSession } from '@agent-foundry/contracts';
 import { VersionConflictError } from '@agent-foundry/domain';
-import { FilePreviewLogRepository, FilePreviewSessionRepository } from './preview-repositories.js';
+import {
+  FilePreviewLifecycleLock,
+  FilePreviewLogRepository,
+  FilePreviewSessionRepository,
+} from './preview-repositories.js';
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -49,6 +53,33 @@ function runningSession(url: string): PreviewSession {
 }
 
 describe('FilePreviewSessionRepository', () => {
+  it('serializes lifecycle work across lock instances sharing DATA_DIR', async () => {
+    const dataDir = await temporaryDataDir();
+    const first = new FilePreviewLifecycleLock(dataDir);
+    const second = new FilePreviewLifecycleLock(dataDir);
+    const order: string[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const left = first.withSessionLock('preview-1', async () => {
+      order.push('left:start');
+      await blocked;
+      order.push('left:end');
+    });
+    await vi.waitFor(() => expect(order).toEqual(['left:start']));
+    const right = second.withSessionLock('preview-1', async () => {
+      order.push('right');
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(order).toEqual(['left:start']);
+    release();
+    await Promise.all([left, right]);
+
+    expect(order).toEqual(['left:start', 'left:end', 'right']);
+  });
+
   it('stores a versioned session with only its SHA-256 token digest', async () => {
     const dataDir = await temporaryDataDir();
     const repository = new FilePreviewSessionRepository(dataDir);

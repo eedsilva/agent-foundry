@@ -19,7 +19,11 @@ import {
 } from '@agent-foundry/domain';
 import { resolvePreviewCommandPlan, runReproducibleInstall } from './preview-command-plan.js';
 import { detectPortFromOutput, reservePreviewPort } from './preview-port.js';
-import { killProcessTree, terminateProcessTree } from './process-tree.js';
+import {
+  killProcessTree,
+  terminatePersistedProcessTree,
+  terminateProcessTree,
+} from './process-tree.js';
 
 export interface NodePreviewRunnerOptions {
   reservePort?: () => Promise<number>;
@@ -102,7 +106,7 @@ export class NodePreviewRunner implements PreviewRunner {
   }
 
   async restart(session: PreviewSession): Promise<PreviewSession> {
-    await this.killTracked(session.id);
+    await this.killTracked(session.id, session.process?.pid);
     return this.spawn(session);
   }
 
@@ -135,14 +139,17 @@ export class NodePreviewRunner implements PreviewRunner {
   }
 
   async stop(session: PreviewSession): Promise<PreviewSession> {
-    await this.killTracked(session.id);
+    await this.killTracked(session.id, session.process?.pid);
     if (isPreviewSessionTerminal(session.status)) return session;
     return stopPreviewSession(session, this.clock.now());
   }
 
-  private async killTracked(sessionId: string): Promise<void> {
+  private async killTracked(sessionId: string, persistedPid?: number): Promise<void> {
     const entry = this.processes.get(sessionId);
-    if (!entry) return;
+    if (!entry) {
+      if (persistedPid !== undefined) await terminatePersistedProcessTree(persistedPid);
+      return;
+    }
     if (entry.exited) killProcessTree(entry.child, 'SIGKILL');
     else await terminateProcessTree(entry.child);
     await entry.logWrites;

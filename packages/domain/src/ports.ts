@@ -219,6 +219,10 @@ export interface PreviewSessionRepository {
   update(session: PreviewSession, expectedVersion: number): Promise<PreviewSession>;
 }
 
+export interface PreviewLifecycleLock {
+  withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T>;
+}
+
 export interface PreviewLogRepository {
   append(sessionId: string, entry: Omit<PreviewLogEntry, 'cursor'>): Promise<PreviewLogEntry>;
   list(sessionId: string, options?: { cursor?: number; limit?: number }): Promise<PreviewLogPage>;
