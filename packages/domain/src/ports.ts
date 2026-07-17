@@ -20,6 +20,7 @@ import type {
   Project,
   ProjectPolicy,
   ProjectEvent,
+  ProjectVersion,
   QueueJob,
   RouteDecision,
   RouteOverrideProvenance,
@@ -291,6 +292,16 @@ export interface WorkspaceManager {
   discardDraft(projectId: string, runId: string, expectedCommit: string): Promise<void>;
   commit(projectId: string, message: string): Promise<string | null>;
   head(projectId: string): Promise<string | null>;
+  /** Unified diff between two commits/refs, for comparing two ProjectVersions. */
+  diff(projectId: string, fromRef: string, toRef: string): Promise<string>;
+  /**
+   * Checks out ref's tree onto the working copy without moving HEAD or
+   * creating a commit; the caller commits explicitly (e.g. via `commit`) so
+   * a revert always adds a new commit instead of rewriting history.
+   */
+  restoreTree(projectId: string, ref: string): Promise<void>;
+  /** Creates a new branch at ref, independent of the current branch's HEAD. Returns ref's commit sha. */
+  createBranch(projectId: string, ref: string, name: string): Promise<string>;
 }
 
 export interface Clock {
@@ -299,4 +310,13 @@ export interface Clock {
 
 export interface IdGenerator {
   next(): string;
+}
+
+/** Create-only, immutable ledger: revert/branch always append a new version, never mutate an existing one. */
+export interface ProjectVersionRepository {
+  create(version: ProjectVersion): Promise<void>;
+  get(projectId: string, versionId: string): Promise<ProjectVersion | null>;
+  list(projectId: string, limit?: number): Promise<ProjectVersion[]>;
+  /** Only the `protected` flag is ever updated after creation. */
+  update(version: ProjectVersion, expectedVersion: number): Promise<ProjectVersion>;
 }
