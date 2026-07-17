@@ -428,6 +428,15 @@ describe('browser verification contracts', () => {
     expect(schema.safeParse({ ...plan, steps: plan.steps.slice(1) }).success).toBe(false);
   });
 
+  it('rejects duplicate step ids', () => {
+    expect(
+      BrowserTestPlanSchema.safeParse({
+        ...plan,
+        steps: [plan.steps[0], { ...plan.steps[1], id: plan.steps[0]!.id }],
+      }).success,
+    ).toBe(false);
+  });
+
   it.each(['items', '//example.test/items', 'https://example.test/items'])(
     'rejects non-relative app path %s',
     (path) => {

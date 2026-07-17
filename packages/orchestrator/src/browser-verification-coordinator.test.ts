@@ -130,6 +130,28 @@ describe('BrowserVerificationCoordinator', () => {
     expect(stopped).toEqual(['preview-1']);
   });
 
+  it('preserves verifier and preview stop failures', async () => {
+    const session = runningSession();
+    const coordinator = new BrowserVerificationCoordinator(
+      {
+        start: () => Promise.resolve({ session, url: session.url! }),
+        stop: () => Promise.reject(new Error('preview stop failed')),
+      },
+      { verify: () => Promise.reject(new Error('browser crashed')) },
+    );
+
+    const failure = await coordinator
+      .verify(input, new AbortController().signal)
+      .then(() => undefined)
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([
+      expect.objectContaining({ message: 'browser crashed' }),
+      expect.objectContaining({ message: 'preview stop failed' }),
+    ]);
+  });
+
   it('publishes the preview session before verification can fail', async () => {
     const observed: string[] = [];
     const { coordinator, stopped } = setup(() => {

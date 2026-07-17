@@ -1,5 +1,6 @@
 import type {
   AgentArtifact,
+  AgentExecutionRequest,
   AgentExecutionResult,
   AgentStep,
   ApprovalGateStep,
@@ -22,7 +23,11 @@ import type {
   WorkflowNode,
   WorkflowRun,
 } from '@agent-foundry/contracts';
-import { AGENT_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
+import {
+  AGENT_ARTIFACT_JSON_SCHEMA,
+  BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
+  BrowserVerificationReportSchema,
+} from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
   ApprovalRequestRepository,
@@ -1401,6 +1406,7 @@ export class WorkflowOrchestrator {
         attemptId: attempt.id,
         idempotencyKey,
       });
+      const persistedReport = BrowserVerificationReportSchema.parse(artifact.content);
       attempt = await this.stepAttempts.update(
         transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
           durationMs: Date.now() - startedAt,
@@ -1408,7 +1414,7 @@ export class WorkflowOrchestrator {
         }),
         attempt.version,
       );
-      if (report.approved) {
+      if (persistedReport.approved) {
         const checkpoint = await this.workspaces.checkpoint(
           project.id,
           `${step.id}-${runId}-verified`,
@@ -1418,10 +1424,10 @@ export class WorkflowOrchestrator {
           lastVerifiedCheckpoint: checkpoint,
         }));
       }
-      await this.emit(project.id, 'verification.completed', report.summary, {
+      await this.emit(project.id, 'verification.completed', persistedReport.summary, {
         nodeId: step.id,
         runId,
-        data: { approved: report.approved, attemptId: attempt.id },
+        data: { approved: persistedReport.approved, attemptId: attempt.id },
       });
       await this.emitArtifactCreated(project.id, artifact, step.id, runId);
       return artifact;
@@ -1471,6 +1477,9 @@ export class WorkflowOrchestrator {
       tags: step.harnessTags,
     });
     const profile = buildTaskProfile({ step, harness, artifacts: inputArtifacts, policy });
+    const outputSchema = workflowUsesBrowserPlan(workflow, step.outputArtifact)
+      ? BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA
+      : AGENT_ARTIFACT_JSON_SCHEMA;
     const explicit = await this.resolveModelPin(
       runId,
       stepRun.nodeId,
@@ -1576,7 +1585,7 @@ export class WorkflowOrchestrator {
           stepRunId: stepRun.id,
           attemptId: attempt.id,
           requestMarkdown,
-          outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+          outputSchema,
         });
         const result = await this.executeCandidate(
           project,
@@ -1586,6 +1595,7 @@ export class WorkflowOrchestrator {
           attempt.id,
           candidate,
           signal,
+          outputSchema,
         );
         await this.assertExecutionMayContinue(runId, signal);
         const commit = step.mutatesWorkspace
@@ -1789,6 +1799,7 @@ export class WorkflowOrchestrator {
     attemptId: string,
     candidate: RankedModel,
     signal: AbortSignal,
+    outputSchema: AgentExecutionRequest['outputSchema'],
   ): Promise<AgentExecutionResult> {
     await this.emit(project.id, 'agent.started', `${step.id} started on ${candidate.model.id}.`, {
       nodeId: step.id,
@@ -1811,7 +1822,7 @@ export class WorkflowOrchestrator {
         cwd: this.workspaces.workspacePath(project.id),
         mutatesWorkspace: step.mutatesWorkspace,
         timeoutMs: this.options.agentTimeoutMs,
-        outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+        outputSchema,
       },
       signal,
     );
@@ -2147,6 +2158,16 @@ function artifactReference(artifact: StoredArtifact) {
     revision: artifact.metadata.revision,
     sha256: artifact.metadata.sha256,
   };
+}
+
+function workflowUsesBrowserPlan(workflow: WorkflowDefinition, artifactName: string): boolean {
+  return workflow.nodes.some((node) => {
+    if (node.type === 'verify') return node.browserTestPlanArtifact === artifactName;
+    if (node.type !== 'quality-loop') return false;
+    return [node.setup, node.check].some(
+      (step) => step?.type === 'verify' && step.browserTestPlanArtifact === artifactName,
+    );
+  });
 }
 
 function throwIfCancelled(signal: AbortSignal, runId: string): void {

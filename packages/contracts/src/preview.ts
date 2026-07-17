@@ -367,6 +367,10 @@ export const BrowserTestPlanSchema = z
   .refine((plan) => plan.steps[0]?.action.kind === 'goto', {
     message: 'The first browser test step must use goto',
     path: ['steps', 0, 'action'],
+  })
+  .refine((plan) => new Set(plan.steps.map((step) => step.id)).size === plan.steps.length, {
+    message: 'Browser test step ids must be unique',
+    path: ['steps'],
   });
 export type BrowserTestPlan = z.infer<typeof BrowserTestPlanSchema>;
 
@@ -374,6 +378,10 @@ export const BrowserTestPlanArtifactSchema = AgentArtifactSchema.extend({
   data: BrowserTestPlanSchema,
 });
 export type BrowserTestPlanArtifact = z.infer<typeof BrowserTestPlanArtifactSchema>;
+export const BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA = {
+  $id: 'https://agent-foundry.dev/schemas/browser-test-plan-artifact-v1.json',
+  ...z.toJSONSchema(BrowserTestPlanArtifactSchema),
+};
 
 const BrowserObservationSchema = z
   .object({

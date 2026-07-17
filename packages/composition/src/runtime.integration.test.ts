@@ -321,7 +321,7 @@ describe('mock runtime', () => {
     expect(requestMarkdown).not.toContain(rawSecret);
   }, 30_000);
 
-  it('runs the complete workflow and persists auditable artifacts', async () => {
+  it('runs the complete workflow in default mock mode without runtime patches', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-'));
     temporaryDirectories.push(dataDir);
     const rootDir = resolve(import.meta.dirname, '../../..');
@@ -333,8 +333,6 @@ describe('mock runtime', () => {
       AUTO_INSTALL_DEPENDENCIES: 'false',
       WORKER_ID: 'integration-worker',
     });
-    configureMockBrowserRuntime(runtime);
-
     const project = await runtime.projectService.create({
       name: 'Integration sample',
       workflowId: 'web-app-v1',

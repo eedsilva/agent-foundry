@@ -120,6 +120,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           viewport: parsed.data.data.viewport,
           serviceWorkers: 'block',
         });
+        await context.grantPermissions(['local-network-access'], { origin: prefixUrl.origin });
         return this.execute(
           context,
           parsed.data.data,
@@ -198,7 +199,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         (url.protocol === prefixProtocol && url.host === prefixUrl.host);
       return (
         (previewOrigin && url.pathname.startsWith(prefixUrl.pathname)) ||
-        allowedOrigins.has(url.origin)
+        allowedOrigins.has(comparisonOrigin(url))
       );
     };
     const settleRequest = (request: Request): void => {
@@ -483,4 +484,10 @@ function redact(value: string, token: string | null): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function comparisonOrigin(url: URL): string {
+  if (url.protocol === 'ws:') return `http://${url.host}`;
+  if (url.protocol === 'wss:') return `https://${url.host}`;
+  return url.origin;
 }

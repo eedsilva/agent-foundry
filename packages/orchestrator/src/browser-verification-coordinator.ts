@@ -39,6 +39,8 @@ export class BrowserVerificationCoordinator {
       evidence: { screenshots: [] },
     });
     const planArtifact = artifactReference(input.plan);
+    let verificationFailed = false;
+    let verificationError: unknown;
 
     try {
       await onSessionStarted?.(started.session.id);
@@ -69,8 +71,22 @@ export class BrowserVerificationCoordinator {
         },
         signal,
       );
+    } catch (error) {
+      verificationFailed = true;
+      verificationError = error;
+      throw error;
     } finally {
-      await this.previews.stop(started.session.id);
+      try {
+        await this.previews.stop(started.session.id);
+      } catch (stopError) {
+        if (verificationFailed) {
+          throw new AggregateError(
+            [verificationError, stopError],
+            'Browser verification and preview cleanup both failed',
+          );
+        }
+        throw stopError;
+      }
     }
   }
 }

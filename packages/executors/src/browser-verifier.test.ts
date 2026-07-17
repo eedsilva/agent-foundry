@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -302,6 +303,51 @@ describe('PlaywrightBrowserVerifier', () => {
       ),
     ).toBe(true);
     expectRedacted(report);
+  });
+
+  it('permits an external WebSocket when its HTTP origin is allowed', async () => {
+    let allowedUpgrades = 0;
+    const allowedOrigin = await serve((_request, response) => response.end('allowed'));
+    servers.at(-1)!.on('upgrade', (request, socket) => {
+      allowedUpgrades += 1;
+      const key = request.headers['sec-websocket-key'];
+      const accept = createHash('sha1')
+        .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+        .digest('base64');
+      socket.end(
+        `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+      );
+    });
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<h1>Connecting</h1><script>
+        const socket = new WebSocket('${allowedOrigin.replace('http:', 'ws:')}/allowed');
+        socket.onopen = () => { document.querySelector('h1').textContent = 'Connected'; };
+      </script>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [
+            {
+              kind: 'containsText',
+              locator: { kind: 'role', role: 'heading' },
+              text: 'Connected',
+            },
+          ],
+        },
+      ]),
+      { allowedOrigins: [allowedOrigin] },
+    );
+
+    expect(report.approved).toBe(true);
+    expect(allowedUpgrades).toBe(1);
+    expect(report.steps[0]?.observations).toEqual([]);
   });
 
   it('permits a normalized allowed origin but blocks same-origin paths outside the preview prefix', async () => {

@@ -400,11 +400,15 @@ export class InMemoryArtifacts implements ArtifactStore {
   constructor(private readonly power: PowerSwitch) {}
   put(input: Parameters<ArtifactStore['put']>[0]): Promise<StoredArtifact> {
     checkPower(this.power);
-    const existing = input.sourceDecisionId
+    const existing = input.idempotencyKey
       ? this.named(input.name).find(
-          (artifact) => artifact.metadata.sourceDecisionId === input.sourceDecisionId,
+          (artifact) => artifact.metadata.idempotencyKey === input.idempotencyKey,
         )
-      : undefined;
+      : input.sourceDecisionId
+        ? this.named(input.name).find(
+            (artifact) => artifact.metadata.sourceDecisionId === input.sourceDecisionId,
+          )
+        : undefined;
     if (existing) return Promise.resolve(existing);
     const revision = this.named(input.name).length + 1;
     const metadata: ArtifactMetadata = {
