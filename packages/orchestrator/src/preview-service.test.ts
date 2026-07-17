@@ -116,6 +116,7 @@ function sanitize(session: PreviewSession): PreviewSession {
 class FakePreviewRunner implements PreviewRunner {
   healthResponses: PreviewHealth[] = [{ state: 'healthy', consecutiveFailures: 0 }];
   logsPage: PreviewLogPage = { entries: [], nextCursor: 0 };
+  logEntries?: PreviewLogPage['entries'];
   stopCount = 0;
   restartCount = 0;
   restartThrows = 0;
@@ -170,12 +171,20 @@ class FakePreviewRunner implements PreviewRunner {
   async health(): Promise<PreviewHealth> {
     return this.healthResponses.shift() ?? { state: 'healthy', consecutiveFailures: 0 };
   }
-  async logs(): Promise<PreviewLogPage> {
+  async logs(
+    _session: PreviewSession,
+    options: { cursor?: number; limit?: number } = {},
+  ): Promise<PreviewLogPage> {
     if (this.logsThrows > 0) {
       this.logsThrows -= 1;
       throw new Error('log store unavailable');
     }
-    return this.logsPage;
+    if (!this.logEntries) return this.logsPage;
+    const cursor = options.cursor ?? 0;
+    const entries = this.logEntries
+      .filter((entry) => entry.cursor > cursor)
+      .slice(0, options.limit ?? 200);
+    return { entries, nextCursor: entries.at(-1)?.cursor ?? cursor };
   }
   async restart(session: PreviewSession): Promise<PreviewSession> {
     this.restartCount += 1;
@@ -580,6 +589,30 @@ describe('PreviewService durable lifecycle', () => {
       expect(serialized).toContain('[REDACTED]');
     },
   );
+
+  it('captures the retained log tail in failure diagnostics when more than 200 entries exist', async () => {
+    const runner = new FakePreviewRunner();
+    runner.prepareFailureMessage = 'install failed';
+    runner.logEntries = Array.from({ length: 250 }, (_, index) => ({
+      cursor: index + 1,
+      stream: 'stderr' as const,
+      message: `entry-${index + 1}`,
+      timestamp: '2026-07-16T12:00:00.000Z',
+    }));
+    const built = await buildService({ runner });
+
+    const result = await start(built.service);
+
+    const diagnostic = PreviewFailureDiagnosticSchema.parse(
+      (await built.artifacts.getLatest('project-1', `preview-failure-${result.session.id}`))
+        ?.content,
+    );
+    expect(diagnostic.logs.entries).toHaveLength(200);
+    expect(diagnostic.logs.entries[0]?.cursor).toBe(51);
+    expect(diagnostic.logs.entries.at(-1)?.cursor).toBe(250);
+    expect(diagnostic.logs.truncatedBeforeCursor).toBe(51);
+    expect(diagnostic.logs.nextCursor).toBe(250);
+  });
 
   it.each(['prepare', 'start'] as const)(
     'stages and replays a thrown %s exception as failure evidence',

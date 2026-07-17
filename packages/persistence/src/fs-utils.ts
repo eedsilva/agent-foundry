@@ -1,5 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { link, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import {
+  link,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 import { NotFoundError } from '@agent-foundry/domain';
@@ -140,7 +151,6 @@ export function safeSegment(value: string): string {
 export async function withDirectoryLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
   await ensureDir(dirname(lockPath));
   const deadline = Date.now() + 10_000;
-
   while (true) {
     try {
       await mkdir(lockPath);
@@ -151,11 +161,119 @@ export async function withDirectoryLock<T>(lockPath: string, fn: () => Promise<T
       await sleep(25 + Math.floor(Math.random() * 50));
     }
   }
-
   try {
     return await fn();
   } finally {
     await rm(lockPath, { recursive: true, force: true });
+  }
+}
+
+interface DirectoryLockOwner {
+  token: string;
+  pid: number;
+  acquiredAt: string;
+}
+
+export interface DirectoryLockOptions {
+  acquisitionTimeoutMs?: number;
+  pollIntervalMs?: number;
+  ownerWriteGraceMs?: number;
+}
+
+export async function withRecoverableDirectoryLock<T>(
+  lockPath: string,
+  fn: () => Promise<T>,
+  options: DirectoryLockOptions = {},
+): Promise<T> {
+  await ensureDir(dirname(lockPath));
+  const ownerPath = join(lockPath, 'owner.json');
+  const owner: DirectoryLockOwner = {
+    token: randomUUID(),
+    pid: process.pid,
+    acquiredAt: new Date().toISOString(),
+  };
+  const deadline = Date.now() + (options.acquisitionTimeoutMs ?? 10_000);
+  const pollIntervalMs = options.pollIntervalMs ?? 25;
+  const ownerWriteGraceMs = options.ownerWriteGraceMs ?? 250;
+
+  while (true) {
+    try {
+      await mkdir(lockPath);
+      try {
+        await writeFile(ownerPath, JSON.stringify(owner), { flag: 'wx' });
+      } catch (error) {
+        await rmdir(lockPath).catch(() => undefined);
+        throw error;
+      }
+      break;
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+      await recoverAbandonedLock(lockPath, ownerPath, ownerWriteGraceMs);
+      if (Date.now() > deadline) throw new Error(`Timed out acquiring lock ${lockPath}`);
+      await sleep(pollIntervalMs + Math.floor(Math.random() * pollIntervalMs));
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await releaseOwnedLock(lockPath, ownerPath, owner.token);
+  }
+}
+
+async function recoverAbandonedLock(
+  lockPath: string,
+  ownerPath: string,
+  ownerWriteGraceMs: number,
+): Promise<void> {
+  const owner = await readLockOwner(ownerPath);
+  if (owner) {
+    if (!processAlive(owner.pid)) await releaseOwnedLock(lockPath, ownerPath, owner.token);
+    return;
+  }
+  try {
+    const lockStat = await stat(lockPath);
+    if (Date.now() - lockStat.mtimeMs < ownerWriteGraceMs) return;
+    await unlink(ownerPath).catch((error: unknown) => {
+      if (!isNotFound(error)) throw error;
+    });
+    await rmdir(lockPath);
+  } catch (error) {
+    if (!isNotFound(error) && !isNotEmpty(error)) throw error;
+  }
+}
+
+async function readLockOwner(path: string): Promise<DirectoryLockOwner | null> {
+  try {
+    const value = JSON.parse(await readFile(path, 'utf8')) as Partial<DirectoryLockOwner>;
+    return typeof value.token === 'string' &&
+      Number.isInteger(value.pid) &&
+      typeof value.acquiredAt === 'string'
+      ? { token: value.token, pid: value.pid!, acquiredAt: value.acquiredAt }
+      : null;
+  } catch (error) {
+    if (isNotFound(error) || error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
+async function releaseOwnedLock(lockPath: string, ownerPath: string, token: string): Promise<void> {
+  const owner = await readLockOwner(ownerPath);
+  if (owner?.token !== token) return;
+  try {
+    await unlink(ownerPath);
+    await rmdir(lockPath);
+  } catch (error) {
+    if (!isNotFound(error) && !isNotEmpty(error)) throw error;
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !isNodeError(error) || error.code !== 'ESRCH';
   }
 }
 
@@ -169,6 +287,10 @@ function isNotFound(error: unknown): boolean {
 
 function isAlreadyExists(error: unknown): boolean {
   return isNodeError(error) && error.code === 'EEXIST';
+}
+
+function isNotEmpty(error: unknown): boolean {
+  return isNodeError(error) && error.code === 'ENOTEMPTY';
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

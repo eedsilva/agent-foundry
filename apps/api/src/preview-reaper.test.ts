@@ -5,7 +5,7 @@ import { startPreviewReaper } from './preview-reaper.js';
 afterEach(() => vi.useRealTimers());
 
 describe('preview reaper schedule', () => {
-  it('runs one non-overlapping sweep per interval and reports aggregate errors', async () => {
+  it('runs immediately, prevents interval overlap, and reports later aggregate errors', async () => {
     let finish!: () => void;
     const firstSweep = new Promise<void>((resolveSweep) => {
       finish = resolveSweep;
@@ -19,6 +19,8 @@ describe('preview reaper schedule', () => {
     const app = Fastify();
     const schedule = startPreviewReaper({ reap }, 10, logger, app);
 
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reap).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(30);
     expect(reap).toHaveBeenCalledTimes(1);
     finish();
@@ -47,7 +49,7 @@ describe('preview reaper schedule', () => {
     vi.useFakeTimers();
     const app = Fastify();
     const schedule = startPreviewReaper({ reap }, 10, logger, app);
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(0);
     expect(reap).toHaveBeenCalledTimes(1);
 
     let closed = false;

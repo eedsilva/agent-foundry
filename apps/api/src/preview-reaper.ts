@@ -19,16 +19,22 @@ export function startPreviewReaper(
   app: FastifyInstance,
 ): PreviewReaperSchedule {
   let active: Promise<void> | undefined;
-  const timer = setInterval(() => {
+  const sweep = () => {
     if (active) return;
-    active = service
-      .reap()
-      .catch((error: unknown) => logger.error(error, 'Preview reaper sweep failed'))
-      .then(() => undefined)
-      .finally(() => {
-        active = undefined;
-      });
-  }, intervalMs);
+    try {
+      active = service
+        .reap()
+        .catch((error: unknown) => logger.error(error, 'Preview reaper sweep failed'))
+        .then(() => undefined)
+        .finally(() => {
+          active = undefined;
+        });
+    } catch (error) {
+      logger.error(error, 'Preview reaper sweep failed');
+    }
+  };
+  sweep();
+  const timer = setInterval(sweep, intervalMs);
   timer.unref();
 
   let stopPromise: Promise<void> | undefined;

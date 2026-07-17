@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   PreviewLogEntrySchema,
   PreviewLogPageSchema,
@@ -12,6 +11,7 @@ import {
 import {
   VersionConflictError,
   redactString,
+  redactUnknown,
   type PreviewLogRepository,
   type PreviewLifecycleLock,
   type PreviewSessionRecord,
@@ -22,7 +22,8 @@ import {
   ensureDir,
   readJsonOrNull,
   safeSegment,
-  withDirectoryLock,
+  withRecoverableDirectoryLock,
+  type DirectoryLockOptions,
 } from './fs-utils.js';
 
 const TOKEN_DIGEST = /^[a-f0-9]{64}$/;
@@ -32,18 +33,6 @@ interface LogFile {
   nextCursor: number;
   truncatedThroughCursor: number;
   entries: PreviewLogEntry[];
-}
-
-interface LifecycleLockOwner {
-  token: string;
-  pid: number;
-  acquiredAt: string;
-}
-
-interface PreviewLifecycleLockOptions {
-  acquisitionTimeoutMs?: number;
-  pollIntervalMs?: number;
-  ownerWriteGraceMs?: number;
 }
 
 const DEFAULT_LIFECYCLE_LOCK_TIMEOUT_MS = 180_000;
@@ -57,7 +46,7 @@ export class FilePreviewLifecycleLock implements PreviewLifecycleLock {
 
   constructor(
     private readonly dataDir: string,
-    options: PreviewLifecycleLockOptions = {},
+    options: DirectoryLockOptions = {},
   ) {
     this.acquisitionTimeoutMs = options.acquisitionTimeoutMs ?? DEFAULT_LIFECYCLE_LOCK_TIMEOUT_MS;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_LIFECYCLE_LOCK_POLL_MS;
@@ -66,56 +55,11 @@ export class FilePreviewLifecycleLock implements PreviewLifecycleLock {
 
   async withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
     const lockPath = join(this.dataDir, 'previews', safeSegment(sessionId), '.lifecycle.lock');
-    const ownerPath = join(lockPath, 'owner.json');
-    const owner: LifecycleLockOwner = {
-      token: randomUUID(),
-      pid: process.pid,
-      acquiredAt: new Date().toISOString(),
-    };
-    await ensureDir(dirname(lockPath));
-    const deadline = Date.now() + this.acquisitionTimeoutMs;
-    while (true) {
-      try {
-        await mkdir(lockPath);
-        try {
-          await writeFile(ownerPath, JSON.stringify(owner), { flag: 'wx' });
-        } catch (error) {
-          await rmdir(lockPath).catch(() => undefined);
-          throw error;
-        }
-        break;
-      } catch (error) {
-        if (!isAlreadyExists(error)) throw error;
-        await this.recoverDeadOwner(lockPath, ownerPath);
-        if (Date.now() >= deadline) {
-          throw new Error(`Timed out acquiring preview lifecycle lock ${lockPath}`);
-        }
-        await sleep(this.pollIntervalMs);
-      }
-    }
-    try {
-      return await operation();
-    } finally {
-      await releaseOwnedLock(lockPath, ownerPath, owner.token);
-    }
-  }
-
-  private async recoverDeadOwner(lockPath: string, ownerPath: string): Promise<void> {
-    const owner = await readLockOwner(ownerPath);
-    if (owner) {
-      if (!processAlive(owner.pid)) await releaseOwnedLock(lockPath, ownerPath, owner.token);
-      return;
-    }
-    try {
-      const lockStat = await stat(lockPath);
-      if (Date.now() - lockStat.mtimeMs < this.ownerWriteGraceMs) return;
-      await unlink(ownerPath).catch((error: unknown) => {
-        if (!isNotFound(error)) throw error;
-      });
-      await rmdir(lockPath);
-    } catch (error) {
-      if (!isNotFound(error) && !isNotEmpty(error)) throw error;
-    }
+    return withRecoverableDirectoryLock(lockPath, operation, {
+      acquisitionTimeoutMs: this.acquisitionTimeoutMs,
+      pollIntervalMs: this.pollIntervalMs,
+      ownerWriteGraceMs: this.ownerWriteGraceMs,
+    });
   }
 }
 
@@ -128,7 +72,7 @@ export class FilePreviewSessionRepository implements PreviewSessionRepository {
       throw new Error(`New preview-session ${parsed.session.id} must start at version 1`);
     }
     const path = this.pathFor(parsed.session.id);
-    await withDirectoryLock(`${path}.lock`, async () => {
+    await withRecoverableDirectoryLock(`${path}.lock`, async () => {
       if ((await readJsonOrNull(path)) !== null) {
         throw new Error(`preview-session ${parsed.session.id} already exists`);
       }
@@ -166,7 +110,7 @@ export class FilePreviewSessionRepository implements PreviewSessionRepository {
       );
     }
     const path = this.pathFor(session.id);
-    return withDirectoryLock(`${path}.lock`, async () => {
+    return withRecoverableDirectoryLock(`${path}.lock`, async () => {
       const current = await this.get(session.id);
       if (!current) throw new Error(`preview-session ${session.id} does not exist`);
       if (current.session.version !== expectedVersion) {
@@ -201,7 +145,7 @@ export class FilePreviewLogRepository implements PreviewLogRepository {
     entry: Omit<PreviewLogEntry, 'cursor'>,
   ): Promise<PreviewLogEntry> {
     const path = this.pathFor(sessionId);
-    return withDirectoryLock(`${path}.lock`, async () => {
+    return withRecoverableDirectoryLock(`${path}.lock`, async () => {
       const file = await this.read(path);
       const parsed = PreviewLogEntrySchema.parse({
         ...entry,
@@ -261,12 +205,12 @@ function parseRecord(value: unknown): PreviewSessionRecord {
 }
 
 function sanitizeSession(session: PreviewSession): PreviewSession {
-  if (!session.url) return session;
+  if (!session.url) return redactUnknown(session) as PreviewSession;
   const url = new URL(session.url);
   for (const key of [...url.searchParams.keys()]) {
     if (key.toLowerCase() === 'token') url.searchParams.delete(key);
   }
-  return { ...session, url: url.toString() };
+  return redactUnknown({ ...session, url: url.toString() }) as PreviewSession;
 }
 
 function validCursor(value: number): number {
@@ -285,59 +229,4 @@ function validLimit(value: number): number {
 
 function encodedBytes(file: LogFile): number {
   return Buffer.byteLength(`${JSON.stringify(file, null, 2)}\n`);
-}
-
-async function readLockOwner(path: string): Promise<LifecycleLockOwner | null> {
-  try {
-    const value = JSON.parse(await readFile(path, 'utf8')) as Partial<LifecycleLockOwner>;
-    return typeof value.token === 'string' &&
-      Number.isInteger(value.pid) &&
-      typeof value.acquiredAt === 'string'
-      ? { token: value.token, pid: value.pid!, acquiredAt: value.acquiredAt }
-      : null;
-  } catch (error) {
-    if (isNotFound(error)) return null;
-    if (error instanceof SyntaxError) return null;
-    throw error;
-  }
-}
-
-async function releaseOwnedLock(lockPath: string, ownerPath: string, token: string): Promise<void> {
-  const owner = await readLockOwner(ownerPath);
-  if (owner?.token !== token) return;
-  try {
-    await unlink(ownerPath);
-    await rmdir(lockPath);
-  } catch (error) {
-    if (!isNotFound(error) && !isNotEmpty(error)) throw error;
-  }
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !isNodeError(error) || error.code !== 'ESRCH';
-  }
-}
-
-function isAlreadyExists(error: unknown): boolean {
-  return isNodeError(error) && error.code === 'EEXIST';
-}
-
-function isNotFound(error: unknown): boolean {
-  return isNodeError(error) && error.code === 'ENOENT';
-}
-
-function isNotEmpty(error: unknown): boolean {
-  return isNodeError(error) && error.code === 'ENOTEMPTY';
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && 'code' in error;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

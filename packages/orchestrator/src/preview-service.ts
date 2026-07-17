@@ -373,7 +373,7 @@ export class PreviewService {
   ): Promise<void> {
     const name = `preview-failure-${session.id}`;
     if (await this.artifacts.getLatest(session.workspaceRef.projectId, name)) return;
-    const logs = await this.runner.logs(session, { limit: DIAGNOSTIC_LOG_LIMIT });
+    const logs = await this.readDiagnosticLogTail(session);
     const redactedLogs: PreviewLogPage = {
       ...logs,
       entries: logs.entries.map((entry) => ({ ...entry, message: redactString(entry.message) })),
@@ -398,6 +398,30 @@ export class PreviewService {
       ...(session.runId ? { runId: session.runId } : {}),
       idempotencyKey: createHash('sha256').update(name).digest('hex'),
     });
+  }
+
+  private async readDiagnosticLogTail(session: PreviewSession): Promise<PreviewLogPage> {
+    let cursor = 0;
+    let nextCursor = 0;
+    let entries: PreviewLogPage['entries'] = [];
+    let omittedBeforeCursor: number | undefined;
+    while (true) {
+      const page = await this.runner.logs(session, { cursor, limit: DIAGNOSTIC_LOG_LIMIT });
+      if (page.truncatedBeforeCursor !== undefined) {
+        omittedBeforeCursor = page.truncatedBeforeCursor;
+      }
+      entries = [...entries, ...page.entries].slice(-DIAGNOSTIC_LOG_LIMIT);
+      nextCursor = page.nextCursor;
+      if (page.entries.length < DIAGNOSTIC_LOG_LIMIT || nextCursor <= cursor) break;
+      cursor = nextCursor;
+    }
+    const firstCursor = entries[0]?.cursor;
+    if (firstCursor !== undefined && firstCursor > 1) omittedBeforeCursor = firstCursor;
+    return {
+      entries,
+      nextCursor: entries.at(-1)?.cursor ?? nextCursor,
+      ...(omittedBeforeCursor !== undefined ? { truncatedBeforeCursor: omittedBeforeCursor } : {}),
+    };
   }
 
   private async emit(

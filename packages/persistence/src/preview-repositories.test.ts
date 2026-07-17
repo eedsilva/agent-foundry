@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  rmdir,
+  stat,
+  unlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -188,6 +198,53 @@ describe('FilePreviewSessionRepository', () => {
     expect(persisted).not.toContain(rawToken);
   });
 
+  it('recovers stale repository locks left by a terminated process', async () => {
+    const dataDir = await temporaryDataDir();
+    const repository = new FilePreviewSessionRepository(dataDir);
+    const lockPath = join(dataDir, 'previews', 'preview-1', 'session.json.lock');
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(
+      join(lockPath, 'owner.json'),
+      JSON.stringify({ token: 'dead-owner', pid: 2_147_483_647, acquiredAt: createdAt }),
+    );
+
+    await repository.create({ session: session(), tokenDigest: 'a'.repeat(64) });
+
+    expect((await repository.get('preview-1'))?.session.id).toBe('preview-1');
+  });
+
+  it('redacts all persisted session free text without mutating the caller', async () => {
+    const dataDir = await temporaryDataDir();
+    const repository = new FilePreviewSessionRepository(dataDir);
+    const secret = `ghp_${'b'.repeat(24)}`;
+    const input: PreviewSession = {
+      ...session(),
+      status: 'failing',
+      failurePhase: 'runtime',
+      health: {
+        state: 'unhealthy',
+        consecutiveFailures: 1,
+        detail: `password=${secret}`,
+      },
+      error: {
+        name: 'PreviewError',
+        code: 'PREVIEW_FAILED',
+        message: `Authorization: Bearer ${secret}`,
+      },
+    };
+
+    await repository.create({ session: input, tokenDigest: 'a'.repeat(64) });
+
+    const persisted = await readFile(
+      join(dataDir, 'previews', 'preview-1', 'session.json'),
+      'utf8',
+    );
+    expect(persisted).not.toContain(secret);
+    expect(persisted).toContain('[REDACTED]');
+    expect(input.health.detail).toContain(secret);
+    expect(input.error?.message).toContain(secret);
+  });
+
   it('removes raw URL tokens before create and update reach disk or reads', async () => {
     const dataDir = await temporaryDataDir();
     const repository = new FilePreviewSessionRepository(dataDir);
@@ -257,6 +314,47 @@ describe('FilePreviewSessionRepository', () => {
 });
 
 describe('FilePreviewLogRepository', () => {
+  it('recovers malformed stale log locks but never steals a live owner lock', async () => {
+    const dataDir = await temporaryDataDir();
+    const repository = new FilePreviewLogRepository(dataDir);
+    const lockPath = join(dataDir, 'previews', 'preview-1', 'logs.json.lock');
+    const ownerPath = join(lockPath, 'owner.json');
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(ownerPath, '{');
+    const old = new Date(Date.now() - 1_000);
+    await utimes(lockPath, old, old);
+
+    await repository.append('preview-1', {
+      stream: 'stdout',
+      message: 'after stale lock',
+      timestamp: createdAt,
+    });
+
+    await mkdir(lockPath);
+    await writeFile(
+      ownerPath,
+      JSON.stringify({ token: 'live-owner', pid: process.pid, acquiredAt: createdAt }),
+    );
+    let settled = false;
+    const append = repository
+      .append('preview-1', {
+        stream: 'stdout',
+        message: 'after live lock',
+        timestamp: createdAt,
+      })
+      .then(() => {
+        settled = true;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(settled).toBe(false);
+    expect(JSON.parse(await readFile(ownerPath, 'utf8'))).toMatchObject({ token: 'live-owner' });
+
+    await unlink(ownerPath);
+    await rmdir(lockPath);
+    await append;
+    expect((await repository.list('preview-1')).entries).toHaveLength(2);
+  });
+
   it('assigns monotonic cursors and paginates after the supplied cursor', async () => {
     const repository = new FilePreviewLogRepository(await temporaryDataDir());
 
