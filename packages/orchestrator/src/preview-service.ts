@@ -76,7 +76,7 @@ export class PreviewService {
   async start(input: StartPreviewInput): Promise<{ session: PreviewSession; url: string }> {
     const sessionId = this.ids.next();
     const token = mintToken();
-    return this.withSessionLock(sessionId, async () => {
+    return this.lifecycleLock.withSessionLock(sessionId, async () => {
       const now = this.clock.now().toISOString();
       let session: PreviewSession = {
         id: sessionId,
@@ -158,7 +158,7 @@ export class PreviewService {
   }
 
   async stop(sessionId: string): Promise<PreviewSession> {
-    return this.withSessionLock(sessionId, async () => {
+    return this.lifecycleLock.withSessionLock(sessionId, async () => {
       const record = await this.requireSession(sessionId);
       if (isPreviewSessionTerminal(record.session.status)) return record.session;
       if (record.session.status === 'failing') {
@@ -177,7 +177,7 @@ export class PreviewService {
   }
 
   async resolveUpstream(sessionId: string, token: string | undefined): Promise<ResolvedUpstream> {
-    return this.withSessionLock(sessionId, async () => {
+    return this.lifecycleLock.withSessionLock(sessionId, async () => {
       const record = await this.requireSession(sessionId);
       let session = record.session;
       if (session.status === 'failing') {
@@ -211,7 +211,7 @@ export class PreviewService {
     const failures: unknown[] = [];
     for (const record of active) {
       try {
-        reaped += await this.withSessionLock(record.session.id, async () =>
+        reaped += await this.lifecycleLock.withSessionLock(record.session.id, async () =>
           this.reapSession(record.session.id),
         );
       } catch (error) {
@@ -465,10 +465,6 @@ export class PreviewService {
       await new Promise((resolveTick) => setTimeout(resolveTick, this.healthIntervalMs));
     } while (Date.now() < deadline);
     return health;
-  }
-
-  private async withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-    return this.lifecycleLock.withSessionLock(sessionId, operation);
   }
 
   private stageFailure(session: PreviewSession, failurePhase: PreviewFailurePhase): PreviewSession {

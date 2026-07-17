@@ -48,11 +48,12 @@ export class FileArtifactStore implements ArtifactStore {
       const indexPath = join(root, 'index.json');
       const index = (await readJsonOrNull<ArtifactIndex>(indexPath)) ?? { artifacts: {} };
       const revisions = index.artifacts[name] ?? [];
-      const existing = input.idempotencyKey
-        ? revisions.find((item) => item.idempotencyKey === input.idempotencyKey)
-        : input.sourceDecisionId
-          ? revisions.find((item) => item.sourceDecisionId === input.sourceDecisionId)
-          : undefined;
+      let existing: ArtifactMetadata | undefined;
+      if (input.idempotencyKey) {
+        existing = revisions.find((item) => item.idempotencyKey === input.idempotencyKey);
+      } else if (input.sourceDecisionId) {
+        existing = revisions.find((item) => item.sourceDecisionId === input.sourceDecisionId);
+      }
       if (existing) {
         const stored = await this.getRevision(projectId, name, existing.revision);
         if (stored) return stored;

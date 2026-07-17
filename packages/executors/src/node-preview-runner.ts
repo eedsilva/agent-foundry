@@ -209,14 +209,10 @@ export class NodePreviewRunner implements PreviewRunner {
       exited: false,
     };
     this.processes.set(session.id, entry);
-    void child.then(
-      () => {
-        entry.exited = true;
-      },
-      () => {
-        entry.exited = true;
-      },
-    );
+    const markExited = (): void => {
+      entry.exited = true;
+    };
+    void child.then(markExited, markExited);
     let detectedPort: number | undefined;
     const capture =
       (stream: PreviewLogEntry['stream']) =>
