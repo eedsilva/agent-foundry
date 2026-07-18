@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { EXECUTION_PROTOCOL_VERSION, type ExecutionRequest } from '@agent-foundry/contracts';
 import {
   EmergencyCeilingError,

@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  getDeploymentProfile,
-  listDeploymentProfiles,
-  DeploymentProfileSpec,
-} from './deployment-profiles.js';
+import { getDeploymentProfile, listDeploymentProfiles } from './deployment-profiles.js';
 
 describe('Deployment Profiles', () => {
   describe('getDeploymentProfile', () => {
