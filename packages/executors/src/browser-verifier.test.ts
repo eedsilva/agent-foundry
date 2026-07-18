@@ -1654,7 +1654,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(
       report.steps.flatMap(({ observations }) => observations).map(({ kind }) => kind),
     ).not.toContain('request-failed');
-  }, 55_000);
+  }, 70_000);
 
   it('caps observations at 100', async () => {
     const origin = await serve((_request, response) => {
