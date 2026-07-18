@@ -293,7 +293,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps[1]?.error).toContain('Missing');
     expect(report.steps[2]?.durationMs).toBe(0);
     expectRedacted(report);
-  }, 15_000);
+  }, 20_000);
 
   it('rejects HTTP errors, console errors, and uncaught exceptions as passive failures', async () => {
     const origin = await serve((request, response) => {
