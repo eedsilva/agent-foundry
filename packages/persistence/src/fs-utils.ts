@@ -12,8 +12,9 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import type { Readable } from 'node:stream';
 import YAML from 'yaml';
-import { NotFoundError } from '@agent-foundry/domain';
+import { ArtifactTooLargeError, NotFoundError } from '@agent-foundry/domain';
 
 export async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
@@ -91,6 +92,37 @@ export async function atomicWriteText(path: string, value: string): Promise<void
   await rename(temp, path);
 }
 
+export async function atomicWriteStream(
+  path: string,
+  source: Readable,
+  maxBytes: number,
+): Promise<{ sha256: string; sizeBytes: number }> {
+  await ensureDir(dirname(path));
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const hash = createHash('sha256');
+  let sizeBytes = 0;
+  try {
+    const handle = await open(temp, 'w');
+    try {
+      for await (const chunk of source) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        sizeBytes += buffer.byteLength;
+        if (sizeBytes > maxBytes) throw new ArtifactTooLargeError(maxBytes);
+        hash.update(buffer);
+        await handle.write(buffer);
+      }
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(temp, path);
+  } catch (error) {
+    await rm(temp, { force: true });
+    throw error;
+  }
+  return { sha256: hash.digest('hex'), sizeBytes };
+}
+
 export async function appendJsonLine(path: string, value: unknown): Promise<void> {
   await ensureDir(dirname(path));
   const handle = await open(path, 'a');
@@ -138,7 +170,7 @@ export async function readYamlEntity<T extends { id: string }>(
   }
 }
 
-export function sha256(value: string): string {
+export function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
