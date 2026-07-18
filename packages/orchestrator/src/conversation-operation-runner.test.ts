@@ -312,4 +312,48 @@ describe('ConversationOperationRunner', () => {
     expect(workspaces.commits).toHaveLength(1);
     expect(await artifacts.getLatest('project-1', `operation-${operationId}`)).not.toBeNull();
   });
+
+  it('resolves run() when the workflow run completion update fails after the step succeeded', async () => {
+    const workspaces = new FakeWorkspaces({ on: true });
+    const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
+    (runs as InMemoryRuns).onBeforeUpdate = (run) => {
+      if (run.status === 'completed') {
+        throw new Error('run store unavailable');
+      }
+    };
+    const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
+    const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
+    const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
+    const conversations = new MemoryConversations();
+    const executor = new ControllableExecutor({}, workspaces);
+    const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+    const runner = new ConversationOperationRunner(
+      runs,
+      stepRuns,
+      stepAttempts,
+      artifacts,
+      events,
+      harnessRepo,
+      router,
+      metrics,
+      executors,
+      workspaces,
+      conversations,
+      new FixedClock(),
+      new SequentialIds(),
+      { agentTimeoutMs: 60_000 },
+    );
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+
+    // The step attempt and stepRun already reached their terminal 'completed'
+    // state before the WorkflowRun's own completion write failed. The catch
+    // block must not blindly re-transition the already-terminal stepRun to
+    // 'failed' (that throws InvalidStateTransitionError and would make run()
+    // reject), and run() must still resolve.
+    await expect(runner.run('project-1', runId, operationId)).resolves.toBeUndefined();
+
+    const stepRunList = await stepRuns.list(runId);
+    expect(stepRunList[0]?.status).toBe('completed');
+  });
 });

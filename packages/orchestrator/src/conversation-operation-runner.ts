@@ -253,14 +253,18 @@ export class ConversationOperationRunner {
           attempt.version,
         );
       }
-      await this.stepRuns.update(
-        transitionStepRun(stepRun, 'failed', this.clock.now(), { error: runErr }),
-        stepRun.version,
-      );
-      await this.runs.update(
-        transitionWorkflowRun(runState, 'failed', this.clock.now(), { error: runErr }),
-        runState.version,
-      );
+      if (stepRun.status === 'running') {
+        stepRun = await this.stepRuns.update(
+          transitionStepRun(stepRun, 'failed', this.clock.now(), { error: runErr }),
+          stepRun.version,
+        );
+      }
+      if (runState.status === 'running') {
+        runState = await this.runs.update(
+          transitionWorkflowRun(runState, 'failed', this.clock.now(), { error: runErr }),
+          runState.version,
+        );
+      }
       await this.events.append({
         id: this.ids.next(),
         projectId,
