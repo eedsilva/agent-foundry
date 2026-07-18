@@ -11,9 +11,11 @@ import {
   CreateMessageRequestSchema,
   CreateOperationRequestSchema,
   DecideApprovalRequestSchema,
+  DecideOperationRequestSchema,
   PathSegmentSchema,
   RetryStepRequestSchema,
   SetVersionProtectedRequestSchema,
+  StartOperationRequestSchema,
 } from '@agent-foundry/contracts';
 import {
   ApprovalConflictError,
@@ -218,6 +220,12 @@ export async function buildApp(
       const { projectId, messageId } = z
         .object({ projectId: PathSegmentSchema, messageId: PathSegmentSchema })
         .parse(request.params);
+      const body = request.body as { kind?: unknown };
+      if (body?.kind === 'plan' || body?.kind === 'build') {
+        const input = StartOperationRequestSchema.parse(request.body);
+        const operation = await runtime.operationService.start(projectId, messageId, input);
+        return reply.status(201).send({ operation });
+      }
       const input = CreateOperationRequestSchema.parse(request.body);
       const operation = await runtime.conversationService.createOperation(
         projectId,
@@ -225,6 +233,18 @@ export async function buildApp(
         input,
       );
       return reply.status(201).send({ operation });
+    },
+  );
+
+  app.post(
+    '/projects/:projectId/conversation/operations/:operationId/decide',
+    async (request, reply) => {
+      const { projectId, operationId } = z
+        .object({ projectId: PathSegmentSchema, operationId: PathSegmentSchema })
+        .parse(request.params);
+      const { action } = DecideOperationRequestSchema.parse(request.body);
+      const operation = await runtime.operationService.decide(projectId, operationId, action);
+      return reply.status(200).send({ operation });
     },
   );
 

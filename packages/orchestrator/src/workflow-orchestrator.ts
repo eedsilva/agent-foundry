@@ -18,6 +18,7 @@ import type {
   StepAttempt,
   StepRun,
   StoredArtifact,
+  TaskProfile,
   VerifyStep,
   WorkflowDefinition,
   WorkflowNode,
@@ -27,6 +28,7 @@ import {
   AGENT_ARTIFACT_JSON_SCHEMA,
   BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
   DEFAULT_BROWSER_EVIDENCE_POLICY,
+  EXECUTION_PROTOCOL_VERSION,
 } from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
@@ -34,7 +36,7 @@ import type {
   ArtifactStore,
   Clock,
   EventStore,
-  ExecutorRegistry,
+  ExecutionPlane,
   ExplicitModelRoute,
   HarnessRepository,
   HarnessSelection,
@@ -112,7 +114,7 @@ export class WorkflowOrchestrator {
     private readonly harness: HarnessRepository,
     private readonly router: ModelRouter,
     private readonly metrics: MetricsRepository,
-    private readonly executors: ExecutorRegistry,
+    private readonly executionPlane: ExecutionPlane,
     private readonly verifier: VerificationService,
     private readonly workspaces: WorkspaceManager,
     private readonly clock: Clock,
@@ -1646,6 +1648,7 @@ export class WorkflowOrchestrator {
           requestMarkdown,
           outputSchema,
         });
+        const workspaceRef = checkpoint ?? (await this.workspaces.head(project.id)) ?? runId;
         const result = await this.executeCandidate(
           project,
           step,
@@ -1653,8 +1656,10 @@ export class WorkflowOrchestrator {
           stepRun.id,
           attempt.id,
           candidate,
+          profile,
           signal,
           outputSchema,
+          workspaceRef,
         );
         await this.assertExecutionMayContinue(runId, signal);
         const commit = step.mutatesWorkspace
@@ -1771,6 +1776,8 @@ export class WorkflowOrchestrator {
           modelId: candidate.model.id,
           taskKind: step.taskKind,
           role: step.role,
+          taxonomyVersion: profile.taxonomyVersion,
+          category: profile.category,
           success: false,
           durationMs: Date.now() - attemptStartedAt,
         });
@@ -1866,40 +1873,63 @@ export class WorkflowOrchestrator {
     stepRunId: string,
     attemptId: string,
     candidate: RankedModel,
+    profile: TaskProfile,
     signal: AbortSignal,
     outputSchema: AgentExecutionRequest['outputSchema'],
+    workspaceRef: string,
   ): Promise<AgentExecutionResult> {
     await this.emit(project.id, 'agent.started', `${step.id} started on ${candidate.model.id}.`, {
       nodeId: step.id,
       runId,
       data: { modelId: candidate.model.id, provider: candidate.model.provider, attemptId },
     });
-    const executor = this.executors.get(candidate.model.provider);
-    const result = await executor.execute(
+    const executionResult = await this.executionPlane.submit(
       {
-        runId,
-        stepRunId,
-        attemptId,
-        projectId: project.id,
-        stepId: step.id,
-        role: step.role,
-        taskKind: step.taskKind,
-        provider: candidate.model.provider,
-        model: candidate.model.model,
-        prompt: compileCliPrompt(runId, stepRunId, attemptId),
-        cwd: this.workspaces.workspacePath(project.id),
-        mutatesWorkspace: step.mutatesWorkspace,
-        timeoutMs: this.options.agentTimeoutMs,
-        outputSchema,
+        protocolVersion: EXECUTION_PROTOCOL_VERSION,
+        executionId: attemptId,
+        agent: {
+          runId,
+          stepRunId,
+          attemptId,
+          projectId: project.id,
+          stepId: step.id,
+          role: step.role,
+          taskKind: step.taskKind,
+          provider: candidate.model.provider,
+          model: candidate.model.model,
+          prompt: compileCliPrompt(runId, stepRunId, attemptId),
+          mutatesWorkspace: step.mutatesWorkspace,
+          timeoutMs: this.options.agentTimeoutMs,
+          outputSchema,
+        },
+        workspace: { projectId: project.id, ref: workspaceRef },
+        // ponytail: tool allow-listing and network policy are shape-only until
+        // v07-sandbox-runner/v07-network-policy/v07-secret-broker enforce them.
+        tools: [],
+        limits: { timeoutMs: this.options.agentTimeoutMs },
+        networkPolicy: { mode: 'none', allowedHosts: [] },
+        secrets: [],
       },
       signal,
     );
     // A result that arrives after cancellation was requested must never be promoted.
     throwIfCancelled(signal, runId);
+    if (executionResult.state === 'cancelled') throw new RunCancelledError(runId);
+    if (executionResult.state === 'failed' || !executionResult.agent) {
+      const detail = executionResult.error;
+      throw new ExecutionError(detail?.message ?? 'Execution plane reported a failure', {
+        ...(detail?.exitCode !== undefined ? { exitCode: detail.exitCode } : {}),
+        ...(detail?.stdout !== undefined ? { stdout: detail.stdout } : {}),
+        ...(detail?.stderr !== undefined ? { stderr: detail.stderr } : {}),
+      });
+    }
+    const result = executionResult.agent;
     await this.metrics.record({
       modelId: candidate.model.id,
       taskKind: step.taskKind,
       role: step.role,
+      taxonomyVersion: profile.taxonomyVersion,
+      category: profile.category,
       success: true,
       durationMs: result.durationMs,
       ...(result.usage?.inputTokens !== undefined ? { inputTokens: result.usage.inputTokens } : {}),
@@ -1956,6 +1986,8 @@ export class WorkflowOrchestrator {
       modelId: executed.model.id,
       taskKind: route.profile.taskKind,
       role: route.profile.role,
+      taxonomyVersion: route.profile.taxonomyVersion,
+      category: route.profile.category,
       approved,
     });
   }
@@ -2220,7 +2252,7 @@ export class WorkflowOrchestrator {
   }
 }
 
-function artifactReference(artifact: StoredArtifact) {
+export function artifactReference(artifact: StoredArtifact) {
   return {
     name: artifact.metadata.name,
     revision: artifact.metadata.revision,
@@ -2251,7 +2283,7 @@ function isCancellation(error: unknown, signal: AbortSignal): boolean {
   );
 }
 
-function runError(error: unknown): RunError {
+export function runError(error: unknown): RunError {
   const details = error instanceof ExecutionError ? error.details : {};
   const code =
     error instanceof Error && 'code' in error && typeof error.code === 'string'

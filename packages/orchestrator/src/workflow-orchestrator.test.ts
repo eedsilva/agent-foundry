@@ -6,7 +6,6 @@ import {
 } from '@agent-foundry/contracts';
 import {
   SystemClock,
-  type ExecutorRegistry,
   type HarnessRepository,
   type MetricsRepository,
   type ModelRouter,
@@ -119,10 +118,6 @@ function makeOrchestrator(versions?: ProjectVersionService) {
     record: () => Promise.resolve(),
     recordQuality: () => Promise.resolve(),
   };
-  const registry: ExecutorRegistry = {
-    get: () => executor,
-    health: () => Promise.resolve([]),
-  };
   const verifier: VerificationService = {
     verify: () => Promise.reject(new Error('verify is not used by this fixture')),
   };
@@ -141,7 +136,7 @@ function makeOrchestrator(versions?: ProjectVersionService) {
     harnessRepo,
     router,
     metrics,
-    registry,
+    executor,
     verifier,
     workspaces,
     clock,

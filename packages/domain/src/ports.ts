@@ -35,8 +35,10 @@ import type {
   StoredArtifact,
   StepAttempt,
   StepRun,
+  TaskCategory,
   TaskKind,
   TaskProfile,
+  TaskTaxonomyVersion,
   VerificationReport,
   WorkflowDefinition,
   WorkflowRun,
@@ -62,6 +64,8 @@ export interface ConversationRepository {
   getAttachment(projectId: string, attachmentId: string): Promise<Attachment | null>;
   listAttachments(projectId: string): Promise<Attachment[]>;
   createOperation(operation: Operation): Promise<Operation>;
+  getOperation(projectId: string, operationId: string): Promise<Operation | null>;
+  updateOperation(operation: Operation): Promise<Operation>;
   listOperations(projectId: string): Promise<Operation[]>;
 }
 
@@ -209,11 +213,18 @@ export interface ModelRouter {
 }
 
 export interface MetricsRepository {
-  get(modelId: string, taskKind: TaskKind, role: AgentRole): Promise<ModelMetric | null>;
+  get(
+    modelId: string,
+    taskKind: TaskKind,
+    role: AgentRole,
+    category?: TaskCategory,
+  ): Promise<ModelMetric | null>;
   record(input: {
     modelId: string;
     taskKind: TaskKind;
     role: AgentRole;
+    taxonomyVersion?: TaskTaxonomyVersion;
+    category?: TaskCategory;
     success: boolean;
     durationMs: number;
     inputTokens?: number;
@@ -224,6 +235,8 @@ export interface MetricsRepository {
     modelId: string;
     taskKind: TaskKind;
     role: AgentRole;
+    taxonomyVersion?: TaskTaxonomyVersion;
+    category?: TaskCategory;
     approved: boolean;
   }): Promise<void>;
 }

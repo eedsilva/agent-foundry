@@ -45,7 +45,12 @@ export class ScoreBasedModelRouter implements ModelRouter {
         continue;
       }
 
-      const metric = await this.metrics.get(model.id, profile.taskKind, profile.role);
+      const metric = await this.metrics.get(
+        model.id,
+        profile.taskKind,
+        profile.role,
+        profile.category,
+      );
       ranked.push({ model, score: this.score(model, profile, metric) });
     }
 

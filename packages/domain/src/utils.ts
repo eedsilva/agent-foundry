@@ -1,3 +1,6 @@
+import { EXECUTION_PROTOCOL_VERSION, type ExecutionResult } from '@agent-foundry/contracts';
+import { EmergencyCeilingError, ExecutionError, RunCancelledError } from './errors.js';
+
 export function getValueAtPath(value: unknown, path: string): unknown {
   const segments = path.split('.').filter(Boolean);
   let current = value;
@@ -28,6 +31,35 @@ export function errorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+/**
+ * Maps a caught `AgentExecutor`/CLI error to an `ExecutionPlane.submit` result.
+ * `EmergencyCeilingError` is an orchestrator-level circuit breaker, not a
+ * normal execution outcome — it must keep propagating as a rejection, exactly
+ * as it did via the aborted signal's `reason` before the execution-plane
+ * boundary existed, so it is rethrown rather than mapped. Shared by every
+ * `ExecutionPlane.submit` implementation so the completed/cancelled/failed
+ * mapping — and this rethrow — has one source of truth instead of being
+ * hand-copied per implementation.
+ */
+export function toExecutionResult(executionId: string, error: unknown): ExecutionResult {
+  if (error instanceof EmergencyCeilingError) throw error;
+  if (error instanceof RunCancelledError) {
+    return { protocolVersion: EXECUTION_PROTOCOL_VERSION, executionId, state: 'cancelled' };
+  }
+  const details = error instanceof ExecutionError ? error.details : {};
+  return {
+    protocolVersion: EXECUTION_PROTOCOL_VERSION,
+    executionId,
+    state: 'failed',
+    error: {
+      message: errorMessage(error),
+      ...(details.exitCode !== undefined ? { exitCode: details.exitCode } : {}),
+      ...(details.stdout !== undefined ? { stdout: details.stdout } : {}),
+      ...(details.stderr !== undefined ? { stderr: details.stderr } : {}),
+    },
+  };
 }
 
 export function stableJson(value: unknown): string {

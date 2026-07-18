@@ -90,6 +90,13 @@ Coordena tudo. O motor:
 ao port, e sempre para a sessão. O orquestrador persiste o report como artifact normal e associa o
 attempt ao `previewSessionId`; não conhece Playwright.
 
+Desde a ADR 0023, o orquestrador submete trabalho de agente pela port `ExecutionPlane`
+(`submit`/`cancel`/`status`) em vez de chamar `ExecutorRegistry` diretamente. `LocalExecutionPlane`
+(em `packages/executors`) é a única implementação hoje: roda as CLIs no mesmo processo do control
+plane, in-process, confiável apenas para desenvolvimento local — sem mudança de comportamento ou de
+fronteira de confiança em relação ao `ExecutorRegistry` direto de antes. No diagrama de sequência
+abaixo, o participante `E` (Executor) agora é alcançado através dessa port.
+
 ### `packages/composition`
 
 Composition root. Converte ambiente em configuração e conecta implementações concretas às portas.
@@ -199,6 +206,30 @@ StepAttempt: running -> succeeded | failed | cancelled
 `WorkflowRun`, `StepRun` e `StepAttempt` são a fonte de verdade. `Project.currentRunId`, `status`, `currentNodeId` e `error` são somente um resumo derivado para compatibilidade da API e da UI. Cada entidade possui `version`; updates usam compare-and-swap e rejeitam uma versão esperada obsoleta.
 
 No filesystem, o estado fica em `DATA_DIR/runs/<runId>/run.json`, com steps em `steps/<stepRunId>/step.json` e attempts em `steps/<stepRunId>/attempts/<attemptId>.json`. Contextos de executor usam a mesma identidade em `.orchestrator/runs/<runId>/steps/<stepRunId>/attempts/<attemptId>/`, evitando que attempts sobrescrevam requests anteriores.
+
+## Execução de operações (Plan/Build)
+
+Além do pipeline de projeto inteiro, o orquestrador suporta uma via de execução paralela e leve para operações de conversa com `kind` `'plan'` ou `'build'`. Cada operação é exatamente um `AgentStep` — sem grafo multi-nó, sem gates de approval entre nós — e nunca toca em `Project.status` ou `Project.currentRunId`. Ver [`docs/superpowers/specs/2026-07-18-plan-build-modes-design.md`](superpowers/specs/2026-07-18-plan-build-modes-design.md) para detalhes de design e rationale.
+
+### `OperationService` e `ConversationOperationRunner`
+
+`OperationService` (packages/orchestrator) aceita um início de operação de conversa, valida as constraint (uma `'build'` deve referenciar um plano aprovado OU ter `directExecution: true`), constrói um `TaskProfile` da operação, e enfileira um novo tipo de job `run-conversation-operation` carregando a identidade da execução.
+
+`ConversationOperationRunner` (packages/orchestrator) consome esse job type na `WorkerLoop`, executando:
+
+1. Roteador: `buildTaskProfile` → `scoreRouter` → seleciona modelo.
+2. Compilação: `compileRequestMarkdown` + `compileCliPrompt` (mesmo contrato para `mutatesWorkspace`).
+3. Execução: `ExecutorRegistry.get(provider).execute()` — mesmo request shape que execuções em nó de workflow.
+4. Persistência: `ArtifactStore.put()` do resultado (artefato chamado `operation-{operationId}`), marca `StepRun`/`WorkflowRun` como completado.
+
+### Gating do Build
+
+Uma operação `'build'` só pode ser criada com exatamente uma das duas condições:
+
+- `planOperationId`: referencia uma operação `'plan'` precedente com `approval.status === 'approved'`. A operação build herda `artifactReferences` do plano aprovado.
+- `directExecution: true`: indica escolha explícita de pular o plano, registrada para auditoria.
+
+Tentar criar um build sem nenhuma das duas, ou referenciar um plano não-aprovado, resulta em `400 ValidationError`.
 
 ## Conversa persistida por projeto
 

@@ -3,13 +3,17 @@
 import { use, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { diffLines } from 'diff';
 import {
+  taskCategoryLevels,
   VerificationReportSchema,
   type ApprovalAction,
   type ApprovalGateStep,
   type ApprovalListResponse,
   type ApprovalRequest,
   type ActorRef,
+  type ConversationPageResponse,
+  type Message,
   type ModelDefinition,
+  type Operation,
   type ProjectDetailResponse,
   type ProjectEvent,
   type ResumeBlockedResponse,
@@ -24,9 +28,11 @@ import {
 import {
   compareVersions,
   decideApproval,
+  decideOperation,
   createModelOverride,
   eventStreamUrl,
   getArtifact,
+  getConversation,
   getArtifactBlobUrl,
   getProject,
   getRetryPlan,
@@ -39,6 +45,8 @@ import {
   resumeRun,
   retryProject,
   retryStep,
+  sendMessage,
+  startOperation,
 } from '../../../lib/api';
 import { mergeEvents } from '../../../lib/events';
 import {
@@ -213,6 +221,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [deciding, setDeciding] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [previousArtifact, setPreviousArtifact] = useState<StoredArtifact | null>(null);
+  const [conversation, setConversation] = useState<ConversationPageResponse | null>(null);
+  const [draft, setDraft] = useState('');
+  const [mode, setMode] = useState<'plan' | 'build'>('plan');
+  const [buildChoice, setBuildChoice] = useState<'plan' | 'direct'>('plan');
+  const [conversationError, setConversationError] = useState('');
 
   function openArtifact(artifact: StoredArtifact) {
     setSelected(artifact);
@@ -308,6 +321,25 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await getConversation(id);
+        if (active) setConversation(next);
+      } catch {
+        // conversation panel is best-effort; the main project poll surfaces fatal errors
+      }
+      timer = setTimeout(poll, 2_000);
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [id]);
+
   const routes = useMemo(
     () =>
       detail?.artifacts
@@ -318,6 +350,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         })) ?? [],
     [detail],
   );
+  const routeGroups = useMemo(() => {
+    const groups = new Map<string, typeof routes>();
+    for (const item of routes) {
+      const root = taskCategoryLevels(item.route.profile.category)[0]!;
+      const group = groups.get(root);
+      if (group) group.push(item);
+      else groups.set(root, [item]);
+    }
+    return groups;
+  }, [routes]);
 
   const run = runDetail?.run;
 
@@ -422,6 +464,46 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  const latestApprovedPlan = conversation?.operations
+    .filter((op) => op.kind === 'plan' && op.approval?.status === 'approved')
+    .at(-1);
+
+  async function submitMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draft.trim()) return;
+    try {
+      const message = await sendMessage(id, {
+        role: 'user',
+        content: [{ type: 'text', text: draft }],
+      });
+      if (mode === 'plan') {
+        await startOperation(id, message.id, { kind: 'plan' });
+      } else if (buildChoice === 'plan' && latestApprovedPlan) {
+        await startOperation(id, message.id, {
+          kind: 'build',
+          planOperationId: latestApprovedPlan.id,
+        });
+      } else {
+        await startOperation(id, message.id, { kind: 'build', directExecution: true });
+      }
+      setDraft('');
+      setConversationError('');
+      setConversation(await getConversation(id));
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function decide(operationId: string, action: 'approve' | 'reject') {
+    try {
+      await decideOperation(id, operationId, action);
+      setConversationError('');
+      setConversation(await getConversation(id));
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
@@ -599,6 +681,91 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </button>
           ) : null}
         </div>
+      </section>
+
+      <section className="panel">
+        <h2>Conversa</h2>
+        {conversationError ? <p className="errorBox">{conversationError}</p> : null}
+        <ul className="conversationList">
+          {(conversation?.messages ?? []).map((message: Message) => {
+            const operation = conversation?.operations.find(
+              (op: Operation) => op.messageId === message.id,
+            );
+            return (
+              <li key={message.id}>
+                <strong>{message.role}:</strong>{' '}
+                {message.content
+                  .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
+                  .join(' ')}
+                {operation ? (
+                  <span className="operationBadge">
+                    {' '}
+                    ({operation.kind}
+                    {operation.approval ? `, ${operation.approval.status}` : ''})
+                    {operation.kind === 'plan' && operation.approval?.status === 'pending' ? (
+                      <>
+                        {' '}
+                        <button
+                          className="secondaryButton"
+                          onClick={() => void decide(operation.id, 'approve')}
+                        >
+                          Aprovar
+                        </button>
+                        <button
+                          className="secondaryButton"
+                          onClick={() => void decide(operation.id, 'reject')}
+                        >
+                          Rejeitar
+                        </button>
+                      </>
+                    ) : null}
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+        <form onSubmit={(event) => void submitMessage(event)}>
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} />
+          <div className="modelPinGrid">
+            <label>
+              <input type="radio" checked={mode === 'plan'} onChange={() => setMode('plan')} /> Plan
+              (somente proposta, sem alterar código)
+            </label>
+            <label>
+              <input type="radio" checked={mode === 'build'} onChange={() => setMode('build')} />{' '}
+              Build (vai alterar código e consumir budget)
+            </label>
+          </div>
+          {mode === 'build' ? (
+            <div className="modelPinGrid">
+              {latestApprovedPlan ? (
+                <label>
+                  <input
+                    type="radio"
+                    checked={buildChoice === 'plan'}
+                    onChange={() => setBuildChoice('plan')}
+                  />{' '}
+                  Build a partir do plano aprovado
+                </label>
+              ) : null}
+              <label>
+                <input
+                  type="radio"
+                  checked={buildChoice === 'direct' || !latestApprovedPlan}
+                  onChange={() => setBuildChoice('direct')}
+                />{' '}
+                Build direto, sem plano (decisão explícita)
+              </label>
+              <p className="errorBox">
+                Esta ação vai alterar o código do projeto e consumir budget.
+              </p>
+            </div>
+          ) : null}
+          <button className="secondaryButton" type="submit">
+            Enviar
+          </button>
+        </form>
       </section>
 
       {detail.project.error ? <p className="errorBox">{detail.project.error}</p> : null}
@@ -898,61 +1065,74 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           <h2>Decisões do model router</h2>
           <span className="hint">score auditável</span>
         </div>
-        <div className="routeGrid">
-          {routes.map(({ artifact, route }) => {
-            const executed = route.executed ?? route.selected;
-            const usedFallback = isFallback(route);
-            return (
-              <article key={`${artifact}-${route.routeId}`}>
-                <p className="eyebrow">{artifact}</p>
-                <h3>{executed.model.id}</h3>
-                <p>
-                  {executed.model.provider} · {executed.model.model || 'default da CLI'}
-                </p>
-                {usedFallback ? (
-                  <p className="fallbackNotice">fallback de {route.selected.model.id}</p>
-                ) : null}
-                <dl>
-                  <div>
-                    <dt>total</dt>
-                    <dd>{executed.score.total.toFixed(3)}</dd>
-                  </div>
-                  <div>
-                    <dt>capability</dt>
-                    <dd>{executed.score.capability.toFixed(3)}</dd>
-                  </div>
-                  <div>
-                    <dt>reliability</dt>
-                    <dd>{executed.score.reliability.toFixed(3)}</dd>
-                  </div>
-                  <div>
-                    <dt>context</dt>
-                    <dd>{executed.score.context.toFixed(3)}</dd>
-                  </div>
-                  <div>
-                    <dt>speed</dt>
-                    <dd>{executed.score.speed.toFixed(3)}</dd>
-                  </div>
-                  <div>
-                    <dt>cost score</dt>
-                    <dd>{executed.score.cost.toFixed(3)}</dd>
-                  </div>
-                  <div>
-                    <dt>custo estimado</dt>
-                    <dd>
-                      {executed.score.estimatedCostUsd === null
-                        ? 'quota'
-                        : `$${executed.score.estimatedCostUsd.toFixed(4)}`}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>billing</dt>
-                    <dd>{executed.model.billingMode}</dd>
-                  </div>
-                </dl>
-              </article>
-            );
-          })}
+        <div>
+          {Array.from(routeGroups, ([category, groupedRoutes]) => (
+            <section key={category}>
+              <h3>{category}</h3>
+              <div className="routeGrid">
+                {groupedRoutes.map(({ artifact, route }) => {
+                  const executed = route.executed ?? route.selected;
+                  const usedFallback = isFallback(route);
+                  return (
+                    <article key={`${artifact}-${route.routeId}`}>
+                      <p className="eyebrow">{artifact}</p>
+                      <p className="eyebrow">
+                        {route.profile.category} · taxonomy v{route.profile.taxonomyVersion}
+                      </p>
+                      {route.profile.features.length > 0 ? (
+                        <p>features: {route.profile.features.join(', ')}</p>
+                      ) : null}
+                      <h4>{executed.model.id}</h4>
+                      <p>
+                        {executed.model.provider} · {executed.model.model || 'default da CLI'}
+                      </p>
+                      {usedFallback ? (
+                        <p className="fallbackNotice">fallback de {route.selected.model.id}</p>
+                      ) : null}
+                      <dl>
+                        <div>
+                          <dt>total</dt>
+                          <dd>{executed.score.total.toFixed(3)}</dd>
+                        </div>
+                        <div>
+                          <dt>capability</dt>
+                          <dd>{executed.score.capability.toFixed(3)}</dd>
+                        </div>
+                        <div>
+                          <dt>reliability</dt>
+                          <dd>{executed.score.reliability.toFixed(3)}</dd>
+                        </div>
+                        <div>
+                          <dt>context</dt>
+                          <dd>{executed.score.context.toFixed(3)}</dd>
+                        </div>
+                        <div>
+                          <dt>speed</dt>
+                          <dd>{executed.score.speed.toFixed(3)}</dd>
+                        </div>
+                        <div>
+                          <dt>cost score</dt>
+                          <dd>{executed.score.cost.toFixed(3)}</dd>
+                        </div>
+                        <div>
+                          <dt>custo estimado</dt>
+                          <dd>
+                            {executed.score.estimatedCostUsd === null
+                              ? 'quota'
+                              : `$${executed.score.estimatedCostUsd.toFixed(4)}`}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>billing</dt>
+                          <dd>{executed.model.billingMode}</dd>
+                        </div>
+                      </dl>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
           {routes.length === 0 ? (
             <p className="emptyState">As rotas aparecem quando os agentes começarem.</p>
           ) : null}

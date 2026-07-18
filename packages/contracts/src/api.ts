@@ -16,7 +16,9 @@ import {
   AttachmentSchema,
   ConversationSchema,
   MessageSchema,
+  OperationObjectSchema,
   OperationSchema,
+  requireExactlyOnePlanSource,
 } from './conversation.js';
 import {
   ApprovalDecisionSchema,
@@ -46,7 +48,7 @@ export type CreateMessageRequest = z.infer<typeof CreateMessageRequestSchema>;
 export const CreateMessageResponseSchema = z.object({ message: MessageSchema }).strict();
 export type CreateMessageResponse = z.infer<typeof CreateMessageResponseSchema>;
 
-export const CreateOperationRequestSchema = OperationSchema.pick({
+export const CreateOperationRequestSchema = OperationObjectSchema.pick({
   kind: true,
   idempotencyKey: true,
   runId: true,
@@ -58,6 +60,27 @@ export type CreateOperationRequest = z.infer<typeof CreateOperationRequestSchema
 
 export const CreateOperationResponseSchema = z.object({ operation: OperationSchema }).strict();
 export type CreateOperationResponse = z.infer<typeof CreateOperationResponseSchema>;
+
+export const StartOperationRequestSchema = z
+  .object({
+    kind: z.enum(['plan', 'build']),
+    planOperationId: PathSegmentSchema.optional(),
+    directExecution: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine(requireExactlyOnePlanSource);
+export type StartOperationRequest = z.infer<typeof StartOperationRequestSchema>;
+
+export const StartOperationResponseSchema = z.object({ operation: OperationSchema }).strict();
+export type StartOperationResponse = z.infer<typeof StartOperationResponseSchema>;
+
+export const DecideOperationRequestSchema = z
+  .object({ action: z.enum(['approve', 'reject']) })
+  .strict();
+export type DecideOperationRequest = z.infer<typeof DecideOperationRequestSchema>;
+
+export const DecideOperationResponseSchema = z.object({ operation: OperationSchema }).strict();
+export type DecideOperationResponse = z.infer<typeof DecideOperationResponseSchema>;
 
 export const ConversationPageResponseSchema = z
   .object({

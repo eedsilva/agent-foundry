@@ -1,0 +1,92 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { atomicWriteJson } from './fs-utils.js';
+import { FileMetricsRepository } from './metrics-repository.js';
+
+describe('FileMetricsRepository taxonomy migration', () => {
+  let dataDir: string;
+  let repository: FileMetricsRepository;
+
+  beforeEach(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-metrics-'));
+    repository = new FileMetricsRepository(dataDir);
+    await atomicWriteJson(join(dataDir, 'metrics', 'models.json'), {
+      metrics: {
+        'legacy::implementation::developer': {
+          modelId: 'legacy',
+          taskKind: 'implementation',
+          role: 'developer',
+          attempts: 3,
+          successes: 2,
+          totalDurationMs: 1_000,
+          totalInputTokens: 100,
+          totalOutputTokens: 50,
+          totalEstimatedCostUsd: 0,
+          consecutiveFailures: 0,
+          qualityEvaluations: 0,
+          qualityApprovals: 0,
+          updatedAt: '2026-07-18T12:00:00.000Z',
+        },
+      },
+    });
+  });
+
+  afterEach(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  it('normalizes and falls back to a legacy v1 metric', async () => {
+    const metric = await repository.get(
+      'legacy',
+      'implementation',
+      'developer',
+      'implementation/frontend',
+    );
+
+    expect(metric).toMatchObject({
+      taxonomyVersion: '1',
+      category: 'implementation/general',
+      attempts: 3,
+      successes: 2,
+    });
+  });
+
+  it('prefers an exact v2 category while preserving the v1 fallback', async () => {
+    await repository.record({
+      modelId: 'legacy',
+      taskKind: 'implementation',
+      role: 'developer',
+      taxonomyVersion: '2',
+      category: 'implementation/frontend',
+      success: true,
+      durationMs: 250,
+    });
+
+    await expect(
+      repository.get('legacy', 'implementation', 'developer', 'implementation/frontend'),
+    ).resolves.toMatchObject({
+      taxonomyVersion: '2',
+      category: 'implementation/frontend',
+      attempts: 1,
+      successes: 1,
+    });
+    await expect(
+      repository.get('legacy', 'implementation', 'developer', 'implementation/backend'),
+    ).resolves.toMatchObject({
+      taxonomyVersion: '1',
+      category: 'implementation/general',
+      attempts: 3,
+      successes: 2,
+    });
+
+    const persisted = JSON.parse(
+      await readFile(join(dataDir, 'metrics', 'models.json'), 'utf8'),
+    ) as { metrics: Record<string, unknown> };
+    expect(persisted.metrics['legacy::implementation::developer']).toMatchObject({
+      taxonomyVersion: '1',
+      category: 'implementation/general',
+    });
+  });
+});

@@ -8,6 +8,13 @@ import {
   RiskLevelSchema,
   TaskKindSchema,
 } from './primitives.js';
+import {
+  TaskCategorySchema,
+  TaskFeatureSchema,
+  TaskTaxonomyVersionSchema,
+  isTaskCategoryCompatible,
+  legacyTaskCategory,
+} from './task-taxonomy.js';
 
 export const CapabilityScoresSchema = z.object({
   planning: z.number().min(0).max(1),
@@ -58,26 +65,50 @@ export const RoutingPrioritiesSchema = z.object({
 });
 export type RoutingPriorities = z.infer<typeof RoutingPrioritiesSchema>;
 
-export const TaskProfileSchema = z.object({
-  role: AgentRoleSchema,
-  taskKind: TaskKindSchema,
-  complexity: ComplexityLevelSchema,
-  risk: RiskLevelSchema,
-  estimatedContextTokens: z.number().int().nonnegative(),
-  estimatedOutputTokens: z.number().int().nonnegative(),
-  mutatesWorkspace: z.boolean(),
-  priorities: RoutingPrioritiesSchema,
-  allowedProviders: z.array(ProviderSchema.exclude(['mock'])).optional(),
-  policy: z
+export const TaskProfileSchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const profile = value as Record<string, unknown>;
+    const taskKind = TaskKindSchema.safeParse(profile.taskKind);
+    return {
+      ...profile,
+      taxonomyVersion: profile.taxonomyVersion === undefined ? '1' : profile.taxonomyVersion,
+      category:
+        profile.category === undefined && taskKind.success
+          ? legacyTaskCategory(taskKind.data)
+          : profile.category,
+      features: profile.features === undefined ? [] : profile.features,
+    };
+  },
+  z
     .object({
-      id: PathSegmentSchema,
-      version: z.number().int().positive(),
-      allowedProviders: z.array(ProviderSchema.exclude(['mock'])),
+      role: AgentRoleSchema,
+      taskKind: TaskKindSchema,
+      taxonomyVersion: TaskTaxonomyVersionSchema,
+      category: TaskCategorySchema,
+      features: z.array(TaskFeatureSchema),
+      complexity: ComplexityLevelSchema,
+      risk: RiskLevelSchema,
+      estimatedContextTokens: z.number().int().nonnegative(),
+      estimatedOutputTokens: z.number().int().nonnegative(),
+      mutatesWorkspace: z.boolean(),
+      priorities: RoutingPrioritiesSchema,
+      allowedProviders: z.array(ProviderSchema.exclude(['mock'])).optional(),
+      policy: z
+        .object({
+          id: PathSegmentSchema,
+          version: z.number().int().positive(),
+          allowedProviders: z.array(ProviderSchema.exclude(['mock'])),
+        })
+        .strict()
+        .optional(),
+      preferredTags: z.array(z.string()).default([]),
     })
-    .strict()
-    .optional(),
-  preferredTags: z.array(z.string()).default([]),
-});
+    .refine((profile) => isTaskCategoryCompatible(profile.taskKind, profile.category), {
+      message: 'Category is incompatible with taskKind',
+      path: ['category'],
+    }),
+);
 export type TaskProfile = z.infer<typeof TaskProfileSchema>;
 
 export const RouteScoreBreakdownSchema = z.object({
@@ -181,20 +212,42 @@ export const RouteDecisionSchema = z.object({
 });
 export type RouteDecision = z.infer<typeof RouteDecisionSchema>;
 
-export const ModelMetricSchema = z.object({
-  modelId: PathSegmentSchema,
-  taskKind: TaskKindSchema,
-  role: AgentRoleSchema,
-  attempts: z.number().int().nonnegative(),
-  successes: z.number().int().nonnegative(),
-  totalDurationMs: z.number().nonnegative(),
-  totalInputTokens: z.number().nonnegative(),
-  totalOutputTokens: z.number().nonnegative(),
-  totalEstimatedCostUsd: z.number().nonnegative(),
-  consecutiveFailures: z.number().int().nonnegative(),
-  qualityEvaluations: z.number().int().nonnegative().default(0),
-  qualityApprovals: z.number().int().nonnegative().default(0),
-  lastFailureAt: z.string().datetime().optional(),
-  updatedAt: z.string().datetime(),
-});
+export const ModelMetricSchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const metric = value as Record<string, unknown>;
+    const taskKind = TaskKindSchema.safeParse(metric.taskKind);
+    return {
+      ...metric,
+      taxonomyVersion: metric.taxonomyVersion === undefined ? '1' : metric.taxonomyVersion,
+      category:
+        metric.category === undefined && taskKind.success
+          ? legacyTaskCategory(taskKind.data)
+          : metric.category,
+    };
+  },
+  z
+    .object({
+      modelId: PathSegmentSchema,
+      taskKind: TaskKindSchema,
+      role: AgentRoleSchema,
+      taxonomyVersion: TaskTaxonomyVersionSchema,
+      category: TaskCategorySchema,
+      attempts: z.number().int().nonnegative(),
+      successes: z.number().int().nonnegative(),
+      totalDurationMs: z.number().nonnegative(),
+      totalInputTokens: z.number().nonnegative(),
+      totalOutputTokens: z.number().nonnegative(),
+      totalEstimatedCostUsd: z.number().nonnegative(),
+      consecutiveFailures: z.number().int().nonnegative(),
+      qualityEvaluations: z.number().int().nonnegative().default(0),
+      qualityApprovals: z.number().int().nonnegative().default(0),
+      lastFailureAt: z.string().datetime().optional(),
+      updatedAt: z.string().datetime(),
+    })
+    .refine((metric) => isTaskCategoryCompatible(metric.taskKind, metric.category), {
+      message: 'Category is incompatible with taskKind',
+      path: ['category'],
+    }),
+);
 export type ModelMetric = z.infer<typeof ModelMetricSchema>;

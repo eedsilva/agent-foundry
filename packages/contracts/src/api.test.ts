@@ -10,9 +10,13 @@ import {
   CreateOperationRequestSchema,
   CreateOperationResponseSchema,
   DecideApprovalRequestSchema,
+  DecideOperationRequestSchema,
+  DecideOperationResponseSchema,
   ProjectExportResponseSchema,
   RetryStepRequestSchema,
   RunAuditExportSchema,
+  StartOperationRequestSchema,
+  StartOperationResponseSchema,
 } from './api.js';
 
 const conversationCreatedAt = '2026-07-17T12:00:00.000Z';
@@ -49,6 +53,7 @@ const operation = {
   kind: 'build' as const,
   idempotencyKey: 'b'.repeat(64),
   artifactReferences: [],
+  directExecution: true,
   createdAt: conversationCreatedAt,
 };
 
@@ -135,6 +140,30 @@ describe('conversation HTTP contracts (#36)', () => {
         operations: [operation],
       }),
     ).toMatchObject({ schemaVersion: '1', project, conversation });
+  });
+
+  it('parses start/decide operation requests and rejects ambiguous build gating', () => {
+    expect(StartOperationRequestSchema.parse({ kind: 'plan' })).toEqual({ kind: 'plan' });
+    expect(
+      StartOperationRequestSchema.parse({ kind: 'build', planOperationId: 'operation-1' }),
+    ).toMatchObject({ planOperationId: 'operation-1' });
+    expect(
+      StartOperationRequestSchema.parse({ kind: 'build', directExecution: true }),
+    ).toMatchObject({ directExecution: true });
+    expect(() => StartOperationRequestSchema.parse({ kind: 'build' })).toThrow();
+    expect(() =>
+      StartOperationRequestSchema.parse({
+        kind: 'build',
+        planOperationId: 'operation-1',
+        directExecution: true,
+      }),
+    ).toThrow();
+    expect(StartOperationResponseSchema.parse({ operation }).operation).toEqual(operation);
+
+    expect(DecideOperationRequestSchema.parse({ action: 'approve' })).toEqual({
+      action: 'approve',
+    });
+    expect(DecideOperationResponseSchema.parse({ operation }).operation).toEqual(operation);
   });
 });
 

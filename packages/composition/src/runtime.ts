@@ -8,6 +8,7 @@ import {
   WorkspaceVerifier,
   PlaywrightBrowserVerifier,
   NodePreviewRunner,
+  LocalExecutionPlane,
 } from '@agent-foundry/executors';
 import { VersionedHarnessRepository } from '@agent-foundry/harness';
 import { ScoreBasedModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
@@ -33,7 +34,9 @@ import {
   YamlWorkflowRepository,
 } from '@agent-foundry/persistence';
 import {
+  ConversationOperationRunner,
   ConversationService,
+  OperationService,
   ProjectService,
   ProjectVersionService,
   QueueLeaseReaper,
@@ -68,11 +71,14 @@ export interface Runtime {
   workspaces: FileWorkspaceManager;
   router: ScoreBasedModelRouter;
   executors: StaticExecutorRegistry | MockExecutorRegistry;
+  executionPlane: LocalExecutionPlane;
   verifier: WorkspaceVerifier;
   browserVerifier: PlaywrightBrowserVerifier;
   browserVerification: BrowserVerificationCoordinator;
   projectService: ProjectService;
   conversationService: ConversationService;
+  operationRunner: ConversationOperationRunner;
+  operationService: OperationService;
   orchestrator: WorkflowOrchestrator;
   worker: WorkerLoop;
   leaseReaper: QueueLeaseReaper;
@@ -120,6 +126,7 @@ export async function createRuntime(
           new ClaudeCliExecutor(config.maxCliOutputBytes),
           new AgyCliExecutor(config.maxCliOutputBytes),
         ]);
+  const executionPlane = new LocalExecutionPlane(executors, workspaces);
   const verifier = new WorkspaceVerifier({
     autoInstallDependencies: config.autoInstallDependencies,
     timeoutMs: config.verificationTimeoutMs,
@@ -189,7 +196,7 @@ export async function createRuntime(
     harness,
     router,
     metrics,
-    executors,
+    executionPlane,
     verifier,
     workspaces,
     clock,
@@ -226,7 +233,24 @@ export async function createRuntime(
     clock,
     ids,
   );
-  const worker = new WorkerLoop(queue, orchestrator, {
+  const operationRunner = new ConversationOperationRunner(
+    runs,
+    stepRuns,
+    stepAttempts,
+    artifacts,
+    events,
+    harness,
+    router,
+    metrics,
+    executors,
+    workspaces,
+    conversations,
+    clock,
+    ids,
+    { agentTimeoutMs: config.agentTimeoutMs },
+  );
+  const operationService = new OperationService(conversations, runs, queue, artifacts, clock, ids);
+  const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
     workerId: config.workerId,
     pollIntervalMs: config.workerPollIntervalMs,
     heartbeatIntervalMs: config.queueHeartbeatIntervalMs,
@@ -255,11 +279,14 @@ export async function createRuntime(
     workspaces,
     router,
     executors,
+    executionPlane,
     verifier,
     browserVerifier,
     browserVerification,
     projectService,
     conversationService,
+    operationRunner,
+    operationService,
     orchestrator,
     worker,
     leaseReaper,
