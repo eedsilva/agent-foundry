@@ -37,6 +37,21 @@ export function assertNoUnexpectedDrift(liveBody, saved, force, key) {
     );
 }
 
+export async function reconcileIssue(client, ownerName, repoName, record, issue, milestone, saved, force) {
+  const live = await client.request(`/repos/${ownerName}/${repoName}/issues/${issue.number}`);
+  if ((live.body ?? '') !== record.body)
+    assertNoUnexpectedDrift(live.body ?? '', saved, force, record.key);
+  await client.request(`/repos/${ownerName}/${repoName}/issues/${issue.number}`, {
+    method: 'PATCH',
+    body: {
+      title: record.title,
+      body: record.body,
+      labels: record.labels,
+      milestone: milestone?.number ?? null,
+    },
+  });
+}
+
 export async function verifyWritableRepository(client, owner, repo) {
   const viewer = await client.request('/user');
   const repository = await client.request(`/repos/${owner}/${repo}`);

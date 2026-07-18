@@ -6,6 +6,7 @@ import {
   assertNoUnexpectedDrift,
   createRoadmapIssue,
   parseArgs,
+  reconcileIssue,
   reconcileIssueBlockers,
   reconcileIssueHierarchy,
   verifyWritableRepository,
@@ -215,19 +216,4 @@ async function loadIssues(client, ownerName, repoName) {
     if (key) byMarker.set(key, issue);
   }
   return { byNumber, byMarker, byTitle };
-}
-
-async function reconcileIssue(client, ownerName, repoName, record, issue, milestone, saved, force) {
-  const live = await client.request(`/repos/${ownerName}/${repoName}/issues/${issue.number}`);
-  if ((live.body ?? '') !== record.body)
-    assertNoUnexpectedDrift(live.body ?? '', saved, force, record.key);
-  await client.request(`/repos/${ownerName}/${repoName}/issues/${issue.number}`, {
-    method: 'PATCH',
-    body: {
-      title: record.title,
-      body: record.body,
-      labels: record.labels,
-      milestone: milestone?.number ?? null,
-    },
-  });
 }

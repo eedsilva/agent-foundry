@@ -5,6 +5,7 @@ import {
   createRoadmapIssue,
   getIssueParent,
   parseArgs,
+  reconcileIssue,
   reconcileIssueBlockers,
   reconcileIssueHierarchy,
   verifyWritableRepository,
@@ -214,4 +215,56 @@ test('assertNoUnexpectedDrift: --force-drift ignora a divergência', () => {
 test('assertNoUnexpectedDrift: estado salvo sem hash nenhum ainda não bloqueia', () => {
   const saved = { number: 7 };
   assert.doesNotThrow(() => assertNoUnexpectedDrift('qualquer corpo', saved, false, 'k'));
+});
+
+test('reconcileIssue: corpo sem divergência é atualizado normalmente', async () => {
+  const record = { key: 'task-a', title: 'Título', body: 'corpo gerenciado', labels: ['kind:task'] };
+  const saved = { number: 9, lastAppliedBodySha256: sha256('corpo gerenciado') };
+  const client = fakeClient({
+    responses: new Map([
+      ['/repos/o/r/issues/9', { body: 'corpo gerenciado' }],
+      ['PATCH /repos/o/r/issues/9', { number: 9 }],
+    ]),
+  });
+  await reconcileIssue(client, 'o', 'r', record, { number: 9 }, { number: 3 }, saved, false);
+  const patch = client.calls.find((call) => call.options?.method === 'PATCH');
+  assert.deepEqual(patch, {
+    endpoint: '/repos/o/r/issues/9',
+    options: {
+      method: 'PATCH',
+      body: { title: 'Título', body: 'corpo gerenciado', labels: ['kind:task'], milestone: 3 },
+    },
+  });
+});
+
+test('reconcileIssue: divergência manual bloqueia o PATCH', async () => {
+  const record = { key: 'task-a', title: 'Título', body: 'corpo novo', labels: [] };
+  const saved = { number: 9, lastAppliedBodySha256: sha256('corpo antigo gerenciado') };
+  const client = fakeClient({
+    responses: new Map([['/repos/o/r/issues/9', { body: 'corpo editado à mão' }]]),
+  });
+  await assert.rejects(
+    () => reconcileIssue(client, 'o', 'r', record, { number: 9 }, null, saved, false),
+    /Drift manual detectado em task-a \(#9\)/,
+  );
+  assert.equal(
+    client.calls.some((call) => call.options?.method === 'PATCH'),
+    false,
+  );
+});
+
+test('reconcileIssue: --force-drift aplica o PATCH mesmo com divergência', async () => {
+  const record = { key: 'task-a', title: 'Título', body: 'corpo novo', labels: [] };
+  const saved = { number: 9, lastAppliedBodySha256: sha256('corpo antigo gerenciado') };
+  const client = fakeClient({
+    responses: new Map([
+      ['/repos/o/r/issues/9', { body: 'corpo editado à mão' }],
+      ['PATCH /repos/o/r/issues/9', { number: 9 }],
+    ]),
+  });
+  await reconcileIssue(client, 'o', 'r', record, { number: 9 }, null, saved, true);
+  assert.equal(
+    client.calls.some((call) => call.options?.method === 'PATCH'),
+    true,
+  );
 });
