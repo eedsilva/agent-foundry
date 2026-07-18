@@ -99,6 +99,8 @@ describe('compileContext', () => {
     expect(compiled.digest).toContain('## Compacted history');
     expect(compiled.digest).toContain('Referenced decision text');
     expect(compiled.digest).toContain('Unresolved feedback text');
+    // Verify cr-compacted is specifically in Compacted history, not promoted to Pinned by a sort inversion
+    expect(compiled.digest.split('## Compacted history')[0]).not.toContain('cr-compacted');
     expect(compiled.digest).toContain('cr-compacted');
   });
 
