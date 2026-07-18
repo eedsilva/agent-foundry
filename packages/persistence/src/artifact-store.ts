@@ -185,6 +185,13 @@ export class FileArtifactStore implements ArtifactStore {
               );
               await rm(blobPath, { force: true });
               metadata.blobDeleted = true;
+              const snapshotPath = join(
+                artifactsRoot,
+                safeSegment(name),
+                `${String(metadata.revision).padStart(6, '0')}.json`,
+              );
+              const stored = StoredArtifactSchema.parse({ metadata, content: null });
+              await atomicWriteJson(snapshotPath, stored);
               count += 1;
             }
           }

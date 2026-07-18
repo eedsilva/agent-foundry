@@ -171,5 +171,11 @@ describe('FileArtifactStore blob storage', () => {
     const survivingMetadata = await store.listMetadata('project-1', 'browser-video-preview-1');
     expect(survivingMetadata).toHaveLength(1);
     expect(survivingMetadata[0]).toMatchObject({ blobDeleted: true, sha256: metadata.sha256 });
+
+    const revision = await store.getRevision('project-1', 'browser-video-preview-1', 1);
+    expect(revision?.metadata).toMatchObject({ blobDeleted: true, sha256: metadata.sha256 });
+
+    const latest = await store.getLatest('project-1', 'browser-video-preview-1');
+    expect(latest?.metadata).toMatchObject({ blobDeleted: true, sha256: metadata.sha256 });
   });
 });
