@@ -94,8 +94,9 @@ Desde a ADR 0023, o orquestrador submete trabalho de agente pela port `Execution
 (`submit`/`cancel`/`status`) em vez de chamar `ExecutorRegistry` diretamente. `LocalExecutionPlane`
 (em `packages/executors`) é a única implementação hoje: roda as CLIs no mesmo processo do control
 plane, in-process, confiável apenas para desenvolvimento local — sem mudança de comportamento ou de
-fronteira de confiança em relação ao `ExecutorRegistry` direto de antes. No diagrama de sequência
-abaixo, o participante `E` (Executor) agora é alcançado através dessa port.
+fronteira de confiança em relação ao `ExecutorRegistry` direto de antes. `SandboxRunner` é o contrato
+do próximo runner, mas nenhum backend está conectado ainda. No diagrama de sequência abaixo, o
+participante `E` (Executor) agora é alcançado através dessa port.
 
 ### `packages/composition`
 
