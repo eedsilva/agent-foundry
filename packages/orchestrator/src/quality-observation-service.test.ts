@@ -144,4 +144,25 @@ describe('QualityObservationService', () => {
       },
     ]);
   });
+
+  it('redacts delayed evidence before it reaches append-only storage', async () => {
+    const repository = new MemoryQualityObservations();
+    const service = new QualityObservationService(repository, clock, ids);
+
+    await service.recordDelayed(artifact('implementation'), {
+      source: 'human-edit',
+      artifact: { name: 'implementation', revision: 1, sha256: 'a'.repeat(64) },
+      evaluator: { kind: 'human', id: 'ed' },
+      rubric: 'post-review-edit',
+      score: 0.8,
+      evidence: [
+        {
+          kind: 'human-edit',
+          summary: 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz',
+        },
+      ],
+    });
+
+    expect(repository.values[0]?.evidence[0]?.summary).toBe('Authorization: [REDACTED]');
+  });
 });

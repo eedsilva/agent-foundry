@@ -6,7 +6,12 @@ import {
   type QualitySubject,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
-import type { Clock, IdGenerator, QualityObservationRepository } from '@agent-foundry/domain';
+import {
+  redactString,
+  type Clock,
+  type IdGenerator,
+  type QualityObservationRepository,
+} from '@agent-foundry/domain';
 
 export class QualityObservationService {
   constructor(
@@ -68,9 +73,12 @@ export class QualityObservationService {
       source: input.source,
       producer,
       evaluator: input.evaluator,
-      rubric: input.rubric,
+      rubric: redactString(input.rubric),
       score: input.score,
-      evidence: input.evidence,
+      evidence: input.evidence.map((evidence) => ({
+        ...evidence,
+        summary: redactString(evidence.summary),
+      })),
     });
   }
 
