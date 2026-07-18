@@ -621,3 +621,46 @@ dd {
     display: none;
   }
 }
+
+.viewportSwitcher {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.75rem 0;
+}
+.secondaryButton.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.previewFrameWrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+}
+.previewFrameWrap iframe {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  display: block;
+}
+.previewLogPane {
+  max-height: 240px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 12px;
+  padding: 0.75rem;
+  font-size: 0.85rem;
+}
+.screenshotFilmstrip {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+.screenshotFilmstrip img {
+  height: 160px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
