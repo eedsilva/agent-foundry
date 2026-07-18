@@ -27,6 +27,7 @@ import {
   RunCancelledError,
   SystemClock,
   VersionConflictError,
+  toExecutionResult,
   transitionWorkflowRun,
   type ApprovalDecisionRepository,
   type ApprovalRequestRepository,
@@ -430,19 +431,7 @@ class ControllableExecutor implements ExecutionPlane {
         agent: result,
       };
     } catch (error) {
-      if (error instanceof RunCancelledError) {
-        return {
-          protocolVersion: EXECUTION_PROTOCOL_VERSION,
-          executionId: request.executionId,
-          state: 'cancelled',
-        };
-      }
-      return {
-        protocolVersion: EXECUTION_PROTOCOL_VERSION,
-        executionId: request.executionId,
-        state: 'failed',
-        error: { message: error instanceof Error ? error.message : String(error) },
-      };
+      return toExecutionResult(request.executionId, error);
     }
   }
 

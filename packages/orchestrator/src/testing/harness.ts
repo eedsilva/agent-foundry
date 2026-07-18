@@ -30,12 +30,12 @@ import {
   type WorkflowRun,
 } from '@agent-foundry/contracts';
 import {
-  EmergencyCeilingError,
   ExecutionError,
   NotFoundError,
   RunCancelledError,
   SystemClock,
   VersionConflictError,
+  toExecutionResult,
   type ApprovalDecisionRepository,
   type ApprovalRequestRepository,
   type ArtifactBlobPutInput,
@@ -709,26 +709,13 @@ export class ControllableExecutor implements ExecutionPlane {
       };
     } catch (error) {
       // emergency-ceiling.test.ts's 'hang-until-abort' scenario rejects with
-      // an EmergencyCeilingError via the aborted signal's `reason` — that must
-      // keep propagating as a rejection, not collapse into a normal 'failed'
-      // result, or the orchestrator's own `instanceof EmergencyCeilingError`
-      // handling downstream would never see it.
-      if (error instanceof EmergencyCeilingError) throw error;
-      if (error instanceof RunCancelledError) {
-        this.states.set(request.executionId, 'cancelled');
-        return {
-          protocolVersion: EXECUTION_PROTOCOL_VERSION,
-          executionId: request.executionId,
-          state: 'cancelled',
-        };
-      }
-      this.states.set(request.executionId, 'failed');
-      return {
-        protocolVersion: EXECUTION_PROTOCOL_VERSION,
-        executionId: request.executionId,
-        state: 'failed',
-        error: { message: error instanceof Error ? error.message : String(error) },
-      };
+      // an EmergencyCeilingError via the aborted signal's `reason` — toExecutionResult
+      // rethrows that rather than mapping it, so it keeps propagating as a
+      // rejection and the orchestrator's own `instanceof EmergencyCeilingError`
+      // handling downstream still sees it.
+      const result = toExecutionResult(request.executionId, error);
+      this.states.set(request.executionId, result.state);
+      return result;
     } finally {
       this.cancellers.delete(request.executionId);
     }
