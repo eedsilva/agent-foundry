@@ -8,6 +8,7 @@ import {
   WorkspaceVerifier,
   PlaywrightBrowserVerifier,
   NodePreviewRunner,
+  LocalExecutionPlane,
 } from '@agent-foundry/executors';
 import { VersionedHarnessRepository } from '@agent-foundry/harness';
 import { ScoreBasedModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
@@ -68,6 +69,7 @@ export interface Runtime {
   workspaces: FileWorkspaceManager;
   router: ScoreBasedModelRouter;
   executors: StaticExecutorRegistry | MockExecutorRegistry;
+  executionPlane: LocalExecutionPlane;
   verifier: WorkspaceVerifier;
   browserVerifier: PlaywrightBrowserVerifier;
   browserVerification: BrowserVerificationCoordinator;
@@ -120,6 +122,7 @@ export async function createRuntime(
           new ClaudeCliExecutor(config.maxCliOutputBytes),
           new AgyCliExecutor(config.maxCliOutputBytes),
         ]);
+  const executionPlane = new LocalExecutionPlane(executors, workspaces);
   const verifier = new WorkspaceVerifier({
     autoInstallDependencies: config.autoInstallDependencies,
     timeoutMs: config.verificationTimeoutMs,
@@ -189,7 +192,7 @@ export async function createRuntime(
     harness,
     router,
     metrics,
-    executors,
+    executionPlane,
     verifier,
     workspaces,
     clock,
@@ -255,6 +258,7 @@ export async function createRuntime(
     workspaces,
     router,
     executors,
+    executionPlane,
     verifier,
     browserVerifier,
     browserVerification,
