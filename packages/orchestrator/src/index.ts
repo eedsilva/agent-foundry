@@ -12,3 +12,4 @@ export * from './conversation-step-config.js';
 export * from './message-classifier.js';
 export * from './conversation-operation-runner.js';
 export * from './operation-service.js';
+export * from './context-compiler.js';
