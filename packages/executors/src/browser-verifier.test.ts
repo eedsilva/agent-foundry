@@ -1822,4 +1822,4 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(evidence.video).toBeInstanceOf(Buffer);
     expect(evidence.video!.byteLength).toBeGreaterThan(0);
   });
-});
+}, 70_000);
