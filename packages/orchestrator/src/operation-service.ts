@@ -95,6 +95,44 @@ export class OperationService {
     return operation;
   }
 
+  async decide(
+    projectId: string,
+    operationId: string,
+    action: 'approve' | 'reject',
+  ): Promise<Operation> {
+    const operation = await this.conversations.getOperation(projectId, operationId);
+    if (!operation) throw new NotFoundError(`Operation ${operationId} not found`);
+    if (operation.kind !== 'plan') {
+      throw new ValidationError(`Operation ${operationId} is not a plan operation`);
+    }
+    if (!operation.runId) throw new ValidationError(`Operation ${operationId} has no run`);
+    const run = await this.runs.get(operation.runId);
+    if (!run || run.status !== 'completed') {
+      throw new ValidationError(`Operation ${operationId}'s run has not completed`);
+    }
+
+    if (action === 'reject') {
+      return this.conversations.updateOperation({
+        ...operation,
+        approval: { status: 'rejected', decidedAt: this.clock.now().toISOString() },
+      });
+    }
+
+    const artifact = await this.artifacts.getLatest(projectId, `operation-${operationId}`);
+    if (!artifact) throw new NotFoundError(`Plan artifact for operation ${operationId} not found`);
+    return this.conversations.updateOperation({
+      ...operation,
+      approval: { status: 'approved', decidedAt: this.clock.now().toISOString() },
+      artifactReferences: [
+        {
+          name: artifact.metadata.name,
+          revision: artifact.metadata.revision,
+          sha256: artifact.metadata.sha256,
+        },
+      ],
+    });
+  }
+
   protected idempotencyKey(operationId: string, runId: string): string {
     return createHash('sha256').update(`${operationId}:${runId}`).digest('hex');
   }

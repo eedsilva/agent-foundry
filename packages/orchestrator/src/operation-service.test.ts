@@ -286,3 +286,113 @@ describe('OperationService.start', () => {
     );
   });
 });
+
+describe('OperationService.decide', () => {
+  async function startAndCompletePlan(
+    conversations: MemoryConversations,
+    runs: MemoryRuns,
+    queue: MemoryQueue,
+    artifacts: ArtifactStore,
+  ) {
+    const message = await seedMessage(conversations);
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      artifacts,
+      new FixedClock(),
+      new SequentialIds(),
+    );
+    const plan = await service.start('project-1', message.id, { kind: 'plan' });
+    const run = (await runs.get(plan.runId!))!;
+    await runs.update({ ...run, status: 'running' });
+    await runs.update({ ...run, status: 'completed' });
+    return { service, plan };
+  }
+
+  it('rejects deciding a plan whose run has not completed', async () => {
+    const conversations = new MemoryConversations();
+    const runs = new MemoryRuns();
+    const queue = new MemoryQueue();
+    const message = await seedMessage(conversations);
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      noArtifacts(),
+      new FixedClock(),
+      new SequentialIds(),
+    );
+    const plan = await service.start('project-1', message.id, { kind: 'plan' });
+
+    await expect(service.decide('project-1', plan.id, 'approve')).rejects.toThrow(ValidationError);
+  });
+
+  it('approving derives artifactReferences from the completed run artifact', async () => {
+    const conversations = new MemoryConversations();
+    const runs = new MemoryRuns();
+    const queue = new MemoryQueue();
+    const artifacts: ArtifactStore = {
+      put: () => Promise.reject(new Error('not used')),
+      putBlob: () => Promise.reject(new Error('not used')),
+      getBlobStream: () => Promise.resolve(null),
+      getLatest: (projectId, name) =>
+        Promise.resolve({
+          metadata: {
+            projectId,
+            name,
+            revision: 1,
+            contentType: 'application/json',
+            createdAt: '2026-07-18T12:00:00.000Z',
+            createdBy: 'planner:mock/mock',
+            sha256: 'b'.repeat(64),
+          },
+          content: { schemaVersion: '1', summary: 'toggle plan' },
+        }),
+      getRevision: () => Promise.resolve(null),
+      listLatest: () => Promise.resolve([]),
+      listMetadata: () => Promise.resolve([]),
+    };
+    const { service, plan } = await startAndCompletePlan(conversations, runs, queue, artifacts);
+
+    const approved = await service.decide('project-1', plan.id, 'approve');
+
+    expect(approved.approval).toMatchObject({ status: 'approved' });
+    expect(approved.artifactReferences).toEqual([
+      { name: `operation-${plan.id}`, revision: 1, sha256: 'b'.repeat(64) },
+    ]);
+  });
+
+  it('rejecting sets approval.status without touching artifactReferences', async () => {
+    const conversations = new MemoryConversations();
+    const runs = new MemoryRuns();
+    const queue = new MemoryQueue();
+    const { service, plan } = await startAndCompletePlan(conversations, runs, queue, noArtifacts());
+
+    const rejected = await service.decide('project-1', plan.id, 'reject');
+
+    expect(rejected.approval).toMatchObject({ status: 'rejected' });
+    expect(rejected.artifactReferences).toEqual([]);
+  });
+
+  it('rejects deciding a non-plan operation', async () => {
+    const conversations = new MemoryConversations();
+    const runs = new MemoryRuns();
+    const queue = new MemoryQueue();
+    const message = await seedMessage(conversations);
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      noArtifacts(),
+      new FixedClock(),
+      new SequentialIds(),
+    );
+    const build = await service.start('project-1', message.id, {
+      kind: 'build',
+      directExecution: true,
+    });
+
+    await expect(service.decide('project-1', build.id, 'approve')).rejects.toThrow(ValidationError);
+  });
+});
