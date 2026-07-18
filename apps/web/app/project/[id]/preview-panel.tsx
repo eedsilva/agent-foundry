@@ -48,7 +48,11 @@ export function BlobMedia({
 function ScreenshotFigure({ shot, projectId }: { shot: ArtifactReference; projectId: string }) {
   return (
     <figure>
-      <BlobMedia src={getArtifactBlobUrl(projectId, shot.name, shot.revision)} alt={shot.name} kind="image" />
+      <BlobMedia
+        src={getArtifactBlobUrl(projectId, shot.name, shot.revision)}
+        alt={shot.name}
+        kind="image"
+      />
       <figcaption className="hint">{shot.name}</figcaption>
     </figure>
   );
@@ -86,7 +90,11 @@ export function VerificationReportView({
       {report.previewSession.evidence.screenshots.length > 0 ? (
         <div className="screenshotFilmstrip">
           {report.previewSession.evidence.screenshots.map((shot) => (
-            <ScreenshotFigure key={`${shot.name}-${shot.revision}`} shot={shot} projectId={projectId} />
+            <ScreenshotFigure
+              key={`${shot.name}-${shot.revision}`}
+              shot={shot}
+              projectId={projectId}
+            />
           ))}
         </div>
       ) : null}
@@ -138,7 +146,6 @@ export function PreviewPanel({
 
   useEffect(() => {
     let active = true;
-    setSessionLoaded(false);
     getActivePreviewSession(projectId)
       .then((result: { session: PreviewSession | null }) => {
         if (active) setSession(result.session);
@@ -210,7 +217,9 @@ export function PreviewPanel({
     <section className="panel previewPanel">
       <div className="panelHeader">
         <h2>Preview</h2>
-        {session?.status ? <span className={`pill ${session.status}`}>{session.status}</span> : null}
+        {session?.status ? (
+          <span className={`pill ${session.status}`}>{session.status}</span>
+        ) : null}
       </div>
 
       {panelError ? <p className="errorBox">{panelError}</p> : null}

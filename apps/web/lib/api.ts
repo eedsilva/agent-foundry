@@ -234,9 +234,7 @@ export function getActivePreviewSession(
   );
 }
 
-export function startPreview(
-  projectId: string,
-): Promise<{ session: PreviewSession; url: string }> {
+export function startPreview(projectId: string): Promise<{ session: PreviewSession; url: string }> {
   return api<{ session: PreviewSession; url: string }>(
     `/projects/${encodeURIComponent(projectId)}/preview`,
     { method: 'POST' },

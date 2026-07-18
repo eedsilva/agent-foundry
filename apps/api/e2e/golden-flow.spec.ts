@@ -9,10 +9,7 @@ import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from '../src/app.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
-const FIXTURE_SCRIPT = resolve(
-  REPO_ROOT,
-  'packages/executors/src/fixtures/preview-dev-server.mjs',
-);
+const FIXTURE_SCRIPT = resolve(REPO_ROOT, 'packages/executors/src/fixtures/preview-dev-server.mjs');
 const BROWSER_TEST_PLAN = {
   schemaVersion: '1' as const,
   status: 'completed' as const,
@@ -166,7 +163,9 @@ async function getRun(projectId: string): Promise<{ id: string; status: string }
   return run;
 }
 
-test('golden flow: change request, preview, browser tests, diff approval, axe', async ({ page }) => {
+test('golden flow: change request, preview, browser tests, diff approval, axe', async ({
+  page,
+}) => {
   const projectId = await createProject();
   await seedWorkspaceAndPlan(projectId);
   expect(await runtime.worker.runOnce()).toBe(true);

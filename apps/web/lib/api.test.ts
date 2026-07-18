@@ -174,9 +174,7 @@ const session: PreviewSession = {
 
 describe('preview API client', () => {
   it('gets the active preview session', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse({ session }));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ session }));
 
     const result = await getActivePreviewSession('project-1');
 

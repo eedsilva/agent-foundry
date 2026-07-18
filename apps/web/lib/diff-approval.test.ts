@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectVersion } from '@agent-foundry/contracts';
 import { findDiffApprovalVersions } from './diff-approval';
 
-function version(overrides: Partial<ProjectVersion> & { id: string; sequence: number }): ProjectVersion {
+function version(
+  overrides: Partial<ProjectVersion> & { id: string; sequence: number },
+): ProjectVersion {
   return {
     schemaVersion: '1',
     projectId: 'project-1',

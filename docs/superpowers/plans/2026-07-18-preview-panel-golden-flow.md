@@ -24,10 +24,12 @@
 **Depends on:** nothing. Can run in parallel with Tasks 2 and 3.
 
 **Files:**
+
 - Modify: `apps/api/src/app.ts:395` (insert new route between the existing `POST /projects/:projectId/preview` handler ending at line 395 and the `POST /projects/:projectId/preview/:sessionId/stop` handler starting at line 397)
 - Test: `apps/api/src/preview.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runtime.previewSessions.listActive(): Promise<PreviewSessionRecord[]>` (`packages/domain/src/ports.ts:291`, impl `packages/persistence/src/preview-repositories.ts:95-108` — returns only non-terminal sessions, i.e. excludes `stopped`/`failed`/`expired`). `PreviewSessionRecord.session.workspaceRef.projectId` (`packages/contracts/src/preview.ts:61-67`) identifies which project a session belongs to. `PreviewSession.createdAt` is an ISO datetime string.
 - Produces: `GET /projects/:projectId/preview/active` → `200 { session: PreviewSession | null }`. No new contracts export — the response is typed inline in `apps/web/lib/api.ts` in Task 3.
 
@@ -114,14 +116,14 @@ Expected: FAIL — `404` or connection error, since the route doesn't exist yet.
 In `apps/api/src/app.ts`, insert this route immediately after the closing `});` of `POST /projects/:projectId/preview` (line 395) and before `app.post('/projects/:projectId/preview/:sessionId/stop', ...)` (line 397):
 
 ```ts
-  app.get('/projects/:projectId/preview/active', async (request) => {
-    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
-    const active = await runtime.previewSessions.listActive();
-    const projectSessions = active
-      .filter((record) => record.session.workspaceRef.projectId === projectId)
-      .sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
-    return { session: projectSessions[0]?.session ?? null };
-  });
+app.get('/projects/:projectId/preview/active', async (request) => {
+  const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+  const active = await runtime.previewSessions.listActive();
+  const projectSessions = active
+    .filter((record) => record.session.workspaceRef.projectId === projectId)
+    .sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
+  return { session: projectSessions[0]?.session ?? null };
+});
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -143,10 +145,12 @@ git commit -m "feat(api): resolve a project's active preview session for refresh
 **Depends on:** nothing. Can run in parallel with Tasks 1 and 3.
 
 **Files:**
+
 - Modify: `workflows/web-app-v1.yaml` (insert a new node between `browser-verification` and `release-assessment`)
 - Modify: `packages/persistence/src/workflow-repository.test.ts:19-27`
 
 **Interfaces:**
+
 - Consumes: `ApprovalGateStepSchema` (`packages/contracts/src/workflow.ts:88-119`) — `artifact` must be an artifact guaranteed to exist by an earlier node; `browser-verification`'s `check` step already produces `outputArtifact: browser-verification.report` (`workflows/web-app-v1.yaml`, existing `browser-verification` node).
 - Produces: a `diff-approval` node whose `outputArtifact: diff.approval` later tasks can reference by name (`browser-verification.report`, the gate's `artifact`, is what Task 7's decide-modal extension checks for).
 
@@ -155,16 +159,16 @@ git commit -m "feat(api): resolve a project's active preview session for refresh
 In `packages/persistence/src/workflow-repository.test.ts`, update the existing node-id assertion (lines 19-27):
 
 ```ts
-    const workflow = await repository.get('web-app-v1');
-    expect(workflow.nodes.map((node) => node.id)).toEqual([
-      'plan-gate',
-      'architecture-gate',
-      'implementation-gate',
-      'deterministic-verification',
-      'browser-verification',
-      'diff-approval',
-      'release-assessment',
-    ]);
+const workflow = await repository.get('web-app-v1');
+expect(workflow.nodes.map((node) => node.id)).toEqual([
+  'plan-gate',
+  'architecture-gate',
+  'implementation-gate',
+  'deterministic-verification',
+  'browser-verification',
+  'diff-approval',
+  'release-assessment',
+]);
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -223,10 +227,12 @@ git commit -m "feat: add a human diff-approval gate after browser verification"
 **Depends on:** nothing. Can run in parallel with Tasks 1 and 2.
 
 **Files:**
+
 - Modify: `apps/web/lib/api.ts`
 - Test: `apps/web/lib/api.test.ts`
 
 **Interfaces:**
+
 - Consumes: existing `api<T>()` helper (`apps/web/lib/api.ts:23-37`); `PreviewSession`/`PreviewLogPage` types from `@agent-foundry/contracts`; the `GET /projects/:projectId/preview/active` route from Task 1 (contract only — this task's tests mock `fetch`, no live server needed).
 - Produces: `getActivePreviewSession(projectId): Promise<{ session: PreviewSession | null }>`, `startPreview(projectId): Promise<{ session: PreviewSession; url: string }>`, `stopPreview(projectId, sessionId): Promise<{ session: PreviewSession }>`, `getPreviewLogs(projectId, sessionId, cursor?): Promise<PreviewLogPage>` — all consumed by Task 4's `PreviewPanel`.
 
@@ -271,9 +277,7 @@ const session: PreviewSession = {
 
 describe('preview API client', () => {
   it('gets the active preview session', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse({ session }));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ session }));
 
     const result = await getActivePreviewSession('project-1');
 
@@ -400,9 +404,7 @@ export function getActivePreviewSession(
   );
 }
 
-export function startPreview(
-  projectId: string,
-): Promise<{ session: PreviewSession; url: string }> {
+export function startPreview(projectId: string): Promise<{ session: PreviewSession; url: string }> {
   return api<{ session: PreviewSession; url: string }>(
     `/projects/${encodeURIComponent(projectId)}/preview`,
     { method: 'POST' },
@@ -450,16 +452,18 @@ git commit -m "feat(web): add preview session and log API client functions"
 **Depends on:** Task 3 (imports its client functions).
 
 **Files:**
+
 - Create: `apps/web/lib/browser-verification.ts`
 - Test: `apps/web/lib/browser-verification.test.ts`
 - Create: `apps/web/app/project/[id]/preview-panel.tsx`
 - Modify: `apps/web/app/globals.css` (append new classes)
 
 **Interfaces:**
+
 - Consumes: `getActivePreviewSession`, `startPreview`, `getPreviewLogs`, `getArtifactBlobUrl` (Task 3 / existing); `PreviewSession`, `PreviewLogEntry`, `StoredArtifact`, `WorkflowRun`, `BrowserVerificationReport`, `BrowserVerificationReportSchema` from `@agent-foundry/contracts`.
 - Produces: `latestBrowserVerificationReport(artifacts, runId): BrowserVerificationReport | null` (exported from `lib/browser-verification.ts`, reused by Task 7). `PreviewPanel({ projectId, run, artifacts })` and `VerificationReportView({ report, projectId })` (both exported from `preview-panel.tsx`; `VerificationReportView` is reused by Task 7's decide-modal extension).
 
-**Note on test scope:** this repo has no jsdom/React Testing Library anywhere (`vitest.config.ts:9` sets `environment: 'node'` globally) and none is being added here — that's a real new dependency the roadmap's touchpoints don't call for, and the roadmap's own required test is the golden-flow E2E (Task 8), not component unit tests. Per TDD, the *pure logic* extracted into `lib/browser-verification.ts` gets a real Vitest unit test in this task; the component's rendering behavior is proven end-to-end by Task 8's real-browser E2E.
+**Note on test scope:** this repo has no jsdom/React Testing Library anywhere (`vitest.config.ts:9` sets `environment: 'node'` globally) and none is being added here — that's a real new dependency the roadmap's touchpoints don't call for, and the roadmap's own required test is the golden-flow E2E (Task 8), not component unit tests. Per TDD, the _pure logic_ extracted into `lib/browser-verification.ts` gets a real Vitest unit test in this task; the component's rendering behavior is proven end-to-end by Task 8's real-browser E2E.
 
 - [ ] **Step 1: Write the failing test for the pure helper**
 
@@ -756,7 +760,9 @@ export function PreviewPanel({
     <section className="panel previewPanel">
       <div className="panelHeader">
         <h2>Preview</h2>
-        {session?.status ? <span className={`pill ${session.status}`}>{session.status}</span> : null}
+        {session?.status ? (
+          <span className={`pill ${session.status}`}>{session.status}</span>
+        ) : null}
       </div>
 
       {panelError ? <p className="errorBox">{panelError}</p> : null}
@@ -899,9 +905,11 @@ git commit -m "feat(web): add PreviewPanel with viewport switching, logs, and ve
 **Depends on:** Task 4 (imports `PreviewPanel` from the file it creates). Must run after Task 4 — same file (`page.tsx`) as Tasks 6 and 7, so those three run sequentially, not in parallel.
 
 **Files:**
+
 - Modify: `apps/web/app/project/[id]/page.tsx`
 
 **Interfaces:**
+
 - Consumes: `PreviewPanel` from `./preview-panel` (Task 4). Existing `id`, `run`, `detail.artifacts` already in scope in `ProjectPage`.
 
 - [ ] **Step 1: Add the import**
@@ -960,10 +968,12 @@ git commit -m "feat(web): mount the preview panel on the project page"
 **Depends on:** Task 5 (same file, run sequentially after it).
 
 **Files:**
+
 - Modify: `apps/web/app/project/[id]/page.tsx`
 - Modify: `apps/web/app/globals.css`
 
 **Interfaces:**
+
 - Consumes: `getArtifactBlobUrl` (existing, `apps/web/lib/api.ts:166-169`, already defined but previously unused by this file). `ArtifactMetadata.storage: 'inline' | 'blob' | undefined` and `ArtifactMetadata.contentType: string` (`packages/contracts/src/project.ts:30,45`).
 
 - [ ] **Step 1: Import `getArtifactBlobUrl`**
@@ -1114,11 +1124,13 @@ git commit -m "feat(web): render blob-backed artifacts (screenshots, video) in t
 **Depends on:** Task 6 (same file, run sequentially after it). Reuses `VerificationReportView` from Task 4 and `listVersions`/`compareVersions` (already existing in `apps/web/lib/api.ts`).
 
 **Files:**
+
 - Create: `apps/web/lib/diff-approval.ts`
 - Test: `apps/web/lib/diff-approval.test.ts`
 - Modify: `apps/web/app/project/[id]/page.tsx`
 
 **Interfaces:**
+
 - Consumes: `ProjectVersion` (`sequence`, `runId`, `id` fields — `packages/contracts/src/project-version.ts:14-29`), `listVersions(projectId): Promise<ProjectVersion[]>` (sorted newest-first by `sequence`, `apps/web/lib/api.ts:176-182` / `packages/persistence/src/project-version-repository.ts:59-63`), `compareVersions(projectId, from, to): Promise<{ diff: string }>` (`apps/web/lib/api.ts:184-192`), `VerificationReportView` and `latestBrowserVerificationReport`/`BrowserVerificationReportSchema` from Task 4.
 - Produces: `findDiffApprovalVersions(versions, runId): { from: ProjectVersion | null; to: ProjectVersion | null }`, exported from `lib/diff-approval.ts`.
 
@@ -1131,7 +1143,9 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectVersion } from '@agent-foundry/contracts';
 import { findDiffApprovalVersions } from './diff-approval';
 
-function version(overrides: Partial<ProjectVersion> & { id: string; sequence: number }): ProjectVersion {
+function version(
+  overrides: Partial<ProjectVersion> & { id: string; sequence: number },
+): ProjectVersion {
   return {
     schemaVersion: '1',
     projectId: 'project-1',
@@ -1238,55 +1252,59 @@ import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
 Add new state, alongside the existing `decidePreview`/`decideError` state (after line 151's `const [decideError, setDecideError] = useState('');`):
 
 ```tsx
-  const [decideDiff, setDecideDiff] = useState<string | null>(null);
+const [decideDiff, setDecideDiff] = useState<string | null>(null);
 ```
 
 Add a new effect after the existing `useEffect` blocks (e.g. right after the `getRuntime` effect ending around line 248), keyed on `decideTarget`:
 
 ```tsx
-  useEffect(() => {
-    setDecideDiff(null);
-    if (!decideTarget || !run || decideTarget.request.artifact.name !== 'browser-verification.report') {
-      return;
-    }
-    let active = true;
-    listVersions(id)
-      .then((versions) => {
-        if (!active) return;
-        const { from, to } = findDiffApprovalVersions(versions, run.id);
-        if (!from || !to) {
-          setDecideDiff('Nenhuma versão anterior para comparar.');
-          return undefined;
-        }
-        return compareVersions(id, from.id, to.id).then((result) => {
-          if (active) setDecideDiff(result.diff);
-        });
-      })
-      .catch((cause: unknown) => {
-        if (active) setDecideError(cause instanceof Error ? cause.message : String(cause));
+useEffect(() => {
+  setDecideDiff(null);
+  if (
+    !decideTarget ||
+    !run ||
+    decideTarget.request.artifact.name !== 'browser-verification.report'
+  ) {
+    return;
+  }
+  let active = true;
+  listVersions(id)
+    .then((versions) => {
+      if (!active) return;
+      const { from, to } = findDiffApprovalVersions(versions, run.id);
+      if (!from || !to) {
+        setDecideDiff('Nenhuma versão anterior para comparar.');
+        return undefined;
+      }
+      return compareVersions(id, from.id, to.id).then((result) => {
+        if (active) setDecideDiff(result.diff);
       });
-    return () => {
-      active = false;
-    };
-  }, [decideTarget, id, run]);
+    })
+    .catch((cause: unknown) => {
+      if (active) setDecideError(cause instanceof Error ? cause.message : String(cause));
+    });
+  return () => {
+    active = false;
+  };
+}, [decideTarget, id, run]);
 ```
 
 Add a memo for the evidence report, next to the existing `evidence`/`routes` memos (after line 259's `routes` memo):
 
 ```tsx
-  const decideReport = useMemo(() => {
-    if (!decideTarget || decideTarget.request.artifact.name !== 'browser-verification.report') {
-      return null;
-    }
-    const match = detail?.artifacts.find(
-      (artifact) =>
-        artifact.metadata.name === decideTarget.request.artifact.name &&
-        artifact.metadata.revision === decideTarget.request.artifact.revision,
-    );
-    if (!match) return null;
-    const parsed = BrowserVerificationReportSchema.safeParse(match.content);
-    return parsed.success ? parsed.data : null;
-  }, [decideTarget, detail]);
+const decideReport = useMemo(() => {
+  if (!decideTarget || decideTarget.request.artifact.name !== 'browser-verification.report') {
+    return null;
+  }
+  const match = detail?.artifacts.find(
+    (artifact) =>
+      artifact.metadata.name === decideTarget.request.artifact.name &&
+      artifact.metadata.revision === decideTarget.request.artifact.revision,
+  );
+  if (!match) return null;
+  const parsed = BrowserVerificationReportSchema.safeParse(match.content);
+  return parsed.success ? parsed.data : null;
+}, [decideTarget, detail]);
 ```
 
 Finally, in the decide-modal JSX, insert the diff/evidence view before the existing "Comentário" `<label>` (find, around line 972-974):
@@ -1361,6 +1379,7 @@ git commit -m "feat(web): show the code diff and verification evidence in the di
 **Why this lives under `apps/api`, not `apps/web`:** per Global Constraints, `apps/web` may only depend on `@agent-foundry/contracts` (`scripts/lib/architecture.mjs:5,28`). This test needs in-process access to `createRuntime`/`buildApp` (to seed artifacts directly and manually pump the worker between steps, exactly like `apps/api/src/approvals.test.ts` already does) — only `@agent-foundry/api` is allowed to depend on `@agent-foundry/composition`. The Next.js web app itself is launched as a real subprocess and driven purely through the browser.
 
 **Files:**
+
 - Modify: `apps/api/package.json` (new devDependencies + script)
 - Create: `apps/api/e2e/tsconfig.json`
 - Create: `apps/api/e2e/playwright.config.ts`
@@ -1368,6 +1387,7 @@ git commit -m "feat(web): show the code diff and verification evidence in the di
 - Create: `apps/api/e2e/golden-flow.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `createRuntime`, `buildApp` (as in every existing `apps/api/src/*.test.ts`); `runtime.worker.runOnce(): Promise<boolean>` (`packages/orchestrator/src/worker-loop.ts`, proven pattern in `apps/api/src/approvals.test.ts:154` etc.); `runtime.artifacts.put(...)` (`packages/persistence/src/artifact-store.ts:40-54`); `runtime.workspaces.ensure(projectId)` (`packages/persistence/src/workspace-manager.ts:42`); `packages/executors/src/fixtures/preview-dev-server.mjs` (copied into the seeded workspace).
 - Produces: nothing consumed elsewhere — this is the terminal verification task.
 
@@ -1490,10 +1510,7 @@ import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from '../src/app.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
-const FIXTURE_SCRIPT = resolve(
-  REPO_ROOT,
-  'packages/executors/src/fixtures/preview-dev-server.mjs',
-);
+const FIXTURE_SCRIPT = resolve(REPO_ROOT, 'packages/executors/src/fixtures/preview-dev-server.mjs');
 const BROWSER_TEST_PLAN = {
   schemaVersion: '1' as const,
   status: 'completed' as const,
@@ -1628,7 +1645,9 @@ async function getRun(projectId: string): Promise<{ id: string; status: string }
   return run;
 }
 
-test('golden flow: change request, preview, browser tests, diff approval, axe', async ({ page }) => {
+test('golden flow: change request, preview, browser tests, diff approval, axe', async ({
+  page,
+}) => {
   const projectId = await createProject();
   await seedWorkspaceAndPlan(projectId);
   expect(await runtime.worker.runOnce()).toBe(true);

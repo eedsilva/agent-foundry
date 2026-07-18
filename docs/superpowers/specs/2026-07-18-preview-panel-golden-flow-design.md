@@ -78,7 +78,7 @@ A new `approval-gate` node inserted after `browser-verification` and before
   outputArtifact: diff.approval
   actions: [approve, reject, request-changes]
   onReject: return-to-step
-  returnToStepId: implementation-gate  # exact target confirmed during implementation
+  returnToStepId: implementation-gate # exact target confirmed during implementation
   repairArtifact: diff.repair-notes
 ```
 
@@ -101,14 +101,14 @@ status/timeline/approvals list, and now also mounts `PreviewPanel`).
   embed its `url` as the iframe `src`; if absent, show a "Start preview"
   button (`POST .../preview`, existing).
 - **Tabs:**
-  - *Runtime logs* — `GET .../preview/:sessionId/logs`, same poll pattern
+  - _Runtime logs_ — `GET .../preview/:sessionId/logs`, same poll pattern
     already used for the run timeline.
-  - *Console & network* — `browser-verification.report.steps[].observations`
+  - _Console & network_ — `browser-verification.report.steps[].observations`
     (kinds: `console-error`, `request-failed`, `http-error`,
     `uncaught-exception`, `policy-block`), sourced from
     `GET /projects/:id`'s existing `artifacts[]`, filtered client-side by
     `metadata.runId`.
-  - *Test results* — the same report's `steps[]` (status/duration/error),
+  - _Test results_ — the same report's `steps[]` (status/duration/error),
     rendered as a pass/fail list.
 - Screenshots render as an `<img>` filmstrip via the existing-but-unused
   `getArtifactBlobUrl` helper; trace/video render as download links (same
@@ -120,6 +120,7 @@ status/timeline/approvals list, and now also mounts `PreviewPanel`).
 When an `ApprovalRequest`'s artifact is `browser-verification.report`
 (i.e., the `diff-approval` gate), the existing decide modal additionally
 fetches and renders:
+
 - the code diff via `/versions/compare` (reusing the `diffLines` renderer
   already used on the versions page), comparing the project's last
   protected version against the version produced by this run,

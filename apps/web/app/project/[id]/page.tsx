@@ -114,7 +114,10 @@ function DiffView({ parts }: { parts: DiffSpan[] }) {
   return (
     <pre className="diffPane">
       {parts.map((part, index) => (
-        <span key={index} className={part.added ? 'diffAdded' : part.removed ? 'diffRemoved' : undefined}>
+        <span
+          key={index}
+          className={part.added ? 'diffAdded' : part.removed ? 'diffRemoved' : undefined}
+        >
           {part.value}
         </span>
       ))}
@@ -319,8 +322,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const run = runDetail?.run;
 
   useEffect(() => {
-    setDecideDiff(null);
-    if (!decideTarget || !run || decideTarget.request.artifact.name !== 'browser-verification.report') {
+    if (
+      !decideTarget ||
+      !run ||
+      decideTarget.request.artifact.name !== 'browser-verification.report'
+    ) {
       return;
     }
     const runId = run?.id;
@@ -482,6 +488,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     setDecideError('');
     setDecideNote('');
     setDecidePreview(null);
+    setDecideDiff(null);
     setDecideTarget({ request, node, action });
     const needsReturn =
       action === 'request-changes' || (action === 'reject' && node.onReject === 'return-to-step');
@@ -1150,7 +1157,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             {showDiff ? (
               previousArtifact ? (
                 <DiffView
-                  parts={diffLines(artifactText(previousArtifact.content), artifactText(selected.content))}
+                  parts={diffLines(
+                    artifactText(previousArtifact.content),
+                    artifactText(selected.content),
+                  )}
                 />
               ) : (
                 <p className="hint">Carregando revisão anterior…</p>
