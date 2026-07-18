@@ -1,12 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  assertNoUnexpectedDrift,
   createRoadmapIssue,
   getIssueParent,
+  parseArgs,
+  reconcileIssue,
   reconcileIssueBlockers,
   reconcileIssueHierarchy,
   verifyWritableRepository,
 } from './github-roadmap.mjs';
+import { sha256 } from './roadmap.mjs';
 
 function fakeClient({ responses = new Map(), paginated = new Map() } = {}) {
   const calls = [];
@@ -129,5 +133,133 @@ test('dependências adicionam ausentes, removem stale gerenciadas e preservam ex
   assert.equal(
     writes.some((call) => call.endpoint.endsWith('/999')),
     false,
+  );
+});
+
+test('parseArgs: dry-run é o padrão', () => {
+  const options = parseArgs([]);
+  assert.deepEqual(options, {
+    apply: false,
+    reconcile: false,
+    forceDrift: false,
+    adoptExisting: false,
+    delayMs: 500,
+    repo: null,
+  });
+});
+
+test('parseArgs: liga apply, reconcile, force-drift e adopt-existing', () => {
+  const options = parseArgs(['--apply', '--reconcile', '--force-drift', '--adopt-existing']);
+  assert.equal(options.apply, true);
+  assert.equal(options.reconcile, true);
+  assert.equal(options.forceDrift, true);
+  assert.equal(options.adoptExisting, true);
+});
+
+test('parseArgs: aceita --repo e --delay-ms com valor customizado', () => {
+  const options = parseArgs(['--repo', 'o/r', '--delay-ms', '10']);
+  assert.equal(options.repo, 'o/r');
+  assert.equal(options.delayMs, 10);
+});
+
+test('parseArgs: rejeita --delay-ms inválido', () => {
+  assert.throws(() => parseArgs(['--delay-ms', 'nope']), /--delay-ms inválido/);
+  assert.throws(() => parseArgs(['--delay-ms', '-1']), /--delay-ms inválido/);
+});
+
+test('parseArgs: rejeita flag desconhecida', () => {
+  assert.throws(() => parseArgs(['--bogus']), /Argumento desconhecido: --bogus/);
+});
+
+test('assertNoUnexpectedDrift: sem estado salvo, primeira aplicação passa', () => {
+  assert.doesNotThrow(() => assertNoUnexpectedDrift('qualquer corpo', undefined, false, 'k'));
+});
+
+test('assertNoUnexpectedDrift: hash do corpo ao vivo bate com o último aplicado', () => {
+  const saved = { number: 7, lastAppliedBodySha256: sha256('corpo gerenciado') };
+  assert.doesNotThrow(() => assertNoUnexpectedDrift('corpo gerenciado', saved, false, 'k'));
+});
+
+test('assertNoUnexpectedDrift: hash do corpo ao vivo bate com o legado', () => {
+  const saved = {
+    number: 7,
+    lastAppliedBodySha256: sha256('corpo novo formato'),
+    legacyBodySha256: sha256('corpo formato antigo'),
+  };
+  assert.doesNotThrow(() => assertNoUnexpectedDrift('corpo formato antigo', saved, false, 'k'));
+});
+
+test('assertNoUnexpectedDrift: edição manual inesperada lança erro', () => {
+  const saved = { number: 7, lastAppliedBodySha256: sha256('corpo gerenciado') };
+  assert.throws(
+    () => assertNoUnexpectedDrift('corpo editado à mão', saved, false, 'minha-task'),
+    /Drift manual detectado em minha-task \(#7\)/,
+  );
+});
+
+test('assertNoUnexpectedDrift: --force-drift ignora a divergência', () => {
+  const saved = { number: 7, lastAppliedBodySha256: sha256('corpo gerenciado') };
+  assert.doesNotThrow(() => assertNoUnexpectedDrift('corpo editado à mão', saved, true, 'k'));
+});
+
+test('assertNoUnexpectedDrift: estado salvo sem hash nenhum ainda não bloqueia', () => {
+  const saved = { number: 7 };
+  assert.doesNotThrow(() => assertNoUnexpectedDrift('qualquer corpo', saved, false, 'k'));
+});
+
+test('reconcileIssue: corpo sem divergência é atualizado normalmente', async () => {
+  const record = {
+    key: 'task-a',
+    title: 'Título',
+    body: 'corpo gerenciado',
+    labels: ['kind:task'],
+  };
+  const saved = { number: 9, lastAppliedBodySha256: sha256('corpo gerenciado') };
+  const client = fakeClient({
+    responses: new Map([
+      ['/repos/o/r/issues/9', { body: 'corpo gerenciado' }],
+      ['PATCH /repos/o/r/issues/9', { number: 9 }],
+    ]),
+  });
+  await reconcileIssue(client, 'o', 'r', record, { number: 9 }, { number: 3 }, saved, false);
+  const patch = client.calls.find((call) => call.options?.method === 'PATCH');
+  assert.deepEqual(patch, {
+    endpoint: '/repos/o/r/issues/9',
+    options: {
+      method: 'PATCH',
+      body: { title: 'Título', body: 'corpo gerenciado', labels: ['kind:task'], milestone: 3 },
+    },
+  });
+});
+
+test('reconcileIssue: divergência manual bloqueia o PATCH', async () => {
+  const record = { key: 'task-a', title: 'Título', body: 'corpo novo', labels: [] };
+  const saved = { number: 9, lastAppliedBodySha256: sha256('corpo antigo gerenciado') };
+  const client = fakeClient({
+    responses: new Map([['/repos/o/r/issues/9', { body: 'corpo editado à mão' }]]),
+  });
+  await assert.rejects(
+    () => reconcileIssue(client, 'o', 'r', record, { number: 9 }, null, saved, false),
+    /Drift manual detectado em task-a \(#9\)/,
+  );
+  assert.equal(
+    client.calls.some((call) => call.options?.method === 'PATCH'),
+    false,
+  );
+});
+
+test('reconcileIssue: --force-drift aplica o PATCH mesmo com divergência', async () => {
+  const record = { key: 'task-a', title: 'Título', body: 'corpo novo', labels: [] };
+  const saved = { number: 9, lastAppliedBodySha256: sha256('corpo antigo gerenciado') };
+  const client = fakeClient({
+    responses: new Map([
+      ['/repos/o/r/issues/9', { body: 'corpo editado à mão' }],
+      ['PATCH /repos/o/r/issues/9', { number: 9 }],
+    ]),
+  });
+  await reconcileIssue(client, 'o', 'r', record, { number: 9 }, null, saved, true);
+  assert.equal(
+    client.calls.some((call) => call.options?.method === 'PATCH'),
+    true,
   );
 });

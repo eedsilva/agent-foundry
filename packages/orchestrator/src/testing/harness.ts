@@ -896,6 +896,40 @@ export class ControllableAgentExecutor implements AgentExecutor {
         nextActions: [],
       },
     };
+ * Bridges an ExecutionPlane double (e.g. ControllableExecutor) back to the
+ * AgentExecutor shape that ExecutorRegistry-based callers still expect.
+ * ExecutionPlane.submit never rejects — a failed/cancelled run resolves with
+ * `state`; this restores AgentExecutor's reject-on-failure contract.
+ */
+export class AgentExecutorFromExecutionPlane implements AgentExecutor {
+  readonly provider = 'mock';
+  constructor(private readonly plane: ExecutionPlane) {}
+
+  async execute(
+    request: AgentExecutionRequest,
+    signal?: AbortSignal,
+  ): Promise<AgentExecutionResult> {
+    const { cwd: _cwd, ...agent } = request;
+    const result = await this.plane.submit(
+      {
+        protocolVersion: EXECUTION_PROTOCOL_VERSION,
+        executionId: `${request.stepRunId}:${request.attemptId}`,
+        agent,
+        workspace: { projectId: request.projectId, ref: 'unused' },
+        tools: [],
+        limits: { timeoutMs: request.timeoutMs },
+        networkPolicy: { mode: 'none', allowedHosts: [] },
+        secrets: [],
+      },
+      signal,
+    );
+    if (result.state === 'cancelled') throw new RunCancelledError(request.runId);
+    if (result.state === 'failed') throw new Error(result.error?.message ?? 'execution failed');
+    return result.agent as AgentExecutionResult;
+  }
+
+  async health(): Promise<ExecutorHealth> {
+    return { provider: 'mock', available: true, version: '1', message: 'test double' };
   }
 }
 

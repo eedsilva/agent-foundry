@@ -17,6 +17,8 @@ import {
 } from '@agent-foundry/domain';
 import {
   ControllableAgentExecutor,
+  AgentExecutorFromExecutionPlane,
+  ControllableExecutor,
   FakeWorkspaces,
   InMemoryArtifacts,
   InMemoryEvents,
@@ -163,8 +165,17 @@ async function runOperation(kind: 'plan' | 'build') {
   const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
   const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
   const workspaces = new FakeWorkspaces({ on: true });
-  const executor = new ControllableAgentExecutor({}, workspaces);
-  const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+  const executorA = new ControllableAgentExecutor({}, workspaces);
+  const executorsA: ExecutorRegistry = { 
+    get: () => executorA, 
+    health: () => Promise.resolve([]) 
+  };
+
+  const executor = new ControllableExecutor({}, workspaces);
+  const executors: ExecutorRegistry = {
+    get: () => new AgentExecutorFromExecutionPlane(executor),
+    health: () => Promise.resolve([]),
+  };
   const clock = new FixedClock();
   const ids = new SequentialIds();
 

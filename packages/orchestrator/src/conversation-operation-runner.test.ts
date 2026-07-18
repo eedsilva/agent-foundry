@@ -16,6 +16,8 @@ import type {
 import type { Conversation, Message, Operation, WorkflowRun } from '@agent-foundry/contracts';
 import {
   ControllableAgentExecutor,
+  AgentExecutorFromExecutionPlane,
+  ControllableExecutor,
   FakeWorkspaces,
   InMemoryArtifacts,
   InMemoryEvents,
@@ -138,8 +140,16 @@ function setup() {
   const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
   const workspaces = new FakeWorkspaces({ on: true });
   const conversations = new MemoryConversations();
-  const executor = new ControllableAgentExecutor({}, workspaces);
-  const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+  const executorsA: ExecutorRegistry = { 
+    get: () => executorA, 
+    health: () => Promise.resolve([]) 
+  };
+
+  const executor = new ControllableExecutor({}, workspaces);
+  const executors: ExecutorRegistry = {
+    get: () => new AgentExecutorFromExecutionPlane(executor),
+    health: () => Promise.resolve([]),
+  };  
   const runner = new ConversationOperationRunner(
     runs,
     stepRuns,
@@ -242,7 +252,10 @@ describe('ConversationOperationRunner', () => {
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
       workspaces,
     );
-    const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+    const executors: ExecutorRegistry = {
+      get: () => new AgentExecutorFromExecutionPlane(executor),
+      health: () => Promise.resolve([]),
+    };
     const runner = new ConversationOperationRunner(
       runs,
       stepRuns,
@@ -281,8 +294,16 @@ describe('ConversationOperationRunner', () => {
       throw new Error('event store unavailable');
     };
     const conversations = new MemoryConversations();
-    const executor = new ControllableAgentExecutor({}, workspaces);
-    const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+    const executorsA: ExecutorRegistry = { 
+      get: () => executorA, 
+      health: () => Promise.resolve([]) 
+    };
+
+    const executor = new ControllableExecutor({}, workspaces);
+    const executors: ExecutorRegistry = {
+      get: () => new AgentExecutorFromExecutionPlane(executor),
+      health: () => Promise.resolve([]),
+    };  
     const runner = new ConversationOperationRunner(
       runs,
       stepRuns,
@@ -326,8 +347,17 @@ describe('ConversationOperationRunner', () => {
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const conversations = new MemoryConversations();
-    const executor = new ControllableAgentExecutor({}, workspaces);
-    const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+    const executorA = new ControllableAgentExecutor({}, workspaces);
+    const executorsA: ExecutorRegistry = { 
+      get: () => executorA, 
+      health: () => Promise.resolve([]) 
+    };
+
+    const executor = new ControllableExecutor({}, workspaces);
+    const executors: ExecutorRegistry = {
+      get: () => new AgentExecutorFromExecutionPlane(executor),
+      health: () => Promise.resolve([]),
+    };    
     const runner = new ConversationOperationRunner(
       runs,
       stepRuns,
@@ -370,7 +400,10 @@ describe('ConversationOperationRunner', () => {
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
       workspaces,
     );
-    const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+    const executors: ExecutorRegistry = {
+      get: () => new AgentExecutorFromExecutionPlane(executor),
+      health: () => Promise.resolve([]),
+    };
     const runner = new ConversationOperationRunner(
       runs,
       stepRuns,
@@ -415,7 +448,10 @@ describe('ConversationOperationRunner', () => {
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
       workspaces,
     );
-    const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+    const executors: ExecutorRegistry = {
+      get: () => new AgentExecutorFromExecutionPlane(executor),
+      health: () => Promise.resolve([]),
+    };
     const runner = new ConversationOperationRunner(
       runs,
       stepRuns,
