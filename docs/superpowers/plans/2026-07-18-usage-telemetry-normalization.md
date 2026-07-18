@@ -23,6 +23,7 @@
 ## Task 1: Contracts + domain ports (FOUNDATION — must land first)
 
 **Files:**
+
 - Modify: `packages/contracts/src/run.ts` (`ExecutionUsageSchema`, `+ UsageReport`)
 - Modify: `packages/contracts/src/project.ts` (`ExecutorHealthSchema`)
 - Modify: `packages/contracts/src/model.ts` (`ModelMetricSchema`)
@@ -31,6 +32,7 @@
 - Test: `packages/contracts/src/run.test.ts`, `packages/contracts/src/model.ts` covered via a new `model.usage.test.ts` (or existing test file if present)
 
 **Interfaces (Produces — later tasks rely on these exact names/types):**
+
 - `ExecutionUsage` / `UsageReport` = `{ inputTokens?, outputTokens?, cachedInputTokens?, quotaUnits?, estimatedCostUsd?, sourceQuality?: 'provider-reported'|'computed'|'estimated'|'unknown' }`
 - `ExecutorHealth.rateLimit?: { limit?: number; remaining?: number; resetAt?: string }`
 - `ModelMetric` += `quotaUnitsTotal?`, `inputTokensKnownCount?`, `outputTokensKnownCount?`, `cachedInputTokensKnownCount?`, `costKnownCount?`, `quotaUnitsKnownCount?` (all `number`, optional)
@@ -289,12 +291,14 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 2: Executor usage + rate-limit parsing (parallel after Task 1)
 
 **Files:**
+
 - Modify: `packages/executors/src/json-output.ts` (`extractUsage`, new `extractRateLimit`)
 - Modify: `packages/executors/src/base-cli-executor.ts` (cache rate limit, surface in `health()`)
 - Test: `packages/executors/src/json-output.test.ts`, `packages/executors/src/base-cli-executor.test.ts`
 - Create: `packages/executors/src/fixtures/codex.partial-usage.stdout.jsonl`, `claude.partial-usage.stdout.json`, `agy.partial-usage.stdout.json`, `claude.rate-limited.stdout.json`
 
 **Interfaces:**
+
 - Consumes: `ExecutionUsage`/`UsageReport`, `ProviderRateLimit` from Task 1.
 - Produces: `extractRateLimit(provider, raw): { limit?, remaining?, resetAt? } | undefined`; `extractUsage` now returns `sourceQuality: 'provider-reported'` and `quotaUnits?` when present.
 
@@ -303,7 +307,13 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 `packages/executors/src/fixtures/claude.partial-usage.stdout.json` (output tokens + quota present, input/cost ABSENT):
 
 ```json
-{"type":"result","subtype":"success","is_error":false,"result":"partial","usage":{"output_tokens":42,"quota_units":2}}
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "partial",
+  "usage": { "output_tokens": 42, "quota_units": 2 }
+}
 ```
 
 `packages/executors/src/fixtures/codex.partial-usage.stdout.jsonl` (input tokens only):
@@ -315,13 +325,20 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 `packages/executors/src/fixtures/agy.partial-usage.stdout.json` (cost only):
 
 ```json
-{"type":"result","usage":{"total_cost_usd":0.01}}
+{ "type": "result", "usage": { "total_cost_usd": 0.01 } }
 ```
 
 `packages/executors/src/fixtures/claude.rate-limited.stdout.json` (rate-limit signal):
 
 ```json
-{"type":"result","subtype":"success","is_error":false,"result":"ok","usage":{"input_tokens":1},"rate_limit":{"limit":100,"remaining":0,"reset_at":"2026-07-18T13:00:00.000Z"}}
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "ok",
+  "usage": { "input_tokens": 1 },
+  "rate_limit": { "limit": 100, "remaining": 0, "reset_at": "2026-07-18T13:00:00.000Z" }
+}
 ```
 
 - [ ] **Step 2: Write failing tests — partial usage stays unknown + sourceQuality**
@@ -389,16 +406,16 @@ Expected: FAIL (`extractRateLimit` not exported; `sourceQuality` missing).
 In `interface UsageAccumulator` and the `output` object in `extractUsage`, add `quotaUnits?: number`. In `collectUsage`, after the `cost` block, add quota parsing:
 
 ```typescript
-  const quota = numberFrom(record, ['quota_units', 'quotaUnits', 'quota', 'message_units']);
-  if (quota !== undefined) accumulator.quotaUnits = maxDefined(accumulator.quotaUnits, quota);
+const quota = numberFrom(record, ['quota_units', 'quotaUnits', 'quota', 'message_units']);
+if (quota !== undefined) accumulator.quotaUnits = maxDefined(accumulator.quotaUnits, quota);
 ```
 
 In `extractUsage`, after building `output`, before the return, tag provenance:
 
 ```typescript
-  if (accumulator.quotaUnits !== undefined) output.quotaUnits = accumulator.quotaUnits;
-  if (Object.keys(output).length === 0) return undefined;
-  return { ...output, sourceQuality: 'provider-reported' };
+if (accumulator.quotaUnits !== undefined) output.quotaUnits = accumulator.quotaUnits;
+if (Object.keys(output).length === 0) return undefined;
+return { ...output, sourceQuality: 'provider-reported' };
 ```
 
 Update the `extractUsage` return type annotation and the `output` local type to include `quotaUnits?: number` and `sourceQuality?: 'provider-reported'`.
@@ -470,8 +487,8 @@ Add a private field and populate it after `extractUsage` in the run path:
 After `const usage = extractUsage(this.provider, stdout);`:
 
 ```typescript
-    const rateLimit = extractRateLimit(this.provider, stdout);
-    if (rateLimit) this.lastRateLimit = rateLimit;
+const rateLimit = extractRateLimit(this.provider, stdout);
+if (rateLimit) this.lastRateLimit = rateLimit;
 ```
 
 In `health()`, spread the cached value into the returned object (both success and non-available branches where sensible):
@@ -501,11 +518,13 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 3: Persistence aggregation — unknown ≠ zero (parallel after Task 1)
 
 **Files:**
+
 - Modify: `packages/persistence/src/metrics-repository.ts` (`record`)
 - Modify: `packages/orchestrator/src/workflow-orchestrator.ts` (map `cachedInputTokens`, `quotaUnits` into `record`)
 - Test: `packages/persistence/src/metrics-repository.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ModelMetric` known-count fields + `record` input (`cachedInputTokens?`, `quotaUnits?`) from Task 1.
 - Produces: aggregated `ModelMetric` where a total only grows on a defined sample and the matching `*KnownCount` increments.
 
@@ -517,25 +536,36 @@ Add to `packages/persistence/src/metrics-repository.test.ts`:
 it('does not invent zero: unknown tokens leave totals and counts untouched', async () => {
   const repo = new FileMetricsRepository(await mkdtempDir()); // use the file's existing temp-dir helper
   await repo.record({
-    modelId: 'm', taskKind: 'implementation', role: 'developer',
-    success: true, durationMs: 10, inputTokens: 100, // no output/cost/quota
+    modelId: 'm',
+    taskKind: 'implementation',
+    role: 'developer',
+    success: true,
+    durationMs: 10,
+    inputTokens: 100, // no output/cost/quota
   });
   await repo.record({
-    modelId: 'm', taskKind: 'implementation', role: 'developer',
-    success: true, durationMs: 10, // nothing known
+    modelId: 'm',
+    taskKind: 'implementation',
+    role: 'developer',
+    success: true,
+    durationMs: 10, // nothing known
   });
   const metric = await repo.get('m', 'implementation', 'developer');
   expect(metric?.totalInputTokens).toBe(100);
-  expect(metric?.inputTokensKnownCount).toBe(1);       // only the first sample knew input
+  expect(metric?.inputTokensKnownCount).toBe(1); // only the first sample knew input
   expect(metric?.outputTokensKnownCount).toBeUndefined(); // never known → undefined, not 0
-  expect(metric?.totalOutputTokens).toBe(0);            // sum of zero known samples
+  expect(metric?.totalOutputTokens).toBe(0); // sum of zero known samples
 });
 
 it('sums quota units and counts known quota samples', async () => {
   const repo = new FileMetricsRepository(await mkdtempDir());
   await repo.record({
-    modelId: 'q', taskKind: 'implementation', role: 'developer',
-    success: true, durationMs: 5, quotaUnits: 3,
+    modelId: 'q',
+    taskKind: 'implementation',
+    role: 'developer',
+    success: true,
+    durationMs: 5,
+    quotaUnits: 3,
   });
   const metric = await repo.get('q', 'implementation', 'developer');
   expect(metric?.quotaUnitsTotal).toBe(3);
@@ -626,10 +656,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 4: Router budget + rate-limit exclusion (parallel after Task 1)
 
 **Files:**
+
 - Modify: `packages/model-router/src/score-router.ts` (`route`, new rejection reasons)
 - Test: `packages/model-router/src/score-router.test.ts`
 
 **Interfaces:**
+
 - Consumes: `RouteConstraints`, `ExecutorHealth` (with `rateLimit`) from Task 1.
 - Produces: `route(profile, explicit?, constraints?)` that pushes `rate-limited …` / `over-budget …` into `RouteDecision.rejected[]` and never selects an excluded model.
 
@@ -641,10 +673,19 @@ Add to `packages/model-router/src/score-router.test.ts` (reuse the file's catalo
 it('excludes a model whose provider is rate-limited until a future reset', async () => {
   const router = new ScoreBasedModelRouter(twoProviderCatalog(), new InMemoryMetrics());
   const health = new Map([
-    ['claude', { provider: 'claude', available: true, message: 'ok',
-      rateLimit: { remaining: 0, resetAt: '2999-01-01T00:00:00.000Z' } }],
+    [
+      'claude',
+      {
+        provider: 'claude',
+        available: true,
+        message: 'ok',
+        rateLimit: { remaining: 0, resetAt: '2999-01-01T00:00:00.000Z' },
+      },
+    ],
   ]);
-  const decision = await router.route(implementationProfile(), undefined, { providerHealth: health });
+  const decision = await router.route(implementationProfile(), undefined, {
+    providerHealth: health,
+  });
   expect(decision.selected.model.provider).not.toBe('claude');
   expect(decision.rejected.some((r) => r.reason.startsWith('rate-limited'))).toBe(true);
 });
@@ -688,20 +729,20 @@ Import `RouteConstraints` from `@agent-foundry/domain`. Change the signature and
 In the `for (const model of this.models)` loop, after the existing `this.rejectReason` check, add a constraint check that can also reject:
 
 ```typescript
-      const constraintRejection = this.constraintRejection(model, profile, metric, constraints);
+const constraintRejection = this.constraintRejection(model, profile, metric, constraints);
 ```
 
 But `metric` is fetched after `rejectReason`. Restructure: fetch `metric` first (it is needed for cost estimate), then check both reject reasons. Minimal change — move the `const metric = await this.metrics.get(...)` above the rejection checks, then:
 
 ```typescript
-      const rejection =
-        this.rejectReason(model, profile) ??
-        this.constraintRejection(model, profile, metric, constraints);
-      if (rejection) {
-        rejected.push({ modelId: model.id, reason: rejection });
-        continue;
-      }
-      ranked.push({ model, score: this.score(model, profile, metric) });
+const rejection =
+  this.rejectReason(model, profile) ??
+  this.constraintRejection(model, profile, metric, constraints);
+if (rejection) {
+  rejected.push({ modelId: model.id, reason: rejection });
+  continue;
+}
+ranked.push({ model, score: this.score(model, profile, metric) });
 ```
 
 Add the method (uses the same `estimateCostUsd` helper already in the file):
@@ -759,11 +800,13 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 5: UI — observed vs estimated (parallel after Task 1)
 
 **Files:**
+
 - Create: `apps/web/app/project/[id]/format-usage.ts` (pure formatter)
 - Test: `apps/web/app/project/[id]/format-usage.test.ts`
 - Modify: `apps/web/app/project/[id]/page.tsx` (render observed usage on each attempt row)
 
 **Interfaces:**
+
 - Consumes: `ExecutionUsage`/`UsageReport` from Task 1 (via `@agent-foundry/contracts`).
 - Produces: `formatObservedUsage(usage?): string` → human string with `desconhecido` for absent fields.
 
@@ -829,9 +872,7 @@ Import at top: `import { formatObservedUsage } from './format-usage.js';`
 In the attempt `.map((attempt) => {...})` block (the `<div key={attempt.id}>` row), after the failed-error `<small>`, add:
 
 ```tsx
-                      <small style={{ display: 'block', opacity: 0.75 }}>
-                        {formatObservedUsage(attempt.usage)}
-                      </small>
+<small style={{ display: 'block', opacity: 0.75 }}>{formatObservedUsage(attempt.usage)}</small>
 ```
 
 This puts observed usage next to the existing estimated cost (`custo estimado` in the route-decision card), satisfying "estimado versus observado".
@@ -871,15 +912,15 @@ Attach test output + a note that each acceptance criterion maps to a task (see S
 
 ## Self-Review (spec coverage)
 
-| Issue acceptance criterion | Task |
-| --- | --- |
-| UsageReport: in/out/cache tokens, cost, quota units, source quality | Task 1 (schema) + Task 2 (populate) |
-| Missing data unknown, never zero | Task 1 (optional fields) + Task 2 (undefined not 0) + Task 3 (known-counts) |
-| Rate limit + reset in ProviderHealth | Task 1 (`ExecutorHealth.rateLimit`) + Task 2 (parse/surface) |
-| Router applies budget by available unit | Task 1 (`RouteConstraints`) + Task 4 (enforce) |
-| UI estimated vs observed | Task 5 |
-| Partial-usage fixtures for Codex/Claude/AGY | Task 2 |
-| Evidence, security, migration, rollback | Design doc + Final integration |
+| Issue acceptance criterion                                          | Task                                                                        |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| UsageReport: in/out/cache tokens, cost, quota units, source quality | Task 1 (schema) + Task 2 (populate)                                         |
+| Missing data unknown, never zero                                    | Task 1 (optional fields) + Task 2 (undefined not 0) + Task 3 (known-counts) |
+| Rate limit + reset in ProviderHealth                                | Task 1 (`ExecutorHealth.rateLimit`) + Task 2 (parse/surface)                |
+| Router applies budget by available unit                             | Task 1 (`RouteConstraints`) + Task 4 (enforce)                              |
+| UI estimated vs observed                                            | Task 5                                                                      |
+| Partial-usage fixtures for Codex/Claude/AGY                         | Task 2                                                                      |
+| Evidence, security, migration, rollback                             | Design doc + Final integration                                              |
 
 **Placeholder scan:** none — every code step shows real code.
 **Type consistency:** `formatObservedUsage`, `extractRateLimit`, `RouteConstraints`, `bumpKnown`, `ProviderRateLimit`, `UsageReport` used identically across the tasks that reference them.

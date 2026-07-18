@@ -34,7 +34,7 @@ Mandatory tests: partial-usage fixtures for Codex, Claude, and AGY.
 ## Non-goals
 
 - No cumulative per-run budget ledger persisted across steps (deferred; this
-  track only needs the router to *apply* a budget it is handed).
+  track only needs the router to _apply_ a budget it is handed).
 - No new provider integrations; only richer parsing of existing CLI output.
 - No pricing-catalog changes beyond what already feeds cost estimation.
 
@@ -57,6 +57,7 @@ All token/cost/quota fields remain **optional** — absence means unknown, never
 zero.
 
 `sourceQuality` semantics:
+
 - `provider-reported` — parsed from the provider's own usage JSON.
 - `computed` — derived by us (e.g. cost = tokens × catalog pricing).
 - `estimated` — a pre-run estimate, not an observation.
@@ -65,7 +66,7 @@ zero.
 **`project.ts` — `ExecutorHealthSchema`:**
 
 - Add optional `rateLimit?: { limit?: number; remaining?: number; resetAt?:
-  string (datetime) }`. All fields optional → unknown, never invented.
+string (datetime) }`. All fields optional → unknown, never invented.
 
 **`model.ts` — `ModelMetricSchema`:**
 
@@ -85,7 +86,7 @@ zero.
   field is parsed from provider JSON; `unknown` otherwise) and parses
   `quotaUnits` where a provider exposes it.
 - New `extractRateLimit(provider, stdout)` → `{ limit?, remaining?, resetAt? } |
-  undefined`, defensively parsed from provider output (reusing the existing
+undefined`, defensively parsed from provider output (reusing the existing
   `numberFrom` guards).
 
 **`base-cli-executor.ts`:**
