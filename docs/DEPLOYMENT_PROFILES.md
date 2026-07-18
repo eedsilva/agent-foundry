@@ -1,60 +1,107 @@
 # Deployment Profiles
 
-Deployment profiles make trust assumptions explicit. A profile is a security contract, not a marketing tier.
+Deployment profiles are configuration presets that encode security assumptions about where Agent Foundry runs and what execution modes are enabled.
 
-## `mock-local`
+## Available Profiles
 
-- `EXECUTOR_MODE=mock`
-- API may bind to a container-facing interface.
-- No provider credentials or generated dependency installation.
-- Suitable for CI, demos, and pipeline mechanics.
+### development
 
-## `real-local-trusted`
+**Executor Mode:** mock  
+**API Host:** 127.0.0.1 (loopback)  
+**Remote Execution:** ❌ disabled
 
-- `EXECUTOR_MODE=real`
-- API bound to `127.0.0.1`, `localhost`, or `::1`.
-- One trusted operator and trusted repositories/PRDs.
-- CLIs and verifier run with host-user capabilities.
-- No claim of isolation against malicious code.
+Local development with mock CLI execution (no real commands run). Safe for shared machines.
 
-This is the only supported real-execution profile before Safe Runtime Foundation.
+**Use case:** Development, debugging, demo with fake execution.
 
-## `personal-local-builder`
+**Configuration:**
+```bash
+EXECUTOR_MODE=mock
+API_HOST=127.0.0.1
+ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=false
+```
 
-- Personal Builder v1 control plane on macOS.
-- API bound to loopback; one trusted operator.
-- Locally authenticated Codex, Claude and AGY CLIs.
-- Docker Desktop provides isolated per-project Supabase and preview environments.
-- Local `.env` files provide trusted configuration and secrets.
-- Generated code, verifier and preview run through `SandboxRunner`.
-- Not suitable for remote users or untrusted PRDs.
+### real-local-trusted ✓ (MAX BEFORE v0.4.5)
 
-This is the supported Agent Foundry v1 profile after Safe Runtime Foundation.
+**Executor Mode:** real  
+**API Host:** 127.0.0.1 (loopback only)  
+**Remote Execution:** ❌ disabled
 
-## `personal-vps-app`
+Trusted local environment with real CLI execution. Restricts API to loopback interface for host-level isolation.
 
-- Runtime profile for a generated application, not for the Agent Foundry control plane.
-- Existing Ubuntu LTS VPS over SSH; Debian-based hosts are best effort.
-- Isolated Docker Compose project per app with Next.js, Supabase and Caddy routing.
-- Host/port endpoint always available; custom domain optional after manual DNS configuration.
-- Scheduled backups retained on the VPS and copied to the owner's Mac.
-- Application rollback does not imply database rollback.
+**Use case:** Local development with real command execution, personal laptop, trusted server.
 
-## `isolated-preview`
+**Security:** Real mode is **only** accessible from the same machine (127.0.0.1, localhost, ::1). Remote network access is denied at startup.
 
-- Ephemeral rootless sandbox per run.
-- No host home, CLI credential directory, Docker socket, or ambient cloud credentials.
-- CPU, memory, PID, disk, output, and wall-clock limits.
-- Egress denied by default with audited allowlists.
-- Artifacts and logs leave the sandbox through an authenticated, redacted channel.
+**Configuration:**
+```bash
+EXECUTOR_MODE=real
+API_HOST=127.0.0.1
+ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=false
+```
 
-Required before running generated preview or verifier execution, including for the trusted local operator's v1 golden path.
+### mock-production
 
-## `hosted-multi-tenant`
+**Executor Mode:** mock  
+**API Host:** 0.0.0.0 (all interfaces)  
+**Remote Execution:** ❌ disabled
 
-- Distributed control and execution planes.
-- Tenant-scoped data, queue, artifact, sandbox, secret, observability, and billing boundaries.
-- Short-lived credentials and policy enforcement independent of the model/provider.
-- Abuse controls, incident response, retention, deletion, and SLOs.
+Production-ready deployment with mock CLI execution. Safe for public-facing deployments since all execution is simulated.
 
-No environment should claim this profile until the Hosted Platform v2 launch gates pass.
+**Use case:** Production, shared hosting, untrusted networks, public demo.
+
+**Security:** Execution is mocked (no real commands). Public access is safe.
+
+**Configuration:**
+```bash
+EXECUTOR_MODE=mock
+API_HOST=0.0.0.0
+ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=false
+```
+
+## Real Mode Security Model
+
+**Default:** API binds to loopback (127.0.0.1) when `EXECUTOR_MODE=real`.
+
+**Remote Host Binding Rejected:** If you set `API_HOST=0.0.0.0` or any non-loopback IP with `EXECUTOR_MODE=real`, startup fails:
+
+```
+Error: Refusing to expose real CLI execution on a non-loopback API host.
+Keep API_HOST on 127.0.0.1/localhost or explicitly set ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true
+after accepting the host-level risk.
+```
+
+**Override (⚠️ unsafe):** Set `ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true` to bind real mode to non-loopback hosts. This exposes real command execution to untrusted network. Startup logs a security warning.
+
+## Deployment Profile Detection
+
+On startup, the runtime detects your deployment profile from environment variables and logs it:
+
+```
+[info] Deployment profile: real-local-trusted
+[info] API listening on 127.0.0.1:4000
+```
+
+If your configuration matches a known profile, the name is logged. If it's a custom combination, logged as "custom".
+
+## Startup Warnings
+
+**Real mode with remote override:**
+```
+SECURITY WARNING: real CLI execution is exposed on a non-loopback host with an explicit unsafe override.
+```
+
+This warning appears every startup as a reminder that the environment is configured with reduced safety.
+
+## Changing Profiles
+
+Profiles are determined at startup from environment variables. To switch profiles:
+
+1. Update `.env` or export environment variables
+2. Stop the server
+3. Start the server (new profile is detected and logged)
+
+## Related Documentation
+
+- [RISK_REGISTER.md](./RISK_REGISTER.md) — Operational risks and mitigations
+- [Configuration Reference](./docs/CONFIGURATION.md) — All environment variables
