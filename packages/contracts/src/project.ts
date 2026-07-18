@@ -170,10 +170,20 @@ export const VerificationReportSchema = z.object({
 });
 export type VerificationReport = z.infer<typeof VerificationReportSchema>;
 
+export const ProviderRateLimitSchema = z
+  .object({
+    limit: z.number().nonnegative().optional(),
+    remaining: z.number().nonnegative().optional(),
+    resetAt: z.string().datetime().optional(),
+  })
+  .strict();
+export type ProviderRateLimit = z.infer<typeof ProviderRateLimitSchema>;
+
 export const ExecutorHealthSchema = z.object({
   provider: ProviderSchema,
   available: z.boolean(),
   version: z.string().optional(),
   message: z.string(),
+  rateLimit: ProviderRateLimitSchema.optional(),
 });
 export type ExecutorHealth = z.infer<typeof ExecutorHealthSchema>;

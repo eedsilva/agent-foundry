@@ -209,8 +209,19 @@ export interface ExplicitModelRoute {
   provenance?: RouteOverrideProvenance;
 }
 
+export interface RouteConstraints {
+  /** Provider health keyed by provider id (e.g. 'claude'); rate-limited providers are excluded. */
+  providerHealth?: ReadonlyMap<string, ExecutorHealth>;
+  /** Remaining budget by unit. metered→maxCostUsd, subscription→maxQuotaUnits. */
+  budget?: { maxCostUsd?: number; maxQuotaUnits?: number };
+}
+
 export interface ModelRouter {
-  route(profile: TaskProfile, explicit?: ExplicitModelRoute): Promise<RouteDecision>;
+  route(
+    profile: TaskProfile,
+    explicit?: ExplicitModelRoute,
+    constraints?: RouteConstraints,
+  ): Promise<RouteDecision>;
   catalog(): Promise<ModelDefinition[]>;
 }
 
@@ -231,6 +242,8 @@ export interface MetricsRepository {
     durationMs: number;
     inputTokens?: number;
     outputTokens?: number;
+    cachedInputTokens?: number;
+    quotaUnits?: number;
     estimatedCostUsd?: number;
   }): Promise<void>;
   recordQuality(input: {
@@ -262,6 +275,7 @@ export interface ExecutorRegistry {
 export interface ExecutionStatus {
   executionId: string;
   state: 'pending' | 'running' | ExecutionState;
+  result?: ExecutionResult;
 }
 
 /**

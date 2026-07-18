@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ArtifactMetadataSchema, QueueJobSchema } from './project.js';
+import { ArtifactMetadataSchema, ExecutorHealthSchema, QueueJobSchema } from './project.js';
 
 describe('ArtifactMetadataSchema', () => {
   it('leaves storage unset for an existing JSON artifact and accepts it unchanged', () => {
@@ -61,5 +61,26 @@ describe('QueueJobSchema job types (#37)', () => {
       type: 'run-project',
     });
     expect(() => QueueJobSchema.parse({ ...base, type: 'bogus' })).toThrow();
+  });
+});
+
+describe('ExecutorHealthSchema rate limit', () => {
+  it('accepts optional rate limit with reset', () => {
+    const health = ExecutorHealthSchema.parse({
+      provider: 'claude',
+      available: true,
+      message: 'ok',
+      rateLimit: { limit: 100, remaining: 4, resetAt: '2026-07-18T12:00:00.000Z' },
+    });
+    expect(health.rateLimit?.remaining).toBe(4);
+  });
+
+  it('omits rate limit when unknown', () => {
+    const health = ExecutorHealthSchema.parse({
+      provider: 'codex',
+      available: true,
+      message: 'ok',
+    });
+    expect(health.rateLimit).toBeUndefined();
   });
 });

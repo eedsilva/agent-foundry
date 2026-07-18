@@ -57,6 +57,7 @@ import {
   retryRequest,
 } from '../../../lib/model-overrides';
 import { BlobMedia, PreviewPanel, VerificationReportView } from './preview-panel';
+import { formatObservedUsage } from './format-usage.js';
 import { findDiffApprovalVersions } from '../../../lib/diff-approval';
 import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
 
@@ -983,6 +984,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       {attempt.status === 'failed' && attempt.error ? (
                         <small>{attempt.error.message}</small>
                       ) : null}
+                      <small style={{ display: 'block', opacity: 0.75 }}>
+                        {formatObservedUsage(attempt.usage)}
+                      </small>
                     </div>
                   );
                 })}

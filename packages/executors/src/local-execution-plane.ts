@@ -4,7 +4,10 @@ import {
   type ExecutionResult,
 } from '@agent-foundry/contracts';
 import {
-  toExecutionResult,
+  EmergencyCeilingError,
+  ExecutionError,
+  RunCancelledError,
+  errorMessage,
   type ExecutionPlane,
   type ExecutionStatus,
   type ExecutorRegistry,
@@ -35,7 +38,30 @@ export class LocalExecutionPlane implements ExecutionPlane {
         agent: result,
       };
     } catch (error) {
-      return toExecutionResult(request.executionId, error);
+      // A ceiling breach is an orchestrator-level circuit breaker, not a
+      // normal execution outcome — it must propagate as a rejection so the
+      // orchestrator's own `instanceof EmergencyCeilingError` handling still
+      // sees it, exactly as it does today via the aborted signal's `reason`.
+      if (error instanceof EmergencyCeilingError) throw error;
+      if (error instanceof RunCancelledError) {
+        return {
+          protocolVersion: EXECUTION_PROTOCOL_VERSION,
+          executionId: request.executionId,
+          state: 'cancelled',
+        };
+      }
+      const details = error instanceof ExecutionError ? error.details : {};
+      return {
+        protocolVersion: EXECUTION_PROTOCOL_VERSION,
+        executionId: request.executionId,
+        state: 'failed',
+        error: {
+          message: errorMessage(error),
+          ...(details.exitCode !== undefined ? { exitCode: details.exitCode } : {}),
+          ...(details.stdout !== undefined ? { stdout: details.stdout } : {}),
+          ...(details.stderr !== undefined ? { stderr: details.stderr } : {}),
+        },
+      };
     }
   }
 
