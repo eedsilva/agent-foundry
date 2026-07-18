@@ -16,12 +16,17 @@ describe('SandboxSpecSchema', () => {
   });
 
   it('rejects a control-plane field instead of carrying it into the sandbox', () => {
-    expect(SandboxSpecSchema.safeParse({ ...spec, controlPlane: { token: 'secret' } }).success).toBe(false);
+    expect(
+      SandboxSpecSchema.safeParse({ ...spec, controlPlane: { token: 'secret' } }).success,
+    ).toBe(false);
   });
 });
 
 describe('SandboxSnapshotPathSchema', () => {
-  it.each(['/workspace/.env', '../.env', 'src/../.env'])('rejects unsafe snapshot path %s', (path) => {
-    expect(SandboxSnapshotPathSchema.safeParse(path).success).toBe(false);
-  });
+  it.each(['/workspace/.env', '../.env', 'src/../.env'])(
+    'rejects unsafe snapshot path %s',
+    (path) => {
+      expect(SandboxSnapshotPathSchema.safeParse(path).success).toBe(false);
+    },
+  );
 });

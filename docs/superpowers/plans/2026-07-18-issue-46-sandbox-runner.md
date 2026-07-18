@@ -42,7 +42,7 @@
 
 - [ ] **Step 1: Write the failing contract tests**
 
-~~~typescript
+```typescript
 // packages/contracts/src/sandbox.test.ts
 import { describe, expect, it } from 'vitest';
 import { SandboxSnapshotPathSchema, SandboxSpecSchema } from './index.js';
@@ -62,16 +62,21 @@ describe('SandboxSpecSchema', () => {
   });
 
   it('rejects a control-plane field instead of carrying it into the sandbox', () => {
-    expect(SandboxSpecSchema.safeParse({ ...spec, controlPlane: { token: 'secret' } }).success).toBe(false);
+    expect(
+      SandboxSpecSchema.safeParse({ ...spec, controlPlane: { token: 'secret' } }).success,
+    ).toBe(false);
   });
 });
 
 describe('SandboxSnapshotPathSchema', () => {
-  it.each(['/workspace/.env', '../.env', 'src/../.env'])('rejects unsafe snapshot path %s', (path) => {
-    expect(SandboxSnapshotPathSchema.safeParse(path).success).toBe(false);
-  });
+  it.each(['/workspace/.env', '../.env', 'src/../.env'])(
+    'rejects unsafe snapshot path %s',
+    (path) => {
+      expect(SandboxSnapshotPathSchema.safeParse(path).success).toBe(false);
+    },
+  );
 });
-~~~
+```
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -81,7 +86,7 @@ Expected: FAIL because ./index.js does not export sandbox contract symbols.
 
 - [ ] **Step 3: Write the minimum contract implementation**
 
-~~~typescript
+```typescript
 // packages/contracts/src/sandbox.ts
 import { z } from 'zod';
 import { ExecutionNetworkPolicySchema } from './execution-plane.js';
@@ -142,15 +147,17 @@ export const SandboxSnapshotFileSchema = z
   .strict();
 export type SandboxSnapshotFile = z.infer<typeof SandboxSnapshotFileSchema>;
 
-export const SandboxSnapshotSchema = z.object({ files: z.array(SandboxSnapshotFileSchema) }).strict();
+export const SandboxSnapshotSchema = z
+  .object({ files: z.array(SandboxSnapshotFileSchema) })
+  .strict();
 export type SandboxSnapshot = z.infer<typeof SandboxSnapshotSchema>;
-~~~
+```
 
 Add this line to packages/contracts/src/index.ts:
 
-~~~typescript
+```typescript
 export * from './sandbox.js';
-~~~
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -160,10 +167,10 @@ Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
-~~~bash
+```bash
 git add packages/contracts/src/sandbox.ts packages/contracts/src/sandbox.test.ts packages/contracts/src/index.ts
 git commit -m "feat(contracts): define sandbox lifecycle contract"
-~~~
+```
 
 ---
 
@@ -187,7 +194,7 @@ git commit -m "feat(contracts): define sandbox lifecycle contract"
 
 - [ ] **Step 1: Write the failing lifecycle tests**
 
-~~~typescript
+```typescript
 // packages/domain/src/sandbox-runner.test.ts
 import { describe, expect, it } from 'vitest';
 import type { SandboxSpec } from '@agent-foundry/contracts';
@@ -213,7 +220,11 @@ class FakeSandboxRunner implements SandboxRunner {
     if (this.failAt === 'create') throw new Error('create failed');
     return { id: 'sandbox-1' };
   }
-  async exec(_sandbox: { id: string }, request: Parameters<SandboxRunner['exec']>[1], signal?: AbortSignal) {
+  async exec(
+    _sandbox: { id: string },
+    request: Parameters<SandboxRunner['exec']>[1],
+    signal?: AbortSignal,
+  ) {
     this.signals.push(signal);
     request.onOutput?.({ stream: 'stdout', text: 'running' });
     if (this.failAt === 'exec') throw new Error('exec failed');
@@ -243,7 +254,12 @@ describe('runSandboxLifecycle', () => {
     const result = await runSandboxLifecycle(
       runner,
       spec,
-      { command: 'agent', args: ['run'], timeoutMs: 1_000, onOutput: (chunk) => output.push(chunk.text) },
+      {
+        command: 'agent',
+        args: ['run'],
+        timeoutMs: 1_000,
+        onOutput: (chunk) => output.push(chunk.text),
+      },
       ['src'],
       signal,
     );
@@ -275,7 +291,9 @@ describe('runSandboxLifecycle', () => {
   it('rejects an unsafe allowlist before creating a sandbox', async () => {
     const runner = new FakeSandboxRunner();
     await expect(
-      runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, ['../secrets']),
+      runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, [
+        '../secrets',
+      ]),
     ).rejects.toThrow('Sandbox snapshot paths must be relative');
     expect(runner.createCalls).toBe(0);
   });
@@ -288,7 +306,7 @@ describe('runSandboxLifecycle', () => {
     expect(runner.destroyCalls).toBe(1);
   });
 });
-~~~
+```
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -298,7 +316,7 @@ Expected: FAIL because sandbox-runner.ts does not exist.
 
 - [ ] **Step 3: Write the minimum port and lifecycle helper**
 
-~~~typescript
+```typescript
 // packages/domain/src/sandbox-runner.ts
 import { posix as path } from 'node:path';
 import {
@@ -354,7 +372,9 @@ export async function runSandboxLifecycle(
     return {
       result,
       snapshot: {
-        files: snapshot.files.filter((file) => allowed.some((entry) => isAllowed(file.path, entry))),
+        files: snapshot.files.filter((file) =>
+          allowed.some((entry) => isAllowed(file.path, entry)),
+        ),
       },
     };
   } finally {
@@ -364,15 +384,18 @@ export async function runSandboxLifecycle(
 
 function isAllowed(filePath: string, allowedPath: string): boolean {
   const relative = path.relative(allowedPath, filePath);
-  return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
+  return (
+    relative === '' ||
+    (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative))
+  );
 }
-~~~
+```
 
 Add this line to packages/domain/src/index.ts:
 
-~~~typescript
+```typescript
 export * from './sandbox-runner.js';
-~~~
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -382,10 +405,10 @@ Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
-~~~bash
+```bash
 git add packages/domain/src/sandbox-runner.ts packages/domain/src/sandbox-runner.test.ts packages/domain/src/index.ts
 git commit -m "feat(domain): add sandbox runner lifecycle port"
-~~~
+```
 
 ---
 
@@ -404,9 +427,9 @@ git commit -m "feat(domain): add sandbox runner lifecycle port"
 
 - [ ] **Step 1: Write the failing documentation assertion**
 
-~~~bash
+```bash
 rg -q 'SandboxRunner' docs/adr/0024-sandbox-runner-lifecycle.md docs/ARCHITECTURE.md docs/SECURITY.md
-~~~
+```
 
 Expected: FAIL because ADR 0024 and the security-boundary references do not yet exist.
 
@@ -414,7 +437,7 @@ Expected: FAIL because ADR 0024 and the security-boundary references do not yet 
 
 Create docs/adr/0024-sandbox-runner-lifecycle.md:
 
-~~~markdown
+```markdown
 # ADR 0024: Sandbox runner lifecycle boundary
 
 - Status: Accepted
@@ -436,7 +459,7 @@ This is a contract boundary, not a sandbox implementation: LocalExecutionPlane r
 ## Validation and rollback
 
 packages/domain/src/sandbox-runner.test.ts proves success, streaming, allowed-path filtering, and cleanup after exec/snapshot failure. Roll back with a revert; all values are transient and unpersisted.
-~~~
+```
 
 In docs/ARCHITECTURE.md, extend the execution-plane paragraph to name SandboxRunner as the upcoming runner contract and state that no backend is wired yet. In docs/SECURITY.md, replace the v07-sandbox-runner/v07-container-backend sentence with one that distinguishes the new lifecycle contract from the still-unresolved host-permission risk until #47.
 
@@ -444,20 +467,20 @@ In docs/ARCHITECTURE.md, extend the execution-plane paragraph to name SandboxRun
 
 Run:
 
-~~~bash
+```bash
 rg -q 'SandboxRunner' docs/adr/0024-sandbox-runner-lifecycle.md docs/ARCHITECTURE.md docs/SECURITY.md
 npm run test:unit -- packages/contracts/src/sandbox.test.ts packages/domain/src/sandbox-runner.test.ts
 npm run format:check
-~~~
+```
 
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
 
-~~~bash
+```bash
 git add docs/adr/0024-sandbox-runner-lifecycle.md docs/ARCHITECTURE.md docs/SECURITY.md
 git commit -m "docs: record sandbox runner security boundary"
-~~~
+```
 
 ---
 

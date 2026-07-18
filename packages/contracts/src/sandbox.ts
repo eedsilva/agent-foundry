@@ -57,5 +57,7 @@ export const SandboxSnapshotFileSchema = z
   .strict();
 export type SandboxSnapshotFile = z.infer<typeof SandboxSnapshotFileSchema>;
 
-export const SandboxSnapshotSchema = z.object({ files: z.array(SandboxSnapshotFileSchema) }).strict();
+export const SandboxSnapshotSchema = z
+  .object({ files: z.array(SandboxSnapshotFileSchema) })
+  .strict();
 export type SandboxSnapshot = z.infer<typeof SandboxSnapshotSchema>;
