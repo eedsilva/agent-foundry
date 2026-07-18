@@ -1,8 +1,16 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
-import { exists, safeSegment, withRecoverableDirectoryLock } from './fs-utils.js';
+import { ArtifactTooLargeError } from '@agent-foundry/domain';
+import {
+  atomicWriteStream,
+  exists,
+  safeSegment,
+  sha256,
+  withRecoverableDirectoryLock,
+} from './fs-utils.js';
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -180,5 +188,29 @@ describe('withRecoverableDirectoryLock', () => {
       'A lock path segment is required',
     );
     expect(await readdir(root)).toEqual([]);
+  });
+});
+
+describe('atomicWriteStream', () => {
+  it('streams content to disk and returns its hash and size', async () => {
+    const root = await temporaryDirectory();
+    const path = join(root, 'blob.bin');
+    const content = Buffer.from('hello world');
+
+    const result = await atomicWriteStream(path, Readable.from(content), 1_000);
+
+    expect(result).toEqual({ sha256: sha256(content), sizeBytes: content.byteLength });
+    await expect(readFile(path)).resolves.toEqual(content);
+  });
+
+  it('rejects content over the byte limit and leaves no temp file behind', async () => {
+    const root = await temporaryDirectory();
+    const path = join(root, 'blob.bin');
+    const content = Buffer.from('this is definitely more than ten bytes');
+
+    await expect(atomicWriteStream(path, Readable.from(content), 10)).rejects.toThrow(
+      ArtifactTooLargeError,
+    );
+    await expect(readdir(root)).resolves.toEqual([]);
   });
 });

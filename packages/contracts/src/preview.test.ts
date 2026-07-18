@@ -6,20 +6,76 @@ import {
   BrowserAssertionSchema,
   BrowserLocatorSchema,
   BrowserRoleSchema,
+  BrowserScreenshotEvidenceSchema,
   BrowserTestPlanArtifactSchema,
   BrowserTestPlanSchema,
   BrowserVerificationReportSchema,
   PreviewCommandPlanSchema,
+  PreviewEvidenceSchema,
   PreviewFailureDiagnosticSchema,
   PreviewLogPageSchema,
   PreviewSessionReferenceSchema,
   PreviewSessionSchema,
   type PreviewSession,
 } from './preview.js';
-import { StepAttemptSchema } from './run.js';
+import { ArtifactReferenceSchema, StepAttemptSchema } from './run.js';
 
 const createdAt = '2026-07-14T12:00:00.000Z';
 const startedAt = '2026-07-14T12:00:05.000Z';
+
+describe('ArtifactReferenceSchema', () => {
+  it('accepts an optional sizeBytes without requiring it', () => {
+    expect(
+      ArtifactReferenceSchema.parse({ name: 'plan', revision: 1, sha256: 'a'.repeat(64) }),
+    ).toEqual({ name: 'plan', revision: 1, sha256: 'a'.repeat(64) });
+    expect(
+      ArtifactReferenceSchema.parse({
+        name: 'plan',
+        revision: 1,
+        sha256: 'a'.repeat(64),
+        sizeBytes: 128,
+      }).sizeBytes,
+    ).toBe(128);
+  });
+});
+
+describe('BrowserScreenshotEvidenceSchema', () => {
+  it('carries viewport, url, step id, and hash alongside the artifact reference', () => {
+    const parsed = BrowserScreenshotEvidenceSchema.parse({
+      name: 'browser-screenshot-preview-1-open-items',
+      revision: 1,
+      sha256: 'a'.repeat(64),
+      sizeBytes: 4096,
+      stepId: 'open-items',
+      url: 'http://127.0.0.1:4000/preview/preview-1/items',
+      viewport: { width: 1280, height: 720 },
+    });
+    expect(parsed.stepId).toBe('open-items');
+    expect(parsed.viewport).toEqual({ width: 1280, height: 720 });
+  });
+});
+
+describe('PreviewEvidenceSchema', () => {
+  it('defaults to an empty screenshot array and accepts optional trace/video/logs', () => {
+    expect(PreviewEvidenceSchema.parse({})).toEqual({ screenshots: [] });
+    const full = PreviewEvidenceSchema.parse({
+      logs: { name: 'browser-logs', revision: 1, sha256: 'a'.repeat(64) },
+      screenshots: [
+        {
+          name: 'browser-screenshot-preview-1-open-items',
+          revision: 1,
+          sha256: 'a'.repeat(64),
+          stepId: 'open-items',
+          url: 'http://127.0.0.1:4000/preview/preview-1/items',
+          viewport: { width: 1280, height: 720 },
+        },
+      ],
+      trace: { name: 'browser-trace-preview-1', revision: 1, sha256: 'b'.repeat(64) },
+      video: { name: 'browser-video-preview-1', revision: 1, sha256: 'c'.repeat(64) },
+    });
+    expect(full.video?.name).toBe('browser-video-preview-1');
+  });
+});
 
 function baseSession(): Record<string, unknown> {
   return {
@@ -185,7 +241,16 @@ describe('preview references on run artifacts', () => {
       url: 'http://127.0.0.1:3100',
       evidence: {
         logs: { name: 'preview-logs-1', revision: 1, sha256: 'a'.repeat(64) },
-        screenshots: [{ name: 'preview-shot-1', revision: 1, sha256: 'b'.repeat(64) }],
+        screenshots: [
+          {
+            name: 'preview-shot-1',
+            revision: 1,
+            sha256: 'b'.repeat(64),
+            stepId: 'step-1',
+            url: 'http://127.0.0.1:3100/page',
+            viewport: { width: 1280, height: 720 },
+          },
+        ],
       },
     });
     expect(reference.evidence.screenshots).toHaveLength(1);
@@ -607,7 +672,16 @@ describe('browser verification contracts', () => {
         url: 'http://127.0.0.1:3100',
         evidence: {
           logs: { name: 'preview-logs', revision: 1, sha256: 'b'.repeat(64) },
-          screenshots: [{ name: 'delete-failure', revision: 1, sha256: 'c'.repeat(64) }],
+          screenshots: [
+            {
+              name: 'delete-failure',
+              revision: 1,
+              sha256: 'c'.repeat(64),
+              stepId: 'delete',
+              url: 'http://127.0.0.1:3100/items',
+              viewport: { width: 1280, height: 720 },
+            },
+          ],
           trace: { name: 'browser-trace', revision: 1, sha256: 'd'.repeat(64) },
         },
       },
@@ -646,7 +720,7 @@ describe('browser verification contracts', () => {
           evidence: { ...report.previewSession.evidence, video: report.planArtifact },
         },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it.each([

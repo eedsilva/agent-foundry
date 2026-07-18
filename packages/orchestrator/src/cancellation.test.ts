@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+import { buffer } from 'node:stream/consumers';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ModelDefinitionSchema,
@@ -253,6 +255,7 @@ class InMemoryApprovalDecisions implements ApprovalDecisionRepository {
 
 class InMemoryArtifacts implements ArtifactStore {
   readonly artifacts: StoredArtifact[] = [];
+  readonly blobs: Array<{ metadata: ArtifactMetadata; buffer: Buffer }> = [];
   put(input: {
     projectId: string;
     name: string;
@@ -276,6 +279,43 @@ class InMemoryArtifacts implements ArtifactStore {
     const stored: StoredArtifact = { metadata, content: input.content };
     this.artifacts.push(stored);
     return Promise.resolve(stored);
+  }
+  async putBlob(
+    input: { projectId: string; name: string; contentType: string; createdBy: string },
+    source: Readable,
+  ): Promise<ArtifactMetadata> {
+    const content = await buffer(source);
+    const revision =
+      this.artifacts.filter(
+        (artifact) =>
+          artifact.metadata.projectId === input.projectId && artifact.metadata.name === input.name,
+      ).length +
+      this.blobs.filter(
+        (entry) =>
+          entry.metadata.projectId === input.projectId && entry.metadata.name === input.name,
+      ).length;
+    const metadata: ArtifactMetadata = {
+      projectId: input.projectId,
+      name: input.name,
+      revision: revision + 1,
+      contentType: input.contentType,
+      createdAt: new Date().toISOString(),
+      createdBy: input.createdBy,
+      storage: 'blob',
+      sizeBytes: content.byteLength,
+      sha256: 'f'.repeat(64),
+    };
+    this.blobs.push({ metadata, buffer: content });
+    return metadata;
+  }
+  getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null> {
+    const entry = this.blobs.find(
+      (item) =>
+        item.metadata.projectId === projectId &&
+        item.metadata.name === name &&
+        item.metadata.revision === revision,
+    );
+    return Promise.resolve(entry ? Readable.from(entry.buffer) : null);
   }
   getLatest(projectId: string, name: string): Promise<StoredArtifact | null> {
     const matches = this.artifacts.filter(

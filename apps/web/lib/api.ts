@@ -163,6 +163,11 @@ export function getArtifact(
   );
 }
 
+export function getArtifactBlobUrl(projectId: string, name: string, revision?: number): string {
+  const query = revision ? `?revision=${revision}` : '';
+  return `${API_URL}/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(name)}/blob${query}`;
+}
+
 export async function listWorkflows(): Promise<WorkflowDefinition[]> {
   const response = await api<{ workflows: WorkflowDefinition[] }>('/workflows');
   return response.workflows;

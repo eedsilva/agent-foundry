@@ -41,6 +41,7 @@ import {
   WorkflowOrchestrator,
   PreviewService,
   BrowserVerificationCoordinator,
+  type BrowserEvidenceLimits,
 } from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
 import type { BrowserVerifier } from '@agent-foundry/domain';
@@ -159,10 +160,21 @@ export async function createRuntime(
     ids,
   );
   const browserVerifier = new PlaywrightBrowserVerifier();
+  const browserEvidenceLimits = {
+    maxScreenshotBytes: config.artifactMaxScreenshotBytes,
+    maxTraceBytes: config.artifactMaxTraceBytes,
+    maxVideoBytes: config.artifactMaxVideoBytes,
+    retentionSeconds: config.artifactRetentionSeconds,
+  };
   const browserVerification =
     config.executorMode === 'mock'
-      ? mockBrowserVerificationCoordinator()
-      : new BrowserVerificationCoordinator(previewService, browserVerifier);
+      ? mockBrowserVerificationCoordinator(artifacts, browserEvidenceLimits)
+      : new BrowserVerificationCoordinator(
+          previewService,
+          browserVerifier,
+          artifacts,
+          browserEvidenceLimits,
+        );
   const orchestrator = new WorkflowOrchestrator(
     projects,
     runs,
@@ -261,7 +273,10 @@ export async function createRuntime(
   };
 }
 
-function mockBrowserVerificationCoordinator(): BrowserVerificationCoordinator {
+function mockBrowserVerificationCoordinator(
+  artifacts: Pick<FileArtifactStore, 'putBlob'>,
+  limits: BrowserEvidenceLimits,
+): BrowserVerificationCoordinator {
   let sequence = 0;
   const sessions = new Map<string, PreviewSession>();
   const previews: Pick<PreviewService, 'start' | 'stop'> = {
@@ -303,23 +318,26 @@ function mockBrowserVerificationCoordinator(): BrowserVerificationCoordinator {
     verify: (input) => {
       const plan = BrowserTestPlanArtifactSchema.parse(input.planContent).data;
       return Promise.resolve({
-        schemaVersion: '1',
-        approved: true,
-        summary: 'Mock browser verification passed.',
-        planArtifact: input.planArtifact,
-        previewSession: {
-          ...input.session,
-          url: input.session.url?.replace(/\?.*$/, ''),
+        report: {
+          schemaVersion: '1',
+          approved: true,
+          summary: 'Mock browser verification passed.',
+          planArtifact: input.planArtifact,
+          previewSession: {
+            ...input.session,
+            url: input.session.url?.replace(/\?.*$/, ''),
+          },
+          steps: plan.steps.map((step) => ({
+            stepId: step.id,
+            title: step.title,
+            status: 'passed' as const,
+            durationMs: 0,
+            observations: [],
+          })),
         },
-        steps: plan.steps.map((step) => ({
-          stepId: step.id,
-          title: step.title,
-          status: 'passed',
-          durationMs: 0,
-          observations: [],
-        })),
+        evidence: { screenshots: [] },
       });
     },
   };
-  return new BrowserVerificationCoordinator(previews, verifier);
+  return new BrowserVerificationCoordinator(previews, verifier, artifacts, limits);
 }

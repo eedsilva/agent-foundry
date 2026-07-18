@@ -1,5 +1,9 @@
+import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { buffer } from 'node:stream/consumers';
 import { describe, expect, it } from 'vitest';
 import type {
+  ArtifactMetadata,
   Attachment,
   Conversation,
   Message,
@@ -12,6 +16,7 @@ import {
   IdempotencyConflictError,
   NotFoundError,
   ValidationError,
+  type ArtifactBlobPutInput,
   type ArtifactStore,
   type Clock,
   type ConversationRepository,
@@ -275,6 +280,7 @@ class MemoryRuns implements WorkflowRunRepository {
 
 class MemoryArtifacts implements ArtifactStore {
   private readonly values = new Map<string, StoredArtifact>();
+  private readonly blobs = new Map<string, { metadata: ArtifactMetadata; buffer: Buffer }>();
 
   put(input: Parameters<ArtifactStore['put']>[0]): Promise<StoredArtifact> {
     const stored: StoredArtifact = {
@@ -291,6 +297,33 @@ class MemoryArtifacts implements ArtifactStore {
     };
     this.values.set(`${input.projectId}/${input.name}/1`, stored);
     return Promise.resolve(stored);
+  }
+
+  async putBlob(input: ArtifactBlobPutInput, source: Readable): Promise<ArtifactMetadata> {
+    const content = await buffer(source);
+    const prefix = `${input.projectId}/${input.name}/`;
+    const revision =
+      [...this.values.keys()].filter((key) => key.startsWith(prefix)).length +
+      [...this.blobs.keys()].filter((key) => key.startsWith(prefix)).length +
+      1;
+    const metadata: ArtifactMetadata = {
+      projectId: input.projectId,
+      name: input.name,
+      revision,
+      contentType: input.contentType,
+      createdAt: '2026-07-17T12:00:00.000Z',
+      createdBy: input.createdBy,
+      storage: 'blob',
+      sizeBytes: content.byteLength,
+      sha256: createHash('sha256').update(content).digest('hex'),
+    };
+    this.blobs.set(`${input.projectId}/${input.name}/${revision}`, { metadata, buffer: content });
+    return metadata;
+  }
+
+  getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null> {
+    const entry = this.blobs.get(`${projectId}/${name}/${revision}`);
+    return Promise.resolve(entry ? Readable.from(entry.buffer) : null);
   }
 
   getLatest(projectId: string, name: string): Promise<StoredArtifact | null> {

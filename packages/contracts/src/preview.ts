@@ -21,6 +21,13 @@ export type PreviewHealthState = z.infer<typeof PreviewHealthStateSchema>;
 export const PreviewFailurePhaseSchema = z.enum(['prepare', 'start', 'health', 'runtime', 'reap']);
 export type PreviewFailurePhase = z.infer<typeof PreviewFailurePhaseSchema>;
 
+const ViewportSchema = z
+  .object({
+    width: z.number().int().min(1).max(10_000),
+    height: z.number().int().min(1).max(10_000),
+  })
+  .strict();
+
 export const PreviewHealthSchema = z
   .object({
     state: PreviewHealthStateSchema,
@@ -277,11 +284,19 @@ export const PreviewFailureDiagnosticSchema = z
   .strict();
 export type PreviewFailureDiagnostic = z.infer<typeof PreviewFailureDiagnosticSchema>;
 
+export const BrowserScreenshotEvidenceSchema = ArtifactReferenceSchema.extend({
+  stepId: PathSegmentSchema,
+  url: z.string(),
+  viewport: ViewportSchema,
+}).strict();
+export type BrowserScreenshotEvidence = z.infer<typeof BrowserScreenshotEvidenceSchema>;
+
 export const PreviewEvidenceSchema = z
   .object({
     logs: ArtifactReferenceSchema.optional(),
-    screenshots: z.array(ArtifactReferenceSchema).default([]),
+    screenshots: z.array(BrowserScreenshotEvidenceSchema).default([]),
     trace: ArtifactReferenceSchema.optional(),
+    video: ArtifactReferenceSchema.optional(),
   })
   .strict();
 export type PreviewEvidence = z.infer<typeof PreviewEvidenceSchema>;
@@ -460,12 +475,7 @@ export const BrowserTestPlanSchema = z
     schemaVersion: z.literal('1'),
     id: PathSegmentSchema,
     title: z.string().min(1),
-    viewport: z
-      .object({
-        width: z.number().int().min(1).max(10_000),
-        height: z.number().int().min(1).max(10_000),
-      })
-      .strict(),
+    viewport: ViewportSchema,
     steps: z
       .array(
         z

@@ -1,3 +1,4 @@
+import type { Readable } from 'node:stream';
 import type {
   AgentExecutionRequest,
   AgentExecutionResult,
@@ -8,6 +9,7 @@ import type {
   ArtifactMetadata,
   Conversation,
   ArtifactReference,
+  BrowserEvidencePolicy,
   BrowserVerificationReport,
   ExecutorHealth,
   ModelDefinition,
@@ -107,6 +109,18 @@ export interface ApprovalDecisionRepository {
   get(runId: string, requestId: string): Promise<ApprovalDecision | null>;
 }
 
+export interface ArtifactBlobPutInput {
+  projectId: string;
+  name: string;
+  contentType: string;
+  createdBy: string;
+  maxBytes: number;
+  runId?: string;
+  stepRunId?: string;
+  attemptId?: string;
+  retentionSeconds?: number;
+}
+
 export interface ArtifactStore {
   put(input: {
     projectId: string;
@@ -123,6 +137,8 @@ export interface ArtifactStore {
     routeDecision?: RouteDecision;
     idempotencyKey?: string;
   }): Promise<StoredArtifact>;
+  putBlob(input: ArtifactBlobPutInput, source: Readable): Promise<ArtifactMetadata>;
+  getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null>;
   getLatest(projectId: string, name: string): Promise<StoredArtifact | null>;
   getRevision(projectId: string, name: string, revision: number): Promise<StoredArtifact | null>;
   listLatest(projectId: string): Promise<StoredArtifact[]>;
@@ -238,6 +254,19 @@ export interface PreviewRunner {
   stop(session: PreviewSession): Promise<PreviewSession>;
 }
 
+export interface CapturedScreenshot {
+  stepId: string;
+  url: string;
+  viewport: { width: number; height: number };
+  buffer: Buffer;
+}
+
+export interface BrowserVerificationEvidence {
+  screenshots: CapturedScreenshot[];
+  trace?: Buffer;
+  video?: Buffer;
+}
+
 export interface BrowserVerifier {
   verify(
     input: {
@@ -245,9 +274,10 @@ export interface BrowserVerifier {
       planContent: unknown;
       session: PreviewSessionReference;
       allowedOrigins: string[];
+      evidencePolicy: BrowserEvidencePolicy;
     },
     signal: AbortSignal,
-  ): Promise<BrowserVerificationReport>;
+  ): Promise<{ report: BrowserVerificationReport; evidence: BrowserVerificationEvidence }>;
 }
 
 export interface PreviewSessionRecord {

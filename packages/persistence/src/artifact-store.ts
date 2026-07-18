@@ -1,4 +1,7 @@
+import { createReadStream } from 'node:fs';
+import { readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Readable } from 'node:stream';
 import {
   ArtifactMetadataSchema,
   StoredArtifactSchema,
@@ -7,10 +10,12 @@ import {
   type RouteDecision,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
-import type { ArtifactStore } from '@agent-foundry/domain';
+import type { ArtifactBlobPutInput, ArtifactStore } from '@agent-foundry/domain';
 import {
   atomicWriteJson,
+  atomicWriteStream,
   ensureDir,
+  exists,
   readJsonOrNull,
   safeSegment,
   sha256,
@@ -19,6 +24,14 @@ import {
 
 interface ArtifactIndex {
   artifacts: Record<string, ArtifactMetadata[]>;
+}
+
+function metadataPath(root: string, name: string, revision: number): string {
+  return join(root, name, `${String(revision).padStart(6, '0')}.json`);
+}
+
+function blobPath(root: string, name: string, revision: number): string {
+  return join(root, name, 'blobs', `${String(revision).padStart(6, '0')}.bin`);
 }
 
 export class FileArtifactStore implements ArtifactStore {
@@ -80,13 +93,108 @@ export class FileArtifactStore implements ArtifactStore {
       });
 
       const stored = StoredArtifactSchema.parse({ metadata, content: input.content });
-      const artifactPath = join(root, name, `${String(revision).padStart(6, '0')}.json`);
-      await atomicWriteJson(artifactPath, stored);
+      await atomicWriteJson(metadataPath(root, name, revision), stored);
 
       index.artifacts[name] = [...revisions, metadata];
       await atomicWriteJson(indexPath, index);
       return stored;
     });
+  }
+
+  async putBlob(input: ArtifactBlobPutInput, source: Readable): Promise<ArtifactMetadata> {
+    const projectId = safeSegment(input.projectId);
+    const name = safeSegment(input.name);
+    const root = join(this.dataDir, 'projects', projectId, 'artifacts');
+    const lock = join(root, '.index.lock');
+
+    return withDirectoryLock(lock, async () => {
+      const indexPath = join(root, 'index.json');
+      const index = (await readJsonOrNull<ArtifactIndex>(indexPath)) ?? { artifacts: {} };
+      const revisions = index.artifacts[name] ?? [];
+      const revision = revisions.length + 1;
+      const { sha256: hash, sizeBytes } = await atomicWriteStream(
+        blobPath(root, name, revision),
+        source,
+        input.maxBytes,
+      );
+
+      const metadata = ArtifactMetadataSchema.parse({
+        projectId,
+        name,
+        revision,
+        contentType: input.contentType,
+        createdAt: new Date().toISOString(),
+        createdBy: input.createdBy,
+        ...(input.runId ? { runId: input.runId } : {}),
+        ...(input.stepRunId ? { stepRunId: input.stepRunId } : {}),
+        ...(input.attemptId ? { attemptId: input.attemptId } : {}),
+        storage: 'blob',
+        sizeBytes,
+        ...(input.retentionSeconds
+          ? { expiresAt: new Date(Date.now() + input.retentionSeconds * 1000).toISOString() }
+          : {}),
+        sha256: hash,
+      });
+
+      const stored = StoredArtifactSchema.parse({ metadata, content: null });
+      await atomicWriteJson(metadataPath(root, name, revision), stored);
+
+      index.artifacts[name] = [...revisions, metadata];
+      await atomicWriteJson(indexPath, index);
+      return metadata;
+    });
+  }
+
+  async getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null> {
+    const root = join(this.dataDir, 'projects', safeSegment(projectId), 'artifacts');
+    const path = blobPath(root, safeSegment(name), revision);
+    if (!(await exists(path))) return null;
+    return createReadStream(path);
+  }
+
+  async reapExpired(now: Date): Promise<number> {
+    const projectsRoot = join(this.dataDir, 'projects');
+    const projectIds = await readdir(projectsRoot).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    });
+    const nowIso = now.toISOString();
+    const counts = await Promise.all(
+      projectIds.map((projectId) => {
+        const artifactsRoot = join(projectsRoot, projectId, 'artifacts');
+        const lock = join(artifactsRoot, '.index.lock');
+        return withDirectoryLock(lock, async () => {
+          const indexPath = join(artifactsRoot, 'index.json');
+          const index = await readJsonOrNull<ArtifactIndex>(indexPath);
+          if (!index) return 0;
+          let count = 0;
+          for (const [name, revisions] of Object.entries(index.artifacts)) {
+            for (const metadata of revisions) {
+              if (
+                metadata.storage === 'blob' &&
+                !metadata.blobDeleted &&
+                metadata.expiresAt &&
+                metadata.expiresAt <= nowIso
+              ) {
+                await rm(blobPath(artifactsRoot, safeSegment(name), metadata.revision), {
+                  force: true,
+                });
+                metadata.blobDeleted = true;
+                const stored = StoredArtifactSchema.parse({ metadata, content: null });
+                await atomicWriteJson(
+                  metadataPath(artifactsRoot, safeSegment(name), metadata.revision),
+                  stored,
+                );
+                count += 1;
+              }
+            }
+          }
+          if (count > 0) await atomicWriteJson(indexPath, index);
+          return count;
+        });
+      }),
+    );
+    return counts.reduce((total, count) => total + count, 0);
   }
 
   async getLatest(projectId: string, name: string): Promise<StoredArtifact | null> {
@@ -100,15 +208,8 @@ export class FileArtifactStore implements ArtifactStore {
     name: string,
     revision: number,
   ): Promise<StoredArtifact | null> {
-    const path = join(
-      this.dataDir,
-      'projects',
-      safeSegment(projectId),
-      'artifacts',
-      safeSegment(name),
-      `${String(revision).padStart(6, '0')}.json`,
-    );
-    const stored = await readJsonOrNull<unknown>(path);
+    const root = join(this.dataDir, 'projects', safeSegment(projectId), 'artifacts');
+    const stored = await readJsonOrNull<unknown>(metadataPath(root, safeSegment(name), revision));
     return stored ? StoredArtifactSchema.parse(stored) : null;
   }
 

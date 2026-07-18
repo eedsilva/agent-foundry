@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PreviewAccessDeniedError } from './errors.js';
+import { ArtifactTooLargeError, PreviewAccessDeniedError } from './errors.js';
 
 describe('PreviewAccessDeniedError', () => {
   it('carries the session id and reason in a readable message', () => {
@@ -9,5 +9,13 @@ describe('PreviewAccessDeniedError', () => {
     expect(error.reason).toBe('token mismatch');
     expect(error.message).toContain('sess-1');
     expect(error.message).toContain('token mismatch');
+  });
+});
+
+describe('ArtifactTooLargeError', () => {
+  it('names ArtifactTooLargeError with the byte ceiling in its message', () => {
+    const error = new ArtifactTooLargeError(1_024);
+    expect(error.name).toBe('ArtifactTooLargeError');
+    expect(error.message).toContain('1024');
   });
 });

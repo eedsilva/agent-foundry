@@ -1,8 +1,10 @@
+import type { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import type { ArtifactMetadata, ProjectVersion, StoredArtifact } from '@agent-foundry/contracts';
 import {
   NotFoundError,
   VersionConflictError,
+  type ArtifactBlobPutInput,
   type ArtifactStore,
   type Clock,
   type IdGenerator,
@@ -123,6 +125,12 @@ class FakeArtifacts implements ArtifactStore {
   metadata: ArtifactMetadata[] = [];
   put(): Promise<StoredArtifact> {
     throw new Error('not used by ProjectVersionService');
+  }
+  putBlob(_input: ArtifactBlobPutInput, _source: Readable): Promise<ArtifactMetadata> {
+    throw new Error('not used by ProjectVersionService');
+  }
+  getBlobStream(): Promise<Readable | null> {
+    return Promise.resolve(null);
   }
   getLatest(): Promise<StoredArtifact | null> {
     return Promise.resolve(null);

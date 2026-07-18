@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { buffer } from 'node:stream/consumers';
 import {
   ModelDefinitionSchema,
   ProjectPolicySchema,
@@ -33,6 +35,7 @@ import {
   type AgentExecutor,
   type ApprovalDecisionRepository,
   type ApprovalRequestRepository,
+  type ArtifactBlobPutInput,
   type ArtifactStore,
   type Clock,
   type EventStore,
@@ -396,6 +399,7 @@ export class InMemoryApprovalDecisions implements ApprovalDecisionRepository {
 
 export class InMemoryArtifacts implements ArtifactStore {
   readonly artifacts: StoredArtifact[] = [];
+  readonly blobs: Array<{ metadata: ArtifactMetadata; buffer: Buffer }> = [];
   onAfterPut?: ((name: string) => void) | undefined;
   constructor(private readonly power: PowerSwitch) {}
   put(input: Parameters<ArtifactStore['put']>[0]): Promise<StoredArtifact> {
@@ -431,6 +435,39 @@ export class InMemoryArtifacts implements ArtifactStore {
     this.artifacts.push(stored);
     this.onAfterPut?.(input.name);
     return Promise.resolve(stored);
+  }
+  async putBlob(input: ArtifactBlobPutInput, source: Readable): Promise<ArtifactMetadata> {
+    checkPower(this.power);
+    const content = await buffer(source);
+    const revision =
+      this.named(input.name).length +
+      this.blobs.filter((entry) => entry.metadata.name === input.name).length +
+      1;
+    const metadata: ArtifactMetadata = {
+      projectId: input.projectId,
+      name: input.name,
+      revision,
+      contentType: input.contentType,
+      createdAt: new Date().toISOString(),
+      createdBy: input.createdBy,
+      ...(input.runId ? { runId: input.runId } : {}),
+      ...(input.stepRunId ? { stepRunId: input.stepRunId } : {}),
+      ...(input.attemptId ? { attemptId: input.attemptId } : {}),
+      storage: 'blob',
+      sizeBytes: content.byteLength,
+      sha256: createHash('sha256').update(content).digest('hex'),
+    };
+    this.blobs.push({ metadata, buffer: content });
+    return metadata;
+  }
+  getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null> {
+    const entry = this.blobs.find(
+      (item) =>
+        item.metadata.projectId === projectId &&
+        item.metadata.name === name &&
+        item.metadata.revision === revision,
+    );
+    return Promise.resolve(entry ? Readable.from(entry.buffer) : null);
   }
   getLatest(projectId: string, name: string): Promise<StoredArtifact | null> {
     const matches = this.artifacts.filter(

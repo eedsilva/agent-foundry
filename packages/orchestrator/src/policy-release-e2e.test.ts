@@ -183,6 +183,27 @@ const BROWSER_PLAN = {
   nextActions: [],
 } satisfies AgentArtifact;
 
+const MOCK_ARTIFACTS = {
+  putBlob: () =>
+    Promise.resolve({
+      projectId: 'project-1',
+      name: 'test',
+      revision: 1,
+      contentType: 'application/octet-stream',
+      createdAt: '2026-07-17T12:00:00.000Z',
+      createdBy: 'tester',
+      sha256: 'a'.repeat(64),
+      storage: 'blob' as const,
+      sizeBytes: 0,
+    }),
+};
+const MOCK_LIMITS = {
+  maxScreenshotBytes: 10_000_000,
+  maxTraceBytes: 50_000_000,
+  maxVideoBytes: 100_000_000,
+  retentionSeconds: 86400,
+};
+
 function browserReportSteps(approved: boolean): BrowserVerificationReport['steps'] {
   return [
     {
@@ -235,7 +256,12 @@ function browserCoordinator(verify: BrowserVerifier['verify']) {
     },
   } satisfies Pick<PreviewService, 'start' | 'stop'>;
   return {
-    coordinator: new BrowserVerificationCoordinator(previews, { verify }),
+    coordinator: new BrowserVerificationCoordinator(
+      previews,
+      { verify },
+      MOCK_ARTIFACTS,
+      MOCK_LIMITS,
+    ),
     get started() {
       return sequence;
     },
@@ -354,7 +380,7 @@ describe('browser verification orchestration (#32)', () => {
         verifierInputs.push(input);
         if (verifierInputs.length === 1) await addNewerPlan();
         const approved = verifierInputs.length > 1;
-        return BrowserVerificationReportSchema.parse({
+        const report = BrowserVerificationReportSchema.parse({
           schemaVersion: '1',
           approved,
           summary: approved ? 'Browser verification passed.' : 'Browser verification failed.',
@@ -365,9 +391,18 @@ describe('browser verification orchestration (#32)', () => {
           },
           steps: browserReportSteps(approved),
         }) satisfies BrowserVerificationReport;
+        return {
+          report,
+          evidence: { screenshots: [] },
+        };
       },
     };
-    const browserVerification = new BrowserVerificationCoordinator(previews, browserVerifier);
+    const browserVerification = new BrowserVerificationCoordinator(
+      previews,
+      browserVerifier,
+      MOCK_ARTIFACTS,
+      MOCK_LIMITS,
+    );
     let planRequestOutputSchema: AgentExecutionRequest['outputSchema'];
     const harness = makeHarness({}, undefined, {
       workflow: BROWSER_WORKFLOW,
@@ -592,21 +627,23 @@ describe('browser verification orchestration (#32)', () => {
   it.each(['report-artifact', 'attempt-success'] as const)(
     'does not advance the verified checkpoint when %s persistence fails',
     async (failure) => {
-      const browser = browserCoordinator((input) =>
-        Promise.resolve(
-          BrowserVerificationReportSchema.parse({
-            schemaVersion: '1',
-            approved: true,
-            summary: 'Browser verification passed.',
-            planArtifact: input.planArtifact,
-            previewSession: {
-              ...input.session,
-              url: input.session.url?.replace(/\?.*$/, ''),
-            },
-            steps: browserReportSteps(true),
-          }),
-        ),
-      );
+      const browser = browserCoordinator((input) => {
+        const report = BrowserVerificationReportSchema.parse({
+          schemaVersion: '1',
+          approved: true,
+          summary: 'Browser verification passed.',
+          planArtifact: input.planArtifact,
+          previewSession: {
+            ...input.session,
+            url: input.session.url?.replace(/\?.*$/, ''),
+          },
+          steps: browserReportSteps(true),
+        });
+        return Promise.resolve({
+          report,
+          evidence: { screenshots: [] },
+        });
+      });
       const harness = makeHarness({}, undefined, {
         workflow: BROWSER_WORKFLOW,
         browserVerification: browser.coordinator,
@@ -652,19 +689,21 @@ describe('browser verification orchestration (#32)', () => {
       let verifierCalls = 0;
       const browser = browserCoordinator((input) => {
         const approved = approvals[verifierCalls++]!;
-        return Promise.resolve(
-          BrowserVerificationReportSchema.parse({
-            schemaVersion: '1',
-            approved,
-            summary: approved ? 'Persisted browser approval.' : 'Persisted browser rejection.',
-            planArtifact: input.planArtifact,
-            previewSession: {
-              ...input.session,
-              url: input.session.url?.replace(/\?.*$/, ''),
-            },
-            steps: browserReportSteps(approved),
-          }),
-        );
+        const report = BrowserVerificationReportSchema.parse({
+          schemaVersion: '1',
+          approved,
+          summary: approved ? 'Persisted browser approval.' : 'Persisted browser rejection.',
+          planArtifact: input.planArtifact,
+          previewSession: {
+            ...input.session,
+            url: input.session.url?.replace(/\?.*$/, ''),
+          },
+          steps: browserReportSteps(approved),
+        });
+        return Promise.resolve({
+          report,
+          evidence: { screenshots: [] },
+        });
       });
       const harness = makeHarness({}, undefined, {
         workflow: BROWSER_WORKFLOW,
@@ -748,21 +787,23 @@ describe('browser verification orchestration (#32)', () => {
   ] as const)(
     'rejects an adversarial persisted approval with a different %s',
     async (_case, mutate) => {
-      const browser = browserCoordinator((input) =>
-        Promise.resolve(
-          BrowserVerificationReportSchema.parse({
-            schemaVersion: '1',
-            approved: true,
-            summary: 'Persisted browser approval.',
-            planArtifact: input.planArtifact,
-            previewSession: {
-              ...input.session,
-              url: input.session.url?.replace(/\?.*$/, ''),
-            },
-            steps: browserReportSteps(true),
-          }),
-        ),
-      );
+      const browser = browserCoordinator((input) => {
+        const report = BrowserVerificationReportSchema.parse({
+          schemaVersion: '1',
+          approved: true,
+          summary: 'Persisted browser approval.',
+          planArtifact: input.planArtifact,
+          previewSession: {
+            ...input.session,
+            url: input.session.url?.replace(/\?.*$/, ''),
+          },
+          steps: browserReportSteps(true),
+        });
+        return Promise.resolve({
+          report,
+          evidence: { screenshots: [] },
+        });
+      });
       const harness = makeHarness({}, undefined, {
         workflow: BROWSER_WORKFLOW,
         browserVerification: browser.coordinator,

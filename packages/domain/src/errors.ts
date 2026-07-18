@@ -20,6 +20,14 @@ export class QueueError extends Error {
   override readonly name = 'QueueError';
 }
 
+export class ArtifactTooLargeError extends Error {
+  override readonly name = 'ArtifactTooLargeError';
+
+  constructor(readonly maxBytes: number) {
+    super(`Artifact exceeds the ${maxBytes}-byte limit`);
+  }
+}
+
 export class ExecutionError extends Error {
   override readonly name = 'ExecutionError';
 

@@ -3,6 +3,7 @@ import type { ProjectVersion } from '@agent-foundry/contracts';
 import {
   branchFromVersion,
   compareVersions,
+  getArtifactBlobUrl,
   listVersions,
   revertToVersion,
   setVersionProtected,
@@ -117,5 +118,19 @@ describe('project version API client', () => {
     );
     expect(result).toEqual(protectedVersion);
     fetchMock.mockRestore();
+  });
+});
+
+describe('getArtifactBlobUrl', () => {
+  it('builds the download URL for the latest revision', () => {
+    expect(getArtifactBlobUrl('project-1', 'browser-screenshot-preview-1-open-items')).toBe(
+      'http://localhost:4000/projects/project-1/artifacts/browser-screenshot-preview-1-open-items/blob',
+    );
+  });
+
+  it('includes an explicit revision when provided', () => {
+    expect(getArtifactBlobUrl('project-1', 'browser-trace-preview-1', 2)).toBe(
+      'http://localhost:4000/projects/project-1/artifacts/browser-trace-preview-1/blob?revision=2',
+    );
   });
 });

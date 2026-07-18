@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   BrowserVerificationReportSchema,
+  DEFAULT_BROWSER_EVIDENCE_POLICY,
   type BrowserVerificationReport,
   type PreviewSession,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
-import { RunCancelledError, type BrowserVerifier } from '@agent-foundry/domain';
+import {
+  ArtifactTooLargeError,
+  RunCancelledError,
+  type ArtifactStore,
+  type BrowserVerifier,
+} from '@agent-foundry/domain';
 import type { PreviewService } from './preview-service.js';
 import { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
 
@@ -93,7 +99,12 @@ function report(): BrowserVerificationReport {
   });
 }
 
-function setup(verify: BrowserVerifier['verify']) {
+function setup(
+  verify: BrowserVerifier['verify'],
+  artifacts: Pick<ArtifactStore, 'putBlob'> = {
+    putBlob: () => Promise.reject(new Error('putBlob should not be called by this fixture')),
+  },
+) {
   const stopped: string[] = [];
   const session = runningSession();
   const previews = {
@@ -107,7 +118,12 @@ function setup(verify: BrowserVerifier['verify']) {
       });
     },
   } satisfies Pick<PreviewService, 'start' | 'stop'>;
-  const coordinator = new BrowserVerificationCoordinator(previews, { verify });
+  const coordinator = new BrowserVerificationCoordinator(previews, { verify }, artifacts, {
+    maxScreenshotBytes: 5_000_000,
+    maxTraceBytes: 20_000_000,
+    maxVideoBytes: 50_000_000,
+    retentionSeconds: 604_800,
+  });
   return { coordinator, stopped };
 }
 
@@ -117,11 +133,14 @@ const input = {
   runId: 'run-1',
   plan,
   allowedOrigins: ['https://example.test'],
+  evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
 };
 
 describe('BrowserVerificationCoordinator', () => {
   it('stops the preview once after successful verification', async () => {
-    const { coordinator, stopped } = setup(() => Promise.resolve(report()));
+    const { coordinator, stopped } = setup(() =>
+      Promise.resolve({ report: report(), evidence: { screenshots: [] } }),
+    );
 
     await expect(coordinator.verify(input, new AbortController().signal)).resolves.toEqual(
       report(),
@@ -152,7 +171,9 @@ describe('BrowserVerificationCoordinator', () => {
       }),
     ],
   ] as const)('rejects verifier evidence bound to a different %s', async (_case, mutate) => {
-    const { coordinator, stopped } = setup(() => Promise.resolve(mutate(report())));
+    const { coordinator, stopped } = setup(() =>
+      Promise.resolve({ report: mutate(report()), evidence: { screenshots: [] } }),
+    );
 
     await expect(coordinator.verify(input, new AbortController().signal)).rejects.toThrow(
       /browser verification report/i,
@@ -177,6 +198,13 @@ describe('BrowserVerificationCoordinator', () => {
         stop: () => Promise.reject(new Error('preview stop failed')),
       },
       { verify: () => Promise.reject(new Error('browser crashed')) },
+      { putBlob: () => Promise.reject(new Error('putBlob should not be called by this fixture')) },
+      {
+        maxScreenshotBytes: 5_000_000,
+        maxTraceBytes: 20_000_000,
+        maxVideoBytes: 50_000_000,
+        retentionSeconds: 604_800,
+      },
     );
 
     const failure = await coordinator
@@ -213,7 +241,7 @@ describe('BrowserVerificationCoordinator', () => {
     let verifierCalls = 0;
     const { coordinator, stopped } = setup(() => {
       verifierCalls += 1;
-      return Promise.resolve(report());
+      return Promise.resolve({ report: report(), evidence: { screenshots: [] } });
     });
 
     const invalid = await coordinator.verify(
@@ -240,10 +268,120 @@ describe('BrowserVerificationCoordinator', () => {
     controller.abort(cancellation);
     const { coordinator, stopped } = setup((_input, signal) => {
       if (signal.aborted) return Promise.reject(signal.reason);
-      return Promise.resolve(report());
+      return Promise.resolve({ report: report(), evidence: { screenshots: [] } });
     });
 
     await expect(coordinator.verify(input, controller.signal)).rejects.toBe(cancellation);
     expect(stopped).toEqual(['preview-1']);
+  });
+
+  it('persists captured evidence via putBlob and attaches references to the report', async () => {
+    const putCalls: string[] = [];
+    const artifacts: Pick<ArtifactStore, 'putBlob'> = {
+      putBlob: (blobInput) => {
+        putCalls.push(blobInput.name);
+        return Promise.resolve({
+          projectId: 'project-1',
+          name: blobInput.name,
+          revision: 1,
+          contentType: blobInput.contentType,
+          createdAt: '2026-07-17T12:00:03.000Z',
+          createdBy: blobInput.createdBy,
+          sha256: 'c'.repeat(64),
+          storage: 'blob',
+          sizeBytes: 128,
+        });
+      },
+    };
+    const { coordinator } = setup(
+      () =>
+        Promise.resolve({
+          report: report(),
+          evidence: {
+            screenshots: [
+              {
+                stepId: 'open-items',
+                url: 'http://127.0.0.1:4000/preview/preview-1/items',
+                viewport: { width: 1280, height: 720 },
+                buffer: Buffer.from('fake screenshot'),
+              },
+            ],
+            trace: Buffer.from('fake trace'),
+            video: Buffer.from('fake video'),
+          },
+        }),
+      artifacts,
+    );
+
+    const result = await coordinator.verify(input, new AbortController().signal);
+
+    expect(putCalls).toHaveLength(3);
+    expect(result.previewSession.evidence.screenshots).toEqual([
+      {
+        name: putCalls[0],
+        revision: 1,
+        sha256: 'c'.repeat(64),
+        sizeBytes: 128,
+        stepId: 'open-items',
+        url: 'http://127.0.0.1:4000/preview/preview-1/items',
+        viewport: { width: 1280, height: 720 },
+      },
+    ]);
+    expect(result.previewSession.evidence.trace).toEqual({
+      name: putCalls[1],
+      revision: 1,
+      sha256: 'c'.repeat(64),
+      sizeBytes: 128,
+    });
+    expect(result.previewSession.evidence.video).toEqual({
+      name: putCalls[2],
+      revision: 1,
+      sha256: 'c'.repeat(64),
+      sizeBytes: 128,
+    });
+  });
+
+  it('drops evidence that exceeds its size limit instead of failing verification', async () => {
+    const artifacts: Pick<ArtifactStore, 'putBlob'> = {
+      putBlob: (blobInput) => {
+        if (blobInput.name.startsWith('browser-trace-')) {
+          return Promise.reject(new ArtifactTooLargeError(blobInput.maxBytes));
+        }
+        return Promise.resolve({
+          projectId: 'project-1',
+          name: blobInput.name,
+          revision: 1,
+          contentType: blobInput.contentType,
+          createdAt: '2026-07-17T12:00:03.000Z',
+          createdBy: blobInput.createdBy,
+          sha256: 'c'.repeat(64),
+          storage: 'blob',
+          sizeBytes: 128,
+        });
+      },
+    };
+    const { coordinator } = setup(
+      () =>
+        Promise.resolve({
+          report: report(),
+          evidence: {
+            screenshots: [
+              {
+                stepId: 'open-items',
+                url: 'http://127.0.0.1:4000/preview/preview-1/items',
+                viewport: { width: 1280, height: 720 },
+                buffer: Buffer.from('fake screenshot'),
+              },
+            ],
+            trace: Buffer.from('too big'),
+          },
+        }),
+      artifacts,
+    );
+
+    const result = await coordinator.verify(input, new AbortController().signal);
+
+    expect(result.previewSession.evidence.trace).toBeUndefined();
+    expect(result.previewSession.evidence.screenshots).toHaveLength(1);
   });
 });

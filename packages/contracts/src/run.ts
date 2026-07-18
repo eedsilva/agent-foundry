@@ -58,6 +58,7 @@ export const ArtifactReferenceSchema = z
     name: PathSegmentSchema,
     revision: z.number().int().positive(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    sizeBytes: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type ArtifactReference = z.infer<typeof ArtifactReferenceSchema>;

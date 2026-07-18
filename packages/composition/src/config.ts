@@ -41,6 +41,11 @@ const ConfigSchema = z.object({
   PREVIEW_MAX_RESTARTS: z.coerce.number().int().nonnegative().default(2),
   PREVIEW_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(5_000),
   PREVIEW_LOG_MAX_BYTES: z.coerce.number().int().positive().default(1_000_000),
+  ARTIFACT_MAX_SCREENSHOT_BYTES: z.coerce.number().int().positive().default(5_000_000),
+  ARTIFACT_MAX_TRACE_BYTES: z.coerce.number().int().positive().default(20_000_000),
+  ARTIFACT_MAX_VIDEO_BYTES: z.coerce.number().int().positive().default(50_000_000),
+  ARTIFACT_RETENTION_SECONDS: z.coerce.number().int().positive().default(604_800),
+  ARTIFACT_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
 });
 
 export interface RuntimeConfig {
@@ -77,6 +82,11 @@ export interface RuntimeConfig {
   previewMaxRestarts: number;
   previewReapIntervalMs: number;
   previewLogMaxBytes: number;
+  artifactMaxScreenshotBytes: number;
+  artifactMaxTraceBytes: number;
+  artifactMaxVideoBytes: number;
+  artifactRetentionSeconds: number;
+  artifactReapIntervalMs: number;
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -131,6 +141,11 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     previewMaxRestarts: parsed.PREVIEW_MAX_RESTARTS,
     previewReapIntervalMs: parsed.PREVIEW_REAP_INTERVAL_MS,
     previewLogMaxBytes: parsed.PREVIEW_LOG_MAX_BYTES,
+    artifactMaxScreenshotBytes: parsed.ARTIFACT_MAX_SCREENSHOT_BYTES,
+    artifactMaxTraceBytes: parsed.ARTIFACT_MAX_TRACE_BYTES,
+    artifactMaxVideoBytes: parsed.ARTIFACT_MAX_VIDEO_BYTES,
+    artifactRetentionSeconds: parsed.ARTIFACT_RETENTION_SECONDS,
+    artifactReapIntervalMs: parsed.ARTIFACT_REAP_INTERVAL_MS,
   };
 }
 
