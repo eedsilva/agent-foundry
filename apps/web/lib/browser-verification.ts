@@ -16,5 +16,5 @@ export function latestBrowserVerificationReport(
   );
   if (candidates.length === 0) return null;
   const latest = candidates.reduce((a, b) => (a.metadata.revision > b.metadata.revision ? a : b));
-  return latest.content as BrowserVerificationReport;
+  return BrowserVerificationReportSchema.parse(latest.content);
 }

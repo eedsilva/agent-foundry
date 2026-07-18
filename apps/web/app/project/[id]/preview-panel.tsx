@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type {
+  ArtifactReference,
   BrowserVerificationReport,
   PreviewLogEntry,
   PreviewSession,
@@ -25,6 +26,24 @@ const VIEWPORTS = {
 type ViewportKey = keyof typeof VIEWPORTS;
 
 const TERMINAL_SESSION_STATUSES = new Set(['stopped', 'failed', 'expired']);
+
+function ScreenshotFigure({ shot, projectId }: { shot: ArtifactReference; projectId: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <figure>
+      {failed ? (
+        <p className="hint">Evidência expirada ou indisponível.</p>
+      ) : (
+        <img
+          src={getArtifactBlobUrl(projectId, shot.name, shot.revision)}
+          alt={shot.name}
+          onError={() => setFailed(true)}
+        />
+      )}
+      <figcaption className="hint">{shot.name}</figcaption>
+    </figure>
+  );
+}
 
 export function VerificationReportView({
   report,
@@ -58,13 +77,7 @@ export function VerificationReportView({
       {report.previewSession.evidence.screenshots.length > 0 ? (
         <div className="screenshotFilmstrip">
           {report.previewSession.evidence.screenshots.map((shot) => (
-            <figure key={`${shot.name}-${shot.revision}`}>
-              <img
-                src={getArtifactBlobUrl(projectId, shot.name, shot.revision)}
-                alt={shot.name}
-              />
-              <figcaption className="hint">{shot.name}</figcaption>
-            </figure>
+            <ScreenshotFigure key={`${shot.name}-${shot.revision}`} shot={shot} projectId={projectId} />
           ))}
         </div>
       ) : null}
@@ -76,6 +89,7 @@ export function VerificationReportView({
             report.previewSession.evidence.trace.name,
             report.previewSession.evidence.trace.revision,
           )}
+          download
         >
           Baixar trace
         </a>
@@ -88,6 +102,7 @@ export function VerificationReportView({
             report.previewSession.evidence.video.name,
             report.previewSession.evidence.video.revision,
           )}
+          download
         >
           Baixar vídeo
         </a>

@@ -53,6 +53,7 @@ import { findDiffApprovalVersions } from '../../../lib/diff-approval';
 import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
 
 const PROJECT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'rejected']);
+const NO_PREDECESSOR_VERSION_MESSAGE = 'Nenhuma versão anterior para comparar.';
 
 const rowStyle = { display: 'flex', alignItems: 'center', gap: '0.75rem' } as const;
 
@@ -109,6 +110,37 @@ function artifactText(content: unknown): string {
 
 function isVerificationReport(content: unknown): content is VerificationReport {
   return VerificationReportSchema.safeParse(content).success;
+}
+
+function BlobArtifactPreview({
+  projectId,
+  name,
+  revision,
+  contentType,
+}: {
+  projectId: string;
+  name: string;
+  revision: number;
+  contentType: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const blobUrl = getArtifactBlobUrl(projectId, name, revision);
+  return (
+    <div className="blobPreview">
+      {failed ? (
+        <p className="hint">Evidência expirada ou indisponível.</p>
+      ) : contentType.startsWith('image/') ? (
+        <img src={blobUrl} alt={name} onError={() => setFailed(true)} />
+      ) : contentType.startsWith('video/') ? (
+        <video controls src={blobUrl} onError={() => setFailed(true)} />
+      ) : (
+        <p className="hint">Conteúdo binário ({contentType}).</p>
+      )}
+      <a className="secondaryButton" href={blobUrl} download>
+        Baixar
+      </a>
+    </div>
+  );
 }
 
 function eventBadges(event: ProjectEvent): string[] {
@@ -273,12 +305,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       return;
     }
     let active = true;
-    listVersions(id)
+    listVersions(id, 500)
       .then((versions) => {
         if (!active) return;
         const { from, to } = findDiffApprovalVersions(versions, run.id);
         if (!from || !to) {
-          setDecideDiff('Nenhuma versão anterior para comparar.');
+          setDecideDiff(NO_PREDECESSOR_VERSION_MESSAGE);
           return undefined;
         }
         return compareVersions(id, from.id, to.id).then((result) => {
@@ -1025,7 +1057,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 {decideReport ? (
                   <VerificationReportView report={decideReport} projectId={detail.project.id} />
                 ) : null}
-                {decideDiff !== null ? (
+                {decideDiff === NO_PREDECESSOR_VERSION_MESSAGE ? (
+                  <p className="hint">{NO_PREDECESSOR_VERSION_MESSAGE}</p>
+                ) : decideDiff !== null ? (
                   <pre className="diffPane">
                     {decideDiff.split('\n').map((line, index) => (
                       <span
@@ -1143,40 +1177,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 ))}
               </div>
             ) : selected.metadata.storage === 'blob' ? (
-              <div className="blobPreview">
-                {selected.metadata.contentType.startsWith('image/') ? (
-                  <img
-                    src={getArtifactBlobUrl(
-                      detail.project.id,
-                      selected.metadata.name,
-                      selected.metadata.revision,
-                    )}
-                    alt={selected.metadata.name}
-                  />
-                ) : selected.metadata.contentType.startsWith('video/') ? (
-                  <video
-                    controls
-                    src={getArtifactBlobUrl(
-                      detail.project.id,
-                      selected.metadata.name,
-                      selected.metadata.revision,
-                    )}
-                  />
-                ) : (
-                  <p className="hint">Conteúdo binário ({selected.metadata.contentType}).</p>
-                )}
-                <a
-                  className="secondaryButton"
-                  href={getArtifactBlobUrl(
-                    detail.project.id,
-                    selected.metadata.name,
-                    selected.metadata.revision,
-                  )}
-                  download
-                >
-                  Baixar
-                </a>
-              </div>
+              <BlobArtifactPreview
+                key={`${selected.metadata.name}-${selected.metadata.revision}`}
+                projectId={detail.project.id}
+                name={selected.metadata.name}
+                revision={selected.metadata.revision}
+                contentType={selected.metadata.contentType}
+              />
             ) : (
               <pre>{artifactText(selected.content)}</pre>
             )}
