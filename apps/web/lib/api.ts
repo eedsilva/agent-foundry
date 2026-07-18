@@ -5,6 +5,8 @@ import type {
   CreateModelOverrideResponse,
   DecideApprovalRequest,
   DecideApprovalResponse,
+  PreviewLogPage,
+  PreviewSession,
   Project,
   ProjectDetailResponse,
   ProjectVersion,
@@ -24,7 +26,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      'content-type': 'application/json',
+      ...(init?.body ? { 'content-type': 'application/json' } : {}),
       ...(init?.headers ?? {}),
     },
     cache: 'no-store',
@@ -98,7 +100,6 @@ export async function resumeRun(
 ): Promise<{ run?: WorkflowRun; blocked?: ResumeBlockedResponse }> {
   const response = await fetch(`${API_URL}/runs/${encodeURIComponent(runId)}/resume`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
     cache: 'no-store',
   });
   const body = (await response.json().catch(() => null)) as
@@ -223,4 +224,40 @@ export async function setVersionProtected(
     { method: 'POST', body: JSON.stringify({ protected: protectedFlag }) },
   );
   return response.version;
+}
+
+export function getActivePreviewSession(
+  projectId: string,
+): Promise<{ session: PreviewSession | null }> {
+  return api<{ session: PreviewSession | null }>(
+    `/projects/${encodeURIComponent(projectId)}/preview/active`,
+  );
+}
+
+export function startPreview(projectId: string): Promise<{ session: PreviewSession; url: string }> {
+  return api<{ session: PreviewSession; url: string }>(
+    `/projects/${encodeURIComponent(projectId)}/preview`,
+    { method: 'POST' },
+  );
+}
+
+export function stopPreview(
+  projectId: string,
+  sessionId: string,
+): Promise<{ session: PreviewSession }> {
+  return api<{ session: PreviewSession }>(
+    `/projects/${encodeURIComponent(projectId)}/preview/${encodeURIComponent(sessionId)}/stop`,
+    { method: 'POST' },
+  );
+}
+
+export function getPreviewLogs(
+  projectId: string,
+  sessionId: string,
+  cursor?: number,
+): Promise<PreviewLogPage> {
+  const query = cursor !== undefined ? `?cursor=${cursor}` : '';
+  return api<PreviewLogPage>(
+    `/projects/${encodeURIComponent(projectId)}/preview/${encodeURIComponent(sessionId)}/logs${query}`,
+  );
 }

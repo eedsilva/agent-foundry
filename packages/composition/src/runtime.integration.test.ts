@@ -90,6 +90,17 @@ class FailFirstExecutor implements AgentExecutor {
   }
 }
 
+async function approveDiffGate(runtime: Runtime, runId: string): Promise<void> {
+  const [diffApproval] = (await runtime.projectService.listApprovals(runId)).filter(
+    (entry) => entry.request.nodeId === 'diff-approval',
+  );
+  if (!diffApproval) throw new Error('Expected a pending diff-approval request');
+  await runtime.projectService.decideApproval(runId, diffApproval.request.id, {
+    action: 'approve',
+    decidedBy: 'integration-test',
+  });
+}
+
 class AlwaysFailExecutor implements AgentExecutor {
   readonly provider = 'mock';
 
@@ -343,11 +354,16 @@ describe('mock runtime', () => {
       ].join('\n\n'),
     });
 
+    if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
+    const runId = project.currentRunId;
+
     expect(await runtime.worker.runOnce()).toBe(true);
+    await approveDiffGate(runtime, runId);
+    expect(await runtime.worker.runOnce()).toBe(true);
+
     const detail = await runtime.projectService.get(project.id);
     expect(detail.project.status).toBe('completed');
     expect(detail.project.currentRunId).toBe(project.currentRunId);
-    if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
     const workflowRun = await runtime.runs.get(project.currentRunId);
     expect(workflowRun).toMatchObject({ status: 'completed', projectId: project.id });
     const stepRuns = await runtime.stepRuns.list(project.currentRunId);
@@ -358,7 +374,9 @@ describe('mock runtime', () => {
         stepRuns.map((step) => runtime.stepAttempts.list(project.currentRunId!, step.id)),
       )
     ).flat();
-    expect(attempts.length).toBeGreaterThanOrEqual(stepRuns.length);
+    // Approval gates (e.g. diff-approval) get a StepRun but never a StepAttempt.
+    const executableStepRuns = stepRuns.filter((step) => step.stepType !== 'approval-gate');
+    expect(attempts.length).toBeGreaterThanOrEqual(executableStepRuns.length);
     expect(attempts.every((attempt) => attempt.outputArtifacts.length > 0)).toBe(true);
     const agentAttempts = attempts.filter((attempt) => attempt.executorKind === 'agent');
     expect(agentAttempts.length).toBeGreaterThan(0);
@@ -485,10 +503,15 @@ describe('mock runtime', () => {
       prd: 'Build a small, persistent issue tracker with validation, filters, tests, type checking, clear failure states, and a production build.',
     });
 
+    if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
+    const runId = project.currentRunId;
+
     expect(await runtime.worker.runOnce()).toBe(true);
+    await approveDiffGate(runtime, runId);
+    expect(await runtime.worker.runOnce()).toBe(true);
+
     const detail = await runtime.projectService.get(project.id);
     expect(detail.project.status).toBe('completed');
-    if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
     const planStep = (await runtime.stepRuns.list(project.currentRunId)).find(
       (step) => step.stepId === 'plan',
     );
@@ -603,6 +626,12 @@ describe('mock runtime', () => {
     await runtime.queue.enqueue(legacyJob);
 
     expect(await runtime.worker.runOnce()).toBe(true);
+    const afterFirstRun = await runtime.projects.get('legacy-project');
+    if (!afterFirstRun?.currentRunId) throw new Error('Expected a persisted workflow run');
+    const runId = afterFirstRun.currentRunId;
+    await approveDiffGate(runtime, runId);
+    expect(await runtime.worker.runOnce()).toBe(true);
+
     const project = await runtime.projects.get('legacy-project');
     expect(project).toMatchObject({ status: 'completed' });
     expect(project?.currentRunId).toBeDefined();

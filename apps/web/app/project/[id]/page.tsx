@@ -22,15 +22,18 @@ import {
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
+  compareVersions,
   decideApproval,
   createModelOverride,
   eventStreamUrl,
   getArtifact,
+  getArtifactBlobUrl,
   getProject,
   getRetryPlan,
   getRunDetail,
   getRuntime,
   listApprovals,
+  listVersions,
   listWorkflows,
   pauseRun,
   resumeRun,
@@ -45,8 +48,12 @@ import {
   retryMode,
   retryRequest,
 } from '../../../lib/model-overrides';
+import { BlobMedia, PreviewPanel, VerificationReportView } from './preview-panel';
+import { findDiffApprovalVersions } from '../../../lib/diff-approval';
+import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
 
 const PROJECT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'rejected']);
+const NO_PREDECESSOR_VERSION_MESSAGE = 'Nenhuma versão anterior para comparar.';
 
 const rowStyle = { display: 'flex', alignItems: 'center', gap: '0.75rem' } as const;
 
@@ -101,8 +108,61 @@ function artifactText(content: unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content, null, 2);
 }
 
+type DiffSpan = { value: string; added?: boolean; removed?: boolean };
+
+function DiffView({ parts }: { parts: DiffSpan[] }) {
+  return (
+    <pre className="diffPane">
+      {parts.map((part, index) => (
+        <span
+          key={index}
+          className={part.added ? 'diffAdded' : part.removed ? 'diffRemoved' : undefined}
+        >
+          {part.value}
+        </span>
+      ))}
+    </pre>
+  );
+}
+
+function unifiedDiffToSpans(diff: string): DiffSpan[] {
+  return diff.split('\n').map((line) => ({
+    value: `${line}\n`,
+    added: line.startsWith('+'),
+    removed: line.startsWith('-'),
+  }));
+}
+
 function isVerificationReport(content: unknown): content is VerificationReport {
   return VerificationReportSchema.safeParse(content).success;
+}
+
+function BlobArtifactPreview({
+  projectId,
+  name,
+  revision,
+  contentType,
+}: {
+  projectId: string;
+  name: string;
+  revision: number;
+  contentType: string;
+}) {
+  const blobUrl = getArtifactBlobUrl(projectId, name, revision);
+  return (
+    <div className="blobPreview">
+      {contentType.startsWith('image/') ? (
+        <BlobMedia src={blobUrl} alt={name} kind="image" />
+      ) : contentType.startsWith('video/') ? (
+        <BlobMedia src={blobUrl} alt={name} kind="video" />
+      ) : (
+        <p className="hint">Conteúdo binário ({contentType}).</p>
+      )}
+      <a className="secondaryButton" href={blobUrl} download>
+        Baixar
+      </a>
+    </div>
+  );
 }
 
 function eventBadges(event: ProjectEvent): string[] {
@@ -149,6 +209,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   );
   const [decidePreview, setDecidePreview] = useState<RetryPlanResponse | null>(null);
   const [decideError, setDecideError] = useState('');
+  const [decideDiff, setDecideDiff] = useState<string | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [previousArtifact, setPreviousArtifact] = useState<StoredArtifact | null>(null);
@@ -259,12 +320,61 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   );
 
   const run = runDetail?.run;
+
+  useEffect(() => {
+    if (
+      !decideTarget ||
+      !run ||
+      decideTarget.request.artifact.name !== 'browser-verification.report'
+    ) {
+      return;
+    }
+    const runId = run?.id;
+    let active = true;
+    listVersions(id, 500)
+      .then((versions) => {
+        if (!active) return;
+        const { from, to } = findDiffApprovalVersions(versions, runId);
+        if (!from || !to) {
+          setDecideDiff(NO_PREDECESSOR_VERSION_MESSAGE);
+          return undefined;
+        }
+        return compareVersions(id, from.id, to.id).then((result) => {
+          if (active) setDecideDiff(result.diff);
+        });
+      })
+      .catch((cause: unknown) => {
+        if (active) setDecideError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      active = false;
+    };
+    // `run` is intentionally tracked by id only: the page's polling effect
+    // recreates the whole `run` object every ~1.5s, and depending on it
+    // directly would refetch listVersions/compareVersions on every poll
+    // tick for as long as the decide modal stays open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decideTarget, id, run?.id]);
+
   const stepTargets = useMemo(
     () => (workflowDef ? agentStepTargets(workflowDef) : []),
     [workflowDef],
   );
   const runnableModels = runtimeModels.filter((model) => model.enabled && model.model.trim());
   const evidence = run ? executionEvidence(run) : null;
+  const decideReport = useMemo(() => {
+    if (!decideTarget || decideTarget.request.artifact.name !== 'browser-verification.report') {
+      return null;
+    }
+    const match = detail?.artifacts.find(
+      (artifact) =>
+        artifact.metadata.name === decideTarget.request.artifact.name &&
+        artifact.metadata.revision === decideTarget.request.artifact.revision,
+    );
+    if (!match) return null;
+    const parsed = BrowserVerificationReportSchema.safeParse(match.content);
+    return parsed.success ? parsed.data : null;
+  }, [decideTarget, detail]);
   const refresh = () => setRefreshTick((tick) => tick + 1);
 
   function pinFields(data: FormData) {
@@ -378,6 +488,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     setDecideError('');
     setDecideNote('');
     setDecidePreview(null);
+    setDecideDiff(null);
     setDecideTarget({ request, node, action });
     const needsReturn =
       action === 'request-changes' || (action === 'reject' && node.onReject === 'return-to-step');
@@ -492,6 +603,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
       {detail.project.error ? <p className="errorBox">{detail.project.error}</p> : null}
       {error ? <p className="errorBox">{error}</p> : null}
+
+      <PreviewPanel projectId={id} run={run ?? null} artifacts={detail.artifacts} />
 
       {run?.status === 'paused' ? (
         <section className="panel">
@@ -971,6 +1084,21 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               <p className="hint">Calculando consequências…</p>
             )}
 
+            {decideTarget.request.artifact.name === 'browser-verification.report' ? (
+              <div>
+                {decideReport ? (
+                  <VerificationReportView report={decideReport} projectId={detail.project.id} />
+                ) : null}
+                {decideDiff === NO_PREDECESSOR_VERSION_MESSAGE ? (
+                  <p className="hint">{NO_PREDECESSOR_VERSION_MESSAGE}</p>
+                ) : decideDiff !== null ? (
+                  <DiffView parts={unifiedDiffToSpans(decideDiff)} />
+                ) : (
+                  <p className="hint">Carregando diff…</p>
+                )}
+              </div>
+            ) : null}
+
             <label>
               {decideTarget.action === 'request-changes'
                 ? 'Comentário (obrigatório)'
@@ -1028,21 +1156,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </div>
             {showDiff ? (
               previousArtifact ? (
-                <pre className="diffPane">
-                  {diffLines(
+                <DiffView
+                  parts={diffLines(
                     artifactText(previousArtifact.content),
                     artifactText(selected.content),
-                  ).map((part, index) => (
-                    <span
-                      key={index}
-                      className={
-                        part.added ? 'diffAdded' : part.removed ? 'diffRemoved' : undefined
-                      }
-                    >
-                      {part.value}
-                    </span>
-                  ))}
-                </pre>
+                  )}
+                />
               ) : (
                 <p className="hint">Carregando revisão anterior…</p>
               )
@@ -1064,6 +1183,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   </details>
                 ))}
               </div>
+            ) : selected.metadata.storage === 'blob' ? (
+              <BlobArtifactPreview
+                key={`${selected.metadata.name}-${selected.metadata.revision}`}
+                projectId={detail.project.id}
+                name={selected.metadata.name}
+                revision={selected.metadata.revision}
+                contentType={selected.metadata.contentType}
+              />
             ) : (
               <pre>{artifactText(selected.content)}</pre>
             )}
