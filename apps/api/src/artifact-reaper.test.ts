@@ -47,4 +47,34 @@ describe('artifact reaper schedule', () => {
     await schedule.stop();
     await app.close();
   });
+
+  it('keeps direct API close pending until an active rejected sweep settles', async () => {
+    let rejectSweep!: (error: Error) => void;
+    const activeSweep = new Promise<number>((_resolve, reject) => {
+      rejectSweep = reject;
+    });
+    const reapExpired = vi.fn().mockReturnValue(activeSweep);
+    const logger = { error: vi.fn() };
+    vi.useFakeTimers();
+    const app = Fastify();
+    const schedule = startArtifactReaper({ reapExpired }, 10, logger, app);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reapExpired).toHaveBeenCalledTimes(1);
+
+    let closed = false;
+    const close = app.close().then(() => {
+      closed = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(closed).toBe(false);
+
+    rejectSweep(new Error('late sweep failure'));
+    await close;
+    expect(closed).toBe(true);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'late sweep failure' }),
+      'Artifact reaper sweep failed',
+    );
+    await expect(schedule.stop()).resolves.toBeUndefined();
+  });
 });

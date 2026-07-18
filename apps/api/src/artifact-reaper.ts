@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { startIntervalSweep, type IntervalSweepSchedule } from './interval-sweep.js';
 
 interface ArtifactReaperLogger {
   error(error: unknown, message: string): void;
@@ -8,9 +9,7 @@ interface ArtifactReaperService {
   reapExpired(now: Date): Promise<number>;
 }
 
-export interface ArtifactReaperSchedule {
-  stop(): Promise<void>;
-}
+export type ArtifactReaperSchedule = IntervalSweepSchedule;
 
 export function startArtifactReaper(
   service: ArtifactReaperService,
@@ -18,35 +17,11 @@ export function startArtifactReaper(
   logger: ArtifactReaperLogger,
   app: FastifyInstance,
 ): ArtifactReaperSchedule {
-  let active: Promise<void> | undefined;
-  const sweep = () => {
-    if (active) return;
-    try {
-      active = service
-        .reapExpired(new Date())
-        .catch((error: unknown) => logger.error(error, 'Artifact reaper sweep failed'))
-        .then(() => undefined)
-        .finally(() => {
-          active = undefined;
-        });
-    } catch (error) {
-      logger.error(error, 'Artifact reaper sweep failed');
-    }
-  };
-  sweep();
-  const timer = setInterval(sweep, intervalMs);
-  timer.unref();
-
-  let stopPromise: Promise<void> | undefined;
-  const schedule: ArtifactReaperSchedule = {
-    stop() {
-      stopPromise ??= (async () => {
-        clearInterval(timer);
-        await active;
-      })();
-      return stopPromise;
-    },
-  };
-  app.addHook('onClose', () => schedule.stop());
-  return schedule;
+  return startIntervalSweep(
+    () => service.reapExpired(new Date()),
+    intervalMs,
+    logger,
+    app,
+    'Artifact reaper sweep failed',
+  );
 }
