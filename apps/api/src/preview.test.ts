@@ -64,6 +64,27 @@ async function createStoredSession(runtime: Runtime, projectId: string): Promise
   return session;
 }
 
+async function createActiveSession(runtime: Runtime, projectId: string): Promise<PreviewSession> {
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 3600_000).toISOString(); // 1 hour from now
+  const session: PreviewSession = {
+    id: `preview-active-${projectId}`,
+    workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+    status: 'running',
+    version: 1,
+    url: `http://127.0.0.1/preview/preview-active-${projectId}/`,
+    process: { command: 'npm', args: ['run', 'dev'] },
+    health: { state: 'healthy', consecutiveFailures: 0 },
+    ttl: { seconds: 60, expiresAt },
+    restartCount: 0,
+    createdAt: now,
+    updatedAt: now,
+    startedAt: now,
+  };
+  await runtime.previewSessions.create({ session, tokenDigest: 'a'.repeat(64) });
+  return session;
+}
+
 describe('preview routes', () => {
   it('starts and stops a preview session for a project', async () => {
     const { baseUrl, runtime } = await startApi();
@@ -218,6 +239,50 @@ describe('preview routes', () => {
 
     expect(response.status).toBe(202);
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ runId: project!.currentRunId }));
+  });
+});
+
+describe('GET /projects/:projectId/preview/active', () => {
+  it('returns null when no session is active', async () => {
+    const { baseUrl } = await startApi();
+    const projectId = await createProject(baseUrl);
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ session: null });
+  });
+
+  it('returns the active session for a project', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const session = await createActiveSession(runtime, projectId);
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ session });
+  });
+
+  it('does not return a stopped session', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    await createStoredSession(runtime, projectId);
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
+
+    expect(await response.json()).toEqual({ session: null });
+  });
+
+  it("does not return another project's active session", async () => {
+    const { baseUrl, runtime } = await startApi();
+    const ownerId = await createProject(baseUrl);
+    const otherId = await createProject(baseUrl);
+    await createActiveSession(runtime, ownerId);
+
+    const response = await fetch(`${baseUrl}/projects/${otherId}/preview/active`);
+
+    expect(await response.json()).toEqual({ session: null });
   });
 });
 

@@ -1,0 +1,27 @@
+schemaVersion: '1'
+id: golden-flow-e2e-v1
+name: Golden flow E2E fixture
+description: Minimal real preview + real browser-verification + diff-approval pipeline for issue #34 E2E coverage.
+stack: nextjs
+nodes:
+  - id: verify-browser
+    type: verify
+    title: Run the declarative browser test plan
+    outputArtifact: browser-verification.report
+    # Static workflow validation (packages/persistence/src/workflow-repository.ts)
+    # requires browserTestPlanArtifact to already be a producible artifact by
+    # this point in the node list; only 'prd' is available with no preceding
+    # nodes. Real workflows have an earlier LLM step that outputs
+    # `browser-test.plan`; this fixture deliberately skips that (slow,
+    # costly, nondeterministic in CI) and instead reuses the 'prd' artifact
+    # name, seeding a second revision with the real plan content directly
+    # (see golden-flow.spec.ts's seedWorkspaceAndPlan).
+    browserTestPlanArtifact: prd
+    scripts: []
+    includeGitDiffCheck: false
+
+  - id: diff-approval
+    type: approval-gate
+    title: Human diff approval
+    artifact: browser-verification.report
+    outputArtifact: diff.approval

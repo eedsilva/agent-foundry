@@ -414,6 +414,15 @@ export async function buildApp(
     return reply.status(202).send({ session, url });
   });
 
+  app.get('/projects/:projectId/preview/active', async (request) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const active = await runtime.previewSessions.listActive();
+    const projectSessions = active
+      .filter((record) => record.session.workspaceRef.projectId === projectId)
+      .sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
+    return { session: projectSessions[0]?.session ?? null };
+  });
+
   app.post('/projects/:projectId/preview/:sessionId/stop', async (request, reply) => {
     const { projectId, sessionId } = z
       .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
