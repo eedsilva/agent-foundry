@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
+import { buffer } from 'node:stream/consumers';
 import {
   ModelDefinitionSchema,
   ProjectPolicySchema,
@@ -437,11 +438,7 @@ export class InMemoryArtifacts implements ArtifactStore {
   }
   async putBlob(input: ArtifactBlobPutInput, source: Readable): Promise<ArtifactMetadata> {
     checkPower(this.power);
-    const chunks: Buffer[] = [];
-    for await (const chunk of source) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const buffer = Buffer.concat(chunks);
+    const content = await buffer(source);
     const revision =
       this.named(input.name).length +
       this.blobs.filter((entry) => entry.metadata.name === input.name).length +
@@ -457,10 +454,10 @@ export class InMemoryArtifacts implements ArtifactStore {
       ...(input.stepRunId ? { stepRunId: input.stepRunId } : {}),
       ...(input.attemptId ? { attemptId: input.attemptId } : {}),
       storage: 'blob',
-      sizeBytes: buffer.byteLength,
-      sha256: createHash('sha256').update(buffer).digest('hex'),
+      sizeBytes: content.byteLength,
+      sha256: createHash('sha256').update(content).digest('hex'),
     };
-    this.blobs.push({ metadata, buffer });
+    this.blobs.push({ metadata, buffer: content });
     return metadata;
   }
   getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null> {

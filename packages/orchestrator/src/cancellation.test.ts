@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream';
+import { buffer } from 'node:stream/consumers';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ModelDefinitionSchema,
@@ -283,12 +284,16 @@ class InMemoryArtifacts implements ArtifactStore {
     input: { projectId: string; name: string; contentType: string; createdBy: string },
     source: Readable,
   ): Promise<ArtifactMetadata> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of source) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const buffer = Buffer.concat(chunks);
-    const revision = this.blobs.filter((entry) => entry.metadata.name === input.name).length;
+    const content = await buffer(source);
+    const revision =
+      this.artifacts.filter(
+        (artifact) =>
+          artifact.metadata.projectId === input.projectId && artifact.metadata.name === input.name,
+      ).length +
+      this.blobs.filter(
+        (entry) =>
+          entry.metadata.projectId === input.projectId && entry.metadata.name === input.name,
+      ).length;
     const metadata: ArtifactMetadata = {
       projectId: input.projectId,
       name: input.name,
@@ -297,10 +302,10 @@ class InMemoryArtifacts implements ArtifactStore {
       createdAt: new Date().toISOString(),
       createdBy: input.createdBy,
       storage: 'blob',
-      sizeBytes: buffer.byteLength,
+      sizeBytes: content.byteLength,
       sha256: 'f'.repeat(64),
     };
-    this.blobs.push({ metadata, buffer });
+    this.blobs.push({ metadata, buffer: content });
     return metadata;
   }
   getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null> {

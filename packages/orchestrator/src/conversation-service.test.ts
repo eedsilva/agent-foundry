@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
+import { buffer } from 'node:stream/consumers';
 import { describe, expect, it } from 'vitest';
 import type {
   ArtifactMetadata,
@@ -299,23 +300,24 @@ class MemoryArtifacts implements ArtifactStore {
   }
 
   async putBlob(input: ArtifactBlobPutInput, source: Readable): Promise<ArtifactMetadata> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of source) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const buffer = Buffer.concat(chunks);
+    const content = await buffer(source);
+    const prefix = `${input.projectId}/${input.name}/`;
+    const revision =
+      [...this.values.keys()].filter((key) => key.startsWith(prefix)).length +
+      [...this.blobs.keys()].filter((key) => key.startsWith(prefix)).length +
+      1;
     const metadata: ArtifactMetadata = {
       projectId: input.projectId,
       name: input.name,
-      revision: 1,
+      revision,
       contentType: input.contentType,
       createdAt: '2026-07-17T12:00:00.000Z',
       createdBy: input.createdBy,
       storage: 'blob',
-      sizeBytes: buffer.byteLength,
-      sha256: createHash('sha256').update(buffer).digest('hex'),
+      sizeBytes: content.byteLength,
+      sha256: createHash('sha256').update(content).digest('hex'),
     };
-    this.blobs.set(`${input.projectId}/${input.name}/1`, { metadata, buffer });
+    this.blobs.set(`${input.projectId}/${input.name}/${revision}`, { metadata, buffer: content });
     return metadata;
   }
 

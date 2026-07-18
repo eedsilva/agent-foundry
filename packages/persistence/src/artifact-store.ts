@@ -159,41 +159,42 @@ export class FileArtifactStore implements ArtifactStore {
       throw error;
     });
     const nowIso = now.toISOString();
-    let reaped = 0;
-    for (const projectId of projectIds) {
-      const artifactsRoot = join(projectsRoot, projectId, 'artifacts');
-      const lock = join(artifactsRoot, '.index.lock');
-      reaped += await withDirectoryLock(lock, async () => {
-        const indexPath = join(artifactsRoot, 'index.json');
-        const index = await readJsonOrNull<ArtifactIndex>(indexPath);
-        if (!index) return 0;
-        let count = 0;
-        for (const [name, revisions] of Object.entries(index.artifacts)) {
-          for (const metadata of revisions) {
-            if (
-              metadata.storage === 'blob' &&
-              !metadata.blobDeleted &&
-              metadata.expiresAt &&
-              metadata.expiresAt <= nowIso
-            ) {
-              await rm(blobPath(artifactsRoot, safeSegment(name), metadata.revision), {
-                force: true,
-              });
-              metadata.blobDeleted = true;
-              const stored = StoredArtifactSchema.parse({ metadata, content: null });
-              await atomicWriteJson(
-                metadataPath(artifactsRoot, safeSegment(name), metadata.revision),
-                stored,
-              );
-              count += 1;
+    const counts = await Promise.all(
+      projectIds.map((projectId) => {
+        const artifactsRoot = join(projectsRoot, projectId, 'artifacts');
+        const lock = join(artifactsRoot, '.index.lock');
+        return withDirectoryLock(lock, async () => {
+          const indexPath = join(artifactsRoot, 'index.json');
+          const index = await readJsonOrNull<ArtifactIndex>(indexPath);
+          if (!index) return 0;
+          let count = 0;
+          for (const [name, revisions] of Object.entries(index.artifacts)) {
+            for (const metadata of revisions) {
+              if (
+                metadata.storage === 'blob' &&
+                !metadata.blobDeleted &&
+                metadata.expiresAt &&
+                metadata.expiresAt <= nowIso
+              ) {
+                await rm(blobPath(artifactsRoot, safeSegment(name), metadata.revision), {
+                  force: true,
+                });
+                metadata.blobDeleted = true;
+                const stored = StoredArtifactSchema.parse({ metadata, content: null });
+                await atomicWriteJson(
+                  metadataPath(artifactsRoot, safeSegment(name), metadata.revision),
+                  stored,
+                );
+                count += 1;
+              }
             }
           }
-        }
-        if (count > 0) await atomicWriteJson(indexPath, index);
-        return count;
-      });
-    }
-    return reaped;
+          if (count > 0) await atomicWriteJson(indexPath, index);
+          return count;
+        });
+      }),
+    );
+    return counts.reduce((total, count) => total + count, 0);
   }
 
   async getLatest(projectId: string, name: string): Promise<StoredArtifact | null> {
