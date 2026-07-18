@@ -100,7 +100,6 @@ export async function resumeRun(
 ): Promise<{ run?: WorkflowRun; blocked?: ResumeBlockedResponse }> {
   const response = await fetch(`${API_URL}/runs/${encodeURIComponent(runId)}/resume`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
     cache: 'no-store',
   });
   const body = (await response.json().catch(() => null)) as

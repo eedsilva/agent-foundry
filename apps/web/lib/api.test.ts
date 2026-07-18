@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PreviewLogPage, PreviewSession, ProjectVersion } from '@agent-foundry/contracts';
+import type {
+  PreviewLogPage,
+  PreviewSession,
+  ProjectVersion,
+  WorkflowRun,
+} from '@agent-foundry/contracts';
 import {
   branchFromVersion,
   compareVersions,
@@ -7,6 +12,7 @@ import {
   getArtifactBlobUrl,
   getPreviewLogs,
   listVersions,
+  resumeRun,
   revertToVersion,
   setVersionProtected,
   startPreview,
@@ -105,6 +111,20 @@ describe('project version API client', () => {
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ label: 'wip' }) }),
     );
     expect(result).toEqual({ branchName: 'wip', version: branched });
+    const branchInit = fetchMock.mock.calls[0]?.[1];
+    expect((branchInit?.headers as Record<string, string> | undefined)?.['content-type']).toBe(
+      'application/json',
+    );
+    fetchMock.mockRestore();
+  });
+
+  it('omits content-type on a body-less POST (the shared api() helper)', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ version }));
+
+    await revertToVersion('project-1', 'version-1');
+
+    const init = fetchMock.mock.calls[0]?.[1];
+    expect((init?.headers as Record<string, string> | undefined)?.['content-type']).toBeUndefined();
     fetchMock.mockRestore();
   });
 
@@ -234,6 +254,34 @@ describe('preview API client', () => {
       'http://localhost:4000/projects/project-1/preview/preview-1/logs?cursor=5',
       expect.anything(),
     );
+    fetchMock.mockRestore();
+  });
+});
+
+describe('resumeRun', () => {
+  it('resumes a run without sending a content-type header (the request has no body)', async () => {
+    const run = { id: 'run-1', projectId: 'project-1', status: 'running' } as WorkflowRun;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ run }));
+
+    const result = await resumeRun('run-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/runs/run-1/resume',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1];
+    expect(init?.headers).toBeUndefined();
+    expect(result).toEqual({ run });
+    fetchMock.mockRestore();
+  });
+
+  it('surfaces a 409 ResumeBlockedError response instead of throwing', async () => {
+    const blocked = { error: 'ResumeBlockedError', reason: 'run-not-paused' };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(blocked, 409));
+
+    const result = await resumeRun('run-1');
+
+    expect(result).toEqual({ blocked });
     fetchMock.mockRestore();
   });
 });
