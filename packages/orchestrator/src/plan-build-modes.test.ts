@@ -18,6 +18,7 @@ import {
   FakeWorkspaces,
   InMemoryArtifacts,
   InMemoryEvents,
+  InMemoryProjects,
   InMemoryRuns,
   InMemoryStepAttempts,
   InMemoryStepRuns,
@@ -25,6 +26,7 @@ import {
   MODELS,
 } from './testing/harness.js';
 import { ConversationOperationRunner } from './conversation-operation-runner.js';
+import { ConversationService } from './conversation-service.js';
 import { OperationService } from './operation-service.js';
 
 class FixedClock implements Clock {
@@ -126,6 +128,15 @@ async function runOperation(kind: 'plan' | 'build') {
     createdAt: clock.now().toISOString(),
   });
 
+  const projects = new InMemoryProjects({ on: true });
+  const conversationService = new ConversationService(
+    projects,
+    runs,
+    artifacts,
+    conversations,
+    clock,
+    ids,
+  );
   const operationService = new OperationService(
     conversations,
     runs,
@@ -133,6 +144,7 @@ async function runOperation(kind: 'plan' | 'build') {
     artifacts,
     clock,
     ids,
+    conversationService,
   );
   const runner = new ConversationOperationRunner(
     runs,

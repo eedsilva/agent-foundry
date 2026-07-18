@@ -249,7 +249,15 @@ export async function createRuntime(
     ids,
     { agentTimeoutMs: config.agentTimeoutMs },
   );
-  const operationService = new OperationService(conversations, runs, queue, artifacts, clock, ids);
+  const operationService = new OperationService(
+    conversations,
+    runs,
+    queue,
+    artifacts,
+    clock,
+    ids,
+    conversationService,
+  );
   const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
     workerId: config.workerId,
     pollIntervalMs: config.workerPollIntervalMs,
