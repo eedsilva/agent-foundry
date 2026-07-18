@@ -1798,4 +1798,28 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(evidence.trace).toBeInstanceOf(Buffer);
     expect(evidence.trace!.byteLength).toBeGreaterThan(0);
   });
+
+  it('captures a video only when the evidence policy requests it', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>Fixture</h1>');
+    });
+    const browserPlan = plan([
+      { id: 'open', title: 'Open fixture', action: { kind: 'goto', path: '/' }, assertions: [] },
+    ]);
+
+    const { evidence } = await new PlaywrightBrowserVerifier().verify(
+      {
+        planArtifact: PLAN_ARTIFACT,
+        planContent: artifact(browserPlan),
+        session: session(origin),
+        allowedOrigins: [],
+        evidencePolicy: { ...DEFAULT_BROWSER_EVIDENCE_POLICY, captureVideo: true },
+      },
+      new AbortController().signal,
+    );
+
+    expect(evidence.video).toBeInstanceOf(Buffer);
+    expect(evidence.video!.byteLength).toBeGreaterThan(0);
+  });
 });

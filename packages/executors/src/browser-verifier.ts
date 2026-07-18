@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -24,6 +24,7 @@ import {
   type Locator,
   type Page,
   type Request,
+  type Video,
 } from 'playwright';
 
 const ACTION_TIMEOUT_MS = 10_000;
@@ -260,10 +261,9 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       context = undefined;
 
       let video: Buffer | undefined;
-      if (videoDir) {
-        const files = await readdir(videoDir).catch(() => [] as string[]);
-        const videoFile = files.find((file) => file.endsWith('.webm'));
-        if (videoFile) video = await readFile(join(videoDir, videoFile));
+      if (result.video) {
+        const videoPath = await result.video.path();
+        video = await readFile(videoPath);
       }
 
       return {
@@ -290,12 +290,17 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     allowedOrigins: Set<string>,
     input: Parameters<BrowserVerifier['verify']>[0],
     previewSession: Parameters<BrowserVerifier['verify']>[0]['session'],
-  ): Promise<{ report: BrowserVerificationReport; evidence: BrowserVerificationEvidence }> {
+  ): Promise<{
+    report: BrowserVerificationReport;
+    evidence: BrowserVerificationEvidence;
+    video: Video | null;
+  }> {
     await context.addInitScript(installTimerTracker, {
       key: TIMER_TRACKER_KEY,
       maxDelayMs: MAX_TRACKED_TIMER_DELAY_MS,
     });
     const page = await context.newPage();
+    const video = page.video();
     page.setDefaultTimeout(ACTION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(ACTION_TIMEOUT_MS);
     let activeStepIndex = 0;
@@ -632,6 +637,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         steps,
       }),
       evidence: { screenshots },
+      video,
     };
   }
 
