@@ -862,6 +862,14 @@ export class WorkflowOrchestrator {
         browserPlan = artifactReference(setupArtifact);
       }
     }
+    if (!qualitySubject && node.check.type === 'agent' && isReviewerRole(node.check.role)) {
+      // ponytail: quality loops normally have few inputs; add a route-decision
+      // lookup to ArtifactStore if workflows begin reviewing large artifact sets.
+      qualitySubject =
+        (await this.loadInputArtifacts(project.id, node.check.inputArtifacts)).find(
+          (artifact) => artifact.metadata.routeDecision,
+        ) ?? null;
+    }
 
     let latest: StoredArtifact | null = null;
     for (let iteration = 1; ; iteration += 1) {
