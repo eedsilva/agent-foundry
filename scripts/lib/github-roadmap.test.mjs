@@ -218,7 +218,12 @@ test('assertNoUnexpectedDrift: estado salvo sem hash nenhum ainda não bloqueia'
 });
 
 test('reconcileIssue: corpo sem divergência é atualizado normalmente', async () => {
-  const record = { key: 'task-a', title: 'Título', body: 'corpo gerenciado', labels: ['kind:task'] };
+  const record = {
+    key: 'task-a',
+    title: 'Título',
+    body: 'corpo gerenciado',
+    labels: ['kind:task'],
+  };
   const saved = { number: 9, lastAppliedBodySha256: sha256('corpo gerenciado') };
   const client = fakeClient({
     responses: new Map([

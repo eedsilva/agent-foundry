@@ -37,7 +37,16 @@ export function assertNoUnexpectedDrift(liveBody, saved, force, key) {
     );
 }
 
-export async function reconcileIssue(client, ownerName, repoName, record, issue, milestone, saved, force) {
+export async function reconcileIssue(
+  client,
+  ownerName,
+  repoName,
+  record,
+  issue,
+  milestone,
+  saved,
+  force,
+) {
   const live = await client.request(`/repos/${ownerName}/${repoName}/issues/${issue.number}`);
   if ((live.body ?? '') !== record.body)
     assertNoUnexpectedDrift(live.body ?? '', saved, force, record.key);
