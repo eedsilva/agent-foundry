@@ -1,14 +1,24 @@
+import { Readable } from 'node:stream';
 import { isDeepStrictEqual } from 'node:util';
 import {
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
   PreviewSessionReferenceSchema,
+  type ArtifactMetadata,
   type ArtifactReference,
+  type BrowserEvidencePolicy,
+  type BrowserScreenshotEvidence,
   type BrowserVerificationReport,
   type PreviewSessionReference,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
-import type { BrowserVerifier } from '@agent-foundry/domain';
+import {
+  ArtifactTooLargeError,
+  type ArtifactBlobPutInput,
+  type ArtifactStore,
+  type BrowserVerificationEvidence,
+  type BrowserVerifier,
+} from '@agent-foundry/domain';
 import type { PreviewService } from './preview-service.js';
 
 export interface BrowserVerificationInput {
@@ -17,12 +27,22 @@ export interface BrowserVerificationInput {
   runId: string;
   plan: StoredArtifact;
   allowedOrigins: string[];
+  evidencePolicy: BrowserEvidencePolicy;
+}
+
+export interface BrowserEvidenceLimits {
+  maxScreenshotBytes: number;
+  maxTraceBytes: number;
+  maxVideoBytes: number;
+  retentionSeconds: number;
 }
 
 export class BrowserVerificationCoordinator {
   constructor(
     private readonly previews: Pick<PreviewService, 'start' | 'stop'>,
     private readonly verifier: BrowserVerifier,
+    private readonly artifacts: Pick<ArtifactStore, 'putBlob'>,
+    private readonly limits: BrowserEvidenceLimits,
   ) {}
 
   async verify(
@@ -65,22 +85,22 @@ export class BrowserVerificationCoordinator {
         });
       }
 
-      return validateBrowserVerificationReportBinding(
-        await this.verifier.verify(
-          {
-            planArtifact,
-            planContent: input.plan.content,
-            session,
-            allowedOrigins: input.allowedOrigins,
-          },
-          signal,
-        ),
+      const { report: verifierReport, evidence } = await this.verifier.verify(
         {
           planArtifact,
           planContent: input.plan.content,
-          previewSession: publicSession,
+          session,
+          allowedOrigins: input.allowedOrigins,
+          evidencePolicy: input.evidencePolicy,
         },
+        signal,
       );
+      const validated = validateBrowserVerificationReportBinding(verifierReport, {
+        planArtifact,
+        planContent: input.plan.content,
+        previewSession: publicSession,
+      });
+      return await this.attachEvidence(validated, evidence, input);
     } catch (error) {
       verificationFailed = true;
       verificationError = error;
@@ -97,6 +117,114 @@ export class BrowserVerificationCoordinator {
         }
         throw stopError;
       }
+    }
+  }
+
+  private async attachEvidence(
+    report: BrowserVerificationReport,
+    evidence: BrowserVerificationEvidence,
+    input: BrowserVerificationInput,
+  ): Promise<BrowserVerificationReport> {
+    if (evidence.screenshots.length === 0 && !evidence.trace && !evidence.video) return report;
+    const sessionId = report.previewSession.sessionId;
+
+    const screenshots: BrowserScreenshotEvidence[] = [];
+    for (const shot of evidence.screenshots) {
+      const metadata = await this.putBlobOrSkip(
+        {
+          projectId: input.projectId,
+          name: `browser-screenshot-${sessionId}-${shot.stepId}`,
+          contentType: 'image/png',
+          createdBy: 'browser-verifier',
+          maxBytes: this.limits.maxScreenshotBytes,
+          runId: input.runId,
+          retentionSeconds: this.limits.retentionSeconds,
+        },
+        Readable.from(shot.buffer),
+      );
+      if (!metadata) continue;
+      screenshots.push({
+        name: metadata.name,
+        revision: metadata.revision,
+        sha256: metadata.sha256,
+        sizeBytes: metadata.sizeBytes,
+        stepId: shot.stepId,
+        url: shot.url,
+        viewport: shot.viewport,
+      });
+    }
+
+    let trace: ArtifactReference | undefined;
+    if (evidence.trace) {
+      const metadata = await this.putBlobOrSkip(
+        {
+          projectId: input.projectId,
+          name: `browser-trace-${sessionId}`,
+          contentType: 'application/zip',
+          createdBy: 'browser-verifier',
+          maxBytes: this.limits.maxTraceBytes,
+          runId: input.runId,
+          retentionSeconds: this.limits.retentionSeconds,
+        },
+        Readable.from(evidence.trace),
+      );
+      if (metadata) {
+        trace = {
+          name: metadata.name,
+          revision: metadata.revision,
+          sha256: metadata.sha256,
+          sizeBytes: metadata.sizeBytes,
+        };
+      }
+    }
+
+    let video: ArtifactReference | undefined;
+    if (evidence.video) {
+      const metadata = await this.putBlobOrSkip(
+        {
+          projectId: input.projectId,
+          name: `browser-video-${sessionId}`,
+          contentType: 'video/webm',
+          createdBy: 'browser-verifier',
+          maxBytes: this.limits.maxVideoBytes,
+          runId: input.runId,
+          retentionSeconds: this.limits.retentionSeconds,
+        },
+        Readable.from(evidence.video),
+      );
+      if (metadata) {
+        video = {
+          name: metadata.name,
+          revision: metadata.revision,
+          sha256: metadata.sha256,
+          sizeBytes: metadata.sizeBytes,
+        };
+      }
+    }
+
+    return BrowserVerificationReportSchema.parse({
+      ...report,
+      previewSession: {
+        ...report.previewSession,
+        evidence: {
+          ...report.previewSession.evidence,
+          screenshots,
+          ...(trace ? { trace } : {}),
+          ...(video ? { video } : {}),
+        },
+      },
+    });
+  }
+
+  private async putBlobOrSkip(
+    input: ArtifactBlobPutInput,
+    source: Readable,
+  ): Promise<ArtifactMetadata | undefined> {
+    try {
+      return await this.artifacts.putBlob(input, source);
+    } catch (error) {
+      if (error instanceof ArtifactTooLargeError) return undefined;
+      throw error;
     }
   }
 }
