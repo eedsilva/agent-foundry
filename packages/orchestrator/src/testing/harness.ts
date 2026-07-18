@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { buffer } from 'node:stream/consumers';
 import {
+  EXECUTION_PROTOCOL_VERSION,
   ModelDefinitionSchema,
   ProjectPolicySchema,
   RouteDecisionSchema,
@@ -13,7 +14,8 @@ import {
   type ApprovalDecision,
   type ApprovalRequest,
   type ArtifactMetadata,
-  type ExecutorHealth,
+  type ExecutionRequest,
+  type ExecutionResult,
   type ModelDefinition,
   type ModelOverrideRecord,
   type Project,
@@ -28,18 +30,20 @@ import {
   type WorkflowRun,
 } from '@agent-foundry/contracts';
 import {
+  EmergencyCeilingError,
   ExecutionError,
   NotFoundError,
+  RunCancelledError,
   SystemClock,
   VersionConflictError,
-  type AgentExecutor,
   type ApprovalDecisionRepository,
   type ApprovalRequestRepository,
   type ArtifactBlobPutInput,
   type ArtifactStore,
   type Clock,
   type EventStore,
-  type ExecutorRegistry,
+  type ExecutionPlane,
+  type ExecutionStatus,
   type HarnessRepository,
   type IdGenerator,
   type JobQueue,
@@ -666,10 +670,16 @@ export function invalidOutputError(): ExecutionError {
   });
 }
 
-export class ControllableExecutor implements AgentExecutor {
-  readonly provider = 'codex';
+/** Simulates a transport-level failure between control plane and execution plane — not a CLI/domain error. */
+export function disconnectError(): Error {
+  return new Error('ECONNRESET: execution plane disconnected before the run completed');
+}
+
+export class ControllableExecutor implements ExecutionPlane {
   readonly startCounts = new Map<string, number>();
   private readonly gates = new Map<string, () => void>();
+  private readonly states = new Map<string, ExecutionStatus['state']>();
+  private readonly cancellers = new Map<string, () => void>();
   constructor(
     private readonly behaviors: Record<string, StepBehavior>,
     private readonly workspaces: FakeWorkspaces,
@@ -678,7 +688,64 @@ export class ControllableExecutor implements AgentExecutor {
     ) => AgentExecutionResult['output'] | undefined,
   ) {}
 
-  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult> {
+  async submit(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult> {
+    this.states.set(request.executionId, 'running');
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      this.cancellers.set(request.executionId, () =>
+        reject(new RunCancelledError(request.agent.runId)),
+      );
+    });
+    try {
+      const result = await Promise.race([
+        this.executeInternal({ ...request.agent, cwd: 'unused' }, signal),
+        cancelled,
+      ]);
+      this.states.set(request.executionId, 'completed');
+      return {
+        protocolVersion: EXECUTION_PROTOCOL_VERSION,
+        executionId: request.executionId,
+        state: 'completed',
+        agent: result,
+      };
+    } catch (error) {
+      // emergency-ceiling.test.ts's 'hang-until-abort' scenario rejects with
+      // an EmergencyCeilingError via the aborted signal's `reason` — that must
+      // keep propagating as a rejection, not collapse into a normal 'failed'
+      // result, or the orchestrator's own `instanceof EmergencyCeilingError`
+      // handling downstream would never see it.
+      if (error instanceof EmergencyCeilingError) throw error;
+      if (error instanceof RunCancelledError) {
+        this.states.set(request.executionId, 'cancelled');
+        return {
+          protocolVersion: EXECUTION_PROTOCOL_VERSION,
+          executionId: request.executionId,
+          state: 'cancelled',
+        };
+      }
+      this.states.set(request.executionId, 'failed');
+      return {
+        protocolVersion: EXECUTION_PROTOCOL_VERSION,
+        executionId: request.executionId,
+        state: 'failed',
+        error: { message: error instanceof Error ? error.message : String(error) },
+      };
+    } finally {
+      this.cancellers.delete(request.executionId);
+    }
+  }
+
+  async cancel(executionId: string): Promise<void> {
+    this.cancellers.get(executionId)?.();
+  }
+
+  async status(executionId: string): Promise<ExecutionStatus> {
+    return { executionId, state: this.states.get(executionId) ?? 'pending' };
+  }
+
+  private executeInternal(
+    request: AgentExecutionRequest,
+    signal?: AbortSignal,
+  ): Promise<AgentExecutionResult> {
     const count = (this.startCounts.get(request.stepId) ?? 0) + 1;
     this.startCounts.set(request.stepId, count);
     const behavior = this.behaviors[request.stepId] ?? 'instant';
@@ -723,10 +790,6 @@ export class ControllableExecutor implements AgentExecutor {
 
   started(stepId: string): number {
     return this.startCounts.get(stepId) ?? 0;
-  }
-
-  health(): Promise<ExecutorHealth> {
-    return Promise.resolve({ provider: 'codex', available: true, message: 'ok' });
   }
 
   private result(request: AgentExecutionRequest): AgentExecutionResult {
@@ -929,10 +992,6 @@ export function makeHarness(
     },
     recordQuality: () => Promise.resolve(),
   };
-  const registry: ExecutorRegistry = {
-    get: () => executor,
-    health: () => Promise.resolve([]),
-  };
   const enqueued: QueueJob[] = [];
   let enqueueFailure: Error | undefined;
   const queue: JobQueue = {
@@ -965,7 +1024,7 @@ export function makeHarness(
     harness,
     router,
     metrics,
-    registry,
+    executor,
     verifier,
     stores.workspaces,
     stores.clock,
