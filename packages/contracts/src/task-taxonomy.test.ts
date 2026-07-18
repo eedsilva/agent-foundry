@@ -52,8 +52,8 @@ describe('task taxonomy', () => {
   });
 
   it('keeps invalid legacy profiles inside zod validation', () => {
-    expect(() => TaskProfileSchema.safeParse({})).not.toThrow();
-    expect(TaskProfileSchema.safeParse({}).success).toBe(false);
+    const result = TaskProfileSchema.safeParse({});
+    expect(result.success).toBe(false);
   });
 
   it('returns every hierarchy level without dropping the leaf', () => {
