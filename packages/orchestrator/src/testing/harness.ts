@@ -653,8 +653,12 @@ export class FakeWorkspaces implements WorkspaceManager {
   writePrd(): Promise<void> {
     return Promise.resolve();
   }
-  writeRunContext(): Promise<{ requestPath: string; schemaPath: string }> {
+  lastRequestMarkdown: string | undefined;
+  writeRunContext(input: {
+    requestMarkdown: string;
+  }): Promise<{ requestPath: string; schemaPath: string }> {
     checkPower(this.power);
+    this.lastRequestMarkdown = input.requestMarkdown;
     return Promise.resolve({ requestPath: 'request.md', schemaPath: 'schema.json' });
   }
   ensureGit(): Promise<void> {

@@ -245,6 +245,7 @@ export async function createRuntime(
     executors,
     workspaces,
     conversations,
+    projectVersions,
     clock,
     ids,
     { agentTimeoutMs: config.agentTimeoutMs },

@@ -9,6 +9,7 @@ import {
   type JobQueue,
   type MetricsRepository,
   type ModelRouter,
+  type ProjectVersionRepository,
   type StepAttemptRepository,
   type StepRunRepository,
   type WorkflowRunRepository,
@@ -113,6 +114,13 @@ async function runOperation(kind: 'plan' | 'build') {
   const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
   const clock = new FixedClock();
   const ids = new SequentialIds();
+  // This test doesn't exercise context compilation, just needs a valid port.
+  const projectVersions: ProjectVersionRepository = {
+    create: () => Promise.resolve(),
+    get: () => Promise.resolve(null),
+    list: () => Promise.resolve([]),
+    update: (version) => Promise.resolve(version),
+  };
 
   await conversations.createConversation({
     id: 'project-1',
@@ -158,6 +166,7 @@ async function runOperation(kind: 'plan' | 'build') {
     executors,
     workspaces,
     conversations,
+    projectVersions,
     clock,
     ids,
     { agentTimeoutMs: 60_000 },
