@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { GitHubClient, parseRepository, resolveGitHubToken } from './lib/github-client.mjs';
 import {
   createRoadmapIssue,
+  parseArgs,
   reconcileIssueBlockers,
   reconcileIssueHierarchy,
   verifyWritableRepository,
@@ -17,33 +18,6 @@ import {
   validateRoadmap,
 } from './lib/roadmap.mjs';
 
-function parseArgs(argv) {
-  const options = {
-    apply: false,
-    reconcile: false,
-    forceDrift: false,
-    adoptExisting: false,
-    delayMs: 500,
-    repo: null,
-  };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === '--apply') options.apply = true;
-    else if (arg === '--reconcile') options.reconcile = true;
-    else if (arg === '--force-drift') options.forceDrift = true;
-    else if (arg === '--adopt-existing') options.adoptExisting = true;
-    else if (arg === '--repo') options.repo = argv[++i];
-    else if (arg === '--delay-ms') options.delayMs = Number(argv[++i]);
-    else if (arg === '--help' || arg === '-h') {
-      printHelp();
-      process.exit(0);
-    } else throw new Error(`Argumento desconhecido: ${arg}`);
-  }
-  if (!Number.isFinite(options.delayMs) || options.delayMs < 0)
-    throw new Error('--delay-ms inválido.');
-  return options;
-}
-
 function printHelp() {
   console.log(
     `Uso: node scripts/bootstrap-github-roadmap.mjs [--apply] [--reconcile] [--force-drift]\n\nDry-run é o padrão. --apply cria itens ausentes. --reconcile também atualiza campos gerenciados. --force-drift permite substituir body editado manualmente.\n`,
@@ -54,7 +28,12 @@ const root = resolve(import.meta.dirname, '..');
 const specPath = resolve(root, 'planning/roadmap-spec.json');
 const projectPath = resolve(root, 'planning/project-spec.json');
 const statePath = resolve(root, 'planning/github-state.json');
-const options = parseArgs(process.argv.slice(2));
+const options = parseArgs(process.argv.slice(2), {
+  onHelp: () => {
+    printHelp();
+    process.exit(0);
+  },
+});
 const spec = await readJson(specPath);
 const project = await readJson(projectPath);
 const state = await readJson(statePath);

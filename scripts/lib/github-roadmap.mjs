@@ -1,3 +1,30 @@
+export function parseArgs(argv, { onHelp } = {}) {
+  const options = {
+    apply: false,
+    reconcile: false,
+    forceDrift: false,
+    adoptExisting: false,
+    delayMs: 500,
+    repo: null,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--apply') options.apply = true;
+    else if (arg === '--reconcile') options.reconcile = true;
+    else if (arg === '--force-drift') options.forceDrift = true;
+    else if (arg === '--adopt-existing') options.adoptExisting = true;
+    else if (arg === '--repo') options.repo = argv[++i];
+    else if (arg === '--delay-ms') options.delayMs = Number(argv[++i]);
+    else if (arg === '--help' || arg === '-h') {
+      onHelp?.();
+      return options;
+    } else throw new Error(`Argumento desconhecido: ${arg}`);
+  }
+  if (!Number.isFinite(options.delayMs) || options.delayMs < 0)
+    throw new Error('--delay-ms inválido.');
+  return options;
+}
+
 export async function verifyWritableRepository(client, owner, repo) {
   const viewer = await client.request('/user');
   const repository = await client.request(`/repos/${owner}/${repo}`);

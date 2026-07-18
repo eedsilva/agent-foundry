@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createRoadmapIssue,
   getIssueParent,
+  parseArgs,
   reconcileIssueBlockers,
   reconcileIssueHierarchy,
   verifyWritableRepository,
@@ -130,4 +131,45 @@ test('dependências adicionam ausentes, removem stale gerenciadas e preservam ex
     writes.some((call) => call.endpoint.endsWith('/999')),
     false,
   );
+});
+
+test('parseArgs: dry-run é o padrão', () => {
+  const options = parseArgs([]);
+  assert.deepEqual(options, {
+    apply: false,
+    reconcile: false,
+    forceDrift: false,
+    adoptExisting: false,
+    delayMs: 500,
+    repo: null,
+  });
+});
+
+test('parseArgs: liga apply, reconcile, force-drift e adopt-existing', () => {
+  const options = parseArgs(['--apply', '--reconcile', '--force-drift', '--adopt-existing']);
+  assert.equal(options.apply, true);
+  assert.equal(options.reconcile, true);
+  assert.equal(options.forceDrift, true);
+  assert.equal(options.adoptExisting, true);
+});
+
+test('parseArgs: aceita --repo e --delay-ms com valor customizado', () => {
+  const options = parseArgs(['--repo', 'o/r', '--delay-ms', '10']);
+  assert.equal(options.repo, 'o/r');
+  assert.equal(options.delayMs, 10);
+});
+
+test('parseArgs: rejeita --delay-ms inválido', () => {
+  assert.throws(() => parseArgs(['--delay-ms', 'nope']), /--delay-ms inválido/);
+  assert.throws(() => parseArgs(['--delay-ms', '-1']), /--delay-ms inválido/);
+});
+
+test('parseArgs: rejeita flag desconhecida', () => {
+  assert.throws(() => parseArgs(['--bogus']), /Argumento desconhecido: --bogus/);
+});
+
+test('parseArgs: --help invoca o callback ao invés de encerrar o processo', () => {
+  let called = false;
+  parseArgs(['--help'], { onHelp: () => { called = true; } });
+  assert.equal(called, true);
 });
