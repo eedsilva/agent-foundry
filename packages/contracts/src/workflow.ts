@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AgentRoleSchema, PathSegmentSchema, TaskKindSchema } from './primitives.js';
 import { RoutingPrioritiesSchema } from './model.js';
+import { TaskCategorySchema } from './task-taxonomy.js';
 
 export const ArtifactConditionSchema = z.object({
   artifact: PathSegmentSchema,
@@ -24,6 +25,7 @@ const AgentStepSchema = z.object({
     .object({
       complexity: z.number().int().min(1).max(5).optional(),
       risk: z.number().int().min(1).max(5).optional(),
+      category: TaskCategorySchema.optional(),
       priorities: RoutingPrioritiesSchema.partial().optional(),
       allowedProviders: z.array(z.enum(['codex', 'claude', 'agy'])).optional(),
       preferredTags: z.array(z.string()).optional(),
