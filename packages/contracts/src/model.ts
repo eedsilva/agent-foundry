@@ -206,20 +206,37 @@ export const RouteDecisionSchema = z.object({
 });
 export type RouteDecision = z.infer<typeof RouteDecisionSchema>;
 
-export const ModelMetricSchema = z.object({
-  modelId: PathSegmentSchema,
-  taskKind: TaskKindSchema,
-  role: AgentRoleSchema,
-  attempts: z.number().int().nonnegative(),
-  successes: z.number().int().nonnegative(),
-  totalDurationMs: z.number().nonnegative(),
-  totalInputTokens: z.number().nonnegative(),
-  totalOutputTokens: z.number().nonnegative(),
-  totalEstimatedCostUsd: z.number().nonnegative(),
-  consecutiveFailures: z.number().int().nonnegative(),
-  qualityEvaluations: z.number().int().nonnegative().default(0),
-  qualityApprovals: z.number().int().nonnegative().default(0),
-  lastFailureAt: z.string().datetime().optional(),
-  updatedAt: z.string().datetime(),
-});
+export const ModelMetricSchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const metric = value as Record<string, unknown>;
+    const taskKind = TaskKindSchema.safeParse(metric.taskKind);
+    return {
+      ...metric,
+      taxonomyVersion: metric.taxonomyVersion === undefined ? '1' : metric.taxonomyVersion,
+      category:
+        metric.category === undefined && taskKind.success
+          ? legacyTaskCategory(taskKind.data)
+          : metric.category,
+    };
+  },
+  z.object({
+    modelId: PathSegmentSchema,
+    taskKind: TaskKindSchema,
+    role: AgentRoleSchema,
+    taxonomyVersion: TaskTaxonomyVersionSchema,
+    category: TaskCategorySchema,
+    attempts: z.number().int().nonnegative(),
+    successes: z.number().int().nonnegative(),
+    totalDurationMs: z.number().nonnegative(),
+    totalInputTokens: z.number().nonnegative(),
+    totalOutputTokens: z.number().nonnegative(),
+    totalEstimatedCostUsd: z.number().nonnegative(),
+    consecutiveFailures: z.number().int().nonnegative(),
+    qualityEvaluations: z.number().int().nonnegative().default(0),
+    qualityApprovals: z.number().int().nonnegative().default(0),
+    lastFailureAt: z.string().datetime().optional(),
+    updatedAt: z.string().datetime(),
+  }),
+);
 export type ModelMetric = z.infer<typeof ModelMetricSchema>;

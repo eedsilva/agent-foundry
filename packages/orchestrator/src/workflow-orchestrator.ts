@@ -18,6 +18,7 @@ import type {
   StepAttempt,
   StepRun,
   StoredArtifact,
+  TaskProfile,
   VerifyStep,
   WorkflowDefinition,
   WorkflowNode,
@@ -1653,6 +1654,7 @@ export class WorkflowOrchestrator {
           stepRun.id,
           attempt.id,
           candidate,
+          profile,
           signal,
           outputSchema,
         );
@@ -1771,6 +1773,8 @@ export class WorkflowOrchestrator {
           modelId: candidate.model.id,
           taskKind: step.taskKind,
           role: step.role,
+          taxonomyVersion: profile.taxonomyVersion,
+          category: profile.category,
           success: false,
           durationMs: Date.now() - attemptStartedAt,
         });
@@ -1866,6 +1870,7 @@ export class WorkflowOrchestrator {
     stepRunId: string,
     attemptId: string,
     candidate: RankedModel,
+    profile: TaskProfile,
     signal: AbortSignal,
     outputSchema: AgentExecutionRequest['outputSchema'],
   ): Promise<AgentExecutionResult> {
@@ -1900,6 +1905,8 @@ export class WorkflowOrchestrator {
       modelId: candidate.model.id,
       taskKind: step.taskKind,
       role: step.role,
+      taxonomyVersion: profile.taxonomyVersion,
+      category: profile.category,
       success: true,
       durationMs: result.durationMs,
       ...(result.usage?.inputTokens !== undefined ? { inputTokens: result.usage.inputTokens } : {}),
@@ -1956,6 +1963,8 @@ export class WorkflowOrchestrator {
       modelId: executed.model.id,
       taskKind: route.profile.taskKind,
       role: route.profile.role,
+      taxonomyVersion: route.profile.taxonomyVersion,
+      category: route.profile.category,
       approved,
     });
   }

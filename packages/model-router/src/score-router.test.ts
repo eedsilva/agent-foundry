@@ -9,8 +9,15 @@ import type { MetricsRepository } from '@agent-foundry/domain';
 import { ScoreBasedModelRouter } from './score-router.js';
 
 class MemoryMetrics implements MetricsRepository {
+  readonly requestedCategories: Array<string | undefined> = [];
   constructor(private readonly values = new Map<string, ModelMetric>()) {}
-  async get(modelId: string, taskKind: string, role: string): Promise<ModelMetric | null> {
+  async get(
+    modelId: string,
+    taskKind: string,
+    role: string,
+    category?: string,
+  ): Promise<ModelMetric | null> {
+    this.requestedCategories.push(category);
     return this.values.get(`${modelId}:${taskKind}:${role}`) ?? null;
   }
   async record(): Promise<void> {}
@@ -48,6 +55,9 @@ function model(id: string, overrides: Partial<ModelDefinition>): ModelDefinition
 const profile: TaskProfile = {
   role: 'developer',
   taskKind: 'implementation',
+  taxonomyVersion: '2',
+  category: 'implementation/frontend',
+  features: ['frontend'],
   complexity: 4,
   risk: 4,
   estimatedContextTokens: 20_000,
@@ -71,6 +81,7 @@ const override: RouteOverrideProvenance = {
 
 describe('ScoreBasedModelRouter', () => {
   it('selects the stronger coding model for a quality-weighted implementation task', async () => {
+    const metrics = new MemoryMetrics();
     const router = new ScoreBasedModelRouter(
       [
         model('fast', {
@@ -82,12 +93,16 @@ describe('ScoreBasedModelRouter', () => {
           capabilities: { ...baseCapabilities, coding: 0.96, speed: 0.55 },
         }),
       ],
-      new MemoryMetrics(),
+      metrics,
     );
 
     const route = await router.route(profile);
     expect(route.selected.model.id).toBe('strong');
     expect(route.fallbacks[0]?.model.id).toBe('fast');
+    expect(metrics.requestedCategories).toEqual([
+      'implementation/frontend',
+      'implementation/frontend',
+    ]);
   });
 
   it('uses reviewer outcomes to overcome a small prior advantage', async () => {
@@ -99,6 +114,8 @@ describe('ScoreBasedModelRouter', () => {
           modelId: 'prior-favorite',
           taskKind: 'implementation',
           role: 'developer',
+          taxonomyVersion: '2',
+          category: 'implementation/frontend',
           attempts: 20,
           successes: 20,
           totalDurationMs: 20_000,
@@ -117,6 +134,8 @@ describe('ScoreBasedModelRouter', () => {
           modelId: 'proven',
           taskKind: 'implementation',
           role: 'developer',
+          taxonomyVersion: '2',
+          category: 'implementation/frontend',
           attempts: 20,
           successes: 20,
           totalDurationMs: 20_000,
