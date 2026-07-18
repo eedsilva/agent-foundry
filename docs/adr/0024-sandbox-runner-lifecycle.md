@@ -18,4 +18,8 @@ This is a contract boundary, not a sandbox implementation: LocalExecutionPlane r
 
 ## Validation and rollback
 
+```bash
+npm run test:unit -- packages/contracts/src/sandbox.test.ts packages/domain/src/sandbox-runner.test.ts
+```
+
 packages/domain/src/sandbox-runner.test.ts proves success, streaming, allowed-path filtering, and cleanup after exec/snapshot failure. Roll back with a revert; all values are transient and unpersisted.
