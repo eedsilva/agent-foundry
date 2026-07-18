@@ -9,7 +9,10 @@ import {
   type ApprovalListResponse,
   type ApprovalRequest,
   type ActorRef,
+  type ConversationPageResponse,
+  type Message,
   type ModelDefinition,
+  type Operation,
   type ProjectDetailResponse,
   type ProjectEvent,
   type ResumeBlockedResponse,
@@ -23,9 +26,11 @@ import {
 } from '@agent-foundry/contracts';
 import {
   decideApproval,
+  decideOperation,
   createModelOverride,
   eventStreamUrl,
   getArtifact,
+  getConversation,
   getProject,
   getRetryPlan,
   getRunDetail,
@@ -36,6 +41,8 @@ import {
   resumeRun,
   retryProject,
   retryStep,
+  sendMessage,
+  startOperation,
 } from '../../../lib/api';
 import { mergeEvents } from '../../../lib/events';
 import {
@@ -152,6 +159,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [deciding, setDeciding] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [previousArtifact, setPreviousArtifact] = useState<StoredArtifact | null>(null);
+  const [conversation, setConversation] = useState<ConversationPageResponse | null>(null);
+  const [draft, setDraft] = useState('');
+  const [mode, setMode] = useState<'plan' | 'build'>('plan');
+  const [buildChoice, setBuildChoice] = useState<'plan' | 'direct'>('plan');
+  const [conversationError, setConversationError] = useState('');
 
   function openArtifact(artifact: StoredArtifact) {
     setSelected(artifact);
@@ -247,6 +259,25 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await getConversation(id);
+        if (active) setConversation(next);
+      } catch {
+        // conversation panel is best-effort; the main project poll surfaces fatal errors
+      }
+      timer = setTimeout(poll, 2_000);
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [id]);
+
   const routes = useMemo(
     () =>
       detail?.artifacts
@@ -312,6 +343,46 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  const latestApprovedPlan = conversation?.operations
+    .filter((op) => op.kind === 'plan' && op.approval?.status === 'approved')
+    .at(-1);
+
+  async function submitMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draft.trim()) return;
+    try {
+      const message = await sendMessage(id, {
+        role: 'user',
+        content: [{ type: 'text', text: draft }],
+      });
+      if (mode === 'plan') {
+        await startOperation(id, message.id, { kind: 'plan' });
+      } else if (buildChoice === 'plan' && latestApprovedPlan) {
+        await startOperation(id, message.id, {
+          kind: 'build',
+          planOperationId: latestApprovedPlan.id,
+        });
+      } else {
+        await startOperation(id, message.id, { kind: 'build', directExecution: true });
+      }
+      setDraft('');
+      setConversationError('');
+      setConversation(await getConversation(id));
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function decide(operationId: string, action: 'approve' | 'reject') {
+    try {
+      await decideOperation(id, operationId, action);
+      setConversationError('');
+      setConversation(await getConversation(id));
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
@@ -488,6 +559,91 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </button>
           ) : null}
         </div>
+      </section>
+
+      <section className="panel">
+        <h2>Conversa</h2>
+        {conversationError ? <p className="errorBox">{conversationError}</p> : null}
+        <ul className="conversationList">
+          {(conversation?.messages ?? []).map((message: Message) => {
+            const operation = conversation?.operations.find(
+              (op: Operation) => op.messageId === message.id,
+            );
+            return (
+              <li key={message.id}>
+                <strong>{message.role}:</strong>{' '}
+                {message.content
+                  .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
+                  .join(' ')}
+                {operation ? (
+                  <span className="operationBadge">
+                    {' '}
+                    ({operation.kind}
+                    {operation.approval ? `, ${operation.approval.status}` : ''})
+                    {operation.kind === 'plan' && operation.approval?.status === 'pending' ? (
+                      <>
+                        {' '}
+                        <button
+                          className="secondaryButton"
+                          onClick={() => void decide(operation.id, 'approve')}
+                        >
+                          Aprovar
+                        </button>
+                        <button
+                          className="secondaryButton"
+                          onClick={() => void decide(operation.id, 'reject')}
+                        >
+                          Rejeitar
+                        </button>
+                      </>
+                    ) : null}
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+        <form onSubmit={(event) => void submitMessage(event)}>
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} />
+          <div className="modelPinGrid">
+            <label>
+              <input type="radio" checked={mode === 'plan'} onChange={() => setMode('plan')} /> Plan
+              (somente proposta, sem alterar código)
+            </label>
+            <label>
+              <input type="radio" checked={mode === 'build'} onChange={() => setMode('build')} />{' '}
+              Build (vai alterar código e consumir budget)
+            </label>
+          </div>
+          {mode === 'build' ? (
+            <div className="modelPinGrid">
+              {latestApprovedPlan ? (
+                <label>
+                  <input
+                    type="radio"
+                    checked={buildChoice === 'plan'}
+                    onChange={() => setBuildChoice('plan')}
+                  />{' '}
+                  Build a partir do plano aprovado
+                </label>
+              ) : null}
+              <label>
+                <input
+                  type="radio"
+                  checked={buildChoice === 'direct' || !latestApprovedPlan}
+                  onChange={() => setBuildChoice('direct')}
+                />{' '}
+                Build direto, sem plano (decisão explícita)
+              </label>
+              <p className="errorBox">
+                Esta ação vai alterar o código do projeto e consumir budget.
+              </p>
+            </div>
+          ) : null}
+          <button className="secondaryButton" type="submit">
+            Enviar
+          </button>
+        </form>
       </section>
 
       {detail.project.error ? <p className="errorBox">{detail.project.error}</p> : null}
