@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ArtifactMetadataSchema } from './project.js';
+import { ArtifactMetadataSchema, QueueJobSchema } from './project.js';
 
 describe('ArtifactMetadataSchema', () => {
   it('leaves storage unset for an existing JSON artifact and accepts it unchanged', () => {
@@ -32,5 +32,34 @@ describe('ArtifactMetadataSchema', () => {
     expect(parsed.storage).toBe('blob');
     expect(parsed.sizeBytes).toBe(48_211);
     expect(parsed.blobDeleted).toBeUndefined();
+  });
+});
+
+describe('QueueJobSchema job types (#37)', () => {
+  it('accepts both run-project and run-conversation-operation jobs', () => {
+    const base = {
+      id: 'job-1',
+      projectId: 'project-1',
+      workflowId: 'conversation-plan',
+      attempts: 0,
+      maxAttempts: 1,
+      createdAt: '2026-07-18T12:00:00.000Z',
+      availableAt: '2026-07-18T12:00:00.000Z',
+      leaseEpoch: 0,
+    };
+    expect(
+      QueueJobSchema.parse({
+        ...base,
+        type: 'run-conversation-operation',
+        runId: 'run-1',
+        operationId: 'operation-1',
+      }),
+    ).toMatchObject({ type: 'run-conversation-operation', operationId: 'operation-1' });
+    expect(
+      QueueJobSchema.parse({ ...base, type: 'run-project', workflowId: 'web-app-v1' }),
+    ).toMatchObject({
+      type: 'run-project',
+    });
+    expect(() => QueueJobSchema.parse({ ...base, type: 'bogus' })).toThrow();
   });
 });

@@ -130,10 +130,11 @@ export type QueueLease = z.infer<typeof QueueLeaseSchema>;
 
 export const QueueJobSchema = z.object({
   id: PathSegmentSchema,
-  type: z.literal('run-project'),
+  type: z.enum(['run-project', 'run-conversation-operation']),
   projectId: PathSegmentSchema,
   workflowId: PathSegmentSchema,
   runId: PathSegmentSchema.optional(),
+  operationId: PathSegmentSchema.optional(),
   attempts: z.number().int().nonnegative(),
   maxAttempts: z.number().int().positive(),
   createdAt: z.string().datetime(),
