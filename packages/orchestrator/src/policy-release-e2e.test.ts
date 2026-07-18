@@ -235,7 +235,17 @@ function browserCoordinator(verify: BrowserVerifier['verify']) {
     },
   } satisfies Pick<PreviewService, 'start' | 'stop'>;
   const mockArtifacts = {
-    putBlob: () => Promise.resolve(),
+    putBlob: () => Promise.resolve({
+      projectId: 'project-1',
+      name: 'test',
+      revision: 1,
+      contentType: 'application/octet-stream',
+      createdAt: '2026-07-17T12:00:00.000Z',
+      createdBy: 'tester',
+      sha256: 'a'.repeat(64),
+      storage: 'blob' as const,
+      sizeBytes: 0,
+    }),
   };
   const mockLimits = {
     maxScreenshotBytes: 10_000_000,
