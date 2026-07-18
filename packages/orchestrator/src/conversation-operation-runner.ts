@@ -82,7 +82,7 @@ export class ConversationOperationRunner {
     const planArtifact = await this.loadPlanArtifact(projectId, operation);
     const step = buildConversationStep({ operationId, kind, message, planArtifact });
 
-    const runState = await this.runs.update(
+    let runState = await this.runs.update(
       transitionWorkflowRun(initialRun, 'running', this.clock.now()),
       initialRun.version,
     );
@@ -107,6 +107,7 @@ export class ConversationOperationRunner {
 
     let checkpoint: string | null = null;
     let attempt: StepAttempt | undefined;
+    let succeeded = false;
     try {
       const harness = await this.harness.select({
         role: step.role,
@@ -202,7 +203,7 @@ export class ConversationOperationRunner {
         routeDecision: executionRoute,
       });
 
-      await this.stepAttempts.update(
+      attempt = await this.stepAttempts.update(
         transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
           durationMs: result.durationMs,
           ...(commit ? { commit } : {}),
@@ -211,14 +212,15 @@ export class ConversationOperationRunner {
         }),
         attempt.version,
       );
-      await this.stepRuns.update(
+      stepRun = await this.stepRuns.update(
         transitionStepRun(stepRun, 'completed', this.clock.now()),
         stepRun.version,
       );
-      await this.runs.update(
+      runState = await this.runs.update(
         transitionWorkflowRun(runState, 'completed', this.clock.now()),
         runState.version,
       );
+      succeeded = true;
       await this.metrics.record({
         modelId: route.selected.model.id,
         taskKind: step.taskKind,
@@ -235,6 +237,14 @@ export class ConversationOperationRunner {
         data: { operationId, runId, kind },
       });
     } catch (error) {
+      if (succeeded) {
+        // The operation already durably completed (attempt/stepRun/runState all
+        // reached their terminal success state); this failure is a secondary,
+        // best-effort concern (metrics or event append). Do not roll back the
+        // already-committed workspace and do not re-attempt repository writes
+        // against records that have moved past these local versions.
+        return;
+      }
       if (checkpoint) await this.workspaces.rollback(projectId, checkpoint);
       const runErr = toRunError(error);
       if (attempt && attempt.status === 'running') {

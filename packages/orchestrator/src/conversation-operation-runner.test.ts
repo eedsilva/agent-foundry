@@ -269,4 +269,47 @@ describe('ConversationOperationRunner', () => {
     expect(workspaces.rollbacks).toHaveLength(1);
     expect(workspaces.commits).toEqual([]);
   });
+
+  it('keeps the completed run and commit intact when appending the completion event fails', async () => {
+    const workspaces = new FakeWorkspaces({ on: true });
+    const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
+    const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
+    const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
+    const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    const events = new InMemoryEvents({ on: true });
+    events.onBeforeAppend = () => {
+      throw new Error('event store unavailable');
+    };
+    const conversations = new MemoryConversations();
+    const executor = new ControllableExecutor({}, workspaces);
+    const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+    const runner = new ConversationOperationRunner(
+      runs,
+      stepRuns,
+      stepAttempts,
+      artifacts,
+      events,
+      harnessRepo,
+      router,
+      metrics,
+      executors,
+      workspaces,
+      conversations,
+      new FixedClock(),
+      new SequentialIds(),
+      { agentTimeoutMs: 60_000 },
+    );
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+
+    // run() must resolve (not throw) even though the post-completion event
+    // append failed, and the already-durable success must not be undone.
+    await expect(runner.run('project-1', runId, operationId)).resolves.toBeUndefined();
+
+    const run = (await runs.get(runId)) as WorkflowRun;
+    expect(run.status).toBe('completed');
+    expect(workspaces.rollbacks).toEqual([]);
+    expect(workspaces.checkpoints).toHaveLength(1);
+    expect(workspaces.commits).toHaveLength(1);
+    expect(await artifacts.getLatest('project-1', `operation-${operationId}`)).not.toBeNull();
+  });
 });
