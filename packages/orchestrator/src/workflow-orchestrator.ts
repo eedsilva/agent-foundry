@@ -83,6 +83,7 @@ import {
   validateBrowserVerificationReportBinding,
   type BrowserVerificationCoordinator,
 } from './browser-verification-coordinator.js';
+import type { QualityObservationService } from './quality-observation-service.js';
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -123,6 +124,7 @@ export class WorkflowOrchestrator {
     private readonly modelOverrides?: ModelOverrideRepository,
     private readonly versions?: ProjectVersionService,
     private readonly browserVerification?: BrowserVerificationCoordinator,
+    private readonly qualityObservations?: QualityObservationService,
   ) {}
 
   async runProject(projectId: string, workflowId?: string, requestedRunId?: string): Promise<void> {
@@ -875,7 +877,14 @@ export class WorkflowOrchestrator {
         browserPlan ? [browserPlan] : [],
       );
       const approved = this.conditionApproved(latest, node);
-      if (qualitySubject) await this.recordQualityOutcome(qualitySubject, approved);
+      if (qualitySubject) {
+        await this.recordQualityOutcome(qualitySubject, approved);
+        if (node.check.type === 'verify') {
+          await this.qualityObservations?.recordDeterministic(qualitySubject, latest, approved);
+        } else if (isReviewerRole(node.check.role)) {
+          await this.qualityObservations?.recordBlindReview(qualitySubject, latest, approved);
+        }
+      }
       if (approved) {
         await this.resetConsecutiveRepairs(runId);
         await this.emit(project.id, 'quality.approved', `${node.title} approved.`, {
@@ -2268,6 +2277,10 @@ function workflowUsesBrowserPlan(workflow: WorkflowDefinition, artifactName: str
       (step) => step?.type === 'verify' && step.browserTestPlanArtifact === artifactName,
     );
   });
+}
+
+function isReviewerRole(role: AgentStep['role']): boolean {
+  return role === 'plan-reviewer' || role === 'architecture-reviewer' || role === 'code-reviewer';
 }
 
 function throwIfCancelled(signal: AbortSignal, runId: string): void {

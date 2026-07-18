@@ -21,6 +21,7 @@ import {
   FileJobQueue,
   FileMetricsRepository,
   FileModelOverrideRepository,
+  FileQualityObservationRepository,
   FileProjectRepository,
   FilePreviewLifecycleLock,
   FilePreviewLogRepository,
@@ -43,6 +44,7 @@ import {
   WorkerLoop,
   WorkflowOrchestrator,
   PreviewService,
+  QualityObservationService,
   BrowserVerificationCoordinator,
   type BrowserEvidenceLimits,
 } from '@agent-foundry/orchestrator';
@@ -64,6 +66,7 @@ export interface Runtime {
   events: FileEventStore;
   queue: FileJobQueue;
   metrics: FileMetricsRepository;
+  qualityObservations: FileQualityObservationRepository;
   modelOverrides: FileModelOverrideRepository;
   workflows: YamlWorkflowRepository;
   policies: YamlPolicyRepository;
@@ -108,6 +111,8 @@ export async function createRuntime(
   const events = new FileEventStore(config.dataDir);
   const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
   const metrics = new FileMetricsRepository(config.dataDir);
+  const qualityObservations = new FileQualityObservationRepository(config.dataDir);
+  const qualityObservationService = new QualityObservationService(qualityObservations, clock, ids);
   const modelOverrides = new FileModelOverrideRepository(config.dataDir);
   const workflows = new YamlWorkflowRepository(config.workflowsDir);
   const policies = new YamlPolicyRepository(config.policiesDir);
@@ -117,7 +122,7 @@ export async function createRuntime(
     gitAuthorEmail: config.gitAuthorEmail,
   });
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
-  const router = new ScoreBasedModelRouter(catalog, metrics);
+  const router = new ScoreBasedModelRouter(catalog, metrics, qualityObservations);
   const executors =
     config.executorMode === 'mock'
       ? new MockExecutorRegistry(new MockAgentExecutor())
@@ -205,6 +210,7 @@ export async function createRuntime(
     modelOverrides,
     projectVersionService,
     browserVerification,
+    qualityObservationService,
   );
   const projectService = new ProjectService(
     projects,
@@ -272,6 +278,7 @@ export async function createRuntime(
     events,
     queue,
     metrics,
+    qualityObservations,
     modelOverrides,
     workflows,
     policies,
