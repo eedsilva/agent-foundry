@@ -22,6 +22,7 @@ import {
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
+  compareVersions,
   decideApproval,
   createModelOverride,
   eventStreamUrl,
@@ -32,6 +33,7 @@ import {
   getRunDetail,
   getRuntime,
   listApprovals,
+  listVersions,
   listWorkflows,
   pauseRun,
   resumeRun,
@@ -46,7 +48,9 @@ import {
   retryMode,
   retryRequest,
 } from '../../../lib/model-overrides';
-import { PreviewPanel } from './preview-panel';
+import { PreviewPanel, VerificationReportView } from './preview-panel';
+import { findDiffApprovalVersions } from '../../../lib/diff-approval';
+import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
 
 const PROJECT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 
@@ -151,6 +155,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   );
   const [decidePreview, setDecidePreview] = useState<RetryPlanResponse | null>(null);
   const [decideError, setDecideError] = useState('');
+  const [decideDiff, setDecideDiff] = useState<string | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [previousArtifact, setPreviousArtifact] = useState<StoredArtifact | null>(null);
@@ -261,12 +266,52 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   );
 
   const run = runDetail?.run;
+
+  useEffect(() => {
+    setDecideDiff(null);
+    if (!decideTarget || !run || decideTarget.request.artifact.name !== 'browser-verification.report') {
+      return;
+    }
+    let active = true;
+    listVersions(id)
+      .then((versions) => {
+        if (!active) return;
+        const { from, to } = findDiffApprovalVersions(versions, run.id);
+        if (!from || !to) {
+          setDecideDiff('Nenhuma versão anterior para comparar.');
+          return undefined;
+        }
+        return compareVersions(id, from.id, to.id).then((result) => {
+          if (active) setDecideDiff(result.diff);
+        });
+      })
+      .catch((cause: unknown) => {
+        if (active) setDecideError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, [decideTarget, id, run]);
+
   const stepTargets = useMemo(
     () => (workflowDef ? agentStepTargets(workflowDef) : []),
     [workflowDef],
   );
   const runnableModels = runtimeModels.filter((model) => model.enabled && model.model.trim());
   const evidence = run ? executionEvidence(run) : null;
+  const decideReport = useMemo(() => {
+    if (!decideTarget || decideTarget.request.artifact.name !== 'browser-verification.report') {
+      return null;
+    }
+    const match = detail?.artifacts.find(
+      (artifact) =>
+        artifact.metadata.name === decideTarget.request.artifact.name &&
+        artifact.metadata.revision === decideTarget.request.artifact.revision,
+    );
+    if (!match) return null;
+    const parsed = BrowserVerificationReportSchema.safeParse(match.content);
+    return parsed.success ? parsed.data : null;
+  }, [decideTarget, detail]);
   const refresh = () => setRefreshTick((tick) => tick + 1);
 
   function pinFields(data: FormData) {
@@ -974,6 +1019,35 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             ) : (
               <p className="hint">Calculando consequências…</p>
             )}
+
+            {decideTarget.request.artifact.name === 'browser-verification.report' ? (
+              <div>
+                {decideReport ? (
+                  <VerificationReportView report={decideReport} projectId={detail.project.id} />
+                ) : null}
+                {decideDiff !== null ? (
+                  <pre className="diffPane">
+                    {decideDiff.split('\n').map((line, index) => (
+                      <span
+                        key={index}
+                        className={
+                          line.startsWith('+')
+                            ? 'diffAdded'
+                            : line.startsWith('-')
+                              ? 'diffRemoved'
+                              : undefined
+                        }
+                      >
+                        {line}
+                        {'\n'}
+                      </span>
+                    ))}
+                  </pre>
+                ) : (
+                  <p className="hint">Carregando diff…</p>
+                )}
+              </div>
+            ) : null}
 
             <label>
               {decideTarget.action === 'request-changes'
