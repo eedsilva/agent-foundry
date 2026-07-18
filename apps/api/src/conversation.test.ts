@@ -255,7 +255,7 @@ describe('conversation API', () => {
     const message = await createMessage(baseUrl, projectId, 'Build it');
     const path = `/projects/${projectId}/conversation/messages/${message.id}/operations`;
     const input = {
-      kind: 'build',
+      kind: 'explain',
       idempotencyKey: 'c'.repeat(64),
       artifactReferences: [],
     };
