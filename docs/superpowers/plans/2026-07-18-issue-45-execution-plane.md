@@ -114,9 +114,7 @@ describe('ExecutionRequestSchema', () => {
   });
 
   it('rejects an unknown protocol version', () => {
-    expect(ExecutionRequestSchema.safeParse(request({ protocolVersion: '2' })).success).toBe(
-      false,
-    );
+    expect(ExecutionRequestSchema.safeParse(request({ protocolVersion: '2' })).success).toBe(false);
   });
 
   it('never carries a local cwd — the field does not exist on the embedded agent request', () => {
@@ -172,7 +170,12 @@ describe('ExecutionResultSchema', () => {
       protocolVersion: EXECUTION_PROTOCOL_VERSION,
       executionId: 'attempt-1',
       state: 'failed',
-      error: { message: 'CLI exited with a failure status', exitCode: 1, stdout: '', stderr: '429' },
+      error: {
+        message: 'CLI exited with a failure status',
+        exitCode: 1,
+        stdout: '',
+        stderr: '429',
+      },
     });
     expect(parsed.error?.exitCode).toBe(1);
   });
@@ -395,7 +398,8 @@ class FakeAgentExecutor implements AgentExecutor {
   constructor(private readonly behavior: 'succeed' | 'fail' | 'cancel' | 'ceiling') {}
   async execute(agentRequest: Parameters<AgentExecutor['execute']>[0]) {
     if (this.behavior === 'cancel') throw new RunCancelledError(agentRequest.runId);
-    if (this.behavior === 'ceiling') throw new EmergencyCeilingError(agentRequest.runId, 'active-time');
+    if (this.behavior === 'ceiling')
+      throw new EmergencyCeilingError(agentRequest.runId, 'active-time');
     if (this.behavior === 'fail') {
       throw new ExecutionError('CLI exited with a failure status', {
         exitCode: 1,
@@ -503,7 +507,11 @@ Expected: FAIL — `./local-execution-plane.js` does not exist.
 
 ```typescript
 // packages/executors/src/local-execution-plane.ts
-import { EXECUTION_PROTOCOL_VERSION, type ExecutionRequest, type ExecutionResult } from '@agent-foundry/contracts';
+import {
+  EXECUTION_PROTOCOL_VERSION,
+  type ExecutionRequest,
+  type ExecutionResult,
+} from '@agent-foundry/contracts';
 import {
   EmergencyCeilingError,
   ExecutionError,
@@ -571,11 +579,15 @@ export class LocalExecutionPlane implements ExecutionPlane {
   // cancel/observe (e.g. reconciling after a control-plane restart) is
   // meaningful only for a real remote runner; it lands with v07-sandbox-runner.
   async cancel(): Promise<void> {
-    throw new Error('LocalExecutionPlane does not support out-of-band cancel; use the AbortSignal passed to submit().');
+    throw new Error(
+      'LocalExecutionPlane does not support out-of-band cancel; use the AbortSignal passed to submit().',
+    );
   }
 
   async status(): Promise<ExecutionStatus> {
-    throw new Error('LocalExecutionPlane does not support out-of-band status; local execution is synchronous.');
+    throw new Error(
+      'LocalExecutionPlane does not support out-of-band status; local execution is synchronous.',
+    );
   }
 }
 ```
@@ -643,18 +655,18 @@ Constructor (line 115): rename `private readonly executors: ExecutorRegistry,` t
 At the `executeCandidate` call site (around line 1649), compute and pass the workspace ref (the existing `checkpoint` local is already in scope — it is `null` for non-mutating steps):
 
 ```typescript
-        const workspaceRef = checkpoint ?? (await this.workspaces.head(project.id)) ?? runId;
-        const result = await this.executeCandidate(
-          project,
-          step,
-          runId,
-          stepRun.id,
-          attempt.id,
-          candidate,
-          signal,
-          outputSchema,
-          workspaceRef,
-        );
+const workspaceRef = checkpoint ?? (await this.workspaces.head(project.id)) ?? runId;
+const result = await this.executeCandidate(
+  project,
+  step,
+  runId,
+  stepRun.id,
+  attempt.id,
+  candidate,
+  signal,
+  outputSchema,
+  workspaceRef,
+);
 ```
 
 Replace the whole `executeCandidate` method (lines 1862-1914) with:
@@ -1109,7 +1121,7 @@ git commit -m "refactor(orchestrator): submit agent work through the ExecutionPl
 In `packages/composition/src/runtime.ts`, add `LocalExecutionPlane` to the `@agent-foundry/executors` import (line 1-11 block). Add `executionPlane: LocalExecutionPlane;` to the `Runtime` interface, next to `executors`. After the existing `executors` construction (line 115-122), add:
 
 ```typescript
-  const executionPlane = new LocalExecutionPlane(executors, workspaces);
+const executionPlane = new LocalExecutionPlane(executors, workspaces);
 ```
 
 In the `new WorkflowOrchestrator(...)` call (line 178), change `executors,` to `executionPlane,`. Add `executionPlane,` to the object returned by `createRuntime` alongside `executors,`.
@@ -1146,6 +1158,7 @@ git commit -m "feat(composition): wire the local ExecutionPlane into the runtime
 - [ ] **Step 1: Write the ADR**
 
 Create `docs/adr/0023-control-execution-plane-protocol.md` following the existing ADR format (see `docs/adr/0014-project-policy-enforcement.md` for the section structure: Status/Date/Owners, Context, Decision, Alternatives considered, Consequences, Validation and rollback). Cover:
+
 - Context: the orchestrator called `ExecutorRegistry`/`AgentExecutor` directly, spawning CLIs in the same process as the control plane (issue #45, roadmap task `v07-control-execution-plane`).
 - Decision: the `ExecutionRequest`/`ExecutionResult` protocol (fields and why — workspace snapshot instead of `cwd`, tools/networkPolicy/secrets as shape-only placeholders, `state` machine, no local paths in the result), the `ExecutionPlane` port (`submit`/`cancel`/`status`), and `LocalExecutionPlane` as the sole, explicitly dev-only implementation.
 - Alternatives considered: extending `AgentExecutionRequest`/`Result` in place (rejected — conflates the CLI-specific shape with the transport envelope a remote runner needs); building the real sandboxed runner now (rejected — out of scope, tracked by dependent roadmap tasks).

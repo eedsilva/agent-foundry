@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { EXECUTION_PROTOCOL_VERSION, type ExecutionRequest } from '@agent-foundry/contracts';
 import {
   EmergencyCeilingError,
@@ -43,7 +42,8 @@ function makeExecutor(behavior: 'succeed' | 'fail' | 'cancel' | 'ceiling'): Agen
     provider: 'codex',
     async execute(agentRequest, _signal?) {
       if (behavior === 'cancel') throw new RunCancelledError(agentRequest.runId);
-      if (behavior === 'ceiling') throw new EmergencyCeilingError(agentRequest.runId, 'active-time');
+      if (behavior === 'ceiling')
+        throw new EmergencyCeilingError(agentRequest.runId, 'active-time');
       if (behavior === 'fail') {
         throw new ExecutionError('CLI exited with a failure status', {
           exitCode: 1,
