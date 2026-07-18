@@ -128,79 +128,40 @@ export class BrowserVerificationCoordinator {
     if (evidence.screenshots.length === 0 && !evidence.trace && !evidence.video) return report;
     const sessionId = report.previewSession.sessionId;
 
-    const screenshots: BrowserScreenshotEvidence[] = [];
-    for (const shot of evidence.screenshots) {
-      const metadata = await this.putBlobOrSkip(
-        {
-          projectId: input.projectId,
-          name: `browser-screenshot-${sessionId}-${shot.stepId}`,
-          contentType: 'image/png',
-          createdBy: 'browser-verifier',
-          maxBytes: this.limits.maxScreenshotBytes,
-          runId: input.runId,
-          retentionSeconds: this.limits.retentionSeconds,
-        },
-        Readable.from(shot.buffer),
-      );
-      if (!metadata) continue;
-      screenshots.push({
-        name: metadata.name,
-        revision: metadata.revision,
-        sha256: metadata.sha256,
-        sizeBytes: metadata.sizeBytes,
-        stepId: shot.stepId,
-        url: shot.url,
-        viewport: shot.viewport,
-      });
-    }
-
-    let trace: ArtifactReference | undefined;
-    if (evidence.trace) {
-      const metadata = await this.putBlobOrSkip(
-        {
-          projectId: input.projectId,
-          name: `browser-trace-${sessionId}`,
-          contentType: 'application/zip',
-          createdBy: 'browser-verifier',
-          maxBytes: this.limits.maxTraceBytes,
-          runId: input.runId,
-          retentionSeconds: this.limits.retentionSeconds,
-        },
-        Readable.from(evidence.trace),
-      );
-      if (metadata) {
-        trace = {
-          name: metadata.name,
-          revision: metadata.revision,
-          sha256: metadata.sha256,
-          sizeBytes: metadata.sizeBytes,
-        };
-      }
-    }
-
-    let video: ArtifactReference | undefined;
-    if (evidence.video) {
-      const metadata = await this.putBlobOrSkip(
-        {
-          projectId: input.projectId,
-          name: `browser-video-${sessionId}`,
-          contentType: 'video/webm',
-          createdBy: 'browser-verifier',
-          maxBytes: this.limits.maxVideoBytes,
-          runId: input.runId,
-          retentionSeconds: this.limits.retentionSeconds,
-        },
-        Readable.from(evidence.video),
-      );
-      if (metadata) {
-        video = {
-          name: metadata.name,
-          revision: metadata.revision,
-          sha256: metadata.sha256,
-          sizeBytes: metadata.sizeBytes,
-        };
-      }
-    }
+    const [screenshots, trace, video] = await Promise.all([
+      Promise.all(
+        evidence.screenshots.map(async (shot) => {
+          const ref = await this.putEvidenceRef(
+            input,
+            `browser-screenshot-${sessionId}-${shot.stepId}`,
+            'image/png',
+            this.limits.maxScreenshotBytes,
+            shot.buffer,
+          );
+          return ref
+            ? { ...ref, stepId: shot.stepId, url: shot.url, viewport: shot.viewport }
+            : undefined;
+        }),
+      ).then((refs) => refs.filter((ref): ref is BrowserScreenshotEvidence => ref !== undefined)),
+      evidence.trace
+        ? this.putEvidenceRef(
+            input,
+            `browser-trace-${sessionId}`,
+            'application/zip',
+            this.limits.maxTraceBytes,
+            evidence.trace,
+          )
+        : Promise.resolve(undefined),
+      evidence.video
+        ? this.putEvidenceRef(
+            input,
+            `browser-video-${sessionId}`,
+            'video/webm',
+            this.limits.maxVideoBytes,
+            evidence.video,
+          )
+        : Promise.resolve(undefined),
+    ]);
 
     return BrowserVerificationReportSchema.parse({
       ...report,
@@ -214,6 +175,35 @@ export class BrowserVerificationCoordinator {
         },
       },
     });
+  }
+
+  private async putEvidenceRef(
+    input: BrowserVerificationInput,
+    name: string,
+    contentType: string,
+    maxBytes: number,
+    buffer: Buffer,
+  ): Promise<ArtifactReference | undefined> {
+    const metadata = await this.putBlobOrSkip(
+      {
+        projectId: input.projectId,
+        name,
+        contentType,
+        createdBy: 'browser-verifier',
+        maxBytes,
+        runId: input.runId,
+        retentionSeconds: this.limits.retentionSeconds,
+      },
+      Readable.from(buffer),
+    );
+    return metadata
+      ? {
+          name: metadata.name,
+          revision: metadata.revision,
+          sha256: metadata.sha256,
+          sizeBytes: metadata.sizeBytes,
+        }
+      : undefined;
   }
 
   private async putBlobOrSkip(
