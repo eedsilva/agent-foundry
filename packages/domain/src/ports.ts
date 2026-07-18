@@ -59,6 +59,8 @@ export interface ConversationRepository {
   getAttachment(projectId: string, attachmentId: string): Promise<Attachment | null>;
   listAttachments(projectId: string): Promise<Attachment[]>;
   createOperation(operation: Operation): Promise<Operation>;
+  getOperation(projectId: string, operationId: string): Promise<Operation | null>;
+  updateOperation(operation: Operation): Promise<Operation>;
   listOperations(projectId: string): Promise<Operation[]>;
 }
 

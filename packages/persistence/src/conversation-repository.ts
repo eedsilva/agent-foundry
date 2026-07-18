@@ -157,6 +157,25 @@ export class FileConversationRepository implements ConversationRepository {
     });
   }
 
+  async getOperation(projectId: string, operationId: string): Promise<Operation | null> {
+    return (
+      (await this.readOperations(projectId)).find((operation) => operation.id === operationId) ??
+      null
+    );
+  }
+
+  async updateOperation(operation: Operation): Promise<Operation> {
+    const parsed = OperationSchema.parse(operation);
+    return this.withLock(parsed.projectId, async () => {
+      const operations = await this.readOperations(parsed.projectId);
+      const index = operations.findIndex((item) => item.id === parsed.id);
+      if (index === -1) throw new NotFoundError(`Operation ${parsed.id} not found`);
+      operations[index] = parsed;
+      await this.writeJsonLines(this.operationsPath(parsed.projectId), operations);
+      return parsed;
+    });
+  }
+
   async listOperations(projectId: string): Promise<Operation[]> {
     return this.readOperations(projectId);
   }
