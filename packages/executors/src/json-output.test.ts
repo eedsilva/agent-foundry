@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { extractExecutedModel, extractUsage, parseAgentArtifact } from './json-output.js';
+import {
+  extractExecutedModel,
+  extractRateLimit,
+  extractUsage,
+  parseAgentArtifact,
+} from './json-output.js';
 
 function fixture(name: string): string {
   return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -119,6 +124,7 @@ describe('extractUsage', () => {
       outputTokens: 45,
       cachedInputTokens: 70,
       estimatedCostUsd: 0.018,
+      sourceQuality: 'provider-reported',
     });
   });
 
@@ -136,6 +142,7 @@ describe('extractUsage', () => {
       inputTokens: 180,
       outputTokens: 42,
       cachedInputTokens: 80,
+      sourceQuality: 'provider-reported',
     });
   });
 
@@ -159,11 +166,20 @@ describe('extractUsage', () => {
     ).toEqual({
       inputTokens: 10,
       outputTokens: 2,
+      sourceQuality: 'provider-reported',
     });
   });
 
   it.each([
-    ['codex.success.stdout.jsonl', { inputTokens: 180, outputTokens: 42, cachedInputTokens: 80 }],
+    [
+      'codex.success.stdout.jsonl',
+      {
+        inputTokens: 180,
+        outputTokens: 42,
+        cachedInputTokens: 80,
+        sourceQuality: 'provider-reported',
+      },
+    ],
     [
       'claude.success.stdout.json',
       {
@@ -171,9 +187,13 @@ describe('extractUsage', () => {
         outputTokens: 45,
         cachedInputTokens: 70,
         estimatedCostUsd: 0.018,
+        sourceQuality: 'provider-reported',
       },
     ],
-    ['agy.success.stdout.json', { inputTokens: 90, outputTokens: 30 }],
+    [
+      'agy.success.stdout.json',
+      { inputTokens: 90, outputTokens: 30, sourceQuality: 'provider-reported' },
+    ],
     [
       'claude.stream.success.stdout.jsonl',
       {
@@ -181,6 +201,7 @@ describe('extractUsage', () => {
         outputTokens: 45,
         cachedInputTokens: 70,
         estimatedCostUsd: 0.018,
+        sourceQuality: 'provider-reported',
       },
     ],
   ])('extracts usage from the scrubbed provider fixture %s', (name, expected) => {
@@ -190,6 +211,51 @@ describe('extractUsage', () => {
         ? 'claude'
         : 'agy';
     expect(extractUsage(provider, fixture(name))).toEqual(expected);
+  });
+});
+
+describe('extractUsage partial (issue #62)', () => {
+  it('claude: keeps missing signals undefined and tags provider-reported', () => {
+    const usage = extractUsage('claude', fixture('claude.partial-usage.stdout.json'));
+    expect(usage).toEqual({
+      outputTokens: 42,
+      quotaUnits: 2,
+      sourceQuality: 'provider-reported',
+    });
+    expect(usage?.inputTokens).toBeUndefined();
+    expect(usage?.estimatedCostUsd).toBeUndefined();
+  });
+
+  it('codex: input tokens only', () => {
+    expect(extractUsage('codex', fixture('codex.partial-usage.stdout.jsonl'))).toEqual({
+      inputTokens: 15,
+      sourceQuality: 'provider-reported',
+    });
+  });
+
+  it('agy: cost only', () => {
+    expect(extractUsage('agy', fixture('agy.partial-usage.stdout.json'))).toEqual({
+      estimatedCostUsd: 0.01,
+      sourceQuality: 'provider-reported',
+    });
+  });
+
+  it('returns undefined (not zeros) when no usage present', () => {
+    expect(extractUsage('claude', 'no json here')).toBeUndefined();
+  });
+});
+
+describe('extractRateLimit (issue #62)', () => {
+  it('parses limit/remaining/reset from a provider result', () => {
+    expect(extractRateLimit('claude', fixture('claude.rate-limited.stdout.json'))).toEqual({
+      limit: 100,
+      remaining: 0,
+      resetAt: '2026-07-18T13:00:00.000Z',
+    });
+  });
+
+  it('returns undefined when no rate-limit signal exists', () => {
+    expect(extractRateLimit('codex', fixture('codex.partial-usage.stdout.jsonl'))).toBeUndefined();
   });
 });
 

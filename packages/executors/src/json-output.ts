@@ -67,7 +67,9 @@ export function extractUsage(
       inputTokens?: number;
       outputTokens?: number;
       cachedInputTokens?: number;
+      quotaUnits?: number;
       estimatedCostUsd?: number;
+      sourceQuality?: 'provider-reported';
     }
   | undefined {
   const cleaned = stripAnsi(raw).trim();
@@ -94,7 +96,9 @@ export function extractUsage(
     inputTokens?: number;
     outputTokens?: number;
     cachedInputTokens?: number;
+    quotaUnits?: number;
     estimatedCostUsd?: number;
+    sourceQuality?: 'provider-reported';
   } = {};
   if (accumulator.inputTokens !== undefined) output.inputTokens = accumulator.inputTokens;
   if (accumulator.outputTokens !== undefined) output.outputTokens = accumulator.outputTokens;
@@ -104,7 +108,32 @@ export function extractUsage(
   if (accumulator.estimatedCostUsd !== undefined) {
     output.estimatedCostUsd = accumulator.estimatedCostUsd;
   }
-  return Object.keys(output).length > 0 ? output : undefined;
+  if (accumulator.quotaUnits !== undefined) output.quotaUnits = accumulator.quotaUnits;
+  if (Object.keys(output).length === 0) return undefined;
+  return { ...output, sourceQuality: 'provider-reported' };
+}
+
+export function extractRateLimit(
+  provider: Provider,
+  raw: string,
+): { limit?: number; remaining?: number; resetAt?: string } | undefined {
+  for (const document of providerDocuments(raw)) {
+    if (document === null || typeof document !== 'object' || Array.isArray(document)) continue;
+    const record = document as Record<string, unknown>;
+    const rl = record.rate_limit ?? record.rateLimit;
+    if (rl === null || typeof rl !== 'object' || Array.isArray(rl)) continue;
+    const rlRecord = rl as Record<string, unknown>;
+    const limit = numberFrom(rlRecord, ['limit', 'max']);
+    const remaining = numberFrom(rlRecord, ['remaining', 'left']);
+    const resetAt = stringFrom(rlRecord, ['reset_at', 'resetAt', 'reset']);
+    if (limit === undefined && remaining === undefined && resetAt === undefined) continue;
+    return {
+      ...(limit !== undefined ? { limit } : {}),
+      ...(remaining !== undefined ? { remaining } : {}),
+      ...(resetAt !== undefined ? { resetAt } : {}),
+    };
+  }
+  return undefined;
 }
 
 export function extractExecutedModel(
@@ -179,6 +208,7 @@ interface UsageAccumulator {
   inputTokens?: number;
   outputTokens?: number;
   cachedInputTokens?: number;
+  quotaUnits?: number;
   estimatedCostUsd?: number;
 }
 
@@ -241,6 +271,9 @@ function collectUsage(record: Record<string, unknown>, accumulator: UsageAccumul
   if (cost !== undefined) {
     accumulator.estimatedCostUsd = maxDefined(accumulator.estimatedCostUsd, cost);
   }
+
+  const quota = numberFrom(record, ['quota_units', 'quotaUnits', 'quota', 'message_units']);
+  if (quota !== undefined) accumulator.quotaUnits = maxDefined(accumulator.quotaUnits, quota);
 }
 
 function providerDocuments(raw: string): unknown[] {
