@@ -26,6 +26,7 @@ import type {
 import {
   AGENT_ARTIFACT_JSON_SCHEMA,
   BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
+  DEFAULT_BROWSER_EVIDENCE_POLICY,
 } from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
@@ -1420,6 +1421,7 @@ export class WorkflowOrchestrator {
             runId,
             plan: browserPlan,
             allowedOrigins: policy.browserAllowedOrigins ?? [],
+            evidencePolicy: policy.browserEvidence ?? DEFAULT_BROWSER_EVIDENCE_POLICY,
           },
           signal,
           async (previewSessionId) => {
