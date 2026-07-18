@@ -196,7 +196,15 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   await expect(page.getByText('Load the root page')).toBeVisible();
   await expect(page.locator('.screenshotFilmstrip img').first()).toBeVisible();
 
-  const axeResults = await new AxeBuilder({ page }).include('.previewPanel').analyze();
+  // Exclude the previewed iframe's own document: it's the fixture dev
+  // server's bare-text stand-in page (packages/executors/src/fixtures/
+  // preview-dev-server.mjs), not real app markup, so it has no landmarks/h1
+  // by design. This scan targets the PreviewPanel chrome itself (Task 4's
+  // deliverable — buttons, tabs, labels), not arbitrary previewed content.
+  const axeResults = await new AxeBuilder({ page })
+    .include('.previewPanel')
+    .exclude('.previewFrameWrap iframe')
+    .analyze();
   expect(axeResults.violations).toEqual([]);
 
   const screenshotArtifactButton = page
@@ -207,11 +215,16 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   await expect(page.locator('.artifactModal img')).toBeVisible();
   await page.getByRole('button', { name: '×' }).click();
 
+  // Scoped to the decide-modal's own heading: the live timeline ("Linha do
+  // tempo") also renders an event whose message equals the node title
+  // ("Human diff approval"), as a plain <p>, which collides with a bare
+  // getByText match.
+  const decideModalHeading = page.getByRole('heading', { name: /Human diff approval/ });
   await page.getByRole('button', { name: 'approve' }).first().click();
-  await expect(page.getByText('Human diff approval')).toBeVisible();
+  await expect(decideModalHeading).toBeVisible();
   await page.getByLabel('Decidido por').fill('e2e-reviewer');
   await page.getByRole('button', { name: /Confirmar approve/ }).click();
-  await expect(page.getByText('Human diff approval')).not.toBeVisible();
+  await expect(decideModalHeading).not.toBeVisible();
 
   expect(await runtime.worker.runOnce()).toBe(true);
   const finalRun = await getRun(projectId);
