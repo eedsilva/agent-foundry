@@ -251,17 +251,26 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       if (tracingStarted && context) {
         const traceDir = await mkdtemp(join(tmpdir(), 'agent-foundry-browser-trace-'));
         const tracePath = join(traceDir, 'trace.zip');
-        await context.tracing.stop({ path: tracePath });
-        trace = await readFile(tracePath);
-        await rm(traceDir, { recursive: true, force: true }).catch(() => undefined);
+        try {
+          await context.tracing.stop({ path: tracePath });
+          trace = await readFile(tracePath);
+        } catch {
+          // Best-effort evidence: a trace read-back failure must not fail verification.
+        } finally {
+          await rm(traceDir, { recursive: true, force: true }).catch(() => undefined);
+        }
       }
       if (context) await context.close().catch(() => undefined);
       context = undefined;
 
       let video: Buffer | undefined;
       if (result.video) {
-        const videoPath = await result.video.path();
-        video = await readFile(videoPath);
+        try {
+          const videoPath = await result.video.path();
+          video = await readFile(videoPath);
+        } catch {
+          // Best-effort evidence: a video read-back failure must not fail verification.
+        }
       }
 
       return {
