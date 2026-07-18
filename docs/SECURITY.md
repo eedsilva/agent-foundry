@@ -36,7 +36,7 @@ Esses controles reduzem risco. Eles não formam uma barreira forte de isolamento
 
 ### Isolamento de processo
 
-O worker real roda com as permissões do usuário do host. Um comando permitido pela CLI pode alcançar tudo que esse usuário alcança. O sandbox do fornecedor ajuda, mas não substitui uma fronteira operacional independente.
+O worker real roda com as permissões do usuário do host. Um comando permitido pela CLI pode alcançar tudo que esse usuário alcança. O sandbox do fornecedor ajuda, mas não substitui uma fronteira operacional independente. A ADR 0023 introduz a port `ExecutionPlane` justamente para que um runner remoto ou sandboxed futuro substitua `LocalExecutionPlane` sem mudar o orquestrador; por enquanto nada mudou nessa fronteira de confiança — as CLIs continuam rodando com as permissões do host até `v07-sandbox-runner`/`v07-container-backend`.
 
 ### Rede
 
