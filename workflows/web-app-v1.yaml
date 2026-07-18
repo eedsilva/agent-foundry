@@ -275,6 +275,12 @@ nodes:
       path: approved
       equals: true
 
+  - id: diff-approval
+    type: approval-gate
+    title: Human diff approval
+    artifact: browser-verification.report
+    outputArtifact: diff.approval
+
   - id: release-assessment
     type: quality-loop
     title: Final release-readiness assessment

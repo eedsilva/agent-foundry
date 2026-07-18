@@ -23,6 +23,7 @@ describe('YamlWorkflowRepository', () => {
       'implementation-gate',
       'deterministic-verification',
       'browser-verification',
+      'diff-approval',
       'release-assessment',
     ]);
   });

@@ -1,12 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ProjectVersion } from '@agent-foundry/contracts';
+import type {
+  PreviewLogPage,
+  PreviewSession,
+  ProjectVersion,
+  WorkflowRun,
+} from '@agent-foundry/contracts';
 import {
   branchFromVersion,
   compareVersions,
+  getActivePreviewSession,
   getArtifactBlobUrl,
+  getPreviewLogs,
   listVersions,
+  resumeRun,
   revertToVersion,
   setVersionProtected,
+  startPreview,
+  stopPreview,
 } from './api';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -101,6 +111,20 @@ describe('project version API client', () => {
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ label: 'wip' }) }),
     );
     expect(result).toEqual({ branchName: 'wip', version: branched });
+    const branchInit = fetchMock.mock.calls[0]?.[1];
+    expect((branchInit?.headers as Record<string, string> | undefined)?.['content-type']).toBe(
+      'application/json',
+    );
+    fetchMock.mockRestore();
+  });
+
+  it('omits content-type on a body-less POST (the shared api() helper)', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ version }));
+
+    await revertToVersion('project-1', 'version-1');
+
+    const init = fetchMock.mock.calls[0]?.[1];
+    expect((init?.headers as Record<string, string> | undefined)?.['content-type']).toBeUndefined();
     fetchMock.mockRestore();
   });
 
@@ -132,5 +156,130 @@ describe('getArtifactBlobUrl', () => {
     expect(getArtifactBlobUrl('project-1', 'browser-trace-preview-1', 2)).toBe(
       'http://localhost:4000/projects/project-1/artifacts/browser-trace-preview-1/blob?revision=2',
     );
+  });
+});
+
+const session: PreviewSession = {
+  id: 'preview-1',
+  workspaceRef: { projectId: 'project-1', workspacePath: '/tmp/project-1' },
+  status: 'running',
+  version: 1,
+  url: 'http://localhost:4000/preview/preview-1/',
+  health: { state: 'healthy', consecutiveFailures: 0 },
+  ttl: { seconds: 1800 },
+  restartCount: 0,
+  createdAt: '2026-07-18T00:00:00.000Z',
+  updatedAt: '2026-07-18T00:00:00.000Z',
+};
+
+describe('preview API client', () => {
+  it('gets the active preview session', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ session }));
+
+    const result = await getActivePreviewSession('project-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/projects/project-1/preview/active',
+      expect.anything(),
+    );
+    expect(result).toEqual({ session });
+    fetchMock.mockRestore();
+  });
+
+  it('returns null when no session is active', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ session: null }));
+
+    const result = await getActivePreviewSession('project-1');
+
+    expect(result).toEqual({ session: null });
+    fetchMock.mockRestore();
+  });
+
+  it('starts a preview session', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ session, url: session.url }, 202));
+
+    const result = await startPreview('project-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/projects/project-1/preview',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(result).toEqual({ session, url: session.url });
+    fetchMock.mockRestore();
+  });
+
+  it('stops a preview session', async () => {
+    const stopped = { ...session, status: 'stopped' as const };
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ session: stopped }, 202));
+
+    const result = await stopPreview('project-1', 'preview-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/projects/project-1/preview/preview-1/stop',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(result).toEqual({ session: stopped });
+    fetchMock.mockRestore();
+  });
+
+  it('gets preview logs without a cursor', async () => {
+    const page: PreviewLogPage = { entries: [], nextCursor: 0 };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(page));
+
+    const result = await getPreviewLogs('project-1', 'preview-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/projects/project-1/preview/preview-1/logs',
+      expect.anything(),
+    );
+    expect(result).toEqual(page);
+    fetchMock.mockRestore();
+  });
+
+  it('gets preview logs with a cursor', async () => {
+    const page: PreviewLogPage = { entries: [], nextCursor: 5 };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(page));
+
+    await getPreviewLogs('project-1', 'preview-1', 5);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/projects/project-1/preview/preview-1/logs?cursor=5',
+      expect.anything(),
+    );
+    fetchMock.mockRestore();
+  });
+});
+
+describe('resumeRun', () => {
+  it('resumes a run without sending a content-type header (the request has no body)', async () => {
+    const run = { id: 'run-1', projectId: 'project-1', status: 'running' } as WorkflowRun;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ run }));
+
+    const result = await resumeRun('run-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/runs/run-1/resume',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1];
+    expect(init?.headers).toBeUndefined();
+    expect(result).toEqual({ run });
+    fetchMock.mockRestore();
+  });
+
+  it('surfaces a 409 ResumeBlockedError response instead of throwing', async () => {
+    const blocked = { error: 'ResumeBlockedError', reason: 'run-not-paused' };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(blocked, 409));
+
+    const result = await resumeRun('run-1');
+
+    expect(result).toEqual({ blocked });
+    fetchMock.mockRestore();
   });
 });
