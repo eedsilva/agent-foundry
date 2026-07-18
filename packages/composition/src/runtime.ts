@@ -230,6 +230,7 @@ export async function createRuntime(
     clock,
     ids,
     modelOverrides,
+    qualityObservationService,
   );
   const conversationService = new ConversationService(
     projects,

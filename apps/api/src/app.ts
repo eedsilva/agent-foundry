@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
 import {
   BranchVersionRequestSchema,
+  CreateQualityObservationRequestSchema,
   CreateProjectRequestSchema,
   CreateModelOverrideRequestSchema,
   CreateAttachmentRequestSchema,
@@ -150,6 +151,16 @@ export async function buildApp(
       .object({ revision: z.coerce.number().int().positive().optional() })
       .parse(request.query);
     return runtime.projectService.getArtifact(projectId, name, revision);
+  });
+
+  app.post('/projects/:projectId/quality-observations', async (request, reply) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const input = CreateQualityObservationRequestSchema.parse(request.body);
+    const observation = await runtime.projectService.recordDelayedQualityObservation(
+      projectId,
+      input,
+    );
+    return reply.status(201).send({ observation });
   });
 
   app.get('/projects/:projectId/artifacts/:name/blob', async (request, reply) => {

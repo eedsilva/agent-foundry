@@ -98,7 +98,7 @@ describe('QualityObservationService', () => {
     expect('QualityObservationService' in orchestrator).toBe(true);
   });
 
-  it('records verifier and blind reviewer observations against the same producer artifact', async () => {
+  it('records verifier, blind reviewer, and human edit observations against the same producer artifact', async () => {
     const repository = new MemoryQualityObservations();
     const service = new QualityObservationService(repository, clock, ids);
     const producer = artifact('implementation');
@@ -114,6 +114,14 @@ describe('QualityObservationService', () => {
       artifact('review', routeDecision, 'code-reviewer:claude/sonnet'),
       false,
     );
+    await service.recordDelayed(producer, {
+      source: 'human-edit',
+      artifact: producerReference,
+      evaluator: { kind: 'human', id: 'ed' },
+      rubric: 'post-review-edit',
+      score: 0.8,
+      evidence: [{ kind: 'human-edit', summary: 'Human accepted the implementation.' }],
+    });
 
     expect(repository.values).toMatchObject([
       {
@@ -126,6 +134,12 @@ describe('QualityObservationService', () => {
         source: 'blind-review',
         blind: true,
         evaluator: { kind: 'llm', id: 'producer' },
+        subject: { artifact: producerReference },
+      },
+      {
+        source: 'human-edit',
+        blind: false,
+        evaluator: { kind: 'human', id: 'ed' },
         subject: { artifact: producerReference },
       },
     ]);

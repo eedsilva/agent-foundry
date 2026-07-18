@@ -180,6 +180,29 @@ Cada chave registra:
 
 A execução bem-sucedida mede apenas funcionamento. O quality gate mede utilidade do resultado. Os dois sinais são necessários.
 
+## Quality signals atribuíveis
+
+Além das métricas agregadas legadas, o router lê observações imutáveis em
+`DATA_DIR/quality/observations.json`. Cada uma mantém o artefato produtor exato (nome, revisão e SHA),
+identidade de rota, avaliador, rubric, score e evidência limitada. A consulta histórica é por modelo,
+`taskKind`, papel, versão de taxonomia e categoria; o artefato exato continua no registro bruto para
+auditoria.
+
+O resultado de rota expõe tanto as observações quanto os componentes separados. Quando há sinais, o
+agregado normalizado usa apenas as fontes presentes: check determinístico `0.50`, review cego `0.25`,
+edição humana `0.15` e regressão pós-merge `0.10`. Portanto, o agregado nunca apaga um relatório de
+verificação, uma review, uma edição ou uma regressão individuais.
+
+O orquestrador associa checks e reviews ao artefato que os produziu. Prompts de reviewer preservam
+conteúdo, revisão e SHA, mas ocultam `createdBy`, identidade do modelo produtor, decisão de rota e dados
+do ator. Edições humanas e regressões pós-merge entram por
+`POST /projects/:projectId/quality-observations`; o endpoint exige a revisão e SHA do artefato roteado,
+uma fonte atrasada válida, avaliador compatível e evidência limitada. Não há endpoint para escrever um
+agregado diretamente.
+
+O repositório faz uma varredura append-only simples neste estágio. Se volume real de roteamento tornar a
+varredura relevante, adicionaremos um índice pela chave de rota preservando os registros existentes.
+
 ## Hierarquia no dashboard
 
 O painel existente agrupa as decisões pela raiz da categoria, na ordem em que aparecem nos artefatos.

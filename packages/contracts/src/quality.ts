@@ -99,7 +99,17 @@ export const QualityObservationInputSchema = z
     score: z.number().min(0).max(1),
     evidence: z.array(QualityEvidenceSchema).min(1),
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    const expectedEvaluator = input.source === 'human-edit' ? 'human' : 'system';
+    if (input.evaluator.kind !== expectedEvaluator) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['evaluator', 'kind'],
+        message: `${input.source} requires a ${expectedEvaluator} evaluator`,
+      });
+    }
+  });
 export type QualityObservationInput = z.infer<typeof QualityObservationInputSchema>;
 
 export const QualitySignalComponentSchema = z

@@ -12,6 +12,8 @@ import type {
   Project,
   ProjectDetailResponse,
   ProjectEvent,
+  QualityObservation,
+  QualityObservationInput,
   Provider,
   QueueJob,
   RetryPlanResponse,
@@ -55,6 +57,7 @@ import {
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
 import { policyHash, workflowHash } from './idempotency.js';
+import type { QualityObservationService } from './quality-observation-service.js';
 
 export class ProjectService {
   constructor(
@@ -75,6 +78,7 @@ export class ProjectService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly modelOverrides?: ModelOverrideRepository,
+    private readonly qualityObservations?: QualityObservationService,
   ) {}
 
   async createModelOverride(
@@ -185,6 +189,31 @@ export class ProjectService {
       : await this.artifacts.getLatest(projectId, name);
     if (!artifact) throw new NotFoundError(`Artifact ${name} not found in project ${projectId}`);
     return artifact;
+  }
+
+  async recordDelayedQualityObservation(
+    projectId: string,
+    input: QualityObservationInput,
+  ): Promise<QualityObservation> {
+    await this.requireProject(projectId);
+    if (!this.qualityObservations) throw new Error('Quality observation service is not configured');
+    const artifact = await this.artifacts.getRevision(
+      projectId,
+      input.artifact.name,
+      input.artifact.revision,
+    );
+    if (!artifact || artifact.metadata.sha256 !== input.artifact.sha256) {
+      throw new NotFoundError(
+        `Artifact ${input.artifact.name} revision ${input.artifact.revision} not found in project ${projectId}`,
+      );
+    }
+    const observation = await this.qualityObservations.recordDelayed(artifact, input);
+    if (!observation) {
+      throw new ValidationError(
+        `Artifact ${input.artifact.name} revision ${input.artifact.revision} has no model route.`,
+      );
+    }
+    return observation;
   }
 
   async getArtifactBlob(
