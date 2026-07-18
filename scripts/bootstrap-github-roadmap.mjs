@@ -30,12 +30,7 @@ const root = resolve(import.meta.dirname, '..');
 const specPath = resolve(root, 'planning/roadmap-spec.json');
 const projectPath = resolve(root, 'planning/project-spec.json');
 const statePath = resolve(root, 'planning/github-state.json');
-const options = parseArgs(process.argv.slice(2), {
-  onHelp: () => {
-    printHelp();
-    process.exit(0);
-  },
-});
+const options = parseArgs(process.argv.slice(2), printHelp);
 const spec = await readJson(specPath);
 const project = await readJson(projectPath);
 const state = await readJson(statePath);

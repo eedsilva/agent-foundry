@@ -1,6 +1,6 @@
 import { sha256 } from './roadmap.mjs';
 
-export function parseArgs(argv, { onHelp } = {}) {
+export function parseArgs(argv, printHelp) {
   const options = {
     apply: false,
     reconcile: false,
@@ -18,8 +18,8 @@ export function parseArgs(argv, { onHelp } = {}) {
     else if (arg === '--repo') options.repo = argv[++i];
     else if (arg === '--delay-ms') options.delayMs = Number(argv[++i]);
     else if (arg === '--help' || arg === '-h') {
-      onHelp?.();
-      return options;
+      printHelp();
+      process.exit(0);
     } else throw new Error(`Argumento desconhecido: ${arg}`);
   }
   if (!Number.isFinite(options.delayMs) || options.delayMs < 0)

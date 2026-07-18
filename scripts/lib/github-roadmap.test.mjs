@@ -171,16 +171,6 @@ test('parseArgs: rejeita flag desconhecida', () => {
   assert.throws(() => parseArgs(['--bogus']), /Argumento desconhecido: --bogus/);
 });
 
-test('parseArgs: --help invoca o callback ao invés de encerrar o processo', () => {
-  let called = false;
-  parseArgs(['--help'], {
-    onHelp: () => {
-      called = true;
-    },
-  });
-  assert.equal(called, true);
-});
-
 test('assertNoUnexpectedDrift: sem estado salvo, primeira aplicação passa', () => {
   assert.doesNotThrow(() => assertNoUnexpectedDrift('qualquer corpo', undefined, false, 'k'));
 });
