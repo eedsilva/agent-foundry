@@ -18,10 +18,12 @@ export const INITIAL_RISKS: Risk[] = [
     id: 'risk-001',
     title: 'Exposed secrets in environment configuration',
     owner: 'DevOps',
-    trigger: 'Real mode execution with API host != loopback AND ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true',
+    trigger:
+      'Real mode execution with API host != loopback AND ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true',
     probability: 'high',
     impact: 'critical',
-    mitigation: 'API binds to loopback (127.0.0.1) by default. Real mode throws on non-loopback unless override set. Override requires explicit env var.',
+    mitigation:
+      'API binds to loopback (127.0.0.1) by default. Real mode throws on non-loopback unless override set. Override requires explicit env var.',
     contingency: 'Rotate all exposed credentials immediately. Audit who accessed the API.',
     status: 'active',
   },
@@ -32,7 +34,8 @@ export const INITIAL_RISKS: Risk[] = [
     trigger: 'Executor mode = real AND untrusted user input reaches CLI',
     probability: 'high',
     impact: 'critical',
-    mitigation: 'Real mode restricted to loopback by default. Input validation in orchestrator. Mock mode for untrusted environments.',
+    mitigation:
+      'Real mode restricted to loopback by default. Input validation in orchestrator. Mock mode for untrusted environments.',
     contingency: 'Disable real mode. Audit execution logs. Review injected commands.',
     status: 'active',
   },
@@ -43,7 +46,8 @@ export const INITIAL_RISKS: Risk[] = [
     trigger: 'Real execution with provider keys configured AND logs/artifacts stored insecurely',
     probability: 'medium',
     impact: 'critical',
-    mitigation: 'Provider keys masked in logs. Artifacts stored in .data/ (local only by default). Keys never logged in plan execution.',
+    mitigation:
+      'Provider keys masked in logs. Artifacts stored in .data/ (local only by default). Keys never logged in plan execution.',
     contingency: 'Rotate provider keys. Audit artifact/log access. Enable encryption at rest.',
     status: 'active',
   },
@@ -54,7 +58,8 @@ export const INITIAL_RISKS: Risk[] = [
     trigger: 'Real mode with fallback provider configuration AND main provider unavailable',
     probability: 'low',
     impact: 'high',
-    mitigation: 'Fallback providers explicitly configured. Real mode only on trusted hosts. Warnings logged on fallback.',
+    mitigation:
+      'Fallback providers explicitly configured. Real mode only on trusted hosts. Warnings logged on fallback.',
     contingency: 'Kill the execution. Review fallback config. Restrict provider availability.',
     status: 'monitoring',
   },
@@ -65,7 +70,8 @@ export const INITIAL_RISKS: Risk[] = [
     trigger: 'Real mode with artifact collection AND .data/ directory writable by untrusted user',
     probability: 'low',
     impact: 'high',
-    mitigation: 'Artifacts stored in .data/ by default (local). Real mode restricted to loopback. Reaper deletes old artifacts.',
+    mitigation:
+      'Artifacts stored in .data/ by default (local). Real mode restricted to loopback. Reaper deletes old artifacts.',
     contingency: 'Review artifact contents. Enable encryption. Restrict .data/ permissions.',
     status: 'monitoring',
   },

@@ -66,9 +66,7 @@ describe('ExecutionRequestSchema', () => {
   });
 
   it('rejects an unknown protocol version', () => {
-    expect(ExecutionRequestSchema.safeParse(request({ protocolVersion: '2' })).success).toBe(
-      false,
-    );
+    expect(ExecutionRequestSchema.safeParse(request({ protocolVersion: '2' })).success).toBe(false);
   });
 
   it('never carries a local cwd — the field does not exist on the embedded agent request', () => {
@@ -124,7 +122,12 @@ describe('ExecutionResultSchema', () => {
       protocolVersion: EXECUTION_PROTOCOL_VERSION,
       executionId: 'attempt-1',
       state: 'failed',
-      error: { message: 'CLI exited with a failure status', exitCode: 1, stdout: '', stderr: '429' },
+      error: {
+        message: 'CLI exited with a failure status',
+        exitCode: 1,
+        stdout: '',
+        stderr: '429',
+      },
     });
     expect(parsed.error?.exitCode).toBe(1);
   });

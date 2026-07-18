@@ -15,6 +15,7 @@ Local development with mock CLI execution (no real commands run). Safe for share
 **Use case:** Development, debugging, demo with fake execution.
 
 **Configuration:**
+
 ```bash
 EXECUTOR_MODE=mock
 API_HOST=127.0.0.1
@@ -34,6 +35,7 @@ Trusted local environment with real CLI execution. Restricts API to loopback int
 **Security:** Real mode is **only** accessible from the same machine (127.0.0.1, localhost, ::1). Remote network access is denied at startup.
 
 **Configuration:**
+
 ```bash
 EXECUTOR_MODE=real
 API_HOST=127.0.0.1
@@ -53,6 +55,7 @@ Production-ready deployment with mock CLI execution. Safe for public-facing depl
 **Security:** Execution is mocked (no real commands). Public access is safe.
 
 **Configuration:**
+
 ```bash
 EXECUTOR_MODE=mock
 API_HOST=0.0.0.0
@@ -87,6 +90,7 @@ If your configuration matches a known profile, the name is logged. If it's a cus
 ## Startup Warnings
 
 **Real mode with remote override:**
+
 ```
 SECURITY WARNING: real CLI execution is exposed on a non-loopback host with an explicit unsafe override.
 ```

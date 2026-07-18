@@ -1,7 +1,4 @@
-export type DeploymentProfile =
-  | 'development'
-  | 'real-local-trusted'
-  | 'mock-production';
+export type DeploymentProfile = 'development' | 'real-local-trusted' | 'mock-production';
 
 export interface DeploymentProfileSpec {
   name: DeploymentProfile;
@@ -12,7 +9,7 @@ export interface DeploymentProfileSpec {
 }
 
 const PROFILES: Record<DeploymentProfile, DeploymentProfileSpec> = {
-  'development': {
+  development: {
     name: 'development',
     executorMode: 'mock',
     apiHost: '127.0.0.1',
@@ -35,7 +32,11 @@ const PROFILES: Record<DeploymentProfile, DeploymentProfileSpec> = {
   },
 };
 
-export function getDeploymentProfile(executorMode: string, apiHost: string, allowRemoteExecution: boolean): DeploymentProfileSpec | null {
+export function getDeploymentProfile(
+  executorMode: string,
+  apiHost: string,
+  allowRemoteExecution: boolean,
+): DeploymentProfileSpec | null {
   for (const profile of Object.values(PROFILES)) {
     if (
       profile.executorMode === executorMode &&

@@ -1,4 +1,8 @@
-import { EXECUTION_PROTOCOL_VERSION, type ExecutionRequest, type ExecutionResult } from '@agent-foundry/contracts';
+import {
+  EXECUTION_PROTOCOL_VERSION,
+  type ExecutionRequest,
+  type ExecutionResult,
+} from '@agent-foundry/contracts';
 import {
   EmergencyCeilingError,
   ExecutionError,
@@ -66,10 +70,14 @@ export class LocalExecutionPlane implements ExecutionPlane {
   // cancel/observe (e.g. reconciling after a control-plane restart) is
   // meaningful only for a real remote runner; it lands with v07-sandbox-runner.
   async cancel(_executionId: string): Promise<void> {
-    throw new Error('LocalExecutionPlane does not support out-of-band cancel; use the AbortSignal passed to submit().');
+    throw new Error(
+      'LocalExecutionPlane does not support out-of-band cancel; use the AbortSignal passed to submit().',
+    );
   }
 
   async status(_executionId: string): Promise<ExecutionStatus> {
-    throw new Error('LocalExecutionPlane does not support out-of-band status; local execution is synchronous.');
+    throw new Error(
+      'LocalExecutionPlane does not support out-of-band status; local execution is synchronous.',
+    );
   }
 }

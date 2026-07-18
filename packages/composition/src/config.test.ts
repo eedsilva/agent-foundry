@@ -214,7 +214,7 @@ describe('Loopback Binding Validation', () => {
     expect(config.deploymentProfile).toBe('real-local-trusted');
   });
 
-  it('marks custom configuration when profile doesn\'t match', () => {
+  it("marks custom configuration when profile doesn't match", () => {
     const config = loadRuntimeConfig({
       ...base,
       EXECUTOR_MODE: 'real',
