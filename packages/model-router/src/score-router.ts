@@ -48,17 +48,22 @@ export class ScoreBasedModelRouter implements ModelRouter {
 
     for (const model of this.models) {
       if (explicit && model.id !== explicit.modelId) continue;
+      // Cheap synchronous rejections first, before spending a metrics read.
+      const staticRejection = this.rejectReason(model, profile);
+      if (staticRejection) {
+        rejected.push({ modelId: model.id, reason: staticRejection });
+        continue;
+      }
+
       const metric = await this.metrics.get(
         model.id,
         profile.taskKind,
         profile.role,
         profile.category,
       );
-      const rejection =
-        this.rejectReason(model, profile) ??
-        this.constraintRejection(model, profile, metric, constraints);
-      if (rejection) {
-        rejected.push({ modelId: model.id, reason: rejection });
+      const constraintRejection = this.constraintRejection(model, profile, metric, constraints);
+      if (constraintRejection) {
+        rejected.push({ modelId: model.id, reason: constraintRejection });
         continue;
       }
 

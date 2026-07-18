@@ -176,6 +176,10 @@ export abstract class BaseCliExecutor implements AgentExecutor {
   }
 
   async health(): Promise<ExecutorHealth> {
+    // ponytail: lastRateLimit is the value observed on the most recent run and is
+    // never invalidated here; the router already gates on resetAt, so a past-reset
+    // value is inert. Add TTL/eviction only if another health() consumer needs it.
+    const rateLimit = this.lastRateLimit ? { rateLimit: this.lastRateLimit } : {};
     try {
       const result = await execa(this.command, ['--version'], {
         reject: false,
@@ -189,14 +193,14 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         message: available
           ? `${this.command} is available`
           : `${this.command} returned exit code ${String(result.exitCode)}`,
-        ...(this.lastRateLimit ? { rateLimit: this.lastRateLimit } : {}),
+        ...rateLimit,
       };
     } catch (error) {
       return {
         provider: this.provider,
         available: false,
         message: errorMessage(error),
-        ...(this.lastRateLimit ? { rateLimit: this.lastRateLimit } : {}),
+        ...rateLimit,
       };
     }
   }

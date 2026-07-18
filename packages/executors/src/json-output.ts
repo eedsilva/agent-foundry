@@ -1,4 +1,9 @@
-import { AgentArtifactSchema, type AgentArtifact, type Provider } from '@agent-foundry/contracts';
+import {
+  AgentArtifactSchema,
+  type AgentArtifact,
+  type Provider,
+  type ProviderRateLimit,
+} from '@agent-foundry/contracts';
 import { ExecutionError } from '@agent-foundry/domain';
 
 export function parseAgentArtifact(provider: Provider, raw: string): AgentArtifact {
@@ -98,7 +103,6 @@ export function extractUsage(
     cachedInputTokens?: number;
     quotaUnits?: number;
     estimatedCostUsd?: number;
-    sourceQuality?: 'provider-reported';
   } = {};
   if (accumulator.inputTokens !== undefined) output.inputTokens = accumulator.inputTokens;
   if (accumulator.outputTokens !== undefined) output.outputTokens = accumulator.outputTokens;
@@ -113,10 +117,7 @@ export function extractUsage(
   return { ...output, sourceQuality: 'provider-reported' };
 }
 
-export function extractRateLimit(
-  provider: Provider,
-  raw: string,
-): { limit?: number; remaining?: number; resetAt?: string } | undefined {
+export function extractRateLimit(provider: Provider, raw: string): ProviderRateLimit | undefined {
   for (const document of providerDocuments(raw)) {
     if (document === null || typeof document !== 'object' || Array.isArray(document)) continue;
     const record = document as Record<string, unknown>;

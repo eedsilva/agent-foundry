@@ -1548,6 +1548,9 @@ export class WorkflowOrchestrator {
       override,
       overrideCreatedAt,
     );
+    // ponytail: the router accepts RouteConstraints (provider rate limits + budget) but we do
+    // not pass them yet — health() spawns a --version probe per provider, so a route-time
+    // ProviderHealth snapshot needs a non-probing source first (v0.9 follow-up, issue #62).
     const route = await this.router.route(profile, explicit);
     await this.emit(
       project.id,

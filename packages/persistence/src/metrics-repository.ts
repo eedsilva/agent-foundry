@@ -20,6 +20,35 @@ function bumpKnown(existing: number | undefined, value: number | undefined): num
   return value === undefined ? existing : (existing ?? 0) + 1;
 }
 
+const USAGE_COUNT_KEYS = [
+  'quotaUnitsTotal',
+  'inputTokensKnownCount',
+  'outputTokensKnownCount',
+  'cachedInputTokensKnownCount',
+  'costKnownCount',
+  'quotaUnitsKnownCount',
+] as const;
+
+// Emit a known-count field only when a sample was observed (absent stays unknown, never 0).
+function knownCountField<K extends string>(
+  key: K,
+  existing: number | undefined,
+  value: number | undefined,
+): Partial<Record<K, number>> {
+  const next = bumpKnown(existing, value);
+  return next === undefined ? {} : ({ [key]: next } as Record<K, number>);
+}
+
+// Carry forward only the usage counts that already exist (recordQuality never observes usage).
+function carryUsageCounts(existing: ModelMetric | null): Partial<ModelMetric> {
+  const carried: Partial<ModelMetric> = {};
+  for (const key of USAGE_COUNT_KEYS) {
+    const value = existing?.[key];
+    if (value !== undefined) carried[key] = value;
+  }
+  return carried;
+}
+
 export class FileMetricsRepository implements MetricsRepository {
   constructor(private readonly dataDir: string) {}
 
@@ -72,34 +101,30 @@ export class FileMetricsRepository implements MetricsRepository {
         consecutiveFailures: input.success ? 0 : (existing?.consecutiveFailures ?? 0) + 1,
         qualityEvaluations: existing?.qualityEvaluations ?? 0,
         qualityApprovals: existing?.qualityApprovals ?? 0,
-        ...(bumpKnown(existing?.inputTokensKnownCount, input.inputTokens) !== undefined
-          ? { inputTokensKnownCount: bumpKnown(existing?.inputTokensKnownCount, input.inputTokens) }
-          : {}),
-        ...(bumpKnown(existing?.outputTokensKnownCount, input.outputTokens) !== undefined
-          ? {
-              outputTokensKnownCount: bumpKnown(
-                existing?.outputTokensKnownCount,
-                input.outputTokens,
-              ),
-            }
-          : {}),
-        ...(bumpKnown(existing?.cachedInputTokensKnownCount, input.cachedInputTokens) !== undefined
-          ? {
-              cachedInputTokensKnownCount: bumpKnown(
-                existing?.cachedInputTokensKnownCount,
-                input.cachedInputTokens,
-              ),
-            }
-          : {}),
-        ...(bumpKnown(existing?.costKnownCount, input.estimatedCostUsd) !== undefined
-          ? { costKnownCount: bumpKnown(existing?.costKnownCount, input.estimatedCostUsd) }
-          : {}),
+        ...knownCountField(
+          'inputTokensKnownCount',
+          existing?.inputTokensKnownCount,
+          input.inputTokens,
+        ),
+        ...knownCountField(
+          'outputTokensKnownCount',
+          existing?.outputTokensKnownCount,
+          input.outputTokens,
+        ),
+        ...knownCountField(
+          'cachedInputTokensKnownCount',
+          existing?.cachedInputTokensKnownCount,
+          input.cachedInputTokens,
+        ),
+        ...knownCountField('costKnownCount', existing?.costKnownCount, input.estimatedCostUsd),
         ...(input.quotaUnits !== undefined || existing?.quotaUnitsTotal !== undefined
           ? { quotaUnitsTotal: (existing?.quotaUnitsTotal ?? 0) + (input.quotaUnits ?? 0) }
           : {}),
-        ...(bumpKnown(existing?.quotaUnitsKnownCount, input.quotaUnits) !== undefined
-          ? { quotaUnitsKnownCount: bumpKnown(existing?.quotaUnitsKnownCount, input.quotaUnits) }
-          : {}),
+        ...knownCountField(
+          'quotaUnitsKnownCount',
+          existing?.quotaUnitsKnownCount,
+          input.quotaUnits,
+        ),
         ...(!input.success
           ? { lastFailureAt: now }
           : existing?.lastFailureAt
@@ -138,24 +163,7 @@ export class FileMetricsRepository implements MetricsRepository {
         consecutiveFailures: existing?.consecutiveFailures ?? 0,
         qualityEvaluations: (existing?.qualityEvaluations ?? 0) + 1,
         qualityApprovals: (existing?.qualityApprovals ?? 0) + (input.approved ? 1 : 0),
-        ...(existing?.quotaUnitsTotal !== undefined
-          ? { quotaUnitsTotal: existing.quotaUnitsTotal }
-          : {}),
-        ...(existing?.inputTokensKnownCount !== undefined
-          ? { inputTokensKnownCount: existing.inputTokensKnownCount }
-          : {}),
-        ...(existing?.outputTokensKnownCount !== undefined
-          ? { outputTokensKnownCount: existing.outputTokensKnownCount }
-          : {}),
-        ...(existing?.cachedInputTokensKnownCount !== undefined
-          ? { cachedInputTokensKnownCount: existing.cachedInputTokensKnownCount }
-          : {}),
-        ...(existing?.costKnownCount !== undefined
-          ? { costKnownCount: existing.costKnownCount }
-          : {}),
-        ...(existing?.quotaUnitsKnownCount !== undefined
-          ? { quotaUnitsKnownCount: existing.quotaUnitsKnownCount }
-          : {}),
+        ...carryUsageCounts(existing),
         ...(existing?.lastFailureAt ? { lastFailureAt: existing.lastFailureAt } : {}),
         updatedAt: now,
       }),
