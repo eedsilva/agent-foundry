@@ -446,7 +446,7 @@ class MemoryConversations implements ConversationRepository {
     if (index !== -1) {
       this.operations[index] = operation;
     } else {
-      this.operations.push(operation);
+      throw new NotFoundError(`Operation ${operation.id} not found`);
     }
     return Promise.resolve(operation);
   }
