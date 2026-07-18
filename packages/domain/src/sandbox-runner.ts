@@ -48,7 +48,7 @@ export async function runSandboxLifecycle(
   const sandbox = await runner.create(spec);
   try {
     const result = await runner.exec(sandbox, exec, signal);
-    const snapshot = await runner.snapshot(sandbox, allowed);
+    const snapshot = await runner.snapshot(sandbox, [...allowed]);
     return {
       result,
       snapshot: {

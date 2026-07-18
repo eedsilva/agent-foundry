@@ -16,7 +16,10 @@ class FakeSandboxRunner implements SandboxRunner {
   destroyCalls = 0;
   createCalls = 0;
   readonly signals: Array<AbortSignal | undefined> = [];
-  constructor(private readonly failAt?: 'create' | 'exec' | 'snapshot') {}
+  constructor(
+    private readonly failAt?: 'create' | 'exec' | 'snapshot',
+    private readonly mutateSnapshotAllowlist = false,
+  ) {}
   async create(_spec: SandboxSpec) {
     this.createCalls += 1;
     if (this.failAt === 'create') throw new Error('create failed');
@@ -32,12 +35,15 @@ class FakeSandboxRunner implements SandboxRunner {
     if (this.failAt === 'exec') throw new Error('exec failed');
     return { exitCode: 0, stdout: 'done', stderr: '' };
   }
-  async snapshot() {
+  async snapshot(_sandbox: { id: string }, allowedPaths: readonly string[]) {
     if (this.failAt === 'snapshot') throw new Error('snapshot failed');
+    if (this.mutateSnapshotAllowlist) (allowedPaths as string[]).push('secrets');
     return {
       files: [
         { path: 'src/index.ts', content: new Uint8Array([1]) },
         { path: 'secrets/.env', content: new Uint8Array([2]) },
+        { path: 'src-secret/file', content: new Uint8Array([3]) },
+        { path: 'src/../secrets/.env', content: new Uint8Array([4]) },
       ],
     };
   }
@@ -69,6 +75,17 @@ describe('runSandboxLifecycle', () => {
     expect(runner.signals).toEqual([signal]);
     expect(result.snapshot.files.map((file) => file.path)).toEqual(['src/index.ts']);
     expect(runner.destroyed).toEqual(new Set(['sandbox-1']));
+  });
+
+  it('keeps filtering against the validated allowlist when the runner mutates its copy', async () => {
+    const runner = new FakeSandboxRunner(undefined, true);
+    const result = await runSandboxLifecycle(
+      runner,
+      spec,
+      { command: 'agent', args: [], timeoutMs: 1_000 },
+      ['src'],
+    );
+    expect(result.snapshot.files.map((file) => file.path)).toEqual(['src/index.ts']);
   });
 
   it.each([
