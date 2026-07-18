@@ -15,6 +15,40 @@ import { atomicWriteJson, readJsonOrNull, safeSegment, withDirectoryLock } from 
 const MetricsFileSchema = z.object({ metrics: z.record(z.string(), ModelMetricSchema) });
 type MetricsFile = z.infer<typeof MetricsFileSchema>;
 
+// ponytail: known-counts are the unknown/zero discriminator; no per-field nullable totals.
+function bumpKnown(existing: number | undefined, value: number | undefined): number | undefined {
+  return value === undefined ? existing : (existing ?? 0) + 1;
+}
+
+const USAGE_COUNT_KEYS = [
+  'quotaUnitsTotal',
+  'inputTokensKnownCount',
+  'outputTokensKnownCount',
+  'cachedInputTokensKnownCount',
+  'costKnownCount',
+  'quotaUnitsKnownCount',
+] as const;
+
+// Emit a known-count field only when a sample was observed (absent stays unknown, never 0).
+function knownCountField<K extends string>(
+  key: K,
+  existing: number | undefined,
+  value: number | undefined,
+): Partial<Record<K, number>> {
+  const next = bumpKnown(existing, value);
+  return next === undefined ? {} : ({ [key]: next } as Record<K, number>);
+}
+
+// Carry forward only the usage counts that already exist (recordQuality never observes usage).
+function carryUsageCounts(existing: ModelMetric | null): Partial<ModelMetric> {
+  const carried: Partial<ModelMetric> = {};
+  for (const key of USAGE_COUNT_KEYS) {
+    const value = existing?.[key];
+    if (value !== undefined) carried[key] = value;
+  }
+  return carried;
+}
+
 export class FileMetricsRepository implements MetricsRepository {
   constructor(private readonly dataDir: string) {}
 
@@ -42,6 +76,8 @@ export class FileMetricsRepository implements MetricsRepository {
     durationMs: number;
     inputTokens?: number;
     outputTokens?: number;
+    cachedInputTokens?: number;
+    quotaUnits?: number;
     estimatedCostUsd?: number;
   }): Promise<void> {
     await this.mutate(
@@ -65,6 +101,30 @@ export class FileMetricsRepository implements MetricsRepository {
         consecutiveFailures: input.success ? 0 : (existing?.consecutiveFailures ?? 0) + 1,
         qualityEvaluations: existing?.qualityEvaluations ?? 0,
         qualityApprovals: existing?.qualityApprovals ?? 0,
+        ...knownCountField(
+          'inputTokensKnownCount',
+          existing?.inputTokensKnownCount,
+          input.inputTokens,
+        ),
+        ...knownCountField(
+          'outputTokensKnownCount',
+          existing?.outputTokensKnownCount,
+          input.outputTokens,
+        ),
+        ...knownCountField(
+          'cachedInputTokensKnownCount',
+          existing?.cachedInputTokensKnownCount,
+          input.cachedInputTokens,
+        ),
+        ...knownCountField('costKnownCount', existing?.costKnownCount, input.estimatedCostUsd),
+        ...(input.quotaUnits !== undefined || existing?.quotaUnitsTotal !== undefined
+          ? { quotaUnitsTotal: (existing?.quotaUnitsTotal ?? 0) + (input.quotaUnits ?? 0) }
+          : {}),
+        ...knownCountField(
+          'quotaUnitsKnownCount',
+          existing?.quotaUnitsKnownCount,
+          input.quotaUnits,
+        ),
         ...(!input.success
           ? { lastFailureAt: now }
           : existing?.lastFailureAt
@@ -103,6 +163,7 @@ export class FileMetricsRepository implements MetricsRepository {
         consecutiveFailures: existing?.consecutiveFailures ?? 0,
         qualityEvaluations: (existing?.qualityEvaluations ?? 0) + 1,
         qualityApprovals: (existing?.qualityApprovals ?? 0) + (input.approved ? 1 : 0),
+        ...carryUsageCounts(existing),
         ...(existing?.lastFailureAt ? { lastFailureAt: existing.lastFailureAt } : {}),
         updatedAt: now,
       }),

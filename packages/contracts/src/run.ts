@@ -43,15 +43,28 @@ export const RunErrorSchema = z
   .strict();
 export type RunError = z.infer<typeof RunErrorSchema>;
 
+export const UsageSourceQualitySchema = z.enum([
+  'provider-reported',
+  'computed',
+  'estimated',
+  'unknown',
+]);
+export type UsageSourceQuality = z.infer<typeof UsageSourceQualitySchema>;
+
 export const ExecutionUsageSchema = z
   .object({
     inputTokens: z.number().nonnegative().optional(),
     outputTokens: z.number().nonnegative().optional(),
     cachedInputTokens: z.number().nonnegative().optional(),
+    quotaUnits: z.number().nonnegative().optional(),
     estimatedCostUsd: z.number().nonnegative().optional(),
+    sourceQuality: UsageSourceQualitySchema.optional(),
   })
   .strict();
 export type ExecutionUsage = z.infer<typeof ExecutionUsageSchema>;
+
+/** Issue #62 vocabulary — normalized usage across providers. */
+export type UsageReport = ExecutionUsage;
 
 export const ArtifactReferenceSchema = z
   .object({

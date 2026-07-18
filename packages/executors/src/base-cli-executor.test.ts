@@ -1,9 +1,14 @@
+import { readFileSync } from 'node:fs';
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentExecutionRequest, Provider } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
+
+function fixture(name: string): string {
+  return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+}
 
 const { execaMock } = vi.hoisted(() => ({ execaMock: vi.fn() }));
 
@@ -93,7 +98,11 @@ describe('BaseCliExecutor metadata', () => {
 
     expect(result.model).toBe('selected-alias');
     expect(result.executedModel).toBe('gpt-5.3-codex');
-    expect(result.usage).toEqual({ inputTokens: 20, outputTokens: 5 });
+    expect(result.usage).toEqual({
+      inputTokens: 20,
+      outputTokens: 5,
+      sourceQuality: 'provider-reported',
+    });
   });
 
   it('records a configured Codex model reported on stderr without persisting inference', async () => {
@@ -225,6 +234,28 @@ describe('BaseCliExecutor metadata', () => {
       vi.useRealTimers();
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe('BaseCliExecutor rate limit (issue #62)', () => {
+  it('surfaces the last observed rate limit in health()', async () => {
+    const executor = new FixtureExecutor(1_000_000);
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stderr: '',
+      stdout: fixture('claude.rate-limited.stdout.json'),
+    });
+
+    await executor.execute(request);
+
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stdout: 'claude-cli 1.0.0', stderr: '' });
+    const health = await executor.health();
+
+    expect(health.rateLimit).toEqual({
+      limit: 100,
+      remaining: 0,
+      resetAt: '2026-07-18T13:00:00.000Z',
+    });
   });
 });
 

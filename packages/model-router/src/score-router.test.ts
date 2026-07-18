@@ -67,6 +67,20 @@ const profile: TaskProfile = {
   preferredTags: ['coding'],
 };
 
+function twoProviderCatalog(): ModelDefinition[] {
+  return [
+    model('claude-metered', {
+      provider: 'claude',
+      billingMode: 'metered',
+      pricing: { inputUsdPerMillionTokens: 3, outputUsdPerMillionTokens: 15 },
+    }),
+    model('codex-subscription', {
+      provider: 'codex',
+      billingMode: 'subscription',
+    }),
+  ];
+}
+
 const override: RouteOverrideProvenance = {
   source: 'run',
   overrideId: 'override-1',
@@ -325,5 +339,39 @@ describe('ScoreBasedModelRouter', () => {
         provenance: override,
       }),
     ).rejects.toThrow(message);
+  });
+
+  it('excludes a model whose provider is rate-limited until a future reset', async () => {
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const health = new Map([
+      [
+        'claude',
+        {
+          provider: 'claude' as const,
+          available: true,
+          message: 'ok',
+          rateLimit: { remaining: 0, resetAt: '2999-01-01T00:00:00.000Z' },
+        },
+      ],
+    ]);
+    const decision = await router.route(profile, undefined, { providerHealth: health });
+    expect(decision.selected.model.provider).not.toBe('claude');
+    expect(decision.rejected.some((r) => r.reason.startsWith('rate-limited'))).toBe(true);
+  });
+
+  it('rejects a metered model that exceeds the cost budget', async () => {
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const decision = await router.route(profile, undefined, {
+      budget: { maxCostUsd: 0 },
+    });
+    // every metered model estimates > $0 → rejected; a subscription/no-pricing model may remain
+    expect(decision.rejected.some((r) => r.reason.startsWith('over-budget'))).toBe(true);
+  });
+
+  it('ignores absent constraints (unchanged behavior)', async () => {
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const a = await router.route(profile);
+    const b = await router.route(profile, undefined, {});
+    expect(b.selected.model.id).toBe(a.selected.model.id);
   });
 });

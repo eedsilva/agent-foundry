@@ -10,6 +10,7 @@ import { WorkflowNodeSchema } from './workflow.js';
 import {
   ApprovalDecisionSchema,
   ApprovalRequestSchema,
+  ExecutionUsageSchema,
   RunExecutionStateSchema,
   RunRetryDirectiveSchema,
   StepAttemptSchema,
@@ -560,5 +561,28 @@ describe('persisted run contracts', () => {
         sha256: 'a'.repeat(64),
       }),
     ).toMatchObject({ kind: 'feedback', actor, sourceDecisionId: 'decision-1' });
+  });
+});
+
+describe('ExecutionUsageSchema (usage report)', () => {
+  it('accepts quota units and source quality', () => {
+    const usage = ExecutionUsageSchema.parse({
+      inputTokens: 10,
+      quotaUnits: 3,
+      sourceQuality: 'provider-reported',
+    });
+    expect(usage.quotaUnits).toBe(3);
+    expect(usage.sourceQuality).toBe('provider-reported');
+  });
+
+  it('leaves missing signals undefined, never zero', () => {
+    const usage = ExecutionUsageSchema.parse({ inputTokens: 10 });
+    expect(usage.outputTokens).toBeUndefined();
+    expect(usage.quotaUnits).toBeUndefined();
+    expect(usage.sourceQuality).toBeUndefined();
+  });
+
+  it('rejects an invalid source quality', () => {
+    expect(() => ExecutionUsageSchema.parse({ sourceQuality: 'guess' })).toThrow();
   });
 });
