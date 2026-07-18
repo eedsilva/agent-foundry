@@ -3,6 +3,7 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
   ActorRef,
+  ArtifactMetadata,
   ArtifactReference,
   CreateModelOverrideRequest,
   CreateProjectRequest,
@@ -184,6 +185,22 @@ export class ProjectService {
       : await this.artifacts.getLatest(projectId, name);
     if (!artifact) throw new NotFoundError(`Artifact ${name} not found in project ${projectId}`);
     return artifact;
+  }
+
+  async getArtifactBlob(
+    projectId: string,
+    name: string,
+    revision?: number,
+  ): Promise<{ metadata: ArtifactMetadata; stream: NodeJS.ReadableStream } | 'gone'> {
+    const artifact = await this.getArtifact(projectId, name, revision);
+    if (artifact.metadata.blobDeleted) return 'gone';
+    const stream = await this.artifacts.getBlobStream(
+      projectId,
+      artifact.metadata.name,
+      artifact.metadata.revision,
+    );
+    if (!stream) return 'gone';
+    return { metadata: artifact.metadata, stream };
   }
 
   async retry(projectId: string): Promise<Project> {

@@ -150,6 +150,24 @@ export async function buildApp(
     return runtime.projectService.getArtifact(projectId, name, revision);
   });
 
+  app.get('/projects/:projectId/artifacts/:name/blob', async (request, reply) => {
+    const { projectId, name } = z
+      .object({ projectId: PathSegmentSchema, name: PathSegmentSchema })
+      .parse(request.params);
+    const { revision } = z
+      .object({ revision: z.coerce.number().int().positive().optional() })
+      .parse(request.query);
+    const result = await runtime.projectService.getArtifactBlob(projectId, name, revision);
+    if (result === 'gone') {
+      return reply.status(410).send({ error: 'Gone', message: `Artifact ${name} has expired.` });
+    }
+    reply.header('content-type', result.metadata.contentType);
+    if (result.metadata.sizeBytes !== undefined) {
+      reply.header('content-length', String(result.metadata.sizeBytes));
+    }
+    return reply.send(result.stream);
+  });
+
   app.get('/projects/:projectId/conversation', async (request) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
     const { cursor, limit } = z
