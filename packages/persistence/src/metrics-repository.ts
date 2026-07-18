@@ -15,6 +15,11 @@ import { atomicWriteJson, readJsonOrNull, safeSegment, withDirectoryLock } from 
 const MetricsFileSchema = z.object({ metrics: z.record(z.string(), ModelMetricSchema) });
 type MetricsFile = z.infer<typeof MetricsFileSchema>;
 
+// ponytail: known-counts are the unknown/zero discriminator; no per-field nullable totals.
+function bumpKnown(existing: number | undefined, value: number | undefined): number | undefined {
+  return value === undefined ? existing : (existing ?? 0) + 1;
+}
+
 export class FileMetricsRepository implements MetricsRepository {
   constructor(private readonly dataDir: string) {}
 
@@ -42,6 +47,8 @@ export class FileMetricsRepository implements MetricsRepository {
     durationMs: number;
     inputTokens?: number;
     outputTokens?: number;
+    cachedInputTokens?: number;
+    quotaUnits?: number;
     estimatedCostUsd?: number;
   }): Promise<void> {
     await this.mutate(
@@ -65,6 +72,34 @@ export class FileMetricsRepository implements MetricsRepository {
         consecutiveFailures: input.success ? 0 : (existing?.consecutiveFailures ?? 0) + 1,
         qualityEvaluations: existing?.qualityEvaluations ?? 0,
         qualityApprovals: existing?.qualityApprovals ?? 0,
+        ...(bumpKnown(existing?.inputTokensKnownCount, input.inputTokens) !== undefined
+          ? { inputTokensKnownCount: bumpKnown(existing?.inputTokensKnownCount, input.inputTokens) }
+          : {}),
+        ...(bumpKnown(existing?.outputTokensKnownCount, input.outputTokens) !== undefined
+          ? {
+              outputTokensKnownCount: bumpKnown(
+                existing?.outputTokensKnownCount,
+                input.outputTokens,
+              ),
+            }
+          : {}),
+        ...(bumpKnown(existing?.cachedInputTokensKnownCount, input.cachedInputTokens) !== undefined
+          ? {
+              cachedInputTokensKnownCount: bumpKnown(
+                existing?.cachedInputTokensKnownCount,
+                input.cachedInputTokens,
+              ),
+            }
+          : {}),
+        ...(bumpKnown(existing?.costKnownCount, input.estimatedCostUsd) !== undefined
+          ? { costKnownCount: bumpKnown(existing?.costKnownCount, input.estimatedCostUsd) }
+          : {}),
+        ...(input.quotaUnits !== undefined || existing?.quotaUnitsTotal !== undefined
+          ? { quotaUnitsTotal: (existing?.quotaUnitsTotal ?? 0) + (input.quotaUnits ?? 0) }
+          : {}),
+        ...(bumpKnown(existing?.quotaUnitsKnownCount, input.quotaUnits) !== undefined
+          ? { quotaUnitsKnownCount: bumpKnown(existing?.quotaUnitsKnownCount, input.quotaUnits) }
+          : {}),
         ...(!input.success
           ? { lastFailureAt: now }
           : existing?.lastFailureAt
@@ -103,6 +138,24 @@ export class FileMetricsRepository implements MetricsRepository {
         consecutiveFailures: existing?.consecutiveFailures ?? 0,
         qualityEvaluations: (existing?.qualityEvaluations ?? 0) + 1,
         qualityApprovals: (existing?.qualityApprovals ?? 0) + (input.approved ? 1 : 0),
+        ...(existing?.quotaUnitsTotal !== undefined
+          ? { quotaUnitsTotal: existing.quotaUnitsTotal }
+          : {}),
+        ...(existing?.inputTokensKnownCount !== undefined
+          ? { inputTokensKnownCount: existing.inputTokensKnownCount }
+          : {}),
+        ...(existing?.outputTokensKnownCount !== undefined
+          ? { outputTokensKnownCount: existing.outputTokensKnownCount }
+          : {}),
+        ...(existing?.cachedInputTokensKnownCount !== undefined
+          ? { cachedInputTokensKnownCount: existing.cachedInputTokensKnownCount }
+          : {}),
+        ...(existing?.costKnownCount !== undefined
+          ? { costKnownCount: existing.costKnownCount }
+          : {}),
+        ...(existing?.quotaUnitsKnownCount !== undefined
+          ? { quotaUnitsKnownCount: existing.quotaUnitsKnownCount }
+          : {}),
         ...(existing?.lastFailureAt ? { lastFailureAt: existing.lastFailureAt } : {}),
         updatedAt: now,
       }),

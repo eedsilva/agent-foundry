@@ -1939,6 +1939,10 @@ export class WorkflowOrchestrator {
       ...(result.usage?.estimatedCostUsd !== undefined
         ? { estimatedCostUsd: result.usage.estimatedCostUsd }
         : {}),
+      ...(result.usage?.cachedInputTokens !== undefined
+        ? { cachedInputTokens: result.usage.cachedInputTokens }
+        : {}),
+      ...(result.usage?.quotaUnits !== undefined ? { quotaUnits: result.usage.quotaUnits } : {}),
     });
     return result;
   }
