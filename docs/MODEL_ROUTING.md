@@ -12,6 +12,9 @@ O router deste projeto transforma cada etapa em um perfil e ranqueia um catálog
 interface TaskProfile {
   role: AgentRole;
   taskKind: TaskKind;
+  taxonomyVersion: '1' | '2';
+  category: TaskCategory;
+  features: TaskFeature[];
   complexity: 1 | 2 | 3 | 4 | 5;
   risk: 1 | 2 | 3 | 4 | 5;
   estimatedContextTokens: number;
@@ -29,6 +32,24 @@ interface TaskProfile {
 ```
 
 `TaskProfiler` combina defaults por tipo de tarefa com overrides do workflow. A estimativa de tokens é deliberadamente aproximada. Ela serve para rejeitar escolhas obviamente incompatíveis e ponderar custo, não para billing exato.
+
+`TaskKind` continua sendo a chave de compatibilidade v1 e o campo enviado ao plano de execução. A
+taxonomia v2 acrescenta estas categorias:
+
+- `planning` e `architecture`;
+- `implementation/general`, `implementation/frontend`, `implementation/backend`,
+  `implementation/database`, `implementation/integration` e `implementation/tests`;
+- `review/plan`, `review/architecture` e `review/code`;
+- `repair/general`, `repair/frontend`, `repair/backend`, `repair/database`, `repair/integration` e
+  `repair/tests`;
+- `verification/tests`.
+
+Os features possíveis são `frontend`, `backend`, `database`, `integration` e `tests`. Uma categoria
+declarada no workflow prevalece. Quando ela é omitida, o profiler extrai todos os features encontrados,
+em ordem determinística (`database`, `frontend`, `backend`, `integration`, `tests`), das instruções,
+harness, artefatos de entrada e tags. Implementação e reparo usam o primeiro feature ou `general`; os
+demais `TaskKind` têm mapeamento fixo. Perfis antigos sem os novos campos são normalizados como
+taxonomia v1, com a categoria legada correspondente e `features: []`.
 
 ## Catálogo
 
@@ -142,7 +163,12 @@ Tags permitem preferências específicas, como `architecture`, `fast`, `review` 
 
 ## Métricas coletadas
 
-Por `modelId + taskKind + role`:
+Uma leitura v2 procura primeiro `modelId::v2::category::role` e, quando não encontra a categoria
+exata, usa `modelId::taskKind::role`. A segunda chave permanece gravada e legível para compatibilidade
+v1. Arquivos antigos são normalizados durante o parse; a próxima escrita persiste essa forma
+normalizada. Assim, a adoção começa aproveitando o histórico existente sem misturar novas categorias.
+
+Cada chave registra:
 
 - tentativas e sucessos;
 - duração acumulada;
@@ -153,6 +179,12 @@ Por `modelId + taskKind + role`:
 - aprovações de qualidade.
 
 A execução bem-sucedida mede apenas funcionamento. O quality gate mede utilidade do resultado. Os dois sinais são necessários.
+
+## Hierarquia no dashboard
+
+O painel existente agrupa as decisões pela raiz da categoria, na ordem em que aparecem nos artefatos.
+Cada card continua mostrando o modelo, todos os scores e o fallback, e também exibe a categoria completa,
+a versão da taxonomia e os features quando existirem.
 
 ## Fallback
 

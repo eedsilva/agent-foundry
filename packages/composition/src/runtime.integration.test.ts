@@ -455,6 +455,7 @@ describe('mock runtime', () => {
         implementationRoute.selected.model.id,
         implementationRoute.profile.taskKind,
         implementationRoute.profile.role,
+        implementationRoute.profile.category,
       );
       expect(metric?.qualityEvaluations).toBeGreaterThanOrEqual(1);
       expect(metric?.qualityApprovals).toBeGreaterThanOrEqual(1);
@@ -529,11 +530,13 @@ describe('mock runtime', () => {
       route.executed.model.id,
       route.profile.taskKind,
       route.profile.role,
+      route.profile.category,
     );
     const originallySelectedMetric = await runtime.metrics.get(
       route.selected.model.id,
       route.profile.taskKind,
       route.profile.role,
+      route.profile.category,
     );
     expect(executedMetric?.qualityApprovals).toBeGreaterThanOrEqual(1);
     expect(originallySelectedMetric?.qualityEvaluations ?? 0).toBe(0);
