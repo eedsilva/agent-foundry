@@ -26,7 +26,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      'content-type': 'application/json',
+      ...(init?.body ? { 'content-type': 'application/json' } : {}),
       ...(init?.headers ?? {}),
     },
     cache: 'no-store',
