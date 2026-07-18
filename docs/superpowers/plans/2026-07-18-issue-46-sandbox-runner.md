@@ -204,6 +204,7 @@ const spec: SandboxSpec = {
 
 class FakeSandboxRunner implements SandboxRunner {
   readonly destroyed = new Set<string>();
+  destroyCalls = 0;
   readonly signals: Array<AbortSignal | undefined> = [];
   constructor(private readonly failAt?: 'create' | 'exec' | 'snapshot') {}
   async create() {
@@ -226,7 +227,9 @@ class FakeSandboxRunner implements SandboxRunner {
     };
   }
   async destroy(sandbox: { id: string }) {
+    if (this.destroyed.has(sandbox.id)) return;
     this.destroyed.add(sandbox.id);
+    this.destroyCalls += 1;
   }
 }
 
@@ -265,6 +268,14 @@ describe('runSandboxLifecycle', () => {
       runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, ['src']),
     ).rejects.toThrow('create failed');
     expect(runner.destroyed).toEqual(new Set());
+  });
+
+  it('requires idempotent destroy for a sandbox handle', async () => {
+    const runner = new FakeSandboxRunner();
+    const sandbox = await runner.create(spec);
+    await runner.destroy(sandbox);
+    await runner.destroy(sandbox);
+    expect(runner.destroyCalls).toBe(1);
   });
 });
 ~~~
