@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { JsonValueSchema, PathSegmentSchema } from './primitives.js';
+import { ActorRefSchema, JsonValueSchema, PathSegmentSchema } from './primitives.js';
 import { ArtifactReferenceSchema, IdempotencyKeySchema } from './run.js';
 
 export const MessageRoleSchema = z.enum(['user', 'assistant', 'system', 'tool']);
@@ -68,6 +68,15 @@ export type Attachment = z.infer<typeof AttachmentSchema>;
 export const OperationKindSchema = z.enum(['plan', 'build', 'explain', 'repair', 'visual-edit']);
 export type OperationKind = z.infer<typeof OperationKindSchema>;
 
+export const OperationApprovalSchema = z
+  .object({
+    status: z.enum(['pending', 'approved', 'rejected']),
+    decidedAt: z.string().datetime().optional(),
+    decidedBy: ActorRefSchema.optional(),
+  })
+  .strict();
+export type OperationApproval = z.infer<typeof OperationApprovalSchema>;
+
 export const OperationSchema = z
   .object({
     id: PathSegmentSchema,
@@ -80,7 +89,22 @@ export const OperationSchema = z
     changeRequestId: PathSegmentSchema.optional(),
     projectVersionId: PathSegmentSchema.optional(),
     artifactReferences: z.array(ArtifactReferenceSchema).default([]),
+    approval: OperationApprovalSchema.optional(),
+    planOperationId: PathSegmentSchema.optional(),
+    directExecution: z.boolean().optional(),
     createdAt: z.string().datetime(),
   })
-  .strict();
+  .strict()
+  .superRefine((operation, ctx) => {
+    if (operation.kind !== 'build') return;
+    const hasPlan = operation.planOperationId !== undefined;
+    const hasDirect = operation.directExecution === true;
+    if (hasPlan === hasDirect) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['planOperationId'],
+        message: 'build operations require exactly one of planOperationId or directExecution',
+      });
+    }
+  });
 export type Operation = z.infer<typeof OperationSchema>;
