@@ -5,6 +5,8 @@ import type {
   CreateModelOverrideResponse,
   DecideApprovalRequest,
   DecideApprovalResponse,
+  PreviewLogPage,
+  PreviewSession,
   Project,
   ProjectDetailResponse,
   ProjectVersion,
@@ -223,4 +225,42 @@ export async function setVersionProtected(
     { method: 'POST', body: JSON.stringify({ protected: protectedFlag }) },
   );
   return response.version;
+}
+
+export function getActivePreviewSession(
+  projectId: string,
+): Promise<{ session: PreviewSession | null }> {
+  return api<{ session: PreviewSession | null }>(
+    `/projects/${encodeURIComponent(projectId)}/preview/active`,
+  );
+}
+
+export function startPreview(
+  projectId: string,
+): Promise<{ session: PreviewSession; url: string }> {
+  return api<{ session: PreviewSession; url: string }>(
+    `/projects/${encodeURIComponent(projectId)}/preview`,
+    { method: 'POST' },
+  );
+}
+
+export function stopPreview(
+  projectId: string,
+  sessionId: string,
+): Promise<{ session: PreviewSession }> {
+  return api<{ session: PreviewSession }>(
+    `/projects/${encodeURIComponent(projectId)}/preview/${encodeURIComponent(sessionId)}/stop`,
+    { method: 'POST' },
+  );
+}
+
+export function getPreviewLogs(
+  projectId: string,
+  sessionId: string,
+  cursor?: number,
+): Promise<PreviewLogPage> {
+  const query = cursor !== undefined ? `?cursor=${cursor}` : '';
+  return api<PreviewLogPage>(
+    `/projects/${encodeURIComponent(projectId)}/preview/${encodeURIComponent(sessionId)}/logs${query}`,
+  );
 }
