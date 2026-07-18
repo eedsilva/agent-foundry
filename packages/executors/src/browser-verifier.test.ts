@@ -13,6 +13,8 @@ import { DEFAULT_BROWSER_EVIDENCE_POLICY } from '@agent-foundry/contracts';
 import { PlaywrightBrowserVerifier } from './browser-verifier.js';
 
 const TOKEN = 'preview-token-that-must-never-leak';
+// Verification caps at 60 seconds; allow fixture servers 30 seconds to close long-poll connections.
+const BROWSER_TEST_TIMEOUT_MS = 90_000;
 const PLAN_ARTIFACT: ArtifactReference = {
   name: 'browser-test-plan',
   revision: 1,
@@ -1609,7 +1611,7 @@ describe('PlaywrightBrowserVerifier', () => {
 
     expect(report.approved).toBe(true);
     expect(report.steps[0]?.status).toBe('passed');
-  }, 15_000);
+  }, BROWSER_TEST_TIMEOUT_MS);
 
   it('does not synthesize a failure after Playwright route fetch default timeout', async () => {
     const origin = await serve((request, response) => {
@@ -1654,7 +1656,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(
       report.steps.flatMap(({ observations }) => observations).map(({ kind }) => kind),
     ).not.toContain('request-failed');
-  }, 70_000);
+  }, BROWSER_TEST_TIMEOUT_MS);
 
   it('caps observations at 100', async () => {
     const origin = await serve((_request, response) => {
@@ -1822,4 +1824,4 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(evidence.video).toBeInstanceOf(Buffer);
     expect(evidence.video!.byteLength).toBeGreaterThan(0);
   });
-}, 70_000);
+}, BROWSER_TEST_TIMEOUT_MS);
