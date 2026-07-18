@@ -44,8 +44,8 @@ export async function runSandboxLifecycle(
   allowedPaths: readonly string[],
   signal?: AbortSignal,
 ): Promise<{ result: SandboxExecResult; snapshot: SandboxSnapshot }> {
-  const sandbox = await runner.create(spec);
   const allowed = allowedPaths.map((entry) => SandboxSnapshotPathSchema.parse(entry));
+  const sandbox = await runner.create(spec);
   try {
     const result = await runner.exec(sandbox, exec, signal);
     const snapshot = await runner.snapshot(sandbox, allowed);

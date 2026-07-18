@@ -14,9 +14,11 @@ const spec: SandboxSpec = {
 class FakeSandboxRunner implements SandboxRunner {
   readonly destroyed = new Set<string>();
   destroyCalls = 0;
+  createCalls = 0;
   readonly signals: Array<AbortSignal | undefined> = [];
   constructor(private readonly failAt?: 'create' | 'exec' | 'snapshot') {}
   async create(_spec: SandboxSpec) {
+    this.createCalls += 1;
     if (this.failAt === 'create') throw new Error('create failed');
     return { id: 'sandbox-1' };
   }
@@ -86,6 +88,16 @@ describe('runSandboxLifecycle', () => {
       runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, ['src']),
     ).rejects.toThrow('create failed');
     expect(runner.destroyed).toEqual(new Set());
+  });
+
+  it('rejects an unsafe allowlist before creating a sandbox', async () => {
+    const runner = new FakeSandboxRunner();
+    await expect(
+      runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, [
+        '../secrets',
+      ]),
+    ).rejects.toThrow('Sandbox snapshot paths must be relative');
+    expect(runner.createCalls).toBe(0);
   });
 
   it('requires idempotent destroy for a sandbox handle', async () => {
