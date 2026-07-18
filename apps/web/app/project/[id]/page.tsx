@@ -48,7 +48,7 @@ import {
   retryMode,
   retryRequest,
 } from '../../../lib/model-overrides';
-import { PreviewPanel, VerificationReportView } from './preview-panel';
+import { BlobMedia, PreviewPanel, VerificationReportView } from './preview-panel';
 import { findDiffApprovalVersions } from '../../../lib/diff-approval';
 import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
 
@@ -108,6 +108,28 @@ function artifactText(content: unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content, null, 2);
 }
 
+type DiffSpan = { value: string; added?: boolean; removed?: boolean };
+
+function DiffView({ parts }: { parts: DiffSpan[] }) {
+  return (
+    <pre className="diffPane">
+      {parts.map((part, index) => (
+        <span key={index} className={part.added ? 'diffAdded' : part.removed ? 'diffRemoved' : undefined}>
+          {part.value}
+        </span>
+      ))}
+    </pre>
+  );
+}
+
+function unifiedDiffToSpans(diff: string): DiffSpan[] {
+  return diff.split('\n').map((line) => ({
+    value: `${line}\n`,
+    added: line.startsWith('+'),
+    removed: line.startsWith('-'),
+  }));
+}
+
 function isVerificationReport(content: unknown): content is VerificationReport {
   return VerificationReportSchema.safeParse(content).success;
 }
@@ -123,16 +145,13 @@ function BlobArtifactPreview({
   revision: number;
   contentType: string;
 }) {
-  const [failed, setFailed] = useState(false);
   const blobUrl = getArtifactBlobUrl(projectId, name, revision);
   return (
     <div className="blobPreview">
-      {failed ? (
-        <p className="hint">Evidência expirada ou indisponível.</p>
-      ) : contentType.startsWith('image/') ? (
-        <img src={blobUrl} alt={name} onError={() => setFailed(true)} />
+      {contentType.startsWith('image/') ? (
+        <BlobMedia src={blobUrl} alt={name} kind="image" />
       ) : contentType.startsWith('video/') ? (
-        <video controls src={blobUrl} onError={() => setFailed(true)} />
+        <BlobMedia src={blobUrl} alt={name} kind="video" />
       ) : (
         <p className="hint">Conteúdo binário ({contentType}).</p>
       )}
@@ -304,11 +323,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     if (!decideTarget || !run || decideTarget.request.artifact.name !== 'browser-verification.report') {
       return;
     }
+    const runId = run?.id;
     let active = true;
     listVersions(id, 500)
       .then((versions) => {
         if (!active) return;
-        const { from, to } = findDiffApprovalVersions(versions, run.id);
+        const { from, to } = findDiffApprovalVersions(versions, runId);
         if (!from || !to) {
           setDecideDiff(NO_PREDECESSOR_VERSION_MESSAGE);
           return undefined;
@@ -323,7 +343,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     return () => {
       active = false;
     };
-  }, [decideTarget, id, run]);
+    // `run` is intentionally tracked by id only: the page's polling effect
+    // recreates the whole `run` object every ~1.5s, and depending on it
+    // directly would refetch listVersions/compareVersions on every poll
+    // tick for as long as the decide modal stays open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decideTarget, id, run?.id]);
 
   const stepTargets = useMemo(
     () => (workflowDef ? agentStepTargets(workflowDef) : []),
@@ -1060,23 +1085,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 {decideDiff === NO_PREDECESSOR_VERSION_MESSAGE ? (
                   <p className="hint">{NO_PREDECESSOR_VERSION_MESSAGE}</p>
                 ) : decideDiff !== null ? (
-                  <pre className="diffPane">
-                    {decideDiff.split('\n').map((line, index) => (
-                      <span
-                        key={index}
-                        className={
-                          line.startsWith('+')
-                            ? 'diffAdded'
-                            : line.startsWith('-')
-                              ? 'diffRemoved'
-                              : undefined
-                        }
-                      >
-                        {line}
-                        {'\n'}
-                      </span>
-                    ))}
-                  </pre>
+                  <DiffView parts={unifiedDiffToSpans(decideDiff)} />
                 ) : (
                   <p className="hint">Carregando diff…</p>
                 )}
@@ -1140,21 +1149,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </div>
             {showDiff ? (
               previousArtifact ? (
-                <pre className="diffPane">
-                  {diffLines(
-                    artifactText(previousArtifact.content),
-                    artifactText(selected.content),
-                  ).map((part, index) => (
-                    <span
-                      key={index}
-                      className={
-                        part.added ? 'diffAdded' : part.removed ? 'diffRemoved' : undefined
-                      }
-                    >
-                      {part.value}
-                    </span>
-                  ))}
-                </pre>
+                <DiffView
+                  parts={diffLines(artifactText(previousArtifact.content), artifactText(selected.content))}
+                />
               ) : (
                 <p className="hint">Carregando revisão anterior…</p>
               )

@@ -67,15 +67,17 @@ let webBaseUrl: string;
 const dirs: string[] = [];
 
 test.beforeAll(async () => {
-  const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-golden-e2e-data-'));
-  const workflowsDir = await mkdtemp(join(tmpdir(), 'agent-foundry-golden-e2e-wf-'));
+  const [dataDir, workflowsDir] = await Promise.all([
+    mkdtemp(join(tmpdir(), 'agent-foundry-golden-e2e-data-')),
+    mkdtemp(join(tmpdir(), 'agent-foundry-golden-e2e-wf-')),
+  ]);
   dirs.push(dataDir, workflowsDir);
   await writeFile(
     join(workflowsDir, 'golden-flow-e2e-v1.yaml'),
     await readFile(resolve(import.meta.dirname, 'fixtures/golden-flow-e2e-v1.yaml'), 'utf8'),
   );
 
-  const apiPort = await reserveEphemeralPort();
+  const [apiPort, webPort] = await Promise.all([reserveEphemeralPort(), reserveEphemeralPort()]);
   // Reserve the web port up front so its origin can be passed as WEB_ORIGIN
   // below — the API's CORS policy (apps/api/src/app.ts) only allows
   // runtime.config.webOrigin (default http://localhost:3000), and the web
@@ -90,7 +92,6 @@ test.beforeAll(async () => {
   // leaves the client stuck re-attempting hydration and never commits its
   // effects — so app fetches (and this test) would hang forever waiting for
   // UI that never appears, with no error surfaced anywhere.
-  const webPort = await reserveEphemeralPort();
   webBaseUrl = `http://localhost:${webPort}`;
   runtime = await createRuntime({
     ...process.env,
@@ -117,8 +118,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   webProcess.kill();
-  await apiClose();
-  await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all([apiClose(), ...dirs.map((dir) => rm(dir, { recursive: true, force: true }))]);
 });
 
 async function createProject(): Promise<string> {

@@ -27,19 +27,28 @@ type ViewportKey = keyof typeof VIEWPORTS;
 
 const TERMINAL_SESSION_STATUSES = new Set(['stopped', 'failed', 'expired']);
 
-function ScreenshotFigure({ shot, projectId }: { shot: ArtifactReference; projectId: string }) {
+export function BlobMedia({
+  src,
+  alt,
+  kind,
+}: {
+  src: string;
+  alt: string;
+  kind: 'image' | 'video';
+}) {
   const [failed, setFailed] = useState(false);
+  if (failed) return <p className="hint">Evidência expirada ou indisponível.</p>;
+  return kind === 'image' ? (
+    <img src={src} alt={alt} onError={() => setFailed(true)} />
+  ) : (
+    <video controls src={src} onError={() => setFailed(true)} />
+  );
+}
+
+function ScreenshotFigure({ shot, projectId }: { shot: ArtifactReference; projectId: string }) {
   return (
     <figure>
-      {failed ? (
-        <p className="hint">Evidência expirada ou indisponível.</p>
-      ) : (
-        <img
-          src={getArtifactBlobUrl(projectId, shot.name, shot.revision)}
-          alt={shot.name}
-          onError={() => setFailed(true)}
-        />
-      )}
+      <BlobMedia src={getArtifactBlobUrl(projectId, shot.name, shot.revision)} alt={shot.name} kind="image" />
       <figcaption className="hint">{shot.name}</figcaption>
     </figure>
   );

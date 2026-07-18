@@ -8,13 +8,27 @@ export function latestBrowserVerificationReport(
   artifacts: StoredArtifact[],
   runId: string,
 ): BrowserVerificationReport | null {
-  const candidates = artifacts.filter(
-    (artifact) =>
-      artifact.metadata.name === 'browser-verification.report' &&
-      artifact.metadata.runId === runId &&
-      BrowserVerificationReportSchema.safeParse(artifact.content).success,
-  );
+  const candidates = artifacts
+    .filter(
+      (artifact) =>
+        artifact.metadata.name === 'browser-verification.report' &&
+        artifact.metadata.runId === runId,
+    )
+    .map((artifact) => ({
+      artifact,
+      parsed: BrowserVerificationReportSchema.safeParse(artifact.content),
+    }))
+    .filter(
+      (
+        entry,
+      ): entry is {
+        artifact: StoredArtifact;
+        parsed: { success: true; data: BrowserVerificationReport };
+      } => entry.parsed.success,
+    );
   if (candidates.length === 0) return null;
-  const latest = candidates.reduce((a, b) => (a.metadata.revision > b.metadata.revision ? a : b));
-  return BrowserVerificationReportSchema.parse(latest.content);
+  const latest = candidates.reduce((a, b) =>
+    a.artifact.metadata.revision > b.artifact.metadata.revision ? a : b,
+  );
+  return latest.parsed.data;
 }

@@ -90,6 +90,17 @@ class FailFirstExecutor implements AgentExecutor {
   }
 }
 
+async function approveDiffGate(runtime: Runtime, runId: string): Promise<void> {
+  const [diffApproval] = (await runtime.projectService.listApprovals(runId)).filter(
+    (entry) => entry.request.nodeId === 'diff-approval',
+  );
+  if (!diffApproval) throw new Error('Expected a pending diff-approval request');
+  await runtime.projectService.decideApproval(runId, diffApproval.request.id, {
+    action: 'approve',
+    decidedBy: 'integration-test',
+  });
+}
+
 class AlwaysFailExecutor implements AgentExecutor {
   readonly provider = 'mock';
 
@@ -347,14 +358,7 @@ describe('mock runtime', () => {
     const runId = project.currentRunId;
 
     expect(await runtime.worker.runOnce()).toBe(true);
-    const [diffApproval] = (await runtime.projectService.listApprovals(runId)).filter(
-      (entry) => entry.request.nodeId === 'diff-approval',
-    );
-    if (!diffApproval) throw new Error('Expected a pending diff-approval request');
-    await runtime.projectService.decideApproval(runId, diffApproval.request.id, {
-      action: 'approve',
-      decidedBy: 'integration-test',
-    });
+    await approveDiffGate(runtime, runId);
     expect(await runtime.worker.runOnce()).toBe(true);
 
     const detail = await runtime.projectService.get(project.id);
@@ -503,14 +507,7 @@ describe('mock runtime', () => {
     const runId = project.currentRunId;
 
     expect(await runtime.worker.runOnce()).toBe(true);
-    const [diffApproval] = (await runtime.projectService.listApprovals(runId)).filter(
-      (entry) => entry.request.nodeId === 'diff-approval',
-    );
-    if (!diffApproval) throw new Error('Expected a pending diff-approval request');
-    await runtime.projectService.decideApproval(runId, diffApproval.request.id, {
-      action: 'approve',
-      decidedBy: 'integration-test',
-    });
+    await approveDiffGate(runtime, runId);
     expect(await runtime.worker.runOnce()).toBe(true);
 
     const detail = await runtime.projectService.get(project.id);
@@ -632,14 +629,7 @@ describe('mock runtime', () => {
     const afterFirstRun = await runtime.projects.get('legacy-project');
     if (!afterFirstRun?.currentRunId) throw new Error('Expected a persisted workflow run');
     const runId = afterFirstRun.currentRunId;
-    const [diffApproval] = (await runtime.projectService.listApprovals(runId)).filter(
-      (entry) => entry.request.nodeId === 'diff-approval',
-    );
-    if (!diffApproval) throw new Error('Expected a pending diff-approval request');
-    await runtime.projectService.decideApproval(runId, diffApproval.request.id, {
-      action: 'approve',
-      decidedBy: 'integration-test',
-    });
+    await approveDiffGate(runtime, runId);
     expect(await runtime.worker.runOnce()).toBe(true);
 
     const project = await runtime.projects.get('legacy-project');
