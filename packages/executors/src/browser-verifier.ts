@@ -115,39 +115,33 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       ...input.session,
       ...(input.session.url ? { url: sanitizeUrl(input.session.url, previewToken) } : {}),
     };
+    const planValidationFailure = (
+      planValidationError: string,
+    ): { report: BrowserVerificationReport; evidence: BrowserVerificationEvidence } => ({
+      report: BrowserVerificationReportSchema.parse({
+        schemaVersion: '1',
+        approved: false,
+        summary: 'Browser test plan validation failed.',
+        planArtifact: input.planArtifact,
+        previewSession,
+        planValidationError,
+        steps: [],
+      }),
+      evidence: { screenshots: [] },
+    });
     const parsed = BrowserTestPlanArtifactSchema.safeParse(input.planContent);
     if (!parsed.success) {
-      return {
-        report: BrowserVerificationReportSchema.parse({
-          schemaVersion: '1',
-          approved: false,
-          summary: 'Browser test plan validation failed.',
-          planArtifact: input.planArtifact,
-          previewSession,
-          planValidationError: redact(
-            parsed.error.issues
-              .map((issue) => `${issue.path.join('.') || 'plan'}: ${issue.message}`)
-              .join('; '),
-            previewToken,
-          ),
-          steps: [],
-        }),
-        evidence: { screenshots: [] },
-      };
+      return planValidationFailure(
+        redact(
+          parsed.error.issues
+            .map((issue) => `${issue.path.join('.') || 'plan'}: ${issue.message}`)
+            .join('; '),
+          previewToken,
+        ),
+      );
     }
     if (!input.session.url) {
-      return {
-        report: BrowserVerificationReportSchema.parse({
-          schemaVersion: '1',
-          approved: false,
-          summary: 'Browser test plan validation failed.',
-          planArtifact: input.planArtifact,
-          previewSession,
-          planValidationError: 'Preview session URL is required.',
-          steps: [],
-        }),
-        evidence: { screenshots: [] },
-      };
+      return planValidationFailure('Preview session URL is required.');
     }
     if (signal.aborted) throw new RunCancelledError();
 
@@ -158,18 +152,9 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       !['http:', 'https:'].includes(previewUrl.protocol) ||
       !previewUrl.pathname.startsWith(prefixPath)
     ) {
-      return {
-        report: BrowserVerificationReportSchema.parse({
-          schemaVersion: '1',
-          approved: false,
-          summary: 'Browser test plan validation failed.',
-          planArtifact: input.planArtifact,
-          previewSession,
-          planValidationError: 'Preview session URL does not match the required preview prefix.',
-          steps: [],
-        }),
-        evidence: { screenshots: [] },
-      };
+      return planValidationFailure(
+        'Preview session URL does not match the required preview prefix.',
+      );
     }
     const prefixUrl = new URL(prefixPath, previewUrl.origin);
     let allowedOrigins: Set<string>;
@@ -184,18 +169,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         }),
       );
     } catch {
-      return {
-        report: BrowserVerificationReportSchema.parse({
-          schemaVersion: '1',
-          approved: false,
-          summary: 'Browser test plan validation failed.',
-          planArtifact: input.planArtifact,
-          previewSession,
-          planValidationError: 'Allowed origin entries must be exact HTTP(S) origins.',
-          steps: [],
-        }),
-        evidence: { screenshots: [] },
-      };
+      return planValidationFailure('Allowed origin entries must be exact HTTP(S) origins.');
     }
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;

@@ -69,10 +69,8 @@ describe('artifact blob download route', () => {
   });
 
   it('returns 404 for an artifact that was never written', async () => {
-    const { baseUrl, projectId } = await (async () => {
-      const started = await startApi();
-      return { ...started, projectId: await createProject(started.baseUrl) };
-    })();
+    const { baseUrl } = await startApi();
+    const projectId = await createProject(baseUrl);
 
     const response = await fetch(`${baseUrl}/projects/${projectId}/artifacts/missing/blob`);
     expect(response.status).toBe(404);

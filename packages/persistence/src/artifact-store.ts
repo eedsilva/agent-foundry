@@ -26,6 +26,14 @@ interface ArtifactIndex {
   artifacts: Record<string, ArtifactMetadata[]>;
 }
 
+function metadataPath(root: string, name: string, revision: number): string {
+  return join(root, name, `${String(revision).padStart(6, '0')}.json`);
+}
+
+function blobPath(root: string, name: string, revision: number): string {
+  return join(root, name, 'blobs', `${String(revision).padStart(6, '0')}.bin`);
+}
+
 export class FileArtifactStore implements ArtifactStore {
   constructor(private readonly dataDir: string) {}
 
@@ -85,8 +93,7 @@ export class FileArtifactStore implements ArtifactStore {
       });
 
       const stored = StoredArtifactSchema.parse({ metadata, content: input.content });
-      const artifactPath = join(root, name, `${String(revision).padStart(6, '0')}.json`);
-      await atomicWriteJson(artifactPath, stored);
+      await atomicWriteJson(metadataPath(root, name, revision), stored);
 
       index.artifacts[name] = [...revisions, metadata];
       await atomicWriteJson(indexPath, index);
@@ -105,8 +112,11 @@ export class FileArtifactStore implements ArtifactStore {
       const index = (await readJsonOrNull<ArtifactIndex>(indexPath)) ?? { artifacts: {} };
       const revisions = index.artifacts[name] ?? [];
       const revision = revisions.length + 1;
-      const blobPath = join(root, name, 'blobs', `${String(revision).padStart(6, '0')}.bin`);
-      const { sha256: hash, sizeBytes } = await atomicWriteStream(blobPath, source, input.maxBytes);
+      const { sha256: hash, sizeBytes } = await atomicWriteStream(
+        blobPath(root, name, revision),
+        source,
+        input.maxBytes,
+      );
 
       const metadata = ArtifactMetadataSchema.parse({
         projectId,
@@ -127,8 +137,7 @@ export class FileArtifactStore implements ArtifactStore {
       });
 
       const stored = StoredArtifactSchema.parse({ metadata, content: null });
-      const metadataPath = join(root, name, `${String(revision).padStart(6, '0')}.json`);
-      await atomicWriteJson(metadataPath, stored);
+      await atomicWriteJson(metadataPath(root, name, revision), stored);
 
       index.artifacts[name] = [...revisions, metadata];
       await atomicWriteJson(indexPath, index);
@@ -137,17 +146,10 @@ export class FileArtifactStore implements ArtifactStore {
   }
 
   async getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null> {
-    const blobPath = join(
-      this.dataDir,
-      'projects',
-      safeSegment(projectId),
-      'artifacts',
-      safeSegment(name),
-      'blobs',
-      `${String(revision).padStart(6, '0')}.bin`,
-    );
-    if (!(await exists(blobPath))) return null;
-    return createReadStream(blobPath);
+    const root = join(this.dataDir, 'projects', safeSegment(projectId), 'artifacts');
+    const path = blobPath(root, safeSegment(name), revision);
+    if (!(await exists(path))) return null;
+    return createReadStream(path);
   }
 
   async reapExpired(now: Date): Promise<number> {
@@ -156,6 +158,7 @@ export class FileArtifactStore implements ArtifactStore {
       if (error.code === 'ENOENT') return [];
       throw error;
     });
+    const nowIso = now.toISOString();
     let reaped = 0;
     for (const projectId of projectIds) {
       const artifactsRoot = join(projectsRoot, projectId, 'artifacts');
@@ -171,23 +174,17 @@ export class FileArtifactStore implements ArtifactStore {
               metadata.storage === 'blob' &&
               !metadata.blobDeleted &&
               metadata.expiresAt &&
-              metadata.expiresAt <= now.toISOString()
+              metadata.expiresAt <= nowIso
             ) {
-              const blobPath = join(
-                artifactsRoot,
-                safeSegment(name),
-                'blobs',
-                `${String(metadata.revision).padStart(6, '0')}.bin`,
-              );
-              await rm(blobPath, { force: true });
+              await rm(blobPath(artifactsRoot, safeSegment(name), metadata.revision), {
+                force: true,
+              });
               metadata.blobDeleted = true;
-              const snapshotPath = join(
-                artifactsRoot,
-                safeSegment(name),
-                `${String(metadata.revision).padStart(6, '0')}.json`,
-              );
               const stored = StoredArtifactSchema.parse({ metadata, content: null });
-              await atomicWriteJson(snapshotPath, stored);
+              await atomicWriteJson(
+                metadataPath(artifactsRoot, safeSegment(name), metadata.revision),
+                stored,
+              );
               count += 1;
             }
           }
@@ -210,15 +207,8 @@ export class FileArtifactStore implements ArtifactStore {
     name: string,
     revision: number,
   ): Promise<StoredArtifact | null> {
-    const path = join(
-      this.dataDir,
-      'projects',
-      safeSegment(projectId),
-      'artifacts',
-      safeSegment(name),
-      `${String(revision).padStart(6, '0')}.json`,
-    );
-    const stored = await readJsonOrNull<unknown>(path);
+    const root = join(this.dataDir, 'projects', safeSegment(projectId), 'artifacts');
+    const stored = await readJsonOrNull<unknown>(metadataPath(root, safeSegment(name), revision));
     return stored ? StoredArtifactSchema.parse(stored) : null;
   }
 

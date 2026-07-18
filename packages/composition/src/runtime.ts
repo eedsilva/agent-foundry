@@ -41,6 +41,7 @@ import {
   WorkflowOrchestrator,
   PreviewService,
   BrowserVerificationCoordinator,
+  type BrowserEvidenceLimits,
 } from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
 import type { BrowserVerifier } from '@agent-foundry/domain';
@@ -274,12 +275,7 @@ export async function createRuntime(
 
 function mockBrowserVerificationCoordinator(
   artifacts: Pick<FileArtifactStore, 'putBlob'>,
-  limits: {
-    maxScreenshotBytes: number;
-    maxTraceBytes: number;
-    maxVideoBytes: number;
-    retentionSeconds: number;
-  },
+  limits: BrowserEvidenceLimits,
 ): BrowserVerificationCoordinator {
   let sequence = 0;
   const sessions = new Map<string, PreviewSession>();
