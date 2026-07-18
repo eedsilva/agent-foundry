@@ -153,7 +153,7 @@ describe('ConversationService', () => {
       createdBy: 'test',
     });
     const input = {
-      kind: 'build' as const,
+      kind: 'explain' as const,
       idempotencyKey: 'c'.repeat(64),
       runId: run.id,
       artifactReferences: [
@@ -208,7 +208,7 @@ describe('ConversationService', () => {
     expect(second.messages.map((message) => message.sequence)).toEqual([3, 4]);
     expect(second.nextCursor).toBeNull();
     await service.createOperation(project.id, first.messages[0]!.id, {
-      kind: 'build',
+      kind: 'explain',
       idempotencyKey: 'a'.repeat(64),
       artifactReferences: [],
     });
