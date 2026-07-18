@@ -1,17 +1,13 @@
 import type {
   AgentExecutionRequest,
-  ArtifactReference,
   Message,
   Operation,
-  RunError,
   StepAttempt,
   StepRun,
-  StoredArtifact,
   WorkflowRun,
 } from '@agent-foundry/contracts';
 import { AGENT_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
 import {
-  ExecutionError,
   NotFoundError,
   errorMessage,
   transitionStepAttempt,
@@ -34,26 +30,10 @@ import {
 import { buildTaskProfile } from './task-profiler.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 import { CONVERSATION_WORKFLOW_ID, buildConversationStep } from './conversation-step-config.js';
+import { artifactReference, runError } from './workflow-orchestrator.js';
 
 export interface ConversationOperationRunnerOptions {
   agentTimeoutMs: number;
-}
-
-function toArtifactReference(artifact: StoredArtifact): ArtifactReference {
-  return {
-    name: artifact.metadata.name,
-    revision: artifact.metadata.revision,
-    sha256: artifact.metadata.sha256,
-  };
-}
-
-function toRunError(error: unknown): RunError {
-  const details = error instanceof ExecutionError ? error.details : {};
-  return {
-    name: error instanceof Error ? error.name : 'Error',
-    message: errorMessage(error),
-    ...(details.exitCode !== undefined ? { exitCode: details.exitCode } : {}),
-  };
 }
 
 export class ConversationOperationRunner {
@@ -208,7 +188,7 @@ export class ConversationOperationRunner {
           durationMs: result.durationMs,
           ...(commit ? { commit } : {}),
           routeDecision: executionRoute,
-          outputArtifacts: [toArtifactReference(artifact)],
+          outputArtifacts: [artifactReference(artifact)],
         }),
         attempt.version,
       );
@@ -252,7 +232,7 @@ export class ConversationOperationRunner {
           // best-effort; the failed-state transitions below are the durable record
         }
       }
-      const runErr = toRunError(error);
+      const runErr = runError(error);
       if (attempt && attempt.status === 'running') {
         await this.stepAttempts.update(
           transitionStepAttempt(attempt, 'failed', this.clock.now(), { error: runErr }),

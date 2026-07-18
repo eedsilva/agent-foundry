@@ -77,7 +77,36 @@ export const OperationApprovalSchema = z
   .strict();
 export type OperationApproval = z.infer<typeof OperationApprovalSchema>;
 
-export const OperationSchema = z
+/**
+ * Shared by OperationSchema and StartOperationRequestSchema (api.ts): a
+ * build must carry exactly one of planOperationId/directExecution.
+ */
+export function requireExactlyOnePlanSource(
+  input: {
+    kind: string;
+    planOperationId?: string | undefined;
+    directExecution?: boolean | undefined;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (input.kind !== 'build') return;
+  const hasPlan = input.planOperationId !== undefined;
+  const hasDirect = input.directExecution === true;
+  if (hasPlan === hasDirect) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['planOperationId'],
+      message: 'build operations require exactly one of planOperationId or directExecution',
+    });
+  }
+}
+
+/**
+ * Pre-refine base, kept separate so callers (e.g. api.ts's
+ * CreateOperationRequestSchema) can still .pick() fields from it —
+ * .pick() isn't available on the ZodEffects a superRefine produces.
+ */
+export const OperationObjectSchema = z
   .object({
     id: PathSegmentSchema,
     projectId: PathSegmentSchema,
@@ -94,17 +123,7 @@ export const OperationSchema = z
     directExecution: z.boolean().optional(),
     createdAt: z.string().datetime(),
   })
-  .strict()
-  .superRefine((operation, ctx) => {
-    if (operation.kind !== 'build') return;
-    const hasPlan = operation.planOperationId !== undefined;
-    const hasDirect = operation.directExecution === true;
-    if (hasPlan === hasDirect) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['planOperationId'],
-        message: 'build operations require exactly one of planOperationId or directExecution',
-      });
-    }
-  });
+  .strict();
+
+export const OperationSchema = OperationObjectSchema.superRefine(requireExactlyOnePlanSource);
 export type Operation = z.infer<typeof OperationSchema>;

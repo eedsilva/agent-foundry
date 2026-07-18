@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { Operation, StartOperationRequest, WorkflowRun } from '@agent-foundry/contracts';
 import {
   NotFoundError,
@@ -11,6 +10,7 @@ import {
   type WorkflowRunRepository,
 } from '@agent-foundry/domain';
 import { CONVERSATION_WORKFLOW_ID } from './conversation-step-config.js';
+import { sha256 } from './idempotency.js';
 
 export class OperationService {
   constructor(
@@ -134,6 +134,6 @@ export class OperationService {
   }
 
   protected idempotencyKey(operationId: string, runId: string): string {
-    return createHash('sha256').update(`${operationId}:${runId}`).digest('hex');
+    return sha256(`${operationId}:${runId}`);
   }
 }
