@@ -84,6 +84,34 @@ describe('preview service configuration', () => {
   });
 });
 
+describe('artifact retention configuration', () => {
+  it('defaults artifact size and retention limits', () => {
+    expect(loadRuntimeConfig(base)).toMatchObject({
+      artifactMaxScreenshotBytes: 5_000_000,
+      artifactMaxTraceBytes: 20_000_000,
+      artifactMaxVideoBytes: 50_000_000,
+      artifactRetentionSeconds: 604_800,
+      artifactReapIntervalMs: 60_000,
+    });
+  });
+
+  it('honors overrides for each artifact limit', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      ARTIFACT_MAX_SCREENSHOT_BYTES: '1000',
+      ARTIFACT_MAX_TRACE_BYTES: '2000',
+      ARTIFACT_MAX_VIDEO_BYTES: '3000',
+      ARTIFACT_RETENTION_SECONDS: '3600',
+      ARTIFACT_REAP_INTERVAL_MS: '5000',
+    });
+    expect(config.artifactMaxScreenshotBytes).toBe(1000);
+    expect(config.artifactMaxTraceBytes).toBe(2000);
+    expect(config.artifactMaxVideoBytes).toBe(3000);
+    expect(config.artifactRetentionSeconds).toBe(3600);
+    expect(config.artifactReapIntervalMs).toBe(5000);
+  });
+});
+
 describe('isLoopbackHost', () => {
   it.each(['localhost', 'LOCALHOST', '127.0.0.1', '127.9.8.7', '::1', '[::1]'])(
     'accepts %s',
