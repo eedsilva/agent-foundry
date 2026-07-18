@@ -277,11 +277,30 @@ export const PreviewFailureDiagnosticSchema = z
   .strict();
 export type PreviewFailureDiagnostic = z.infer<typeof PreviewFailureDiagnosticSchema>;
 
+export const BrowserScreenshotEvidenceSchema = z
+  .object({
+    name: PathSegmentSchema,
+    revision: z.number().int().positive(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    sizeBytes: z.number().int().nonnegative().optional(),
+    stepId: PathSegmentSchema,
+    url: z.string(),
+    viewport: z
+      .object({
+        width: z.number().int().min(1).max(10_000),
+        height: z.number().int().min(1).max(10_000),
+      })
+      .strict(),
+  })
+  .strict();
+export type BrowserScreenshotEvidence = z.infer<typeof BrowserScreenshotEvidenceSchema>;
+
 export const PreviewEvidenceSchema = z
   .object({
     logs: ArtifactReferenceSchema.optional(),
-    screenshots: z.array(ArtifactReferenceSchema).default([]),
+    screenshots: z.array(BrowserScreenshotEvidenceSchema).default([]),
     trace: ArtifactReferenceSchema.optional(),
+    video: ArtifactReferenceSchema.optional(),
   })
   .strict();
 export type PreviewEvidence = z.infer<typeof PreviewEvidenceSchema>;
