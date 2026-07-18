@@ -268,6 +268,8 @@ export async function decideOperation(
     { method: 'POST', body: JSON.stringify({ action }) },
   );
   return response.operation;
+}
+
 export function getActivePreviewSession(
   projectId: string,
 ): Promise<{ session: PreviewSession | null }> {
