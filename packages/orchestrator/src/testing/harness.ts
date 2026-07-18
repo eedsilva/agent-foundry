@@ -16,6 +16,7 @@ import {
   type ArtifactMetadata,
   type ExecutionRequest,
   type ExecutionResult,
+  type ExecutorHealth,
   type ModelDefinition,
   type ModelOverrideRecord,
   type Project,
@@ -38,6 +39,7 @@ import {
   toExecutionResult,
   type ApprovalDecisionRepository,
   type ApprovalRequestRepository,
+  type AgentExecutor,
   type ArtifactBlobPutInput,
   type ArtifactStore,
   type Clock,
@@ -677,7 +679,8 @@ export function disconnectError(): Error {
   return new Error('ECONNRESET: execution plane disconnected before the run completed');
 }
 
-export class ControllableExecutor implements ExecutionPlane {
+export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
+  readonly provider = 'mock';
   readonly startCounts = new Map<string, number>();
   private readonly gates = new Map<string, () => void>();
   private readonly states = new Map<string, ExecutionStatus['state']>();
@@ -729,6 +732,19 @@ export class ControllableExecutor implements ExecutionPlane {
 
   async status(executionId: string): Promise<ExecutionStatus> {
     return { executionId, state: this.states.get(executionId) ?? 'pending' };
+  }
+
+  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult> {
+    return this.executeInternal(request, signal);
+  }
+
+  health(): Promise<ExecutorHealth> {
+    return Promise.resolve({
+      provider: this.provider,
+      available: true,
+      version: 'test',
+      message: 'Controllable test executor is available.',
+    });
   }
 
   private executeInternal(
