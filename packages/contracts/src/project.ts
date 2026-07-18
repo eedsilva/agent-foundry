@@ -108,6 +108,8 @@ export const ProjectEventSchema = z.object({
     'preview.restarted',
     'preview.failed',
     'preview.reaped',
+    'operation.completed',
+    'operation.failed',
   ]),
   createdAt: z.string().datetime(),
   nodeId: PathSegmentSchema.optional(),
