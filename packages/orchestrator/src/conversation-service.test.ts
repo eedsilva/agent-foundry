@@ -433,4 +433,21 @@ class MemoryConversations implements ConversationRepository {
       this.operations.filter((operation) => operation.projectId === projectId),
     );
   }
+  getOperation(projectId: string, operationId: string): Promise<Operation | null> {
+    return Promise.resolve(
+      this.operations.find(
+        (operation) => operation.projectId === projectId && operation.id === operationId,
+      ) ?? null,
+    );
+  }
+
+  updateOperation(operation: Operation): Promise<Operation> {
+    const index = this.operations.findIndex((item) => item.id === operation.id);
+    if (index !== -1) {
+      this.operations[index] = operation;
+    } else {
+      this.operations.push(operation);
+    }
+    return Promise.resolve(operation);
+  }
 }
