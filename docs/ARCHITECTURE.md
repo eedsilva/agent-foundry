@@ -90,6 +90,13 @@ Coordena tudo. O motor:
 ao port, e sempre para a sessão. O orquestrador persiste o report como artifact normal e associa o
 attempt ao `previewSessionId`; não conhece Playwright.
 
+Desde a ADR 0023, o orquestrador submete trabalho de agente pela port `ExecutionPlane`
+(`submit`/`cancel`/`status`) em vez de chamar `ExecutorRegistry` diretamente. `LocalExecutionPlane`
+(em `packages/executors`) é a única implementação hoje: roda as CLIs no mesmo processo do control
+plane, in-process, confiável apenas para desenvolvimento local — sem mudança de comportamento ou de
+fronteira de confiança em relação ao `ExecutorRegistry` direto de antes. No diagrama de sequência
+abaixo, o participante `E` (Executor) agora é alcançado através dessa port.
+
 ### `packages/composition`
 
 Composition root. Converte ambiente em configuração e conecta implementações concretas às portas.
