@@ -42,6 +42,10 @@ export const ArtifactMetadataSchema = z.object({
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
   sha256: z.string(),
+  storage: z.enum(['inline', 'blob']).default('inline'),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  expiresAt: z.string().datetime().optional(),
+  blobDeleted: z.boolean().optional(),
 });
 export type ArtifactMetadata = z.infer<typeof ArtifactMetadataSchema>;
 
