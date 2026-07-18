@@ -85,7 +85,9 @@ export type DecideOperationRequest = z.infer<typeof DecideOperationRequestSchema
 export const DecideOperationResponseSchema = z.object({ operation: OperationSchema }).strict();
 export type DecideOperationResponse = z.infer<typeof DecideOperationResponseSchema>;
 
-export const ClassifyMessageResponseSchema = z.object({ changeRequest: ChangeRequestSchema }).strict();
+export const ClassifyMessageResponseSchema = z
+  .object({ changeRequest: ChangeRequestSchema })
+  .strict();
 export type ClassifyMessageResponse = z.infer<typeof ClassifyMessageResponseSchema>;
 
 export const DecideChangeRequestRequestSchema = z
