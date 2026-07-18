@@ -1,7 +1,14 @@
 import { z } from 'zod';
 import { AgentRoleSchema, PathSegmentSchema, TaskKindSchema } from './primitives.js';
-import { ArtifactReferenceSchema } from './run.js';
 import { TaskCategorySchema, TaskTaxonomyVersionSchema } from './task-taxonomy.js';
+
+const QualityArtifactReferenceSchema = z
+  .object({
+    name: PathSegmentSchema,
+    revision: z.number().int().positive(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
 
 export const QualityObservationSourceSchema = z.enum([
   'deterministic',
@@ -11,16 +18,20 @@ export const QualityObservationSourceSchema = z.enum([
 ]);
 export type QualityObservationSource = z.infer<typeof QualityObservationSourceSchema>;
 
-export const QualitySubjectSchema = z
+export const QualityObservationQuerySchema = z
   .object({
     modelId: PathSegmentSchema,
     taskKind: TaskKindSchema,
     role: AgentRoleSchema,
     taxonomyVersion: TaskTaxonomyVersionSchema,
     category: TaskCategorySchema,
-    artifact: ArtifactReferenceSchema,
   })
   .strict();
+export type QualityObservationQuery = z.infer<typeof QualityObservationQuerySchema>;
+
+export const QualitySubjectSchema = QualityObservationQuerySchema.extend({
+  artifact: QualityArtifactReferenceSchema,
+}).strict();
 export type QualitySubject = z.infer<typeof QualitySubjectSchema>;
 
 export const QualityEvaluatorSchema = z
@@ -34,7 +45,7 @@ export type QualityEvaluator = z.infer<typeof QualityEvaluatorSchema>;
 export const QualityEvidenceSchema = z
   .object({
     kind: z.enum(['verification-report', 'review-artifact', 'human-edit', 'regression']),
-    artifact: ArtifactReferenceSchema.optional(),
+    artifact: QualityArtifactReferenceSchema.optional(),
     summary: z.string().trim().min(1).max(2_000),
   })
   .strict();
@@ -82,7 +93,7 @@ export type QualityObservation = z.infer<typeof QualityObservationSchema>;
 export const QualityObservationInputSchema = z
   .object({
     source: z.enum(['human-edit', 'post-merge-regression']),
-    artifact: ArtifactReferenceSchema,
+    artifact: QualityArtifactReferenceSchema,
     evaluator: QualityEvaluatorSchema,
     rubric: z.string().trim().min(1).max(200),
     score: z.number().min(0).max(1),

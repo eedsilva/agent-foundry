@@ -47,7 +47,7 @@ describe('FileQualityObservationRepository', () => {
     expect('FileQualityObservationRepository' in persistence).toBe(true);
   });
 
-  it('appends each id once and lists only the exact producing artifact', async () => {
+  it('appends each id once and lists all artifacts for the routed model category', async () => {
     const otherSubject: QualitySubject = {
       ...subject,
       artifact: { ...subject.artifact, revision: 2, sha256: 'c'.repeat(64) },
@@ -56,9 +56,20 @@ describe('FileQualityObservationRepository', () => {
     await repository.record(observation());
     await repository.record(observation());
     await repository.record(
-      observation({ id: 'quality-2', subject: otherSubject, observedAt: '2026-07-18T12:01:00.000Z' }),
+      observation({
+        id: 'quality-2',
+        subject: otherSubject,
+        observedAt: '2026-07-18T12:01:00.000Z',
+      }),
     );
 
-    await expect(repository.list(subject)).resolves.toEqual([observation()]);
+    await expect(repository.list(subject)).resolves.toEqual([
+      observation(),
+      observation({
+        id: 'quality-2',
+        subject: otherSubject,
+        observedAt: '2026-07-18T12:01:00.000Z',
+      }),
+    ]);
   });
 });

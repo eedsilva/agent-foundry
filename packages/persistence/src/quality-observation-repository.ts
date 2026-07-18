@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   QualityObservationSchema,
   type QualityObservation,
-  type QualitySubject,
+  type QualityObservationQuery,
 } from '@agent-foundry/contracts';
 import type { QualityObservationRepository } from '@agent-foundry/domain';
 import { atomicWriteJson, readJsonOrNull, withDirectoryLock } from './fs-utils.js';
@@ -26,8 +26,8 @@ export class FileQualityObservationRepository implements QualityObservationRepos
     });
   }
 
-  async list(subject: QualitySubject): Promise<QualityObservation[]> {
-    return (await this.read()).observations.filter((item) => sameSubject(item.subject, subject));
+  async list(query: QualityObservationQuery): Promise<QualityObservation[]> {
+    return (await this.read()).observations.filter((item) => matchesQuery(item, query));
   }
 
   private async read(): Promise<QualityObservationFile> {
@@ -40,15 +40,13 @@ export class FileQualityObservationRepository implements QualityObservationRepos
   }
 }
 
-function sameSubject(left: QualitySubject, right: QualitySubject): boolean {
+function matchesQuery(observation: QualityObservation, query: QualityObservationQuery): boolean {
+  const subject = observation.subject;
   return (
-    left.modelId === right.modelId &&
-    left.taskKind === right.taskKind &&
-    left.role === right.role &&
-    left.taxonomyVersion === right.taxonomyVersion &&
-    left.category === right.category &&
-    left.artifact.name === right.artifact.name &&
-    left.artifact.revision === right.artifact.revision &&
-    left.artifact.sha256 === right.artifact.sha256
+    subject.modelId === query.modelId &&
+    subject.taskKind === query.taskKind &&
+    subject.role === query.role &&
+    subject.taxonomyVersion === query.taxonomyVersion &&
+    subject.category === query.category
   );
 }

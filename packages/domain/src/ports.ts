@@ -30,7 +30,7 @@ import type {
   ProjectEvent,
   ProjectVersion,
   QualityObservation,
-  QualitySubject,
+  QualityObservationQuery,
   QueueJob,
   RouteDecision,
   RouteOverrideProvenance,
@@ -245,7 +245,7 @@ export interface MetricsRepository {
 
 export interface QualityObservationRepository {
   record(observation: QualityObservation): Promise<void>;
-  list(subject: QualitySubject): Promise<QualityObservation[]>;
+  list(query: QualityObservationQuery): Promise<QualityObservation[]>;
 }
 
 export interface AgentExecutor {

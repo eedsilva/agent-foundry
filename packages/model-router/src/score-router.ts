@@ -9,12 +9,19 @@ import type {
   TaskKind,
   TaskProfile,
 } from '@agent-foundry/contracts';
-import type { ExplicitModelRoute, MetricsRepository, ModelRouter } from '@agent-foundry/domain';
+import type {
+  ExplicitModelRoute,
+  MetricsRepository,
+  ModelRouter,
+  QualityObservationRepository,
+} from '@agent-foundry/domain';
+import { summarizeQualityObservations } from './quality-signals.js';
 
 export class ScoreBasedModelRouter implements ModelRouter {
   constructor(
     private readonly models: ModelDefinition[],
     private readonly metrics: MetricsRepository,
+    private readonly qualityObservations?: QualityObservationRepository,
   ) {
     if (models.length === 0) throw new Error('Model catalog has no enabled models');
   }
@@ -51,7 +58,21 @@ export class ScoreBasedModelRouter implements ModelRouter {
         profile.role,
         profile.category,
       );
-      ranked.push({ model, score: this.score(model, profile, metric) });
+      const observations = this.qualityObservations
+        ? await this.qualityObservations.list({
+            modelId: model.id,
+            taskKind: profile.taskKind,
+            role: profile.role,
+            taxonomyVersion: profile.taxonomyVersion,
+            category: profile.category,
+          })
+        : [];
+      const quality = observations.length ? summarizeQualityObservations(observations) : undefined;
+      ranked.push({
+        model,
+        score: this.score(model, profile, metric, quality?.aggregate),
+        ...(quality ? { quality } : {}),
+      });
     }
 
     ranked.sort(
@@ -99,6 +120,7 @@ export class ScoreBasedModelRouter implements ModelRouter {
     model: ModelDefinition,
     profile: TaskProfile,
     metric: ModelMetric | null,
+    qualityAggregate?: number,
   ): RouteScoreBreakdown {
     const capability = taskCapability(model.capabilities, profile.taskKind);
     const structured = model.capabilities.structuredOutput;
@@ -112,11 +134,12 @@ export class ScoreBasedModelRouter implements ModelRouter {
 
     const executionHistory = metric ? (metric.successes + 2) / (metric.attempts + 4) : 0.5;
     const qualityHistory =
-      metric && metric.qualityEvaluations > 0
+      qualityAggregate ??
+      (metric && metric.qualityEvaluations > 0
         ? (metric.qualityApprovals + 2) / (metric.qualityEvaluations + 4)
-        : 0.5;
+        : 0.5);
     const historical =
-      metric && metric.qualityEvaluations > 0
+      qualityAggregate !== undefined || (metric && metric.qualityEvaluations > 0)
         ? 0.4 * executionHistory + 0.6 * qualityHistory
         : executionHistory;
     const recentFailurePenalty = metric ? Math.min(0.3, metric.consecutiveFailures * 0.075) : 0;
