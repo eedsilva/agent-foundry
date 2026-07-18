@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  assertNoUnexpectedDrift,
   createRoadmapIssue,
   getIssueParent,
   parseArgs,
@@ -8,6 +9,7 @@ import {
   reconcileIssueHierarchy,
   verifyWritableRepository,
 } from './github-roadmap.mjs';
+import { sha256 } from './roadmap.mjs';
 
 function fakeClient({ responses = new Map(), paginated = new Map() } = {}) {
   const calls = [];
@@ -170,6 +172,46 @@ test('parseArgs: rejeita flag desconhecida', () => {
 
 test('parseArgs: --help invoca o callback ao invés de encerrar o processo', () => {
   let called = false;
-  parseArgs(['--help'], { onHelp: () => { called = true; } });
+  parseArgs(['--help'], {
+    onHelp: () => {
+      called = true;
+    },
+  });
   assert.equal(called, true);
+});
+
+test('assertNoUnexpectedDrift: sem estado salvo, primeira aplicação passa', () => {
+  assert.doesNotThrow(() => assertNoUnexpectedDrift('qualquer corpo', undefined, false, 'k'));
+});
+
+test('assertNoUnexpectedDrift: hash do corpo ao vivo bate com o último aplicado', () => {
+  const saved = { number: 7, lastAppliedBodySha256: sha256('corpo gerenciado') };
+  assert.doesNotThrow(() => assertNoUnexpectedDrift('corpo gerenciado', saved, false, 'k'));
+});
+
+test('assertNoUnexpectedDrift: hash do corpo ao vivo bate com o legado', () => {
+  const saved = {
+    number: 7,
+    lastAppliedBodySha256: sha256('corpo novo formato'),
+    legacyBodySha256: sha256('corpo formato antigo'),
+  };
+  assert.doesNotThrow(() => assertNoUnexpectedDrift('corpo formato antigo', saved, false, 'k'));
+});
+
+test('assertNoUnexpectedDrift: edição manual inesperada lança erro', () => {
+  const saved = { number: 7, lastAppliedBodySha256: sha256('corpo gerenciado') };
+  assert.throws(
+    () => assertNoUnexpectedDrift('corpo editado à mão', saved, false, 'minha-task'),
+    /Drift manual detectado em minha-task \(#7\)/,
+  );
+});
+
+test('assertNoUnexpectedDrift: --force-drift ignora a divergência', () => {
+  const saved = { number: 7, lastAppliedBodySha256: sha256('corpo gerenciado') };
+  assert.doesNotThrow(() => assertNoUnexpectedDrift('corpo editado à mão', saved, true, 'k'));
+});
+
+test('assertNoUnexpectedDrift: estado salvo sem hash nenhum ainda não bloqueia', () => {
+  const saved = { number: 7 };
+  assert.doesNotThrow(() => assertNoUnexpectedDrift('qualquer corpo', saved, false, 'k'));
 });

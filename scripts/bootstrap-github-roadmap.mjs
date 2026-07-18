@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { GitHubClient, parseRepository, resolveGitHubToken } from './lib/github-client.mjs';
 import {
+  assertNoUnexpectedDrift,
   createRoadmapIssue,
   parseArgs,
   reconcileIssueBlockers,
@@ -214,16 +215,6 @@ async function loadIssues(client, ownerName, repoName) {
     if (key) byMarker.set(key, issue);
   }
   return { byNumber, byMarker, byTitle };
-}
-
-function assertNoUnexpectedDrift(liveBody, saved, force, key) {
-  if (!saved || force) return;
-  const liveHash = sha256(liveBody);
-  const accepted = new Set([saved.lastAppliedBodySha256, saved.legacyBodySha256].filter(Boolean));
-  if (accepted.size && !accepted.has(liveHash))
-    throw new Error(
-      `Drift manual detectado em ${key} (#${saved.number}). Revise a edição ou use --force-drift conscientemente.`,
-    );
 }
 
 async function reconcileIssue(client, ownerName, repoName, record, issue, milestone, saved, force) {

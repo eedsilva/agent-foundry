@@ -1,3 +1,5 @@
+import { sha256 } from './roadmap.mjs';
+
 export function parseArgs(argv, { onHelp } = {}) {
   const options = {
     apply: false,
@@ -23,6 +25,16 @@ export function parseArgs(argv, { onHelp } = {}) {
   if (!Number.isFinite(options.delayMs) || options.delayMs < 0)
     throw new Error('--delay-ms inválido.');
   return options;
+}
+
+export function assertNoUnexpectedDrift(liveBody, saved, force, key) {
+  if (!saved || force) return;
+  const liveHash = sha256(liveBody);
+  const accepted = new Set([saved.lastAppliedBodySha256, saved.legacyBodySha256].filter(Boolean));
+  if (accepted.size && !accepted.has(liveHash))
+    throw new Error(
+      `Drift manual detectado em ${key} (#${saved.number}). Revise a edição ou use --force-drift conscientemente.`,
+    );
 }
 
 export async function verifyWritableRepository(client, owner, repo) {
