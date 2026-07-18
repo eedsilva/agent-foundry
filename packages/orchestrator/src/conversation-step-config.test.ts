@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '@agent-foundry/contracts';
 import { ValidationError } from '@agent-foundry/domain';
-import { buildConversationStep, CONVERSATION_WORKFLOW_ID, messageText } from './conversation-step-config.js';
+import {
+  buildConversationStep,
+  CONVERSATION_WORKFLOW_ID,
+  messageText,
+} from './conversation-step-config.js';
 
 function message(overrides: Partial<Message> = {}): Message {
   return {
@@ -19,13 +23,17 @@ function message(overrides: Partial<Message> = {}): Message {
 describe('conversation-step-config', () => {
   it('extracts joined text content and rejects a textless message', () => {
     expect(messageText(message())).toBe('Add a dark mode toggle');
-    expect(() =>
-      messageText(message({ content: [{ type: 'data', value: { x: 1 } }] })),
-    ).toThrow(ValidationError);
+    expect(() => messageText(message({ content: [{ type: 'data', value: { x: 1 } }] }))).toThrow(
+      ValidationError,
+    );
   });
 
   it('builds a non-mutating plan step from the message text', () => {
-    const step = buildConversationStep({ operationId: 'operation-1', kind: 'plan', message: message() });
+    const step = buildConversationStep({
+      operationId: 'operation-1',
+      kind: 'plan',
+      message: message(),
+    });
     expect(step).toMatchObject({
       id: 'conversation-plan-operation-1',
       type: 'agent',
@@ -38,7 +46,11 @@ describe('conversation-step-config', () => {
   });
 
   it('builds a mutating build step and appends an approved plan section when supplied', () => {
-    const withoutPlan = buildConversationStep({ operationId: 'operation-2', kind: 'build', message: message() });
+    const withoutPlan = buildConversationStep({
+      operationId: 'operation-2',
+      kind: 'build',
+      message: message(),
+    });
     expect(withoutPlan).toMatchObject({
       id: 'conversation-build-operation-2',
       role: 'developer',
@@ -59,6 +71,9 @@ describe('conversation-step-config', () => {
   });
 
   it('names the synthetic workflow id per mode', () => {
-    expect(CONVERSATION_WORKFLOW_ID).toEqual({ plan: 'conversation-plan', build: 'conversation-build' });
+    expect(CONVERSATION_WORKFLOW_ID).toEqual({
+      plan: 'conversation-plan',
+      build: 'conversation-build',
+    });
   });
 });

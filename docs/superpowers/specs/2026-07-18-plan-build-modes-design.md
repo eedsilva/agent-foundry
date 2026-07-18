@@ -22,7 +22,7 @@ explicit override.
 - Build is blocked unless it references an **approved** Plan operation, or the caller explicitly
   chooses direct execution — and that choice is recorded for audit.
 - The mode drives `TaskProfile.mutatesWorkspace` and the compiled prompt's mutation-allowed clause
-  through the *existing* propagation path (model routing, executor permission flags, prompt
+  through the _existing_ propagation path (model routing, executor permission flags, prompt
   compiler) — no changes to that propagation logic itself.
 - Sending the identical message content in each mode produces different, observable side effects
   (required test from the roadmap spec).
@@ -42,7 +42,7 @@ explicit override.
 ## Why not reuse the existing run engine directly
 
 `workflow-orchestrator.ts`'s `run-project` job is the only thing that executes a `WorkflowRun`
-today, and it's tightly coupled to `Project` being a *single pipeline*: it mutates
+today, and it's tightly coupled to `Project` being a _single pipeline_: it mutates
 `Project.status`/`currentRunId` as nodes progress. A chat-triggered Plan/Build turn is a short-lived,
 single-`AgentStep` execution that can happen many times over a project's life, concurrently with (or
 after) that pipeline — reusing the engine as-is would make an unrelated chat message flip a finished
@@ -94,36 +94,36 @@ class OperationService {
     projectId: string,
     messageId: string,
     input: StartOperationRequest, // { kind: 'plan' | 'build', planOperationId?, directExecution? }
-  ): Promise<Operation>
+  ): Promise<Operation>;
 
   async decide(
     projectId: string,
     operationId: string,
     action: 'approve' | 'reject',
-  ): Promise<Operation>
+  ): Promise<Operation>;
 }
 ```
 
 `start()`:
+
 1. Loads the message (404 if missing/wrong project — same checks `ConversationService.createOperation`
    already does).
 2. For `kind: 'build'`: validates exactly one of `planOperationId`/`directExecution` is set. If
    `planOperationId` is set, loads that Operation and requires `kind === 'plan'` and
    `approval.status === 'approved'` (400 `ValidationError` otherwise) — and copies its
-   `artifactReferences` onto the new build Operation (this *is* "Plan → Build preserves references
+   `artifactReferences` onto the new build Operation (this _is_ "Plan → Build preserves references
    to approved artifacts").
 3. Builds the `AgentStep`-shaped config for the mode (see below), a `TaskProfile` via
    `buildTaskProfile` (reusing `task-profiler.ts` unchanged), and enqueues a new job type
    `run-conversation-operation` carrying `{ projectId, runId, stepConfig, taskProfile,
-   operationId }`.
+operationId }`.
 4. Persists the `WorkflowRun` (status `queued`) and the `Operation` (with `runId` already set,
    `artifactReferences: []` for `plan`, or copied-from-plan for `build`).
 
 `decide()` (only for `kind: 'plan'`, run must be `completed`): reads the run's single `StepRun`'s
 output artifact via `ArtifactStore`, and on `approve` sets `approval: { status: 'approved',
 decidedAt, decidedBy }` and populates `artifactReferences` from that artifact. On `reject`, sets
-`approval.status = 'rejected'`, no artifacts attached. Calling `decide` on an incomplete run is a
-400.
+`approval.status = 'rejected'`, no artifacts attached. Calling `decide` on an incomplete run is a 400.
 
 ## New execution path: `conversation-operation-runner.ts`
 
@@ -149,14 +149,28 @@ graph to register with a `WorkflowRepository`):
 
 ```ts
 const PLAN_STEP: Omit<AgentStep, 'id' | 'instructions'> = {
-  type: 'agent', role: 'planner', taskKind: 'planning',
-  title: 'Chat plan proposal', outputArtifact: 'plan-proposal',
-  mutatesWorkspace: false, maxAttempts: 2, inputArtifacts: [], harnessTags: [], profile: {},
+  type: 'agent',
+  role: 'planner',
+  taskKind: 'planning',
+  title: 'Chat plan proposal',
+  outputArtifact: 'plan-proposal',
+  mutatesWorkspace: false,
+  maxAttempts: 2,
+  inputArtifacts: [],
+  harnessTags: [],
+  profile: {},
 };
 const BUILD_STEP: Omit<AgentStep, 'id' | 'instructions'> = {
-  type: 'agent', role: 'coder', taskKind: 'implementation',
-  title: 'Chat build execution', outputArtifact: 'build-report',
-  mutatesWorkspace: true, maxAttempts: 2, inputArtifacts: [], harnessTags: [], profile: {},
+  type: 'agent',
+  role: 'coder',
+  taskKind: 'implementation',
+  title: 'Chat build execution',
+  outputArtifact: 'build-report',
+  mutatesWorkspace: true,
+  maxAttempts: 2,
+  inputArtifacts: [],
+  harnessTags: [],
+  profile: {},
 };
 ```
 
@@ -204,7 +218,7 @@ New inline `ConversationPanel` section, following the page's existing pattern (i
 - **Required differential test** (roadmap `tests` field): send the identical message content once
   as `kind: 'plan'` and once as `kind: 'build', directExecution: true`; assert the plan run never
   calls `harness.workspaces.touch()` (mirroring the existing `if (request.mutatesWorkspace)
-  this.workspaces.touch()` fake-executor check used by `workflow-orchestrator.test.ts`) while the
+this.workspaces.touch()` fake-executor check used by `workflow-orchestrator.test.ts`) while the
   build run does, and that the compiled `REQUEST.md`/`AgentExecutionRequest.mutatesWorkspace` differ
   between the two.
 - **Gating tests**: build without `planOperationId`/`directExecution` → 400; build referencing a

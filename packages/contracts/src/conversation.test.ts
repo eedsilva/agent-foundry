@@ -151,7 +151,11 @@ describe('conversation aggregate contracts (#36)', () => {
 
     const approved = {
       ...plan,
-      approval: { status: 'approved' as const, decidedAt: createdAt, decidedBy: { kind: 'user' as const, id: 'ed' } },
+      approval: {
+        status: 'approved' as const,
+        decidedAt: createdAt,
+        decidedBy: { kind: 'user' as const, id: 'ed' },
+      },
     };
     expect(OperationSchema.parse(approved)).toEqual(approved);
 
@@ -168,7 +172,12 @@ describe('conversation aggregate contracts (#36)', () => {
     };
     expect(OperationSchema.parse(buildFromPlan)).toEqual(buildFromPlan);
 
-    const buildDirect = { ...buildFromPlan, id: 'operation-3', planOperationId: undefined, directExecution: true };
+    const buildDirect = {
+      ...buildFromPlan,
+      id: 'operation-3',
+      planOperationId: undefined,
+      directExecution: true,
+    };
     expect(OperationSchema.parse(buildDirect)).toMatchObject({ directExecution: true });
   });
 

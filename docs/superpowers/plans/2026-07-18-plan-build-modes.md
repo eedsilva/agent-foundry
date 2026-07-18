@@ -22,10 +22,12 @@
 ### Task 1: `Operation` approval/gating fields
 
 **Files:**
+
 - Modify: `packages/contracts/src/conversation.ts`
 - Modify: `packages/contracts/src/conversation.test.ts`
 
 **Interfaces:**
+
 - Produces: `OperationApprovalSchema` / `OperationApproval` type; `Operation` gains optional `approval: OperationApproval`, `planOperationId: string`, `directExecution: boolean`. A `build` operation must carry exactly one of `planOperationId`/`directExecution`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -33,59 +35,68 @@
 Add to `packages/contracts/src/conversation.test.ts` (new `it` blocks inside the existing `describe('conversation aggregate contracts (#36)', ...)`, after the existing operation test):
 
 ```typescript
-  it('records plan approval and build gating on an operation', () => {
-    const plan = {
-      id: 'operation-1',
-      projectId: 'project-1',
-      conversationId: 'project-1',
-      messageId: 'message-1',
-      kind: 'plan' as const,
-      idempotencyKey: 'a'.repeat(64),
-      artifactReferences: [],
-      approval: { status: 'pending' as const },
-      createdAt,
-    };
-    expect(OperationSchema.parse(plan)).toEqual(plan);
+it('records plan approval and build gating on an operation', () => {
+  const plan = {
+    id: 'operation-1',
+    projectId: 'project-1',
+    conversationId: 'project-1',
+    messageId: 'message-1',
+    kind: 'plan' as const,
+    idempotencyKey: 'a'.repeat(64),
+    artifactReferences: [],
+    approval: { status: 'pending' as const },
+    createdAt,
+  };
+  expect(OperationSchema.parse(plan)).toEqual(plan);
 
-    const approved = {
-      ...plan,
-      approval: { status: 'approved' as const, decidedAt: createdAt, decidedBy: { kind: 'user' as const, id: 'ed' } },
-    };
-    expect(OperationSchema.parse(approved)).toEqual(approved);
+  const approved = {
+    ...plan,
+    approval: {
+      status: 'approved' as const,
+      decidedAt: createdAt,
+      decidedBy: { kind: 'user' as const, id: 'ed' },
+    },
+  };
+  expect(OperationSchema.parse(approved)).toEqual(approved);
 
-    const buildFromPlan = {
-      id: 'operation-2',
-      projectId: 'project-1',
-      conversationId: 'project-1',
-      messageId: 'message-2',
-      kind: 'build' as const,
-      idempotencyKey: 'b'.repeat(64),
-      artifactReferences: [],
-      planOperationId: plan.id,
-      createdAt,
-    };
-    expect(OperationSchema.parse(buildFromPlan)).toEqual(buildFromPlan);
+  const buildFromPlan = {
+    id: 'operation-2',
+    projectId: 'project-1',
+    conversationId: 'project-1',
+    messageId: 'message-2',
+    kind: 'build' as const,
+    idempotencyKey: 'b'.repeat(64),
+    artifactReferences: [],
+    planOperationId: plan.id,
+    createdAt,
+  };
+  expect(OperationSchema.parse(buildFromPlan)).toEqual(buildFromPlan);
 
-    const buildDirect = { ...buildFromPlan, id: 'operation-3', planOperationId: undefined, directExecution: true };
-    expect(OperationSchema.parse(buildDirect)).toMatchObject({ directExecution: true });
-  });
+  const buildDirect = {
+    ...buildFromPlan,
+    id: 'operation-3',
+    planOperationId: undefined,
+    directExecution: true,
+  };
+  expect(OperationSchema.parse(buildDirect)).toMatchObject({ directExecution: true });
+});
 
-  it('rejects a build operation with neither or both plan gates', () => {
-    const base = {
-      id: 'operation-4',
-      projectId: 'project-1',
-      conversationId: 'project-1',
-      messageId: 'message-3',
-      kind: 'build' as const,
-      idempotencyKey: 'c'.repeat(64),
-      artifactReferences: [],
-      createdAt,
-    };
-    expect(() => OperationSchema.parse(base)).toThrow();
-    expect(() =>
-      OperationSchema.parse({ ...base, planOperationId: 'operation-1', directExecution: true }),
-    ).toThrow();
-  });
+it('rejects a build operation with neither or both plan gates', () => {
+  const base = {
+    id: 'operation-4',
+    projectId: 'project-1',
+    conversationId: 'project-1',
+    messageId: 'message-3',
+    kind: 'build' as const,
+    idempotencyKey: 'c'.repeat(64),
+    artifactReferences: [],
+    createdAt,
+  };
+  expect(() => OperationSchema.parse(base)).toThrow();
+  expect(() =>
+    OperationSchema.parse({ ...base, planOperationId: 'operation-1', directExecution: true }),
+  ).toThrow();
+});
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -165,12 +176,14 @@ git commit -m "feat(contracts): add plan approval and build gating fields to Ope
 ### Task 2: `QueueJob` job-type widening + Start/Decide operation request contracts
 
 **Files:**
+
 - Modify: `packages/contracts/src/project.ts`
 - Modify: `packages/contracts/src/project.test.ts`
 - Modify: `packages/contracts/src/api.ts`
 - Modify: `packages/contracts/src/api.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Operation` from Task 1.
 - Produces: `QueueJobSchema.type` accepts `'run-project' | 'run-conversation-operation'`; `QueueJob.operationId?: string`. `StartOperationRequestSchema`/`StartOperationRequest` (`{kind: 'plan'|'build', planOperationId?, directExecution?}`), `StartOperationResponseSchema`, `DecideOperationRequestSchema`/`DecideOperationRequest` (`{action: 'approve'|'reject'}`), `DecideOperationResponseSchema`.
 
@@ -192,9 +205,16 @@ describe('QueueJobSchema job types (#37)', () => {
       leaseEpoch: 0,
     };
     expect(
-      QueueJobSchema.parse({ ...base, type: 'run-conversation-operation', runId: 'run-1', operationId: 'operation-1' }),
+      QueueJobSchema.parse({
+        ...base,
+        type: 'run-conversation-operation',
+        runId: 'run-1',
+        operationId: 'operation-1',
+      }),
     ).toMatchObject({ type: 'run-conversation-operation', operationId: 'operation-1' });
-    expect(QueueJobSchema.parse({ ...base, type: 'run-project', workflowId: 'web-app-v1' })).toMatchObject({
+    expect(
+      QueueJobSchema.parse({ ...base, type: 'run-project', workflowId: 'web-app-v1' }),
+    ).toMatchObject({
       type: 'run-project',
     });
     expect(() => QueueJobSchema.parse({ ...base, type: 'bogus' })).toThrow();
@@ -207,27 +227,27 @@ Add `QueueJobSchema` to the existing import list at the top of `packages/contrac
 Add to `packages/contracts/src/api.test.ts` (new `it` inside `describe('conversation HTTP contracts (#36)', ...)`, and import `StartOperationRequestSchema`, `StartOperationResponseSchema`, `DecideOperationRequestSchema`, `DecideOperationResponseSchema` in the import list at the top):
 
 ```typescript
-  it('parses start/decide operation requests and rejects ambiguous build gating', () => {
-    expect(StartOperationRequestSchema.parse({ kind: 'plan' })).toEqual({ kind: 'plan' });
-    expect(
-      StartOperationRequestSchema.parse({ kind: 'build', planOperationId: 'operation-1' }),
-    ).toMatchObject({ planOperationId: 'operation-1' });
-    expect(
-      StartOperationRequestSchema.parse({ kind: 'build', directExecution: true }),
-    ).toMatchObject({ directExecution: true });
-    expect(() => StartOperationRequestSchema.parse({ kind: 'build' })).toThrow();
-    expect(() =>
-      StartOperationRequestSchema.parse({
-        kind: 'build',
-        planOperationId: 'operation-1',
-        directExecution: true,
-      }),
-    ).toThrow();
-    expect(StartOperationResponseSchema.parse({ operation }).operation).toEqual(operation);
+it('parses start/decide operation requests and rejects ambiguous build gating', () => {
+  expect(StartOperationRequestSchema.parse({ kind: 'plan' })).toEqual({ kind: 'plan' });
+  expect(
+    StartOperationRequestSchema.parse({ kind: 'build', planOperationId: 'operation-1' }),
+  ).toMatchObject({ planOperationId: 'operation-1' });
+  expect(StartOperationRequestSchema.parse({ kind: 'build', directExecution: true })).toMatchObject(
+    { directExecution: true },
+  );
+  expect(() => StartOperationRequestSchema.parse({ kind: 'build' })).toThrow();
+  expect(() =>
+    StartOperationRequestSchema.parse({
+      kind: 'build',
+      planOperationId: 'operation-1',
+      directExecution: true,
+    }),
+  ).toThrow();
+  expect(StartOperationResponseSchema.parse({ operation }).operation).toEqual(operation);
 
-    expect(DecideOperationRequestSchema.parse({ action: 'approve' })).toEqual({ action: 'approve' });
-    expect(DecideOperationResponseSchema.parse({ operation }).operation).toEqual(operation);
-  });
+  expect(DecideOperationRequestSchema.parse({ action: 'approve' })).toEqual({ action: 'approve' });
+  expect(DecideOperationResponseSchema.parse({ operation }).operation).toEqual(operation);
+});
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -311,11 +331,13 @@ git commit -m "feat(contracts): add run-conversation-operation job type and star
 ### Task 3: `ConversationRepository.getOperation`/`updateOperation`
 
 **Files:**
+
 - Modify: `packages/domain/src/ports.ts`
 - Modify: `packages/persistence/src/conversation-repository.ts`
 - Modify: `packages/persistence/src/conversation-repository.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Operation` (Task 1).
 - Produces: `ConversationRepository.getOperation(projectId, operationId): Promise<Operation | null>`, `ConversationRepository.updateOperation(operation: Operation): Promise<Operation>` — both implemented by `FileConversationRepository`.
 
@@ -324,50 +346,51 @@ git commit -m "feat(contracts): add run-conversation-operation job type and star
 Add to `packages/persistence/src/conversation-repository.test.ts` (find its existing `createOperation`-focused `describe`/`it` blocks and add these as new `it`s in the same `describe`; import nothing new — `NotFoundError` is already imported in that style elsewhere in the persistence package, add `import { NotFoundError } from '@agent-foundry/domain';` if not already present):
 
 ```typescript
-  it('fetches a single operation by id and returns null when absent', async () => {
-    const repo = new FileConversationRepository(dataDir);
-    await repo.createConversation({ id: 'project-1', projectId: 'project-1', createdAt });
-    const operation = {
-      id: 'operation-1',
-      projectId: 'project-1',
-      conversationId: 'project-1',
-      messageId: 'message-1',
-      kind: 'plan' as const,
-      idempotencyKey: 'a'.repeat(64),
-      artifactReferences: [],
-      createdAt,
-    };
-    await repo.createOperation(operation);
+it('fetches a single operation by id and returns null when absent', async () => {
+  const repo = new FileConversationRepository(dataDir);
+  await repo.createConversation({ id: 'project-1', projectId: 'project-1', createdAt });
+  const operation = {
+    id: 'operation-1',
+    projectId: 'project-1',
+    conversationId: 'project-1',
+    messageId: 'message-1',
+    kind: 'plan' as const,
+    idempotencyKey: 'a'.repeat(64),
+    artifactReferences: [],
+    createdAt,
+  };
+  await repo.createOperation(operation);
 
-    expect(await repo.getOperation('project-1', 'operation-1')).toEqual(operation);
-    expect(await repo.getOperation('project-1', 'missing')).toBeNull();
-  });
+  expect(await repo.getOperation('project-1', 'operation-1')).toEqual(operation);
+  expect(await repo.getOperation('project-1', 'missing')).toBeNull();
+});
 
-  it('updates an existing operation in place and rejects an unknown id', async () => {
-    const repo = new FileConversationRepository(dataDir);
-    await repo.createConversation({ id: 'project-1', projectId: 'project-1', createdAt });
-    const operation = {
-      id: 'operation-1',
-      projectId: 'project-1',
-      conversationId: 'project-1',
-      messageId: 'message-1',
-      kind: 'plan' as const,
-      idempotencyKey: 'a'.repeat(64),
-      artifactReferences: [],
-      approval: { status: 'pending' as const },
-      createdAt,
-    };
-    await repo.createOperation(operation);
+it('updates an existing operation in place and rejects an unknown id', async () => {
+  const repo = new FileConversationRepository(dataDir);
+  await repo.createConversation({ id: 'project-1', projectId: 'project-1', createdAt });
+  const operation = {
+    id: 'operation-1',
+    projectId: 'project-1',
+    conversationId: 'project-1',
+    messageId: 'message-1',
+    kind: 'plan' as const,
+    idempotencyKey: 'a'.repeat(64),
+    artifactReferences: [],
+    approval: { status: 'pending' as const },
+    createdAt,
+  };
+  await repo.createOperation(operation);
 
-    const approved = { ...operation, approval: { status: 'approved' as const, decidedAt: createdAt } };
-    const updated = await repo.updateOperation(approved);
-    expect(updated).toEqual(approved);
-    expect(await repo.getOperation('project-1', 'operation-1')).toEqual(approved);
+  const approved = {
+    ...operation,
+    approval: { status: 'approved' as const, decidedAt: createdAt },
+  };
+  const updated = await repo.updateOperation(approved);
+  expect(updated).toEqual(approved);
+  expect(await repo.getOperation('project-1', 'operation-1')).toEqual(approved);
 
-    await expect(repo.updateOperation({ ...approved, id: 'missing' })).rejects.toThrow(
-      NotFoundError,
-    );
-  });
+  await expect(repo.updateOperation({ ...approved, id: 'missing' })).rejects.toThrow(NotFoundError);
+});
 ```
 
 (Match the file's existing `dataDir`/`createdAt` setup fixtures — it already has a `beforeEach`/`afterEach` that creates a temp `dataDir` and a `createdAt` constant used by neighboring tests; reuse those, don't redeclare.)
@@ -443,10 +466,12 @@ git commit -m "feat(persistence): add getOperation/updateOperation to Conversati
 ### Task 4: Conversation step config (Plan/Build `AgentStep` builder)
 
 **Files:**
+
 - Create: `packages/orchestrator/src/conversation-step-config.ts`
 - Create: `packages/orchestrator/src/conversation-step-config.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Message`, `AgentStep` (contracts).
 - Produces: `CONVERSATION_WORKFLOW_ID: Record<'plan' | 'build', string>`, `messageText(message: Message): string`, `buildConversationStep(input: {operationId: string; kind: 'plan' | 'build'; message: Message; planArtifact?: {content: unknown}}): AgentStep`.
 
@@ -457,7 +482,11 @@ git commit -m "feat(persistence): add getOperation/updateOperation to Conversati
 import { describe, expect, it } from 'vitest';
 import type { Message } from '@agent-foundry/contracts';
 import { ValidationError } from '@agent-foundry/domain';
-import { buildConversationStep, CONVERSATION_WORKFLOW_ID, messageText } from './conversation-step-config.js';
+import {
+  buildConversationStep,
+  CONVERSATION_WORKFLOW_ID,
+  messageText,
+} from './conversation-step-config.js';
 
 function message(overrides: Partial<Message> = {}): Message {
   return {
@@ -475,13 +504,17 @@ function message(overrides: Partial<Message> = {}): Message {
 describe('conversation-step-config', () => {
   it('extracts joined text content and rejects a textless message', () => {
     expect(messageText(message())).toBe('Add a dark mode toggle');
-    expect(() =>
-      messageText(message({ content: [{ type: 'data', value: { x: 1 } }] })),
-    ).toThrow(ValidationError);
+    expect(() => messageText(message({ content: [{ type: 'data', value: { x: 1 } }] }))).toThrow(
+      ValidationError,
+    );
   });
 
   it('builds a non-mutating plan step from the message text', () => {
-    const step = buildConversationStep({ operationId: 'operation-1', kind: 'plan', message: message() });
+    const step = buildConversationStep({
+      operationId: 'operation-1',
+      kind: 'plan',
+      message: message(),
+    });
     expect(step).toMatchObject({
       id: 'conversation-plan-operation-1',
       type: 'agent',
@@ -494,7 +527,11 @@ describe('conversation-step-config', () => {
   });
 
   it('builds a mutating build step and appends an approved plan section when supplied', () => {
-    const withoutPlan = buildConversationStep({ operationId: 'operation-2', kind: 'build', message: message() });
+    const withoutPlan = buildConversationStep({
+      operationId: 'operation-2',
+      kind: 'build',
+      message: message(),
+    });
     expect(withoutPlan).toMatchObject({
       id: 'conversation-build-operation-2',
       role: 'developer',
@@ -515,7 +552,10 @@ describe('conversation-step-config', () => {
   });
 
   it('names the synthetic workflow id per mode', () => {
-    expect(CONVERSATION_WORKFLOW_ID).toEqual({ plan: 'conversation-plan', build: 'conversation-build' });
+    expect(CONVERSATION_WORKFLOW_ID).toEqual({
+      plan: 'conversation-plan',
+      build: 'conversation-build',
+    });
   });
 });
 ```
@@ -614,10 +654,12 @@ git commit -m "feat(orchestrator): add conversation plan/build step config build
 ### Task 5: `ConversationOperationRunner`
 
 **Files:**
+
 - Create: `packages/orchestrator/src/conversation-operation-runner.ts`
 - Create: `packages/orchestrator/src/conversation-operation-runner.test.ts`
 
 **Interfaces:**
+
 - Consumes: `buildTaskProfile` (task-profiler.js, existing), `compileRequestMarkdown`/`compileCliPrompt` (prompt-compiler.js, existing), `buildConversationStep`/`CONVERSATION_WORKFLOW_ID`/`messageText` (Task 4), `ConversationRepository.getOperation`/`listMessages` (Task 3), `transitionWorkflowRun`/`transitionStepRun`/`transitionStepAttempt` (`@agent-foundry/domain`, existing).
 - Produces: `class ConversationOperationRunner { constructor(runs, stepRuns, stepAttempts, artifacts, events, harness, router, metrics, executors, workspaces, conversations, clock, ids, options: {agentTimeoutMs: number}); run(projectId: string, runId: string, operationId: string): Promise<void>; }`. On success: `WorkflowRun.status === 'completed'`, one `StepRun`/`StepAttempt` `completed`/`succeeded`, an artifact named `operation-${operationId}` stored, workspace checkpoint+commit only when the step's `mutatesWorkspace` is true. On failure: `WorkflowRun.status === 'failed'` with a `RunError`, workspace rolled back if a checkpoint was taken, `run()` resolves (does not throw) so its caller (Task 8's `WorkerLoop`) acks the job instead of retrying a durably-recorded business failure.
 
@@ -791,7 +833,11 @@ async function seed(
   runs: WorkflowRunRepository,
   kind: 'plan' | 'build',
 ): Promise<{ runId: string; operationId: string }> {
-  await conversations.createConversation({ id: 'project-1', projectId: 'project-1', createdAt: '2026-07-18T12:00:00.000Z' });
+  await conversations.createConversation({
+    id: 'project-1',
+    projectId: 'project-1',
+    createdAt: '2026-07-18T12:00:00.000Z',
+  });
   await conversations.appendMessage({
     id: 'message-1',
     projectId: 'project-1',
@@ -820,7 +866,9 @@ async function seed(
     idempotencyKey: 'a'.repeat(64),
     runId,
     artifactReferences: [],
-    ...(kind === 'plan' ? { approval: { status: 'pending' as const } } : { directExecution: true as const }),
+    ...(kind === 'plan'
+      ? { approval: { status: 'pending' as const } }
+      : { directExecution: true as const }),
     createdAt: '2026-07-18T12:00:00.000Z',
   });
   return { runId, operationId };
@@ -1191,10 +1239,17 @@ export class ConversationOperationRunner {
     operation: Operation,
   ): Promise<{ content: unknown } | undefined> {
     if (operation.kind !== 'build' || !operation.planOperationId) return undefined;
-    const planOperation = await this.conversations.getOperation(projectId, operation.planOperationId);
+    const planOperation = await this.conversations.getOperation(
+      projectId,
+      operation.planOperationId,
+    );
     const reference = planOperation?.artifactReferences[0];
     if (!reference) return undefined;
-    const artifact = await this.artifacts.getRevision(projectId, reference.name, reference.revision);
+    const artifact = await this.artifacts.getRevision(
+      projectId,
+      reference.name,
+      reference.revision,
+    );
     return artifact ? { content: artifact.content } : undefined;
   }
 }
@@ -1219,10 +1274,12 @@ git commit -m "feat(orchestrator): add ConversationOperationRunner for single-st
 ### Task 6: `OperationService.start()`
 
 **Files:**
+
 - Create: `packages/orchestrator/src/operation-service.ts`
 - Create: `packages/orchestrator/src/operation-service.test.ts`
 
 **Interfaces:**
+
 - Consumes: `StartOperationRequest` (Task 2), `CONVERSATION_WORKFLOW_ID` (Task 4), `ConversationRepository.getOperation`/`createOperation` (Task 3), `JobQueue.enqueue` (existing).
 - Produces: `class OperationService { constructor(conversations, runs, queue, artifacts, clock, ids); start(projectId, messageId, input: StartOperationRequest): Promise<Operation>; }` (the `decide` method is added in Task 7, same file/class).
 
@@ -1231,7 +1288,13 @@ git commit -m "feat(orchestrator): add ConversationOperationRunner for single-st
 ```typescript
 // packages/orchestrator/src/operation-service.test.ts
 import { describe, expect, it } from 'vitest';
-import type { Conversation, Message, Operation, StoredArtifact, WorkflowRun } from '@agent-foundry/contracts';
+import type {
+  Conversation,
+  Message,
+  Operation,
+  StoredArtifact,
+  WorkflowRun,
+} from '@agent-foundry/contracts';
 import {
   NotFoundError,
   ValidationError,
@@ -1367,7 +1430,11 @@ function noArtifacts(): ArtifactStore {
 }
 
 async function seedMessage(conversations: MemoryConversations, projectId = 'project-1') {
-  await conversations.createConversation({ id: projectId, projectId, createdAt: '2026-07-18T12:00:00.000Z' });
+  await conversations.createConversation({
+    id: projectId,
+    projectId,
+    createdAt: '2026-07-18T12:00:00.000Z',
+  });
   return conversations.appendMessage({
     id: 'message-1',
     projectId,
@@ -1384,7 +1451,14 @@ describe('OperationService.start', () => {
     const runs = new MemoryRuns();
     const queue = new MemoryQueue();
     const message = await seedMessage(conversations);
-    const service = new OperationService(conversations, runs, queue, noArtifacts(), new FixedClock(), new SequentialIds());
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      noArtifacts(),
+      new FixedClock(),
+      new SequentialIds(),
+    );
 
     const operation = await service.start('project-1', message.id, { kind: 'plan' });
 
@@ -1404,11 +1478,18 @@ describe('OperationService.start', () => {
     const runs = new MemoryRuns();
     const queue = new MemoryQueue();
     const message = await seedMessage(conversations);
-    const service = new OperationService(conversations, runs, queue, noArtifacts(), new FixedClock(), new SequentialIds());
-
-    await expect(service.start('project-1', message.id, { kind: 'build' } as never)).rejects.toThrow(
-      ValidationError,
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      noArtifacts(),
+      new FixedClock(),
+      new SequentialIds(),
     );
+
+    await expect(
+      service.start('project-1', message.id, { kind: 'build' } as never),
+    ).rejects.toThrow(ValidationError);
   });
 
   it('rejects a build referencing a plan that is not approved', async () => {
@@ -1416,7 +1497,14 @@ describe('OperationService.start', () => {
     const runs = new MemoryRuns();
     const queue = new MemoryQueue();
     const message = await seedMessage(conversations);
-    const service = new OperationService(conversations, runs, queue, noArtifacts(), new FixedClock(), new SequentialIds());
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      noArtifacts(),
+      new FixedClock(),
+      new SequentialIds(),
+    );
     const plan = await service.start('project-1', message.id, { kind: 'plan' });
 
     await expect(
@@ -1429,7 +1517,14 @@ describe('OperationService.start', () => {
     const runs = new MemoryRuns();
     const queue = new MemoryQueue();
     const message = await seedMessage(conversations);
-    const service = new OperationService(conversations, runs, queue, noArtifacts(), new FixedClock(), new SequentialIds());
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      noArtifacts(),
+      new FixedClock(),
+      new SequentialIds(),
+    );
     const plan = await service.start('project-1', message.id, { kind: 'plan' });
     const reference = { name: 'plan-proposal', revision: 1, sha256: 'a'.repeat(64) };
     await conversations.updateOperation({
@@ -1438,7 +1533,10 @@ describe('OperationService.start', () => {
       artifactReferences: [reference],
     });
 
-    const build = await service.start('project-1', message.id, { kind: 'build', planOperationId: plan.id });
+    const build = await service.start('project-1', message.id, {
+      kind: 'build',
+      planOperationId: plan.id,
+    });
 
     expect(build.artifactReferences).toEqual([reference]);
   });
@@ -1448,9 +1546,19 @@ describe('OperationService.start', () => {
     const runs = new MemoryRuns();
     const queue = new MemoryQueue();
     const message = await seedMessage(conversations);
-    const service = new OperationService(conversations, runs, queue, noArtifacts(), new FixedClock(), new SequentialIds());
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      noArtifacts(),
+      new FixedClock(),
+      new SequentialIds(),
+    );
 
-    const build = await service.start('project-1', message.id, { kind: 'build', directExecution: true });
+    const build = await service.start('project-1', message.id, {
+      kind: 'build',
+      directExecution: true,
+    });
 
     expect(build).toMatchObject({ kind: 'build', directExecution: true, artifactReferences: [] });
   });
@@ -1459,9 +1567,18 @@ describe('OperationService.start', () => {
     const conversations = new MemoryConversations();
     const runs = new MemoryRuns();
     const queue = new MemoryQueue();
-    const service = new OperationService(conversations, runs, queue, noArtifacts(), new FixedClock(), new SequentialIds());
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      noArtifacts(),
+      new FixedClock(),
+      new SequentialIds(),
+    );
 
-    await expect(service.start('project-1', 'missing', { kind: 'plan' })).rejects.toThrow(NotFoundError);
+    await expect(service.start('project-1', 'missing', { kind: 'plan' })).rejects.toThrow(
+      NotFoundError,
+    );
   });
 });
 ```
@@ -1597,10 +1714,12 @@ git commit -m "feat(orchestrator): add OperationService.start for plan/build ope
 ### Task 7: `OperationService.decide()`
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/operation-service.ts`
 - Modify: `packages/orchestrator/src/operation-service.test.ts`
 
 **Interfaces:**
+
 - Produces: `OperationService.decide(projectId: string, operationId: string, action: 'approve' | 'reject'): Promise<Operation>`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1616,7 +1735,14 @@ describe('OperationService.decide', () => {
     artifacts: ArtifactStore,
   ) {
     const message = await seedMessage(conversations);
-    const service = new OperationService(conversations, runs, queue, artifacts, new FixedClock(), new SequentialIds());
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      artifacts,
+      new FixedClock(),
+      new SequentialIds(),
+    );
     const plan = await service.start('project-1', message.id, { kind: 'plan' });
     const run = (await runs.get(plan.runId!))!;
     await runs.update({ ...run, status: 'running' });
@@ -1629,7 +1755,14 @@ describe('OperationService.decide', () => {
     const runs = new MemoryRuns();
     const queue = new MemoryQueue();
     const message = await seedMessage(conversations);
-    const service = new OperationService(conversations, runs, queue, noArtifacts(), new FixedClock(), new SequentialIds());
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      noArtifacts(),
+      new FixedClock(),
+      new SequentialIds(),
+    );
     const plan = await service.start('project-1', message.id, { kind: 'plan' });
 
     await expect(service.decide('project-1', plan.id, 'approve')).rejects.toThrow(ValidationError);
@@ -1687,8 +1820,18 @@ describe('OperationService.decide', () => {
     const runs = new MemoryRuns();
     const queue = new MemoryQueue();
     const message = await seedMessage(conversations);
-    const service = new OperationService(conversations, runs, queue, noArtifacts(), new FixedClock(), new SequentialIds());
-    const build = await service.start('project-1', message.id, { kind: 'build', directExecution: true });
+    const service = new OperationService(
+      conversations,
+      runs,
+      queue,
+      noArtifacts(),
+      new FixedClock(),
+      new SequentialIds(),
+    );
+    const build = await service.start('project-1', message.id, {
+      kind: 'build',
+      directExecution: true,
+    });
 
     await expect(service.decide('project-1', build.id, 'approve')).rejects.toThrow(ValidationError);
   });
@@ -1763,10 +1906,12 @@ git commit -m "feat(orchestrator): add OperationService.decide for plan approval
 ### Task 8: `WorkerLoop` job-type dispatch
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/worker-loop.ts`
 - Modify: `packages/orchestrator/src/worker-loop.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ConversationOperationRunner` (Task 5).
 - Produces: `new WorkerLoop(queue, orchestrator, operationRunner, options)` — 3rd positional constructor argument added; dispatches `runOnce()` by `job.type`.
 
@@ -1775,8 +1920,13 @@ git commit -m "feat(orchestrator): add OperationService.decide for plan approval
 In `packages/orchestrator/src/worker-loop.test.ts`, add near the top (after the existing `fakeQueue` helper):
 
 ```typescript
-function fakeOperationRunner(run: (projectId: string, runId: string, operationId: string) => Promise<void> = () => Promise.resolve()) {
-  return { run } as unknown as import('./conversation-operation-runner.js').ConversationOperationRunner;
+function fakeOperationRunner(
+  run: (projectId: string, runId: string, operationId: string) => Promise<void> = () =>
+    Promise.resolve(),
+) {
+  return {
+    run,
+  } as unknown as import('./conversation-operation-runner.js').ConversationOperationRunner;
 }
 ```
 
@@ -1791,22 +1941,29 @@ Update all four `new WorkerLoop(queue, orchestrator, {` call sites (lines ~77, ~
 Add one new test at the end of the top-level `describe` block:
 
 ```typescript
-  it('dispatches a run-conversation-operation job to the operation runner, not runProject', async () => {
-    const queue = fakeQueue({ claim: vi.fn().mockResolvedValueOnce(job({ type: 'run-conversation-operation', runId: 'run-1', operationId: 'operation-1' })).mockResolvedValue(null) });
-    const runProject = vi.fn().mockResolvedValue(undefined);
-    const orchestrator = { runProject } as unknown as WorkflowOrchestrator;
-    const run = vi.fn().mockResolvedValue(undefined);
-    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(run), {
-      workerId: 'worker-a',
-      pollIntervalMs: 10,
-    });
-
-    await worker.runOnce();
-
-    expect(run).toHaveBeenCalledWith('project-1', 'run-1', 'operation-1');
-    expect(runProject).not.toHaveBeenCalled();
-    expect(queue.ack).toHaveBeenCalled();
+it('dispatches a run-conversation-operation job to the operation runner, not runProject', async () => {
+  const queue = fakeQueue({
+    claim: vi
+      .fn()
+      .mockResolvedValueOnce(
+        job({ type: 'run-conversation-operation', runId: 'run-1', operationId: 'operation-1' }),
+      )
+      .mockResolvedValue(null),
   });
+  const runProject = vi.fn().mockResolvedValue(undefined);
+  const orchestrator = { runProject } as unknown as WorkflowOrchestrator;
+  const run = vi.fn().mockResolvedValue(undefined);
+  const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(run), {
+    workerId: 'worker-a',
+    pollIntervalMs: 10,
+  });
+
+  await worker.runOnce();
+
+  expect(run).toHaveBeenCalledWith('project-1', 'run-1', 'operation-1');
+  expect(runProject).not.toHaveBeenCalled();
+  expect(queue.ack).toHaveBeenCalled();
+});
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1885,10 +2042,12 @@ git commit -m "feat(orchestrator): dispatch WorkerLoop jobs by type to the conve
 ### Task 9: Wire `OperationService`/`ConversationOperationRunner` into the runtime
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/index.ts`
 - Modify: `packages/composition/src/runtime.ts`
 
 **Interfaces:**
+
 - Consumes: `OperationService` (Task 6/7), `ConversationOperationRunner` (Task 5).
 - Produces: `Runtime.operationService: OperationService`, `Runtime.operationRunner: ConversationOperationRunner` — both constructed and returned from `createRuntime()`.
 
@@ -1913,33 +2072,33 @@ In `packages/composition/src/runtime.ts`:
 3. After the existing `const conversationService = new ConversationService(...)` line, add:
 
 ```typescript
-  const operationRunner = new ConversationOperationRunner(
-    runs,
-    stepRuns,
-    stepAttempts,
-    artifacts,
-    events,
-    harness,
-    router,
-    metrics,
-    executors,
-    workspaces,
-    conversations,
-    clock,
-    ids,
-    { agentTimeoutMs: config.agentTimeoutMs },
-  );
-  const operationService = new OperationService(conversations, runs, queue, artifacts, clock, ids);
+const operationRunner = new ConversationOperationRunner(
+  runs,
+  stepRuns,
+  stepAttempts,
+  artifacts,
+  events,
+  harness,
+  router,
+  metrics,
+  executors,
+  workspaces,
+  conversations,
+  clock,
+  ids,
+  { agentTimeoutMs: config.agentTimeoutMs },
+);
+const operationService = new OperationService(conversations, runs, queue, artifacts, clock, ids);
 ```
 
 4. Change the `WorkerLoop` construction line to pass `operationRunner` as the 3rd argument:
 
 ```typescript
-  const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
-    workerId: config.workerId,
-    pollIntervalMs: config.workerPollIntervalMs,
-    heartbeatIntervalMs: config.queueHeartbeatIntervalMs,
-  });
+const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
+  workerId: config.workerId,
+  pollIntervalMs: config.workerPollIntervalMs,
+  heartbeatIntervalMs: config.queueHeartbeatIntervalMs,
+});
 ```
 
 5. Add `operationRunner` and `operationService` to the object literal returned at the end of `createRuntime`.
@@ -1964,12 +2123,14 @@ git commit -m "feat(composition): wire OperationService and ConversationOperatio
 ### Task 10: Required differential test — identical message, Plan vs Build
 
 **Files:**
+
 - Create: `packages/orchestrator/src/plan-build-modes.test.ts`
 
 **Interfaces:**
+
 - Consumes: `OperationService` (Task 6/7), `ConversationOperationRunner` (Task 5), testing fakes from `./testing/harness.js` (existing) — same composition pattern as Task 5's own test file.
 
-This is the literal roadmap-required test (`planning/roadmap-spec.json`'s `v06-plan-build-modes.tests`): *"Mensagem idêntica em Plan e Build gera side effects diferentes"* (identical message in Plan and Build produces different side effects). It drives the exact same message text through `OperationService.start()` + `ConversationOperationRunner.run()` once with `kind: 'plan'` and once with `kind: 'build', directExecution: true`, and asserts the workspace is untouched in the first case and committed-to in the second.
+This is the literal roadmap-required test (`planning/roadmap-spec.json`'s `v06-plan-build-modes.tests`): _"Mensagem idêntica em Plan e Build gera side effects diferentes"_ (identical message in Plan and Build produces different side effects). It drives the exact same message text through `OperationService.start()` + `ConversationOperationRunner.run()` once with `kind: 'plan'` and once with `kind: 'build', directExecution: true`, and asserts the workspace is untouched in the first case and committed-to in the second.
 
 - [ ] **Step 1: Write the test**
 
@@ -2145,7 +2306,11 @@ async function runOperation(kind: 'plan' | 'build') {
   const clock = new FixedClock();
   const ids = new SequentialIds();
 
-  await conversations.createConversation({ id: 'project-1', projectId: 'project-1', createdAt: clock.now().toISOString() });
+  await conversations.createConversation({
+    id: 'project-1',
+    projectId: 'project-1',
+    createdAt: clock.now().toISOString(),
+  });
   const message = await conversations.appendMessage({
     id: 'message-1',
     projectId: 'project-1',
@@ -2155,7 +2320,14 @@ async function runOperation(kind: 'plan' | 'build') {
     createdAt: clock.now().toISOString(),
   });
 
-  const operationService = new OperationService(conversations, runs, new MemoryQueue(), artifacts, clock, ids);
+  const operationService = new OperationService(
+    conversations,
+    runs,
+    new MemoryQueue(),
+    artifacts,
+    clock,
+    ids,
+  );
   const runner = new ConversationOperationRunner(
     runs,
     stepRuns,
@@ -2224,10 +2396,12 @@ git commit -m "test(orchestrator): prove identical message differs in side effec
 ### Task 11: API routes — start/decide operation
 
 **Files:**
+
 - Modify: `apps/api/src/app.ts`
 - Modify: `apps/api/src/conversation.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runtime.operationService` (Task 9), `StartOperationRequestSchema`/`DecideOperationRequestSchema` (Task 2).
 - Produces: `POST /projects/:projectId/conversation/messages/:messageId/operations` now dispatches `kind: 'plan'|'build'` to `operationService.start`, other kinds keep the existing `conversationService.createOperation` path unchanged; new `POST /projects/:projectId/conversation/operations/:operationId/decide`.
 
@@ -2236,49 +2410,53 @@ git commit -m "test(orchestrator): prove identical message differs in side effec
 Add to `apps/api/src/conversation.test.ts` (new `it`s inside the existing `describe('conversation API', ...)`):
 
 ```typescript
-  it('starts a plan operation, blocks an ungated build, and allows an explicit direct build', async () => {
-    const { baseUrl, runtime } = await startApi();
-    const projectId = await createProject(runtime);
-    const message = await createMessage(baseUrl, projectId, 'Add a dark mode toggle');
-    const opsPath = `/projects/${projectId}/conversation/messages/${message.id}/operations`;
+it('starts a plan operation, blocks an ungated build, and allows an explicit direct build', async () => {
+  const { baseUrl, runtime } = await startApi();
+  const projectId = await createProject(runtime);
+  const message = await createMessage(baseUrl, projectId, 'Add a dark mode toggle');
+  const opsPath = `/projects/${projectId}/conversation/messages/${message.id}/operations`;
 
-    const planResponse = await post(baseUrl, opsPath, { kind: 'plan' });
-    expect(planResponse.status).toBe(201);
-    const { operation: plan } = (await planResponse.json()) as { operation: { id: string; runId: string } };
-    expect(plan.runId).toBeDefined();
+  const planResponse = await post(baseUrl, opsPath, { kind: 'plan' });
+  expect(planResponse.status).toBe(201);
+  const { operation: plan } = (await planResponse.json()) as {
+    operation: { id: string; runId: string };
+  };
+  expect(plan.runId).toBeDefined();
 
-    const ungatedBuild = await post(baseUrl, opsPath, { kind: 'build' });
-    expect(ungatedBuild.status).toBe(400);
+  const ungatedBuild = await post(baseUrl, opsPath, { kind: 'build' });
+  expect(ungatedBuild.status).toBe(400);
 
-    const decideBeforeCompletion = await post(
-      baseUrl,
-      `/projects/${projectId}/conversation/operations/${plan.id}/decide`,
-      { action: 'approve' },
-    );
-    expect(decideBeforeCompletion.status).toBe(400);
+  const decideBeforeCompletion = await post(
+    baseUrl,
+    `/projects/${projectId}/conversation/operations/${plan.id}/decide`,
+    { action: 'approve' },
+  );
+  expect(decideBeforeCompletion.status).toBe(400);
 
-    const directBuild = await post(baseUrl, opsPath, { kind: 'build', directExecution: true });
-    expect(directBuild.status).toBe(201);
-    const { operation: build } = (await directBuild.json()) as { operation: { directExecution: boolean } };
-    expect(build.directExecution).toBe(true);
-  });
+  const directBuild = await post(baseUrl, opsPath, { kind: 'build', directExecution: true });
+  expect(directBuild.status).toBe(201);
+  const { operation: build } = (await directBuild.json()) as {
+    operation: { directExecution: boolean };
+  };
+  expect(build.directExecution).toBe(true);
+});
 
-  it('still routes non plan/build kinds through the original create-operation path', async () => {
-    const { baseUrl, runtime } = await startApi();
-    const projectId = await createProject(runtime);
-    const message = await createMessage(baseUrl, projectId, 'Explain the auth flow');
+it('still routes non plan/build kinds through the original create-operation path', async () => {
+  const { baseUrl, runtime } = await startApi();
+  const projectId = await createProject(runtime);
+  const message = await createMessage(baseUrl, projectId, 'Explain the auth flow');
 
-    const response = await post(
-      baseUrl,
-      `/projects/${projectId}/conversation/messages/${message.id}/operations`,
-      { kind: 'explain', idempotencyKey: 'f'.repeat(64), artifactReferences: [] },
-    );
+  const response = await post(
+    baseUrl,
+    `/projects/${projectId}/conversation/messages/${message.id}/operations`,
+    { kind: 'explain', idempotencyKey: 'f'.repeat(64), artifactReferences: [] },
+  );
 
-    expect(response.status).toBe(201);
-    const { operation } = (await response.json()) as { operation: { kind: string; runId?: string } };
-    expect(operation.kind).toBe('explain');
-    expect(operation.runId).toBeUndefined();
-  });
+  expect(response.status).toBe(201);
+  const { operation } = (await response.json()) as { operation: { kind: string; runId?: string } };
+  expect(operation.kind).toBe('explain');
+  expect(operation.runId).toBeUndefined();
+});
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2291,39 +2469,39 @@ Expected: FAIL — `POST .../operations` with `{kind: 'plan'}` currently 400s (f
 In `apps/api/src/app.ts`, add `StartOperationRequestSchema` and `DecideOperationRequestSchema` to the existing `@agent-foundry/contracts` import list, then replace the existing operations route block (currently lines 199-213) with:
 
 ```typescript
-  app.post(
-    '/projects/:projectId/conversation/messages/:messageId/operations',
-    async (request, reply) => {
-      const { projectId, messageId } = z
-        .object({ projectId: PathSegmentSchema, messageId: PathSegmentSchema })
-        .parse(request.params);
-      const body = request.body as { kind?: unknown };
-      if (body?.kind === 'plan' || body?.kind === 'build') {
-        const input = StartOperationRequestSchema.parse(request.body);
-        const operation = await runtime.operationService.start(projectId, messageId, input);
-        return reply.status(201).send({ operation });
-      }
-      const input = CreateOperationRequestSchema.parse(request.body);
-      const operation = await runtime.conversationService.createOperation(
-        projectId,
-        messageId,
-        input,
-      );
+app.post(
+  '/projects/:projectId/conversation/messages/:messageId/operations',
+  async (request, reply) => {
+    const { projectId, messageId } = z
+      .object({ projectId: PathSegmentSchema, messageId: PathSegmentSchema })
+      .parse(request.params);
+    const body = request.body as { kind?: unknown };
+    if (body?.kind === 'plan' || body?.kind === 'build') {
+      const input = StartOperationRequestSchema.parse(request.body);
+      const operation = await runtime.operationService.start(projectId, messageId, input);
       return reply.status(201).send({ operation });
-    },
-  );
+    }
+    const input = CreateOperationRequestSchema.parse(request.body);
+    const operation = await runtime.conversationService.createOperation(
+      projectId,
+      messageId,
+      input,
+    );
+    return reply.status(201).send({ operation });
+  },
+);
 
-  app.post(
-    '/projects/:projectId/conversation/operations/:operationId/decide',
-    async (request, reply) => {
-      const { projectId, operationId } = z
-        .object({ projectId: PathSegmentSchema, operationId: PathSegmentSchema })
-        .parse(request.params);
-      const { action } = DecideOperationRequestSchema.parse(request.body);
-      const operation = await runtime.operationService.decide(projectId, operationId, action);
-      return reply.status(200).send({ operation });
-    },
-  );
+app.post(
+  '/projects/:projectId/conversation/operations/:operationId/decide',
+  async (request, reply) => {
+    const { projectId, operationId } = z
+      .object({ projectId: PathSegmentSchema, operationId: PathSegmentSchema })
+      .parse(request.params);
+    const { action } = DecideOperationRequestSchema.parse(request.body);
+    const operation = await runtime.operationService.decide(projectId, operationId, action);
+    return reply.status(200).send({ operation });
+  },
+);
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -2343,9 +2521,11 @@ git commit -m "feat(api): add start/decide operation routes for plan and build m
 ### Task 12: Web API client for conversation/operations
 
 **Files:**
+
 - Modify: `apps/web/lib/api.ts`
 
 **Interfaces:**
+
 - Produces: `getConversation(projectId): Promise<ConversationPageResponse>`, `sendMessage(projectId, input: CreateMessageRequest): Promise<Message>`, `startOperation(projectId, messageId, input: StartOperationRequest): Promise<Operation>`, `decideOperation(projectId, operationId, action): Promise<Operation>`.
 
 - [ ] **Step 1: There is no unit test harness for this file today** (`apps/web` has no component/unit test suite — confirmed during design research). Verification for this task is TypeScript compilation plus manual exercise in Task 13's browser check.
@@ -2414,9 +2594,11 @@ git commit -m "feat(web): add conversation and operation API client functions"
 ### Task 13: `ConversationPanel` UI
 
 **Files:**
+
 - Modify: `apps/web/app/project/[id]/page.tsx`
 
 **Interfaces:**
+
 - Consumes: `getConversation`, `sendMessage`, `startOperation`, `decideOperation` (Task 12).
 
 - [ ] **Step 1: No automated test** — `apps/web` has no component test harness (confirmed in design research); this task is verified by manually running the dev server and exercising the flow (Step 4).
@@ -2432,148 +2614,163 @@ In `apps/web/app/project/[id]/page.tsx`:
 3. Inside `ProjectPage`, alongside the other `useState` declarations, add:
 
 ```typescript
-  const [conversation, setConversation] = useState<ConversationPageResponse | null>(null);
-  const [draft, setDraft] = useState('');
-  const [mode, setMode] = useState<'plan' | 'build'>('plan');
-  const [buildChoice, setBuildChoice] = useState<'plan' | 'direct'>('plan');
-  const [conversationError, setConversationError] = useState('');
+const [conversation, setConversation] = useState<ConversationPageResponse | null>(null);
+const [draft, setDraft] = useState('');
+const [mode, setMode] = useState<'plan' | 'build'>('plan');
+const [buildChoice, setBuildChoice] = useState<'plan' | 'direct'>('plan');
+const [conversationError, setConversationError] = useState('');
 ```
 
 4. Add a polling `useEffect`, following the file's existing active-flag + `setTimeout` pattern (place it next to the other `useEffect` blocks):
 
 ```typescript
-  useEffect(() => {
-    let active = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
-      try {
-        const next = await getConversation(id);
-        if (active) setConversation(next);
-      } catch {
-        // conversation panel is best-effort; the main project poll surfaces fatal errors
-      }
-      timer = setTimeout(poll, 2_000);
-    };
-    void poll();
-    return () => {
-      active = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [id]);
+useEffect(() => {
+  let active = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const poll = async () => {
+    try {
+      const next = await getConversation(id);
+      if (active) setConversation(next);
+    } catch {
+      // conversation panel is best-effort; the main project poll surfaces fatal errors
+    }
+    timer = setTimeout(poll, 2_000);
+  };
+  void poll();
+  return () => {
+    active = false;
+    if (timer) clearTimeout(timer);
+  };
+}, [id]);
 ```
 
 5. Add handler functions near the other handlers (e.g. next to `retry`/`submitOverride`):
 
 ```typescript
-  const latestApprovedPlan = conversation?.operations
-    .filter((op) => op.kind === 'plan' && op.approval?.status === 'approved')
-    .at(-1);
+const latestApprovedPlan = conversation?.operations
+  .filter((op) => op.kind === 'plan' && op.approval?.status === 'approved')
+  .at(-1);
 
-  async function submitMessage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!draft.trim()) return;
-    try {
-      const message = await sendMessage(id, { role: 'user', content: [{ type: 'text', text: draft }] });
-      if (mode === 'plan') {
-        await startOperation(id, message.id, { kind: 'plan' });
-      } else if (buildChoice === 'plan' && latestApprovedPlan) {
-        await startOperation(id, message.id, { kind: 'build', planOperationId: latestApprovedPlan.id });
-      } else {
-        await startOperation(id, message.id, { kind: 'build', directExecution: true });
-      }
-      setDraft('');
-      setConversationError('');
-      setConversation(await getConversation(id));
-    } catch (cause) {
-      setConversationError(cause instanceof Error ? cause.message : String(cause));
+async function submitMessage(event: FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+  if (!draft.trim()) return;
+  try {
+    const message = await sendMessage(id, {
+      role: 'user',
+      content: [{ type: 'text', text: draft }],
+    });
+    if (mode === 'plan') {
+      await startOperation(id, message.id, { kind: 'plan' });
+    } else if (buildChoice === 'plan' && latestApprovedPlan) {
+      await startOperation(id, message.id, {
+        kind: 'build',
+        planOperationId: latestApprovedPlan.id,
+      });
+    } else {
+      await startOperation(id, message.id, { kind: 'build', directExecution: true });
     }
+    setDraft('');
+    setConversationError('');
+    setConversation(await getConversation(id));
+  } catch (cause) {
+    setConversationError(cause instanceof Error ? cause.message : String(cause));
   }
+}
 
-  async function decide(operationId: string, action: 'approve' | 'reject') {
-    try {
-      await decideOperation(id, operationId, action);
-      setConversationError('');
-      setConversation(await getConversation(id));
-    } catch (cause) {
-      setConversationError(cause instanceof Error ? cause.message : String(cause));
-    }
+async function decide(operationId: string, action: 'approve' | 'reject') {
+  try {
+    await decideOperation(id, operationId, action);
+    setConversationError('');
+    setConversation(await getConversation(id));
+  } catch (cause) {
+    setConversationError(cause instanceof Error ? cause.message : String(cause));
   }
+}
 ```
 
 6. Insert a new section as a sibling inside the outer `<div className="shell projectShell">`, right after the `projectHero` section closes, following the file's existing `<section className="panel">` idiom:
 
 ```tsx
-        <section className="panel">
-          <h2>Conversa</h2>
-          {conversationError ? <p className="errorBox">{conversationError}</p> : null}
-          <ul className="conversationList">
-            {(conversation?.messages ?? []).map((message: Message) => {
-              const operation = conversation?.operations.find((op) => op.messageId === message.id);
-              return (
-                <li key={message.id}>
-                  <strong>{message.role}:</strong>{' '}
-                  {message.content.map((block) => (block.type === 'text' ? block.text : `[${block.type}]`)).join(' ')}
-                  {operation ? (
-                    <span className="operationBadge">
-                      {' '}
-                      ({operation.kind}{operation.approval ? `, ${operation.approval.status}` : ''})
-                      {operation.kind === 'plan' && operation.approval?.status === 'pending' ? (
-                        <>
-                          {' '}
-                          <button className="secondaryButton" onClick={() => void decide(operation.id, 'approve')}>
-                            Aprovar
-                          </button>
-                          <button className="secondaryButton" onClick={() => void decide(operation.id, 'reject')}>
-                            Rejeitar
-                          </button>
-                        </>
-                      ) : null}
-                    </span>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-          <form onSubmit={(event) => void submitMessage(event)}>
-            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} />
-            <div className="modelPinGrid">
-              <label>
-                <input type="radio" checked={mode === 'plan'} onChange={() => setMode('plan')} /> Plan (somente
-                proposta, sem alterar código)
-              </label>
-              <label>
-                <input type="radio" checked={mode === 'build'} onChange={() => setMode('build')} /> Build (vai
-                alterar código e consumir budget)
-              </label>
-            </div>
-            {mode === 'build' ? (
-              <div className="modelPinGrid">
-                {latestApprovedPlan ? (
-                  <label>
-                    <input
-                      type="radio"
-                      checked={buildChoice === 'plan'}
-                      onChange={() => setBuildChoice('plan')}
-                    />{' '}
-                    Build a partir do plano aprovado
-                  </label>
-                ) : null}
-                <label>
-                  <input
-                    type="radio"
-                    checked={buildChoice === 'direct' || !latestApprovedPlan}
-                    onChange={() => setBuildChoice('direct')}
-                  />{' '}
-                  Build direto, sem plano (decisão explícita)
-                </label>
-                <p className="errorBox">Esta ação vai alterar o código do projeto e consumir budget.</p>
-              </div>
-            ) : null}
-            <button className="secondaryButton" type="submit">
-              Enviar
-            </button>
-          </form>
-        </section>
+<section className="panel">
+  <h2>Conversa</h2>
+  {conversationError ? <p className="errorBox">{conversationError}</p> : null}
+  <ul className="conversationList">
+    {(conversation?.messages ?? []).map((message: Message) => {
+      const operation = conversation?.operations.find((op) => op.messageId === message.id);
+      return (
+        <li key={message.id}>
+          <strong>{message.role}:</strong>{' '}
+          {message.content
+            .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
+            .join(' ')}
+          {operation ? (
+            <span className="operationBadge">
+              {' '}
+              ({operation.kind}
+              {operation.approval ? `, ${operation.approval.status}` : ''})
+              {operation.kind === 'plan' && operation.approval?.status === 'pending' ? (
+                <>
+                  {' '}
+                  <button
+                    className="secondaryButton"
+                    onClick={() => void decide(operation.id, 'approve')}
+                  >
+                    Aprovar
+                  </button>
+                  <button
+                    className="secondaryButton"
+                    onClick={() => void decide(operation.id, 'reject')}
+                  >
+                    Rejeitar
+                  </button>
+                </>
+              ) : null}
+            </span>
+          ) : null}
+        </li>
+      );
+    })}
+  </ul>
+  <form onSubmit={(event) => void submitMessage(event)}>
+    <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} />
+    <div className="modelPinGrid">
+      <label>
+        <input type="radio" checked={mode === 'plan'} onChange={() => setMode('plan')} /> Plan
+        (somente proposta, sem alterar código)
+      </label>
+      <label>
+        <input type="radio" checked={mode === 'build'} onChange={() => setMode('build')} /> Build
+        (vai alterar código e consumir budget)
+      </label>
+    </div>
+    {mode === 'build' ? (
+      <div className="modelPinGrid">
+        {latestApprovedPlan ? (
+          <label>
+            <input
+              type="radio"
+              checked={buildChoice === 'plan'}
+              onChange={() => setBuildChoice('plan')}
+            />{' '}
+            Build a partir do plano aprovado
+          </label>
+        ) : null}
+        <label>
+          <input
+            type="radio"
+            checked={buildChoice === 'direct' || !latestApprovedPlan}
+            onChange={() => setBuildChoice('direct')}
+          />{' '}
+          Build direto, sem plano (decisão explícita)
+        </label>
+        <p className="errorBox">Esta ação vai alterar o código do projeto e consumir budget.</p>
+      </div>
+    ) : null}
+    <button className="secondaryButton" type="submit">
+      Enviar
+    </button>
+  </form>
+</section>
 ```
 
 - [ ] **Step 4: Manually verify in the running app**
@@ -2581,6 +2778,7 @@ In `apps/web/app/project/[id]/page.tsx`:
 Run: `npm run dev:inline` (from repo root; starts the API with `RUN_WORKER_INLINE=true` and the web app together)
 
 In a browser at the web app's URL, open a project's page and confirm:
+
 - The new "Conversa" section renders below the project hero.
 - Typing a message and submitting with "Plan" selected creates a message + a `plan` operation badge, and no workspace/run status elsewhere on the page changes.
 - Once that plan operation's badge shows `pending`, the Aprovar/Rejeitar buttons appear; clicking Aprovar flips it to `approved`.
@@ -2599,6 +2797,7 @@ git commit -m "feat(web): add conversation panel with plan/build mode toggle"
 ### Task 14: Documentation
 
 **Files:**
+
 - Modify: `docs/ARCHITECTURE.md`
 
 **Interfaces:** none (docs only).
@@ -2608,6 +2807,7 @@ git commit -m "feat(web): add conversation panel with plan/build mode toggle"
 - [ ] **Step 1: Add a short section**
 
 Read `docs/ARCHITECTURE.md` first to match its existing heading level/style, then add a section (near wherever the conversation/orchestrator run model is already documented, or as a new subsection under the orchestrator area) covering:
+
 - `Operation.kind` `'plan'`/`'build'` now execute via `OperationService` + `ConversationOperationRunner`, a lightweight single-`AgentStep` path parallel to the whole-project `run-project` pipeline — it never touches `Project.status`/`currentRunId`.
 - Build requires an approved `plan` Operation (`POST .../operations/:id/decide`) or an explicit `directExecution: true`.
 - The new `run-conversation-operation` `QueueJob` type and where it's dispatched (`WorkerLoop`).
