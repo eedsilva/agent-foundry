@@ -356,4 +356,90 @@ describe('ConversationOperationRunner', () => {
     const stepRunList = await stepRuns.list(runId);
     expect(stepRunList[0]?.status).toBe('completed');
   });
+
+  it('resolves run() and still marks stepRun/run failed when the checkpoint rollback throws', async () => {
+    const workspaces = new FakeWorkspaces({ on: true });
+    workspaces.rollback = () => Promise.reject(new Error('rollback unavailable'));
+    const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
+    const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
+    const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
+    const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
+    const conversations = new MemoryConversations();
+    const executor = new ControllableExecutor(
+      { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
+      workspaces,
+    );
+    const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+    const runner = new ConversationOperationRunner(
+      runs,
+      stepRuns,
+      stepAttempts,
+      artifacts,
+      events,
+      harnessRepo,
+      router,
+      metrics,
+      executors,
+      workspaces,
+      conversations,
+      new FixedClock(),
+      new SequentialIds(),
+      { agentTimeoutMs: 60_000 },
+    );
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+
+    // run() must resolve even though workspaces.rollback itself throws (e.g. a
+    // git I/O error), and the failed-state transitions below the rollback call
+    // must still execute so the run isn't stranded in 'running' forever.
+    await expect(runner.run('project-1', runId, operationId)).resolves.toBeUndefined();
+
+    const run = (await runs.get(runId)) as WorkflowRun;
+    expect(run.status).toBe('failed');
+    const stepRunList = await stepRuns.list(runId);
+    expect(stepRunList[0]?.status).toBe('failed');
+  });
+
+  it('resolves run() when appending the operation.failed event also throws', async () => {
+    const workspaces = new FakeWorkspaces({ on: true });
+    const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
+    const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
+    const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
+    const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    const events = new InMemoryEvents({ on: true });
+    events.onBeforeAppend = () => {
+      throw new Error('event store unavailable');
+    };
+    const conversations = new MemoryConversations();
+    const executor = new ControllableExecutor(
+      { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
+      workspaces,
+    );
+    const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+    const runner = new ConversationOperationRunner(
+      runs,
+      stepRuns,
+      stepAttempts,
+      artifacts,
+      events,
+      harnessRepo,
+      router,
+      metrics,
+      executors,
+      workspaces,
+      conversations,
+      new FixedClock(),
+      new SequentialIds(),
+      { agentTimeoutMs: 60_000 },
+    );
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+
+    // run() must resolve even though the catch block's own operation.failed
+    // event append throws; the durable stepRun/run failed state was already
+    // recorded before this best-effort append ran.
+    await expect(runner.run('project-1', runId, operationId)).resolves.toBeUndefined();
+
+    const run = (await runs.get(runId)) as WorkflowRun;
+    expect(run.status).toBe('failed');
+  });
 });

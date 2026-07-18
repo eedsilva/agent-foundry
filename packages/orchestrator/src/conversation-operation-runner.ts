@@ -245,7 +245,13 @@ export class ConversationOperationRunner {
         // against records that have moved past these local versions.
         return;
       }
-      if (checkpoint) await this.workspaces.rollback(projectId, checkpoint);
+      if (checkpoint) {
+        try {
+          await this.workspaces.rollback(projectId, checkpoint);
+        } catch {
+          // best-effort; the failed-state transitions below are the durable record
+        }
+      }
       const runErr = toRunError(error);
       if (attempt && attempt.status === 'running') {
         await this.stepAttempts.update(
@@ -265,14 +271,18 @@ export class ConversationOperationRunner {
           runState.version,
         );
       }
-      await this.events.append({
-        id: this.ids.next(),
-        projectId,
-        type: 'operation.failed',
-        message: errorMessage(error),
-        createdAt: this.clock.now().toISOString(),
-        data: { operationId, runId, kind },
-      });
+      try {
+        await this.events.append({
+          id: this.ids.next(),
+          projectId,
+          type: 'operation.failed',
+          message: errorMessage(error),
+          createdAt: this.clock.now().toISOString(),
+          data: { operationId, runId, kind },
+        });
+      } catch {
+        // best-effort event; durable state (WorkflowRun/StepRun) is already recorded above
+      }
     }
   }
 
