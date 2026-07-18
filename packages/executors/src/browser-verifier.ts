@@ -214,9 +214,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         context = await browser.newContext({
           viewport: parsed.data.data.viewport,
           serviceWorkers: 'block',
-          ...(videoDir
-            ? { recordVideo: { dir: videoDir, size: parsed.data.data.viewport } }
-            : {}),
+          ...(videoDir ? { recordVideo: { dir: videoDir, size: parsed.data.data.viewport } } : {}),
         });
         await context.grantPermissions(['local-network-access'], { origin: prefixUrl.origin });
         if (evidencePolicy.captureTrace) {

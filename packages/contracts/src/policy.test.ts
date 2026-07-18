@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BrowserEvidencePolicySchema,
   DEFAULT_BROWSER_EVIDENCE_POLICY,
   ProjectPolicySchema,
   PolicyRecordSchema,

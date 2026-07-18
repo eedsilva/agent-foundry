@@ -235,17 +235,18 @@ function browserCoordinator(verify: BrowserVerifier['verify']) {
     },
   } satisfies Pick<PreviewService, 'start' | 'stop'>;
   const mockArtifacts = {
-    putBlob: () => Promise.resolve({
-      projectId: 'project-1',
-      name: 'test',
-      revision: 1,
-      contentType: 'application/octet-stream',
-      createdAt: '2026-07-17T12:00:00.000Z',
-      createdBy: 'tester',
-      sha256: 'a'.repeat(64),
-      storage: 'blob' as const,
-      sizeBytes: 0,
-    }),
+    putBlob: () =>
+      Promise.resolve({
+        projectId: 'project-1',
+        name: 'test',
+        revision: 1,
+        contentType: 'application/octet-stream',
+        createdAt: '2026-07-17T12:00:00.000Z',
+        createdBy: 'tester',
+        sha256: 'a'.repeat(64),
+        storage: 'blob' as const,
+        sizeBytes: 0,
+      }),
   };
   const mockLimits = {
     maxScreenshotBytes: 10_000_000,
@@ -254,7 +255,12 @@ function browserCoordinator(verify: BrowserVerifier['verify']) {
     retentionSeconds: 86400,
   };
   return {
-    coordinator: new BrowserVerificationCoordinator(previews, { verify }, mockArtifacts, mockLimits),
+    coordinator: new BrowserVerificationCoordinator(
+      previews,
+      { verify },
+      mockArtifacts,
+      mockLimits,
+    ),
     get started() {
       return sequence;
     },
@@ -391,17 +397,18 @@ describe('browser verification orchestration (#32)', () => {
       },
     };
     const mockArtifacts = {
-      putBlob: () => Promise.resolve({
-        projectId: 'project-1',
-        name: 'test',
-        revision: 1,
-        contentType: 'application/octet-stream',
-        createdAt: '2026-07-17T12:00:00.000Z',
-        createdBy: 'tester',
-        sha256: 'a'.repeat(64),
-        storage: 'blob' as const,
-        sizeBytes: 0,
-      }),
+      putBlob: () =>
+        Promise.resolve({
+          projectId: 'project-1',
+          name: 'test',
+          revision: 1,
+          contentType: 'application/octet-stream',
+          createdAt: '2026-07-17T12:00:00.000Z',
+          createdBy: 'tester',
+          sha256: 'a'.repeat(64),
+          storage: 'blob' as const,
+          sizeBytes: 0,
+        }),
     };
     const mockLimits = {
       maxScreenshotBytes: 10_000_000,
@@ -409,7 +416,12 @@ describe('browser verification orchestration (#32)', () => {
       maxVideoBytes: 100_000_000,
       retentionSeconds: 86400,
     };
-    const browserVerification = new BrowserVerificationCoordinator(previews, browserVerifier, mockArtifacts, mockLimits);
+    const browserVerification = new BrowserVerificationCoordinator(
+      previews,
+      browserVerifier,
+      mockArtifacts,
+      mockLimits,
+    );
     let planRequestOutputSchema: AgentExecutionRequest['outputSchema'];
     const harness = makeHarness({}, undefined, {
       workflow: BROWSER_WORKFLOW,

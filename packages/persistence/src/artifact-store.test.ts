@@ -162,11 +162,15 @@ describe('FileArtifactStore blob storage', () => {
 
     const beforeExpiry = new Date(Date.parse(metadata.expiresAt!) - 1_000);
     await expect(store.reapExpired(beforeExpiry)).resolves.toBe(0);
-    await expect(store.getBlobStream('project-1', 'browser-video-preview-1', 1)).resolves.not.toBeNull();
+    await expect(
+      store.getBlobStream('project-1', 'browser-video-preview-1', 1),
+    ).resolves.not.toBeNull();
 
     const afterExpiry = new Date(Date.parse(metadata.expiresAt!) + 1_000);
     await expect(store.reapExpired(afterExpiry)).resolves.toBe(1);
-    await expect(store.getBlobStream('project-1', 'browser-video-preview-1', 1)).resolves.toBeNull();
+    await expect(
+      store.getBlobStream('project-1', 'browser-video-preview-1', 1),
+    ).resolves.toBeNull();
 
     const survivingMetadata = await store.listMetadata('project-1', 'browser-video-preview-1');
     expect(survivingMetadata).toHaveLength(1);

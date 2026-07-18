@@ -168,7 +168,12 @@ export async function createRuntime(
   const browserVerification =
     config.executorMode === 'mock'
       ? mockBrowserVerificationCoordinator(artifacts, browserEvidenceLimits)
-      : new BrowserVerificationCoordinator(previewService, browserVerifier, artifacts, browserEvidenceLimits);
+      : new BrowserVerificationCoordinator(
+          previewService,
+          browserVerifier,
+          artifacts,
+          browserEvidenceLimits,
+        );
   const orchestrator = new WorkflowOrchestrator(
     projects,
     runs,

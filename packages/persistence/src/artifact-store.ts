@@ -136,11 +136,7 @@ export class FileArtifactStore implements ArtifactStore {
     });
   }
 
-  async getBlobStream(
-    projectId: string,
-    name: string,
-    revision: number,
-  ): Promise<Readable | null> {
+  async getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null> {
     const blobPath = join(
       this.dataDir,
       'projects',
