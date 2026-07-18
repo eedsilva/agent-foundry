@@ -124,3 +124,103 @@ describe('isLoopbackHost', () => {
     expect(isLoopbackHost(host)).toBe(false);
   });
 });
+
+describe('Loopback Binding Validation', () => {
+  it('accepts real mode on loopback', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      EXECUTOR_MODE: 'real',
+      API_HOST: '127.0.0.1',
+      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
+    });
+    expect(config.executorMode).toBe('real');
+    expect(config.apiHost).toBe('127.0.0.1');
+  });
+
+  it('accepts real mode on localhost', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      EXECUTOR_MODE: 'real',
+      API_HOST: 'localhost',
+      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
+    });
+    expect(config.executorMode).toBe('real');
+    expect(config.apiHost).toBe('localhost');
+  });
+
+  it('accepts real mode on ::1 (IPv6 loopback)', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      EXECUTOR_MODE: 'real',
+      API_HOST: '::1',
+      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
+    });
+    expect(config.executorMode).toBe('real');
+    expect(config.apiHost).toBe('::1');
+  });
+
+  it('rejects real mode on non-loopback without override', () => {
+    expect(() => {
+      loadRuntimeConfig({
+        ...base,
+        EXECUTOR_MODE: 'real',
+        API_HOST: '0.0.0.0',
+        ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
+      });
+    }).toThrow('Refusing to expose real CLI execution on a non-loopback API host');
+  });
+
+  it('rejects real mode on non-loopback IP without override', () => {
+    expect(() => {
+      loadRuntimeConfig({
+        ...base,
+        EXECUTOR_MODE: 'real',
+        API_HOST: '192.168.1.100',
+        ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
+      });
+    }).toThrow('Refusing to expose real CLI execution on a non-loopback API host');
+  });
+
+  it('allows real mode on non-loopback with explicit override', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      EXECUTOR_MODE: 'real',
+      API_HOST: '0.0.0.0',
+      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'true',
+    });
+    expect(config.executorMode).toBe('real');
+    expect(config.apiHost).toBe('0.0.0.0');
+    expect(config.allowUnsafeRemoteRealExecution).toBe(true);
+  });
+
+  it('accepts mock mode on any host', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      EXECUTOR_MODE: 'mock',
+      API_HOST: '0.0.0.0',
+      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
+    });
+    expect(config.executorMode).toBe('mock');
+    expect(config.apiHost).toBe('0.0.0.0');
+  });
+
+  it('computes deployment profile correctly', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      EXECUTOR_MODE: 'real',
+      API_HOST: '127.0.0.1',
+      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
+    });
+    expect(config.deploymentProfile).toBe('real-local-trusted');
+  });
+
+  it("marks custom configuration when profile doesn't match", () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      EXECUTOR_MODE: 'real',
+      API_HOST: '192.168.1.100',
+      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'true',
+    });
+    expect(config.deploymentProfile).toBe('custom');
+  });
+});

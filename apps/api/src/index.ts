@@ -8,9 +8,16 @@ import { startArtifactReaper } from './artifact-reaper.js';
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
 
 const runtime = await createRuntime();
+
+// Log deployment profile at startup
+console.log(`[info] Deployment profile: ${runtime.config.deploymentProfile}`);
+console.log(
+  `[info] API: ${runtime.config.executorMode} mode on ${runtime.config.apiHost}:${runtime.config.apiPort}`,
+);
+
 if (runtime.config.executorMode === 'real' && runtime.config.allowUnsafeRemoteRealExecution) {
   console.warn(
-    'SECURITY WARNING: real CLI execution is exposed on a non-loopback host with an explicit unsafe override.',
+    '[warn] SECURITY: real CLI execution is exposed on a non-loopback host with an explicit unsafe override',
   );
 }
 

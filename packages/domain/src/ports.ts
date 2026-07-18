@@ -255,6 +255,7 @@ export interface ExecutorRegistry {
 export interface ExecutionStatus {
   executionId: string;
   state: 'pending' | 'running' | ExecutionState;
+  result?: ExecutionResult;
 }
 
 /**
