@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
+import type { TaskProfile } from '@agent-foundry/contracts';
 import { buildApp } from '../src/app.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -153,6 +154,29 @@ async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
     contentType: 'application/json',
     createdBy: 'golden-flow-e2e',
   });
+  const profile: TaskProfile = {
+    role: 'developer',
+    taskKind: 'implementation',
+    taxonomyVersion: '2',
+    category: 'implementation/frontend',
+    features: ['frontend', 'tests'],
+    complexity: 3,
+    risk: 2,
+    estimatedContextTokens: 1_000,
+    estimatedOutputTokens: 500,
+    mutatesWorkspace: false,
+    priorities: { quality: 0.5, speed: 0.2, cost: 0.1, reliability: 0.2 },
+    preferredTags: [],
+  };
+  const routeDecision = await runtime.router.route(profile);
+  await runtime.artifacts.put({
+    projectId,
+    name: 'taxonomy-route',
+    content: { seeded: true },
+    contentType: 'application/json',
+    createdBy: 'golden-flow-e2e',
+    routeDecision,
+  });
 }
 
 async function getRun(projectId: string): Promise<{ id: string; status: string }> {
@@ -180,6 +204,15 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   await expect(page.getByRole('heading', { name: 'Aprovações' })).toBeVisible({
     timeout: 30_000,
   });
+
+  const routesPanel = page.locator('.routesPanel');
+  await expect(
+    routesPanel.getByRole('heading', { name: 'implementation', exact: true }),
+  ).toBeVisible();
+  await expect(
+    routesPanel.getByText('implementation/frontend · taxonomy v2', { exact: true }),
+  ).toBeVisible();
+  await expect(routesPanel.getByText('features: frontend, tests', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Iniciar preview' }).click();
   const iframe = page.locator('.previewFrameWrap iframe');
