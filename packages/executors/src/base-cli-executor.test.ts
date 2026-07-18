@@ -37,6 +37,19 @@ class FixtureExecutor extends BaseCliExecutor {
   }
 }
 
+class OutputFixtureExecutor extends BaseCliExecutor {
+  readonly provider = 'codex';
+  protected readonly command = 'fixture-cli';
+
+  protected async invocation(): Promise<CliInvocation> {
+    return { command: this.command, args: [] };
+  }
+
+  readResponse(outputFile: string, stdout: string): Promise<string> {
+    return this.responseText({ command: this.command, args: [], outputFile }, stdout);
+  }
+}
+
 const completedArtifact = {
   schemaVersion: '1',
   status: 'completed',
@@ -210,6 +223,26 @@ describe('BaseCliExecutor metadata', () => {
       await expect(access(directory)).rejects.toThrow();
     } finally {
       vi.useRealTimers();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('BaseCliExecutor output', () => {
+  it('reads the output file directly and falls back to stdout when it is absent', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'executor-output-test-'));
+    const outputFile = join(directory, 'provider-output.json');
+    const executor = new OutputFixtureExecutor(1_000_000);
+
+    try {
+      await writeFile(outputFile, 'file output');
+      await expect(executor.readResponse(outputFile, 'stdout output')).resolves.toBe('file output');
+
+      await rm(outputFile);
+      await expect(executor.readResponse(outputFile, 'stdout output')).resolves.toBe(
+        'stdout output',
+      );
+    } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
