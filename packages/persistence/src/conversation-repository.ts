@@ -1,10 +1,12 @@
 import { join } from 'node:path';
 import {
   AttachmentSchema,
+  ChangeRequestSchema,
   ConversationSchema,
   MessageSchema,
   OperationSchema,
   type Attachment,
+  type ChangeRequest,
   type Conversation,
   type Message,
   type Operation,
@@ -62,13 +64,20 @@ export class FileConversationRepository implements ConversationRepository {
   async getSnapshot(projectId: string): Promise<ConversationSnapshot> {
     const safeProjectId = safeSegment(projectId);
     if (!(await exists(this.rootFor(safeProjectId)))) {
-      return { conversation: null, messages: [], attachments: [], operations: [] };
+      return {
+        conversation: null,
+        messages: [],
+        attachments: [],
+        operations: [],
+        changeRequests: [],
+      };
     }
     return this.withLock(safeProjectId, async () => ({
       conversation: await this.getConversation(safeProjectId),
       messages: await this.readMessages(safeProjectId),
       attachments: await this.readAttachments(safeProjectId),
       operations: await this.readOperations(safeProjectId),
+      changeRequests: await this.readChangeRequests(safeProjectId),
     }));
   }
 
@@ -180,6 +189,44 @@ export class FileConversationRepository implements ConversationRepository {
     return this.readOperations(projectId);
   }
 
+  async createChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest> {
+    const parsed = ChangeRequestSchema.parse(changeRequest);
+    return this.withLock(parsed.projectId, async () => {
+      await this.requireConversation(parsed.projectId, parsed.conversationId);
+      const existing = await this.readChangeRequests(parsed.projectId);
+      if (existing.some((item) => item.id === parsed.id)) {
+        throw new Error(`Change request ${parsed.id} already exists`);
+      }
+      await this.writeJsonLines(this.changeRequestsPath(parsed.projectId), [...existing, parsed]);
+      return parsed;
+    });
+  }
+
+  async getChangeRequest(
+    projectId: string,
+    changeRequestId: string,
+  ): Promise<ChangeRequest | null> {
+    return (
+      (await this.readChangeRequests(projectId)).find((item) => item.id === changeRequestId) ?? null
+    );
+  }
+
+  async updateChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest> {
+    const parsed = ChangeRequestSchema.parse(changeRequest);
+    return this.withLock(parsed.projectId, async () => {
+      const changeRequests = await this.readChangeRequests(parsed.projectId);
+      const index = changeRequests.findIndex((item) => item.id === parsed.id);
+      if (index === -1) throw new NotFoundError(`Change request ${parsed.id} not found`);
+      changeRequests[index] = parsed;
+      await this.writeJsonLines(this.changeRequestsPath(parsed.projectId), changeRequests);
+      return parsed;
+    });
+  }
+
+  async listChangeRequests(projectId: string): Promise<ChangeRequest[]> {
+    return this.readChangeRequests(projectId);
+  }
+
   private async requireConversation(projectId: string, conversationId: string): Promise<void> {
     const conversation = await this.getConversation(projectId);
     if (!conversation) throw new NotFoundError(`Conversation ${projectId} not found`);
@@ -203,6 +250,12 @@ export class FileConversationRepository implements ConversationRepository {
   private async readOperations(projectId: string): Promise<Operation[]> {
     return (await readJsonLines<unknown>(this.operationsPath(projectId))).map((value) =>
       OperationSchema.parse(value),
+    );
+  }
+
+  private async readChangeRequests(projectId: string): Promise<ChangeRequest[]> {
+    return (await readJsonLines<unknown>(this.changeRequestsPath(projectId))).map((value) =>
+      ChangeRequestSchema.parse(value),
     );
   }
 
@@ -236,6 +289,10 @@ export class FileConversationRepository implements ConversationRepository {
 
   private operationsPath(projectId: string): string {
     return join(this.rootFor(projectId), 'operations.jsonl');
+  }
+
+  private changeRequestsPath(projectId: string): string {
+    return join(this.rootFor(projectId), 'changeRequests.jsonl');
   }
 }
 

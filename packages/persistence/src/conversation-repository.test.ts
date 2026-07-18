@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Attachment, Conversation, Operation } from '@agent-foundry/contracts';
+import type { Attachment, ChangeRequest, Conversation, Operation } from '@agent-foundry/contracts';
 import { IdempotencyConflictError, NotFoundError } from '@agent-foundry/domain';
 import { FileConversationRepository } from './conversation-repository.js';
 import { atomicWriteText } from './fs-utils.js';
@@ -53,6 +53,23 @@ function operation(overrides: Partial<Operation> = {}): Operation {
     idempotencyKey: 'b'.repeat(64),
     artifactReferences: [],
     directExecution: true,
+    createdAt,
+    ...overrides,
+  };
+}
+
+function changeRequest(overrides: Partial<ChangeRequest> = {}): ChangeRequest {
+  return {
+    id: 'cr-1',
+    projectId: 'project-1',
+    conversationId: 'project-1',
+    messageId: 'message-1',
+    suggestedKind: 'build',
+    summary: 'Add a login page.',
+    rationale: 'Imperative verb.',
+    referencedDecisionIds: [],
+    contextSources: [],
+    status: 'proposed',
     createdAt,
     ...overrides,
   };
@@ -329,6 +346,7 @@ describe('FileConversationRepository', () => {
       messages: [],
       attachments: [],
       operations: [],
+      changeRequests: [],
     });
     await expect(
       access(join(legacyDataDir, 'projects', 'legacy-project', 'conversation')),
@@ -371,5 +389,66 @@ describe('FileConversationRepository', () => {
     expect(captured.messages.map((message) => message.id)).toContain(
       captured.operations[0]!.messageId,
     );
+  });
+});
+
+describe('FileConversationRepository change requests', () => {
+  it('creates, lists, and updates a change request scoped to its project', async () => {
+    const dataDir = await temporaryDataDir();
+    const repository = new FileConversationRepository(dataDir);
+    await repository.createConversation(conversation);
+    await repository.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page.' }],
+      createdAt,
+    });
+    const created = await repository.createChangeRequest(changeRequest());
+    expect(await repository.getChangeRequest('project-1', created.id)).toEqual(created);
+    expect(await repository.listChangeRequests('project-1')).toEqual([created]);
+
+    const updated = await repository.updateChangeRequest({
+      ...created,
+      status: 'confirmed',
+      confirmedKind: 'build',
+      decidedAt: '2026-07-17T12:01:00.000Z',
+    });
+    expect((await repository.getChangeRequest('project-1', created.id))?.status).toBe('confirmed');
+    expect(updated.confirmedKind).toBe('build');
+  });
+
+  it('returns null for a change request id from a different project', async () => {
+    const dataDir = await temporaryDataDir();
+    const repository = new FileConversationRepository(dataDir);
+    await repository.createConversation(conversation);
+    await repository.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page.' }],
+      createdAt,
+    });
+    await repository.createChangeRequest(changeRequest());
+    expect(await repository.getChangeRequest('project-2', 'cr-1')).toBeNull();
+  });
+
+  it('includes change requests in getSnapshot', async () => {
+    const dataDir = await temporaryDataDir();
+    const repository = new FileConversationRepository(dataDir);
+    await repository.createConversation(conversation);
+    await repository.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page.' }],
+      createdAt,
+    });
+    await repository.createChangeRequest(changeRequest());
+    const snapshot = await repository.getSnapshot('project-1');
+    expect(snapshot.changeRequests).toHaveLength(1);
   });
 });

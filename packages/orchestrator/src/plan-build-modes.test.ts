@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { Conversation, Message, Operation } from '@agent-foundry/contracts';
 import {
   type ArtifactStore,
   type Clock,
-  type ConversationRepository,
   type EventStore,
   type ExecutorRegistry,
   type HarnessRepository,
@@ -23,6 +21,7 @@ import {
   InMemoryRuns,
   InMemoryStepAttempts,
   InMemoryStepRuns,
+  MemoryConversations,
   MODELS,
 } from './testing/harness.js';
 import { ConversationOperationRunner } from './conversation-operation-runner.js';
@@ -41,61 +40,6 @@ class SequentialIds implements IdGenerator {
   next(): string {
     this.counter += 1;
     return `id-${String(this.counter).padStart(4, '0')}`;
-  }
-}
-
-class MemoryConversations implements ConversationRepository {
-  private readonly conversations = new Map<string, Conversation>();
-  private readonly messages: Message[] = [];
-  private readonly operations: Operation[] = [];
-  createConversation(conversation: Conversation): Promise<void> {
-    this.conversations.set(conversation.projectId, conversation);
-    return Promise.resolve();
-  }
-  getConversation(projectId: string): Promise<Conversation | null> {
-    return Promise.resolve(this.conversations.get(projectId) ?? null);
-  }
-  getSnapshot(projectId: string) {
-    return Promise.resolve({
-      conversation: this.conversations.get(projectId) ?? null,
-      messages: this.messages.filter((m) => m.projectId === projectId),
-      attachments: [],
-      operations: this.operations.filter((o) => o.projectId === projectId),
-    });
-  }
-  appendMessage(message: Omit<Message, 'sequence'>): Promise<Message> {
-    const stored = { ...message, sequence: this.messages.length + 1 };
-    this.messages.push(stored);
-    return Promise.resolve(stored);
-  }
-  listMessages(projectId: string): Promise<Message[]> {
-    return Promise.resolve(this.messages.filter((m) => m.projectId === projectId));
-  }
-  createAttachment(): Promise<never> {
-    return Promise.reject(new Error('not used'));
-  }
-  getAttachment(): Promise<null> {
-    return Promise.resolve(null);
-  }
-  listAttachments(): Promise<never[]> {
-    return Promise.resolve([]);
-  }
-  createOperation(operation: Operation): Promise<Operation> {
-    this.operations.push(operation);
-    return Promise.resolve(operation);
-  }
-  getOperation(projectId: string, operationId: string): Promise<Operation | null> {
-    return Promise.resolve(
-      this.operations.find((o) => o.projectId === projectId && o.id === operationId) ?? null,
-    );
-  }
-  updateOperation(operation: Operation): Promise<Operation> {
-    const index = this.operations.findIndex((o) => o.id === operation.id);
-    this.operations[index] = operation;
-    return Promise.resolve(operation);
-  }
-  listOperations(projectId: string): Promise<Operation[]> {
-    return Promise.resolve(this.operations.filter((o) => o.projectId === projectId));
   }
 }
 
