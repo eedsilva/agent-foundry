@@ -153,7 +153,7 @@ describe('ConversationService', () => {
       createdBy: 'test',
     });
     const input = {
-      kind: 'build' as const,
+      kind: 'explain' as const,
       idempotencyKey: 'c'.repeat(64),
       runId: run.id,
       artifactReferences: [
@@ -208,7 +208,7 @@ describe('ConversationService', () => {
     expect(second.messages.map((message) => message.sequence)).toEqual([3, 4]);
     expect(second.nextCursor).toBeNull();
     await service.createOperation(project.id, first.messages[0]!.id, {
-      kind: 'build',
+      kind: 'explain',
       idempotencyKey: 'a'.repeat(64),
       artifactReferences: [],
     });
@@ -432,5 +432,22 @@ class MemoryConversations implements ConversationRepository {
     return Promise.resolve(
       this.operations.filter((operation) => operation.projectId === projectId),
     );
+  }
+  getOperation(projectId: string, operationId: string): Promise<Operation | null> {
+    return Promise.resolve(
+      this.operations.find(
+        (operation) => operation.projectId === projectId && operation.id === operationId,
+      ) ?? null,
+    );
+  }
+
+  updateOperation(operation: Operation): Promise<Operation> {
+    const index = this.operations.findIndex((item) => item.id === operation.id);
+    if (index !== -1) {
+      this.operations[index] = operation;
+    } else {
+      throw new NotFoundError(`Operation ${operation.id} not found`);
+    }
+    return Promise.resolve(operation);
   }
 }

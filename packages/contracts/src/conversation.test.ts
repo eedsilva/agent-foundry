@@ -121,6 +121,7 @@ describe('conversation aggregate contracts (#36)', () => {
       changeRequestId: 'change-1',
       projectVersionId: 'version-1',
       artifactReferences: [{ name: 'result', revision: 1, sha256: 'c'.repeat(64) }],
+      directExecution: true,
       createdAt,
     };
     expect(
@@ -132,6 +133,69 @@ describe('conversation aggregate contracts (#36)', () => {
     expect(
       OperationSchema.parse({ ...operation, artifactReferences: undefined }).artifactReferences,
     ).toEqual([]);
+  });
+
+  it('records plan approval and build gating on an operation', () => {
+    const plan = {
+      id: 'operation-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      messageId: 'message-1',
+      kind: 'plan' as const,
+      idempotencyKey: 'a'.repeat(64),
+      artifactReferences: [],
+      approval: { status: 'pending' as const },
+      createdAt,
+    };
+    expect(OperationSchema.parse(plan)).toEqual(plan);
+
+    const approved = {
+      ...plan,
+      approval: {
+        status: 'approved' as const,
+        decidedAt: createdAt,
+        decidedBy: { kind: 'user' as const, id: 'ed' },
+      },
+    };
+    expect(OperationSchema.parse(approved)).toEqual(approved);
+
+    const buildFromPlan = {
+      id: 'operation-2',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      messageId: 'message-2',
+      kind: 'build' as const,
+      idempotencyKey: 'b'.repeat(64),
+      artifactReferences: [],
+      planOperationId: plan.id,
+      createdAt,
+    };
+    expect(OperationSchema.parse(buildFromPlan)).toEqual(buildFromPlan);
+
+    const buildDirect = {
+      ...buildFromPlan,
+      id: 'operation-3',
+      planOperationId: undefined,
+      directExecution: true,
+    };
+    expect(OperationSchema.parse(buildDirect)).toMatchObject({ directExecution: true });
+  });
+
+  it('rejects a build operation with neither or both plan gates', () => {
+    const base = {
+      id: 'operation-4',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      messageId: 'message-3',
+      kind: 'build' as const,
+      idempotencyKey: 'c'.repeat(64),
+      artifactReferences: [],
+      createdAt,
+    };
+    expect(() => OperationSchema.parse(base)).toThrow();
+    expect(() =>
+      OperationSchema.parse({ ...base, planOperationId: 'operation-1', directExecution: true }),
+    ).toThrow();
   });
 
   it('parses the canonical project conversation', () => {

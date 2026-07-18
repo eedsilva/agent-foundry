@@ -1,10 +1,14 @@
 import type {
   ApprovalConflictResponse,
   ApprovalListResponse,
+  ConversationPageResponse,
+  CreateMessageRequest,
   CreateModelOverrideRequest,
   CreateModelOverrideResponse,
   DecideApprovalRequest,
   DecideApprovalResponse,
+  Message,
+  Operation,
   PreviewLogPage,
   PreviewSession,
   Project,
@@ -15,6 +19,7 @@ import type {
   RetryStepRequest,
   RunDetailResponse,
   RuntimeInfoResponse,
+  StartOperationRequest,
   StoredArtifact,
   WorkflowDefinition,
   WorkflowRun,
@@ -224,6 +229,45 @@ export async function setVersionProtected(
     { method: 'POST', body: JSON.stringify({ protected: protectedFlag }) },
   );
   return response.version;
+}
+
+export function getConversation(projectId: string): Promise<ConversationPageResponse> {
+  return api<ConversationPageResponse>(`/projects/${encodeURIComponent(projectId)}/conversation`);
+}
+
+export async function sendMessage(
+  projectId: string,
+  input: CreateMessageRequest,
+): Promise<Message> {
+  const response = await api<{ message: Message }>(
+    `/projects/${encodeURIComponent(projectId)}/conversation/messages`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return response.message;
+}
+
+export async function startOperation(
+  projectId: string,
+  messageId: string,
+  input: StartOperationRequest,
+): Promise<Operation> {
+  const response = await api<{ operation: Operation }>(
+    `/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}/operations`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return response.operation;
+}
+
+export async function decideOperation(
+  projectId: string,
+  operationId: string,
+  action: 'approve' | 'reject',
+): Promise<Operation> {
+  const response = await api<{ operation: Operation }>(
+    `/projects/${encodeURIComponent(projectId)}/conversation/operations/${encodeURIComponent(operationId)}/decide`,
+    { method: 'POST', body: JSON.stringify({ action }) },
+  );
+  return response.operation;
 }
 
 export function getActivePreviewSession(

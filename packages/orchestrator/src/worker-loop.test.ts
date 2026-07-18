@@ -53,6 +53,15 @@ function fakeQueue(overrides: Partial<JobQueue> = {}): JobQueue {
   };
 }
 
+function fakeOperationRunner(
+  run: (projectId: string, runId: string, operationId: string) => Promise<void> = () =>
+    Promise.resolve(),
+) {
+  return {
+    run,
+  } as unknown as import('./conversation-operation-runner.js').ConversationOperationRunner;
+}
+
 describe('WorkerLoop heartbeat renewal', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -74,7 +83,7 @@ describe('WorkerLoop heartbeat renewal', () => {
     const runProject = vi.fn().mockReturnValue(run.promise);
     const orchestrator = { runProject } as unknown as WorkflowOrchestrator;
 
-    const worker = new WorkerLoop(queue, orchestrator, {
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
       workerId: 'worker-a',
       pollIntervalMs: 1_000,
       heartbeatIntervalMs: 100,
@@ -108,7 +117,7 @@ describe('WorkerLoop heartbeat renewal', () => {
     const orchestrator = {
       runProject: vi.fn().mockReturnValue(run.promise),
     } as unknown as WorkflowOrchestrator;
-    const worker = new WorkerLoop(queue, orchestrator, {
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
       workerId: 'worker-a',
       pollIntervalMs: 1_000,
       heartbeatIntervalMs: 100,
@@ -137,7 +146,7 @@ describe('WorkerLoop heartbeat renewal', () => {
     const orchestrator = {
       runProject: vi.fn().mockReturnValue(run.promise),
     } as unknown as WorkflowOrchestrator;
-    const worker = new WorkerLoop(queue, orchestrator, {
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
       workerId: 'worker-a',
       pollIntervalMs: 1_000,
       heartbeatIntervalMs: 100,
@@ -161,7 +170,7 @@ describe('WorkerLoop heartbeat renewal', () => {
     const heartbeat = vi.fn();
     const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(null), heartbeat });
     const orchestrator = { runProject: vi.fn() } as unknown as WorkflowOrchestrator;
-    const worker = new WorkerLoop(queue, orchestrator, {
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
       workerId: 'worker-a',
       pollIntervalMs: 1_000,
     });
@@ -169,5 +178,29 @@ describe('WorkerLoop heartbeat renewal', () => {
     expect(await worker.runOnce()).toBe(false);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(heartbeat).not.toHaveBeenCalled();
+  });
+
+  it('dispatches a run-conversation-operation job to the operation runner, not runProject', async () => {
+    const queue = fakeQueue({
+      claim: vi
+        .fn()
+        .mockResolvedValueOnce(
+          job({ type: 'run-conversation-operation', runId: 'run-1', operationId: 'operation-1' }),
+        )
+        .mockResolvedValue(null),
+    });
+    const runProject = vi.fn().mockResolvedValue(undefined);
+    const orchestrator = { runProject } as unknown as WorkflowOrchestrator;
+    const run = vi.fn().mockResolvedValue(undefined);
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(run), {
+      workerId: 'worker-a',
+      pollIntervalMs: 10,
+    });
+
+    await worker.runOnce();
+
+    expect(run).toHaveBeenCalledWith('project-1', 'run-1', 'operation-1');
+    expect(runProject).not.toHaveBeenCalled();
+    expect(queue.ack).toHaveBeenCalled();
   });
 });

@@ -2220,7 +2220,7 @@ export class WorkflowOrchestrator {
   }
 }
 
-function artifactReference(artifact: StoredArtifact) {
+export function artifactReference(artifact: StoredArtifact) {
   return {
     name: artifact.metadata.name,
     revision: artifact.metadata.revision,
@@ -2251,7 +2251,7 @@ function isCancellation(error: unknown, signal: AbortSignal): boolean {
   );
 }
 
-function runError(error: unknown): RunError {
+export function runError(error: unknown): RunError {
   const details = error instanceof ExecutionError ? error.details : {};
   const code =
     error instanceof Error && 'code' in error && typeof error.code === 'string'

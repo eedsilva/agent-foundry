@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Attachment, Conversation, Operation } from '@agent-foundry/contracts';
-import { IdempotencyConflictError } from '@agent-foundry/domain';
+import { IdempotencyConflictError, NotFoundError } from '@agent-foundry/domain';
 import { FileConversationRepository } from './conversation-repository.js';
 import { atomicWriteText } from './fs-utils.js';
 
@@ -52,6 +52,7 @@ function operation(overrides: Partial<Operation> = {}): Operation {
     kind: 'build',
     idempotencyKey: 'b'.repeat(64),
     artifactReferences: [],
+    directExecution: true,
     createdAt,
     ...overrides,
   };
@@ -183,6 +184,56 @@ describe('FileConversationRepository', () => {
       ),
     ).rejects.toBeInstanceOf(IdempotencyConflictError);
     await expect(repository.listOperations('project-1')).resolves.toEqual([first]);
+  });
+
+  it('fetches a single operation by id and returns null when absent', async () => {
+    const dataDir = await temporaryDataDir();
+    const repo = new FileConversationRepository(dataDir);
+    await repo.createConversation({ id: 'project-1', projectId: 'project-1', createdAt });
+    const operation = {
+      id: 'operation-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      messageId: 'message-1',
+      kind: 'plan' as const,
+      idempotencyKey: 'a'.repeat(64),
+      artifactReferences: [],
+      createdAt,
+    };
+    await repo.createOperation(operation);
+
+    expect(await repo.getOperation('project-1', 'operation-1')).toEqual(operation);
+    expect(await repo.getOperation('project-1', 'missing')).toBeNull();
+  });
+
+  it('updates an existing operation in place and rejects an unknown id', async () => {
+    const dataDir = await temporaryDataDir();
+    const repo = new FileConversationRepository(dataDir);
+    await repo.createConversation({ id: 'project-1', projectId: 'project-1', createdAt });
+    const operation = {
+      id: 'operation-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      messageId: 'message-1',
+      kind: 'plan' as const,
+      idempotencyKey: 'a'.repeat(64),
+      artifactReferences: [],
+      approval: { status: 'pending' as const },
+      createdAt,
+    };
+    await repo.createOperation(operation);
+
+    const approved = {
+      ...operation,
+      approval: { status: 'approved' as const, decidedAt: createdAt },
+    };
+    const updated = await repo.updateOperation(approved);
+    expect(updated).toEqual(approved);
+    expect(await repo.getOperation('project-1', 'operation-1')).toEqual(approved);
+
+    await expect(repo.updateOperation({ ...approved, id: 'missing' })).rejects.toThrow(
+      NotFoundError,
+    );
   });
 
   it('redacts message content and attachment names before writing JSONL', async () => {

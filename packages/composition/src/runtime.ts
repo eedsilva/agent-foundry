@@ -33,7 +33,9 @@ import {
   YamlWorkflowRepository,
 } from '@agent-foundry/persistence';
 import {
+  ConversationOperationRunner,
   ConversationService,
+  OperationService,
   ProjectService,
   ProjectVersionService,
   QueueLeaseReaper,
@@ -73,6 +75,8 @@ export interface Runtime {
   browserVerification: BrowserVerificationCoordinator;
   projectService: ProjectService;
   conversationService: ConversationService;
+  operationRunner: ConversationOperationRunner;
+  operationService: OperationService;
   orchestrator: WorkflowOrchestrator;
   worker: WorkerLoop;
   leaseReaper: QueueLeaseReaper;
@@ -226,7 +230,24 @@ export async function createRuntime(
     clock,
     ids,
   );
-  const worker = new WorkerLoop(queue, orchestrator, {
+  const operationRunner = new ConversationOperationRunner(
+    runs,
+    stepRuns,
+    stepAttempts,
+    artifacts,
+    events,
+    harness,
+    router,
+    metrics,
+    executors,
+    workspaces,
+    conversations,
+    clock,
+    ids,
+    { agentTimeoutMs: config.agentTimeoutMs },
+  );
+  const operationService = new OperationService(conversations, runs, queue, artifacts, clock, ids);
+  const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
     workerId: config.workerId,
     pollIntervalMs: config.workerPollIntervalMs,
     heartbeatIntervalMs: config.queueHeartbeatIntervalMs,
@@ -260,6 +281,8 @@ export async function createRuntime(
     browserVerification,
     projectService,
     conversationService,
+    operationRunner,
+    operationService,
     orchestrator,
     worker,
     leaseReaper,
