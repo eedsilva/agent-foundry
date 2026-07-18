@@ -1,5 +1,4 @@
-import { access, open, rm } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { open, readFile, rm } from 'node:fs/promises';
 import { execa } from 'execa';
 import type {
   AgentExecutionRequest,
@@ -52,8 +51,6 @@ export abstract class BaseCliExecutor implements AgentExecutor {
   protected async responseText(invocation: CliInvocation, stdout: string): Promise<string> {
     if (invocation.outputFile) {
       try {
-        await access(invocation.outputFile, constants.R_OK);
-        const { readFile } = await import('node:fs/promises');
         return await readFile(invocation.outputFile, 'utf8');
       } catch {
         // Fall through to stdout. Some CLI versions may omit the output file on partial success.
