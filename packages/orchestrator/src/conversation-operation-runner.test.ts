@@ -15,7 +15,7 @@ import type {
 } from '@agent-foundry/domain';
 import type { Conversation, Message, Operation, WorkflowRun } from '@agent-foundry/contracts';
 import {
-  ControllableExecutor,
+  ControllableAgentExecutor,
   FakeWorkspaces,
   InMemoryArtifacts,
   InMemoryEvents,
@@ -138,7 +138,7 @@ function setup() {
   const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
   const workspaces = new FakeWorkspaces({ on: true });
   const conversations = new MemoryConversations();
-  const executor = new ControllableExecutor({}, workspaces);
+  const executor = new ControllableAgentExecutor({}, workspaces);
   const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
   const runner = new ConversationOperationRunner(
     runs,
@@ -238,7 +238,7 @@ describe('ConversationOperationRunner', () => {
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const conversations = new MemoryConversations();
-    const executor = new ControllableExecutor(
+    const executor = new ControllableAgentExecutor(
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
       workspaces,
     );
@@ -281,7 +281,7 @@ describe('ConversationOperationRunner', () => {
       throw new Error('event store unavailable');
     };
     const conversations = new MemoryConversations();
-    const executor = new ControllableExecutor({}, workspaces);
+    const executor = new ControllableAgentExecutor({}, workspaces);
     const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
     const runner = new ConversationOperationRunner(
       runs,
@@ -326,7 +326,7 @@ describe('ConversationOperationRunner', () => {
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const conversations = new MemoryConversations();
-    const executor = new ControllableExecutor({}, workspaces);
+    const executor = new ControllableAgentExecutor({}, workspaces);
     const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
     const runner = new ConversationOperationRunner(
       runs,
@@ -366,7 +366,7 @@ describe('ConversationOperationRunner', () => {
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const conversations = new MemoryConversations();
-    const executor = new ControllableExecutor(
+    const executor = new ControllableAgentExecutor(
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
       workspaces,
     );
@@ -411,7 +411,7 @@ describe('ConversationOperationRunner', () => {
       throw new Error('event store unavailable');
     };
     const conversations = new MemoryConversations();
-    const executor = new ControllableExecutor(
+    const executor = new ControllableAgentExecutor(
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
       workspaces,
     );

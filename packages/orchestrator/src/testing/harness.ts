@@ -16,6 +16,7 @@ import {
   type ArtifactMetadata,
   type ExecutionRequest,
   type ExecutionResult,
+  type ExecutorHealth,
   type ModelDefinition,
   type ModelOverrideRecord,
   type Project,
@@ -36,6 +37,7 @@ import {
   SystemClock,
   VersionConflictError,
   toExecutionResult,
+  type AgentExecutor,
   type ApprovalDecisionRepository,
   type ApprovalRequestRepository,
   type ArtifactBlobPutInput,
@@ -777,6 +779,99 @@ export class ControllableExecutor implements ExecutionPlane {
 
   started(stepId: string): number {
     return this.startCounts.get(stepId) ?? 0;
+  }
+
+  private result(request: AgentExecutionRequest): AgentExecutionResult {
+    return {
+      runId: request.runId,
+      stepRunId: request.stepRunId,
+      attemptId: request.attemptId,
+      provider: 'codex',
+      model: request.model,
+      exitCode: 0,
+      durationMs: 1,
+      stdout: '',
+      stderr: '',
+      output: this.output?.(request) ?? {
+        schemaVersion: '1',
+        status: 'completed',
+        summary: `${request.stepId} done.`,
+        data: {},
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        nextActions: [],
+      },
+    };
+  }
+}
+
+/**
+ * AgentExecutor-shaped counterpart to ControllableExecutor, for callers that
+ * still go through ExecutorRegistry.get(...).execute(...) directly rather
+ * than the ExecutionPlane port.
+ */
+export class ControllableAgentExecutor implements AgentExecutor {
+  readonly provider = 'codex';
+  readonly startCounts = new Map<string, number>();
+  private readonly gates = new Map<string, () => void>();
+  constructor(
+    private readonly behaviors: Record<string, StepBehavior>,
+    private readonly workspaces: FakeWorkspaces,
+    private readonly output?: (
+      request: AgentExecutionRequest,
+    ) => AgentExecutionResult['output'] | undefined,
+  ) {}
+
+  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult> {
+    const count = (this.startCounts.get(request.stepId) ?? 0) + 1;
+    this.startCounts.set(request.stepId, count);
+    const behavior = this.behaviors[request.stepId] ?? 'instant';
+    // Simulates a CLI that writes to the workspace before it reports success or failure.
+    const touch = (): void => {
+      if (request.mutatesWorkspace) this.workspaces.touch();
+    };
+
+    if (behavior === 'instant') {
+      touch();
+      return Promise.resolve(this.result(request));
+    }
+    if (behavior === 'gated') {
+      return new Promise((resolve) => {
+        this.gates.set(request.stepId, () => {
+          touch();
+          resolve(this.result(request));
+        });
+      });
+    }
+    if (behavior.kind === 'hang-until-abort') {
+      return new Promise((_resolve, reject) => {
+        if (signal?.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    }
+    const shouldFail = behavior.kind === 'fail-always' || count === 1;
+    touch();
+    if (shouldFail) return Promise.reject(behavior.error());
+    return Promise.resolve(this.result(request));
+  }
+
+  release(stepId: string): void {
+    const open = this.gates.get(stepId);
+    if (!open) throw new Error(`no gated execution for ${stepId}`);
+    this.gates.delete(stepId);
+    open();
+  }
+
+  started(stepId: string): number {
+    return this.startCounts.get(stepId) ?? 0;
+  }
+
+  health(): Promise<ExecutorHealth> {
+    return Promise.resolve({ provider: 'codex', available: true, message: 'ok' });
   }
 
   private result(request: AgentExecutionRequest): AgentExecutionResult {
