@@ -154,12 +154,9 @@ async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
     contentType: 'application/json',
     createdBy: 'golden-flow-e2e',
   });
-  const profile: TaskProfile = {
+  const profileDefaults = {
     role: 'developer',
-    taskKind: 'implementation',
     taxonomyVersion: '2',
-    category: 'implementation/frontend',
-    features: ['frontend', 'tests'],
     complexity: 3,
     risk: 2,
     estimatedContextTokens: 1_000,
@@ -168,15 +165,37 @@ async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
     priorities: { quality: 0.5, speed: 0.2, cost: 0.1, reliability: 0.2 },
     preferredTags: [],
   };
-  const routeDecision = await runtime.router.route(profile);
-  await runtime.artifacts.put({
-    projectId,
-    name: 'taxonomy-route',
-    content: { seeded: true },
-    contentType: 'application/json',
-    createdBy: 'golden-flow-e2e',
-    routeDecision,
-  });
+  const profiles: TaskProfile[] = [
+    {
+      ...profileDefaults,
+      taskKind: 'implementation',
+      category: 'implementation/frontend',
+      features: ['frontend', 'tests'],
+    },
+    {
+      ...profileDefaults,
+      taskKind: 'implementation',
+      category: 'implementation/backend',
+      features: ['backend'],
+    },
+    {
+      ...profileDefaults,
+      taskKind: 'repair',
+      category: 'repair/integration',
+      features: ['integration'],
+    },
+  ];
+  for (const profile of profiles) {
+    const routeDecision = await runtime.router.route(profile);
+    await runtime.artifacts.put({
+      projectId,
+      name: `taxonomy-${profile.category.replace('/', '-')}`,
+      content: { seeded: true },
+      contentType: 'application/json',
+      createdBy: 'golden-flow-e2e',
+      routeDecision,
+    });
+  }
 }
 
 async function getRun(projectId: string): Promise<{ id: string; status: string }> {
@@ -206,13 +225,17 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   });
 
   const routesPanel = page.locator('.routesPanel');
-  await expect(
-    routesPanel.getByRole('heading', { name: 'implementation', exact: true }),
-  ).toBeVisible();
-  await expect(
-    routesPanel.getByText('implementation/frontend · taxonomy v2', { exact: true }),
-  ).toBeVisible();
-  await expect(routesPanel.getByText('features: frontend, tests', { exact: true })).toBeVisible();
+  const implementationRoutes = routesPanel
+    .getByRole('heading', { name: 'implementation', exact: true })
+    .locator('..');
+  await expect(implementationRoutes).toContainText('implementation/frontend · taxonomy v2');
+  await expect(implementationRoutes).toContainText('implementation/backend · taxonomy v2');
+  await expect(implementationRoutes).toContainText('features: frontend, tests');
+  const repairRoutes = routesPanel
+    .getByRole('heading', { name: 'repair', exact: true })
+    .locator('..');
+  await expect(repairRoutes).toContainText('repair/integration · taxonomy v2');
+  await expect(routesPanel.locator('.routeGrid article h4')).toHaveCount(3);
 
   await page.getByRole('button', { name: 'Iniciar preview' }).click();
   const iframe = page.locator('.previewFrameWrap iframe');

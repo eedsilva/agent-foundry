@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -79,6 +79,14 @@ describe('FileMetricsRepository taxonomy migration', () => {
       category: 'implementation/general',
       attempts: 3,
       successes: 2,
+    });
+
+    const persisted = JSON.parse(
+      await readFile(join(dataDir, 'metrics', 'models.json'), 'utf8'),
+    ) as { metrics: Record<string, unknown> };
+    expect(persisted.metrics['legacy::implementation::developer']).toMatchObject({
+      taxonomyVersion: '1',
+      category: 'implementation/general',
     });
   });
 });

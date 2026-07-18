@@ -12,6 +12,7 @@ import {
   TaskCategorySchema,
   TaskFeatureSchema,
   TaskTaxonomyVersionSchema,
+  isTaskCategoryCompatible,
   legacyTaskCategory,
 } from './task-taxonomy.js';
 
@@ -79,29 +80,34 @@ export const TaskProfileSchema = z.preprocess(
       features: profile.features === undefined ? [] : profile.features,
     };
   },
-  z.object({
-    role: AgentRoleSchema,
-    taskKind: TaskKindSchema,
-    taxonomyVersion: TaskTaxonomyVersionSchema,
-    category: TaskCategorySchema,
-    features: z.array(TaskFeatureSchema),
-    complexity: ComplexityLevelSchema,
-    risk: RiskLevelSchema,
-    estimatedContextTokens: z.number().int().nonnegative(),
-    estimatedOutputTokens: z.number().int().nonnegative(),
-    mutatesWorkspace: z.boolean(),
-    priorities: RoutingPrioritiesSchema,
-    allowedProviders: z.array(ProviderSchema.exclude(['mock'])).optional(),
-    policy: z
-      .object({
-        id: PathSegmentSchema,
-        version: z.number().int().positive(),
-        allowedProviders: z.array(ProviderSchema.exclude(['mock'])),
-      })
-      .strict()
-      .optional(),
-    preferredTags: z.array(z.string()).default([]),
-  }),
+  z
+    .object({
+      role: AgentRoleSchema,
+      taskKind: TaskKindSchema,
+      taxonomyVersion: TaskTaxonomyVersionSchema,
+      category: TaskCategorySchema,
+      features: z.array(TaskFeatureSchema),
+      complexity: ComplexityLevelSchema,
+      risk: RiskLevelSchema,
+      estimatedContextTokens: z.number().int().nonnegative(),
+      estimatedOutputTokens: z.number().int().nonnegative(),
+      mutatesWorkspace: z.boolean(),
+      priorities: RoutingPrioritiesSchema,
+      allowedProviders: z.array(ProviderSchema.exclude(['mock'])).optional(),
+      policy: z
+        .object({
+          id: PathSegmentSchema,
+          version: z.number().int().positive(),
+          allowedProviders: z.array(ProviderSchema.exclude(['mock'])),
+        })
+        .strict()
+        .optional(),
+      preferredTags: z.array(z.string()).default([]),
+    })
+    .refine((profile) => isTaskCategoryCompatible(profile.taskKind, profile.category), {
+      message: 'Category is incompatible with taskKind',
+      path: ['category'],
+    }),
 );
 export type TaskProfile = z.infer<typeof TaskProfileSchema>;
 
@@ -220,23 +226,28 @@ export const ModelMetricSchema = z.preprocess(
           : metric.category,
     };
   },
-  z.object({
-    modelId: PathSegmentSchema,
-    taskKind: TaskKindSchema,
-    role: AgentRoleSchema,
-    taxonomyVersion: TaskTaxonomyVersionSchema,
-    category: TaskCategorySchema,
-    attempts: z.number().int().nonnegative(),
-    successes: z.number().int().nonnegative(),
-    totalDurationMs: z.number().nonnegative(),
-    totalInputTokens: z.number().nonnegative(),
-    totalOutputTokens: z.number().nonnegative(),
-    totalEstimatedCostUsd: z.number().nonnegative(),
-    consecutiveFailures: z.number().int().nonnegative(),
-    qualityEvaluations: z.number().int().nonnegative().default(0),
-    qualityApprovals: z.number().int().nonnegative().default(0),
-    lastFailureAt: z.string().datetime().optional(),
-    updatedAt: z.string().datetime(),
-  }),
+  z
+    .object({
+      modelId: PathSegmentSchema,
+      taskKind: TaskKindSchema,
+      role: AgentRoleSchema,
+      taxonomyVersion: TaskTaxonomyVersionSchema,
+      category: TaskCategorySchema,
+      attempts: z.number().int().nonnegative(),
+      successes: z.number().int().nonnegative(),
+      totalDurationMs: z.number().nonnegative(),
+      totalInputTokens: z.number().nonnegative(),
+      totalOutputTokens: z.number().nonnegative(),
+      totalEstimatedCostUsd: z.number().nonnegative(),
+      consecutiveFailures: z.number().int().nonnegative(),
+      qualityEvaluations: z.number().int().nonnegative().default(0),
+      qualityApprovals: z.number().int().nonnegative().default(0),
+      lastFailureAt: z.string().datetime().optional(),
+      updatedAt: z.string().datetime(),
+    })
+    .refine((metric) => isTaskCategoryCompatible(metric.taskKind, metric.category), {
+      message: 'Category is incompatible with taskKind',
+      path: ['category'],
+    }),
 );
 export type ModelMetric = z.infer<typeof ModelMetricSchema>;

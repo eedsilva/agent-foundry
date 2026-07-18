@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { AgentRoleSchema, PathSegmentSchema, TaskKindSchema } from './primitives.js';
 import { RoutingPrioritiesSchema } from './model.js';
-import { TaskCategorySchema } from './task-taxonomy.js';
+import { isTaskCategoryCompatible, TaskCategorySchema } from './task-taxonomy.js';
 
 export const ArtifactConditionSchema = z.object({
   artifact: PathSegmentSchema,
@@ -10,29 +10,36 @@ export const ArtifactConditionSchema = z.object({
 });
 export type ArtifactCondition = z.infer<typeof ArtifactConditionSchema>;
 
-const AgentStepSchema = z.object({
-  id: PathSegmentSchema,
-  type: z.literal('agent'),
-  role: AgentRoleSchema,
-  taskKind: TaskKindSchema,
-  title: z.string().min(1),
-  instructions: z.string().min(1),
-  inputArtifacts: z.array(PathSegmentSchema).default([]),
-  outputArtifact: PathSegmentSchema,
-  mutatesWorkspace: z.boolean().default(false),
-  harnessTags: z.array(z.string()).default([]),
-  profile: z
-    .object({
-      complexity: z.number().int().min(1).max(5).optional(),
-      risk: z.number().int().min(1).max(5).optional(),
-      category: TaskCategorySchema.optional(),
-      priorities: RoutingPrioritiesSchema.partial().optional(),
-      allowedProviders: z.array(z.enum(['codex', 'claude', 'agy'])).optional(),
-      preferredTags: z.array(z.string()).optional(),
-    })
-    .default({}),
-  maxAttempts: z.number().int().min(1).max(5).default(2),
-});
+const AgentStepSchema = z
+  .object({
+    id: PathSegmentSchema,
+    type: z.literal('agent'),
+    role: AgentRoleSchema,
+    taskKind: TaskKindSchema,
+    title: z.string().min(1),
+    instructions: z.string().min(1),
+    inputArtifacts: z.array(PathSegmentSchema).default([]),
+    outputArtifact: PathSegmentSchema,
+    mutatesWorkspace: z.boolean().default(false),
+    harnessTags: z.array(z.string()).default([]),
+    profile: z
+      .object({
+        complexity: z.number().int().min(1).max(5).optional(),
+        risk: z.number().int().min(1).max(5).optional(),
+        category: TaskCategorySchema.optional(),
+        priorities: RoutingPrioritiesSchema.partial().optional(),
+        allowedProviders: z.array(z.enum(['codex', 'claude', 'agy'])).optional(),
+        preferredTags: z.array(z.string()).optional(),
+      })
+      .default({}),
+    maxAttempts: z.number().int().min(1).max(5).default(2),
+  })
+  .refine(
+    (step) =>
+      step.profile.category === undefined ||
+      isTaskCategoryCompatible(step.taskKind, step.profile.category),
+    { message: 'Category is incompatible with taskKind', path: ['profile', 'category'] },
+  );
 export type AgentStep = z.infer<typeof AgentStepSchema>;
 
 const VerifyStepSchema = z

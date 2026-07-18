@@ -58,6 +58,14 @@ export function legacyTaskCategory(taskKind: TaskKind): TaskCategory {
   }
 }
 
+export function isTaskCategoryCompatible(taskKind: TaskKind, category: TaskCategory): boolean {
+  return (
+    category === legacyTaskCategory(taskKind) ||
+    ((taskKind === 'implementation' || taskKind === 'repair') &&
+      category.startsWith(`${taskKind}/`))
+  );
+}
+
 export function taskCategoryLevels(category: TaskCategory): string[] {
   return category.split('/').map((_, index, parts) => parts.slice(0, index + 1).join('/'));
 }

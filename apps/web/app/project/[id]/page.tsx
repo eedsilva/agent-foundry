@@ -926,7 +926,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       {route.profile.features.length > 0 ? (
                         <p>features: {route.profile.features.join(', ')}</p>
                       ) : null}
-                      <h3>{executed.model.id}</h3>
+                      <h4>{executed.model.id}</h4>
                       <p>
                         {executed.model.provider} · {executed.model.model || 'default da CLI'}
                       </p>
