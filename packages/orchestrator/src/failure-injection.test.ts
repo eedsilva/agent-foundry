@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentExecutionRequest } from '@agent-foundry/contracts';
+import { EXECUTION_PROTOCOL_VERSION, type ExecutionRequest } from '@agent-foundry/contracts';
 import { ExecutionError } from '@agent-foundry/domain';
 import {
   assertCountsUnchanged,
   ControllableExecutor,
   completeRun,
+  disconnectError,
   FakeWorkspaces,
   invalidOutputError,
   liveStepRun,
@@ -16,26 +17,34 @@ import {
   timeoutError,
 } from './testing/harness.js';
 
-function request(stepId: string, mutatesWorkspace = false): AgentExecutionRequest {
+function request(stepId: string, mutatesWorkspace = false): ExecutionRequest {
   return {
-    runId: 'run-1',
-    stepRunId: 'step-1',
-    attemptId: 'attempt-1',
-    projectId: 'project-1',
-    stepId,
-    role: 'developer',
-    taskKind: 'implementation',
-    provider: 'codex',
-    model: 'test-model',
-    prompt: 'do the thing',
-    cwd: '/fake/project-1/workspace',
-    mutatesWorkspace,
-    timeoutMs: 60_000,
+    protocolVersion: EXECUTION_PROTOCOL_VERSION,
+    executionId: 'attempt-1',
+    agent: {
+      runId: 'run-1',
+      stepRunId: 'step-1',
+      attemptId: 'attempt-1',
+      projectId: 'project-1',
+      stepId,
+      role: 'developer',
+      taskKind: 'implementation',
+      provider: 'codex',
+      model: 'test-model',
+      prompt: 'do the thing',
+      mutatesWorkspace,
+      timeoutMs: 60_000,
+    },
+    workspace: { projectId: 'project-1', ref: 'deadbeef' },
+    tools: [],
+    limits: { timeoutMs: 60_000 },
+    networkPolicy: { mode: 'none', allowedHosts: [] },
+    secrets: [],
   };
 }
 
 describe('failure fixtures', () => {
-  it('hang-until-abort rejects when the signal aborts', async () => {
+  it('hang-until-abort resolves to a failed result when the signal aborts', async () => {
     const stores = makeStores();
     const executor = new ControllableExecutor(
       { implement: { kind: 'hang-until-abort' } },
@@ -43,10 +52,12 @@ describe('failure fixtures', () => {
     );
     const controller = new AbortController();
 
-    const running = executor.execute(request('implement'), controller.signal);
+    const running = executor.submit(request('implement'), controller.signal);
     controller.abort();
 
-    await expect(running).rejects.toBe(controller.signal.reason);
+    const result = await running;
+    expect(result.state).toBe('failed');
+    expect(result.error?.message).toBe(controller.signal.reason?.message);
   });
 
   it('error factories produce ExecutionError with the real-world shape', () => {
@@ -65,11 +76,11 @@ describe('failure fixtures', () => {
       stores.workspaces,
     );
 
-    await expect(executor.execute(request('implement', true))).rejects.toThrow(ExecutionError);
+    expect((await executor.submit(request('implement', true))).state).toBe('failed');
     expect(stores.workspaces.dirty).toBe(true);
 
     stores.workspaces.dirty = false;
-    await expect(executor.execute(request('review', false))).rejects.toThrow(ExecutionError);
+    expect((await executor.submit(request('review', false))).state).toBe('failed');
     expect(stores.workspaces.dirty).toBe(false);
   });
 });
@@ -107,6 +118,7 @@ describe('Group A: executor failure modes with fallback recovery', () => {
     ['timeout', timeoutError],
     ['rate limit', rateLimitError],
     ['invalid output', invalidOutputError],
+    ['disconnect', disconnectError],
   ])('recovers from %s via fallback with workspace restored', async (_label, error) => {
     const harness = makeHarness({ implement: { kind: 'fail-once', error } }, undefined, {
       fallback: true,

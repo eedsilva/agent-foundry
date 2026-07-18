@@ -1,6 +1,7 @@
 import type { QueueJob } from '@agent-foundry/contracts';
 import type { JobQueue } from '@agent-foundry/domain';
 import { errorMessage } from '@agent-foundry/domain';
+import type { ConversationOperationRunner } from './conversation-operation-runner.js';
 import type { WorkflowOrchestrator } from './workflow-orchestrator.js';
 
 export interface WorkerLoopOptions {
@@ -20,6 +21,7 @@ export class WorkerLoop {
   constructor(
     private readonly queue: JobQueue,
     private readonly orchestrator: WorkflowOrchestrator,
+    private readonly operationRunner: ConversationOperationRunner,
     private readonly options: WorkerLoopOptions,
   ) {}
 
@@ -31,7 +33,14 @@ export class WorkerLoop {
     const stopHeartbeat = this.startHeartbeat(state);
 
     try {
-      await this.orchestrator.runProject(job.projectId, job.workflowId, job.runId);
+      if (job.type === 'run-project') {
+        await this.orchestrator.runProject(job.projectId, job.workflowId, job.runId);
+      } else {
+        if (!job.runId || !job.operationId) {
+          throw new Error(`run-conversation-operation job ${job.id} is missing runId/operationId`);
+        }
+        await this.operationRunner.run(job.projectId, job.runId, job.operationId);
+      }
       stopHeartbeat();
       if (!state.leaseLost) await this.queue.ack(state.job, this.options.workerId);
     } catch (error) {

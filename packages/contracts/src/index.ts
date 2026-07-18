@@ -1,6 +1,7 @@
 export * from './primitives.js';
 export * from './agent.js';
 export * from './model.js';
+export * from './task-taxonomy.js';
 export * from './policy.js';
 export * from './workflow.js';
 export * from './project.js';
@@ -11,3 +12,4 @@ export * from './run.js';
 export * from './preview.js';
 export * from './dogfood.js';
 export * from './project-version.js';
+export * from './execution-plane.js';

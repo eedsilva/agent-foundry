@@ -11,6 +11,9 @@ import type {
   ArtifactReference,
   BrowserEvidencePolicy,
   BrowserVerificationReport,
+  ExecutionRequest,
+  ExecutionResult,
+  ExecutionState,
   ExecutorHealth,
   ModelDefinition,
   ModelMetric,
@@ -32,8 +35,10 @@ import type {
   StoredArtifact,
   StepAttempt,
   StepRun,
+  TaskCategory,
   TaskKind,
   TaskProfile,
+  TaskTaxonomyVersion,
   VerificationReport,
   WorkflowDefinition,
   WorkflowRun,
@@ -59,6 +64,8 @@ export interface ConversationRepository {
   getAttachment(projectId: string, attachmentId: string): Promise<Attachment | null>;
   listAttachments(projectId: string): Promise<Attachment[]>;
   createOperation(operation: Operation): Promise<Operation>;
+  getOperation(projectId: string, operationId: string): Promise<Operation | null>;
+  updateOperation(operation: Operation): Promise<Operation>;
   listOperations(projectId: string): Promise<Operation[]>;
 }
 
@@ -206,11 +213,18 @@ export interface ModelRouter {
 }
 
 export interface MetricsRepository {
-  get(modelId: string, taskKind: TaskKind, role: AgentRole): Promise<ModelMetric | null>;
+  get(
+    modelId: string,
+    taskKind: TaskKind,
+    role: AgentRole,
+    category?: TaskCategory,
+  ): Promise<ModelMetric | null>;
   record(input: {
     modelId: string;
     taskKind: TaskKind;
     role: AgentRole;
+    taxonomyVersion?: TaskTaxonomyVersion;
+    category?: TaskCategory;
     success: boolean;
     durationMs: number;
     inputTokens?: number;
@@ -221,6 +235,8 @@ export interface MetricsRepository {
     modelId: string;
     taskKind: TaskKind;
     role: AgentRole;
+    taxonomyVersion?: TaskTaxonomyVersion;
+    category?: TaskCategory;
     approved: boolean;
   }): Promise<void>;
 }
@@ -234,6 +250,27 @@ export interface AgentExecutor {
 export interface ExecutorRegistry {
   get(provider: string): AgentExecutor;
   health(): Promise<ExecutorHealth[]>;
+}
+
+export interface ExecutionStatus {
+  executionId: string;
+  state: 'pending' | 'running' | ExecutionState;
+}
+
+/**
+ * Boundary between the control plane (orchestrator) and wherever agent CLIs
+ * actually run. `submit` always resolves — even a failed or cancelled run is
+ * a normal response, not a rejection; only a genuine transport failure (the
+ * call itself never completed) should reject. `cancel`/`status` are the
+ * explicit, out-of-band remote-observability surface: a real remote
+ * implementation is expected to also wire the AbortSignal passed to `submit`
+ * into its own transport-level cancel, so callers keep this single
+ * call-and-await shape.
+ */
+export interface ExecutionPlane {
+  submit(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult>;
+  cancel(executionId: string): Promise<void>;
+  status(executionId: string): Promise<ExecutionStatus>;
 }
 
 /**

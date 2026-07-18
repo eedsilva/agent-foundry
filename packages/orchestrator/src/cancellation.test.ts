@@ -2,6 +2,7 @@ import { Readable } from 'node:stream';
 import { buffer } from 'node:stream/consumers';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  EXECUTION_PROTOCOL_VERSION,
   ModelDefinitionSchema,
   RouteDecisionSchema,
   WorkflowDefinitionSchema,
@@ -10,7 +11,8 @@ import {
   type ApprovalDecision,
   type ApprovalRequest,
   type ArtifactMetadata,
-  type ExecutorHealth,
+  type ExecutionRequest,
+  type ExecutionResult,
   type Project,
   type ProjectEvent,
   type StepAttempt,
@@ -25,13 +27,14 @@ import {
   RunCancelledError,
   SystemClock,
   VersionConflictError,
+  toExecutionResult,
   transitionWorkflowRun,
-  type AgentExecutor,
   type ApprovalDecisionRepository,
   type ApprovalRequestRepository,
   type ArtifactStore,
   type EventStore,
-  type ExecutorRegistry,
+  type ExecutionPlane,
+  type ExecutionStatus,
   type HarnessRepository,
   type IdGenerator,
   type JobQueue,
@@ -413,13 +416,35 @@ class FakeWorkspaces implements WorkspaceManager {
 
 type ExecutorBehavior = 'instant' | 'reject-on-abort' | 'resolve-on-abort';
 
-class ControllableExecutor implements AgentExecutor {
-  readonly provider = 'codex';
+class ControllableExecutor implements ExecutionPlane {
   readonly started = new Set<string>();
   readonly completed = new Set<string>();
   constructor(private readonly behaviors: Record<string, ExecutorBehavior>) {}
 
-  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult> {
+  async submit(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult> {
+    try {
+      const result = await this.executeInternal({ ...request.agent, cwd: 'unused' }, signal);
+      return {
+        protocolVersion: EXECUTION_PROTOCOL_VERSION,
+        executionId: request.executionId,
+        state: 'completed',
+        agent: result,
+      };
+    } catch (error) {
+      return toExecutionResult(request.executionId, error);
+    }
+  }
+
+  async cancel(): Promise<void> {}
+
+  async status(executionId: string): Promise<ExecutionStatus> {
+    return { executionId, state: this.completed.has(executionId) ? 'completed' : 'running' };
+  }
+
+  private executeInternal(
+    request: AgentExecutionRequest,
+    signal?: AbortSignal,
+  ): Promise<AgentExecutionResult> {
     this.started.add(request.stepId);
     const behavior = this.behaviors[request.stepId] ?? 'instant';
     if (behavior === 'instant') {
@@ -440,10 +465,6 @@ class ControllableExecutor implements AgentExecutor {
         { once: true },
       );
     });
-  }
-
-  health(): Promise<ExecutorHealth> {
-    return Promise.resolve({ provider: 'codex', available: true, message: 'ok' });
   }
 
   private result(request: AgentExecutionRequest): AgentExecutionResult {
@@ -549,10 +570,6 @@ function makeHarness(
     record: vi.fn(() => Promise.resolve()),
     recordQuality: vi.fn(() => Promise.resolve()),
   };
-  const registry: ExecutorRegistry = {
-    get: () => executor,
-    health: () => Promise.resolve([]),
-  };
   const queue: JobQueue = {
     enqueue: () => Promise.resolve(),
     claim: () => Promise.resolve(null),
@@ -575,7 +592,7 @@ function makeHarness(
     harness,
     router,
     metrics,
-    registry,
+    executor,
     verifier,
     workspaces,
     clock,

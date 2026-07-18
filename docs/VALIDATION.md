@@ -549,3 +549,33 @@ is no semantic schema/config diff parser, consistent with the ADR's stated scope
 is limited to the routes and client functions (`apps/web/lib/api.test.ts`); the panel component itself
 has no automated test, matching this app's existing UI-coverage level (manual/Playwright evidence only
 where it already exists, e.g. issues #14 and #16).
+
+## Versioned task taxonomy — 2026-07-18
+
+Issue #61 keeps `TaskKind` and the execution request compatible while adding taxonomy v2 category paths,
+deterministic feature extraction, exact-category metrics with v1 fallback, and hierarchy on the existing
+route dashboard.
+
+Focused evidence commands:
+
+```bash
+npx vitest run packages/contracts/src/task-taxonomy.test.ts packages/contracts/src/run.test.ts packages/persistence/src/workflow-repository.test.ts --pool=threads --maxWorkers=1
+npx vitest run packages/orchestrator/src/task-profiler.test.ts packages/orchestrator/src/prompt-compiler.test.ts --pool=threads --maxWorkers=1
+npx vitest run packages/persistence/src/metrics-repository.test.ts packages/model-router/src/score-router.test.ts packages/orchestrator/src/workflow-orchestrator.test.ts packages/orchestrator/src/failure-injection.test.ts packages/composition/src/runtime.integration.test.ts --pool=threads --maxWorkers=1
+npm run e2e --workspace @agent-foundry/api
+```
+
+The first command covers the taxonomy contract and legacy workflow/profile parsing. The second covers
+declared and classified profiles. The third covers metric migration and fallback, router category
+queries, workflow metric writes, failure paths, and composed runtime attribution. The real golden-flow
+E2E seeds a v2 frontend route, verifies the root group plus full category/version/features, reruns the
+existing preview and approval journey, and retains its Axe scan.
+
+Full gates:
+
+```bash
+npm run check
+npm run e2e --workspace @agent-foundry/api
+npm run doctor
+git diff --check
+```

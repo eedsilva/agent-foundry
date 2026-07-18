@@ -255,7 +255,7 @@ describe('conversation API', () => {
     const message = await createMessage(baseUrl, projectId, 'Build it');
     const path = `/projects/${projectId}/conversation/messages/${message.id}/operations`;
     const input = {
-      kind: 'build',
+      kind: 'explain',
       idempotencyKey: 'c'.repeat(64),
       artifactReferences: [],
     };
@@ -383,5 +383,55 @@ describe('conversation API', () => {
     );
     expect(combined.map((message) => message.id)).toEqual(expected.map((message) => message.id));
     expect(new Set(combined.map((message) => message.sequence)).size).toBe(503);
+  });
+
+  it('starts a plan operation, blocks an ungated build, and allows an explicit direct build', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime);
+    const message = await createMessage(baseUrl, projectId, 'Add a dark mode toggle');
+    const opsPath = `/projects/${projectId}/conversation/messages/${message.id}/operations`;
+
+    const planResponse = await post(baseUrl, opsPath, { kind: 'plan' });
+    expect(planResponse.status).toBe(201);
+    const { operation: plan } = (await planResponse.json()) as {
+      operation: { id: string; runId: string };
+    };
+    expect(plan.runId).toBeDefined();
+
+    const ungatedBuild = await post(baseUrl, opsPath, { kind: 'build' });
+    expect(ungatedBuild.status).toBe(400);
+
+    const decideBeforeCompletion = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/operations/${plan.id}/decide`,
+      { action: 'approve' },
+    );
+    expect(decideBeforeCompletion.status).toBe(400);
+
+    const directBuild = await post(baseUrl, opsPath, { kind: 'build', directExecution: true });
+    expect(directBuild.status).toBe(201);
+    const { operation: build } = (await directBuild.json()) as {
+      operation: { directExecution: boolean };
+    };
+    expect(build.directExecution).toBe(true);
+  });
+
+  it('still routes non plan/build kinds through the original create-operation path', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime);
+    const message = await createMessage(baseUrl, projectId, 'Explain the auth flow');
+
+    const response = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/messages/${message.id}/operations`,
+      { kind: 'explain', idempotencyKey: 'f'.repeat(64), artifactReferences: [] },
+    );
+
+    expect(response.status).toBe(201);
+    const { operation } = (await response.json()) as {
+      operation: { kind: string; runId?: string };
+    };
+    expect(operation.kind).toBe('explain');
+    expect(operation.runId).toBeUndefined();
   });
 });
