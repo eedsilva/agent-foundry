@@ -9,7 +9,12 @@ import type {
   TaskKind,
   TaskProfile,
 } from '@agent-foundry/contracts';
-import type { ExplicitModelRoute, MetricsRepository, ModelRouter } from '@agent-foundry/domain';
+import type {
+  ExplicitModelRoute,
+  MetricsRepository,
+  ModelRouter,
+  RouteConstraints,
+} from '@agent-foundry/domain';
 
 export class ScoreBasedModelRouter implements ModelRouter {
   constructor(
@@ -23,7 +28,11 @@ export class ScoreBasedModelRouter implements ModelRouter {
     return [...this.models];
   }
 
-  async route(profile: TaskProfile, explicit?: ExplicitModelRoute): Promise<RouteDecision> {
+  async route(
+    profile: TaskProfile,
+    explicit?: ExplicitModelRoute,
+    constraints?: RouteConstraints,
+  ): Promise<RouteDecision> {
     const rejected: Array<{ modelId: string; reason: string }> = [];
     const ranked: RankedModel[] = [];
 
@@ -39,9 +48,10 @@ export class ScoreBasedModelRouter implements ModelRouter {
 
     for (const model of this.models) {
       if (explicit && model.id !== explicit.modelId) continue;
-      const rejection = this.rejectReason(model, profile);
-      if (rejection) {
-        rejected.push({ modelId: model.id, reason: rejection });
+      // Cheap synchronous rejections first, before spending a metrics read.
+      const staticRejection = this.rejectReason(model, profile);
+      if (staticRejection) {
+        rejected.push({ modelId: model.id, reason: staticRejection });
         continue;
       }
 
@@ -51,6 +61,12 @@ export class ScoreBasedModelRouter implements ModelRouter {
         profile.role,
         profile.category,
       );
+      const constraintRejection = this.constraintRejection(model, profile, metric, constraints);
+      if (constraintRejection) {
+        rejected.push({ modelId: model.id, reason: constraintRejection });
+        continue;
+      }
+
       ranked.push({ model, score: this.score(model, profile, metric) });
     }
 
@@ -91,6 +107,40 @@ export class ScoreBasedModelRouter implements ModelRouter {
     }
     if (model.maxContextTokens < profile.estimatedContextTokens) {
       return `context ${model.maxContextTokens} < estimated ${profile.estimatedContextTokens}`;
+    }
+    return null;
+  }
+
+  private constraintRejection(
+    model: ModelDefinition,
+    profile: TaskProfile,
+    metric: ModelMetric | null,
+    constraints?: RouteConstraints,
+  ): string | null {
+    if (!constraints) return null;
+    const health = constraints.providerHealth?.get(model.provider);
+    const rl = health?.rateLimit;
+    if (rl && rl.remaining === 0 && rl.resetAt && new Date(rl.resetAt).getTime() > Date.now()) {
+      return `rate-limited until ${rl.resetAt}`;
+    }
+    const budget = constraints.budget;
+    if (budget) {
+      if (budget.maxCostUsd !== undefined && model.billingMode === 'metered') {
+        const estimate = estimateCostUsd(model, profile, metric);
+        if (estimate !== null && estimate > budget.maxCostUsd) {
+          return `over-budget: est $${estimate.toFixed(4)} > $${budget.maxCostUsd}`;
+        }
+      }
+      // ponytail: subscription budget is a coarse gate (maxQuotaUnits<=0 blocks all subscription
+      // use) because there is no per-model pre-run quota estimate; upgrade to a per-model quota
+      // estimator when catalog carries quota costs.
+      if (
+        budget.maxQuotaUnits !== undefined &&
+        budget.maxQuotaUnits <= 0 &&
+        model.billingMode === 'subscription'
+      ) {
+        return 'over-budget: no quota units remaining';
+      }
     }
     return null;
   }
