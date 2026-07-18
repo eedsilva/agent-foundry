@@ -4,9 +4,12 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
   ArtifactReference,
+  BrowserEvidencePolicy,
   BrowserTestPlan,
+  BrowserVerificationReport,
   PreviewSessionReference,
 } from '@agent-foundry/contracts';
+import { DEFAULT_BROWSER_EVIDENCE_POLICY } from '@agent-foundry/contracts';
 import { PlaywrightBrowserVerifier } from './browser-verifier.js';
 
 const TOKEN = 'preview-token-that-must-never-leak';
@@ -77,17 +80,23 @@ function plan(steps: BrowserTestPlan['steps']): BrowserTestPlan {
 async function verify(
   origin: string,
   browserPlan: BrowserTestPlan,
-  options: { allowedOrigins?: string[]; signal?: AbortSignal } = {},
-) {
-  return new PlaywrightBrowserVerifier().verify(
+  options: {
+    allowedOrigins?: string[];
+    signal?: AbortSignal;
+    evidencePolicy?: BrowserEvidencePolicy;
+  } = {},
+): Promise<BrowserVerificationReport> {
+  const { report } = await new PlaywrightBrowserVerifier().verify(
     {
       planArtifact: PLAN_ARTIFACT,
       planContent: artifact(browserPlan),
       session: session(origin),
       allowedOrigins: options.allowedOrigins ?? [],
+      evidencePolicy: options.evidencePolicy ?? DEFAULT_BROWSER_EVIDENCE_POLICY,
     },
     options.signal ?? new AbortController().signal,
   );
+  return report;
 }
 
 function expectRedacted(value: unknown): void {
@@ -584,7 +593,7 @@ describe('PlaywrightBrowserVerifier', () => {
       },
     ]);
 
-    const report = await new PlaywrightBrowserVerifier().verify(
+    const { report } = await new PlaywrightBrowserVerifier().verify(
       {
         planArtifact: PLAN_ARTIFACT,
         planContent: artifact(browserPlan),
@@ -593,6 +602,7 @@ describe('PlaywrightBrowserVerifier', () => {
           url: `${origin}/untrusted-prefix/?token=${TOKEN}`,
         },
         allowedOrigins: [],
+        evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
       },
       new AbortController().signal,
     );
@@ -1684,12 +1694,13 @@ describe('PlaywrightBrowserVerifier', () => {
       code: `globalThis.generatedCodeRan = '${TOKEN}'`,
     };
 
-    const report = await new PlaywrightBrowserVerifier().verify(
+    const { report } = await new PlaywrightBrowserVerifier().verify(
       {
         planArtifact: PLAN_ARTIFACT,
         planContent: invalidContent,
         session: session(origin),
         allowedOrigins: [],
+        evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
       },
       new AbortController().signal,
     );
@@ -1731,5 +1742,60 @@ describe('PlaywrightBrowserVerifier', () => {
 
     await expect(pending).rejects.toThrow(/cancel/i);
     await expect(closed).resolves.toBeUndefined();
+  });
+
+  it('captures one screenshot per executed step with viewport, url, and hash', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>Fixture</h1>');
+    });
+    const browserPlan = plan([
+      { id: 'open', title: 'Open fixture', action: { kind: 'goto', path: '/' }, assertions: [] },
+    ]);
+
+    const { evidence } = await new PlaywrightBrowserVerifier().verify(
+      {
+        planArtifact: PLAN_ARTIFACT,
+        planContent: artifact(browserPlan),
+        session: session(origin),
+        allowedOrigins: [],
+        evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
+      },
+      new AbortController().signal,
+    );
+
+    expect(evidence.screenshots).toHaveLength(1);
+    expect(evidence.screenshots[0]).toMatchObject({
+      stepId: 'open',
+      viewport: { width: 900, height: 600 },
+    });
+    expect(evidence.screenshots[0]!.buffer.byteLength).toBeGreaterThan(0);
+    expectRedacted(evidence.screenshots[0]!.url);
+    expect(evidence.trace).toBeUndefined();
+    expect(evidence.video).toBeUndefined();
+  });
+
+  it('captures a trace only when the evidence policy requests it', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>Fixture</h1>');
+    });
+    const browserPlan = plan([
+      { id: 'open', title: 'Open fixture', action: { kind: 'goto', path: '/' }, assertions: [] },
+    ]);
+
+    const { evidence } = await new PlaywrightBrowserVerifier().verify(
+      {
+        planArtifact: PLAN_ARTIFACT,
+        planContent: artifact(browserPlan),
+        session: session(origin),
+        allowedOrigins: [],
+        evidencePolicy: { ...DEFAULT_BROWSER_EVIDENCE_POLICY, captureTrace: true },
+      },
+      new AbortController().signal,
+    );
+
+    expect(evidence.trace).toBeInstanceOf(Buffer);
+    expect(evidence.trace!.byteLength).toBeGreaterThan(0);
   });
 });

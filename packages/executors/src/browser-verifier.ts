@@ -1,12 +1,21 @@
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
   isSafeBrowserPath,
+  type BrowserEvidencePolicy,
   type BrowserLocator,
   type BrowserTestPlan,
   type BrowserVerificationReport,
 } from '@agent-foundry/contracts';
-import { RunCancelledError, type BrowserVerifier } from '@agent-foundry/domain';
+import {
+  RunCancelledError,
+  type BrowserVerificationEvidence,
+  type BrowserVerifier,
+  type CapturedScreenshot,
+} from '@agent-foundry/domain';
 import {
   chromium,
   type Browser,
@@ -97,7 +106,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
   async verify(
     input: Parameters<BrowserVerifier['verify']>[0],
     signal: AbortSignal,
-  ): Promise<BrowserVerificationReport> {
+  ): Promise<{ report: BrowserVerificationReport; evidence: BrowserVerificationEvidence }> {
     const previewToken = input.session.url
       ? new URL(input.session.url).searchParams.get('token')
       : null;
@@ -107,31 +116,37 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     };
     const parsed = BrowserTestPlanArtifactSchema.safeParse(input.planContent);
     if (!parsed.success) {
-      return BrowserVerificationReportSchema.parse({
-        schemaVersion: '1',
-        approved: false,
-        summary: 'Browser test plan validation failed.',
-        planArtifact: input.planArtifact,
-        previewSession,
-        planValidationError: redact(
-          parsed.error.issues
-            .map((issue) => `${issue.path.join('.') || 'plan'}: ${issue.message}`)
-            .join('; '),
-          previewToken,
-        ),
-        steps: [],
-      });
+      return {
+        report: BrowserVerificationReportSchema.parse({
+          schemaVersion: '1',
+          approved: false,
+          summary: 'Browser test plan validation failed.',
+          planArtifact: input.planArtifact,
+          previewSession,
+          planValidationError: redact(
+            parsed.error.issues
+              .map((issue) => `${issue.path.join('.') || 'plan'}: ${issue.message}`)
+              .join('; '),
+            previewToken,
+          ),
+          steps: [],
+        }),
+        evidence: { screenshots: [] },
+      };
     }
     if (!input.session.url) {
-      return BrowserVerificationReportSchema.parse({
-        schemaVersion: '1',
-        approved: false,
-        summary: 'Browser test plan validation failed.',
-        planArtifact: input.planArtifact,
-        previewSession,
-        planValidationError: 'Preview session URL is required.',
-        steps: [],
-      });
+      return {
+        report: BrowserVerificationReportSchema.parse({
+          schemaVersion: '1',
+          approved: false,
+          summary: 'Browser test plan validation failed.',
+          planArtifact: input.planArtifact,
+          previewSession,
+          planValidationError: 'Preview session URL is required.',
+          steps: [],
+        }),
+        evidence: { screenshots: [] },
+      };
     }
     if (signal.aborted) throw new RunCancelledError();
 
@@ -142,15 +157,18 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       !['http:', 'https:'].includes(previewUrl.protocol) ||
       !previewUrl.pathname.startsWith(prefixPath)
     ) {
-      return BrowserVerificationReportSchema.parse({
-        schemaVersion: '1',
-        approved: false,
-        summary: 'Browser test plan validation failed.',
-        planArtifact: input.planArtifact,
-        previewSession,
-        planValidationError: 'Preview session URL does not match the required preview prefix.',
-        steps: [],
-      });
+      return {
+        report: BrowserVerificationReportSchema.parse({
+          schemaVersion: '1',
+          approved: false,
+          summary: 'Browser test plan validation failed.',
+          planArtifact: input.planArtifact,
+          previewSession,
+          planValidationError: 'Preview session URL does not match the required preview prefix.',
+          steps: [],
+        }),
+        evidence: { screenshots: [] },
+      };
     }
     const prefixUrl = new URL(prefixPath, previewUrl.origin);
     let allowedOrigins: Set<string>;
@@ -165,18 +183,26 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         }),
       );
     } catch {
-      return BrowserVerificationReportSchema.parse({
-        schemaVersion: '1',
-        approved: false,
-        summary: 'Browser test plan validation failed.',
-        planArtifact: input.planArtifact,
-        previewSession,
-        planValidationError: 'Allowed origin entries must be exact HTTP(S) origins.',
-        steps: [],
-      });
+      return {
+        report: BrowserVerificationReportSchema.parse({
+          schemaVersion: '1',
+          approved: false,
+          summary: 'Browser test plan validation failed.',
+          planArtifact: input.planArtifact,
+          previewSession,
+          planValidationError: 'Allowed origin entries must be exact HTTP(S) origins.',
+          steps: [],
+        }),
+        evidence: { screenshots: [] },
+      };
     }
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
+    let tracingStarted = false;
+    const evidencePolicy: BrowserEvidencePolicy = input.evidencePolicy;
+    const videoDir = evidencePolicy.captureVideo
+      ? await mkdtemp(join(tmpdir(), 'agent-foundry-browser-video-'))
+      : undefined;
     const launch = chromium.launch({ headless: true });
     const timeout = AbortSignal.timeout(RUN_TIMEOUT_MS);
     const combinedSignal = AbortSignal.any([signal, timeout]);
@@ -187,8 +213,15 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
         context = await browser.newContext({
           viewport: parsed.data.data.viewport,
           serviceWorkers: 'block',
+          ...(videoDir
+            ? { recordVideo: { dir: videoDir, size: parsed.data.data.viewport } }
+            : {}),
         });
         await context.grantPermissions(['local-network-access'], { origin: prefixUrl.origin });
+        if (evidencePolicy.captureTrace) {
+          await context.tracing.start({ screenshots: true, snapshots: true });
+          tracingStarted = true;
+        }
         return this.execute(
           context,
           parsed.data.data,
@@ -199,7 +232,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           previewSession,
         );
       })();
-      return await Promise.race([
+      const result = await Promise.race([
         run,
         new Promise<never>((_resolve, reject) => {
           combinedSignal.addEventListener(
@@ -214,10 +247,38 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           );
         }),
       ]);
+
+      let trace: Buffer | undefined;
+      if (tracingStarted && context) {
+        const traceDir = await mkdtemp(join(tmpdir(), 'agent-foundry-browser-trace-'));
+        const tracePath = join(traceDir, 'trace.zip');
+        await context.tracing.stop({ path: tracePath });
+        trace = await readFile(tracePath);
+        await rm(traceDir, { recursive: true, force: true }).catch(() => undefined);
+      }
+      if (context) await context.close().catch(() => undefined);
+      context = undefined;
+
+      let video: Buffer | undefined;
+      if (videoDir) {
+        const files = await readdir(videoDir).catch(() => [] as string[]);
+        const videoFile = files.find((file) => file.endsWith('.webm'));
+        if (videoFile) video = await readFile(join(videoDir, videoFile));
+      }
+
+      return {
+        report: result.report,
+        evidence: {
+          ...result.evidence,
+          ...(trace ? { trace } : {}),
+          ...(video ? { video } : {}),
+        },
+      };
     } finally {
       if (context) await context.close().catch(() => undefined);
       const launched = browser ?? (await launch.catch(() => undefined));
       await launched?.close().catch(() => undefined);
+      if (videoDir) await rm(videoDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
@@ -229,7 +290,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     allowedOrigins: Set<string>,
     input: Parameters<BrowserVerifier['verify']>[0],
     previewSession: Parameters<BrowserVerifier['verify']>[0]['session'],
-  ): Promise<BrowserVerificationReport> {
+  ): Promise<{ report: BrowserVerificationReport; evidence: BrowserVerificationEvidence }> {
     await context.addInitScript(installTimerTracker, {
       key: TIMER_TRACKER_KEY,
       maxDelayMs: MAX_TRACKED_TIMER_DELAY_MS,
@@ -501,6 +562,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       }
     });
     const steps: StepReport[] = [];
+    const screenshots: CapturedScreenshot[] = [];
     let failed = false;
     for (const [index, step] of plan.steps.entries()) {
       if (failed) {
@@ -545,6 +607,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
           observations: [],
         });
       }
+      await this.captureScreenshot(page, step.id, plan.viewport, token, screenshots);
     }
     for (const { stepIndex, observation } of runObservations) {
       steps[stepIndex]?.observations.push(observation);
@@ -557,16 +620,34 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       }
     }
     const approved = !failed && !passiveFailure;
-    return BrowserVerificationReportSchema.parse({
-      schemaVersion: '1',
-      approved,
-      summary: approved
-        ? 'All browser verification steps passed.'
-        : `${steps.filter((step) => step.status === 'failed').length} browser step failure(s) and ${runObservations.length} passive failure(s).`,
-      planArtifact: input.planArtifact,
-      previewSession,
-      steps,
-    });
+    return {
+      report: BrowserVerificationReportSchema.parse({
+        schemaVersion: '1',
+        approved,
+        summary: approved
+          ? 'All browser verification steps passed.'
+          : `${steps.filter((step) => step.status === 'failed').length} browser step failure(s) and ${runObservations.length} passive failure(s).`,
+        planArtifact: input.planArtifact,
+        previewSession,
+        steps,
+      }),
+      evidence: { screenshots },
+    };
+  }
+
+  private async captureScreenshot(
+    page: Page,
+    stepId: string,
+    viewport: { width: number; height: number },
+    token: string | null,
+    sink: CapturedScreenshot[],
+  ): Promise<void> {
+    try {
+      const buffer = await page.screenshot({ type: 'png' });
+      sink.push({ stepId, url: sanitizeUrl(page.url(), token), viewport, buffer });
+    } catch {
+      // Best-effort evidence: a closed or mid-navigation page must not fail verification.
+    }
   }
 
   private async executeAction(
