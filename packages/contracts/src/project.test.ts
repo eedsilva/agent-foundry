@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ArtifactMetadataSchema } from './project.js';
 
 describe('ArtifactMetadataSchema', () => {
-  it('defaults storage to inline and accepts an existing JSON artifact unchanged', () => {
+  it('leaves storage unset for an existing JSON artifact and accepts it unchanged', () => {
     const parsed = ArtifactMetadataSchema.parse({
       projectId: 'project-1',
       name: 'prd',
@@ -12,7 +12,7 @@ describe('ArtifactMetadataSchema', () => {
       createdBy: 'user',
       sha256: 'a'.repeat(64),
     });
-    expect(parsed.storage).toBe('inline');
+    expect(parsed.storage).toBeUndefined();
     expect(parsed.sizeBytes).toBeUndefined();
   });
 

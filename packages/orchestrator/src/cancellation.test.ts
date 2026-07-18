@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ModelDefinitionSchema,
@@ -253,6 +254,7 @@ class InMemoryApprovalDecisions implements ApprovalDecisionRepository {
 
 class InMemoryArtifacts implements ArtifactStore {
   readonly artifacts: StoredArtifact[] = [];
+  readonly blobs: Array<{ metadata: ArtifactMetadata; buffer: Buffer }> = [];
   put(input: {
     projectId: string;
     name: string;
@@ -276,6 +278,39 @@ class InMemoryArtifacts implements ArtifactStore {
     const stored: StoredArtifact = { metadata, content: input.content };
     this.artifacts.push(stored);
     return Promise.resolve(stored);
+  }
+  async putBlob(
+    input: { projectId: string; name: string; contentType: string; createdBy: string },
+    source: Readable,
+  ): Promise<ArtifactMetadata> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of source) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const buffer = Buffer.concat(chunks);
+    const revision = this.blobs.filter((entry) => entry.metadata.name === input.name).length;
+    const metadata: ArtifactMetadata = {
+      projectId: input.projectId,
+      name: input.name,
+      revision: revision + 1,
+      contentType: input.contentType,
+      createdAt: new Date().toISOString(),
+      createdBy: input.createdBy,
+      storage: 'blob',
+      sizeBytes: buffer.byteLength,
+      sha256: 'f'.repeat(64),
+    };
+    this.blobs.push({ metadata, buffer });
+    return metadata;
+  }
+  getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null> {
+    const entry = this.blobs.find(
+      (item) =>
+        item.metadata.projectId === projectId &&
+        item.metadata.name === name &&
+        item.metadata.revision === revision,
+    );
+    return Promise.resolve(entry ? Readable.from(entry.buffer) : null);
   }
   getLatest(projectId: string, name: string): Promise<StoredArtifact | null> {
     const matches = this.artifacts.filter(
