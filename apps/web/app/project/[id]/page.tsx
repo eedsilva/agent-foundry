@@ -45,6 +45,7 @@ import {
   retryMode,
   retryRequest,
 } from '../../../lib/model-overrides';
+import { PreviewPanel } from './preview-panel';
 
 const PROJECT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 
@@ -492,6 +493,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
       {detail.project.error ? <p className="errorBox">{detail.project.error}</p> : null}
       {error ? <p className="errorBox">{error}</p> : null}
+
+      <PreviewPanel projectId={id} run={run ?? null} artifacts={detail.artifacts} />
 
       {run?.status === 'paused' ? (
         <section className="panel">
