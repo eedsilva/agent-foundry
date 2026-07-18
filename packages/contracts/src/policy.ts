@@ -14,6 +14,17 @@ const BrowserOriginSchema = z.string().refine((value) => {
   }
 });
 
+export const BrowserEvidencePolicySchema = z
+  .object({
+    captureTrace: z.boolean().default(false),
+    captureVideo: z.boolean().default(false),
+  })
+  .strict();
+export type BrowserEvidencePolicy = z.infer<typeof BrowserEvidencePolicySchema>;
+
+export const DEFAULT_BROWSER_EVIDENCE_POLICY: BrowserEvidencePolicy =
+  BrowserEvidencePolicySchema.parse({});
+
 /**
  * Hard constraints a project executes under, validated before (router,
  * stack) and after (verifier) execution. Absent optional fields mean
@@ -39,6 +50,7 @@ export const ProjectPolicySchema = z.object({
     .strict()
     .optional(),
   browserAllowedOrigins: z.array(BrowserOriginSchema).min(1).optional(),
+  browserEvidence: BrowserEvidencePolicySchema.optional(),
 });
 export type ProjectPolicy = z.infer<typeof ProjectPolicySchema>;
 

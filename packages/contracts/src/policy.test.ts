@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ProjectPolicySchema, PolicyRecordSchema } from './policy.js';
+import {
+  BrowserEvidencePolicySchema,
+  DEFAULT_BROWSER_EVIDENCE_POLICY,
+  ProjectPolicySchema,
+  PolicyRecordSchema,
+} from './policy.js';
 
 describe('ProjectPolicySchema', () => {
   it('parses a full policy and defaults forbiddenDependencies to []', () => {
@@ -82,5 +87,21 @@ describe('PolicyRecordSchema', () => {
     expect(
       PolicyRecordSchema.parse({ id: 'p', version: 1, hash: 'a'.repeat(64) }).hash,
     ).toHaveLength(64);
+  });
+});
+
+describe('BrowserEvidencePolicySchema', () => {
+  it('defaults to no trace/video capture', () => {
+    expect(DEFAULT_BROWSER_EVIDENCE_POLICY).toEqual({ captureTrace: false, captureVideo: false });
+  });
+
+  it('is accepted as an optional field on ProjectPolicySchema', () => {
+    const parsed = ProjectPolicySchema.parse({
+      schemaVersion: '1',
+      id: 'default',
+      version: 1,
+      browserEvidence: { captureTrace: true, captureVideo: true },
+    });
+    expect(parsed.browserEvidence).toEqual({ captureTrace: true, captureVideo: true });
   });
 });
