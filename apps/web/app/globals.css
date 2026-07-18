@@ -664,3 +664,10 @@ dd {
   border-radius: 8px;
   border: 1px solid var(--line);
 }
+.blobPreview img,
+.blobPreview video {
+  max-width: 100%;
+  border-radius: 12px;
+  display: block;
+  margin-bottom: 0.75rem;
+}

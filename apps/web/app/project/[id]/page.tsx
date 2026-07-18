@@ -26,6 +26,7 @@ import {
   createModelOverride,
   eventStreamUrl,
   getArtifact,
+  getArtifactBlobUrl,
   getProject,
   getRetryPlan,
   getRunDetail,
@@ -1066,6 +1067,41 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                     {command.stderr ? <pre>{command.stderr}</pre> : null}
                   </details>
                 ))}
+              </div>
+            ) : selected.metadata.storage === 'blob' ? (
+              <div className="blobPreview">
+                {selected.metadata.contentType.startsWith('image/') ? (
+                  <img
+                    src={getArtifactBlobUrl(
+                      detail.project.id,
+                      selected.metadata.name,
+                      selected.metadata.revision,
+                    )}
+                    alt={selected.metadata.name}
+                  />
+                ) : selected.metadata.contentType.startsWith('video/') ? (
+                  <video
+                    controls
+                    src={getArtifactBlobUrl(
+                      detail.project.id,
+                      selected.metadata.name,
+                      selected.metadata.revision,
+                    )}
+                  />
+                ) : (
+                  <p className="hint">Conteúdo binário ({selected.metadata.contentType}).</p>
+                )}
+                <a
+                  className="secondaryButton"
+                  href={getArtifactBlobUrl(
+                    detail.project.id,
+                    selected.metadata.name,
+                    selected.metadata.revision,
+                  )}
+                  download
+                >
+                  Baixar
+                </a>
               </div>
             ) : (
               <pre>{artifactText(selected.content)}</pre>
