@@ -126,6 +126,26 @@ describe('compileContext', () => {
     expect(compiled.digest).toContain('cr-compacted');
   });
 
+  it('excludes rejected change requests from every digest section but keeps them in sources', () => {
+    const rejected = changeRequest({
+      id: 'cr-rejected',
+      status: 'rejected',
+      summary: 'Add a dark mode toggle',
+    });
+    const current = changeRequest({ id: 'cr-current', status: 'proposed' });
+
+    const compiled = compileContext({
+      message: message('m1', 'Actually change the login flow.'),
+      changeRequest: current,
+      allChangeRequests: [rejected, current],
+      versions: [],
+    });
+
+    expect(compiled.digest).not.toContain('cr-rejected');
+    expect(compiled.digest).not.toContain('Add a dark mode toggle');
+    expect(compiled.sources.map((source) => source.id)).toContain('cr-rejected');
+  });
+
   it('lists recent project versions with a reference id', () => {
     const compiled = compileContext({
       message: message('m1', 'Add a login page.'),

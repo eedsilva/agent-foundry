@@ -35,8 +35,11 @@ export function compileContext(input: {
 
   const unresolved = others.filter((cr) => cr.status === 'proposed');
 
+  // Rejected change requests are neither a fixed decision nor unresolved feedback, so they're
+  // excluded from every rendered digest section — but they still count as a source we classified.
+  const rejected = others.filter((cr) => cr.status === 'rejected');
   const detailedIds = new Set([...pinned, ...unresolved].map((cr) => cr.id));
-  const compacted = others.filter((cr) => !detailedIds.has(cr.id));
+  const compacted = others.filter((cr) => !detailedIds.has(cr.id) && cr.status !== 'rejected');
 
   const sections: string[] = [];
   const sources: ContextSource[] = [{ type: 'message', id: input.message.id }];
@@ -71,6 +74,7 @@ export function compileContext(input: {
     );
     for (const cr of compacted) sources.push({ type: 'change-request', id: cr.id });
   }
+  for (const cr of rejected) sources.push({ type: 'change-request', id: cr.id });
 
   return {
     digest: sections.length ? `${sections.join('\n\n')}\n` : '',
