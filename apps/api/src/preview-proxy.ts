@@ -9,6 +9,7 @@ import type { Socket } from 'node:net';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Runtime } from '@agent-foundry/composition';
 import { isLoopbackHost } from '@agent-foundry/composition';
+import { buildInspectorScript } from './preview-inspector-script.js';
 
 // Keep-alive so proxied asset/HMR-poll bursts reuse one upstream TCP connection
 // instead of opening a fresh socket to the dev server per request.
@@ -81,7 +82,17 @@ async function handleHttp(
       headers: sanitizeRequestHeaders(request.headers, sessionId),
       agent: upstreamAgent,
     },
-    (upstreamRes) => respondFromUpstream(upstreamRes, raw, sessionId, resolved.port, cookieValue),
+    (upstreamRes) =>
+      respondFromUpstream(
+        upstreamRes,
+        raw,
+        sessionId,
+        resolved.port,
+        cookieValue,
+        // webOrigin is CORS's comma-separated allow-list (see app.ts); the
+        // inspector script's parent-origin check is a single strict `===`.
+        runtime.config.webOrigin.split(',')[0]?.trim() ?? runtime.config.webOrigin,
+      ),
   );
   upstreamReq.on('error', () => {
     if (!raw.headersSent) raw.writeHead(502);
@@ -96,6 +107,7 @@ function respondFromUpstream(
   sessionId: string,
   upstreamPort: number,
   cookieValue: string | undefined,
+  parentOrigin: string,
 ): void {
   const headers = sanitizeResponseHeaders(upstreamRes.headers, sessionId, upstreamPort);
   if (cookieValue) {
@@ -105,8 +117,36 @@ function respondFromUpstream(
       ? [...(Array.isArray(existing) ? existing : [existing]), cookie]
       : cookie;
   }
-  raw.writeHead(upstreamRes.statusCode ?? 502, headers);
-  upstreamRes.pipe(raw);
+  const contentType = headers['content-type'];
+  const isHtml = typeof contentType === 'string' && contentType.startsWith('text/html');
+  if (!isHtml) {
+    raw.writeHead(upstreamRes.statusCode ?? 502, headers);
+    upstreamRes.pipe(raw);
+    return;
+  }
+  // ponytail: buffers the full HTML body in memory before forwarding (loses
+  // today's fully-streamed proxying for HTML documents only — JS/CSS/HMR
+  // chunks are untouched above). Fine for typical page sizes; revisit with a
+  // streaming </body> boundary scan if huge SSR pages ever matter.
+  const chunks: Buffer[] = [];
+  upstreamRes.on('data', (chunk: Buffer) => chunks.push(chunk));
+  upstreamRes.on('end', () => {
+    const html = injectInspectorScript(Buffer.concat(chunks).toString('utf8'), parentOrigin);
+    const rewritten = Buffer.from(html, 'utf8');
+    delete headers['content-length']; // body length changed; let Node recompute framing
+    raw.writeHead(upstreamRes.statusCode ?? 502, {
+      ...headers,
+      'content-length': String(rewritten.byteLength),
+    });
+    raw.end(rewritten);
+  });
+  upstreamRes.on('error', () => raw.destroy());
+}
+
+function injectInspectorScript(html: string, parentOrigin: string): string {
+  if (!html.includes('</body>')) return html;
+  const scriptTag = `<script>${buildInspectorScript(parentOrigin)}</script>`;
+  return html.replace('</body>', `${scriptTag}</body>`);
 }
 
 async function handleUpgrade(
