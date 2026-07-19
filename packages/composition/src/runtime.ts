@@ -243,6 +243,7 @@ export async function createRuntime(
     stepAttempts,
     artifacts,
     events,
+    stepEvents,
     harness,
     router,
     metrics,
