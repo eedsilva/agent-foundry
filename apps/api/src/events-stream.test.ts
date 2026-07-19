@@ -197,4 +197,62 @@ describe('GET /runs/:runId/events/stream', () => {
     expect(afterCursor).toHaveLength(1);
     expect(afterCursor[0]).toMatchObject({ type: 'assistant_delta', text: 'Hello', sequence: 2 });
   });
+
+  it('recovers a tool_end missed while disconnected mid-tool-call, with no duplicate tool_start', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const runId = 'run-reconnect-test';
+    const stepRunId = 'step-1';
+    const attemptId = 'attempt-1';
+
+    await runtime.stepEvents.append({
+      id: 'evt-start',
+      runId,
+      stepRunId,
+      attemptId,
+      createdAt: new Date().toISOString(),
+      type: 'tool_start',
+      toolName: 'Read',
+      summary: 'Read: src/app.ts',
+    });
+
+    // Client connects and observes the tool_start, then "disconnects" (this is
+    // exactly what the first readSse call already simulates: open,
+    // collect available frames, close).
+    const { events: beforeDisconnect, abort: abortFirst } = await readSse<AgentStreamEvent>(
+      `${baseUrl}/runs/${runId}/events/stream`,
+      {},
+      1,
+    );
+    abortFirst();
+    expect(beforeDisconnect).toHaveLength(1);
+    expect(beforeDisconnect[0]).toMatchObject({ type: 'tool_start', sequence: 1 });
+    const lastSeenSequence = beforeDisconnect[0]!.sequence as number;
+
+    // While disconnected, the tool finishes.
+    await runtime.stepEvents.append({
+      id: 'evt-end',
+      runId,
+      stepRunId,
+      attemptId,
+      createdAt: new Date().toISOString(),
+      type: 'tool_end',
+      toolName: 'Read',
+      summary: 'Read completed',
+      ok: true,
+    });
+
+    // Reconnect using the last-seen cursor.
+    const { events: afterReconnect, abort: abortSecond } = await readSse<AgentStreamEvent>(
+      `${baseUrl}/runs/${runId}/events/stream?cursor=${lastSeenSequence}`,
+      {},
+      1,
+    );
+    abortSecond();
+
+    expect(afterReconnect).toHaveLength(1);
+    expect(afterReconnect[0]).toMatchObject({ type: 'tool_end', ok: true, sequence: 2 });
+    expect(afterReconnect.some((event: AgentStreamEvent) => event.type === 'tool_start')).toBe(
+      false,
+    );
+  });
 });
