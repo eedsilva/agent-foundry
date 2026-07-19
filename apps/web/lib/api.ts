@@ -10,6 +10,8 @@ import type {
   DecideApprovalResponse,
   DecideChangeRequestRequest,
   DecideChangeRequestResponse,
+  DiscardDraftRequest,
+  DraftDetailResponse,
   Message,
   Operation,
   PreviewLogPage,
@@ -19,6 +21,7 @@ import type {
   ProjectVersion,
   ResumeBlockedResponse,
   RetryPlanResponse,
+  RetryProjectRequest,
   RetryStepRequest,
   RunDetailResponse,
   RuntimeInfoResponse,
@@ -75,15 +78,31 @@ export function eventStreamUrl(id: string): string {
   return `${API_URL}/projects/${encodeURIComponent(id)}/events/stream`;
 }
 
-export async function retryProject(id: string): Promise<Project> {
+export async function retryProject(id: string, input?: RetryProjectRequest): Promise<Project> {
   const response = await api<{ project: Project }>(`/projects/${encodeURIComponent(id)}/retry`, {
     method: 'POST',
+    ...(input ? { body: JSON.stringify(input) } : {}),
   });
   return response.project;
 }
 
 export function getRunDetail(runId: string): Promise<RunDetailResponse> {
   return api<RunDetailResponse>(`/runs/${encodeURIComponent(runId)}`);
+}
+
+export function getDraft(runId: string): Promise<DraftDetailResponse> {
+  return api<DraftDetailResponse>(`/runs/${encodeURIComponent(runId)}/draft`);
+}
+
+export async function discardDraft(
+  runId: string,
+  input: DiscardDraftRequest,
+): Promise<WorkflowRun> {
+  const response = await api<{ run: WorkflowRun }>(
+    `/runs/${encodeURIComponent(runId)}/draft/discard`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return response.run;
 }
 
 export function createModelOverride(

@@ -7,6 +7,7 @@ import type {
   ArtifactReference,
   CreateModelOverrideRequest,
   CreateProjectRequest,
+  DiscardDraftRequest,
   ModelOverrideRecord,
   ModelDefinition,
   Project,
@@ -17,6 +18,7 @@ import type {
   Provider,
   QueueJob,
   RetryPlanResponse,
+  RetryProjectRequest,
   RetryStepRequest,
   RunDetailResponse,
   RunAuditExport,
@@ -232,20 +234,7 @@ export class ProjectService {
     return { metadata: artifact.metadata, stream };
   }
 
-  async retry(
-    projectId: string,
-    input?: {
-      prompt?: string;
-      override?: {
-        modelId: string;
-        provider: Provider;
-        model: string;
-        actor: ActorRef;
-        reason: string;
-        estimatedImpact: string;
-      };
-    },
-  ): Promise<Project> {
+  async retry(projectId: string, input?: RetryProjectRequest): Promise<Project> {
     const project = await this.requireProject(projectId);
     if (project.status === 'running') return project;
     if (input?.prompt) await this.workspaces.writePrd(projectId, input.prompt);
@@ -429,10 +418,7 @@ export class ProjectService {
    * codebase already uses for approval decisions and ceiling events.
    * Idempotent: discarding an already-discarded draft is a no-op.
    */
-  async discardDraft(
-    runId: string,
-    input: { actor: ActorRef; reason?: string },
-  ): Promise<WorkflowRun> {
+  async discardDraft(runId: string, input: DiscardDraftRequest): Promise<WorkflowRun> {
     const run = await this.requireRun(runId);
     const ceiling = run.execution?.ceiling;
     if (!ceiling?.draftBranch || !ceiling.draftCommit) {
