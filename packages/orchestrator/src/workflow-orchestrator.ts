@@ -495,7 +495,7 @@ export class WorkflowOrchestrator {
     }
     if (!ceiling.draftBranch) {
       const draft = await this.workspaces.preserveDraft(projectId, runId, verifiedCheckpoint);
-      const { draftBranch } = draft;
+      const { draftBranch, draftCommit } = draft;
       run = await this.requireRun(runId);
       if (run.status === 'cancel_requested' || run.status === 'cancelled') {
         if (draft.created) {
@@ -511,7 +511,7 @@ export class WorkflowOrchestrator {
           }
           return {
             ...(latest.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
-            ceiling: { ...latest.execution!.ceiling!, draftBranch },
+            ceiling: { ...latest.execution!.ceiling!, draftBranch, draftCommit },
           };
         });
       } catch (error) {

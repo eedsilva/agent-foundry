@@ -141,7 +141,7 @@ describe('emergency ceiling accounting', () => {
       error: { name: 'EmergencyCeilingError', code: 'EMERGENCY_CEILING' },
       execution: {
         lastVerifiedCheckpoint: 'initial-head',
-        ceiling: { draftBranch: 'draft/run-1' },
+        ceiling: { draftBranch: 'draft/run-1', draftCommit: expect.any(String) },
       },
     });
     expect(stores.workspaces.drafts).toEqual(['draft/run-1']);
