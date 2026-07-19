@@ -1373,37 +1373,6 @@ Find the block that calls `await this.approvalRequests.create({ id: this.ids.nex
         ...timeout,
         createdAt: requestTimestamp.toISOString(),
       });
-      this.persistStreamEvent(runId, stepRun.id, undefined as unknown as string, {
-        type: 'status',
-        phase: 'awaiting_approval',
-      });
-      await this.stepEvents
-        .append({
-          id: this.ids.next(),
-          runId,
-          stepRunId: stepRun.id,
-          createdAt: this.clock.now().toISOString(),
-          type: 'approval',
-          approvalRequestId,
-        })
-        .catch(() => undefined);
-      throw new ApprovalRequiredError(runId, node.id);
-```
-
-Remove the `this.persistStreamEvent(...)` status line above — it was a placeholder while reasoning through the edit; the block should only append the single `approval` event. Confirm the final block reads:
-
-```typescript
-      const approvalRequestId = this.ids.next();
-      await this.approvalRequests.create({
-        id: approvalRequestId,
-        runId,
-        stepRunId: stepRun.id,
-        nodeId: node.id,
-        artifact: artifactReference(reviewed),
-        allowedActions: node.actions,
-        ...timeout,
-        createdAt: requestTimestamp.toISOString(),
-      });
       await this.stepEvents
         .append({
           id: this.ids.next(),
