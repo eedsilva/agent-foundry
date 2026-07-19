@@ -28,6 +28,7 @@ import {
 } from 'playwright';
 
 const ACTION_TIMEOUT_MS = 10_000;
+const SCREENSHOT_TIMEOUT_MS = 2_000;
 const RUN_TIMEOUT_MS = 60_000;
 const MAX_OBSERVATIONS = 100;
 const MAX_TRACKED_TIMER_DELAY_MS = 1_000;
@@ -630,7 +631,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     sink: CapturedScreenshot[],
   ): Promise<void> {
     try {
-      const buffer = await page.screenshot({ type: 'png' });
+      const buffer = await page.screenshot({ type: 'png', timeout: SCREENSHOT_TIMEOUT_MS });
       sink.push({ stepId, url: sanitizeUrl(page.url(), token), viewport, buffer });
     } catch {
       // Best-effort evidence: a closed or mid-navigation page must not fail verification.
@@ -648,14 +649,14 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       case 'goto': {
         const url = resolvePlanPath(prefixUrl, action.path);
         if (initialNavigation && token) url.searchParams.set('token', token);
-        await page.goto(url.href);
+        await page.goto(url.href, { timeout: ACTION_TIMEOUT_MS });
         return;
       }
       case 'click':
-        await locator(page, action.locator).click();
+        await locator(page, action.locator).click({ timeout: ACTION_TIMEOUT_MS });
         return;
       case 'fill':
-        await locator(page, action.locator).fill(action.value);
+        await locator(page, action.locator).fill(action.value, { timeout: ACTION_TIMEOUT_MS });
     }
   }
 
@@ -666,24 +667,33 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
   ): Promise<void> {
     switch (assertion.kind) {
       case 'visible':
-        await locator(page, assertion.locator).waitFor({ state: 'visible' });
+        await locator(page, assertion.locator).waitFor({
+          state: 'visible',
+          timeout: ACTION_TIMEOUT_MS,
+        });
         return;
       case 'hidden':
-        await locator(page, assertion.locator).waitFor({ state: 'hidden' });
+        await locator(page, assertion.locator).waitFor({
+          state: 'hidden',
+          timeout: ACTION_TIMEOUT_MS,
+        });
         return;
       case 'containsText': {
         await locator(page, assertion.locator)
           .filter({ hasText: assertion.expected })
-          .waitFor({ state: 'attached' });
+          .waitFor({ state: 'attached', timeout: ACTION_TIMEOUT_MS });
         return;
       }
       case 'url': {
         const expected = resolvePlanPath(prefixUrl, assertion.path);
-        await page.waitForURL((url) => {
-          const actual = new URL(url);
-          actual.searchParams.delete('token');
-          return actual.href === expected.href;
-        });
+        await page.waitForURL(
+          (url) => {
+            const actual = new URL(url);
+            actual.searchParams.delete('token');
+            return actual.href === expected.href;
+          },
+          { timeout: ACTION_TIMEOUT_MS },
+        );
       }
     }
   }

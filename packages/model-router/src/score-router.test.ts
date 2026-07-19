@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type {
   ModelDefinition,
   ModelMetric,
+  QualityObservation,
   RouteOverrideProvenance,
   TaskProfile,
 } from '@agent-foundry/contracts';
-import type { MetricsRepository } from '@agent-foundry/domain';
+import type { MetricsRepository, QualityObservationRepository } from '@agent-foundry/domain';
 import { ScoreBasedModelRouter } from './score-router.js';
 
 class MemoryMetrics implements MetricsRepository {
@@ -22,6 +23,23 @@ class MemoryMetrics implements MetricsRepository {
   }
   async record(): Promise<void> {}
   async recordQuality(): Promise<void> {}
+}
+
+class MemoryQualityObservations implements QualityObservationRepository {
+  constructor(private readonly values: QualityObservation[]) {}
+  async record(): Promise<void> {}
+  async list(
+    query: Parameters<QualityObservationRepository['list']>[0],
+  ): Promise<QualityObservation[]> {
+    return this.values.filter(
+      (item) =>
+        item.subject.modelId === query.modelId &&
+        item.subject.taskKind === query.taskKind &&
+        item.subject.role === query.role &&
+        item.subject.taxonomyVersion === query.taxonomyVersion &&
+        item.subject.category === query.category,
+    );
+  }
 }
 
 const baseCapabilities = {
@@ -93,7 +111,62 @@ const override: RouteOverrideProvenance = {
   createdAt: '2026-07-16T12:00:00.000Z',
 };
 
+function qualityObservation(
+  modelId: string,
+  source: QualityObservation['source'],
+  score: number,
+): QualityObservation {
+  const evaluator =
+    source === 'deterministic'
+      ? { kind: 'deterministic' as const, id: 'workspace-verifier' }
+      : { kind: 'llm' as const, id: 'reviewer-1' };
+  return {
+    id: `${modelId}-${source}`,
+    source,
+    subject: {
+      modelId,
+      taskKind: profile.taskKind,
+      role: profile.role,
+      taxonomyVersion: profile.taxonomyVersion,
+      category: profile.category,
+      artifact: { name: 'implementation', revision: 1, sha256: 'a'.repeat(64) },
+    },
+    evaluator,
+    blind: source === 'blind-review',
+    rubric: source,
+    score,
+    evidence: [
+      {
+        kind: source === 'deterministic' ? 'verification-report' : 'review-artifact',
+        summary: source,
+      },
+    ],
+    observedAt: '2026-07-18T12:00:00.000Z',
+  };
+}
+
 describe('ScoreBasedModelRouter', () => {
+  it('weights deterministic checks separately from blind reviews', async () => {
+    const router = new ScoreBasedModelRouter(
+      [model('verified', { tags: ['coding'] }), model('reviewed', { tags: ['coding'] })],
+      new MemoryMetrics(),
+      new MemoryQualityObservations([
+        qualityObservation('verified', 'deterministic', 1),
+        qualityObservation('verified', 'blind-review', 0),
+        qualityObservation('reviewed', 'deterministic', 0),
+        qualityObservation('reviewed', 'blind-review', 1),
+      ]),
+    );
+
+    const route = await router.route(profile);
+
+    expect(route.selected.model.id).toBe('verified');
+    expect(route.selected.quality).toMatchObject({
+      components: { deterministic: { average: 1 }, blindReview: { average: 0 } },
+      aggregate: 2 / 3,
+    });
+  });
+
   it('selects the stronger coding model for a quality-weighted implementation task', async () => {
     const metrics = new MemoryMetrics();
     const router = new ScoreBasedModelRouter(

@@ -70,6 +70,7 @@ import {
 } from '@agent-foundry/domain';
 import { ProjectService } from '../project-service.js';
 import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
+import type { QualityObservationService } from '../quality-observation-service.js';
 import { WorkflowOrchestrator } from '../workflow-orchestrator.js';
 
 const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
@@ -442,6 +443,7 @@ export class InMemoryArtifacts implements ArtifactStore {
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.actor ? { actor: input.actor } : {}),
       ...(input.sourceDecisionId ? { sourceDecisionId: input.sourceDecisionId } : {}),
+      ...(input.routeDecision ? { routeDecision: input.routeDecision } : {}),
       sha256: createHash('sha256').update(JSON.stringify(input.content)).digest('hex'),
     };
     const stored: StoredArtifact = { metadata, content: input.content };
@@ -782,7 +784,8 @@ export function disconnectError(): Error {
   return new Error('ECONNRESET: execution plane disconnected before the run completed');
 }
 
-export class ControllableExecutor implements ExecutionPlane {
+export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
+  readonly provider = 'mock';
   readonly startCounts = new Map<string, number>();
   private readonly gates = new Map<string, () => void>();
   private readonly states = new Map<string, ExecutionStatus['state']>();
@@ -834,6 +837,19 @@ export class ControllableExecutor implements ExecutionPlane {
 
   async status(executionId: string): Promise<ExecutionStatus> {
     return { executionId, state: this.states.get(executionId) ?? 'pending' };
+  }
+
+  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult> {
+    return this.executeInternal(request, signal);
+  }
+
+  health(): Promise<ExecutorHealth> {
+    return Promise.resolve({
+      provider: this.provider,
+      available: true,
+      version: 'test',
+      message: 'Controllable test executor is available.',
+    });
   }
 
   private executeInternal(
@@ -1002,6 +1018,7 @@ export function makeHarness(
     workflow?: WorkflowDefinition;
     verification?: () => VerificationReport | Promise<VerificationReport>;
     browserVerification?: BrowserVerificationCoordinator;
+    qualityObservationService?: QualityObservationService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
   } = {},
 ) {
@@ -1165,6 +1182,7 @@ export function makeHarness(
     stores.modelOverrides,
     undefined,
     opts.browserVerification,
+    opts.qualityObservationService,
   );
   const service = new ProjectService(
     stores.projects,

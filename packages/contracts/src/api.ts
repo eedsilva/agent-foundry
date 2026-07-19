@@ -29,6 +29,7 @@ import {
   WorkflowRunSchema,
 } from './run.js';
 import { ChangeRequestSchema } from './change-request.js';
+import { QualityObservationInputSchema, QualityObservationSchema } from './quality.js';
 
 export const CreateAttachmentRequestSchema = z
   .object({
@@ -148,6 +149,16 @@ export const CreateProjectResponseSchema = z.object({
   project: ProjectSchema,
 });
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
+
+export const CreateQualityObservationRequestSchema = QualityObservationInputSchema;
+export type CreateQualityObservationRequest = z.infer<typeof CreateQualityObservationRequestSchema>;
+
+export const CreateQualityObservationResponseSchema = z
+  .object({ observation: QualityObservationSchema })
+  .strict();
+export type CreateQualityObservationResponse = z.infer<
+  typeof CreateQualityObservationResponseSchema
+>;
 
 export const ProjectDetailResponseSchema = z.object({
   project: ProjectSchema,

@@ -15,6 +15,7 @@ import {
   isTaskCategoryCompatible,
   legacyTaskCategory,
 } from './task-taxonomy.js';
+import { QualitySignalSummarySchema } from './quality.js';
 
 export const CapabilityScoresSchema = z.object({
   planning: z.number().min(0).max(1),
@@ -127,6 +128,7 @@ export type RouteScoreBreakdown = z.infer<typeof RouteScoreBreakdownSchema>;
 export const RankedModelSchema = z.object({
   model: ModelDefinitionSchema,
   score: RouteScoreBreakdownSchema,
+  quality: QualitySignalSummarySchema.optional(),
 });
 export type RankedModel = z.infer<typeof RankedModelSchema>;
 

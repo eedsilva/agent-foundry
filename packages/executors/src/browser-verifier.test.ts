@@ -13,6 +13,8 @@ import { DEFAULT_BROWSER_EVIDENCE_POLICY } from '@agent-foundry/contracts';
 import { PlaywrightBrowserVerifier } from './browser-verifier.js';
 
 const TOKEN = 'preview-token-that-must-never-leak';
+// Verification caps at 60 seconds; allow fixture servers 30 seconds to close long-poll connections.
+const BROWSER_TEST_TIMEOUT_MS = 90_000;
 const PLAN_ARTIFACT: ArtifactReference = {
   name: 'browser-test-plan',
   revision: 1,
@@ -103,6 +105,8 @@ function expectRedacted(value: unknown): void {
   expect(JSON.stringify(value)).not.toContain(TOKEN);
 }
 
+// Keep a suite timeout without creating a body-wide indentation-only diff.
+// prettier-ignore
 describe('PlaywrightBrowserVerifier', () => {
   it('executes a declarative create/update/delete plan in real Chromium', async () => {
     const requests: string[] = [];
@@ -293,7 +297,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps[1]?.error).toContain('Missing');
     expect(report.steps[2]?.durationMs).toBe(0);
     expectRedacted(report);
-  }, 15_000);
+  });
 
   it('rejects HTTP errors, console errors, and uncaught exceptions as passive failures', async () => {
     const origin = await serve((request, response) => {
@@ -1340,7 +1344,7 @@ describe('PlaywrightBrowserVerifier', () => {
 
     expect(report.approved).toBe(false);
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed']);
-  }, 15_000);
+  });
 
   it('blocks a redirect to a forbidden origin before the sentinel receives it', async () => {
     let sentinelRequests = 0;
@@ -1553,7 +1557,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(sentinelRequests).toBe(0);
     expect(report.approved).toBe(true);
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed']);
-  }, 15_000);
+  });
 
   it('permits a 201 Location header without following it as a redirect', async () => {
     let sentinelRequests = 0;
@@ -1609,7 +1613,7 @@ describe('PlaywrightBrowserVerifier', () => {
 
     expect(report.approved).toBe(true);
     expect(report.steps[0]?.status).toBe('passed');
-  }, 15_000);
+  });
 
   it('does not synthesize a failure after Playwright route fetch default timeout', async () => {
     const origin = await serve((request, response) => {
@@ -1654,7 +1658,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(
       report.steps.flatMap(({ observations }) => observations).map(({ kind }) => kind),
     ).not.toContain('request-failed');
-  }, 55_000);
+  });
 
   it('caps observations at 100', async () => {
     const origin = await serve((_request, response) => {
@@ -1822,4 +1826,4 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(evidence.video).toBeInstanceOf(Buffer);
     expect(evidence.video!.byteLength).toBeGreaterThan(0);
   });
-});
+}, BROWSER_TEST_TIMEOUT_MS);
