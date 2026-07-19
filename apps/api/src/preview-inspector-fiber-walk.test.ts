@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { findReactFiber, walkFiberCandidates, type FiberLike } from './preview-inspector-fiber-walk.js';
+import {
+  findReactFiber,
+  walkFiberCandidates,
+  type FiberLike,
+} from './preview-inspector-fiber-walk.js';
 
 describe('findReactFiber', () => {
   it('finds a fiber attached under a __reactFiber$ prefixed key', () => {

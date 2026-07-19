@@ -70,7 +70,7 @@ The script does nothing until told to:
   - **Source candidates**: walk the React Fiber tree. React (in dev mode,
     which `next dev` always uses) attaches a fiber to every DOM node under a
     key matching `/^__reactFiber\$/`, and each fiber carries `_debugSource:
-    {fileName, lineNumber, columnNumber}` and `type`/`_debugOwner` for the
+{fileName, lineNumber, columnNumber}` and `type`/`_debugOwner` for the
     component name. Starting at the clicked node's fiber, walk `fiber.return`
     up to the app root, collecting `{fileName, line, column, componentName}`
     for every fiber that has a named component type, de-duplicating adjacent
@@ -81,13 +81,13 @@ The script does nothing until told to:
     instrument), `candidates` is `[]` and `unsupported: true` is set — this is
     the "framework not supported" degrade path.
 - Result is posted back: `window.parent.postMessage({ type:
-  'af:selection:result', payload }, appOrigin)`. Both sides check
+'af:selection:result', payload }, appOrigin)`. Both sides check
   `event.origin` against the expected counterpart before trusting a message.
 
 This script is **only ever served by the proxy for live dev-preview
 requests**. The publish/deploy pipeline builds and serves a separate static
 production bundle that never passes through `preview-proxy.ts`, so the
-"preview injects *unpublished* metadata" acceptance criterion is satisfied by
+"preview injects _unpublished_ metadata" acceptance criterion is satisfied by
 construction — we add a test asserting the injected script is absent from
 whatever the publish pipeline emits.
 
@@ -140,13 +140,13 @@ family, following the file's `XxxSchema` + `z.infer` + `.strict()`
 convention:
 
 - `PreviewSelectionCandidateSchema` — `{ fileName, line, column,
-  componentName? }` (raw, client-reported, pre-validation).
+componentName? }` (raw, client-reported, pre-validation).
 - `PreviewSelectionRequestSchema` — `{ domPath, boundingBox, computedStyle,
-  candidates: PreviewSelectionCandidate[] }` (raw, posted by `apps/web`).
+candidates: PreviewSelectionCandidate[] }` (raw, posted by `apps/web`).
 - `PreviewSelectionResultSchema` — `{ status: 'resolved' | 'ambiguous' |
-  'unsupported', domPath, boundingBox, computedStyle, file?: string
-  (workspace-relative), candidates?: string[] (workspace-relative, only for
-  `ambiguous`), screenshot?: ArtifactMetadata (only for `unsupported`) }`
+'unsupported', domPath, boundingBox, computedStyle, file?: string
+(workspace-relative), candidates?: string[] (workspace-relative, only for
+`ambiguous`), screenshot?: ArtifactMetadata (only for `unsupported`) }`
   (validated, server-produced — the only shape the client acts on).
 
 ### 4. UI (`apps/web`)
@@ -158,7 +158,7 @@ convention:
   endpoint, and rendering by `status`:
   - `resolved` → inline confirmation of the target file (ready for whatever
     consumes it next — out of scope for this issue, which only needs to
-    *identify* the file).
+    _identify_ the file).
   - `ambiguous` → the existing inline confirm/discard panel style
     (`page.tsx:766-790`) listing the candidate files as choices — user picks
     one or discards; we never auto-pick.
@@ -174,11 +174,11 @@ repeated list, generated/dynamic element** — map to:
   tests using hand-built fake fiber objects (jsdom, no real React/webpack
   needed — our code only depends on the documented fiber shape:
   `type`/`return`/`_debugSource`/`_debugOwner`):
-  - *Simple*: one fiber, one file → `resolved`.
-  - *Wrapper*: two nested named fibers, two distinct files → `ambiguous`.
-  - *Repeated list*: N fibers sharing one `fileName`+`line` → collapses to
+  - _Simple_: one fiber, one file → `resolved`.
+  - _Wrapper_: two nested named fibers, two distinct files → `ambiguous`.
+  - _Repeated list_: N fibers sharing one `fileName`+`line` → collapses to
     one candidate → `resolved`.
-  - *Generated element*: no `__reactFiber$*` present → `unsupported`, and the
+  - _Generated element_: no `__reactFiber$*` present → `unsupported`, and the
     Playwright screenshot fallback is invoked.
 - **Workspace containment guard**: unit tests feeding `../../etc/passwd`-style
   and absolute-outside-workspace `fileName`s, asserting rejection + logging.
@@ -210,7 +210,7 @@ repeated list, generated/dynamic element** — map to:
 
 ## Out of scope (this issue)
 
-- Actually *applying* an edit to the resolved file(s) — that's issue #42
+- Actually _applying_ an edit to the resolved file(s) — that's issue #42
   ("Aplicar edições visuais como patches estruturados e verificáveis"),
   already tracked separately.
 - Any framework other than Next.js/React — everything else is the

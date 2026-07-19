@@ -16,10 +16,12 @@ function baseRequest(overrides: Partial<PreviewSelectionRequest> = {}): PreviewS
   };
 }
 
-function makeService(overrides: {
-  workspacePath?: string;
-  captureSelectionScreenshot?: ReturnType<typeof vi.fn>;
-} = {}) {
+function makeService(
+  overrides: {
+    workspacePath?: string;
+    captureSelectionScreenshot?: ReturnType<typeof vi.fn>;
+  } = {},
+) {
   const workspaces = { workspacePath: () => overrides.workspacePath ?? '/data/ws' };
   const screenshots = {
     captureSelectionScreenshot: overrides.captureSelectionScreenshot ?? vi.fn(async () => null),
@@ -37,7 +39,9 @@ describe('PreviewSelectionService.resolve', () => {
       projectId: 'proj-1',
       sessionId: 'session-1',
       request: baseRequest({
-        candidates: [{ fileName: 'src/Greeting.tsx', line: 4, column: 3, componentName: 'Greeting' }],
+        candidates: [
+          { fileName: 'src/Greeting.tsx', line: 4, column: 3, componentName: 'Greeting' },
+        ],
       }),
     });
     expect(result).toMatchObject({ status: 'resolved', file: 'src/Greeting.tsx' });

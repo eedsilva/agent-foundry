@@ -24,11 +24,13 @@
 ### Task 1: Domain — workspace path containment guard
 
 **Files:**
+
 - Create: `packages/domain/src/workspace-paths.ts`
 - Create: `packages/domain/src/workspace-paths.test.ts`
 - Modify: `packages/domain/src/index.ts`
 
 **Interfaces:**
+
 - Produces: `resolveWorkspaceRelativePath(workspaceRoot: string, candidatePath: string): string | null` — used by Task 8 (`PreviewSelectionService`) to validate untrusted, browser-reported file paths against a project's workspace root.
 
 - [ ] **Step 1: Write the failing test**
@@ -116,9 +118,11 @@ git commit -m "feat(domain): add workspace path containment guard"
 ### Task 2: Domain — selection screenshot capturer port
 
 **Files:**
+
 - Modify: `packages/domain/src/ports.ts` (add interface after `BrowserVerifier`, ~line 345)
 
 **Interfaces:**
+
 - Produces: `SelectionScreenshotCapturer` interface — implemented by Task 4 (`PlaywrightBrowserVerifier`), consumed by Task 8 (`PreviewSelectionService`). Kept separate from `BrowserVerifier` so no existing implementer/mock of `BrowserVerifier` is forced to implement it.
 
 - [ ] **Step 1: Add the interface (no test — this is a pure type addition; covered by Task 4/8's tests exercising it)**
@@ -143,7 +147,6 @@ export interface BrowserVerifier {
 Insert immediately after it:
 
 ```ts
-
 /**
  * On-demand, single-shot screenshot capture against a live preview session —
  * separate from BrowserVerifier's scheduled verify() flow, which requires a
@@ -176,10 +179,12 @@ git commit -m "feat(domain): add SelectionScreenshotCapturer port"
 ### Task 3: Contracts — preview selection schemas
 
 **Files:**
+
 - Modify: `packages/contracts/src/preview.ts` (append at end of file, after `BrowserVerificationReportSchema`)
 - Modify: `packages/contracts/src/preview.test.ts` (append new `describe` block at end of file)
 
 **Interfaces:**
+
 - Produces: `PreviewSelectionCandidateSchema`/`PreviewSelectionCandidate`, `PreviewSelectionRequestSchema`/`PreviewSelectionRequest`, `PreviewSelectionResultSchema`/`PreviewSelectionResult` — consumed by Task 5 (client payload shape mirrored in the injected script), Task 8 (orchestrator service), Task 9 (apps/api route), Task 10 (apps/web client), Task 11 (apps/web UI).
 
 - [ ] **Step 1: Write the failing test**
@@ -286,7 +291,6 @@ Expected: FAIL — `PreviewSelectionResultSchema is not defined` / `PreviewSelec
 Append to `packages/contracts/src/preview.ts` (after the final line, `export type BrowserVerificationReport = z.infer<typeof BrowserVerificationReportSchema>;`):
 
 ```ts
-
 export const PreviewSelectionCandidateSchema = z
   .object({
     fileName: z.string().min(1),
@@ -392,10 +396,12 @@ git commit -m "feat(contracts): add preview selection schemas"
 ### Task 4: Executors — on-demand selection screenshot
 
 **Files:**
+
 - Modify: `packages/executors/src/browser-verifier.ts`
 - Modify: `packages/executors/src/browser-verifier.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing new (uses existing `chromium`, `ACTION_TIMEOUT_MS`, `SCREENSHOT_TIMEOUT_MS` already in the file).
 - Produces: `PlaywrightBrowserVerifier.captureSelectionScreenshot(input): Promise<Buffer | null>` (implements `SelectionScreenshotCapturer` from Task 2) — consumed by Task 8.
 
@@ -410,7 +416,9 @@ describe('captureSelectionScreenshot', () => {
   it('returns a PNG buffer clipped to the given region', async () => {
     const server = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/html' });
-      res.end('<html><body style="margin:0"><div style="width:50px;height:50px;background:red"></div></body></html>');
+      res.end(
+        '<html><body style="margin:0"><div style="width:50px;height:50px;background:red"></div></body></html>',
+      );
     });
     await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
     const address = server.address();
@@ -519,10 +527,12 @@ git commit -m "feat(executors): add on-demand selection screenshot capture"
 ### Task 5: apps/api — fiber-walk pure functions
 
 **Files:**
+
 - Create: `apps/api/src/preview-inspector-fiber-walk.ts`
 - Create: `apps/api/src/preview-inspector-fiber-walk.test.ts`
 
 **Interfaces:**
+
 - Produces: `findReactFiber(node: unknown): FiberLike | null`, `walkFiberCandidates(fiber: FiberLike | null): SelectionCandidate[]`, and the `FiberLike`/`SelectionCandidate` types — consumed by Task 6 (embedded verbatim into the injected browser script via `.toString()`).
 - These are plain functions with no Node-only APIs (no imports), by design, so they run correctly both in this test (Node) and when injected into a browser via `.toString()`.
 
@@ -532,7 +542,11 @@ Create `apps/api/src/preview-inspector-fiber-walk.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest';
-import { findReactFiber, walkFiberCandidates, type FiberLike } from './preview-inspector-fiber-walk.js';
+import {
+  findReactFiber,
+  walkFiberCandidates,
+  type FiberLike,
+} from './preview-inspector-fiber-walk.js';
 
 describe('findReactFiber', () => {
   it('finds a fiber attached under a __reactFiber$ prefixed key', () => {
@@ -686,10 +700,12 @@ git commit -m "feat(api): add pure React fiber-walk source resolution"
 ### Task 6: apps/api — inspector script builder
 
 **Files:**
+
 - Create: `apps/api/src/preview-inspector-script.ts`
 - Create: `apps/api/src/preview-inspector-script.test.ts`
 
 **Interfaces:**
+
 - Consumes: `findReactFiber`, `walkFiberCandidates` from Task 5 (embedded via `.toString()`).
 - Produces: `buildInspectorScript(parentOrigin: string): string` — a `<script>`-ready JS string — consumed by Task 7 (`preview-proxy.ts`'s HTML injection).
 
@@ -833,10 +849,12 @@ git commit -m "feat(api): build the injectable preview inspector script"
 ### Task 7: apps/api — inject the inspector script into proxied HTML
 
 **Files:**
+
 - Modify: `apps/api/src/preview-proxy.ts`
 - Modify: `apps/api/src/preview-proxy.test.ts`
 
 **Interfaces:**
+
 - Consumes: `buildInspectorScript` from Task 6.
 - Produces: proxied `text/html` responses now carry the inspector script; all other content-types are untouched (verified by test).
 
@@ -1042,11 +1060,13 @@ git commit -m "feat(api): inject inspector script into proxied preview HTML"
 ### Task 8: Orchestrator — PreviewSelectionService
 
 **Files:**
+
 - Create: `packages/orchestrator/src/preview-selection-service.ts`
 - Create: `packages/orchestrator/src/preview-selection-service.test.ts`
 - Modify: `packages/orchestrator/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `resolveWorkspaceRelativePath` (Task 1), `SelectionScreenshotCapturer` (Task 2), `PreviewSelectionRequest`/`PreviewSelectionResult`/`PreviewSelectionCandidate` (Task 3), `WorkspaceManager` (existing, domain).
 - Produces: `PreviewSelectionService.resolve(input: { projectId: string; sessionId: string; request: PreviewSelectionRequest }): Promise<PreviewSelectionResult>` — consumed by Task 9 (apps/api route) via Task 10 (composition wiring).
 
@@ -1073,10 +1093,12 @@ function baseRequest(overrides: Partial<PreviewSelectionRequest> = {}): PreviewS
   };
 }
 
-function makeService(overrides: {
-  workspacePath?: string;
-  captureSelectionScreenshot?: ReturnType<typeof vi.fn>;
-} = {}) {
+function makeService(
+  overrides: {
+    workspacePath?: string;
+    captureSelectionScreenshot?: ReturnType<typeof vi.fn>;
+  } = {},
+) {
   const workspaces = { workspacePath: () => overrides.workspacePath ?? '/data/ws' };
   const screenshots = {
     captureSelectionScreenshot: overrides.captureSelectionScreenshot ?? vi.fn(async () => null),
@@ -1094,7 +1116,9 @@ describe('PreviewSelectionService.resolve', () => {
       projectId: 'proj-1',
       sessionId: 'session-1',
       request: baseRequest({
-        candidates: [{ fileName: 'src/Greeting.tsx', line: 4, column: 3, componentName: 'Greeting' }],
+        candidates: [
+          { fileName: 'src/Greeting.tsx', line: 4, column: 3, componentName: 'Greeting' },
+        ],
       }),
     });
     expect(result).toMatchObject({ status: 'resolved', file: 'src/Greeting.tsx' });
@@ -1302,9 +1326,11 @@ git commit -m "feat(orchestrator): add PreviewSelectionService"
 ### Task 9: Composition — wire PreviewSelectionService into Runtime
 
 **Files:**
+
 - Modify: `packages/composition/src/runtime.ts`
 
 **Interfaces:**
+
 - Consumes: `PreviewSelectionService` (Task 8), existing `workspaces`/`browserVerifier` singletons already constructed in `createRuntime`.
 - Produces: `runtime.previewSelectionService` — consumed by Task 10 (apps/api route).
 
@@ -1317,15 +1343,15 @@ Add `PreviewSelectionService` to the existing `@agent-foundry/orchestrator` dest
 Add to the `Runtime` interface (near the existing `previewService: PreviewService;` line):
 
 ```ts
-  previewSelectionService: PreviewSelectionService;
+previewSelectionService: PreviewSelectionService;
 ```
 
 In `createRuntime`, after `const browserVerifier = new PlaywrightBrowserVerifier();` (and after `config.previewBaseUrl` has already been assembled for `previewService`'s config, a few lines earlier), add:
 
 ```ts
-  const previewSelectionService = new PreviewSelectionService(workspaces, browserVerifier, {
-    previewBaseUrl: `http://${config.apiHost}:${config.apiPort}/preview`,
-  });
+const previewSelectionService = new PreviewSelectionService(workspaces, browserVerifier, {
+  previewBaseUrl: `http://${config.apiHost}:${config.apiPort}/preview`,
+});
 ```
 
 Add `previewSelectionService,` to the trailing returned object literal (near the existing `previewService,` line).
@@ -1347,10 +1373,12 @@ git commit -m "feat(composition): wire PreviewSelectionService into the runtime"
 ### Task 10: apps/api — selection endpoint
 
 **Files:**
+
 - Modify: `apps/api/src/app.ts`
 - Modify: `apps/api/src/preview.test.ts` (this is the existing file that already tests every other `/projects/:projectId/preview*` route, using real `fetch()` against a listening app — not `app.inject`)
 
 **Interfaces:**
+
 - Consumes: `runtime.previewSelectionService` (Task 9), `PreviewSelectionRequestSchema`/`PreviewSelectionResultSchema` (Task 3), existing `requireProjectSession` helper (`apps/api/src/app.ts:597`).
 - Produces: `POST /projects/:projectId/preview/:sessionId/selection` — consumed by Task 11 (apps/web client).
 
@@ -1383,25 +1411,22 @@ describe('POST /projects/:projectId/preview/:sessionId/selection', () => {
     expect(body.status).toBe('unsupported');
   });
 
-  it('404s for a selection posted against another project\'s session', async () => {
+  it("404s for a selection posted against another project's session", async () => {
     const { baseUrl, runtime } = await startApi();
     const ownerId = await createProject(baseUrl);
     const otherId = await createProject(baseUrl);
     const session = await createActiveSession(runtime, ownerId);
-    const response = await fetch(
-      `${baseUrl}/projects/${otherId}/preview/${session.id}/selection`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          previewUrl: `${baseUrl}/preview/${session.id}/`,
-          domPath: 'div[1]',
-          boundingBox: { x: 0, y: 0, width: 10, height: 10 },
-          computedStyle: {},
-          candidates: [],
-        }),
-      },
-    );
+    const response = await fetch(`${baseUrl}/projects/${otherId}/preview/${session.id}/selection`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        previewUrl: `${baseUrl}/preview/${session.id}/`,
+        domPath: 'div[1]',
+        boundingBox: { x: 0, y: 0, width: 10, height: 10 },
+        computedStyle: {},
+        candidates: [],
+      }),
+    });
     expect(response.status).toBe(404);
   });
 });
@@ -1419,19 +1444,19 @@ Modify `apps/api/src/app.ts`. Add `PreviewSelectionRequestSchema` and `PreviewSe
 Add the new route immediately before `registerPreviewProxy(app, runtime);`:
 
 ```ts
-  app.post('/projects/:projectId/preview/:sessionId/selection', async (request, reply) => {
-    const { projectId, sessionId } = z
-      .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
-      .parse(request.params);
-    await requireProjectSession(runtime, projectId, sessionId);
-    const input = PreviewSelectionRequestSchema.parse(request.body);
-    const result = await runtime.previewSelectionService.resolve({
-      projectId,
-      sessionId,
-      request: input,
-    });
-    return reply.status(200).send(PreviewSelectionResultSchema.parse(result));
+app.post('/projects/:projectId/preview/:sessionId/selection', async (request, reply) => {
+  const { projectId, sessionId } = z
+    .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
+    .parse(request.params);
+  await requireProjectSession(runtime, projectId, sessionId);
+  const input = PreviewSelectionRequestSchema.parse(request.body);
+  const result = await runtime.previewSelectionService.resolve({
+    projectId,
+    sessionId,
+    request: input,
   });
+  return reply.status(200).send(PreviewSelectionResultSchema.parse(result));
+});
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1456,9 +1481,11 @@ git commit -m "feat(api): add preview selection endpoint"
 ### Task 11: apps/web — API client function
 
 **Files:**
+
 - Modify: `apps/web/lib/api.ts`
 
 **Interfaces:**
+
 - Consumes: `PreviewSelectionRequest`/`PreviewSelectionResult` (Task 3).
 - Produces: `resolvePreviewSelection(projectId, sessionId, input): Promise<PreviewSelectionResult>` — consumed by Task 12.
 
@@ -1500,9 +1527,11 @@ git commit -m "feat(web): add resolvePreviewSelection API client"
 ### Task 12: apps/web — select-element UI in PreviewPanel
 
 **Files:**
+
 - Modify: `apps/web/app/project/[id]/preview-panel.tsx`
 
 **Interfaces:**
+
 - Consumes: `resolvePreviewSelection` (Task 11), `PreviewSelectionResult` (Task 3), existing `BlobMedia`/`getArtifactBlobUrl`.
 - Produces: visible "Selecionar elemento" toggle + result panels in `PreviewPanel` — exercised end-to-end by Task 13's Playwright spec.
 
@@ -1538,46 +1567,46 @@ import {
 Inside `PreviewPanel`, add new state and a `ref` (alongside the existing `useState` calls):
 
 ```tsx
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [selecting, setSelecting] = useState(false);
-  const [selectionResult, setSelectionResult] = useState<PreviewSelectionResult | null>(null);
-  const [selectionError, setSelectionError] = useState('');
+const iframeRef = useRef<HTMLIFrameElement>(null);
+const [selecting, setSelecting] = useState(false);
+const [selectionResult, setSelectionResult] = useState<PreviewSelectionResult | null>(null);
+const [selectionError, setSelectionError] = useState('');
 ```
 
 Add a new effect (alongside the existing two `useEffect`s) that listens for the inspector script's result and resolves it:
 
 ```tsx
-  useEffect(() => {
-    if (!session?.url) return;
-    const previewOrigin = new URL(session.url).origin;
-    function onMessage(event: MessageEvent) {
-      if (event.origin !== previewOrigin) return;
-      if (event.data?.type !== 'af:selection:result') return;
-      setSelecting(false);
-      const payload = event.data.payload;
-      resolvePreviewSelection(projectId, session!.id, {
-        previewUrl: session!.url!,
-        domPath: payload.domPath,
-        boundingBox: payload.boundingBox,
-        computedStyle: payload.computedStyle,
-        candidates: payload.candidates,
-      })
-        .then(setSelectionResult)
-        .catch((cause) => setSelectionError(cause instanceof Error ? cause.message : String(cause)));
-    }
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [projectId, session]);
-
-  function toggleSelecting() {
-    if (!session?.url || !iframeRef.current?.contentWindow) return;
-    setSelectionResult(null);
-    setSelecting(true);
-    iframeRef.current.contentWindow.postMessage(
-      { type: 'af:selection:start' },
-      new URL(session.url).origin,
-    );
+useEffect(() => {
+  if (!session?.url) return;
+  const previewOrigin = new URL(session.url).origin;
+  function onMessage(event: MessageEvent) {
+    if (event.origin !== previewOrigin) return;
+    if (event.data?.type !== 'af:selection:result') return;
+    setSelecting(false);
+    const payload = event.data.payload;
+    resolvePreviewSelection(projectId, session!.id, {
+      previewUrl: session!.url!,
+      domPath: payload.domPath,
+      boundingBox: payload.boundingBox,
+      computedStyle: payload.computedStyle,
+      candidates: payload.candidates,
+    })
+      .then(setSelectionResult)
+      .catch((cause) => setSelectionError(cause instanceof Error ? cause.message : String(cause)));
   }
+  window.addEventListener('message', onMessage);
+  return () => window.removeEventListener('message', onMessage);
+}, [projectId, session]);
+
+function toggleSelecting() {
+  if (!session?.url || !iframeRef.current?.contentWindow) return;
+  setSelectionResult(null);
+  setSelecting(true);
+  iframeRef.current.contentWindow.postMessage(
+    { type: 'af:selection:start' },
+    new URL(session.url).origin,
+  );
+}
 ```
 
 Modify the `viewportSwitcher` block that currently ends with the "Parar preview" button — add a toggle button next to it:
@@ -1594,69 +1623,79 @@ Modify the `viewportSwitcher` block that currently ends with the "Parar preview"
 Modify the iframe render to attach the `ref`:
 
 ```tsx
-          {session.url ? (
-            <div className="previewFrameWrap">
-              <iframe
-                ref={iframeRef}
-                src={session.url}
-                width={VIEWPORTS[viewport].width}
-                height={VIEWPORTS[viewport].height}
-                title="Preview do aplicativo"
-              />
-            </div>
-          ) : (
-            <p className="hint">Preview iniciando…</p>
-          )}
+{
+  session.url ? (
+    <div className="previewFrameWrap">
+      <iframe
+        ref={iframeRef}
+        src={session.url}
+        width={VIEWPORTS[viewport].width}
+        height={VIEWPORTS[viewport].height}
+        title="Preview do aplicativo"
+      />
+    </div>
+  ) : (
+    <p className="hint">Preview iniciando…</p>
+  );
+}
 ```
 
 Add the result panels right after the `previewFrameWrap`/`Preview iniciando…` block, still inside the same conditional branch:
 
 ```tsx
-          {selectionError ? <p className="errorBox">{selectionError}</p> : null}
-          {selectionResult?.status === 'resolved' ? (
-            <div className="panel">
-              <p>
-                Elemento mapeado para: <strong>{selectionResult.file}</strong>
-              </p>
-            </div>
-          ) : null}
-          {selectionResult?.status === 'ambiguous' ? (
-            <div className="panel">
-              <p>Seleção ambígua — escolha o arquivo correto:</p>
-              <ul>
-                {selectionResult.candidates?.map((file) => (
-                  <li key={file}>
-                    <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
-                      {file}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
-                Descartar
-              </button>
-            </div>
-          ) : null}
-          {selectionResult?.status === 'unsupported' ? (
-            <div className="panel">
-              <p>Não foi possível mapear este elemento a um arquivo de origem.</p>
-              <p className="hint">{selectionResult.domPath}</p>
-              {selectionResult.screenshot ? (
-                <BlobMedia
-                  src={getArtifactBlobUrl(
-                    projectId,
-                    selectionResult.screenshot.name,
-                    selectionResult.screenshot.revision,
-                  )}
-                  alt={selectionResult.domPath}
-                  kind="image"
-                />
-              ) : null}
-              <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
-                Fechar
-              </button>
-            </div>
-          ) : null}
+{
+  selectionError ? <p className="errorBox">{selectionError}</p> : null;
+}
+{
+  selectionResult?.status === 'resolved' ? (
+    <div className="panel">
+      <p>
+        Elemento mapeado para: <strong>{selectionResult.file}</strong>
+      </p>
+    </div>
+  ) : null;
+}
+{
+  selectionResult?.status === 'ambiguous' ? (
+    <div className="panel">
+      <p>Seleção ambígua — escolha o arquivo correto:</p>
+      <ul>
+        {selectionResult.candidates?.map((file) => (
+          <li key={file}>
+            <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
+              {file}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
+        Descartar
+      </button>
+    </div>
+  ) : null;
+}
+{
+  selectionResult?.status === 'unsupported' ? (
+    <div className="panel">
+      <p>Não foi possível mapear este elemento a um arquivo de origem.</p>
+      <p className="hint">{selectionResult.domPath}</p>
+      {selectionResult.screenshot ? (
+        <BlobMedia
+          src={getArtifactBlobUrl(
+            projectId,
+            selectionResult.screenshot.name,
+            selectionResult.screenshot.revision,
+          )}
+          alt={selectionResult.domPath}
+          kind="image"
+        />
+      ) : null}
+      <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
+        Fechar
+      </button>
+    </div>
+  ) : null;
+}
 ```
 
 - [ ] **Step 2: Typecheck**
@@ -1676,21 +1715,23 @@ git commit -m "feat(web): add click-to-select UI to the preview panel"
 ### Task 13: End-to-end Playwright coverage
 
 **Files:**
+
 - Modify: `packages/executors/src/fixtures/preview-dev-server.mjs` (add an HTML-serving branch)
 - Create: `apps/api/e2e/dom-source-map.spec.ts`
 
 **Interfaces:**
+
 - Consumes: the full stack (Tasks 1–12).
-- Produces: real-browser regression tests proving the click → postMessage → resolve → UI round trip works end to end for all three UI outcomes (`resolved`/`ambiguous`/`unsupported`). The four *candidate-resolution* scenarios named in the issue — simple/wrapper/repeated-list/generated — are already covered at the unit level by Tasks 5 and 8; this spec proves the wiring between them and the real browser/UI, using one fixture element per UI outcome (a repeated-list fixture element would exercise identical wiring to "simple", so it isn't duplicated here).
+- Produces: real-browser regression tests proving the click → postMessage → resolve → UI round trip works end to end for all three UI outcomes (`resolved`/`ambiguous`/`unsupported`). The four _candidate-resolution_ scenarios named in the issue — simple/wrapper/repeated-list/generated — are already covered at the unit level by Tasks 5 and 8; this spec proves the wiring between them and the real browser/UI, using one fixture element per UI outcome (a repeated-list fixture element would exercise identical wiring to "simple", so it isn't duplicated here).
 
 - [ ] **Step 1: Add an HTML-serving branch to the fixture dev server**
 
 Modify `packages/executors/src/fixtures/preview-dev-server.mjs`. Add a branch before the final default `text/plain` handler:
 
 ```js
-  if (req.url === '/dom-source-map-fixture') {
-    res.writeHead(200, { 'content-type': 'text/html' });
-    res.end(`<html><body>
+if (req.url === '/dom-source-map-fixture') {
+  res.writeHead(200, { 'content-type': 'text/html' });
+  res.end(`<html><body>
 <div id="simple"></div>
 <div id="wrapper"></div>
 <div id="generated"></div>
@@ -1712,8 +1753,8 @@ Modify `packages/executors/src/fixtures/preview-dev-server.mjs`. Add a branch be
   // 'generated' has no __reactFiber$* property at all — the unsupported/degrade path.
 </script>
 </body></html>`);
-    return;
-  }
+  return;
+}
 ```
 
 (Note the fiber is attached under a literal `__reactFiber$fixture` key — `findReactFiber` matches any key with the `__reactFiber$` prefix, not a specific suffix, exactly so this fixture doesn't need to fake React's real random suffix.)
@@ -1728,7 +1769,10 @@ async function seedDomSourceMapFixture(projectId: string): Promise<void> {
   const workspacePath = runtime.workspaces.workspacePath(projectId);
   const fixtureSource = await readFile(FIXTURE_SCRIPT, 'utf8');
   await writeFile(join(workspacePath, 'server.mjs'), fixtureSource);
-  await writeFile(join(workspacePath, 'package.json'), JSON.stringify({ scripts: { dev: 'node server.mjs' } }));
+  await writeFile(
+    join(workspacePath, 'package.json'),
+    JSON.stringify({ scripts: { dev: 'node server.mjs' } }),
+  );
 }
 
 async function startPreviewAndSelect(page: import('@playwright/test').Page, projectId: string) {
@@ -1797,6 +1841,7 @@ Expected: PASS
 - [ ] **Step 3: Capture evidence for the PR/issue**
 
 Save the full output of `npm run check` and the e2e run to a scratch file for pasting into the PR description (per `docs/DEFINITION_OF_DONE.md`'s "Delivery evidence" requirement). Also capture, per the roadmap's required test scenarios:
+
 - The `walkFiberCandidates`/`PreviewSelectionService` test output for the simple/wrapper/repeated-list/generated cases (Tasks 5, 8).
 - A screenshot or terminal capture of the e2e spec passing (Task 13).
 

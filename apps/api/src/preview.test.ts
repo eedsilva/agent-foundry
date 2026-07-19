@@ -339,20 +339,17 @@ describe('POST /projects/:projectId/preview/:sessionId/selection', () => {
     const ownerId = await createProject(baseUrl);
     const otherId = await createProject(baseUrl);
     const session = await createActiveSession(runtime, ownerId);
-    const response = await fetch(
-      `${baseUrl}/projects/${otherId}/preview/${session.id}/selection`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          previewUrl: `${baseUrl}/preview/${session.id}/`,
-          domPath: 'div[1]',
-          boundingBox: { x: 0, y: 0, width: 10, height: 10 },
-          computedStyle: {},
-          candidates: [],
-        }),
-      },
-    );
+    const response = await fetch(`${baseUrl}/projects/${otherId}/preview/${session.id}/selection`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        previewUrl: `${baseUrl}/preview/${session.id}/`,
+        domPath: 'div[1]',
+        boundingBox: { x: 0, y: 0, width: 10, height: 10 },
+        computedStyle: {},
+        candidates: [],
+      }),
+    });
     expect(response.status).toBe(404);
   });
 });
