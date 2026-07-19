@@ -17,6 +17,8 @@ import {
   DecideChangeRequestResponseSchema,
   DecideOperationRequestSchema,
   PathSegmentSchema,
+  PreviewSelectionRequestSchema,
+  PreviewSelectionResultSchema,
   RetryStepRequestSchema,
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
@@ -501,6 +503,20 @@ export async function buildApp(
       .parse(request.query);
     await requireProjectSession(runtime, projectId, sessionId);
     return runtime.previewService.logs(sessionId, cursor, limit);
+  });
+
+  app.post('/projects/:projectId/preview/:sessionId/selection', async (request, reply) => {
+    const { projectId, sessionId } = z
+      .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
+      .parse(request.params);
+    await requireProjectSession(runtime, projectId, sessionId);
+    const input = PreviewSelectionRequestSchema.parse(request.body);
+    const result = await runtime.previewSelectionService.resolve({
+      projectId,
+      sessionId,
+      request: input,
+    });
+    return reply.status(200).send(PreviewSelectionResultSchema.parse(result));
   });
 
   registerPreviewProxy(app, runtime);
