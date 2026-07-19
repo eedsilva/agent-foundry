@@ -128,7 +128,7 @@ smaller, correct diff.
   existing persisted runs.
 - `ProjectEventSchema.type` enum gains `'run.draft_discarded'` (additive).
 - New request/response schemas: `DiscardDraftRequestSchema` (`actor:
-  ActorRefSchema`, `reason: string().min(1).optional()`), `RetryProjectRequestSchema`
+ActorRefSchema`, `reason: string().min(1).optional()`), `RetryProjectRequestSchema`
   (`prompt: string().min(1).optional()`, `override:` same pin shape
   `CreateModelOverrideRequest` already uses, `.optional()`), `DraftDetailResponseSchema`
   (`draftBranch: string`, `diff: string`).
@@ -154,7 +154,7 @@ store in tests — already returned today, just needs to flow through.)
     `draftBranch` + `draftCommit`; calls
     `workspaces.discardDraft(projectId, runId, draftCommit)`; persists
     `ceiling.discardedAt/discardedBy(/reason kept only in the event, not
-    duplicated on the run)`; appends a `run.draft_discarded` `ProjectEvent`
+duplicated on the run)`; appends a `run.draft_discarded` `ProjectEvent`
     (the audit record — reuses the existing durable event log and its
     existing UI timeline rendering, no new table). Idempotent: a second
     discard call on an already-discarded draft is a no-op returning the same
@@ -168,7 +168,7 @@ store in tests — already returned today, just needs to flow through.)
     `input.override`, when present, is validated the same way
     `createModelOverride` already validates one (catalog lookup +
     `redactOverrideAudit`) and written via the existing `ModelOverrideRepository`
-    scoped to the **new** `runId` *before* the job is enqueued — this removes
+    scoped to the **new** `runId` _before_ the job is enqueued — this removes
     the race a caller would otherwise hit calling `createModelOverride` after
     the fact (the job could already be claimed). Neither branch ever
     references the old run's draft — retry cannot alter it by construction,

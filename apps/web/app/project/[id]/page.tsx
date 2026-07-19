@@ -955,7 +955,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 <span className="hint">{evidence.draftBranch}</span>
               </div>
               {draftError ? <p className="errorBox">{draftError}</p> : null}
-              <button type="button" className="secondaryButton" onClick={() => void loadDraftDiff()}>
+              <button
+                type="button"
+                className="secondaryButton"
+                onClick={() => void loadDraftDiff()}
+              >
                 {draftDiff === null ? 'Ver diff' : 'Recarregar diff'}
               </button>
               {draftDiff !== null ? <DiffView parts={unifiedDiffToSpans(draftDiff)} /> : null}

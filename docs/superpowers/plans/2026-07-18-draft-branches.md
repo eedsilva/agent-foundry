@@ -22,6 +22,7 @@
 ### Task 1: Contracts — persist `draftCommit`/discard audit fields, add request/response schemas
 
 **Files:**
+
 - Modify: `packages/contracts/src/run.ts:139-146` (`RunExecutionStateSchema.ceiling`)
 - Modify: `packages/contracts/src/project.ts:75-113` (`ProjectEventSchema.type` enum)
 - Modify: `packages/contracts/src/api.ts` (insert after line 218, the end of `CreateModelOverrideResponseSchema`)
@@ -29,6 +30,7 @@
 - Test: `packages/contracts/src/api.test.ts` (new `describe` block — check this file exists first with `ls packages/contracts/src/api.test.ts`; if it doesn't, add the block to `packages/contracts/src/run.test.ts` instead, next to the `WorkflowRunSchema` tests, to avoid creating a near-empty new file)
 
 **Interfaces:**
+
 - Produces: `RunExecutionState['ceiling']` now optionally carries `draftCommit: string`, `discardedAt: string` (ISO datetime), `discardedBy: ActorRef`.
 - Produces: `ProjectEvent['type']` includes `'run.draft_discarded'`.
 - Produces: `DraftDetailResponseSchema` (`{ draftBranch: string; diff: string }`), `DiscardDraftRequestSchema` (`{ actor: ActorRef; reason?: string }`), `DiscardDraftResponseSchema` (`{ run: WorkflowRun }`), `RetryProjectRequestSchema` (`{ prompt?: string; override?: Omit<CreateModelOverrideRequest, 'scope'> }`), all exported as both schema and inferred type — later tasks (3, 4, 5, 6) import these by name.
@@ -38,20 +40,20 @@
 Add to `packages/contracts/src/run.test.ts`, right after the existing assertions in the `'parses restart-safe execution and emergency ceiling evidence'` test (after the line `expect(run.execution?.ceiling?.draftBranch).toBe('draft/run-1');`):
 
 ```ts
-    const discarded = WorkflowRunSchema.parse({
-      ...run,
-      execution: {
-        ...run.execution,
-        ceiling: {
-          ...run.execution!.ceiling!,
-          draftCommit: 'sha-0001',
-          discardedAt: '2026-07-16T17:00:00.000Z',
-          discardedBy: { kind: 'user', id: 'ed' },
-        },
-      },
-    });
-    expect(discarded.execution?.ceiling?.draftCommit).toBe('sha-0001');
-    expect(discarded.execution?.ceiling?.discardedBy).toEqual({ kind: 'user', id: 'ed' });
+const discarded = WorkflowRunSchema.parse({
+  ...run,
+  execution: {
+    ...run.execution,
+    ceiling: {
+      ...run.execution!.ceiling!,
+      draftCommit: 'sha-0001',
+      discardedAt: '2026-07-16T17:00:00.000Z',
+      discardedBy: { kind: 'user', id: 'ed' },
+    },
+  },
+});
+expect(discarded.execution?.ceiling?.draftCommit).toBe('sha-0001');
+expect(discarded.execution?.ceiling?.discardedBy).toEqual({ kind: 'user', id: 'ed' });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -207,10 +209,12 @@ git commit -m "feat(contracts): add draft discard/retry fields and request schem
 ### Task 2: Orchestrator — persist `draftCommit` when a draft is preserved
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/workflow-orchestrator.ts:507-516`
 - Test: `packages/orchestrator/src/emergency-ceiling.test.ts` (extend the first test, `'preserves a draft, restores the verified head, and finalizes the run once'`, ~line 126)
 
 **Interfaces:**
+
 - Consumes: `WorkspaceManager.preserveDraft` (unchanged signature, already returns `{ draftBranch, draftCommit, created }` — `packages/domain/src/ports.ts:396`).
 - Produces: `run.execution.ceiling.draftCommit` is now populated whenever `run.execution.ceiling.draftBranch` is (same lifecycle) — Task 4's `discardDraft` relies on this value being present.
 
@@ -219,27 +223,27 @@ git commit -m "feat(contracts): add draft discard/retry fields and request schem
 In `packages/orchestrator/src/emergency-ceiling.test.ts`, in the first test (`'preserves a draft, restores the verified head, and finalizes the run once'`), change the existing assertion block:
 
 ```ts
-    expect(run).toMatchObject({
-      status: 'failed',
-      error: { name: 'EmergencyCeilingError', code: 'EMERGENCY_CEILING' },
-      execution: {
-        lastVerifiedCheckpoint: 'initial-head',
-        ceiling: { draftBranch: 'draft/run-1' },
-      },
-    });
+expect(run).toMatchObject({
+  status: 'failed',
+  error: { name: 'EmergencyCeilingError', code: 'EMERGENCY_CEILING' },
+  execution: {
+    lastVerifiedCheckpoint: 'initial-head',
+    ceiling: { draftBranch: 'draft/run-1' },
+  },
+});
 ```
 
 to:
 
 ```ts
-    expect(run).toMatchObject({
-      status: 'failed',
-      error: { name: 'EmergencyCeilingError', code: 'EMERGENCY_CEILING' },
-      execution: {
-        lastVerifiedCheckpoint: 'initial-head',
-        ceiling: { draftBranch: 'draft/run-1', draftCommit: expect.any(String) },
-      },
-    });
+expect(run).toMatchObject({
+  status: 'failed',
+  error: { name: 'EmergencyCeilingError', code: 'EMERGENCY_CEILING' },
+  execution: {
+    lastVerifiedCheckpoint: 'initial-head',
+    ceiling: { draftBranch: 'draft/run-1', draftCommit: expect.any(String) },
+  },
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -325,10 +329,12 @@ git commit -m "feat(orchestrator): persist the draft branch's commit sha on the 
 ### Task 3: Orchestrator — `ProjectService.getDraft` (diff inspection) + the "ceiling by time" acceptance test
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/project-service.ts` (add method; add `getDraft` near `getRunDetail`, ~line 364-376)
 - Test: `packages/orchestrator/src/emergency-ceiling.test.ts` (new test)
 
 **Interfaces:**
+
 - Consumes: `WorkspaceManager.diff(projectId, fromRef, toRef): Promise<string>` (existing, `packages/domain/src/ports.ts:405`); `run.execution.lastVerifiedCheckpoint`/`run.execution.ceiling.draftBranch` (existing fields).
 - Produces: `ProjectService.getDraft(runId: string): Promise<{ draftBranch: string; diff: string }>` — Task 6 (API route) calls this directly.
 
@@ -394,12 +400,12 @@ Expected: PASS
 Add:
 
 ```ts
-  it('rejects inspecting a draft for a run that never reached a ceiling', async () => {
-    const harness = makeHarness({ work: 'instant' }, undefined, { workflow: ONE_AGENT });
-    await seedRun(harness);
-    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-    await expect(harness.service.getDraft('run-1')).rejects.toThrow('has no preserved draft');
-  });
+it('rejects inspecting a draft for a run that never reached a ceiling', async () => {
+  const harness = makeHarness({ work: 'instant' }, undefined, { workflow: ONE_AGENT });
+  await seedRun(harness);
+  await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+  await expect(harness.service.getDraft('run-1')).rejects.toThrow('has no preserved draft');
+});
 ```
 
 Run: `npx vitest run packages/orchestrator/src/emergency-ceiling.test.ts -t "rejects inspecting"`
@@ -417,10 +423,12 @@ git commit -m "feat(orchestrator): add ProjectService.getDraft for draft-diff in
 ### Task 4: Orchestrator — `ProjectService.discardDraft` + the "ceiling by repair count" and "discard with confirmation" acceptance tests
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/project-service.ts` (add method after `getDraft`)
 - Test: `packages/orchestrator/src/emergency-ceiling.test.ts`
 
 **Interfaces:**
+
 - Consumes: `WorkspaceManager.discardDraft(projectId, runId, expectedCommit)` (existing); `ActorRef` (from `@agent-foundry/contracts`).
 - Produces: `ProjectService.discardDraft(runId: string, input: { actor: ActorRef; reason?: string }): Promise<WorkflowRun>` — idempotent (a second call on an already-discarded draft returns the run unchanged and appends no duplicate event), matching the `cancelRun`/`pauseRun` idempotency convention already in this file.
 
@@ -429,32 +437,32 @@ git commit -m "feat(orchestrator): add ProjectService.getDraft for draft-diff in
 Add to the `describe('draft inspection, retry, and discard', ...)` block:
 
 ```ts
-  it('demonstrates the ceiling reached by consecutive repairs, then discards the draft only with an actor, recording an audit event', async () => {
-    const harness = makeHarness({}, undefined, { workflow: QUALITY_LOOP });
-    await seedRun(harness);
+it('demonstrates the ceiling reached by consecutive repairs, then discards the draft only with an actor, recording an audit event', async () => {
+  const harness = makeHarness({}, undefined, { workflow: QUALITY_LOOP });
+  await seedRun(harness);
 
-    await expect(
-      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
-    ).rejects.toMatchObject({ name: 'EmergencyCeilingError', reason: 'consecutive-repairs' });
+  await expect(
+    harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+  ).rejects.toMatchObject({ name: 'EmergencyCeilingError', reason: 'consecutive-repairs' });
 
-    const run = await harness.runs.get('run-1');
-    expect(run?.execution?.ceiling?.reason).toBe('consecutive-repairs');
-    const draftBranch = run!.execution!.ceiling!.draftBranch!;
-    expect(harness.workspaces.drafts).toContain(draftBranch);
+  const run = await harness.runs.get('run-1');
+  expect(run?.execution?.ceiling?.reason).toBe('consecutive-repairs');
+  const draftBranch = run!.execution!.ceiling!.draftBranch!;
+  expect(harness.workspaces.drafts).toContain(draftBranch);
 
-    const discarded = await harness.service.discardDraft('run-1', {
-      actor: { kind: 'user', id: 'ed' },
-      reason: 'bad attempt, starting over',
-    });
-    expect(discarded.execution?.ceiling?.discardedBy).toEqual({ kind: 'user', id: 'ed' });
-    expect(harness.workspaces.drafts).not.toContain(draftBranch);
-    const auditEvents = harness.events.types().filter((type) => type === 'run.draft_discarded');
-    expect(auditEvents).toHaveLength(1);
-
-    // Idempotent: discarding again is a no-op, not a duplicate audit entry.
-    await harness.service.discardDraft('run-1', { actor: { kind: 'user', id: 'ed' } });
-    expect(harness.events.types().filter((type) => type === 'run.draft_discarded')).toHaveLength(1);
+  const discarded = await harness.service.discardDraft('run-1', {
+    actor: { kind: 'user', id: 'ed' },
+    reason: 'bad attempt, starting over',
   });
+  expect(discarded.execution?.ceiling?.discardedBy).toEqual({ kind: 'user', id: 'ed' });
+  expect(harness.workspaces.drafts).not.toContain(draftBranch);
+  const auditEvents = harness.events.types().filter((type) => type === 'run.draft_discarded');
+  expect(auditEvents).toHaveLength(1);
+
+  // Idempotent: discarding again is a no-op, not a duplicate audit entry.
+  await harness.service.discardDraft('run-1', { actor: { kind: 'user', id: 'ed' } });
+  expect(harness.events.types().filter((type) => type === 'run.draft_discarded')).toHaveLength(1);
+});
 ```
 
 This reuses the exact same drive sequence as the existing, already-passing `'ceilings on the tenth consecutive completed repair'` test a few dozen lines above in this same file (`makeHarness({}, undefined, { workflow: QUALITY_LOOP })` naturally loops the default quality-loop fixture through 10 repairs and ceilings, with no custom `agentOutput`/approval wiring needed) — `harness.workspaces`/`harness.events`/`harness.runs` are the same `Stores` fields spread onto the harness object (see `makeHarness`'s `return { ...stores, ... }`), so they're available directly without threading a separate `stores` variable through.
@@ -538,11 +546,13 @@ git commit -m "feat(orchestrator): add ProjectService.discardDraft with an audit
 ### Task 5: Orchestrator — extend `ProjectService.retry` with an optional prompt/model override + the "retry from a draft" acceptance test
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/project-service.ts:235-273` (`retry` method)
 - Test: `packages/orchestrator/src/emergency-ceiling.test.ts`
 - Test-support: `packages/orchestrator/src/testing/harness.ts` (`FakeWorkspaces.writePrd`, currently a no-op — needs to record what it was called with so the test can assert on it)
 
 **Interfaces:**
+
 - Consumes: `ModelOverrideRepository.create` (existing); `WorkspaceManager.writePrd` (existing); `this.resolveCatalogModel`/`redactOverrideAudit` (existing private helpers already in this file, reused as-is).
 - Produces: `ProjectService.retry(projectId: string, input?: { prompt?: string; override?: { modelId, provider, model, actor, reason, estimatedImpact } }): Promise<Project>` — backward compatible (`input` optional; omitting it reproduces today's exact behavior).
 
@@ -573,43 +583,43 @@ This is test-support infrastructure, not itself a TDD step with its own red/gree
 Add to the `describe('draft inspection, retry, and discard', ...)` block:
 
 ```ts
-  it('retries from a draft with a new prompt and model override, leaving the draft branch untouched', async () => {
-    const clock = new TestClock();
-    const stores = makeStores(clock);
-    const harness = makeHarness({ work: 'gated' }, stores, { workflow: ONE_AGENT });
-    await seedRun(harness);
-    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
-    await waitUntil(() => harness.executor.started('work') === 1);
-    stores.workspaces.touch();
-    clock.advance(14_400_000);
-    harness.executor.release('work');
-    await expect(running).rejects.toBeInstanceOf(EmergencyCeilingError);
+it('retries from a draft with a new prompt and model override, leaving the draft branch untouched', async () => {
+  const clock = new TestClock();
+  const stores = makeStores(clock);
+  const harness = makeHarness({ work: 'gated' }, stores, { workflow: ONE_AGENT });
+  await seedRun(harness);
+  const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+  await waitUntil(() => harness.executor.started('work') === 1);
+  stores.workspaces.touch();
+  clock.advance(14_400_000);
+  harness.executor.release('work');
+  await expect(running).rejects.toBeInstanceOf(EmergencyCeilingError);
 
-    const draftBranchBefore = [...stores.workspaces.drafts];
-    const draftCommitBefore = new Map(stores.workspaces.draftCommits);
+  const draftBranchBefore = [...stores.workspaces.drafts];
+  const draftCommitBefore = new Map(stores.workspaces.draftCommits);
 
-    const project = await harness.service.retry('project-1', {
-      prompt: 'Try a smaller, incremental migration this time.',
-      override: {
-        modelId: 'model-1',
-        provider: 'codex',
-        model: 'test-model',
-        actor: { kind: 'user', id: 'ed' },
-        reason: 'known-good model for this task',
-        estimatedImpact: 'higher success odds',
-      },
-    });
-
-    expect(project.currentRunId).not.toBe('run-1');
-    expect(stores.workspaces.lastPrd).toBe('Try a smaller, incremental migration this time.');
-    const overrides = await stores.modelOverrides.list(project.currentRunId!);
-    expect(overrides).toHaveLength(1);
-    expect(overrides[0]?.scope).toEqual({ kind: 'run' });
-
-    // The original draft is untouched: same branches, same commits.
-    expect(stores.workspaces.drafts).toEqual(draftBranchBefore);
-    expect(stores.workspaces.draftCommits).toEqual(draftCommitBefore);
+  const project = await harness.service.retry('project-1', {
+    prompt: 'Try a smaller, incremental migration this time.',
+    override: {
+      modelId: 'model-1',
+      provider: 'codex',
+      model: 'test-model',
+      actor: { kind: 'user', id: 'ed' },
+      reason: 'known-good model for this task',
+      estimatedImpact: 'higher success odds',
+    },
   });
+
+  expect(project.currentRunId).not.toBe('run-1');
+  expect(stores.workspaces.lastPrd).toBe('Try a smaller, incremental migration this time.');
+  const overrides = await stores.modelOverrides.list(project.currentRunId!);
+  expect(overrides).toHaveLength(1);
+  expect(overrides[0]?.scope).toEqual({ kind: 'run' });
+
+  // The original draft is untouched: same branches, same commits.
+  expect(stores.workspaces.drafts).toEqual(draftBranchBefore);
+  expect(stores.workspaces.draftCommits).toEqual(draftCommitBefore);
+});
 ```
 
 Before finalizing, check `InMemoryModelOverrides`' exact method name for "list overrides for a run" in `packages/orchestrator/src/testing/harness.ts` (search `class InMemoryModelOverrides`) and use its real method name/signature — the sketch above assumes `.list(runId)`; confirm and adjust if the real fake uses a different name.
@@ -769,10 +779,12 @@ git commit -m "feat(orchestrator): retry can carry a new prompt or model overrid
 ### Task 6: API — routes for draft inspection, discard, and retry-with-input
 
 **Files:**
+
 - Modify: `apps/api/src/app.ts` (imports; three route handlers)
 - Test: `apps/api/src/draft.test.ts` (new file, matching the fake-runtime pattern in `apps/api/src/project-versions.test.ts`)
 
 **Interfaces:**
+
 - Consumes: `runtime.projectService.getDraft`, `runtime.projectService.discardDraft`, `runtime.projectService.retry` (Tasks 3-5); `DiscardDraftRequestSchema`, `RetryProjectRequestSchema` (Task 1).
 - Produces: `GET /runs/:runId/draft`, `POST /runs/:runId/draft/discard`, `POST /projects/:projectId/retry` (body now optional `RetryProjectRequestSchema`) — Task 7's web client calls these three routes by these exact paths/methods.
 
@@ -935,38 +947,38 @@ Expected: FAIL — routes don't exist yet (404s where 200/202/400 expected).
 In `apps/api/src/app.ts`, add `DiscardDraftRequestSchema, RetryProjectRequestSchema` to the existing `import { ... } from '@agent-foundry/contracts'` block. Then add, right after the existing `app.get('/runs/:runId/audit', ...)` block (~line 442-445):
 
 ```ts
-  app.get('/runs/:runId/draft', async (request) => {
-    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
-    return runtime.projectService.getDraft(runId);
-  });
+app.get('/runs/:runId/draft', async (request) => {
+  const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+  return runtime.projectService.getDraft(runId);
+});
 
-  app.post('/runs/:runId/draft/discard', async (request, reply) => {
-    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
-    const input = DiscardDraftRequestSchema.parse(request.body);
-    const run = await runtime.projectService.discardDraft(runId, input);
-    return reply.status(200).send({ run });
-  });
+app.post('/runs/:runId/draft/discard', async (request, reply) => {
+  const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+  const input = DiscardDraftRequestSchema.parse(request.body);
+  const run = await runtime.projectService.discardDraft(runId, input);
+  return reply.status(200).send({ run });
+});
 ```
 
 Then change the existing retry route (~line 456-460):
 
 ```ts
-  app.post('/projects/:projectId/retry', async (request, reply) => {
-    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
-    const project = await runtime.projectService.retry(projectId);
-    return reply.status(202).send({ project });
-  });
+app.post('/projects/:projectId/retry', async (request, reply) => {
+  const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+  const project = await runtime.projectService.retry(projectId);
+  return reply.status(202).send({ project });
+});
 ```
 
 to:
 
 ```ts
-  app.post('/projects/:projectId/retry', async (request, reply) => {
-    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
-    const input = RetryProjectRequestSchema.parse(request.body ?? {});
-    const project = await runtime.projectService.retry(projectId, input);
-    return reply.status(202).send({ project });
-  });
+app.post('/projects/:projectId/retry', async (request, reply) => {
+  const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+  const input = RetryProjectRequestSchema.parse(request.body ?? {});
+  const project = await runtime.projectService.retry(projectId, input);
+  return reply.status(202).send({ project });
+});
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -991,10 +1003,12 @@ git commit -m "feat(api): add draft inspect/discard routes and extend retry with
 ### Task 7: Web — API client functions
 
 **Files:**
+
 - Modify: `apps/web/lib/api.ts`
 - Test: `apps/web/lib/api.test.ts`
 
 **Interfaces:**
+
 - Consumes: `GET /runs/:runId/draft`, `POST /runs/:runId/draft/discard`, `POST /projects/:projectId/retry` (Task 6).
 - Produces: `getDraft(runId: string): Promise<DraftDetailResponse>`, `discardDraft(runId: string, input: DiscardDraftRequest): Promise<WorkflowRun>`, `retryProject(id: string, input?: RetryProjectRequest): Promise<Project>` — Task 8's UI calls these by these exact names.
 
@@ -1127,10 +1141,12 @@ git commit -m "feat(web): add draft diff/discard API client functions"
 ### Task 8: Web — draft inspection/retry/discard panel on the project page
 
 **Files:**
+
 - Modify: `apps/web/lib/model-overrides.ts` (one new exported helper)
 - Modify: `apps/web/app/project/[id]/page.tsx`
 
 **Interfaces:**
+
 - Consumes: `getDraft`, `discardDraft`, `retryProject` (Task 7); existing `DiffView`/`unifiedDiffToSpans` (same file, ~line 125-146); existing `ModelPinFields` component (same file, ~line 75-113); existing `pinFields(FormData)` helper (search for its existing usage in the model-override-panel form — reuse it, don't redefine it) and `runtimeModels`.
 - Produces: `retryProjectOverride(models, fields): RetryProjectRequest['override']` in `apps/web/lib/model-overrides.ts` — a thin export reusing the same internal `pinRequest` validation `modelOverrideRequest`/`retryRequest` already use, just without the `scope` wrapper (`RetryProjectRequestSchema.override` has no `scope` field — retry always overrides the whole new run).
 
@@ -1147,7 +1163,14 @@ Add, right after the existing `retryRequest` function:
 export function retryProjectOverride(
   models: ModelDefinition[],
   fields: PinFields,
-): { modelId: string; provider: CreateModelOverrideRequest['provider']; model: string; actor: ActorRef; reason: string; estimatedImpact: string } {
+): {
+  modelId: string;
+  provider: CreateModelOverrideRequest['provider'];
+  model: string;
+  actor: ActorRef;
+  reason: string;
+  estimatedImpact: string;
+} {
   return pinRequest(models, fields);
 }
 ```
@@ -1159,9 +1182,9 @@ Since `pinRequest` is declared above this point in the same file and already ret
 Near the other `useState` declarations (e.g. next to `const [showDiff, setShowDiff] = useState(false);`), add:
 
 ```tsx
-  const [draftDiff, setDraftDiff] = useState<string | null>(null);
-  const [draftError, setDraftError] = useState('');
-  const [projectRetryWithPin, setProjectRetryWithPin] = useState(false);
+const [draftDiff, setDraftDiff] = useState<string | null>(null);
+const [draftError, setDraftError] = useState('');
+const [projectRetryWithPin, setProjectRetryWithPin] = useState(false);
 ```
 
 - [ ] **Step 2: Add the fetch/discard/retry handlers**
@@ -1169,46 +1192,46 @@ Near the other `useState` declarations (e.g. next to `const [showDiff, setShowDi
 Near the other handler functions (e.g. right after `async function retry() { ... }`), add:
 
 ```tsx
-  async function loadDraftDiff() {
-    if (!run) return;
-    try {
-      const { diff } = await getDraft(run.id);
-      setDraftDiff(diff);
-      setDraftError('');
-    } catch (cause) {
-      setDraftError(cause instanceof Error ? cause.message : String(cause));
-    }
+async function loadDraftDiff() {
+  if (!run) return;
+  try {
+    const { diff } = await getDraft(run.id);
+    setDraftDiff(diff);
+    setDraftError('');
+  } catch (cause) {
+    setDraftError(cause instanceof Error ? cause.message : String(cause));
   }
+}
 
-  async function discardCurrentDraft() {
-    if (!run) return;
-    const confirmed = window.confirm(
-      'Discard this draft? The preserved branch will be deleted; this cannot be undone.',
-    );
-    if (!confirmed) return;
-    try {
-      await discardDraft(run.id, { actor: { kind: 'user', id: 'web-ui' } });
-      setDraftDiff(null);
-      setDraftError('');
-      refresh();
-    } catch (cause) {
-      setDraftError(cause instanceof Error ? cause.message : String(cause));
-    }
+async function discardCurrentDraft() {
+  if (!run) return;
+  const confirmed = window.confirm(
+    'Discard this draft? The preserved branch will be deleted; this cannot be undone.',
+  );
+  if (!confirmed) return;
+  try {
+    await discardDraft(run.id, { actor: { kind: 'user', id: 'web-ui' } });
+    setDraftDiff(null);
+    setDraftError('');
+    refresh();
+  } catch (cause) {
+    setDraftError(cause instanceof Error ? cause.message : String(cause));
   }
+}
 
-  async function retryWithPrompt(prompt: string, override?: RetryProjectRequest['override']) {
-    try {
-      const input = {
-        ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
-        ...(override ? { override } : {}),
-      };
-      await retryProject(id, Object.keys(input).length ? input : undefined);
-      setResumeBlocked(null);
-      refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
+async function retryWithPrompt(prompt: string, override?: RetryProjectRequest['override']) {
+  try {
+    const input = {
+      ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+      ...(override ? { override } : {}),
+    };
+    await retryProject(id, Object.keys(input).length ? input : undefined);
+    setResumeBlocked(null);
+    refresh();
+  } catch (cause) {
+    setError(cause instanceof Error ? cause.message : String(cause));
   }
+}
 ```
 
 Add `RetryProjectRequest` to the existing `@agent-foundry/contracts` type import list.
@@ -1220,59 +1243,57 @@ Check the existing `refresh()`/`setResumeBlocked` functions' exact names in this
 Inside the existing `{run && evidence ? (...)}` block (the "Limite de emergência e modelo fixado" panel), immediately after the closing `</dl>` and before the existing `<form onSubmit={(event) => void submitOverride(event)}>`, add:
 
 ```tsx
-          {evidence.draftBranch && !run.execution?.ceiling?.discardedAt ? (
-            <div className="panel">
-              <div className="panelHeader">
-                <h2>Draft preservado</h2>
-                <span className="hint">{evidence.draftBranch}</span>
-              </div>
-              {draftError ? <p className="errorBox">{draftError}</p> : null}
-              <button type="button" className="secondaryButton" onClick={() => void loadDraftDiff()}>
-                {draftDiff === null ? 'Ver diff' : 'Recarregar diff'}
-              </button>
-              {draftDiff !== null ? <DiffView parts={unifiedDiffToSpans(draftDiff)} /> : null}
-              <button
-                type="button"
-                className="secondaryButton"
-                onClick={() => void discardCurrentDraft()}
-              >
-                Descartar draft
-              </button>
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const data = new FormData(event.currentTarget);
-                  const prompt = data.get('retryPrompt');
-                  try {
-                    const override = projectRetryWithPin
-                      ? retryProjectOverride(runtimeModels, pinFields(data))
-                      : undefined;
-                    void retryWithPrompt(typeof prompt === 'string' ? prompt : '', override);
-                    event.currentTarget.reset();
-                  } catch (cause) {
-                    setError(cause instanceof Error ? cause.message : String(cause));
-                  }
-                }}
-              >
-                <label>
-                  Novo prompt para a nova tentativa (opcional)
-                  <textarea name="retryPrompt" rows={3} />
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={projectRetryWithPin}
-                    onChange={(event) => setProjectRetryWithPin(event.target.checked)}
-                  />{' '}
-                  Fixar um modelo para esta tentativa
-                </label>
-                {projectRetryWithPin ? <ModelPinFields models={runnableModels} /> : null}
-                <button className="secondaryButton" type="submit">
-                  Tentar novamente a partir deste draft
-                </button>
-              </form>
-            </div>
-          ) : null}
+{
+  evidence.draftBranch && !run.execution?.ceiling?.discardedAt ? (
+    <div className="panel">
+      <div className="panelHeader">
+        <h2>Draft preservado</h2>
+        <span className="hint">{evidence.draftBranch}</span>
+      </div>
+      {draftError ? <p className="errorBox">{draftError}</p> : null}
+      <button type="button" className="secondaryButton" onClick={() => void loadDraftDiff()}>
+        {draftDiff === null ? 'Ver diff' : 'Recarregar diff'}
+      </button>
+      {draftDiff !== null ? <DiffView parts={unifiedDiffToSpans(draftDiff)} /> : null}
+      <button type="button" className="secondaryButton" onClick={() => void discardCurrentDraft()}>
+        Descartar draft
+      </button>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const data = new FormData(event.currentTarget);
+          const prompt = data.get('retryPrompt');
+          try {
+            const override = projectRetryWithPin
+              ? retryProjectOverride(runtimeModels, pinFields(data))
+              : undefined;
+            void retryWithPrompt(typeof prompt === 'string' ? prompt : '', override);
+            event.currentTarget.reset();
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+          }
+        }}
+      >
+        <label>
+          Novo prompt para a nova tentativa (opcional)
+          <textarea name="retryPrompt" rows={3} />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={projectRetryWithPin}
+            onChange={(event) => setProjectRetryWithPin(event.target.checked)}
+          />{' '}
+          Fixar um modelo para esta tentativa
+        </label>
+        {projectRetryWithPin ? <ModelPinFields models={runnableModels} /> : null}
+        <button className="secondaryButton" type="submit">
+          Tentar novamente a partir deste draft
+        </button>
+      </form>
+    </div>
+  ) : null;
+}
 ```
 
 Add `discardDraft, getDraft` to the existing `'../../../lib/api'` import list, `retryProjectOverride` to the existing `'../../../lib/model-overrides'` import list, and a new `const [projectRetryWithPin, setProjectRetryWithPin] = useState(false);` next to the Step 1 state declarations. `runnableModels` already exists in this file (it feeds the existing "Fixar modelo" panel's `ModelPinFields` a few lines below) — reuse it, don't recompute it.
