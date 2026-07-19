@@ -2280,18 +2280,34 @@ export class WorkflowOrchestrator {
     attemptId: string,
     event: ExecutorStreamEvent,
   ): void {
-    const input: AgentStreamEventInput = {
-      id: this.ids.next(),
-      runId,
-      stepRunId,
-      attemptId,
-      createdAt: this.clock.now().toISOString(),
-      ...event,
-    };
-    // ponytail: best-effort append — a dropped live stream event never fails
-    // the run itself; the final Message/Operation is still persisted normally.
-    this.stepEvents.append(input).catch(() => undefined);
+    persistStreamEvent(this.stepEvents, this.ids, this.clock, runId, stepRunId, attemptId, event);
   }
+}
+
+/**
+ * Shared by WorkflowOrchestrator and ConversationOperationRunner — both feed
+ * the same executor onEvent callback into a StepEventRepository the same way.
+ * Best-effort: a dropped live stream event never fails the run itself; the
+ * final Message/Operation is still persisted normally.
+ */
+export function persistStreamEvent(
+  stepEvents: StepEventRepository,
+  ids: IdGenerator,
+  clock: Clock,
+  runId: string,
+  stepRunId: string,
+  attemptId: string,
+  event: ExecutorStreamEvent,
+): void {
+  const input: AgentStreamEventInput = {
+    id: ids.next(),
+    runId,
+    stepRunId,
+    attemptId,
+    createdAt: clock.now().toISOString(),
+    ...event,
+  };
+  stepEvents.append(input).catch(() => undefined);
 }
 
 export function artifactReference(artifact: StoredArtifact) {

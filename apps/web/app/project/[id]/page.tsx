@@ -832,30 +832,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                             </p>
                           );
                         }
-                        if (streamEvent.type === 'approval') {
-                          const entry = approvals.find(
-                            (candidate) => candidate.request.id === streamEvent.approvalRequestId,
-                          );
-                          if (!entry || entry.decision) return null;
-                          const node = nodeForRequest(entry.request);
-                          if (!node) return null;
-                          return (
-                            <div
-                              key={streamEvent.id}
-                              style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}
-                            >
-                              {node.actions.map((action) => (
-                                <button
-                                  key={action}
-                                  className="secondaryButton"
-                                  onClick={() => void openDecide(entry.request, node, action)}
-                                >
-                                  {action}
-                                </button>
-                              ))}
-                            </div>
-                          );
-                        }
+                        // No 'approval' case: ConversationOperationRunner (the only
+                        // emitter feeding this stream) never emits it — only
+                        // WorkflowOrchestrator's approval-gate does, for the
+                        // unrelated project DAG run this panel doesn't subscribe to.
                         return null;
                       })}
                     <button

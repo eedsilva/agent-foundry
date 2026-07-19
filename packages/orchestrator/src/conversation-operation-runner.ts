@@ -1,7 +1,5 @@
 import type {
   AgentExecutionRequest,
-  AgentStreamEventInput,
-  ExecutorStreamEvent,
   Message,
   Operation,
   StepAttempt,
@@ -33,7 +31,7 @@ import {
 import { buildTaskProfile } from './task-profiler.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 import { CONVERSATION_WORKFLOW_ID, buildConversationStep } from './conversation-step-config.js';
-import { artifactReference, runError } from './workflow-orchestrator.js';
+import { artifactReference, persistStreamEvent, runError } from './workflow-orchestrator.js';
 
 export interface ConversationOperationRunnerOptions {
   agentTimeoutMs: number;
@@ -173,7 +171,15 @@ export class ConversationOperationRunner {
       const result = await this.executors
         .get(route.selected.model.provider)
         .execute(request, undefined, (event) =>
-          this.persistStreamEvent(runId, stepRun.id, attempt!.id, event),
+          persistStreamEvent(
+            this.stepEvents,
+            this.ids,
+            this.clock,
+            runId,
+            stepRun.id,
+            attempt!.id,
+            event,
+          ),
         );
 
       const commit = step.mutatesWorkspace
@@ -295,25 +301,6 @@ export class ConversationOperationRunner {
         // best-effort event; durable state (WorkflowRun/StepRun) is already recorded above
       }
     }
-  }
-
-  private persistStreamEvent(
-    runId: string,
-    stepRunId: string,
-    attemptId: string,
-    event: ExecutorStreamEvent,
-  ): void {
-    const input: AgentStreamEventInput = {
-      id: this.ids.next(),
-      runId,
-      stepRunId,
-      attemptId,
-      createdAt: this.clock.now().toISOString(),
-      ...event,
-    };
-    // ponytail: best-effort append, matching WorkflowOrchestrator.persistStreamEvent —
-    // a dropped live stream event never fails the operation itself.
-    this.stepEvents.append(input).catch(() => undefined);
   }
 
   private async requireRun(runId: string): Promise<WorkflowRun> {

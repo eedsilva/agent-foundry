@@ -1,4 +1,5 @@
 import type { ExecutorStreamEvent } from '@agent-foundry/contracts';
+import { tryParseJsonRecord } from './stream-line-parser.js';
 
 interface ClaudeContentBlock {
   type?: string;
@@ -22,7 +23,7 @@ export function createClaudeStreamMapper(): (line: string) => ExecutorStreamEven
   const toolNames = new Map<string, string>();
 
   return (line: string): ExecutorStreamEvent[] => {
-    const record = tryParseRecord(line);
+    const record = tryParseJsonRecord(line);
     if (!record) return [];
 
     if (record.type === 'system' && record.subtype === 'init') {
@@ -83,15 +84,4 @@ function toolSummary(name: string, input: unknown): string {
     if (typeof filePath === 'string') return `${name}: ${filePath}`;
   }
   return name;
-}
-
-function tryParseRecord(line: string): Record<string, unknown> | undefined {
-  try {
-    const parsed: unknown = JSON.parse(line);
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : undefined;
-  } catch {
-    return undefined;
-  }
 }
