@@ -15,6 +15,7 @@ import {
   type BrowserVerificationEvidence,
   type BrowserVerifier,
   type CapturedScreenshot,
+  type SelectionScreenshotCapturer,
 } from '@agent-foundry/domain';
 import {
   chromium,
@@ -104,7 +105,7 @@ function installTimerTracker(input: { key: string; maxDelayMs: number }): void {
 
 type Observation = BrowserVerificationReport['steps'][number]['observations'][number];
 type StepReport = BrowserVerificationReport['steps'][number];
-export class PlaywrightBrowserVerifier implements BrowserVerifier {
+export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScreenshotCapturer {
   async verify(
     input: Parameters<BrowserVerifier['verify']>[0],
     signal: AbortSignal,
@@ -621,6 +622,36 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       evidence: { screenshots },
       video,
     };
+  }
+
+  /** On-demand, single-shot screenshot against a live preview session — not
+   * the scheduled verify() flow. Launches its own short-lived browser/context,
+   * navigates once, and screenshots the given viewport-relative clip.
+   * ponytail: no route()/permitted() policy enforcement here — this only ever
+   * navigates to the caller-supplied, already-authorized preview session URL
+   * (validated by the caller against its own session record before this is
+   * invoked). Revisit if ever exposed to a caller-supplied arbitrary URL. */
+  async captureSelectionScreenshot(input: {
+    url: string;
+    clip: { x: number; y: number; width: number; height: number };
+    viewport: { width: number; height: number };
+  }): Promise<Buffer | null> {
+    let browser: Browser | undefined;
+    try {
+      browser = await chromium.launch({ headless: true });
+      const context = await browser.newContext({ viewport: input.viewport });
+      const page = await context.newPage();
+      await page.goto(input.url, { timeout: ACTION_TIMEOUT_MS });
+      return await page.screenshot({
+        type: 'png',
+        clip: input.clip,
+        timeout: SCREENSHOT_TIMEOUT_MS,
+      });
+    } catch {
+      return null; // best-effort: the UI degrades to "no screenshot" rather than failing selection
+    } finally {
+      await browser?.close().catch(() => undefined);
+    }
   }
 
   private async captureScreenshot(
