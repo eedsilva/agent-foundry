@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { EXECUTION_PROTOCOL_VERSION, type ExecutionRequest, type ExecutorStreamEvent } from '@agent-foundry/contracts';
+import {
+  EXECUTION_PROTOCOL_VERSION,
+  type ExecutionRequest,
+  type ExecutorStreamEvent,
+} from '@agent-foundry/contracts';
 import {
   EmergencyCeilingError,
   ExecutionError,

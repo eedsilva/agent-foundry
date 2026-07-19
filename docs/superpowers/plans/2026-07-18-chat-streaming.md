@@ -23,11 +23,13 @@
 ### Task 1: `AgentStreamEvent` contract
 
 **Files:**
+
 - Create: `packages/contracts/src/agent-stream.ts`
 - Create: `packages/contracts/src/agent-stream.test.ts`
 - Modify: `packages/contracts/src/index.ts` — add `export * from './agent-stream.js';`
 
 **Interfaces:**
+
 - Produces: `ExecutorStreamEvent` (payload-only union, no envelope — used by executor/domain-port callbacks), `AgentStreamEventSchema`/`AgentStreamEvent` (full envelope + payload, persisted/transmitted shape), `AgentStreamEventInput` (envelope minus `sequence`, the repository's `append()` argument type).
 
 - [ ] **Step 1: Write the failing test**
@@ -141,7 +143,11 @@ export const AgentStreamEventSchema = z.discriminatedUnion('type', [
     .strict(),
   z.object({ ...streamEnvelope, type: z.literal('status'), phase: z.string() }).strict(),
   z
-    .object({ ...streamEnvelope, type: z.literal('approval'), approvalRequestId: PathSegmentSchema })
+    .object({
+      ...streamEnvelope,
+      type: z.literal('approval'),
+      approvalRequestId: PathSegmentSchema,
+    })
     .strict(),
   z.object({ ...streamEnvelope, type: z.literal('error'), message: z.string() }).strict(),
 ]);
@@ -187,12 +193,14 @@ git commit -m "feat(contracts): add AgentStreamEvent schema for issue #39"
 ### Task 2: `StepEventRepository` domain port + file-backed implementation
 
 **Files:**
+
 - Modify: `packages/domain/src/ports.ts` — add `StepEventRepository` interface near `EventStore` (~line 155-158)
 - Create: `packages/persistence/src/step-event-repository.ts`
 - Create: `packages/persistence/src/step-event-repository.test.ts`
 - Modify: `packages/persistence/src/index.ts` — add `export * from './step-event-repository.js';`
 
 **Interfaces:**
+
 - Consumes: `AgentStreamEvent`, `AgentStreamEventSchema`, `AgentStreamEventInput` from `@agent-foundry/contracts` (Task 1); `redactString` from `@agent-foundry/domain`; `appendJsonLine`, `pathFor`, `readJsonLines`, `withDirectoryLock` from `./fs-utils.js` (all pre-existing, same as `event-store.ts`).
 - Produces: `StepEventRepository` interface — `append(event: AgentStreamEventInput): Promise<AgentStreamEvent>`, `list(runId: string, options?: { cursor?: number; limit?: number }): Promise<AgentStreamEvent[]>`. `FileStepEventRepository` class implementing it, exported from `@agent-foundry/persistence`.
 
@@ -429,11 +437,13 @@ git commit -m "feat(persistence): add StepEventRepository for issue #39"
 ### Task 3: Claude CLI stream-json mapper
 
 **Files:**
+
 - Create: `packages/executors/src/claude-stream-events.ts`
 - Create: `packages/executors/src/claude-stream-events.test.ts`
 - Modify: `packages/executors/src/index.ts` — add `export * from './claude-stream-events.js';`
 
 **Interfaces:**
+
 - Consumes: `ExecutorStreamEvent` from `@agent-foundry/contracts` (Task 1).
 - Produces: `createClaudeStreamMapper(): (line: string) => ExecutorStreamEvent[]` — a **stateful** factory (tracks `tool_use` id → name across lines so a later `tool_result` can report which tool finished); one instance per CLI invocation, never shared across runs.
 
@@ -489,7 +499,13 @@ describe('createClaudeStreamMapper', () => {
       }),
     );
     expect(endEvents).toEqual([
-      { type: 'tool_end', toolName: 'Read', summary: 'Read completed', ok: true, detail: 'file contents' },
+      {
+        type: 'tool_end',
+        toolName: 'Read',
+        summary: 'Read completed',
+        ok: true,
+        detail: 'file contents',
+      },
     ]);
   });
 
@@ -506,13 +522,24 @@ describe('createClaudeStreamMapper', () => {
         type: 'user',
         message: {
           content: [
-            { type: 'tool_result', tool_use_id: 'toolu_2', is_error: true, content: 'command failed' },
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_2',
+              is_error: true,
+              content: 'command failed',
+            },
           ],
         },
       }),
     );
     expect(endEvents).toEqual([
-      { type: 'tool_end', toolName: 'Bash', summary: 'Bash failed', ok: false, detail: 'command failed' },
+      {
+        type: 'tool_end',
+        toolName: 'Bash',
+        summary: 'Bash failed',
+        ok: false,
+        detail: 'command failed',
+      },
     ]);
   });
 
@@ -603,7 +630,9 @@ function mapContentBlock(
   }
   if (block.type === 'tool_use' && typeof block.name === 'string') {
     if (typeof block.id === 'string') toolNames.set(block.id, block.name);
-    return [{ type: 'tool_start', toolName: block.name, summary: toolSummary(block.name, block.input) }];
+    return [
+      { type: 'tool_start', toolName: block.name, summary: toolSummary(block.name, block.input) },
+    ];
   }
   if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
     const toolName = toolNames.get(block.tool_use_id) ?? 'tool';
@@ -668,11 +697,13 @@ git commit -m "feat(executors): map Claude stream-json lines to AgentStreamEvent
 ### Task 4: Codex CLI `--json` mapper
 
 **Files:**
+
 - Create: `packages/executors/src/codex-stream-events.ts`
 - Create: `packages/executors/src/codex-stream-events.test.ts`
 - Modify: `packages/executors/src/index.ts` — add `export * from './codex-stream-events.js';`
 
 **Interfaces:**
+
 - Consumes: `ExecutorStreamEvent` from `@agent-foundry/contracts`.
 - Produces: `createCodexStreamMapper(): (line: string) => ExecutorStreamEvent[]`. Codex's `exec --json` only reports `item.completed` (no separate start signal), so every non-`agent_message` item maps straight to a `tool_end` with no preceding `tool_start` — this is the CLI's real granularity, not a bug (see design doc's "not artificially split" non-goal).
 
@@ -831,6 +862,7 @@ git commit -m "feat(executors): map Codex --json lines to AgentStreamEvent"
 ### Task 5: Tap `BaseCliExecutor`'s subprocess stdout live
 
 **Files:**
+
 - Modify: `packages/executors/src/base-cli-executor.ts`
 - Modify: `packages/executors/src/base-cli-executor.test.ts` — add new tests
 - Modify: `packages/executors/src/claude-executor.ts` — override the new hook
@@ -838,6 +870,7 @@ git commit -m "feat(executors): map Codex --json lines to AgentStreamEvent"
 - Modify: `packages/domain/src/ports.ts` — extend `AgentExecutor.execute()` signature
 
 **Interfaces:**
+
 - Consumes: `ExecutorStreamEvent` (Task 1), `createClaudeStreamMapper` (Task 3), `createCodexStreamMapper` (Task 4).
 - Produces: `AgentExecutor.execute(request, signal?, onEvent?: (event: ExecutorStreamEvent) => void): Promise<AgentExecutionResult>` — the new optional third parameter every executor and its callers must now accept (older call sites that omit it are unaffected, since it's optional).
 
@@ -891,7 +924,8 @@ describe('BaseCliExecutor stream tap', () => {
       }
 
       protected override createStreamMapper() {
-        return (line: string) => (line.includes('hello') ? [{ type: 'status' as const, phase: 'hello' }] : []);
+        return (line: string) =>
+          line.includes('hello') ? [{ type: 'status' as const, phase: 'hello' }] : [];
       }
     }
 
@@ -1052,6 +1086,7 @@ import { createClaudeStreamMapper } from './claude-stream-events.js';
     return createClaudeStreamMapper();
   }
 ```
+
 (add this method inside `ClaudeCliExecutor`, after `invocation()`)
 
 In `packages/executors/src/codex-executor.ts`, add the import and override:
@@ -1065,6 +1100,7 @@ import { createCodexStreamMapper } from './codex-stream-events.js';
     return createCodexStreamMapper();
   }
 ```
+
 (add this method inside `CodexCliExecutor`, after `invocation()`)
 
 - [ ] **Step 6: Run test to verify it passes**
@@ -1089,11 +1125,13 @@ git commit -m "feat(executors): stream live AgentStreamEvents from CLI stdout"
 ### Task 6: Thread `onEvent` through `ExecutionPlane`
 
 **Files:**
+
 - Modify: `packages/domain/src/ports.ts` — extend `ExecutionPlane.submit()` signature
 - Modify: `packages/executors/src/local-execution-plane.ts`
 - Modify: `packages/executors/src/local-execution-plane.test.ts` — add a new test
 
 **Interfaces:**
+
 - Consumes: `ExecutorStreamEvent` (Task 1).
 - Produces: `ExecutionPlane.submit(request, signal?, onEvent?: (event: ExecutorStreamEvent) => void): Promise<ExecutionResult>`.
 
@@ -1137,7 +1175,18 @@ it('threads onEvent through to the executor', async () => {
       onEvent?: (event: { type: string }) => void,
     ) => {
       onEvent?.({ type: 'status', phase: 'started' });
-      return { runId: 'run-1', stepRunId: 'step-1', attemptId: 'attempt-1', provider: 'mock' as const, model: 'm', exitCode: 0, durationMs: 1, stdout: '', stderr: '', output: completedArtifact };
+      return {
+        runId: 'run-1',
+        stepRunId: 'step-1',
+        attemptId: 'attempt-1',
+        provider: 'mock' as const,
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1,
+        stdout: '',
+        stderr: '',
+        output: completedArtifact,
+      };
     },
     health: async () => ({ provider: 'mock', available: true, message: 'ok' }),
   };
@@ -1209,6 +1258,7 @@ git commit -m "feat(executors): thread onEvent through LocalExecutionPlane.submi
 ### Task 7: Wire `StepEventRepository` into `WorkflowOrchestrator`
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/workflow-orchestrator.ts`
 - Modify: `packages/orchestrator/src/workflow-orchestrator.test.ts`
 - Modify: `packages/orchestrator/src/cancellation.test.ts`
@@ -1216,6 +1266,7 @@ git commit -m "feat(executors): thread onEvent through LocalExecutionPlane.submi
 - Modify: `packages/composition/src/runtime.ts`
 
 **Interfaces:**
+
 - Consumes: `StepEventRepository` (Task 2), `ExecutorStreamEvent`/`AgentStreamEventInput` (Task 1).
 - Produces: `WorkflowOrchestrator`'s constructor gains a `stepEvents: StepEventRepository` parameter (inserted immediately after the existing `events: EventStore` parameter, in every construction site). Live `ExecutorStreamEvent`s from a running attempt and `approval` events at the approval-gate creation site are now persisted via `stepEvents.append(...)`.
 
@@ -1236,7 +1287,10 @@ class InMemoryStepEvents implements StepEventRepository {
     return parsed;
   }
 
-  async list(runId: string, options: { cursor?: number; limit?: number } = {}): Promise<AgentStreamEvent[]> {
+  async list(
+    runId: string,
+    options: { cursor?: number; limit?: number } = {},
+  ): Promise<AgentStreamEvent[]> {
     const cursor = options.cursor ?? 0;
     const matches = this.events.filter((event) => event.runId === runId && event.sequence > cursor);
     return options.limit === undefined ? matches : matches.slice(0, options.limit);
@@ -1263,6 +1317,7 @@ Then update the harness's own `new WorkflowOrchestrator(...)` call (around line 
     stores.stepEvents,
     workflows,
 ```
+
 (rest of the argument list unchanged)
 
 - [ ] **Step 2: Update the two direct-construction test files**
@@ -1300,38 +1355,38 @@ Add `StepEventRepository` to the existing `import type { ... } from '@agent-foun
 Find `executeCandidate` (contains the `await this.executionPlane.submit(...)` call, using `runId`, `stepRunId`, `attemptId` already in scope). Change the `submit` call from:
 
 ```typescript
-    const executionResult = await this.executionPlane.submit(
-      {
-        protocolVersion: EXECUTION_PROTOCOL_VERSION,
-        executionId: attemptId,
-        agent: { /* ...unchanged... */ },
-        workspace: { projectId: project.id, ref: workspaceRef },
-        tools: [],
-        limits: { timeoutMs: this.options.agentTimeoutMs },
-        networkPolicy: { mode: 'none', allowedHosts: [] },
-        secrets: [],
-      },
-      signal,
-    );
+const executionResult = await this.executionPlane.submit(
+  {
+    protocolVersion: EXECUTION_PROTOCOL_VERSION,
+    executionId: attemptId,
+    agent: {/* ...unchanged... */},
+    workspace: { projectId: project.id, ref: workspaceRef },
+    tools: [],
+    limits: { timeoutMs: this.options.agentTimeoutMs },
+    networkPolicy: { mode: 'none', allowedHosts: [] },
+    secrets: [],
+  },
+  signal,
+);
 ```
 
 to:
 
 ```typescript
-    const executionResult = await this.executionPlane.submit(
-      {
-        protocolVersion: EXECUTION_PROTOCOL_VERSION,
-        executionId: attemptId,
-        agent: { /* ...unchanged... */ },
-        workspace: { projectId: project.id, ref: workspaceRef },
-        tools: [],
-        limits: { timeoutMs: this.options.agentTimeoutMs },
-        networkPolicy: { mode: 'none', allowedHosts: [] },
-        secrets: [],
-      },
-      signal,
-      (event) => this.persistStreamEvent(runId, stepRunId, attemptId, event),
-    );
+const executionResult = await this.executionPlane.submit(
+  {
+    protocolVersion: EXECUTION_PROTOCOL_VERSION,
+    executionId: attemptId,
+    agent: {/* ...unchanged... */},
+    workspace: { projectId: project.id, ref: workspaceRef },
+    tools: [],
+    limits: { timeoutMs: this.options.agentTimeoutMs },
+    networkPolicy: { mode: 'none', allowedHosts: [] },
+    secrets: [],
+  },
+  signal,
+  (event) => this.persistStreamEvent(runId, stepRunId, attemptId, event),
+);
 ```
 
 Add a new private method near `emit()` (end of the class, before the closing brace):
@@ -1362,28 +1417,28 @@ Add a new private method near `emit()` (end of the class, before the closing bra
 Find the block that calls `await this.approvalRequests.create({ id: this.ids.next(), runId, stepRunId: stepRun.id, ... })` (inside the approval-gate node handling, right before `throw new ApprovalRequiredError(runId, node.id);`). Capture the generated id in a variable and append a matching stream event right after:
 
 ```typescript
-      const approvalRequestId = this.ids.next();
-      await this.approvalRequests.create({
-        id: approvalRequestId,
-        runId,
-        stepRunId: stepRun.id,
-        nodeId: node.id,
-        artifact: artifactReference(reviewed),
-        allowedActions: node.actions,
-        ...timeout,
-        createdAt: requestTimestamp.toISOString(),
-      });
-      await this.stepEvents
-        .append({
-          id: this.ids.next(),
-          runId,
-          stepRunId: stepRun.id,
-          createdAt: this.clock.now().toISOString(),
-          type: 'approval',
-          approvalRequestId,
-        })
-        .catch(() => undefined);
-      throw new ApprovalRequiredError(runId, node.id);
+const approvalRequestId = this.ids.next();
+await this.approvalRequests.create({
+  id: approvalRequestId,
+  runId,
+  stepRunId: stepRun.id,
+  nodeId: node.id,
+  artifact: artifactReference(reviewed),
+  allowedActions: node.actions,
+  ...timeout,
+  createdAt: requestTimestamp.toISOString(),
+});
+await this.stepEvents
+  .append({
+    id: this.ids.next(),
+    runId,
+    stepRunId: stepRun.id,
+    createdAt: this.clock.now().toISOString(),
+    type: 'approval',
+    approvalRequestId,
+  })
+  .catch(() => undefined);
+throw new ApprovalRequiredError(runId, node.id);
 ```
 
 (`attemptId` is correctly omitted here — an approval-gate `stepRun` has no execution attempt, matching the schema's optional `attemptId`.)
@@ -1395,7 +1450,7 @@ Add the import: in the existing `import { ... } from '@agent-foundry/persistence
 Add the instantiation right after `const events = new FileEventStore(config.dataDir);` (line 108):
 
 ```typescript
-  const stepEvents = new FileStepEventRepository(config.dataDir);
+const stepEvents = new FileStepEventRepository(config.dataDir);
 ```
 
 Add `stepEvents` to the `WorkflowOrchestrator` construction call, immediately after `events,`:
@@ -1439,10 +1494,12 @@ git commit -m "feat(orchestrator): persist live AgentStreamEvents and approval-g
 ### Task 8: `GET /runs/:runId/events/stream` API endpoint
 
 **Files:**
+
 - Modify: `apps/api/src/app.ts`
 - Modify: `apps/api/src/events-stream.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runtime.stepEvents.list(runId, { cursor, limit })` (Task 7).
 - Produces: `GET /runs/:runId/events/stream` — SSE endpoint, cursor via `?cursor=` or `Last-Event-ID` (numeric `sequence`, matching the existing `/projects/:projectId/conversation/stream` endpoint's cursor convention, not the string-id convention of `/projects/:projectId/events/stream`, since `AgentStreamEvent.sequence` is a number).
 
@@ -1498,26 +1555,26 @@ Expected: FAIL — 404, route does not exist yet
 In `apps/api/src/app.ts`, immediately after the existing `app.get('/projects/:projectId/events/stream', ...)` handler (ends around line 348), add:
 
 ```typescript
-  app.get('/runs/:runId/events/stream', async (request, reply) => {
-    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
-    const { cursor } = z
-      .object({ cursor: CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).optional() })
-      .parse(request.query);
-    const header = request.headers['last-event-id'];
-    const lastSequence =
-      cursor ??
-      (typeof header === 'string' && header
-        ? CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).parse(header)
-        : 0);
-    await streamSse(
-      request,
-      reply,
-      allowedOrigins,
-      lastSequence,
-      (after) => runtime.stepEvents.list(runId, { cursor: after ?? 0, limit: 500 }),
-      (event) => event.sequence,
-    );
-  });
+app.get('/runs/:runId/events/stream', async (request, reply) => {
+  const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+  const { cursor } = z
+    .object({ cursor: CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).optional() })
+    .parse(request.query);
+  const header = request.headers['last-event-id'];
+  const lastSequence =
+    cursor ??
+    (typeof header === 'string' && header
+      ? CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).parse(header)
+      : 0);
+  await streamSse(
+    request,
+    reply,
+    allowedOrigins,
+    lastSequence,
+    (after) => runtime.stepEvents.list(runId, { cursor: after ?? 0, limit: 500 }),
+    (event) => event.sequence,
+  );
+});
 ```
 
 (This mirrors the existing `/projects/:projectId/conversation/stream` handler exactly, which already uses `CanonicalDecimalSchema` — confirm that identifier is already imported/defined in this file, since the conversation-stream handler uses it; no new import needed if so.)
@@ -1544,9 +1601,11 @@ git commit -m "feat(api): add GET /runs/:runId/events/stream"
 ### Task 9: Required test — disconnect/reconnect mid-tool-call
 
 **Files:**
+
 - Modify: `apps/api/src/events-stream.test.ts`
 
 **Interfaces:**
+
 - Consumes: the endpoint from Task 8.
 
 This is the issue's explicitly required test ("Desconectar/reconectar durante tool call e fallback"), written as its own scenario distinct from Task 8's basic cursor test so it survives independently in the test report.
@@ -1627,11 +1686,13 @@ git commit -m "test(api): cover disconnect/reconnect mid-tool-call for issue #39
 ### Task 10: Web — `api.ts` additions and merge helper
 
 **Files:**
+
 - Modify: `apps/web/lib/api.ts`
 - Create: `apps/web/lib/agent-stream.ts`
 - Create: `apps/web/lib/agent-stream.test.ts`
 
 **Interfaces:**
+
 - Produces: `runEventsStreamUrl(runId: string): string`, `cancelRun(runId: string): Promise<Run>` (mirrors existing `pauseRun`) in `api.ts`; `mergeStreamEvents(current: AgentStreamEvent[], incoming: AgentStreamEvent[]): AgentStreamEvent[]` in `agent-stream.ts` (same contract as the existing `mergeEvents` in `events.ts`, keyed on `sequence` instead of `id`).
 
 - [ ] **Step 1: Write the failing test**
@@ -1750,9 +1811,11 @@ git commit -m "feat(web): add run-events stream client helpers"
 ### Task 11: Web — surface live run activity in the Conversa panel
 
 **Files:**
+
 - Modify: `apps/web/app/project/[id]/page.tsx`
 
 **Interfaces:**
+
 - Consumes: `runEventsStreamUrl`, `cancelRun` (Task 10), `mergeStreamEvents` (Task 10), `AgentStreamEvent` (Task 1).
 
 This task is JSX wiring only — this repo has no component-test harness (`apps/web` tests are all pure-function `lib/*.ts` unit tests; verify this task by running the dev server and driving it in a browser, per this project's UI-change convention, not by writing a new component-test framework).
@@ -1893,6 +1956,7 @@ In the same conversation-list block, after the live-activity block from Step 2, 
 Run: `npm run dev:inline` from the repo root (per this project's convention for exercising a real run end-to-end).
 
 Drive one full plan-or-build operation from the UI and confirm:
+
 - Live assistant text appears under the message while the run is active.
 - A tool call renders as a collapsed `<summary>` chip; clicking it expands `detail` when present.
 - The "Cancelar" button appears next to an active operation and calling it actually cancels the run (status flips to `cancelled`).

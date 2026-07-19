@@ -539,7 +539,10 @@ export class InMemoryStepEvents implements StepEventRepository {
     return parsed;
   }
 
-  async list(runId: string, options: { cursor?: number; limit?: number } = {}): Promise<AgentStreamEvent[]> {
+  async list(
+    runId: string,
+    options: { cursor?: number; limit?: number } = {},
+  ): Promise<AgentStreamEvent[]> {
     const cursor = options.cursor ?? 0;
     const matches = this.events.filter((event) => event.runId === runId && event.sequence > cursor);
     return options.limit === undefined ? matches : matches.slice(0, options.limit);

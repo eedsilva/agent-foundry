@@ -46,7 +46,13 @@ describe('createClaudeStreamMapper', () => {
       }),
     );
     expect(endEvents).toEqual([
-      { type: 'tool_end', toolName: 'Read', summary: 'Read completed', ok: true, detail: 'file contents' },
+      {
+        type: 'tool_end',
+        toolName: 'Read',
+        summary: 'Read completed',
+        ok: true,
+        detail: 'file contents',
+      },
     ]);
   });
 
@@ -63,13 +69,24 @@ describe('createClaudeStreamMapper', () => {
         type: 'user',
         message: {
           content: [
-            { type: 'tool_result', tool_use_id: 'toolu_2', is_error: true, content: 'command failed' },
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_2',
+              is_error: true,
+              content: 'command failed',
+            },
           ],
         },
       }),
     );
     expect(endEvents).toEqual([
-      { type: 'tool_end', toolName: 'Bash', summary: 'Bash failed', ok: false, detail: 'command failed' },
+      {
+        type: 'tool_end',
+        toolName: 'Bash',
+        summary: 'Bash failed',
+        ok: false,
+        detail: 'command failed',
+      },
     ]);
   });
 

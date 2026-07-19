@@ -55,7 +55,9 @@ function mapContentBlock(
   }
   if (block.type === 'tool_use' && typeof block.name === 'string') {
     if (typeof block.id === 'string') toolNames.set(block.id, block.name);
-    return [{ type: 'tool_start', toolName: block.name, summary: toolSummary(block.name, block.input) }];
+    return [
+      { type: 'tool_start', toolName: block.name, summary: toolSummary(block.name, block.input) },
+    ];
   }
   if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
     const toolName = toolNames.get(block.tool_use_id) ?? 'tool';

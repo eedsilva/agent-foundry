@@ -49,7 +49,11 @@ export const AgentStreamEventSchema = z.discriminatedUnion('type', [
     .strict(),
   z.object({ ...streamEnvelope, type: z.literal('status'), phase: z.string() }).strict(),
   z
-    .object({ ...streamEnvelope, type: z.literal('approval'), approvalRequestId: PathSegmentSchema })
+    .object({
+      ...streamEnvelope,
+      type: z.literal('approval'),
+      approvalRequestId: PathSegmentSchema,
+    })
     .strict(),
   z.object({ ...streamEnvelope, type: z.literal('error'), message: z.string() }).strict(),
 ]);

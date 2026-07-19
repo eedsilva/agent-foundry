@@ -6,7 +6,7 @@
 
 ## Context
 
-The technical timeline and the conversation must meet without dumping raw stdout to the user. Today `apps/web/app/project/[id]/page.tsx` renders three separate, independently-polled/SSE'd panels: a flat conversation list, a `ProjectEvent` timeline, and a run-steps/approvals panel. Two SSE endpoints already exist and are tested (`/projects/:projectId/events/stream`, `/projects/:projectId/conversation/messages/stream`), both cursor-based via `streamSse` in `apps/api/src/app.ts`. Executors (`packages/executors/src/base-cli-executor.ts`) invoke provider CLIs that already emit line-delimited JSON on stdout (Claude: `--output-format stream-json`; Codex: `--json`), but today that stdout is only read and parsed *after* the process exits — there is no incremental/live event today.
+The technical timeline and the conversation must meet without dumping raw stdout to the user. Today `apps/web/app/project/[id]/page.tsx` renders three separate, independently-polled/SSE'd panels: a flat conversation list, a `ProjectEvent` timeline, and a run-steps/approvals panel. Two SSE endpoints already exist and are tested (`/projects/:projectId/events/stream`, `/projects/:projectId/conversation/messages/stream`), both cursor-based via `streamSse` in `apps/api/src/app.ts`. Executors (`packages/executors/src/base-cli-executor.ts`) invoke provider CLIs that already emit line-delimited JSON on stdout (Claude: `--output-format stream-json`; Codex: `--json`), but today that stdout is only read and parsed _after_ the process exits — there is no incremental/live event today.
 
 ## Goals (acceptance criteria, from the issue)
 
@@ -56,30 +56,36 @@ const base = {
 };
 AgentStreamEventSchema = z.discriminatedUnion('type', [
   z.object({ ...base, type: z.literal('assistant_delta'), text: z.string() }).strict(),
-  z.object({ ...base, type: z.literal('tool_start'), toolName: z.string(), summary: z.string() }).strict(),
-  z.object({
-    ...base,
-    type: z.literal('tool_end'),
-    toolName: z.string(),
-    summary: z.string(),
-    ok: z.boolean(),
-    detail: z.string().max(4_000).optional(), // redacted raw excerpt shown behind "show details"
-  }).strict(),
+  z
+    .object({ ...base, type: z.literal('tool_start'), toolName: z.string(), summary: z.string() })
+    .strict(),
+  z
+    .object({
+      ...base,
+      type: z.literal('tool_end'),
+      toolName: z.string(),
+      summary: z.string(),
+      ok: z.boolean(),
+      detail: z.string().max(4_000).optional(), // redacted raw excerpt shown behind "show details"
+    })
+    .strict(),
   z.object({ ...base, type: z.literal('status'), phase: z.string() }).strict(),
   z.object({ ...base, type: z.literal('approval'), approvalRequestId: PathSegmentSchema }).strict(),
   z.object({ ...base, type: z.literal('error'), message: z.string() }).strict(),
 ]);
 ```
 
-Full raw stdout/stderr for a *successful* attempt is not persisted anywhere today (`StepAttempt` has no stdout/stderr field — only a failed attempt's `RunError` carries a truncated excerpt). Rather than adding storage for that, `tool_end` carries its own small `detail` field: a redacted, size-capped (4,000 char) excerpt of just that tool call's output, produced by the same provider mapper that classifies the line. This is the only "raw-ish" text in the whole event stream and it lives on the event itself, so "show details" is just expanding a field already in hand — no extra fetch, no new persisted blob elsewhere. `tool_start`/`tool_end` also carry a short human-readable `summary` (e.g. `"Editing src/app.ts"`) for the collapsed, default view.
+Full raw stdout/stderr for a _successful_ attempt is not persisted anywhere today (`StepAttempt` has no stdout/stderr field — only a failed attempt's `RunError` carries a truncated excerpt). Rather than adding storage for that, `tool_end` carries its own small `detail` field: a redacted, size-capped (4,000 char) excerpt of just that tool call's output, produced by the same provider mapper that classifies the line. This is the only "raw-ish" text in the whole event stream and it lives on the event itself, so "show details" is just expanding a field already in hand — no extra fetch, no new persisted blob elsewhere. `tool_start`/`tool_end` also carry a short human-readable `summary` (e.g. `"Editing src/app.ts"`) for the collapsed, default view.
 
 ## Executor changes
 
 `packages/domain/src/ports.ts`:
+
 ```ts
 AgentExecutor.execute(request, signal?, onEvent?: (event: AgentStreamEventInput) => void): Promise<AgentExecutionResult>
 ExecutionPlane.submit(request, signal?, onEvent?): Promise<ExecutionResult>
 ```
+
 (`AgentStreamEventInput` = the discriminated variant sans `id`/`sequence`, assigned by the repository on append — matches how `conversation-repository.ts` assigns `Message.sequence` today.)
 
 `BaseCliExecutor.executeInvocation()`: attach a newline-splitting reader to `subprocess.stdout` as data arrives (execa exposes a real readable stream even with `reject: false`). Each complete line is handed to a new per-provider mapper:
