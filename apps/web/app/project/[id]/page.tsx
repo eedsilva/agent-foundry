@@ -496,8 +496,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       'Discard this draft? The preserved branch will be deleted; this cannot be undone.',
     );
     if (!confirmed) return;
+    const actorId = decidedBy.trim() || window.prompt('Informe quem está descartando.', '')?.trim();
+    if (!actorId) return;
     try {
-      await discardDraft(run.id, { actor: { kind: 'user', id: 'web-ui' } });
+      await discardDraft(run.id, { actor: { kind: 'user', id: actorId } });
       setDraftDiff(null);
       setDraftError('');
       refresh();
@@ -512,7 +514,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
         ...(override ? { override } : {}),
       };
-      await retryProject(id, Object.keys(input).length ? input : undefined);
+      await retryProject(id, input);
       setResumeBlocked(null);
       refresh();
     } catch (cause) {
@@ -948,7 +950,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             ) : null}
           </dl>
 
-          {evidence.draftBranch && !run.execution?.ceiling?.discardedAt ? (
+          {evidence.draftBranch ? (
             <div className="panel">
               <div className="panelHeader">
                 <h2>Draft preservado</h2>

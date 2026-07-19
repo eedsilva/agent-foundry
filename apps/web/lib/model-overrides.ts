@@ -54,17 +54,12 @@ export function retryRequest(
   return fields ? { mode, override: pinRequest(models, fields) } : { mode };
 }
 
-/**
- * Same validated shape `modelOverrideRequest` builds, minus `scope` — a
- * project retry always overrides the whole new run, so there's no scope to
- * choose.
- */
-export function retryProjectOverride(
+/** Same validated shape `pinRequest` already builds — a project retry always
+ * overrides the whole new run, so there's no `scope` to attach. */
+export const retryProjectOverride: (
   models: ModelDefinition[],
   fields: PinFields,
-): NonNullable<RetryProjectRequest['override']> {
-  return pinRequest(models, fields);
-}
+) => NonNullable<RetryProjectRequest['override']> = pinRequest;
 
 export const retryMode = (value: unknown): RetryStepRequest['mode'] =>
   value === 'invalidate' ? 'invalidate' : 'preserve';
@@ -107,6 +102,7 @@ export function executionEvidence(run: WorkflowRun, now = Date.now()) {
         }
       : {}),
     ...(run.error?.code ? { errorCode: run.error.code } : {}),
-    ...(ceiling?.draftBranch ? { draftBranch: ceiling.draftBranch } : {}),
+    // Once discarded, the branch no longer exists — stop offering it for inspection/discard.
+    ...(ceiling?.draftBranch && !ceiling.discardedAt ? { draftBranch: ceiling.draftBranch } : {}),
   };
 }

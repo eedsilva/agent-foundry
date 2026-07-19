@@ -227,9 +227,6 @@ export const DiscardDraftRequestSchema = z
   .strict();
 export type DiscardDraftRequest = z.infer<typeof DiscardDraftRequestSchema>;
 
-export const DiscardDraftResponseSchema = z.object({ run: WorkflowRunSchema }).strict();
-export type DiscardDraftResponse = z.infer<typeof DiscardDraftResponseSchema>;
-
 export const RetryProjectRequestSchema = z
   .object({
     prompt: z.string().trim().min(1).optional(),

@@ -8,6 +8,7 @@ import type {
   CreateModelOverrideRequest,
   CreateProjectRequest,
   DiscardDraftRequest,
+  DraftDetailResponse,
   ModelOverrideRecord,
   ModelDefinition,
   Project,
@@ -254,23 +255,7 @@ export class ProjectService {
     // to the router by the time any worker could possibly claim the job —
     // no race window like there would be creating it after the fact.
     if (input?.override) {
-      if (!this.modelOverrides) throw new Error('Model override repository is not configured');
-      const match = await this.resolveCatalogModel(
-        input.override.modelId,
-        input.override.provider,
-        input.override.model,
-      );
-      const audit = redactOverrideAudit(input.override);
-      await this.modelOverrides.create({
-        id: this.ids.next(),
-        runId,
-        scope: { kind: 'run' },
-        modelId: match.id,
-        provider: match.provider,
-        model: match.model,
-        ...audit,
-        createdAt: now,
-      });
+      await this.createModelOverride(runId, { ...input.override, scope: { kind: 'run' } });
     }
     const updated: Project = {
       ...project,
@@ -401,7 +386,7 @@ export class ProjectService {
   }
 
   /** The diff between the last verified checkpoint and a ceiling-preserved draft, for UI inspection. */
-  async getDraft(runId: string): Promise<{ draftBranch: string; diff: string }> {
+  async getDraft(runId: string): Promise<DraftDetailResponse> {
     const run = await this.requireRun(runId);
     const ceiling = run.execution?.ceiling;
     const verifiedCheckpoint = run.execution?.lastVerifiedCheckpoint;
