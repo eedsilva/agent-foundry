@@ -40,7 +40,7 @@ export function walkFiberCandidates(fiber: FiberLike | null): SelectionCandidate
           fileName: source.fileName,
           line: source.lineNumber,
           column: source.columnNumber,
-          componentName,
+          ...(componentName !== undefined && { componentName }),
         });
       }
     }
