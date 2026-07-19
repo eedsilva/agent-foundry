@@ -106,12 +106,19 @@ This:
 1. Re-validates the shape with a new Zod schema (never trust the browser).
 2. For each candidate `fileName`, resolves it against the project's
    `workspacePath(projectId)` using a **new** containment guard —
-   `resolveWorkspaceRelativePath(workspaceRoot, candidatePath)` — added to
-   `packages/persistence/src/fs-utils.ts` alongside `safeSegment`, following
-   the same rejection family as `sandbox-runner.ts`'s `isAllowed` (resolve,
-   compare with `path.relative`, reject `..`/absolute escapes). Any
-   candidate that resolves outside the workspace is dropped and logged, never
-   returned to the client.
+   `resolveWorkspaceRelativePath(workspaceRoot, candidatePath)`. This lives in
+   `packages/domain/src/workspace-paths.ts`, **not** persistence: the repo's
+   architecture check (`scripts/lib/architecture.mjs`) only allows
+   `@agent-foundry/orchestrator` to depend on `@agent-foundry/contracts` and
+   `@agent-foundry/domain`, never on `@agent-foundry/persistence` or
+   `@agent-foundry/executors` directly — so this guard, and the on-demand
+   screenshot capability (item 3 below), are defined as domain interfaces and
+   wired to their concrete implementations only in `packages/composition`,
+   the same way `BrowserVerifier`/`WorkspaceManager` already work. Follows the
+   same rejection family as `sandbox-runner.ts`'s `isAllowed` (resolve,
+   compare with `path.relative`, reject `..`/absolute escapes). Any candidate
+   that resolves outside the workspace is dropped and logged, never returned
+   to the client.
 3. Classifies the result:
    - **`resolved`** — exactly one distinct in-workspace file among the
      (de-duplicated) candidates.
