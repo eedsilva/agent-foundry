@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
+  DiscardDraftRequest,
   PreviewLogPage,
   PreviewSession,
   ProjectVersion,
@@ -8,11 +9,14 @@ import type {
 import {
   branchFromVersion,
   compareVersions,
+  discardDraft,
   getActivePreviewSession,
   getArtifactBlobUrl,
+  getDraft,
   getPreviewLogs,
   listVersions,
   resumeRun,
+  retryProject,
   revertToVersion,
   setVersionProtected,
   startPreview,
@@ -280,6 +284,72 @@ describe('resumeRun', () => {
     const result = await resumeRun('run-1');
 
     expect(result).toEqual({ blocked });
+    fetchMock.mockRestore();
+  });
+});
+
+describe('draft API client', () => {
+  it('fetches a draft diff', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ draftBranch: 'draft/run-1', diff: '+x' }));
+
+    const result = await getDraft('run-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/runs/run-1/draft',
+      expect.anything(),
+    );
+    expect(result).toEqual({ draftBranch: 'draft/run-1', diff: '+x' });
+    fetchMock.mockRestore();
+  });
+
+  it('discards a draft with an actor', async () => {
+    const run = { id: 'run-1' } as unknown as WorkflowRun;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ run }));
+
+    const input: DiscardDraftRequest = { actor: { kind: 'user', id: 'ed' } };
+    const result = await discardDraft('run-1', input);
+
+    expect(fetchMock).toHaveBeenCalledWith('http://localhost:4000/runs/run-1/draft/discard', {
+      method: 'POST',
+      body: JSON.stringify(input),
+      headers: { 'content-type': 'application/json' },
+      cache: 'no-store',
+    });
+    expect(result).toEqual(run);
+    fetchMock.mockRestore();
+  });
+
+  it('retries a project with a prompt', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ project: { id: 'project-1' } }));
+
+    await retryProject('project-1', { prompt: 'try smaller' });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://localhost:4000/projects/project-1/retry', {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'try smaller' }),
+      headers: { 'content-type': 'application/json' },
+      cache: 'no-store',
+    });
+    fetchMock.mockRestore();
+  });
+
+  it('retries a project with no input (back-compatible)', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ project: { id: 'project-1' } }));
+
+    await retryProject('project-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/projects/project-1/retry',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1];
+    expect(init?.body).toBeUndefined();
     fetchMock.mockRestore();
   });
 });

@@ -141,7 +141,7 @@ describe('emergency ceiling accounting', () => {
       error: { name: 'EmergencyCeilingError', code: 'EMERGENCY_CEILING' },
       execution: {
         lastVerifiedCheckpoint: 'initial-head',
-        ceiling: { draftBranch: 'draft/run-1' },
+        ceiling: { draftBranch: 'draft/run-1', draftCommit: expect.any(String) },
       },
     });
     expect(stores.workspaces.drafts).toEqual(['draft/run-1']);
@@ -765,5 +765,100 @@ describe('emergency ceiling accounting', () => {
     await restarted.orchestrator.runProject('project-1', undefined, 'run-1');
 
     expect((await stores.runs.get('run-1'))?.execution?.activeElapsedMs).toBe(3_000);
+  });
+});
+
+describe('draft inspection, retry, and discard', () => {
+  it('demonstrates the ceiling reached by time and exposes the draft diff', async () => {
+    const clock = new TestClock();
+    const stores = makeStores(clock);
+    const harness = makeHarness({ work: 'gated' }, stores, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await waitUntil(() => harness.executor.started('work') === 1);
+    stores.workspaces.touch();
+    clock.advance(14_400_000);
+    harness.executor.release('work');
+
+    await expect(running).rejects.toBeInstanceOf(EmergencyCeilingError);
+    const run = await stores.runs.get('run-1');
+    expect(run?.execution?.ceiling?.reason).toBe('active-time');
+    expect(run?.execution?.ceiling?.draftBranch).toBe('draft/run-1');
+
+    const draft = await harness.service.getDraft('run-1');
+    expect(draft.draftBranch).toBe('draft/run-1');
+    expect(draft.diff).toBe('diff --fake initial-head..draft/run-1');
+  });
+
+  it('rejects inspecting a draft for a run that never reached a ceiling', async () => {
+    const harness = makeHarness({ work: 'instant' }, undefined, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await expect(harness.service.getDraft('run-1')).rejects.toThrow('has no preserved draft');
+  });
+
+  it('demonstrates the ceiling reached by consecutive repairs, then discards the draft only with an actor, recording an audit event', async () => {
+    const harness = makeHarness({}, undefined, { workflow: QUALITY_LOOP });
+    await seedRun(harness);
+
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toMatchObject({ name: 'EmergencyCeilingError', reason: 'consecutive-repairs' });
+
+    const run = await harness.runs.get('run-1');
+    expect(run?.execution?.ceiling?.reason).toBe('consecutive-repairs');
+    const draftBranch = run!.execution!.ceiling!.draftBranch!;
+    expect(harness.workspaces.drafts).toContain(draftBranch);
+
+    const discarded = await harness.service.discardDraft('run-1', {
+      actor: { kind: 'user', id: 'ed' },
+      reason: 'bad attempt, starting over',
+    });
+    expect(discarded.execution?.ceiling?.discardedBy).toEqual({ kind: 'user', id: 'ed' });
+    expect(harness.workspaces.drafts).not.toContain(draftBranch);
+    const auditEvents = harness.events.types().filter((type) => type === 'run.draft_discarded');
+    expect(auditEvents).toHaveLength(1);
+
+    // Idempotent: discarding again is a no-op, not a duplicate audit entry.
+    await harness.service.discardDraft('run-1', { actor: { kind: 'user', id: 'ed' } });
+    expect(harness.events.types().filter((type) => type === 'run.draft_discarded')).toHaveLength(1);
+  });
+
+  it('retries from a draft with a new prompt and model override, leaving the draft branch untouched', async () => {
+    const clock = new TestClock();
+    const stores = makeStores(clock);
+    const harness = makeHarness({ work: 'gated' }, stores, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await waitUntil(() => harness.executor.started('work') === 1);
+    stores.workspaces.touch();
+    clock.advance(14_400_000);
+    harness.executor.release('work');
+    await expect(running).rejects.toBeInstanceOf(EmergencyCeilingError);
+
+    const draftsBefore = [...stores.workspaces.drafts];
+    const draftCommitsBefore = new Map(stores.workspaces.draftCommits);
+
+    const project = await harness.service.retry('project-1', {
+      prompt: 'Try a smaller, incremental migration this time.',
+      override: {
+        modelId: 'model-1',
+        provider: 'codex',
+        model: 'test-model',
+        actor: { kind: 'user', id: 'ed' },
+        reason: 'known-good model for this task',
+        estimatedImpact: 'higher success odds',
+      },
+    });
+
+    expect(project.currentRunId).not.toBe('run-1');
+    expect(stores.workspaces.lastPrd).toBe('Try a smaller, incremental migration this time.');
+    const overrides = await stores.modelOverrides.list(project.currentRunId!);
+    expect(overrides).toHaveLength(1);
+    expect(overrides[0]?.scope).toEqual({ kind: 'run' });
+
+    // The original draft is untouched: same branches, same commits.
+    expect(stores.workspaces.drafts).toEqual(draftsBefore);
+    expect(stores.workspaces.draftCommits).toEqual(draftCommitsBefore);
   });
 });

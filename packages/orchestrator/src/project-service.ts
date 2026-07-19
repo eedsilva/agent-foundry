@@ -7,6 +7,8 @@ import type {
   ArtifactReference,
   CreateModelOverrideRequest,
   CreateProjectRequest,
+  DiscardDraftRequest,
+  DraftDetailResponse,
   ModelOverrideRecord,
   ModelDefinition,
   Project,
@@ -17,6 +19,7 @@ import type {
   Provider,
   QueueJob,
   RetryPlanResponse,
+  RetryProjectRequest,
   RetryStepRequest,
   RunDetailResponse,
   RunAuditExport,
@@ -232,9 +235,10 @@ export class ProjectService {
     return { metadata: artifact.metadata, stream };
   }
 
-  async retry(projectId: string): Promise<Project> {
+  async retry(projectId: string, input?: RetryProjectRequest): Promise<Project> {
     const project = await this.requireProject(projectId);
     if (project.status === 'running') return project;
+    if (input?.prompt) await this.workspaces.writePrd(projectId, input.prompt);
     const now = this.clock.now().toISOString();
     const runId = this.ids.next();
     const run: WorkflowRun = {
@@ -247,6 +251,12 @@ export class ProjectService {
       updatedAt: now,
     };
     await this.runs.create(run);
+    // Created before the job is enqueued so the override is already visible
+    // to the router by the time any worker could possibly claim the job —
+    // no race window like there would be creating it after the fact.
+    if (input?.override) {
+      await this.createModelOverride(runId, { ...input.override, scope: { kind: 'run' } });
+    }
     const updated: Project = {
       ...project,
       status: 'queued',
@@ -373,6 +383,59 @@ export class ProjectService {
         })),
       ),
     };
+  }
+
+  /** The diff between the last verified checkpoint and a ceiling-preserved draft, for UI inspection. */
+  async getDraft(runId: string): Promise<DraftDetailResponse> {
+    const run = await this.requireRun(runId);
+    const ceiling = run.execution?.ceiling;
+    const verifiedCheckpoint = run.execution?.lastVerifiedCheckpoint;
+    if (!ceiling?.draftBranch || !verifiedCheckpoint) {
+      throw new NotFoundError(`Run ${runId} has no preserved draft`);
+    }
+    const diff = await this.workspaces.diff(run.projectId, verifiedCheckpoint, ceiling.draftBranch);
+    return { draftBranch: ceiling.draftBranch, diff };
+  }
+
+  /**
+   * Deletes a preserved draft's git branch and records who did it and when,
+   * as a `run.draft_discarded` ProjectEvent — the durable audit trail this
+   * codebase already uses for approval decisions and ceiling events.
+   * Idempotent: discarding an already-discarded draft is a no-op.
+   */
+  async discardDraft(runId: string, input: DiscardDraftRequest): Promise<WorkflowRun> {
+    const run = await this.requireRun(runId);
+    const ceiling = run.execution?.ceiling;
+    if (!ceiling?.draftBranch || !ceiling.draftCommit) {
+      throw new NotFoundError(`Run ${runId} has no preserved draft`);
+    }
+    if (ceiling.discardedAt) return run;
+
+    await this.workspaces.discardDraft(run.projectId, runId, ceiling.draftCommit);
+    const now = this.clock.now().toISOString();
+    const updated = await this.runs.update(
+      {
+        ...run,
+        execution: {
+          ...run.execution!,
+          ceiling: { ...ceiling, discardedAt: now, discardedBy: input.actor },
+        },
+        updatedAt: now,
+      },
+      run.version,
+    );
+    await this.appendEvent(
+      run.projectId,
+      'run.draft_discarded',
+      `Draft ${ceiling.draftBranch} discarded by ${input.actor.displayName ?? input.actor.id}.`,
+      runId,
+      {
+        draftBranch: ceiling.draftBranch,
+        discardedBy: input.actor,
+        ...(input.reason ? { reason: input.reason } : {}),
+      },
+    );
+    return updated;
   }
 
   /** What a retry of this step would touch, so the UI can show it up front. */

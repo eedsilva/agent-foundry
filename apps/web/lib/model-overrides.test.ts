@@ -168,4 +168,22 @@ describe('execution evidence', () => {
       draftBranch: 'draft/run-16',
     });
   });
+
+  it('omits the draft branch once it has been discarded', () => {
+    const run = {
+      execution: {
+        activeElapsedMs: 0,
+        consecutiveRepairs: 0,
+        ceiling: {
+          reason: 'active-time',
+          reachedAt: '2026-07-16T01:01:02.000Z',
+          draftBranch: 'draft/run-16',
+          discardedAt: '2026-07-16T02:00:00.000Z',
+          discardedBy: { kind: 'user', id: 'ed' },
+        },
+      },
+    } as WorkflowRun;
+
+    expect(executionEvidence(run).draftBranch).toBeUndefined();
+  });
 });

@@ -18,6 +18,11 @@ import {
   WorkflowRunSchema,
 } from './run.js';
 import { ModelOverrideRecordSchema, RouteDecisionSchema } from './model.js';
+import {
+  DiscardDraftRequestSchema,
+  DraftDetailResponseSchema,
+  RetryProjectRequestSchema,
+} from './api.js';
 import * as contracts from './index.js';
 
 const exported = contracts as Record<string, unknown>;
@@ -205,6 +210,21 @@ describe('persisted run contracts', () => {
 
     expect(run.execution?.ceiling?.draftBranch).toBe('draft/run-1');
     expect(run.execution?.countedRepairStepRunIds).toHaveLength(10);
+
+    const discarded = WorkflowRunSchema.parse({
+      ...run,
+      execution: {
+        ...run.execution,
+        ceiling: {
+          ...run.execution!.ceiling!,
+          draftCommit: 'sha-0001',
+          discardedAt: '2026-07-16T17:00:00.000Z',
+          discardedBy: { kind: 'user', id: 'ed' },
+        },
+      },
+    });
+    expect(discarded.execution?.ceiling?.draftCommit).toBe('sha-0001');
+    expect(discarded.execution?.ceiling?.discardedBy).toEqual({ kind: 'user', id: 'ed' });
     expect(() =>
       RunExecutionStateSchema.parse({
         activeElapsedMs: 0,
@@ -584,5 +604,40 @@ describe('ExecutionUsageSchema (usage report)', () => {
 
   it('rejects an invalid source quality', () => {
     expect(() => ExecutionUsageSchema.parse({ sourceQuality: 'guess' })).toThrow();
+  });
+});
+
+describe('draft inspection/discard/retry contracts', () => {
+  it('parses a draft detail response', () => {
+    const detail = DraftDetailResponseSchema.parse({
+      draftBranch: 'draft/run-1',
+      diff: '--- a/file\n+++ b/file\n',
+    });
+    expect(detail.draftBranch).toBe('draft/run-1');
+  });
+
+  it('requires an actor to discard a draft', () => {
+    expect(() => DiscardDraftRequestSchema.parse({})).toThrow();
+    const request = DiscardDraftRequestSchema.parse({
+      actor: { kind: 'user', id: 'ed' },
+      reason: 'no longer needed',
+    });
+    expect(request.actor.id).toBe('ed');
+  });
+
+  it('parses an optional prompt/override retry request', () => {
+    expect(RetryProjectRequestSchema.parse({})).toEqual({});
+    const request = RetryProjectRequestSchema.parse({
+      prompt: 'Try a smaller migration this time.',
+      override: {
+        modelId: 'model-1',
+        provider: 'claude',
+        model: 'opus',
+        actor: { kind: 'user', id: 'ed' },
+        reason: 'faster model',
+        estimatedImpact: 'lower latency',
+      },
+    });
+    expect(request.override?.modelId).toBe('model-1');
   });
 });
