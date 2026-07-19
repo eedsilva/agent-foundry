@@ -1,5 +1,4 @@
 import type {
-  AgentStreamEvent,
   ApprovalConflictResponse,
   ApprovalListResponse,
   ConversationPageResponse,
