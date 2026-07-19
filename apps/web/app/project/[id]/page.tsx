@@ -523,8 +523,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   async function discardChangeRequest() {
     if (!pendingChangeRequest) return;
-    await decideChangeRequest(id, pendingChangeRequest.id, { action: 'reject' });
-    setPendingChangeRequest(null);
+    try {
+      await decideChangeRequest(id, pendingChangeRequest.id, { action: 'reject' });
+      setPendingChangeRequest(null);
+      setConversationError('');
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   async function decide(operationId: string, action: 'approve' | 'reject') {
