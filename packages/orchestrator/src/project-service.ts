@@ -375,6 +375,18 @@ export class ProjectService {
     };
   }
 
+  /** The diff between the last verified checkpoint and a ceiling-preserved draft, for UI inspection. */
+  async getDraft(runId: string): Promise<{ draftBranch: string; diff: string }> {
+    const run = await this.requireRun(runId);
+    const ceiling = run.execution?.ceiling;
+    const verifiedCheckpoint = run.execution?.lastVerifiedCheckpoint;
+    if (!ceiling?.draftBranch || !verifiedCheckpoint) {
+      throw new NotFoundError(`Run ${runId} has no preserved draft`);
+    }
+    const diff = await this.workspaces.diff(run.projectId, verifiedCheckpoint, ceiling.draftBranch);
+    return { draftBranch: ceiling.draftBranch, diff };
+  }
+
   /** What a retry of this step would touch, so the UI can show it up front. */
   async retryPlan(runId: string, stepRunId: string): Promise<RetryPlanResponse> {
     const run = await this.requireRun(runId);

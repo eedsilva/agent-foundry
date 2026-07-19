@@ -767,3 +767,33 @@ describe('emergency ceiling accounting', () => {
     expect((await stores.runs.get('run-1'))?.execution?.activeElapsedMs).toBe(3_000);
   });
 });
+
+describe('draft inspection, retry, and discard', () => {
+  it('demonstrates the ceiling reached by time and exposes the draft diff', async () => {
+    const clock = new TestClock();
+    const stores = makeStores(clock);
+    const harness = makeHarness({ work: 'gated' }, stores, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await waitUntil(() => harness.executor.started('work') === 1);
+    stores.workspaces.touch();
+    clock.advance(14_400_000);
+    harness.executor.release('work');
+
+    await expect(running).rejects.toBeInstanceOf(EmergencyCeilingError);
+    const run = await stores.runs.get('run-1');
+    expect(run?.execution?.ceiling?.reason).toBe('active-time');
+    expect(run?.execution?.ceiling?.draftBranch).toBe('draft/run-1');
+
+    const draft = await harness.service.getDraft('run-1');
+    expect(draft.draftBranch).toBe('draft/run-1');
+    expect(draft.diff).toBe('diff --fake initial-head..draft/run-1');
+  });
+
+  it('rejects inspecting a draft for a run that never reached a ceiling', async () => {
+    const harness = makeHarness({ work: 'instant' }, undefined, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await expect(harness.service.getDraft('run-1')).rejects.toThrow('has no preserved draft');
+  });
+});
