@@ -5,6 +5,7 @@ import { diffLines } from 'diff';
 import {
   taskCategoryLevels,
   VerificationReportSchema,
+  type AgentStreamEvent,
   type ApprovalAction,
   type ApprovalGateStep,
   type ApprovalListResponse,
@@ -26,6 +27,7 @@ import {
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
+  cancelRun,
   compareVersions,
   decideApproval,
   decideOperation,
@@ -45,9 +47,11 @@ import {
   resumeRun,
   retryProject,
   retryStep,
+  runEventsStreamUrl,
   sendMessage,
   startOperation,
 } from '../../../lib/api';
+import { mergeStreamEvents } from '../../../lib/agent-stream';
 import { mergeEvents } from '../../../lib/events';
 import {
   agentStepTargets,
@@ -202,6 +206,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [refreshTick, setRefreshTick] = useState(0);
   const [events, setEvents] = useState<ProjectEvent[]>([]);
   const [live, setLive] = useState(false);
+  const [streamEvents, setStreamEvents] = useState<AgentStreamEvent[]>([]);
   const [approvals, setApprovals] = useState<ApprovalListResponse['approvals']>([]);
   const [workflowDef, setWorkflowDef] = useState<WorkflowDefinition | null>(null);
   const [runtimeModels, setRuntimeModels] = useState<ModelDefinition[]>([]);
@@ -363,6 +368,24 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   }, [routes]);
 
   const run = runDetail?.run;
+
+  useEffect(() => {
+    if (!run || run.status !== 'running') return;
+    const source = new EventSource(runEventsStreamUrl(run.id));
+    source.onmessage = (message) => {
+      try {
+        const event = JSON.parse(message.data) as AgentStreamEvent;
+        setStreamEvents((current) => mergeStreamEvents(current, [event]));
+      } catch {
+        // Malformed frame; drop it silently.
+      }
+    };
+    return () => source.close();
+    // `run` is intentionally tracked by id/status only: the page's polling
+    // effect recreates the whole `run` object every ~1.5s, and depending on
+    // it directly would tear down and reopen this EventSource on every tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.id, run?.status]);
 
   useEffect(() => {
     if (
@@ -527,6 +550,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         setResumeBlocked(result.blocked);
         return;
       }
+      refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function cancel(runId: string) {
+    try {
+      await cancelRun(runId);
       refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -721,6 +753,91 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       </>
                     ) : null}
                   </span>
+                ) : null}
+                {operation && operation.runId && run?.id === operation.runId ? (
+                  <div className="agentStreamActivity">
+                    {streamEvents
+                      .filter((streamEvent) => streamEvent.runId === operation.runId)
+                      .map((streamEvent) => {
+                        if (streamEvent.type === 'assistant_delta') {
+                          return <p key={streamEvent.id}>{streamEvent.text}</p>;
+                        }
+                        if (streamEvent.type === 'tool_start' || streamEvent.type === 'tool_end') {
+                          return (
+                            <details key={streamEvent.id}>
+                              <summary>{streamEvent.summary}</summary>
+                              {streamEvent.type === 'tool_end' && streamEvent.detail ? (
+                                <pre>{streamEvent.detail}</pre>
+                              ) : null}
+                            </details>
+                          );
+                        }
+                        if (streamEvent.type === 'status') {
+                          return <small key={streamEvent.id}>{streamEvent.phase}…</small>;
+                        }
+                        if (streamEvent.type === 'error') {
+                          return (
+                            <p key={streamEvent.id} className="errorBox">
+                              {streamEvent.message}
+                            </p>
+                          );
+                        }
+                        if (streamEvent.type === 'approval') {
+                          const entry = approvals.find(
+                            (candidate) => candidate.request.id === streamEvent.approvalRequestId,
+                          );
+                          if (!entry || entry.decision) return null;
+                          const node = nodeForRequest(entry.request);
+                          if (!node) return null;
+                          return (
+                            <div
+                              key={streamEvent.id}
+                              style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}
+                            >
+                              {node.actions.map((action) => (
+                                <button
+                                  key={action}
+                                  className="secondaryButton"
+                                  onClick={() => void openDecide(entry.request, node, action)}
+                                >
+                                  {action}
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        }
+                        return null;
+                      })}
+                    <button
+                      className="secondaryButton"
+                      onClick={() => void cancel(operation.runId!)}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                ) : null}
+                {operation &&
+                operation.approval &&
+                operation.approval.status !== 'pending' &&
+                operation.projectVersionId ? (
+                  <div className="operationLinks">
+                    <a href={`/project/${detail.project.id}/versions`}>Ver diff</a>
+                    {operation.artifactReferences.map((ref) => (
+                      <button
+                        key={`${ref.name}-${ref.revision}`}
+                        className="secondaryButton"
+                        onClick={() =>
+                          void getArtifact(detail.project.id, ref.name, ref.revision)
+                            .then(openArtifact)
+                            .catch((cause: unknown) =>
+                              setError(cause instanceof Error ? cause.message : String(cause)),
+                            )
+                        }
+                      >
+                        {ref.name}
+                      </button>
+                    ))}
+                  </div>
                 ) : null}
               </li>
             );
