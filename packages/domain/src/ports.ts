@@ -294,7 +294,11 @@ export interface ExecutionStatus {
  * call-and-await shape.
  */
 export interface ExecutionPlane {
-  submit(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult>;
+  submit(
+    request: ExecutionRequest,
+    signal?: AbortSignal,
+    onEvent?: (event: ExecutorStreamEvent) => void,
+  ): Promise<ExecutionResult>;
   cancel(executionId: string): Promise<void>;
   status(executionId: string): Promise<ExecutionStatus>;
 }
