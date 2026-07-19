@@ -1,0 +1,7 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "partial",
+  "usage": { "output_tokens": 42, "quota_units": 2 }
+}

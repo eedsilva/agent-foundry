@@ -1,23 +1,88 @@
 # Risk Register
 
-Review monthly while a track is active and at every release gate. `Owner` names the accountable role until maintainers are assigned.
+Living document of identified operational risks and mitigations for Agent Foundry.
 
-| ID    | Risk                                                            | Owner        | Probability | Impact   | Trigger                                               | Mitigation                                                                         | Contingency                                                       | Status | Review     |
-| ----- | --------------------------------------------------------------- | ------------ | ----------- | -------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------ | ---------- |
-| R-001 | Generated code executes with host permissions                   | Safety       | High        | Critical | Real verifier or preview starts on host               | Loopback fail-closed; trusted-local profile; Safe Runtime milestone                | Stop workers, revoke credentials, discard workspace, inspect host | Open   | 2026-08-11 |
-| R-002 | CLI or child process reads/exfiltrates credentials              | Safety       | Medium      | Critical | Access outside workspace or unexpected network call   | Dedicated account; no ambient secrets; future secret broker and egress policy      | Revoke/rotate secrets; preserve audit logs                        | Open   | 2026-08-11 |
-| R-003 | Prompt injection from PRD/repository changes agent behavior     | Core         | High        | High     | Model follows repository text as instruction          | Separate trusted harness from untrusted data; deterministic gates; least privilege | Reject run, quarantine input, add adversarial fixture             | Open   | 2026-08-11 |
-| R-004 | Sensitive project data is sent to a provider or artifact        | Safety       | Medium      | High     | Raw secret appears in prompt/log/artifact             | Redaction boundary, provider policy, scoped context selection                      | Delete artifact, rotate secret, notify affected owner             | Open   | 2026-08-11 |
-| R-005 | CLI flags/output change and break an adapter                    | Integrations | High        | Medium   | Canary or contract test fails after upgrade           | Version checks, adapter contract tests, pinned supported range                     | Disable provider and route elsewhere                              | Open   | 2026-08-11 |
-| R-006 | Quota/rate limits stall or multiply work                        | Research     | High        | Medium   | Fallback storms or repeated 429s                      | Budgets, retry policy, provider diversity, circuit breaker                         | Pause run and require operator decision                           | Open   | 2026-08-11 |
-| R-007 | Fallback duplicates a mutable change                            | Core         | Medium      | High     | Attempt fails after modifying workspace               | Git checkpoint, idempotency key, step attempts                                     | Roll back to verified checkpoint and replay once                  | Open   | 2026-08-11 |
-| R-008 | Git rollback is incomplete                                      | Core         | Medium      | High     | Dirty/untracked/symlink state survives rollback       | Worktree per run, clean-state assertion, destructive canaries                      | Destroy worktree and reconstruct from base revision               | Open   | 2026-08-11 |
-| R-009 | Secrets leak through logs or artifacts                          | Safety       | Medium      | Critical | Secret scanner or human review finds a token          | Output limits, redaction, retention, secret scanning                               | Revoke token, purge artifact, incident review                     | Open   | 2026-08-11 |
-| R-010 | Run consumes unbounded time, disk, CPU, or output               | Safety       | Medium      | High     | Limit threshold exceeded                              | Timeouts now; sandbox resource limits before preview                               | Kill process tree and quarantine run                              | Open   | 2026-08-11 |
-| R-011 | Model-router metrics reward shallow reviewer agreement          | Research     | Medium      | Medium   | High approval but poor human acceptance/regressions   | Human acceptance and deterministic outcomes as primary signals                     | Disable adaptive policy and return to fixed routing               | Open   | 2026-08-11 |
-| R-012 | Personal subscription auth is unsuitable for hosted concurrency | Hosted       | High        | High     | More than one user or worker needs shared CLI session | Keep CLI execution local; use provider APIs for hosted mode                        | Disable hosted provider until scoped credentials exist            | Open   | 2026-08-11 |
-| R-013 | Local `.env` secret leaks into source, artifact, log or bundle  | Safety       | Medium      | Critical | Secret scanner matches or provider reports misuse     | Git ignore, redaction, known-secret scanning and scoped deployer access            | Revoke/rotate secret, purge artifacts and rebuild                 | Open   | 2026-08-11 |
-| R-014 | App rollback is mistaken for database rollback                  | Core         | Medium      | High     | Old app version is incompatible with current schema   | Compatibility gate, forward-only migrations and explicit release metadata          | Roll forward the app or perform approved backup restore           | Open   | 2026-08-11 |
-| R-015 | VPS and on-host backups are lost together                       | Integrations | Medium      | Critical | Disk or VPS loss makes local backup unavailable       | Scheduled verified copy from VPS to the operator's Mac                             | Restore on replacement VPS from the last verified Mac copy        | Open   | 2026-08-11 |
-| R-016 | SSH bootstrap changes or exposes the wrong host                 | Integrations | Low         | Critical | Host fingerprint or preflight differs from policy     | Pin fingerprint, validate host identity and execute allowlisted deploy operations  | Stop deploy, revoke key, inspect host and restore prior config    | Open   | 2026-08-11 |
-| R-017 | Per-project Supabase stacks exhaust local or VPS resources      | Core         | Medium      | High     | Disk, memory, PID or port threshold is exceeded       | Preflight capacity checks, per-stack limits, health metrics and retention          | Stop newest stack, preserve data and require capacity decision    | Open   | 2026-08-11 |
+## Risk Fields
+
+- **id:** Unique risk identifier (risk-NNN)
+- **title:** One-line risk description
+- **owner:** Team or role responsible for mitigation
+- **trigger:** Condition or event that activates the risk
+- **probability:** low | medium | high | critical
+- **impact:** low | medium | high | critical
+- **mitigation:** Current controls reducing risk
+- **contingency:** Response plan if risk occurs
+- **status:** active | monitoring | mitigated
+
+## Active Risks
+
+See `packages/composition/src/risk-register.ts` for the authoritative register.
+
+### RISK-001: Exposed Secrets in Environment Configuration
+
+**Owner:** DevOps  
+**Probability:** High | **Impact:** Critical
+
+**Trigger:** Real mode execution with API host ≠ loopback AND ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true
+
+**Mitigation:** API binds to loopback by default. Real mode throws on non-loopback unless override set. Override requires explicit env var.
+
+**Contingency:** Rotate all exposed credentials. Audit API access logs.
+
+---
+
+### RISK-002: Prompt Injection via User Input in Real CLI Mode
+
+**Owner:** Security  
+**Probability:** High | **Impact:** Critical
+
+**Trigger:** Executor mode = real AND untrusted user input reaches CLI
+
+**Mitigation:** Real mode restricted to loopback by default. Input validation in orchestrator. Mock mode for untrusted environments.
+
+**Contingency:** Disable real mode. Audit execution logs. Review injected commands.
+
+---
+
+### RISK-003: Provider API Key Exposure in Logs or Artifacts
+
+**Owner:** Platform  
+**Probability:** Medium | **Impact:** Critical
+
+**Trigger:** Real execution with provider keys AND logs/artifacts stored insecurely
+
+**Mitigation:** Provider keys masked in logs. Artifacts stored locally. Keys never logged in plan execution.
+
+**Contingency:** Rotate provider keys. Audit artifact access. Enable encryption.
+
+---
+
+### RISK-004: Mutable Fallback Providers Allow Unexpected Code Execution
+
+**Owner:** Platform  
+**Probability:** Low | **Impact:** High
+
+**Trigger:** Real mode with fallback provider config AND main provider unavailable
+
+**Mitigation:** Fallback providers explicitly configured. Real mode only on trusted hosts. Warnings logged.
+
+**Contingency:** Kill execution. Review fallback config. Restrict provider availability.
+
+---
+
+### RISK-005: Artifacts Stored in Accessible Location
+
+**Owner:** Platform  
+**Probability:** Low | **Impact:** High
+
+**Trigger:** Real mode with artifact collection AND .data/ writable by untrusted user
+
+**Mitigation:** Artifacts stored in .data/. Real mode restricted to loopback. Reaper deletes old artifacts.
+
+**Contingency:** Review artifact contents. Enable encryption. Restrict permissions.
+
+---
+
+## Review Cycle
+
+Risk register reviewed quarterly by platform team. New risks added as discovered. Mitigations updated when controls change.

@@ -1,3 +1,66 @@
+import { sha256 } from './roadmap.mjs';
+
+export function parseArgs(argv, printHelp) {
+  const options = {
+    apply: false,
+    reconcile: false,
+    forceDrift: false,
+    adoptExisting: false,
+    delayMs: 500,
+    repo: null,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--apply') options.apply = true;
+    else if (arg === '--reconcile') options.reconcile = true;
+    else if (arg === '--force-drift') options.forceDrift = true;
+    else if (arg === '--adopt-existing') options.adoptExisting = true;
+    else if (arg === '--repo') options.repo = argv[++i];
+    else if (arg === '--delay-ms') options.delayMs = Number(argv[++i]);
+    else if (arg === '--help' || arg === '-h') {
+      printHelp();
+      process.exit(0);
+    } else throw new Error(`Argumento desconhecido: ${arg}`);
+  }
+  if (!Number.isFinite(options.delayMs) || options.delayMs < 0)
+    throw new Error('--delay-ms inválido.');
+  return options;
+}
+
+export function assertNoUnexpectedDrift(liveBody, saved, force, key) {
+  if (!saved || force) return;
+  const liveHash = sha256(liveBody);
+  const accepted = new Set([saved.lastAppliedBodySha256, saved.legacyBodySha256].filter(Boolean));
+  if (accepted.size && !accepted.has(liveHash))
+    throw new Error(
+      `Drift manual detectado em ${key} (#${saved.number}). Revise a edição ou use --force-drift conscientemente.`,
+    );
+}
+
+export async function reconcileIssue(
+  client,
+  ownerName,
+  repoName,
+  record,
+  issue,
+  milestone,
+  saved,
+  force,
+) {
+  const live = await client.request(`/repos/${ownerName}/${repoName}/issues/${issue.number}`);
+  if ((live.body ?? '') !== record.body)
+    assertNoUnexpectedDrift(live.body ?? '', saved, force, record.key);
+  await client.request(`/repos/${ownerName}/${repoName}/issues/${issue.number}`, {
+    method: 'PATCH',
+    body: {
+      title: record.title,
+      body: record.body,
+      labels: record.labels,
+      milestone: milestone?.number ?? null,
+    },
+  });
+}
+
 export async function verifyWritableRepository(client, owner, repo) {
   const viewer = await client.request('/user');
   const repository = await client.request(`/repos/${owner}/${repo}`);

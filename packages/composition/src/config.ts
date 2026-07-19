@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
+import { getDeploymentProfile } from './deployment-profiles.js';
 
 const booleanFromEnv = z
   .enum(['true', 'false'])
@@ -50,6 +51,7 @@ const ConfigSchema = z.object({
 
 export interface RuntimeConfig {
   environment: 'development' | 'test' | 'production';
+  deploymentProfile: string;
   rootDir: string;
   apiHost: string;
   apiPort: number;
@@ -107,8 +109,16 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
       'Refusing to expose real CLI execution on a non-loopback API host. Keep API_HOST on 127.0.0.1/localhost or explicitly set ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true after accepting the host-level risk.',
     );
   }
+  const profileSpec = getDeploymentProfile(
+    parsed.EXECUTOR_MODE,
+    parsed.API_HOST,
+    parsed.ALLOW_UNSAFE_REMOTE_REAL_EXECUTION,
+  );
+  const deploymentProfile = profileSpec?.name ?? 'custom';
+
   return {
     environment: parsed.NODE_ENV,
+    deploymentProfile,
     rootDir,
     apiHost: parsed.API_HOST,
     apiPort: parsed.API_PORT,

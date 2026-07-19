@@ -1,0 +1,8 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "ok",
+  "usage": { "input_tokens": 1 },
+  "rate_limit": { "limit": 100, "remaining": 0, "reset_at": "2026-07-18T13:00:00.000Z" }
+}

@@ -242,6 +242,12 @@ export const ModelMetricSchema = z.preprocess(
       consecutiveFailures: z.number().int().nonnegative(),
       qualityEvaluations: z.number().int().nonnegative().default(0),
       qualityApprovals: z.number().int().nonnegative().default(0),
+      quotaUnitsTotal: z.number().nonnegative().optional(),
+      inputTokensKnownCount: z.number().int().nonnegative().optional(),
+      outputTokensKnownCount: z.number().int().nonnegative().optional(),
+      cachedInputTokensKnownCount: z.number().int().nonnegative().optional(),
+      costKnownCount: z.number().int().nonnegative().optional(),
+      quotaUnitsKnownCount: z.number().int().nonnegative().optional(),
       lastFailureAt: z.string().datetime().optional(),
       updatedAt: z.string().datetime(),
     })

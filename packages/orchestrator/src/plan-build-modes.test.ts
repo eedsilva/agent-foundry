@@ -15,7 +15,8 @@ import {
   type WorkflowRunRepository,
 } from '@agent-foundry/domain';
 import {
-  ControllableAgentExecutor,
+  AgentExecutorFromExecutionPlane,
+  ControllableExecutor,
   FakeWorkspaces,
   InMemoryArtifacts,
   InMemoryEvents,
@@ -110,8 +111,11 @@ async function runOperation(kind: 'plan' | 'build') {
   const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
   const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
   const workspaces = new FakeWorkspaces({ on: true });
-  const executor = new ControllableAgentExecutor({}, workspaces);
-  const executors: ExecutorRegistry = { get: () => executor, health: () => Promise.resolve([]) };
+  const executor = new ControllableExecutor({}, workspaces);
+  const executors: ExecutorRegistry = {
+    get: () => new AgentExecutorFromExecutionPlane(executor),
+    health: () => Promise.resolve([]),
+  };
   const clock = new FixedClock();
   const ids = new SequentialIds();
   // This test doesn't exercise context compilation, just needs a valid port.

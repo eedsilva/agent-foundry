@@ -438,6 +438,7 @@ class MemoryConversations implements ConversationRepository {
       this.operations.filter((operation) => operation.projectId === projectId),
     );
   }
+
   getOperation(projectId: string, operationId: string): Promise<Operation | null> {
     return Promise.resolve(
       this.operations.find(
@@ -451,6 +452,7 @@ class MemoryConversations implements ConversationRepository {
     if (index !== -1) {
       this.operations[index] = operation;
     } else {
+      this.operations.push(operation);
       throw new NotFoundError(`Operation ${operation.id} not found`);
     }
     return Promise.resolve(operation);

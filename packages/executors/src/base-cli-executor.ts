@@ -5,10 +5,16 @@ import type {
   AgentExecutionResult,
   ExecutorHealth,
   Provider,
+  ProviderRateLimit,
 } from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
 import { ExecutionError, RunCancelledError, errorMessage } from '@agent-foundry/domain';
-import { extractExecutedModel, extractUsage, parseAgentArtifact } from './json-output.js';
+import {
+  extractExecutedModel,
+  extractRateLimit,
+  extractUsage,
+  parseAgentArtifact,
+} from './json-output.js';
 import { killProcessTree, terminateProcessTree } from './process-tree.js';
 
 export interface CliInvocation {
@@ -40,6 +46,7 @@ const HARD_TIMEOUT_GRACE_MS = 5_000;
 export abstract class BaseCliExecutor implements AgentExecutor {
   abstract readonly provider: Provider;
   protected abstract readonly command: string;
+  private lastRateLimit: ProviderRateLimit | undefined;
 
   constructor(
     private readonly maxOutputBytes: number,
@@ -145,6 +152,8 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     const response = await this.responseText(invocation, stdout);
     const output = parseAgentArtifact(this.provider, response);
     const usage = extractUsage(this.provider, stdout);
+    const rateLimit = extractRateLimit(this.provider, stdout);
+    if (rateLimit) this.lastRateLimit = rateLimit;
     const metadata = invocation.metadataFile
       ? await readBoundedFile(invocation.metadataFile, this.maxOutputBytes)
       : '';
@@ -167,6 +176,10 @@ export abstract class BaseCliExecutor implements AgentExecutor {
   }
 
   async health(): Promise<ExecutorHealth> {
+    // ponytail: lastRateLimit is the value observed on the most recent run and is
+    // never invalidated here; the router already gates on resetAt, so a past-reset
+    // value is inert. Add TTL/eviction only if another health() consumer needs it.
+    const rateLimit = this.lastRateLimit ? { rateLimit: this.lastRateLimit } : {};
     try {
       const result = await execa(this.command, ['--version'], {
         reject: false,
@@ -180,12 +193,14 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         message: available
           ? `${this.command} is available`
           : `${this.command} returned exit code ${String(result.exitCode)}`,
+        ...rateLimit,
       };
     } catch (error) {
       return {
         provider: this.provider,
         available: false,
         message: errorMessage(error),
+        ...rateLimit,
       };
     }
   }

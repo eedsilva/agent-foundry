@@ -2,6 +2,7 @@ import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
+import { listRisks, getRiskById } from '@agent-foundry/composition';
 import {
   BranchVersionRequestSchema,
   ClassifyMessageResponseSchema,
@@ -126,6 +127,21 @@ export async function buildApp(
   }));
 
   app.get('/workflows', async () => ({ workflows: await runtime.workflows.list() }));
+
+  app.get('/api/risks', async (request, reply) => {
+    const risks = listRisks();
+    reply.send(risks);
+  });
+
+  app.get('/api/risks/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const risk = getRiskById(id);
+    if (!risk) {
+      reply.code(404).send({ error: 'Risk not found' });
+    } else {
+      reply.send(risk);
+    }
+  });
 
   app.get('/projects', async (request) => {
     const query = z
