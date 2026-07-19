@@ -3,6 +3,8 @@ import type {
   AgentExecutionRequest,
   AgentExecutionResult,
   AgentRole,
+  AgentStreamEvent,
+  AgentStreamEventInput,
   ApprovalDecision,
   ApprovalRequest,
   Attachment,
@@ -155,6 +157,11 @@ export interface ArtifactStore {
 export interface EventStore {
   append(event: ProjectEvent): Promise<void>;
   list(projectId: string, limit?: number, afterId?: string): Promise<ProjectEvent[]>;
+}
+
+export interface StepEventRepository {
+  append(event: AgentStreamEventInput): Promise<AgentStreamEvent>;
+  list(runId: string, options?: { cursor?: number; limit?: number }): Promise<AgentStreamEvent[]>;
 }
 
 /**
