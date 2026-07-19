@@ -3,6 +3,7 @@ import type {
   CreateModelOverrideRequest,
   ModelDefinition,
   ModelOverrideScope,
+  RetryProjectRequest,
   RetryStepRequest,
   WorkflowDefinition,
   WorkflowRun,
@@ -51,6 +52,18 @@ export function retryRequest(
   fields?: PinFields,
 ): RetryStepRequest {
   return fields ? { mode, override: pinRequest(models, fields) } : { mode };
+}
+
+/**
+ * Same validated shape `modelOverrideRequest` builds, minus `scope` — a
+ * project retry always overrides the whole new run, so there's no scope to
+ * choose.
+ */
+export function retryProjectOverride(
+  models: ModelDefinition[],
+  fields: PinFields,
+): NonNullable<RetryProjectRequest['override']> {
+  return pinRequest(models, fields);
 }
 
 export const retryMode = (value: unknown): RetryStepRequest['mode'] =>
