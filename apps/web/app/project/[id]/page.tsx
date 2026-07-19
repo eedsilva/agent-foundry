@@ -369,9 +369,25 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   const run = runDetail?.run;
 
+  // Conversation operations (plan/build sent from the Conversa panel below)
+  // each run under their OWN WorkflowRun — a different run than `run` above,
+  // which only tracks the project's original DAG run. `artifactReferences`
+  // is empty until an operation's run durably completes (ConversationOperationRunner
+  // records it there), so the most recent operation without one — and, for a
+  // plan, not yet rejected — is the one plausibly still streaming live activity.
+  // ponytail: only ever subscribes to the single latest operation; a stale/
+  // failed operation with no newer message after it keeps matching this until
+  // the next message is sent — harmless (bounded to one EventSource), just an
+  // idle connection. Upgrade if operations ever run concurrently.
+  const activeOperation = conversation?.operations
+    .filter(
+      (op) => op.runId && op.artifactReferences.length === 0 && op.approval?.status !== 'rejected',
+    )
+    .at(-1);
+
   useEffect(() => {
-    if (!run || run.status !== 'running') return;
-    const source = new EventSource(runEventsStreamUrl(run.id));
+    if (!activeOperation?.runId) return;
+    const source = new EventSource(runEventsStreamUrl(activeOperation.runId));
     source.onmessage = (message) => {
       try {
         const event = JSON.parse(message.data) as AgentStreamEvent;
@@ -381,11 +397,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       }
     };
     return () => source.close();
-    // `run` is intentionally tracked by id/status only: the page's polling
-    // effect recreates the whole `run` object every ~1.5s, and depending on
-    // it directly would tear down and reopen this EventSource on every tick.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run?.id, run?.status]);
+  }, [activeOperation?.runId]);
 
   useEffect(() => {
     if (
@@ -754,7 +766,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                     ) : null}
                   </span>
                 ) : null}
-                {operation && operation.runId && run?.id === operation.runId ? (
+                {operation && operation.runId && operation.id === activeOperation?.id ? (
                   <div className="agentStreamActivity">
                     {streamEvents
                       .filter((streamEvent) => streamEvent.runId === operation.runId)
