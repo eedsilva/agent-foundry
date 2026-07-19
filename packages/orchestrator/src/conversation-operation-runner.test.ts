@@ -226,7 +226,7 @@ describe('ConversationOperationRunner', () => {
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const conversations = new MemoryConversations();
-    const executor = new ControllableAgentExecutor(
+    const executor = new ControllableExecutor(
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
       workspaces,
     );
@@ -366,7 +366,7 @@ describe('ConversationOperationRunner', () => {
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const conversations = new MemoryConversations();
-    const executor = new ControllableAgentExecutor(
+    const executor = new ControllableExecutor(
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
       workspaces,
     );
@@ -415,7 +415,7 @@ describe('ConversationOperationRunner', () => {
       throw new Error('event store unavailable');
     };
     const conversations = new MemoryConversations();
-    const executor = new ControllableAgentExecutor(
+    const executor = new ControllableExecutor(
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
       workspaces,
     );
