@@ -347,6 +347,27 @@ export async function buildApp(
     );
   });
 
+  app.get('/runs/:runId/events/stream', async (request, reply) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    const { cursor } = z
+      .object({ cursor: CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).optional() })
+      .parse(request.query);
+    const header = request.headers['last-event-id'];
+    const lastSequence =
+      cursor ??
+      (typeof header === 'string' && header
+        ? CanonicalDecimalSchema.pipe(z.number().int().nonnegative()).parse(header)
+        : 0);
+    await streamSse(
+      request,
+      reply,
+      allowedOrigins,
+      lastSequence,
+      (after) => runtime.stepEvents.list(runId, { cursor: after ?? 0, limit: 500 }),
+      (event) => event.sequence,
+    );
+  });
+
   app.post('/runs/:runId/cancel', async (request, reply) => {
     const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
     const run = await runtime.projectService.cancelRun(runId);
