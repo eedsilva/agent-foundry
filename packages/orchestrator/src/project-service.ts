@@ -232,9 +232,23 @@ export class ProjectService {
     return { metadata: artifact.metadata, stream };
   }
 
-  async retry(projectId: string): Promise<Project> {
+  async retry(
+    projectId: string,
+    input?: {
+      prompt?: string;
+      override?: {
+        modelId: string;
+        provider: Provider;
+        model: string;
+        actor: ActorRef;
+        reason: string;
+        estimatedImpact: string;
+      };
+    },
+  ): Promise<Project> {
     const project = await this.requireProject(projectId);
     if (project.status === 'running') return project;
+    if (input?.prompt) await this.workspaces.writePrd(projectId, input.prompt);
     const now = this.clock.now().toISOString();
     const runId = this.ids.next();
     const run: WorkflowRun = {
@@ -247,6 +261,28 @@ export class ProjectService {
       updatedAt: now,
     };
     await this.runs.create(run);
+    // Created before the job is enqueued so the override is already visible
+    // to the router by the time any worker could possibly claim the job —
+    // no race window like there would be creating it after the fact.
+    if (input?.override) {
+      if (!this.modelOverrides) throw new Error('Model override repository is not configured');
+      const match = await this.resolveCatalogModel(
+        input.override.modelId,
+        input.override.provider,
+        input.override.model,
+      );
+      const audit = redactOverrideAudit(input.override);
+      await this.modelOverrides.create({
+        id: this.ids.next(),
+        runId,
+        scope: { kind: 'run' },
+        modelId: match.id,
+        provider: match.provider,
+        model: match.model,
+        ...audit,
+        createdAt: now,
+      });
+    }
     const updated: Project = {
       ...project,
       status: 'queued',
