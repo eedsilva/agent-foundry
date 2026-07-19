@@ -1,12 +1,15 @@
 import type {
   ApprovalConflictResponse,
   ApprovalListResponse,
+  ClassifyMessageResponse,
   ConversationPageResponse,
   CreateMessageRequest,
   CreateModelOverrideRequest,
   CreateModelOverrideResponse,
   DecideApprovalRequest,
   DecideApprovalResponse,
+  DecideChangeRequestRequest,
+  DecideChangeRequestResponse,
   Message,
   Operation,
   PreviewLogPage,
@@ -268,6 +271,27 @@ export async function decideOperation(
     { method: 'POST', body: JSON.stringify({ action }) },
   );
   return response.operation;
+}
+
+export function classifyMessage(
+  projectId: string,
+  messageId: string,
+): Promise<ClassifyMessageResponse> {
+  return api<ClassifyMessageResponse>(
+    `/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}/classify`,
+    { method: 'POST' },
+  );
+}
+
+export function decideChangeRequest(
+  projectId: string,
+  changeRequestId: string,
+  input: DecideChangeRequestRequest,
+): Promise<DecideChangeRequestResponse> {
+  return api<DecideChangeRequestResponse>(
+    `/projects/${encodeURIComponent(projectId)}/conversation/change-requests/${encodeURIComponent(changeRequestId)}/decide`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
 }
 
 export function getActivePreviewSession(

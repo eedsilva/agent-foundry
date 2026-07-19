@@ -9,6 +9,8 @@ export * from './workflow-orchestrator.js';
 export * from './worker-loop.js';
 export * from './queue-lease-reaper.js';
 export * from './conversation-step-config.js';
+export * from './message-classifier.js';
 export * from './conversation-operation-runner.js';
 export * from './operation-service.js';
+export * from './context-compiler.js';
 export * from './quality-observation-service.js';

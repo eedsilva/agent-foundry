@@ -12,6 +12,7 @@ import {
   CreateQualityObservationRequestSchema,
   CreateQualityObservationResponseSchema,
   DecideApprovalRequestSchema,
+  DecideChangeRequestRequestSchema,
   DecideOperationRequestSchema,
   DecideOperationResponseSchema,
   ProjectExportResponseSchema,
@@ -353,6 +354,42 @@ describe('DecideApprovalRequestSchema (#14)', () => {
       'approval-request',
       'approval-decision',
     ]);
+  });
+});
+
+describe('StartOperationRequestSchema', () => {
+  it('accepts an optional changeRequestId', () => {
+    const parsed = StartOperationRequestSchema.parse({
+      kind: 'plan',
+      changeRequestId: 'cr-1',
+    });
+    expect(parsed.changeRequestId).toBe('cr-1');
+  });
+});
+
+describe('DecideChangeRequestRequestSchema', () => {
+  it('accepts a reject action with no kind', () => {
+    expect(DecideChangeRequestRequestSchema.parse({ action: 'reject' })).toEqual({
+      action: 'reject',
+    });
+  });
+
+  it('accepts a confirm action for a non-build kind with no plan fields', () => {
+    const parsed = DecideChangeRequestRequestSchema.parse({ action: 'confirm', kind: 'plan' });
+    expect(parsed).toEqual({ action: 'confirm', kind: 'plan' });
+  });
+
+  it('requires exactly one of planOperationId/directExecution when confirming a build', () => {
+    expect(() =>
+      DecideChangeRequestRequestSchema.parse({ action: 'confirm', kind: 'build' }),
+    ).toThrow();
+    expect(() =>
+      DecideChangeRequestRequestSchema.parse({
+        action: 'confirm',
+        kind: 'build',
+        directExecution: true,
+      }),
+    ).not.toThrow();
   });
 });
 

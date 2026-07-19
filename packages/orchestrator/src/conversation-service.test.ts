@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   ArtifactMetadata,
   Attachment,
+  ChangeRequest,
   Conversation,
   Message,
   Operation,
@@ -350,6 +351,7 @@ class MemoryConversations implements ConversationRepository {
   private readonly messages: Message[] = [];
   private readonly attachments: Attachment[] = [];
   private readonly operations: Operation[] = [];
+  private readonly changeRequests: ChangeRequest[] = [];
 
   createConversation(conversation: Conversation): Promise<void> {
     if (!this.conversations.has(conversation.projectId)) this.conversationCreates += 1;
@@ -368,6 +370,9 @@ class MemoryConversations implements ConversationRepository {
       messages: this.messages.filter((message) => message.projectId === projectId),
       attachments: this.attachments.filter((attachment) => attachment.projectId === projectId),
       operations: this.operations.filter((operation) => operation.projectId === projectId),
+      changeRequests: this.changeRequests.filter(
+        (changeRequest) => changeRequest.projectId === projectId,
+      ),
     });
   }
 
@@ -451,5 +456,29 @@ class MemoryConversations implements ConversationRepository {
       throw new NotFoundError(`Operation ${operation.id} not found`);
     }
     return Promise.resolve(operation);
+  }
+
+  createChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest> {
+    this.changeRequests.push(changeRequest);
+    return Promise.resolve(changeRequest);
+  }
+
+  getChangeRequest(projectId: string, changeRequestId: string): Promise<ChangeRequest | null> {
+    return Promise.resolve(
+      this.changeRequests.find(
+        (item) => item.projectId === projectId && item.id === changeRequestId,
+      ) ?? null,
+    );
+  }
+
+  updateChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest> {
+    const index = this.changeRequests.findIndex((item) => item.id === changeRequest.id);
+    if (index === -1) throw new NotFoundError(`Change request ${changeRequest.id} not found`);
+    this.changeRequests[index] = changeRequest;
+    return Promise.resolve(changeRequest);
+  }
+
+  listChangeRequests(projectId: string): Promise<ChangeRequest[]> {
+    return Promise.resolve(this.changeRequests.filter((item) => item.projectId === projectId));
   }
 }

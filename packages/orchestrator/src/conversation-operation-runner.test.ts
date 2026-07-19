@@ -2,18 +2,18 @@ import { describe, expect, it } from 'vitest';
 import type {
   ArtifactStore,
   Clock,
-  ConversationRepository,
   EventStore,
   ExecutorRegistry,
   HarnessRepository,
   IdGenerator,
   MetricsRepository,
   ModelRouter,
+  ProjectVersionRepository,
   StepAttemptRepository,
   StepRunRepository,
   WorkflowRunRepository,
 } from '@agent-foundry/domain';
-import type { Conversation, Message, Operation, WorkflowRun } from '@agent-foundry/contracts';
+import type { ProjectVersion, WorkflowRun } from '@agent-foundry/contracts';
 import {
   AgentExecutorFromExecutionPlane,
   ControllableExecutor,
@@ -23,6 +23,7 @@ import {
   InMemoryRuns,
   InMemoryStepAttempts,
   InMemoryStepRuns,
+  MemoryConversations,
   MODELS,
 } from './testing/harness.js';
 import { ConversationOperationRunner } from './conversation-operation-runner.js';
@@ -41,58 +42,29 @@ class SequentialIds implements IdGenerator {
   }
 }
 
-class MemoryConversations implements ConversationRepository {
-  private readonly conversations = new Map<string, Conversation>();
-  private readonly messages: Message[] = [];
-  private readonly operations: Operation[] = [];
-  createConversation(conversation: Conversation): Promise<void> {
-    this.conversations.set(conversation.projectId, conversation);
+class MemoryProjectVersions implements ProjectVersionRepository {
+  private readonly store: ProjectVersion[] = [];
+  create(version: ProjectVersion): Promise<void> {
+    this.store.push(version);
     return Promise.resolve();
   }
-  getConversation(projectId: string): Promise<Conversation | null> {
-    return Promise.resolve(this.conversations.get(projectId) ?? null);
-  }
-  getSnapshot(projectId: string) {
-    return Promise.resolve({
-      conversation: this.conversations.get(projectId) ?? null,
-      messages: this.messages.filter((m) => m.projectId === projectId),
-      attachments: [],
-      operations: this.operations.filter((o) => o.projectId === projectId),
-    });
-  }
-  appendMessage(message: Omit<Message, 'sequence'>): Promise<Message> {
-    const stored = { ...message, sequence: this.messages.length + 1 };
-    this.messages.push(stored);
-    return Promise.resolve(stored);
-  }
-  listMessages(projectId: string): Promise<Message[]> {
-    return Promise.resolve(this.messages.filter((m) => m.projectId === projectId));
-  }
-  createAttachment(): Promise<never> {
-    return Promise.reject(new Error('not used in this test'));
-  }
-  getAttachment(): Promise<null> {
-    return Promise.resolve(null);
-  }
-  listAttachments(): Promise<never[]> {
-    return Promise.resolve([]);
-  }
-  createOperation(operation: Operation): Promise<Operation> {
-    this.operations.push(operation);
-    return Promise.resolve(operation);
-  }
-  getOperation(projectId: string, operationId: string): Promise<Operation | null> {
+  get(projectId: string, versionId: string): Promise<ProjectVersion | null> {
     return Promise.resolve(
-      this.operations.find((o) => o.projectId === projectId && o.id === operationId) ?? null,
+      this.store.find((v) => v.projectId === projectId && v.id === versionId) ?? null,
     );
   }
-  updateOperation(operation: Operation): Promise<Operation> {
-    const index = this.operations.findIndex((o) => o.id === operation.id);
-    this.operations[index] = operation;
-    return Promise.resolve(operation);
+  list(projectId: string, limit = 50): Promise<ProjectVersion[]> {
+    return Promise.resolve(
+      this.store
+        .filter((v) => v.projectId === projectId)
+        .sort((a, b) => b.sequence - a.sequence)
+        .slice(0, limit),
+    );
   }
-  listOperations(projectId: string): Promise<Operation[]> {
-    return Promise.resolve(this.operations.filter((o) => o.projectId === projectId));
+  update(version: ProjectVersion, _expectedVersion: number): Promise<ProjectVersion> {
+    const index = this.store.findIndex((v) => v.id === version.id);
+    this.store[index] = version;
+    return Promise.resolve(version);
   }
 }
 
@@ -131,7 +103,7 @@ const router: ModelRouter = {
   catalog: () => Promise.resolve(MODELS),
 };
 
-function setup() {
+function setup(harness: HarnessRepository = harnessRepo) {
   const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
   const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
   const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
@@ -139,6 +111,7 @@ function setup() {
   const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
   const workspaces = new FakeWorkspaces({ on: true });
   const conversations = new MemoryConversations();
+  const projectVersions = new MemoryProjectVersions();
   const executor = new ControllableExecutor({}, workspaces);
   const executors: ExecutorRegistry = {
     get: () => new AgentExecutorFromExecutionPlane(executor),
@@ -150,17 +123,28 @@ function setup() {
     stepAttempts,
     artifacts,
     events,
-    harnessRepo,
+    harness,
     router,
     metrics,
     executors,
     workspaces,
     conversations,
+    projectVersions,
     new FixedClock(),
     new SequentialIds(),
     { agentTimeoutMs: 60_000 },
   );
-  return { runs, stepRuns, stepAttempts, artifacts, events, workspaces, conversations, runner };
+  return {
+    runs,
+    stepRuns,
+    stepAttempts,
+    artifacts,
+    events,
+    workspaces,
+    conversations,
+    projectVersions,
+    runner,
+  };
 }
 
 async function seed(
@@ -262,6 +246,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      new MemoryProjectVersions(),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -305,6 +290,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      new MemoryProjectVersions(),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -353,6 +339,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      new MemoryProjectVersions(),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -399,6 +386,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      new MemoryProjectVersions(),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -447,6 +435,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      new MemoryProjectVersions(),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -460,5 +449,115 @@ describe('ConversationOperationRunner', () => {
 
     const run = (await runs.get(runId)) as WorkflowRun;
     expect(run.status).toBe('failed');
+  });
+});
+
+describe('ConversationOperationRunner context compilation', () => {
+  it('embeds the compiled context digest in the compiled instructions and records sources on the change request', async () => {
+    const fragmentHarness: HarnessRepository = {
+      select: () =>
+        Promise.resolve({
+          version: 'v1',
+          files: [{ path: 'CLAUDE.md', content: 'Be terse.', priority: 1 }],
+          combined: 'Be terse.',
+        }),
+      version: () => Promise.resolve('v1'),
+    };
+    const { runs, workspaces, conversations, runner } = setup(fragmentHarness);
+    await conversations.createConversation({
+      id: 'project-1',
+      projectId: 'project-1',
+      createdAt: '2026-07-18T11:00:00.000Z',
+    });
+    await conversations.appendMessage({
+      id: 'message-earlier',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page with email and password.' }],
+      createdAt: '2026-07-18T11:00:00.000Z',
+    });
+    const confirmedDecision = await conversations.createChangeRequest({
+      id: 'cr-earlier',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      messageId: 'message-earlier',
+      suggestedKind: 'build',
+      confirmedKind: 'build',
+      summary: 'Add a login page with email and password.',
+      rationale: 'Imperative verb.',
+      referencedDecisionIds: [],
+      contextSources: [],
+      status: 'confirmed',
+      createdAt: '2026-07-18T11:00:00.000Z',
+      decidedAt: '2026-07-18T11:00:01.000Z',
+    });
+    await conversations.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Change the login page to use magic links.' }],
+      createdAt: '2026-07-18T12:00:00.000Z',
+    });
+    const changeRequest = await conversations.createChangeRequest({
+      id: 'cr-current',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      messageId: 'message-1',
+      suggestedKind: 'build',
+      summary: 'Change the login page to use magic links.',
+      rationale: 'Imperative verb.',
+      referencedDecisionIds: [confirmedDecision.id],
+      contextSources: [],
+      status: 'proposed',
+      createdAt: '2026-07-18T12:00:00.000Z',
+    });
+    const runId = 'run-1';
+    const operationId = 'operation-1';
+    await runs.create({
+      id: runId,
+      projectId: 'project-1',
+      workflowId: 'conversation-build',
+      status: 'queued',
+      version: 1,
+      createdAt: '2026-07-18T12:00:00.000Z',
+      updatedAt: '2026-07-18T12:00:00.000Z',
+    });
+    await conversations.createOperation({
+      id: operationId,
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      messageId: 'message-1',
+      kind: 'build',
+      idempotencyKey: 'a'.repeat(64),
+      runId,
+      changeRequestId: changeRequest.id,
+      directExecution: true,
+      artifactReferences: [],
+      createdAt: '2026-07-18T12:00:00.000Z',
+    });
+
+    await runner.run('project-1', runId, operationId);
+
+    expect(workspaces.lastRequestMarkdown).toContain('Pinned decisions');
+    expect(workspaces.lastRequestMarkdown).toContain(confirmedDecision.id);
+
+    const updatedChangeRequest = await conversations.getChangeRequest(
+      'project-1',
+      changeRequest.id,
+    );
+    const sourceIds = updatedChangeRequest?.contextSources.map((s) => s.id) ?? [];
+    expect(sourceIds).toContain(confirmedDecision.id);
+    expect(sourceIds).toContain('CLAUDE.md');
+  });
+
+  it('runs unaffected when the operation has no changeRequestId (existing manual-toggle path)', async () => {
+    const { runs, conversations, runner } = setup();
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+
+    await runner.run('project-1', runId, operationId);
+
+    expect((await runs.get(runId))?.status).toBe('completed');
   });
 });

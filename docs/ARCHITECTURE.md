@@ -232,6 +232,30 @@ Uma operação `'build'` só pode ser criada com exatamente uma das duas condiç
 
 Tentar criar um build sem nenhuma das duas, ou referenciar um plano não-aprovado, resulta em `400 ValidationError`.
 
+### Classificação de mensagem e compilação de contexto
+
+`OperationService.classify()` (packages/orchestrator) roda uma classificação determinística e pura
+sobre o texto da mensagem (`message-classifier.ts` — sem chamada a modelo, sem I/O) e persiste um
+`ChangeRequest` com `status: 'proposed'`, o `OperationKind` sugerido, uma justificativa, e
+`referencedDecisionIds` — outros `ChangeRequest`s `confirmed` cujo resumo compartilha duas ou mais
+palavras significativas com a mensagem atual. `classify()` é idempotente por mensagem.
+
+`OperationService.decideChangeRequest()` é o único caminho que transforma uma classificação em
+`Operation`: `'reject'` marca o change request como `rejected` sem criar nada; `'confirm'` aceita um
+`kind` que pode divergir da sugestão — essa divergência é a correção do usuário — e só então cria a
+`Operation`, via `start()` para `plan`/`build` ou via `ConversationService.createOperation()` para os
+demais kinds. `Build` nunca é criado automaticamente a partir de `classify()`.
+
+`ConversationOperationRunner` compila um digest limitado (`context-compiler.ts`, também
+determinístico) a partir do `ChangeRequest` da operação: decisões `confirmed` referenciadas ou
+recentes ficam detalhadas ("Pinned decisions"), `ChangeRequest`s `proposed` ficam sempre detalhados
+("Unresolved feedback"), `ProjectVersion`s recentes aparecem com seu id, e todo o resto vira uma
+linha compacta com id + resumo — nunca desaparece da lista de `sources`, só perde detalhe. Após
+`harness.select()`, os caminhos dos fragmentos de harness selecionados (as "knowledge files" do
+prompt — não existe ainda um repositório de arquivos de conhecimento enviados pelo usuário; ver
+`v06-knowledge-attachments-shell`) são adicionados a `sources` e persistidos de volta no
+`ChangeRequest`, independente do sucesso da execução do agente.
+
 ## Conversa persistida por projeto
 
 Cada projeto possui uma conversa canônica com `conversation.id === conversation.projectId === project.id`. Projetos anteriores derivam essa conversa de `project.id` e `project.createdAt` em leitura/export sem migração; o primeiro write da conversa cria `DATA_DIR/projects/<projectId>/conversation/conversation.json`.

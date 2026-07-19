@@ -7,6 +7,7 @@ import type {
   ApprovalRequest,
   Attachment,
   ArtifactMetadata,
+  ChangeRequest,
   Conversation,
   ArtifactReference,
   BrowserEvidencePolicy,
@@ -69,6 +70,10 @@ export interface ConversationRepository {
   getOperation(projectId: string, operationId: string): Promise<Operation | null>;
   updateOperation(operation: Operation): Promise<Operation>;
   listOperations(projectId: string): Promise<Operation[]>;
+  createChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest>;
+  getChangeRequest(projectId: string, changeRequestId: string): Promise<ChangeRequest | null>;
+  updateChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest>;
+  listChangeRequests(projectId: string): Promise<ChangeRequest[]>;
 }
 
 export interface ConversationSnapshot {
@@ -76,6 +81,7 @@ export interface ConversationSnapshot {
   messages: Message[];
   attachments: Attachment[];
   operations: Operation[];
+  changeRequests: ChangeRequest[];
 }
 
 export interface WorkflowRunRepository {

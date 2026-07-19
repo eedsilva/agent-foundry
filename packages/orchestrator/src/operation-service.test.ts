@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import type { Conversation, Message, Operation, WorkflowRun } from '@agent-foundry/contracts';
+import type { WorkflowRun } from '@agent-foundry/contracts';
 import {
   NotFoundError,
   ValidationError,
   type ArtifactStore,
   type Clock,
-  type ConversationRepository,
   type IdGenerator,
   type JobQueue,
   type WorkflowRunRepository,
 } from '@agent-foundry/domain';
 import { OperationService } from './operation-service.js';
+import { InMemoryProjects, MemoryConversations } from './testing/harness.js';
+import { ConversationService } from './conversation-service.js';
 
 class FixedClock implements Clock {
   now(): Date {
@@ -23,61 +24,6 @@ class SequentialIds implements IdGenerator {
   next(): string {
     this.counter += 1;
     return `id-${String(this.counter).padStart(4, '0')}`;
-  }
-}
-
-class MemoryConversations implements ConversationRepository {
-  private readonly conversations = new Map<string, Conversation>();
-  readonly messages: Message[] = [];
-  readonly operations: Operation[] = [];
-  createConversation(conversation: Conversation): Promise<void> {
-    this.conversations.set(conversation.projectId, conversation);
-    return Promise.resolve();
-  }
-  getConversation(projectId: string): Promise<Conversation | null> {
-    return Promise.resolve(this.conversations.get(projectId) ?? null);
-  }
-  getSnapshot(projectId: string) {
-    return Promise.resolve({
-      conversation: this.conversations.get(projectId) ?? null,
-      messages: this.messages,
-      attachments: [],
-      operations: this.operations,
-    });
-  }
-  appendMessage(message: Omit<Message, 'sequence'>): Promise<Message> {
-    const stored = { ...message, sequence: this.messages.length + 1 };
-    this.messages.push(stored);
-    return Promise.resolve(stored);
-  }
-  listMessages(projectId: string): Promise<Message[]> {
-    return Promise.resolve(this.messages.filter((m) => m.projectId === projectId));
-  }
-  createAttachment(): Promise<never> {
-    return Promise.reject(new Error('not used'));
-  }
-  getAttachment(): Promise<null> {
-    return Promise.resolve(null);
-  }
-  listAttachments(): Promise<never[]> {
-    return Promise.resolve([]);
-  }
-  createOperation(operation: Operation): Promise<Operation> {
-    this.operations.push(operation);
-    return Promise.resolve(operation);
-  }
-  getOperation(projectId: string, operationId: string): Promise<Operation | null> {
-    return Promise.resolve(
-      this.operations.find((o) => o.projectId === projectId && o.id === operationId) ?? null,
-    );
-  }
-  updateOperation(operation: Operation): Promise<Operation> {
-    const index = this.operations.findIndex((o) => o.id === operation.id);
-    this.operations[index] = operation;
-    return Promise.resolve(operation);
-  }
-  listOperations(projectId: string): Promise<Operation[]> {
-    return Promise.resolve(this.operations.filter((o) => o.projectId === projectId));
   }
 }
 
@@ -150,20 +96,38 @@ async function seedMessage(conversations: MemoryConversations, projectId = 'proj
   });
 }
 
+function setup(overrides: { artifacts?: ArtifactStore } = {}) {
+  const conversations = new MemoryConversations();
+  const runs = new MemoryRuns();
+  const queue = new MemoryQueue();
+  const artifacts = overrides.artifacts ?? noArtifacts();
+  const projects = new InMemoryProjects({ on: true });
+  const clock = new FixedClock();
+  const ids = new SequentialIds();
+  const conversationService = new ConversationService(
+    projects,
+    runs,
+    artifacts,
+    conversations,
+    clock,
+    ids,
+  );
+  const service = new OperationService(
+    conversations,
+    runs,
+    queue,
+    artifacts,
+    clock,
+    ids,
+    conversationService,
+  );
+  return { conversations, runs, queue, artifacts, projects, conversationService, service };
+}
+
 describe('OperationService.start', () => {
   it('creates a queued plan operation, run, and job', async () => {
-    const conversations = new MemoryConversations();
-    const runs = new MemoryRuns();
-    const queue = new MemoryQueue();
+    const { service, runs, queue, conversations } = setup();
     const message = await seedMessage(conversations);
-    const service = new OperationService(
-      conversations,
-      runs,
-      queue,
-      noArtifacts(),
-      new FixedClock(),
-      new SequentialIds(),
-    );
 
     const operation = await service.start('project-1', message.id, { kind: 'plan' });
 
@@ -179,18 +143,8 @@ describe('OperationService.start', () => {
   });
 
   it('rejects a build request with neither planOperationId nor directExecution', async () => {
-    const conversations = new MemoryConversations();
-    const runs = new MemoryRuns();
-    const queue = new MemoryQueue();
+    const { service, conversations } = setup();
     const message = await seedMessage(conversations);
-    const service = new OperationService(
-      conversations,
-      runs,
-      queue,
-      noArtifacts(),
-      new FixedClock(),
-      new SequentialIds(),
-    );
 
     await expect(
       service.start('project-1', message.id, { kind: 'build' } as never),
@@ -198,18 +152,8 @@ describe('OperationService.start', () => {
   });
 
   it('rejects a build referencing a plan that is not approved', async () => {
-    const conversations = new MemoryConversations();
-    const runs = new MemoryRuns();
-    const queue = new MemoryQueue();
+    const { service, conversations } = setup();
     const message = await seedMessage(conversations);
-    const service = new OperationService(
-      conversations,
-      runs,
-      queue,
-      noArtifacts(),
-      new FixedClock(),
-      new SequentialIds(),
-    );
     const plan = await service.start('project-1', message.id, { kind: 'plan' });
 
     await expect(
@@ -218,18 +162,8 @@ describe('OperationService.start', () => {
   });
 
   it('copies the approved plan artifact references onto the build operation', async () => {
-    const conversations = new MemoryConversations();
-    const runs = new MemoryRuns();
-    const queue = new MemoryQueue();
+    const { service, conversations } = setup();
     const message = await seedMessage(conversations);
-    const service = new OperationService(
-      conversations,
-      runs,
-      queue,
-      noArtifacts(),
-      new FixedClock(),
-      new SequentialIds(),
-    );
     const plan = await service.start('project-1', message.id, { kind: 'plan' });
     const reference = { name: 'plan-proposal', revision: 1, sha256: 'a'.repeat(64) };
     await conversations.updateOperation({
@@ -247,18 +181,8 @@ describe('OperationService.start', () => {
   });
 
   it('creates a direct-execution build operation without a plan', async () => {
-    const conversations = new MemoryConversations();
-    const runs = new MemoryRuns();
-    const queue = new MemoryQueue();
+    const { service, conversations } = setup();
     const message = await seedMessage(conversations);
-    const service = new OperationService(
-      conversations,
-      runs,
-      queue,
-      noArtifacts(),
-      new FixedClock(),
-      new SequentialIds(),
-    );
 
     const build = await service.start('project-1', message.id, {
       kind: 'build',
@@ -269,17 +193,7 @@ describe('OperationService.start', () => {
   });
 
   it('rejects an unknown message', async () => {
-    const conversations = new MemoryConversations();
-    const runs = new MemoryRuns();
-    const queue = new MemoryQueue();
-    const service = new OperationService(
-      conversations,
-      runs,
-      queue,
-      noArtifacts(),
-      new FixedClock(),
-      new SequentialIds(),
-    );
+    const { service } = setup();
 
     await expect(service.start('project-1', 'missing', { kind: 'plan' })).rejects.toThrow(
       NotFoundError,
@@ -288,21 +202,9 @@ describe('OperationService.start', () => {
 });
 
 describe('OperationService.decide', () => {
-  async function startAndCompletePlan(
-    conversations: MemoryConversations,
-    runs: MemoryRuns,
-    queue: MemoryQueue,
-    artifacts: ArtifactStore,
-  ) {
+  async function startAndCompletePlan(artifacts: ArtifactStore) {
+    const { service, conversations, runs } = setup({ artifacts });
     const message = await seedMessage(conversations);
-    const service = new OperationService(
-      conversations,
-      runs,
-      queue,
-      artifacts,
-      new FixedClock(),
-      new SequentialIds(),
-    );
     const plan = await service.start('project-1', message.id, { kind: 'plan' });
     const run = (await runs.get(plan.runId!))!;
     await runs.update({ ...run, status: 'running' });
@@ -311,27 +213,14 @@ describe('OperationService.decide', () => {
   }
 
   it('rejects deciding a plan whose run has not completed', async () => {
-    const conversations = new MemoryConversations();
-    const runs = new MemoryRuns();
-    const queue = new MemoryQueue();
+    const { service, conversations } = setup();
     const message = await seedMessage(conversations);
-    const service = new OperationService(
-      conversations,
-      runs,
-      queue,
-      noArtifacts(),
-      new FixedClock(),
-      new SequentialIds(),
-    );
     const plan = await service.start('project-1', message.id, { kind: 'plan' });
 
     await expect(service.decide('project-1', plan.id, 'approve')).rejects.toThrow(ValidationError);
   });
 
   it('approving derives artifactReferences from the completed run artifact', async () => {
-    const conversations = new MemoryConversations();
-    const runs = new MemoryRuns();
-    const queue = new MemoryQueue();
     const artifacts: ArtifactStore = {
       put: () => Promise.reject(new Error('not used')),
       putBlob: () => Promise.reject(new Error('not used')),
@@ -353,7 +242,7 @@ describe('OperationService.decide', () => {
       listLatest: () => Promise.resolve([]),
       listMetadata: () => Promise.resolve([]),
     };
-    const { service, plan } = await startAndCompletePlan(conversations, runs, queue, artifacts);
+    const { service, plan } = await startAndCompletePlan(artifacts);
 
     const approved = await service.decide('project-1', plan.id, 'approve');
 
@@ -364,10 +253,7 @@ describe('OperationService.decide', () => {
   });
 
   it('rejecting sets approval.status without touching artifactReferences', async () => {
-    const conversations = new MemoryConversations();
-    const runs = new MemoryRuns();
-    const queue = new MemoryQueue();
-    const { service, plan } = await startAndCompletePlan(conversations, runs, queue, noArtifacts());
+    const { service, plan } = await startAndCompletePlan(noArtifacts());
 
     const rejected = await service.decide('project-1', plan.id, 'reject');
 
@@ -376,23 +262,170 @@ describe('OperationService.decide', () => {
   });
 
   it('rejects deciding a non-plan operation', async () => {
-    const conversations = new MemoryConversations();
-    const runs = new MemoryRuns();
-    const queue = new MemoryQueue();
+    const { service, conversations } = setup();
     const message = await seedMessage(conversations);
-    const service = new OperationService(
-      conversations,
-      runs,
-      queue,
-      noArtifacts(),
-      new FixedClock(),
-      new SequentialIds(),
-    );
     const build = await service.start('project-1', message.id, {
       kind: 'build',
       directExecution: true,
     });
 
     await expect(service.decide('project-1', build.id, 'approve')).rejects.toThrow(ValidationError);
+  });
+});
+
+describe('OperationService.classify', () => {
+  it('creates a proposed change request from an unclassified message', async () => {
+    const { service, conversations } = setup();
+    const message = await conversations.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page with email and password.' }],
+      createdAt: '2026-07-18T00:00:00.000Z',
+    });
+    const changeRequest = await service.classify('project-1', message.id);
+    expect(changeRequest.status).toBe('proposed');
+    expect(changeRequest.suggestedKind).toBe('build');
+    expect(changeRequest.messageId).toBe(message.id);
+  });
+
+  it('is idempotent per message', async () => {
+    const { service, conversations } = setup();
+    const message = await conversations.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page.' }],
+      createdAt: '2026-07-18T00:00:00.000Z',
+    });
+    const first = await service.classify('project-1', message.id);
+    const second = await service.classify('project-1', message.id);
+    expect(second.id).toBe(first.id);
+    expect(await conversations.listChangeRequests('project-1')).toHaveLength(1);
+  });
+
+  it('throws NotFoundError for a missing message', async () => {
+    const { service } = setup();
+    await expect(service.classify('project-1', 'missing')).rejects.toThrow(
+      'Message missing not found',
+    );
+  });
+});
+
+describe('OperationService.decideChangeRequest', () => {
+  it('confirming a plan classification starts an Operation with changeRequestId set', async () => {
+    const { service, conversations } = setup();
+    const message = await conversations.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Let us think about onboarding.' }],
+      createdAt: '2026-07-18T00:00:00.000Z',
+    });
+    const changeRequest = await service.classify('project-1', message.id);
+    expect(changeRequest.suggestedKind).toBe('plan');
+
+    const { changeRequest: decided, operation } = await service.decideChangeRequest(
+      'project-1',
+      changeRequest.id,
+      { action: 'confirm', kind: 'plan' },
+    );
+    expect(decided.status).toBe('confirmed');
+    expect(decided.confirmedKind).toBe('plan');
+    expect(operation?.changeRequestId).toBe(changeRequest.id);
+    expect(decided.operationId).toBe(operation?.id);
+  });
+
+  it('lets the user correct build to plan before anything executes', async () => {
+    const { service, conversations } = setup();
+    const message = await conversations.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page with email and password.' }],
+      createdAt: '2026-07-18T00:00:00.000Z',
+    });
+    const changeRequest = await service.classify('project-1', message.id);
+    expect(changeRequest.suggestedKind).toBe('build');
+
+    const { operation } = await service.decideChangeRequest('project-1', changeRequest.id, {
+      action: 'confirm',
+      kind: 'plan',
+    });
+    expect(operation?.kind).toBe('plan');
+  });
+
+  it('still requires exactly one of planOperationId/directExecution when confirming build', async () => {
+    const { service, conversations } = setup();
+    const message = await conversations.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page.' }],
+      createdAt: '2026-07-18T00:00:00.000Z',
+    });
+    const changeRequest = await service.classify('project-1', message.id);
+    await expect(
+      service.decideChangeRequest('project-1', changeRequest.id, {
+        action: 'confirm',
+        kind: 'build',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('rejecting leaves no operation and marks the change request rejected', async () => {
+    const { service, conversations } = setup();
+    const message = await conversations.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page.' }],
+      createdAt: '2026-07-18T00:00:00.000Z',
+    });
+    const changeRequest = await service.classify('project-1', message.id);
+    const { changeRequest: decided, operation } = await service.decideChangeRequest(
+      'project-1',
+      changeRequest.id,
+      { action: 'reject' },
+    );
+    expect(decided.status).toBe('rejected');
+    expect(operation).toBeUndefined();
+    expect(await conversations.listOperations('project-1')).toHaveLength(0);
+  });
+
+  it('confirming explain routes through the legacy audit-only createOperation path', async () => {
+    const { service, conversations, projects } = setup();
+    await projects.create({
+      id: 'project-1',
+      name: 'Test project',
+      workflowId: 'web-app-v1',
+      policyId: 'default',
+      status: 'queued',
+      version: 1,
+      createdAt: '2026-07-18T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
+    });
+    const message = await conversations.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Why does the login page redirect to the dashboard?' }],
+      createdAt: '2026-07-18T00:00:00.000Z',
+    });
+    const changeRequest = await service.classify('project-1', message.id);
+    expect(changeRequest.suggestedKind).toBe('explain');
+    const { operation } = await service.decideChangeRequest('project-1', changeRequest.id, {
+      action: 'confirm',
+      kind: 'explain',
+    });
+    expect(operation?.kind).toBe('explain');
+    expect(operation?.runId).toBeUndefined();
   });
 });
