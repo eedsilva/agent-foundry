@@ -89,7 +89,9 @@ describe('classifyMessage', () => {
   });
 
   it('does not reference a decision that shares fewer than two significant words', () => {
-    const priorChangeRequests = [confirmedChangeRequest('cr-1', 'Add a footer with copyright text.')];
+    const priorChangeRequests = [
+      confirmedChangeRequest('cr-1', 'Add a footer with copyright text.'),
+    ];
     const result = classifyMessage({
       message: textMessage('m2', 'Add a login page with email and password.'),
       priorChangeRequests,
@@ -123,8 +125,8 @@ describe('findReferencedDecisions', () => {
     expect(findReferencedDecisions(new Set(['add', 'header']), oneWordOverlap)).toEqual([]);
 
     const twoWordOverlap = [confirmedChangeRequest('cr-1', 'Add a footer component.')];
-    expect(findReferencedDecisions(new Set(['add', 'footer', 'component']), twoWordOverlap)).toEqual([
-      'cr-1',
-    ]);
+    expect(
+      findReferencedDecisions(new Set(['add', 'footer', 'component']), twoWordOverlap),
+    ).toEqual(['cr-1']);
   });
 });

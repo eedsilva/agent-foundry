@@ -9,8 +9,29 @@ export interface ClassificationResult {
 }
 
 const STOPWORDS = new Set([
-  'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'have', 'has', 'was', 'were',
-  'are', 'you', 'your', 'let', 'use', 'com', 'que', 'para', 'uma', 'dos', 'das',
+  'the',
+  'and',
+  'for',
+  'with',
+  'that',
+  'this',
+  'from',
+  'into',
+  'have',
+  'has',
+  'was',
+  'were',
+  'are',
+  'you',
+  'your',
+  'let',
+  'use',
+  'com',
+  'que',
+  'para',
+  'uma',
+  'dos',
+  'das',
 ]);
 
 export function tokenize(text: string): string[] {
@@ -44,9 +65,15 @@ function classifyKind(text: string): { kind: OperationKind; rationale: string } 
     return { kind: 'explain', rationale: 'Message is a question with no imperative change verb.' };
   }
   if (BUILD_PATTERN.test(text)) {
-    return { kind: 'build', rationale: 'Message uses an imperative verb requesting a workspace change.' };
+    return {
+      kind: 'build',
+      rationale: 'Message uses an imperative verb requesting a workspace change.',
+    };
   }
-  return { kind: 'plan', rationale: 'No clear execution verb found; defaulting to a non-mutating plan.' };
+  return {
+    kind: 'plan',
+    rationale: 'No clear execution verb found; defaulting to a non-mutating plan.',
+  };
 }
 
 export function findReferencedDecisions(

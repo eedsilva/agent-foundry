@@ -73,9 +73,22 @@ describe('compileContext', () => {
   });
 
   it('puts referenced and unresolved decisions in detailed sections, everything else compacted', () => {
-    const referenced = changeRequest({ id: 'cr-referenced', status: 'confirmed', summary: 'Referenced decision text' });
-    const unresolved = changeRequest({ id: 'cr-unresolved', status: 'proposed', summary: 'Unresolved feedback text' });
-    const compacted = changeRequest({ id: 'cr-compacted', status: 'confirmed', summary: 'Old resolved decision text', createdAt: '2026-07-10T00:00:00.000Z' });
+    const referenced = changeRequest({
+      id: 'cr-referenced',
+      status: 'confirmed',
+      summary: 'Referenced decision text',
+    });
+    const unresolved = changeRequest({
+      id: 'cr-unresolved',
+      status: 'proposed',
+      summary: 'Unresolved feedback text',
+    });
+    const compacted = changeRequest({
+      id: 'cr-compacted',
+      status: 'confirmed',
+      summary: 'Old resolved decision text',
+      createdAt: '2026-07-10T00:00:00.000Z',
+    });
     // Add recent confirmed items so compacted falls outside the RECENT_CONFIRMED_WINDOW
     const recent1 = changeRequest({ id: 'cr-recent-1', status: 'confirmed' });
     const recent2 = changeRequest({ id: 'cr-recent-2', status: 'confirmed' });
@@ -90,7 +103,16 @@ describe('compileContext', () => {
     const compiled = compileContext({
       message: message('m1', 'Actually change the login flow.'),
       changeRequest: current,
-      allChangeRequests: [referenced, unresolved, compacted, recent1, recent2, recent3, recent4, current],
+      allChangeRequests: [
+        referenced,
+        unresolved,
+        compacted,
+        recent1,
+        recent2,
+        recent3,
+        recent4,
+        current,
+      ],
       versions: [],
     });
 

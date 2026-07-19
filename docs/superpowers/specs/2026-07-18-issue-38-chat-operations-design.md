@@ -24,7 +24,7 @@ unresolved (not-yet-confirmed) proposal from that digest.
 ## Goals
 
 - A `ChangeRequest` record captures each message's classification: suggested `OperationKind`,
-  a one-line rationale, which prior *confirmed* `ChangeRequest`s it references, and (after the user
+  a one-line rationale, which prior _confirmed_ `ChangeRequest`s it references, and (after the user
   acts) the confirmed kind and the `Operation` it produced.
 - The user can see and override the suggested kind before any `Build` (or any other kind) actually
   executes — `Build` is only ever created through this confirm step, never automatically from
@@ -35,7 +35,7 @@ unresolved (not-yet-confirmed) proposal from that digest.
 - Every compiled prompt's `ChangeRequest` records exactly which messages, prior decisions, versions,
   and harness (agent-instruction) fragments fed it.
 - Compaction never removes a confirmed decision or a still-proposed `ChangeRequest` from the record —
-  it only reduces *how much detail* is shown for items that are neither referenced nor recent.
+  it only reduces _how much detail_ is shown for items that are neither referenced nor recent.
 - Required differential test: a long conversation that changes a requirement partway through, and a
   later message that references an earlier decision in plain language, classifies and compiles
   correctly.
@@ -48,12 +48,12 @@ unresolved (not-yet-confirmed) proposal from that digest.
   tracks upgrading it.
 - **A dedicated user-uploaded "knowledge files" store.** That's the separate, not-yet-built roadmap
   item `v06-knowledge-attachments-shell`. For this issue, "knowledge files used" is satisfied
-  honestly by recording the *harness* fragments (`HarnessSelection.files` — the versioned
+  honestly by recording the _harness_ fragments (`HarnessSelection.files` — the versioned
   agent-instruction files already selected per step) that fed the prompt; there is no other "files
   fed to the agent" concept in the codebase yet.
 - **Operation execution/lifecycle changes.** `docs/ARCHITECTURE.md` already attributes that to #39.
   `ConversationOperationRunner`'s execution path (route → compile → execute → persist artifact) is
-  unchanged; this issue only changes what goes *into* the compiled instructions and what gets
+  unchanged; this issue only changes what goes _into_ the compiled instructions and what gets
   recorded about the compilation.
 - **Recording a `ProjectVersion` for chat-triggered builds.** `ConversationOperationRunner` doesn't
   do this today and this issue doesn't add it — out of scope, unrelated to classification/context.
@@ -121,7 +121,7 @@ it `undefined`, unchanged.
 
 **`message-classifier.ts`** — `classifyMessage({ message, priorChangeRequests })` → ordered regex rules
 (repair → visual-edit → explain → build → plan default) pick `suggestedKind`; a tokenize +
-≥2-shared-significant-word overlap against *confirmed* prior `ChangeRequest` summaries produces
+≥2-shared-significant-word overlap against _confirmed_ prior `ChangeRequest` summaries produces
 `referencedDecisionIds`. No I/O, no model calls.
 
 **`context-compiler.ts`** — `compileContext({ message, changeRequest, allChangeRequests, versions })` →
@@ -139,7 +139,7 @@ including compacted ones. No I/O, no model calls.
   one already exists); otherwise runs `classifyMessage()` and persists a `'proposed'` `ChangeRequest`.
 - `decideChangeRequest(projectId, changeRequestId, action, kind?, planOperationId?, directExecution?)` —
   `'reject'` marks `'rejected'` and stops. `'confirm'` resolves the final kind (`kind` param overrides
-  `suggestedKind` — this *is* the correction), marks `'confirmed'`, and only now creates the
+  `suggestedKind` — this _is_ the correction), marks `'confirmed'`, and only now creates the
   `Operation`: through `this.start()` for `plan`/`build` (passing `changeRequestId` through), or through
   `conversationService.createOperation()` for the other three kinds (mirroring the existing dual-path
   dispatcher already in `apps/api/src/app.ts`).

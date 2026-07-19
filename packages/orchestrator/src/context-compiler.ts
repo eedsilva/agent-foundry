@@ -1,4 +1,9 @@
-import type { ChangeRequest, ContextSource, Message, ProjectVersion } from '@agent-foundry/contracts';
+import type {
+  ChangeRequest,
+  ContextSource,
+  Message,
+  ProjectVersion,
+} from '@agent-foundry/contracts';
 
 export interface CompiledContext {
   digest: string;
@@ -21,8 +26,12 @@ export function compileContext(input: {
   const confirmed = others
     .filter((cr) => cr.status === 'confirmed')
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const recentConfirmedIds = new Set(confirmed.slice(0, RECENT_CONFIRMED_WINDOW).map((cr) => cr.id));
-  const pinned = confirmed.filter((cr) => referencedIds.has(cr.id) || recentConfirmedIds.has(cr.id));
+  const recentConfirmedIds = new Set(
+    confirmed.slice(0, RECENT_CONFIRMED_WINDOW).map((cr) => cr.id),
+  );
+  const pinned = confirmed.filter(
+    (cr) => referencedIds.has(cr.id) || recentConfirmedIds.has(cr.id),
+  );
 
   const unresolved = others.filter((cr) => cr.status === 'proposed');
 

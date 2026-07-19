@@ -251,7 +251,9 @@ export type StartOperationRequest = z.infer<typeof StartOperationRequestSchema>;
 3. Add after the existing `DecideOperationRequestSchema`/`type DecideOperationRequest` block:
 
 ```ts
-export const ClassifyMessageResponseSchema = z.object({ changeRequest: ChangeRequestSchema }).strict();
+export const ClassifyMessageResponseSchema = z
+  .object({ changeRequest: ChangeRequestSchema })
+  .strict();
 export type ClassifyMessageResponse = z.infer<typeof ClassifyMessageResponseSchema>;
 
 export const DecideChangeRequestRequestSchema = z
@@ -569,7 +571,8 @@ export class MemoryConversations implements ConversationRepository {
   }
   getSnapshot(projectId: string): Promise<ConversationSnapshot> {
     return Promise.resolve({
-      conversation: this.conversation && this.conversation.projectId === projectId ? this.conversation : null,
+      conversation:
+        this.conversation && this.conversation.projectId === projectId ? this.conversation : null,
       messages: this.messages.filter((m) => m.projectId === projectId),
       attachments: this.attachments.filter((a) => a.projectId === projectId),
       operations: this.operations.filter((o) => o.projectId === projectId),
@@ -688,6 +691,7 @@ git commit -m "feat(persistence): store ChangeRequest and share the MemoryConver
 - Consumes: `Message`, `ChangeRequest`, `OperationKind` (contracts), `messageText` (already exported
   from `./conversation-step-config.js`).
 - Produces:
+
   ```ts
   export interface ClassificationResult {
     suggestedKind: OperationKind;
@@ -705,6 +709,7 @@ git commit -m "feat(persistence): store ChangeRequest and share the MemoryConver
   ): string[];
   export function tokenize(text: string): string[];
   ```
+
   Task 4 (`context-compiler.ts`) and Task 5 (`operation-service.ts`) both import `classifyMessage`
   and `ClassificationResult` from this file by these exact names.
 
@@ -804,7 +809,9 @@ describe('classifyMessage', () => {
   });
 
   it('does not reference a decision that shares fewer than two significant words', () => {
-    const priorChangeRequests = [confirmedChangeRequest('cr-1', 'Add a footer with copyright text.')];
+    const priorChangeRequests = [
+      confirmedChangeRequest('cr-1', 'Add a footer with copyright text.'),
+    ];
     const result = classifyMessage({
       message: textMessage('m2', 'Add a login page with email and password.'),
       priorChangeRequests,
@@ -838,9 +845,9 @@ describe('findReferencedDecisions', () => {
     expect(findReferencedDecisions(new Set(['add', 'header']), oneWordOverlap)).toEqual([]);
 
     const twoWordOverlap = [confirmedChangeRequest('cr-1', 'Add a footer component.')];
-    expect(findReferencedDecisions(new Set(['add', 'footer', 'component']), twoWordOverlap)).toEqual([
-      'cr-1',
-    ]);
+    expect(
+      findReferencedDecisions(new Set(['add', 'footer', 'component']), twoWordOverlap),
+    ).toEqual(['cr-1']);
   });
 });
 ```
@@ -869,8 +876,30 @@ export interface ClassificationResult {
 }
 
 const STOPWORDS = new Set([
-  'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'have', 'has', 'was', 'were',
-  'are', 'you', 'your', 'let', 'use', 'add', 'com', 'que', 'para', 'uma', 'dos', 'das',
+  'the',
+  'and',
+  'for',
+  'with',
+  'that',
+  'this',
+  'from',
+  'into',
+  'have',
+  'has',
+  'was',
+  'were',
+  'are',
+  'you',
+  'your',
+  'let',
+  'use',
+  'add',
+  'com',
+  'que',
+  'para',
+  'uma',
+  'dos',
+  'das',
 ]);
 
 export function tokenize(text: string): string[] {
@@ -904,9 +933,15 @@ function classifyKind(text: string): { kind: OperationKind; rationale: string } 
     return { kind: 'explain', rationale: 'Message is a question with no imperative change verb.' };
   }
   if (BUILD_PATTERN.test(text)) {
-    return { kind: 'build', rationale: 'Message uses an imperative verb requesting a workspace change.' };
+    return {
+      kind: 'build',
+      rationale: 'Message uses an imperative verb requesting a workspace change.',
+    };
   }
-  return { kind: 'plan', rationale: 'No clear execution verb found; defaulting to a non-mutating plan.' };
+  return {
+    kind: 'plan',
+    rationale: 'No clear execution verb found; defaulting to a non-mutating plan.',
+  };
 }
 
 export function findReferencedDecisions(
@@ -977,6 +1012,7 @@ git commit -m "feat(orchestrator): add deterministic message classifier"
 
 - Consumes: `Message`, `ChangeRequest`, `ProjectVersion` (contracts).
 - Produces:
+
   ```ts
   export interface CompiledContext {
     digest: string;
@@ -989,6 +1025,7 @@ git commit -m "feat(orchestrator): add deterministic message classifier"
     versions: ProjectVersion[];
   }): CompiledContext;
   ```
+
   Task 6 (`conversation-operation-runner.ts`) imports `compileContext`/`CompiledContext` by these
   exact names, and appends `{ type: 'harness-fragment', id: <path> }` entries to `sources` itself
   after calling this function (harness fragments are not this module's concern — it has no
@@ -1073,9 +1110,21 @@ describe('compileContext', () => {
   });
 
   it('puts referenced and unresolved decisions in detailed sections, everything else compacted', () => {
-    const referenced = changeRequest({ id: 'cr-referenced', status: 'confirmed', summary: 'Referenced decision text' });
-    const unresolved = changeRequest({ id: 'cr-unresolved', status: 'proposed', summary: 'Unresolved feedback text' });
-    const compacted = changeRequest({ id: 'cr-compacted', status: 'confirmed', summary: 'Old resolved decision text' });
+    const referenced = changeRequest({
+      id: 'cr-referenced',
+      status: 'confirmed',
+      summary: 'Referenced decision text',
+    });
+    const unresolved = changeRequest({
+      id: 'cr-unresolved',
+      status: 'proposed',
+      summary: 'Unresolved feedback text',
+    });
+    const compacted = changeRequest({
+      id: 'cr-compacted',
+      status: 'confirmed',
+      summary: 'Old resolved decision text',
+    });
     const current = changeRequest({
       id: 'cr-current',
       status: 'proposed',
@@ -1146,7 +1195,12 @@ Expected: FAIL — `./context-compiler.js` doesn't exist.
 Create `packages/orchestrator/src/context-compiler.ts`:
 
 ```ts
-import type { ChangeRequest, ContextSource, Message, ProjectVersion } from '@agent-foundry/contracts';
+import type {
+  ChangeRequest,
+  ContextSource,
+  Message,
+  ProjectVersion,
+} from '@agent-foundry/contracts';
 
 export interface CompiledContext {
   digest: string;
@@ -1169,8 +1223,12 @@ export function compileContext(input: {
   const confirmed = others
     .filter((cr) => cr.status === 'confirmed')
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const recentConfirmedIds = new Set(confirmed.slice(0, RECENT_CONFIRMED_WINDOW).map((cr) => cr.id));
-  const pinned = confirmed.filter((cr) => referencedIds.has(cr.id) || recentConfirmedIds.has(cr.id));
+  const recentConfirmedIds = new Set(
+    confirmed.slice(0, RECENT_CONFIRMED_WINDOW).map((cr) => cr.id),
+  );
+  const pinned = confirmed.filter(
+    (cr) => referencedIds.has(cr.id) || recentConfirmedIds.has(cr.id),
+  );
 
   const unresolved = others.filter((cr) => cr.status === 'proposed');
 
@@ -1254,6 +1312,7 @@ git commit -m "feat(orchestrator): add context compiler that never drops pinned 
 - Consumes: `classifyMessage` (Task 3), `ChangeRequestSchema`/`ChangeRequest` (Task 1),
   `ConversationService.createOperation` (existing).
 - Produces:
+
   ```ts
   class OperationService {
     constructor(
@@ -1278,6 +1337,7 @@ git commit -m "feat(orchestrator): add context compiler that never drops pinned 
     ): Promise<Operation>; // existing, gains changeRequestId passthrough only
   }
   ```
+
   Task 7 (`composition/runtime.ts`) passes `conversationService` as the new 7th constructor arg.
   Task 8 (`apps/api/src/app.ts`) calls `classify`/`decideChangeRequest` by these exact names.
 
@@ -1399,7 +1459,9 @@ describe('OperationService.classify', () => {
 
   it('throws NotFoundError for a missing message', async () => {
     const { service } = setup();
-    await expect(service.classify('project-1', 'missing')).rejects.toThrow('Message missing not found');
+    await expect(service.classify('project-1', 'missing')).rejects.toThrow(
+      'Message missing not found',
+    );
   });
 });
 
@@ -1460,7 +1522,10 @@ describe('OperationService.decideChangeRequest', () => {
     });
     const changeRequest = await service.classify('project-1', message.id);
     await expect(
-      service.decideChangeRequest('project-1', changeRequest.id, { action: 'confirm', kind: 'build' }),
+      service.decideChangeRequest('project-1', changeRequest.id, {
+        action: 'confirm',
+        kind: 'build',
+      }),
     ).rejects.toThrow();
   });
 
@@ -2004,7 +2069,10 @@ describe('ConversationOperationRunner context compilation', () => {
     expect(workspaces.lastRequestMarkdown).toContain('Pinned decisions');
     expect(workspaces.lastRequestMarkdown).toContain(confirmedDecision.id);
 
-    const updatedChangeRequest = await conversations.getChangeRequest('project-1', changeRequest.id);
+    const updatedChangeRequest = await conversations.getChangeRequest(
+      'project-1',
+      changeRequest.id,
+    );
     const sourceIds = updatedChangeRequest?.contextSources.map((s) => s.id) ?? [];
     expect(sourceIds).toContain(confirmedDecision.id);
     expect(sourceIds).toContain('CLAUDE.md');
@@ -2090,50 +2158,50 @@ export class ConversationOperationRunner {
 3. In `run()`, replace the step-building line and insert context compilation before it:
 
 ```ts
-    const initialRun = await this.requireRun(runId);
-    const operation = await this.requireOperation(projectId, operationId);
-    const kind: 'plan' | 'build' = operation.kind === 'build' ? 'build' : 'plan';
-    const message = await this.requireMessage(projectId, operation.messageId);
-    const planArtifact = await this.loadPlanArtifact(projectId, operation);
-    const changeRequest = operation.changeRequestId
-      ? await this.conversations.getChangeRequest(projectId, operation.changeRequestId)
-      : undefined;
-    const allChangeRequests = await this.conversations.listChangeRequests(projectId);
-    const versions = await this.projectVersions.list(projectId, 5);
-    const compiledContext = compileContext({
-      message,
-      changeRequest,
-      allChangeRequests,
-      versions,
-    });
-    const step = buildConversationStep({
-      operationId,
-      kind,
-      message,
-      planArtifact,
-      contextDigest: compiledContext.digest,
-    });
+const initialRun = await this.requireRun(runId);
+const operation = await this.requireOperation(projectId, operationId);
+const kind: 'plan' | 'build' = operation.kind === 'build' ? 'build' : 'plan';
+const message = await this.requireMessage(projectId, operation.messageId);
+const planArtifact = await this.loadPlanArtifact(projectId, operation);
+const changeRequest = operation.changeRequestId
+  ? await this.conversations.getChangeRequest(projectId, operation.changeRequestId)
+  : undefined;
+const allChangeRequests = await this.conversations.listChangeRequests(projectId);
+const versions = await this.projectVersions.list(projectId, 5);
+const compiledContext = compileContext({
+  message,
+  changeRequest,
+  allChangeRequests,
+  versions,
+});
+const step = buildConversationStep({
+  operationId,
+  kind,
+  message,
+  planArtifact,
+  contextDigest: compiledContext.digest,
+});
 ```
 
 4. Right after the existing `const harness = await this.harness.select({...});` call inside the
    `try` block, add provenance persistence:
 
 ```ts
-      const harness = await this.harness.select({
-        role: step.role,
-        taskKind: step.taskKind,
-        stack: 'conversation',
-        tags: step.harnessTags,
-      });
-      if (changeRequest) {
-        await this.conversations.updateChangeRequest({
-          ...changeRequest,
-          contextSources: [
-            ...compiledContext.sources,
-            ...harness.files.map((file) => ({ type: 'harness-fragment' as const, id: file.path })),
-          ],
-        });
-      }
+const harness = await this.harness.select({
+  role: step.role,
+  taskKind: step.taskKind,
+  stack: 'conversation',
+  tags: step.harnessTags,
+});
+if (changeRequest) {
+  await this.conversations.updateChangeRequest({
+    ...changeRequest,
+    contextSources: [
+      ...compiledContext.sources,
+      ...harness.files.map((file) => ({ type: 'harness-fragment' as const, id: file.path })),
+    ],
+  });
+}
 ```
 
 Everything else in `run()` (the rest of the `try` block, the `catch` block, the private helpers)
@@ -2175,23 +2243,23 @@ Modify `packages/composition/src/runtime.ts` — `operationRunner` gains `projec
 position Task 6 specified (after `conversations`, before `clock`):
 
 ```ts
-  const operationRunner = new ConversationOperationRunner(
-    runs,
-    stepRuns,
-    stepAttempts,
-    artifacts,
-    events,
-    harness,
-    router,
-    metrics,
-    executors,
-    workspaces,
-    conversations,
-    projectVersions,
-    clock,
-    ids,
-    { agentTimeoutMs: config.agentTimeoutMs },
-  );
+const operationRunner = new ConversationOperationRunner(
+  runs,
+  stepRuns,
+  stepAttempts,
+  artifacts,
+  events,
+  harness,
+  router,
+  metrics,
+  executors,
+  workspaces,
+  conversations,
+  projectVersions,
+  clock,
+  ids,
+  { agentTimeoutMs: config.agentTimeoutMs },
+);
 ```
 
 `operationService` gains `conversationService` as its 7th argument — note `conversationService` must
@@ -2199,15 +2267,15 @@ already be constructed above this line (it is, per the file's existing order: `c
 is built before `operationRunner`/`operationService`):
 
 ```ts
-  const operationService = new OperationService(
-    conversations,
-    runs,
-    queue,
-    artifacts,
-    clock,
-    ids,
-    conversationService,
-  );
+const operationService = new OperationService(
+  conversations,
+  runs,
+  queue,
+  artifacts,
+  clock,
+  ids,
+  conversationService,
+);
 ```
 
 - [ ] **Step 2: Verify GREEN**
@@ -2270,7 +2338,9 @@ describe('classify and decide change request', () => {
       {},
     );
     expect(classifyResponse.status).toBe(201);
-    const { changeRequest } = (await classifyResponse.json()) as { changeRequest: { id: string; suggestedKind: string } };
+    const { changeRequest } = (await classifyResponse.json()) as {
+      changeRequest: { id: string; suggestedKind: string };
+    };
     expect(changeRequest.suggestedKind).toBe('plan');
 
     const decideResponse = await post(
@@ -2279,7 +2349,10 @@ describe('classify and decide change request', () => {
       { action: 'confirm', kind: 'plan' },
     );
     expect(decideResponse.status).toBe(200);
-    const decided = (await decideResponse.json()) as { changeRequest: { status: string }; operation: { kind: string } };
+    const decided = (await decideResponse.json()) as {
+      changeRequest: { status: string };
+      operation: { kind: string };
+    };
     expect(decided.changeRequest.status).toBe('confirmed');
     expect(decided.operation.kind).toBe('plan');
   });
@@ -2297,7 +2370,9 @@ describe('classify and decide change request', () => {
       `/projects/${projectId}/conversation/messages/${message.id}/classify`,
       {},
     );
-    const { changeRequest } = (await classifyResponse.json()) as { changeRequest: { id: string; suggestedKind: string } };
+    const { changeRequest } = (await classifyResponse.json()) as {
+      changeRequest: { id: string; suggestedKind: string };
+    };
     expect(changeRequest.suggestedKind).toBe('build');
 
     const decideResponse = await post(
@@ -2323,7 +2398,9 @@ describe('classify and decide change request', () => {
       `/projects/${projectId}/conversation/messages/${firstMsg.id}/classify`,
       {},
     );
-    const { changeRequest: firstCr } = (await firstClassify.json()) as { changeRequest: { id: string } };
+    const { changeRequest: firstCr } = (await firstClassify.json()) as {
+      changeRequest: { id: string };
+    };
     await post(
       baseUrl,
       `/projects/${projectId}/conversation/change-requests/${firstCr.id}/decide`,
@@ -2380,32 +2457,32 @@ Add the two routes immediately after the existing
 `/projects/:projectId/conversation/operations/:operationId/decide` route:
 
 ```ts
-  app.post(
-    '/projects/:projectId/conversation/messages/:messageId/classify',
-    async (request, reply) => {
-      const { projectId, messageId } = z
-        .object({ projectId: PathSegmentSchema, messageId: PathSegmentSchema })
-        .parse(request.params);
-      const changeRequest = await runtime.operationService.classify(projectId, messageId);
-      return reply.status(201).send(ClassifyMessageResponseSchema.parse({ changeRequest }));
-    },
-  );
+app.post(
+  '/projects/:projectId/conversation/messages/:messageId/classify',
+  async (request, reply) => {
+    const { projectId, messageId } = z
+      .object({ projectId: PathSegmentSchema, messageId: PathSegmentSchema })
+      .parse(request.params);
+    const changeRequest = await runtime.operationService.classify(projectId, messageId);
+    return reply.status(201).send(ClassifyMessageResponseSchema.parse({ changeRequest }));
+  },
+);
 
-  app.post(
-    '/projects/:projectId/conversation/change-requests/:changeRequestId/decide',
-    async (request, reply) => {
-      const { projectId, changeRequestId } = z
-        .object({ projectId: PathSegmentSchema, changeRequestId: PathSegmentSchema })
-        .parse(request.params);
-      const input = DecideChangeRequestRequestSchema.parse(request.body);
-      const result = await runtime.operationService.decideChangeRequest(
-        projectId,
-        changeRequestId,
-        input,
-      );
-      return reply.status(200).send(DecideChangeRequestResponseSchema.parse(result));
-    },
-  );
+app.post(
+  '/projects/:projectId/conversation/change-requests/:changeRequestId/decide',
+  async (request, reply) => {
+    const { projectId, changeRequestId } = z
+      .object({ projectId: PathSegmentSchema, changeRequestId: PathSegmentSchema })
+      .parse(request.params);
+    const input = DecideChangeRequestRequestSchema.parse(request.body);
+    const result = await runtime.operationService.decideChangeRequest(
+      projectId,
+      changeRequestId,
+      input,
+    );
+    return reply.status(200).send(DecideChangeRequestResponseSchema.parse(result));
+  },
+);
 ```
 
 Match this file's exact existing style for parsing params (`PathSegmentSchema`, `z.object(...).parse`)
@@ -2493,9 +2570,9 @@ Modify `apps/web/app/project/[id]/page.tsx`. The existing file already computes,
 `submitMessage()`:
 
 ```ts
-  const latestApprovedPlan = conversation?.operations
-    .filter((op) => op.kind === 'plan' && op.approval?.status === 'approved')
-    .at(-1);
+const latestApprovedPlan = conversation?.operations
+  .filter((op) => op.kind === 'plan' && op.approval?.status === 'approved')
+  .at(-1);
 ```
 
 Reuse this exact variable (do not duplicate the lookup).
@@ -2503,7 +2580,7 @@ Reuse this exact variable (do not duplicate the lookup).
 1. Add state near the existing `mode`/`buildChoice`/`conversationError` declarations:
 
 ```ts
-  const [pendingChangeRequest, setPendingChangeRequest] = useState<ChangeRequest | null>(null);
+const [pendingChangeRequest, setPendingChangeRequest] = useState<ChangeRequest | null>(null);
 ```
 
 Add `ChangeRequest, OperationKind` to this file's existing `@agent-foundry/contracts` type import
@@ -2514,56 +2591,56 @@ list.
    classifies instead of starting an operation directly:
 
 ```ts
-  async function submitMessage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!draft.trim()) return;
-    try {
-      const message = await sendMessage(id, {
-        role: 'user',
-        content: [{ type: 'text', text: draft }],
-      });
-      setDraft('');
-      setConversationError('');
-      const { changeRequest } = await classifyMessage(id, message.id);
-      setPendingChangeRequest(changeRequest);
-      if (changeRequest.suggestedKind === 'plan' || changeRequest.suggestedKind === 'build') {
-        setMode(changeRequest.suggestedKind);
-      }
-      setConversation(await getConversation(id));
-    } catch (cause) {
-      setConversationError(cause instanceof Error ? cause.message : String(cause));
+async function submitMessage(event: FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+  if (!draft.trim()) return;
+  try {
+    const message = await sendMessage(id, {
+      role: 'user',
+      content: [{ type: 'text', text: draft }],
+    });
+    setDraft('');
+    setConversationError('');
+    const { changeRequest } = await classifyMessage(id, message.id);
+    setPendingChangeRequest(changeRequest);
+    if (changeRequest.suggestedKind === 'plan' || changeRequest.suggestedKind === 'build') {
+      setMode(changeRequest.suggestedKind);
     }
+    setConversation(await getConversation(id));
+  } catch (cause) {
+    setConversationError(cause instanceof Error ? cause.message : String(cause));
   }
+}
 
-  async function confirmChangeRequest() {
-    if (!pendingChangeRequest) return;
-    const kind: OperationKind =
-      pendingChangeRequest.suggestedKind === 'plan' || pendingChangeRequest.suggestedKind === 'build'
-        ? mode
-        : pendingChangeRequest.suggestedKind;
-    try {
-      await decideChangeRequest(id, pendingChangeRequest.id, {
-        action: 'confirm',
-        kind,
-        ...(kind === 'build'
-          ? buildChoice === 'plan' && latestApprovedPlan
-            ? { planOperationId: latestApprovedPlan.id }
-            : { directExecution: true }
-          : {}),
-      });
-      setPendingChangeRequest(null);
-      setConversationError('');
-      setConversation(await getConversation(id));
-    } catch (cause) {
-      setConversationError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
-
-  async function discardChangeRequest() {
-    if (!pendingChangeRequest) return;
-    await decideChangeRequest(id, pendingChangeRequest.id, { action: 'reject' });
+async function confirmChangeRequest() {
+  if (!pendingChangeRequest) return;
+  const kind: OperationKind =
+    pendingChangeRequest.suggestedKind === 'plan' || pendingChangeRequest.suggestedKind === 'build'
+      ? mode
+      : pendingChangeRequest.suggestedKind;
+  try {
+    await decideChangeRequest(id, pendingChangeRequest.id, {
+      action: 'confirm',
+      kind,
+      ...(kind === 'build'
+        ? buildChoice === 'plan' && latestApprovedPlan
+          ? { planOperationId: latestApprovedPlan.id }
+          : { directExecution: true }
+        : {}),
+    });
     setPendingChangeRequest(null);
+    setConversationError('');
+    setConversation(await getConversation(id));
+  } catch (cause) {
+    setConversationError(cause instanceof Error ? cause.message : String(cause));
   }
+}
+
+async function discardChangeRequest() {
+  if (!pendingChangeRequest) return;
+  await decideChangeRequest(id, pendingChangeRequest.id, { action: 'reject' });
+  setPendingChangeRequest(null);
+}
 ```
 
 This mirrors the existing function's `try`/`catch`/`setConversationError` structure exactly — only
@@ -2571,31 +2648,36 @@ the body changed from "classify then immediately start" to "classify, wait for t
 
 3. Add a small inline confirmation card, rendered when `pendingChangeRequest` is set, placed directly
    above the existing Plan/Build radio toggle. For `plan`/`build` suggestions, the existing radio
-   toggle (`mode` state) *is* the correction control — the card just labels it; `explain`/`repair`/
+   toggle (`mode` state) _is_ the correction control — the card just labels it; `explain`/`repair`/
    `visual-edit` suggestions (no existing radio for these) get a direct confirm with no override,
    matching how those three kinds have no dedicated UI today either:
 
 ```tsx
-{pendingChangeRequest && (
-  <div className="panel" style={{ marginBottom: '0.5rem' }}>
-    <p>
-      Suggested: <strong>{pendingChangeRequest.suggestedKind}</strong> — {pendingChangeRequest.rationale}
-    </p>
-    {pendingChangeRequest.referencedDecisionIds.length > 0 && (
-      <p>References: {pendingChangeRequest.referencedDecisionIds.join(', ')}</p>
-    )}
-    {(pendingChangeRequest.suggestedKind === 'plan' || pendingChangeRequest.suggestedKind === 'build') && (
-      <p>Use the Plan/Build toggle below to confirm or correct this before sending.</p>
-    )}
-    <button onClick={confirmChangeRequest}>
-      Confirm{' '}
-      {pendingChangeRequest.suggestedKind === 'plan' || pendingChangeRequest.suggestedKind === 'build'
-        ? mode
-        : pendingChangeRequest.suggestedKind}
-    </button>
-    <button onClick={discardChangeRequest}>Discard</button>
-  </div>
-)}
+{
+  pendingChangeRequest && (
+    <div className="panel" style={{ marginBottom: '0.5rem' }}>
+      <p>
+        Suggested: <strong>{pendingChangeRequest.suggestedKind}</strong> —{' '}
+        {pendingChangeRequest.rationale}
+      </p>
+      {pendingChangeRequest.referencedDecisionIds.length > 0 && (
+        <p>References: {pendingChangeRequest.referencedDecisionIds.join(', ')}</p>
+      )}
+      {(pendingChangeRequest.suggestedKind === 'plan' ||
+        pendingChangeRequest.suggestedKind === 'build') && (
+        <p>Use the Plan/Build toggle below to confirm or correct this before sending.</p>
+      )}
+      <button onClick={confirmChangeRequest}>
+        Confirm{' '}
+        {pendingChangeRequest.suggestedKind === 'plan' ||
+        pendingChangeRequest.suggestedKind === 'build'
+          ? mode
+          : pendingChangeRequest.suggestedKind}
+      </button>
+      <button onClick={discardChangeRequest}>Discard</button>
+    </div>
+  );
+}
 ```
 
 - [ ] **Step 3: Manually verify in the dev server**
