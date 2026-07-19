@@ -11,3 +11,4 @@ export * from './queue-lease-reaper.js';
 export * from './conversation-step-config.js';
 export * from './conversation-operation-runner.js';
 export * from './operation-service.js';
+export * from './quality-observation-service.js';

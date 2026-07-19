@@ -29,6 +29,8 @@ import type {
   ProjectPolicy,
   ProjectEvent,
   ProjectVersion,
+  QualityObservation,
+  QualityObservationQuery,
   QueueJob,
   RouteDecision,
   RouteOverrideProvenance,
@@ -252,6 +254,11 @@ export interface MetricsRepository {
     category?: TaskCategory;
     approved: boolean;
   }): Promise<void>;
+}
+
+export interface QualityObservationRepository {
+  record(observation: QualityObservation): Promise<void>;
+  list(query: QualityObservationQuery): Promise<QualityObservation[]>;
 }
 
 export interface AgentExecutor {

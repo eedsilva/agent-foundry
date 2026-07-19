@@ -2,6 +2,8 @@ import type { AgentStep, StoredArtifact } from '@agent-foundry/contracts';
 import type { HarnessSelection } from '@agent-foundry/domain';
 import { stableJson } from '@agent-foundry/domain';
 
+const REVIEWER_ROLES = new Set(['plan-reviewer', 'architecture-reviewer', 'code-reviewer']);
+
 export function compileRequestMarkdown(input: {
   projectId: string;
   runId: string;
@@ -14,12 +16,13 @@ export function compileRequestMarkdown(input: {
   artifacts: StoredArtifact[];
   workspacePath: string;
 }): string {
+  const blindReview = REVIEWER_ROLES.has(input.step.role);
   const artifactSections = input.artifacts.length
     ? input.artifacts
         .map(
           (artifact) =>
-            `### ${artifact.metadata.name} · revision ${artifact.metadata.revision}\n\n` +
-            `Created by: ${artifact.metadata.createdBy}\n\n` +
+            `### ${blindReview ? 'Input artifact' : artifact.metadata.name} · revision ${artifact.metadata.revision}\n\n` +
+            (blindReview ? '' : `Created by: ${artifact.metadata.createdBy}\n\n`) +
             `SHA-256: ${artifact.metadata.sha256}\n\n` +
             '```json\n' +
             stableJson(artifact.content) +
