@@ -45,12 +45,12 @@ const server = createServer((req, res) => {
 <div id="wrapper" style="width:120px;height:24px;background:#eee">Wrapper</div>
 <div id="generated" style="width:120px;height:24px;background:#eee">Generated</div>
 <script>
-  document.getElementById('simple').__reactFiber\$fixture = {
+  document.getElementById('simple').__reactFiber$fixture = {
     type: { name: 'Greeting' },
     return: null,
     _debugSource: { fileName: 'src/Greeting.tsx', lineNumber: 4, columnNumber: 3 },
   };
-  document.getElementById('wrapper').__reactFiber\$fixture = {
+  document.getElementById('wrapper').__reactFiber$fixture = {
     type: { name: 'Button' },
     return: {
       type: { name: 'Card' },
