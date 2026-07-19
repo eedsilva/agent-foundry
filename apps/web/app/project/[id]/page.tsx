@@ -207,6 +207,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [events, setEvents] = useState<ProjectEvent[]>([]);
   const [live, setLive] = useState(false);
   const [streamEvents, setStreamEvents] = useState<AgentStreamEvent[]>([]);
+  const [streamEventsRunId, setStreamEventsRunId] = useState<string | undefined>(undefined);
+  const [activeOperationRun, setActiveOperationRun] = useState<RunDetailResponse | null>(null);
   const [approvals, setApprovals] = useState<ApprovalListResponse['approvals']>([]);
   const [workflowDef, setWorkflowDef] = useState<WorkflowDefinition | null>(null);
   const [runtimeModels, setRuntimeModels] = useState<ModelDefinition[]>([]);
@@ -371,19 +373,55 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   // Conversation operations (plan/build sent from the Conversa panel below)
   // each run under their OWN WorkflowRun — a different run than `run` above,
-  // which only tracks the project's original DAG run. `artifactReferences`
-  // is empty until an operation's run durably completes (ConversationOperationRunner
-  // records it there), so the most recent operation without one — and, for a
-  // plan, not yet rejected — is the one plausibly still streaming live activity.
-  // ponytail: only ever subscribes to the single latest operation; a stale/
-  // failed operation with no newer message after it keeps matching this until
-  // the next message is sent — harmless (bounded to one EventSource), just an
-  // idle connection. Upgrade if operations ever run concurrently.
-  const activeOperation = conversation?.operations
-    .filter(
-      (op) => op.runId && op.artifactReferences.length === 0 && op.approval?.status !== 'rejected',
-    )
-    .at(-1);
+  // which only tracks the project's original DAG run. Only the most recently
+  // created operation can plausibly still be in flight (operations are
+  // processed one at a time), so its own run status — not artifactReferences
+  // emptiness — is what "in flight" actually means: a build started from an
+  // approved plan inherits the plan's artifactReferences at creation, before
+  // its own run ever executes, so emptiness alone would wrongly call it
+  // "done" from birth.
+  const latestOperation = conversation?.operations.at(-1);
+
+  useEffect(() => {
+    if (!latestOperation?.runId) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await getRunDetail(latestOperation.runId!);
+        if (!active) return;
+        setActiveOperationRun(next);
+        if (!PROJECT_TERMINAL_STATUSES.has(next.run.status)) {
+          timer = setTimeout(poll, 1_500);
+        }
+      } catch {
+        // best-effort; the live-activity panel just won't update this tick
+      }
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [latestOperation?.runId]);
+
+  const latestOperationRunTerminal =
+    !latestOperation?.runId ||
+    !activeOperationRun ||
+    activeOperationRun.run.id !== latestOperation.runId ||
+    PROJECT_TERMINAL_STATUSES.has(activeOperationRun.run.status);
+
+  const activeOperation =
+    latestOperation && !latestOperationRunTerminal ? latestOperation : undefined;
+
+  // `sequence` is scoped per-run, so events from a new run must not be merged
+  // against a previous run's — adjusting state during render (React's
+  // documented pattern for "reset state when a prop changes") rather than in
+  // the effect below, which must only ever subscribe/unsubscribe.
+  if (activeOperation?.runId !== streamEventsRunId) {
+    setStreamEventsRunId(activeOperation?.runId);
+    setStreamEvents([]);
+  }
 
   useEffect(() => {
     if (!activeOperation?.runId) return;
@@ -830,6 +868,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 ) : null}
                 {operation &&
                 operation.artifactReferences.length > 0 &&
+                (operation.id !== latestOperation?.id || latestOperationRunTerminal) &&
                 (operation.kind !== 'plan' ||
                   (operation.approval && operation.approval.status !== 'pending')) ? (
                   <div className="operationLinks">
