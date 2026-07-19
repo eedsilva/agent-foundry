@@ -40,7 +40,6 @@ import {
   type AgentExecutor,
   type ApprovalDecisionRepository,
   type ApprovalRequestRepository,
-  type AgentExecutor,
   type ArtifactBlobPutInput,
   type ArtifactStore,
   type Clock,
