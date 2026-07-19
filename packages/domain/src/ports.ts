@@ -344,6 +344,20 @@ export interface BrowserVerifier {
   ): Promise<{ report: BrowserVerificationReport; evidence: BrowserVerificationEvidence }>;
 }
 
+/**
+ * On-demand, single-shot screenshot capture against a live preview session —
+ * separate from BrowserVerifier's scheduled verify() flow, which requires a
+ * full BrowserTestPlan/allowedOrigins/evidencePolicy. Used only for the
+ * "unsupported selection" fallback (packages/orchestrator/src/preview-selection-service.ts).
+ */
+export interface SelectionScreenshotCapturer {
+  captureSelectionScreenshot(input: {
+    url: string;
+    clip: { x: number; y: number; width: number; height: number };
+    viewport: { width: number; height: number };
+  }): Promise<Buffer | null>;
+}
+
 export interface PreviewSessionRecord {
   session: PreviewSession;
   tokenDigest: string;
