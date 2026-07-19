@@ -219,7 +219,12 @@ describe('ConversationOperationRunner', () => {
     expect((await runs.get(runId))?.status).toBe('completed');
     expect(workspaces.checkpoints).toEqual([]);
     expect(workspaces.commits).toEqual([]);
-    expect(await artifacts.getLatest('project-1', `operation-${operationId}`)).not.toBeNull();
+    const artifact = await artifacts.getLatest('project-1', `operation-${operationId}`);
+    expect(artifact).not.toBeNull();
+    const operation = await conversations.getOperation('project-1', operationId);
+    expect(operation?.artifactReferences).toEqual([
+      { name: artifact!.metadata.name, revision: artifact!.metadata.revision, sha256: artifact!.metadata.sha256 },
+    ]);
   });
 
   it('completes a build operation and commits the touched workspace', async () => {
@@ -231,7 +236,12 @@ describe('ConversationOperationRunner', () => {
     expect((await runs.get(runId))?.status).toBe('completed');
     expect(workspaces.checkpoints).toHaveLength(1);
     expect(workspaces.commits).toHaveLength(1);
-    expect(await artifacts.getLatest('project-1', `operation-${operationId}`)).not.toBeNull();
+    const artifact = await artifacts.getLatest('project-1', `operation-${operationId}`);
+    expect(artifact).not.toBeNull();
+    const operation = await conversations.getOperation('project-1', operationId);
+    expect(operation?.artifactReferences).toEqual([
+      { name: artifact!.metadata.name, revision: artifact!.metadata.revision, sha256: artifact!.metadata.sha256 },
+    ]);
   });
 
   it('marks the run failed and rolls back the checkpoint when the executor fails', async () => {

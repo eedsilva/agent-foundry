@@ -201,6 +201,17 @@ export class ConversationOperationRunner {
         runState.version,
       );
       succeeded = true;
+      // Records the artifact this operation produced on the Operation itself
+      // (not just the StepAttempt) so the chat UI can link a completed
+      // Operation to its diff/artifacts without waiting on the separate
+      // plan-approval decision — build operations have no approval step at
+      // all, so this is their only completion signal. Runs after `succeeded
+      // = true` like metrics/events below: a failure here must not trigger
+      // the rollback path for a run that already durably completed.
+      await this.conversations.updateOperation({
+        ...operation,
+        artifactReferences: [artifactReference(artifact)],
+      });
       await this.metrics.record({
         modelId: route.selected.model.id,
         taskKind: step.taskKind,

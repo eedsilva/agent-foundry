@@ -817,9 +817,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   </div>
                 ) : null}
                 {operation &&
-                operation.approval &&
-                operation.approval.status !== 'pending' &&
-                operation.artifactReferences.length > 0 ? (
+                operation.artifactReferences.length > 0 &&
+                (operation.kind !== 'plan' ||
+                  (operation.approval && operation.approval.status !== 'pending')) ? (
                   <div className="operationLinks">
                     <a href={`/project/${detail.project.id}/versions`}>Ver diff</a>
                     {operation.artifactReferences.map((ref) => (
