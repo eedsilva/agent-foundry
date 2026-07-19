@@ -8,6 +8,7 @@ import {
   WorkflowDefinitionSchema,
   type AgentExecutionRequest,
   type AgentExecutionResult,
+  type AgentStreamEvent,
   type ApprovalDecision,
   type ApprovalRequest,
   type ArtifactMetadata,
@@ -42,6 +43,7 @@ import {
   type ModelRouter,
   type ProjectRepository,
   type StepAttemptRepository,
+  type StepEventRepository,
   type StepRunRepository,
   type VerificationService,
   type WorkflowRepository,
@@ -527,6 +529,19 @@ function makeHarness(
   const approvalDecisions = new InMemoryApprovalDecisions();
   const artifacts = new InMemoryArtifacts();
   const events = new InMemoryEvents();
+  const stepEvents = {
+    events: [] as AgentStreamEvent[],
+    async append(event) {
+      const sequence = this.events.filter((existing) => existing.runId === event.runId).length + 1;
+      const parsed = { ...event, sequence } as AgentStreamEvent;
+      this.events.push(parsed);
+      return parsed;
+    },
+    async list(runId, options = {}) {
+      const cursor = options.cursor ?? 0;
+      return this.events.filter((event) => event.runId === runId && event.sequence > cursor);
+    },
+  } satisfies StepEventRepository & { events: AgentStreamEvent[] };
   const workspaces = new FakeWorkspaces();
   const executor = new ControllableExecutor(behaviors);
   const verifier = new ControllableVerifier(options.blockingVerifier ?? false);
@@ -587,6 +602,7 @@ function makeHarness(
     approvalDecisions,
     artifacts,
     events,
+    stepEvents,
     workflows,
     new InMemoryPolicies(DEFAULT_POLICY),
     harness,

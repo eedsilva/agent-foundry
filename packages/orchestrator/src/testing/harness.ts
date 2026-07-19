@@ -10,6 +10,8 @@ import {
   WorkflowDefinitionSchema,
   type AgentExecutionRequest,
   type AgentExecutionResult,
+  type AgentStreamEvent,
+  type AgentStreamEventInput,
   type ApprovalAction,
   type ApprovalDecision,
   type ApprovalRequest,
@@ -55,6 +57,7 @@ import {
   type PolicyRepository,
   type ProjectRepository,
   type StepAttemptRepository,
+  type StepEventRepository,
   type StepRunRepository,
   type VerificationService,
   type WorkflowRepository,
@@ -524,6 +527,25 @@ export class InMemoryEvents implements EventStore {
   }
 }
 
+export class InMemoryStepEvents implements StepEventRepository {
+  readonly events: AgentStreamEvent[] = [];
+  private sequenceByRun = new Map<string, number>();
+
+  async append(event: AgentStreamEventInput): Promise<AgentStreamEvent> {
+    const nextSequence = (this.sequenceByRun.get(event.runId) ?? 0) + 1;
+    this.sequenceByRun.set(event.runId, nextSequence);
+    const parsed = { ...event, sequence: nextSequence } as AgentStreamEvent;
+    this.events.push(parsed);
+    return parsed;
+  }
+
+  async list(runId: string, options: { cursor?: number; limit?: number } = {}): Promise<AgentStreamEvent[]> {
+    const cursor = options.cursor ?? 0;
+    const matches = this.events.filter((event) => event.runId === runId && event.sequence > cursor);
+    return options.limit === undefined ? matches : matches.slice(0, options.limit);
+  }
+}
+
 /** Mimics git: commits only when the executor touched the workspace. */
 export class FakeWorkspaces implements WorkspaceManager {
   readonly checkpoints: string[] = [];
@@ -856,6 +878,7 @@ export interface Stores {
   approvalDecisions: InMemoryApprovalDecisions;
   artifacts: InMemoryArtifacts;
   events: InMemoryEvents;
+  stepEvents: InMemoryStepEvents;
   workspaces: FakeWorkspaces;
   harnessVersion: { value: string };
 }
@@ -874,6 +897,7 @@ export function makeStores(clock: Clock = new SystemClock()): Stores {
     approvalDecisions: new InMemoryApprovalDecisions(power),
     artifacts: new InMemoryArtifacts(power),
     events: new InMemoryEvents(power),
+    stepEvents: new InMemoryStepEvents(),
     workspaces: new FakeWorkspaces(power),
     harnessVersion: { value: 'harness-1' },
   };
@@ -1046,6 +1070,7 @@ export function makeHarness(
     stores.approvalDecisions,
     stores.artifacts,
     stores.events,
+    stores.stepEvents,
     workflows,
     policies,
     harness,

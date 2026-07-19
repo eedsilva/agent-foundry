@@ -27,6 +27,7 @@ import {
   FilePreviewSessionRepository,
   FileProjectVersionRepository,
   FileStepAttemptRepository,
+  FileStepEventRepository,
   FileStepRunRepository,
   FileWorkflowRunRepository,
   FileWorkspaceManager,
@@ -62,6 +63,7 @@ export interface Runtime {
   artifacts: FileArtifactStore;
   conversations: FileConversationRepository;
   events: FileEventStore;
+  stepEvents: FileStepEventRepository;
   queue: FileJobQueue;
   metrics: FileMetricsRepository;
   modelOverrides: FileModelOverrideRepository;
@@ -106,6 +108,7 @@ export async function createRuntime(
   const artifacts = new FileArtifactStore(config.dataDir);
   const conversations = new FileConversationRepository(config.dataDir);
   const events = new FileEventStore(config.dataDir);
+  const stepEvents = new FileStepEventRepository(config.dataDir);
   const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
   const metrics = new FileMetricsRepository(config.dataDir);
   const modelOverrides = new FileModelOverrideRepository(config.dataDir);
@@ -191,6 +194,7 @@ export async function createRuntime(
     approvalDecisions,
     artifacts,
     events,
+    stepEvents,
     workflows,
     policies,
     harness,
@@ -270,6 +274,7 @@ export async function createRuntime(
     artifacts,
     conversations,
     events,
+    stepEvents,
     queue,
     metrics,
     modelOverrides,

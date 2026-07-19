@@ -3,9 +3,11 @@ import type {
   AgentExecutionRequest,
   AgentExecutionResult,
   AgentStep,
+  AgentStreamEventInput,
   ApprovalGateStep,
   ArtifactReference,
   ExecutableStep,
+  ExecutorStreamEvent,
   Project,
   ProjectEvent,
   ProjectPolicy,
@@ -47,6 +49,7 @@ import type {
   PolicyRepository,
   ProjectRepository,
   StepAttemptRepository,
+  StepEventRepository,
   StepRunRepository,
   VerificationService,
   WorkflowRunRepository,
@@ -109,6 +112,7 @@ export class WorkflowOrchestrator {
     private readonly approvalDecisions: ApprovalDecisionRepository,
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
+    private readonly stepEvents: StepEventRepository,
     private readonly workflows: WorkflowRepository,
     private readonly policies: PolicyRepository,
     private readonly harness: HarnessRepository,
@@ -779,8 +783,9 @@ export class WorkflowOrchestrator {
               timeoutAt: new Date(requestTimestamp.getTime() + node.timeout.afterMs).toISOString(),
             }
           : {};
+      const approvalRequestId = this.ids.next();
       await this.approvalRequests.create({
-        id: this.ids.next(),
+        id: approvalRequestId,
         runId,
         stepRunId: stepRun.id,
         nodeId: node.id,
@@ -789,6 +794,16 @@ export class WorkflowOrchestrator {
         ...timeout,
         createdAt: requestTimestamp.toISOString(),
       });
+      await this.stepEvents
+        .append({
+          id: this.ids.next(),
+          runId,
+          stepRunId: stepRun.id,
+          createdAt: this.clock.now().toISOString(),
+          type: 'approval',
+          approvalRequestId,
+        })
+        .catch(() => undefined);
       throw new ApprovalRequiredError(runId, node.id);
     }
 
@@ -1914,6 +1929,7 @@ export class WorkflowOrchestrator {
         secrets: [],
       },
       signal,
+      (event) => this.persistStreamEvent(runId, stepRunId, attemptId, event),
     );
     // A result that arrives after cancellation was requested must never be promoted.
     throwIfCancelled(signal, runId);
@@ -2256,6 +2272,25 @@ export class WorkflowOrchestrator {
       message,
       data: options.data ?? {},
     });
+  }
+
+  private persistStreamEvent(
+    runId: string,
+    stepRunId: string,
+    attemptId: string,
+    event: ExecutorStreamEvent,
+  ): void {
+    const input: AgentStreamEventInput = {
+      id: this.ids.next(),
+      runId,
+      stepRunId,
+      attemptId,
+      createdAt: this.clock.now().toISOString(),
+      ...event,
+    };
+    // ponytail: best-effort append — a dropped live stream event never fails
+    // the run itself; the final Message/Operation is still persisted normally.
+    this.stepEvents.append(input).catch(() => undefined);
   }
 }
 
