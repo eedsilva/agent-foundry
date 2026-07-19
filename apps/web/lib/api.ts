@@ -1,4 +1,5 @@
 import type {
+  AgentStreamEvent,
   ApprovalConflictResponse,
   ApprovalListResponse,
   ConversationPageResponse,
@@ -72,6 +73,10 @@ export function eventStreamUrl(id: string): string {
   return `${API_URL}/projects/${encodeURIComponent(id)}/events/stream`;
 }
 
+export function runEventsStreamUrl(runId: string): string {
+  return `${API_URL}/runs/${encodeURIComponent(runId)}/events/stream`;
+}
+
 export async function retryProject(id: string): Promise<Project> {
   const response = await api<{ project: Project }>(`/projects/${encodeURIComponent(id)}/retry`, {
     method: 'POST',
@@ -95,6 +100,13 @@ export function createModelOverride(
 
 export async function pauseRun(runId: string): Promise<WorkflowRun> {
   const response = await api<{ run: WorkflowRun }>(`/runs/${encodeURIComponent(runId)}/pause`, {
+    method: 'POST',
+  });
+  return response.run;
+}
+
+export async function cancelRun(runId: string): Promise<WorkflowRun> {
+  const response = await api<{ run: WorkflowRun }>(`/runs/${encodeURIComponent(runId)}/cancel`, {
     method: 'POST',
   });
   return response.run;
