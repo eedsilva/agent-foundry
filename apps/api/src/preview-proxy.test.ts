@@ -347,6 +347,16 @@ createServer((_req, res) => {
     const body = await fetch(started.url).then((response) => response.text());
     expect(body).toContain('af:selection:start');
     expect(body.indexOf('af:selection:start')).toBeLessThan(body.indexOf('</body>'));
+    // Regression check: injectInspectorScript used to pass the script tag as a
+    // *string* replacement to html.replace('</body>', ...), and the embedded
+    // findReactFiber source contains the literal "__reactFiber$" — the "$'"
+    // there is a special string-replacement pattern (insert the text after
+    // the match), so it silently overwrote that "$" with whatever followed
+    // </body> in the source (here, "</html>"), corrupting the script into
+    // invalid JS. Assert the "$" survives intact (quote style is transform-
+    // dependent — esbuild emits double quotes, tsc keeps single — so match
+    // only the part the bug actually corrupts).
+    expect(body).toContain('__reactFiber$');
   });
 
   it('does not touch a non-HTML response', async () => {

@@ -146,7 +146,13 @@ function respondFromUpstream(
 function injectInspectorScript(html: string, parentOrigin: string): string {
   if (!html.includes('</body>')) return html;
   const scriptTag = `<script>${buildInspectorScript(parentOrigin)}</script>`;
-  return html.replace('</body>', `${scriptTag}</body>`);
+  // Replacement must be a function, not a string: String.replace interprets
+  // "$"-sequences in a *string* replacement specially (e.g. the literal
+  // `__reactFiber$` inside the embedded findReactFiber source is followed by
+  // a quote, so "$'" was parsed as the "insert text after the match" pattern
+  // and silently corrupted the injected script). A function's return value is
+  // inserted verbatim, with no $-pattern interpretation.
+  return html.replace('</body>', () => `${scriptTag}</body>`);
 }
 
 async function handleUpgrade(
