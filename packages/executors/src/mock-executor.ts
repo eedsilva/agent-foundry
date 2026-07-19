@@ -5,6 +5,7 @@ import type {
   AgentExecutionRequest,
   AgentExecutionResult,
   ExecutorHealth,
+  ExecutorStreamEvent,
 } from '@agent-foundry/contracts';
 import { BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
@@ -16,9 +17,11 @@ export class MockAgentExecutor implements AgentExecutor {
   async execute(
     request: AgentExecutionRequest,
     signal?: AbortSignal,
+    onEvent?: (event: ExecutorStreamEvent) => void,
   ): Promise<AgentExecutionResult> {
     if (signal?.aborted) throw new RunCancelledError(request.runId);
     const startedAt = Date.now();
+    if (onEvent) await this.emitMockStream(request, onEvent);
     if (request.mutatesWorkspace) await this.mutateWorkspace(request);
     const output = await this.artifactFor(request);
     const stdout = JSON.stringify(output);
@@ -37,6 +40,33 @@ export class MockAgentExecutor implements AgentExecutor {
       output,
       usage: { inputTokens: 100, outputTokens: 100, estimatedCostUsd: 0 },
     };
+  }
+
+  /**
+   * Local dev/demo mode has no real CLI stdout to tap, so it has nothing to
+   * show the chat UI's live-activity rendering without this. Small delays
+   * make it visibly "stream" rather than arrive as one instantaneous burst;
+   * only runs when a caller actually wants events (onEvent provided).
+   */
+  private async emitMockStream(
+    request: AgentExecutionRequest,
+    onEvent: (event: ExecutorStreamEvent) => void,
+  ): Promise<void> {
+    const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    onEvent({ type: 'status', phase: 'started' });
+    await wait(200);
+    onEvent({ type: 'assistant_delta', text: `Working on ${request.stepId}...` });
+    await wait(200);
+    onEvent({ type: 'tool_start', toolName: 'MockTool', summary: `Reviewing ${request.taskKind}` });
+    await wait(200);
+    onEvent({
+      type: 'tool_end',
+      toolName: 'MockTool',
+      summary: `Reviewed ${request.taskKind}`,
+      ok: true,
+    });
+    await wait(200);
+    onEvent({ type: 'assistant_delta', text: 'Done.' });
   }
 
   async health(): Promise<ExecutorHealth> {
