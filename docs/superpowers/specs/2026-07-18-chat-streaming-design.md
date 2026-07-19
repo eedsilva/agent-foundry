@@ -25,7 +25,7 @@ The technical timeline and the conversation must meet without dumping raw stdout
 
 ## Architecture
 
-Merge happens **client-side**. No new unified backend stream. A third SSE endpoint is added, following the exact idiom the other two already use (JSONL append-only store + sequence cursor + `streamSse` helper), carrying a new normalized event type. The web client subscribes to all three streams for the active project/run and renders them as one ordered timeline.
+Merge happens **client-side, inside the existing "Conversa" panel** — not a wholesale replacement of `page.tsx`'s other panels. A third SSE endpoint is added, following the exact idiom the other two already use (JSONL append-only store + sequence cursor + `streamSse` helper), carrying a new normalized event type. The web client subscribes to it only while a run tied to the current conversation is active, and renders assistant deltas / tool chips / approval action / cancel-pause / completed-operation links directly under the relevant message bubble.
 
 ```
 CLI subprocess stdout (stream-json / --json lines)
@@ -33,33 +33,45 @@ CLI subprocess stdout (stream-json / --json lines)
   -> onEvent callback threaded through AgentExecutor.execute() / ExecutionPlane.submit()
   -> workflow-orchestrator.ts (the only submit() caller) persists via StepEventRepository
   -> GET /runs/:runId/events/stream (new SSE endpoint, reuses streamSse)
-  -> apps/web merges with conversation-messages stream + project-events stream
-  -> one timeline component, replacing the 3 existing panels
+  -> apps/web's Conversa panel subscribes per active Operation.runId
 ```
+
+The existing "Linha do tempo" (`ProjectEvent`), "Steps da execução", and "Aprovações" (workflow approval-gate) panels are **left in place** as the detailed technical audit view — nothing here requires deleting them. Issue #39's "the timeline and the conversation must meet" is satisfied by the chat now surfacing live progress and the same approval/cancel/pause actions inline, not by removing the audit panels a developer may still want. Keeping them avoids re-touching a large amount of already-tested, unrelated logic (build/plan mode selection, model pinning, retry flows) that lives in the same 1386-line `page.tsx`.
 
 ## Data model
 
 New file `packages/contracts/src/agent-stream.ts`:
 
 ```ts
-AgentStreamEventSchema = z.object({
+// Common envelope fields are repeated on every discriminated-union member
+// (each member must be a self-contained .strict() object for z.discriminatedUnion),
+// same convention as MessageContentBlockSchema in conversation.ts.
+const base = {
   id: PathSegmentSchema,
   runId: PathSegmentSchema,
   stepRunId: PathSegmentSchema,
-  attemptId: PathSegmentSchema,
+  attemptId: PathSegmentSchema.optional(), // absent for approval-gate stepRuns, which have no execution attempt
   sequence: z.number().int().positive(),
   createdAt: z.string().datetime(),
-}).and(z.discriminatedUnion('type', [
-  z.object({ type: z.literal('assistant_delta'), text: z.string() }),
-  z.object({ type: z.literal('tool_start'), toolName: z.string(), summary: z.string() }),
-  z.object({ type: z.literal('tool_end'), toolName: z.string(), summary: z.string(), ok: z.boolean() }),
-  z.object({ type: z.literal('status'), phase: z.string() }),
-  z.object({ type: z.literal('approval'), approvalRequestId: PathSegmentSchema }),
-  z.object({ type: z.literal('error'), message: z.string() }),
-]))
+};
+AgentStreamEventSchema = z.discriminatedUnion('type', [
+  z.object({ ...base, type: z.literal('assistant_delta'), text: z.string() }).strict(),
+  z.object({ ...base, type: z.literal('tool_start'), toolName: z.string(), summary: z.string() }).strict(),
+  z.object({
+    ...base,
+    type: z.literal('tool_end'),
+    toolName: z.string(),
+    summary: z.string(),
+    ok: z.boolean(),
+    detail: z.string().max(4_000).optional(), // redacted raw excerpt shown behind "show details"
+  }).strict(),
+  z.object({ ...base, type: z.literal('status'), phase: z.string() }).strict(),
+  z.object({ ...base, type: z.literal('approval'), approvalRequestId: PathSegmentSchema }).strict(),
+  z.object({ ...base, type: z.literal('error'), message: z.string() }).strict(),
+]);
 ```
 
-Raw stdout/stderr are never embedded in these events (keeps the durable per-run event log small and avoids re-redacting large blobs on every line). They remain on `StepAttempt.stdout`/`.stderr` (existing field, already truncated to 20k chars and redacted at write time) for the "show details" affordance. `tool_start`/`tool_end` carry only a short human-readable `summary` string derived by the provider mapper (e.g. `"Editing src/app.ts"`), not the tool's raw arguments/output.
+Full raw stdout/stderr for a *successful* attempt is not persisted anywhere today (`StepAttempt` has no stdout/stderr field — only a failed attempt's `RunError` carries a truncated excerpt). Rather than adding storage for that, `tool_end` carries its own small `detail` field: a redacted, size-capped (4,000 char) excerpt of just that tool call's output, produced by the same provider mapper that classifies the line. This is the only "raw-ish" text in the whole event stream and it lives on the event itself, so "show details" is just expanding a field already in hand — no extra fetch, no new persisted blob elsewhere. `tool_start`/`tool_end` also carry a short human-readable `summary` (e.g. `"Editing src/app.ts"`) for the collapsed, default view.
 
 ## Executor changes
 
@@ -91,13 +103,21 @@ Both mappers are pure functions (`line: string) => AgentStreamEventInput | undef
 
 ## Web
 
-Collapse the "Conversa" / "Linha do tempo" / run-steps+approvals panels in `apps/web/app/project/[id]/page.tsx` into one ordered timeline component. Merge logic (new `apps/web/lib/agent-stream.ts`, alongside existing `events.ts`): dedupe/order by `(source stream, sequence)`, then interleave by `createdAt`. Correlate a run's live deltas to the right chat bubble via `Operation.runId` (`Message` → `Operation.messageId` link already exists). Tool events render as a single collapsed summary line by default; a "show details" toggle reveals the associated `StepAttempt.stdout`/`.stderr` (already redacted). Cancel/pause: buttons on the active-run bubble calling the existing `POST /runs/:runId/cancel` / `/pause` — no new backend endpoints.
+The "Conversa" panel (`apps/web/app/project/[id]/page.tsx:687-770`) already renders each `Message` with its linked `Operation` badge and, for a pending plan, inline Aprovar/Rejeitar buttons — that part is reused as-is. What's missing per message with an in-flight `Operation.runId`:
 
-Completed Operation rendering: use existing `Operation.artifactReferences`/`projectVersionId` to link diff, preview, and artifacts — this data already exists (issue #36), #39 only needs the chat bubble to surface it instead of requiring a separate panel visit.
+- Live assistant text: subscribe to the new run-events stream only while that `Operation`'s run is non-terminal (mirrors the existing `projectTerminal`-gated `EventSource` pattern at `page.tsx:277-294`), append `assistant_delta.text` under the message.
+- Tool activity: `tool_start`/`tool_end` render as a small collapsed chip (`summary`); clicking expands `tool_end.detail` if present.
+- Workflow approval gates: an `approval` event with a pending `ApprovalRequest` (fetched via existing `listApprovals`) renders its actions inline, next to the message, instead of requiring a scroll to the separate "Aprovações" panel.
+- Cancel: new `cancelRun` call in `apps/web/lib/api.ts` (mirrors existing `pauseRun`) and a "Cancelar" button next to the existing header "Pausar" button — reuses the already-built `POST /runs/:runId/cancel` endpoint, which the web client doesn't call anywhere yet.
+- Completed Operation: once `Operation.approval?.status !== 'pending'` and the run is terminal, render links using the operation's existing `artifactReferences`/`projectVersionId` (issue #36 data) to the diff view, `PreviewPanel`, and artifact — reusing `getArtifact`/`compareVersions`/`PreviewPanel` already imported in this file, just placed in the message bubble instead of requiring a visit to the other panels.
+
+The "Linha do tempo" / "Steps da execução" / "Aprovações" panels stay exactly as they are — this is additive to the Conversa panel, not a replacement of the others.
+
+New file `apps/web/lib/agent-stream.ts` (alongside existing `events.ts`) holds the merge/dedup helper for the new stream, following `mergeEvents`'s exact shape (sequence-ordered, reference-stable when nothing new).
 
 ## Reconnect / cursor semantics
 
-Client persists last-seen `sequence` per stream (conversation messages, project events, new step events) exactly as the conversation stream already does. On reconnect, `Last-Event-ID` (or `?cursor=`) on all three streams replays anything missed. No new protocol — applying the existing idiom to a third stream.
+"Messages" reconnect-by-cursor is already satisfied today: the web client recovers the conversation by polling `getConversation` (trivially reconnect-safe) and the existing `/projects/:projectId/conversation/messages/stream` SSE endpoint is already tested for this — this issue does not need to change that. The new piece is the step-events stream: the client persists its last-seen `sequence`, and on reconnect sends it as `Last-Event-ID`/`?cursor=` so `streamSse`'s existing replay-from-cursor behavior recovers anything missed — no new protocol, the existing idiom applied to a third stream.
 
 ## Testing
 
@@ -105,7 +125,7 @@ Client persists last-seen `sequence` per stream (conversation messages, project 
 - Integration: `StepEventRepository` append/list/cursor (mirrors `conversation-repository.test.ts`).
 - API: new SSE endpoint reconnect test mirroring `events-stream.test.ts`'s existing "survives API restart" pattern.
 - **Required test**: disconnect the SSE client while a `tool_start` has been emitted but no matching `tool_end` yet (drive a real or fixture-backed executor mid-run), reconnect, assert the client recovers the missing `tool_end` (and any subsequent deltas) via cursor replay with no duplicate `tool_start`.
-- Web: chat timeline unification renders merged/ordered events; collapsed tool details expand/collapse; cancel/pause buttons call existing endpoints.
+- Web: Conversa panel renders live deltas/tool chips/inline approval actions for an in-flight `Operation`; collapsed tool details expand/collapse; cancel button calls the existing cancel endpoint; completed-Operation links render.
 
 ## Evidence for closure (per `docs/DEFINITION_OF_DONE.md`)
 
