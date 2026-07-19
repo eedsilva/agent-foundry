@@ -10,10 +10,12 @@ import {
   type ApprovalListResponse,
   type ApprovalRequest,
   type ActorRef,
+  type ChangeRequest,
   type ConversationPageResponse,
   type Message,
   type ModelDefinition,
   type Operation,
+  type OperationKind,
   type ProjectDetailResponse,
   type ProjectEvent,
   type ResumeBlockedResponse,
@@ -26,8 +28,10 @@ import {
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
+  classifyMessage,
   compareVersions,
   decideApproval,
+  decideChangeRequest,
   decideOperation,
   createModelOverride,
   eventStreamUrl,
@@ -46,7 +50,6 @@ import {
   retryProject,
   retryStep,
   sendMessage,
-  startOperation,
 } from '../../../lib/api';
 import { mergeEvents } from '../../../lib/events';
 import {
@@ -226,6 +229,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [mode, setMode] = useState<'plan' | 'build'>('plan');
   const [buildChoice, setBuildChoice] = useState<'plan' | 'direct'>('plan');
   const [conversationError, setConversationError] = useState('');
+  const [pendingChangeRequest, setPendingChangeRequest] = useState<ChangeRequest | null>(null);
 
   function openArtifact(artifact: StoredArtifact) {
     setSelected(artifact);
@@ -479,22 +483,48 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         role: 'user',
         content: [{ type: 'text', text: draft }],
       });
-      if (mode === 'plan') {
-        await startOperation(id, message.id, { kind: 'plan' });
-      } else if (buildChoice === 'plan' && latestApprovedPlan) {
-        await startOperation(id, message.id, {
-          kind: 'build',
-          planOperationId: latestApprovedPlan.id,
-        });
-      } else {
-        await startOperation(id, message.id, { kind: 'build', directExecution: true });
-      }
       setDraft('');
+      setConversationError('');
+      const { changeRequest } = await classifyMessage(id, message.id);
+      setPendingChangeRequest(changeRequest);
+      if (changeRequest.suggestedKind === 'plan' || changeRequest.suggestedKind === 'build') {
+        setMode(changeRequest.suggestedKind);
+      }
+      setConversation(await getConversation(id));
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function confirmChangeRequest() {
+    if (!pendingChangeRequest) return;
+    const kind: OperationKind =
+      pendingChangeRequest.suggestedKind === 'plan' ||
+      pendingChangeRequest.suggestedKind === 'build'
+        ? mode
+        : pendingChangeRequest.suggestedKind;
+    try {
+      await decideChangeRequest(id, pendingChangeRequest.id, {
+        action: 'confirm',
+        kind,
+        ...(kind === 'build'
+          ? buildChoice === 'plan' && latestApprovedPlan
+            ? { planOperationId: latestApprovedPlan.id }
+            : { directExecution: true }
+          : {}),
+      });
+      setPendingChangeRequest(null);
       setConversationError('');
       setConversation(await getConversation(id));
     } catch (cause) {
       setConversationError(cause instanceof Error ? cause.message : String(cause));
     }
+  }
+
+  async function discardChangeRequest() {
+    if (!pendingChangeRequest) return;
+    await decideChangeRequest(id, pendingChangeRequest.id, { action: 'reject' });
+    setPendingChangeRequest(null);
   }
 
   async function decide(operationId: string, action: 'approve' | 'reject') {
@@ -727,6 +757,31 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </ul>
         <form onSubmit={(event) => void submitMessage(event)}>
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} />
+          {pendingChangeRequest && (
+            <div className="panel" style={{ marginBottom: '0.5rem' }}>
+              <p>
+                Suggested: <strong>{pendingChangeRequest.suggestedKind}</strong> —{' '}
+                {pendingChangeRequest.rationale}
+              </p>
+              {pendingChangeRequest.referencedDecisionIds.length > 0 && (
+                <p>References: {pendingChangeRequest.referencedDecisionIds.join(', ')}</p>
+              )}
+              {(pendingChangeRequest.suggestedKind === 'plan' ||
+                pendingChangeRequest.suggestedKind === 'build') && (
+                <p>Use the Plan/Build toggle below to confirm or correct this before sending.</p>
+              )}
+              <button type="button" onClick={() => void confirmChangeRequest()}>
+                Confirm{' '}
+                {pendingChangeRequest.suggestedKind === 'plan' ||
+                pendingChangeRequest.suggestedKind === 'build'
+                  ? mode
+                  : pendingChangeRequest.suggestedKind}
+              </button>
+              <button type="button" onClick={() => void discardChangeRequest()}>
+                Discard
+              </button>
+            </div>
+          )}
           <div className="modelPinGrid">
             <label>
               <input type="radio" checked={mode === 'plan'} onChange={() => setMode('plan')} /> Plan
