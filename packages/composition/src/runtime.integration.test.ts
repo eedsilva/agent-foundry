@@ -13,7 +13,10 @@ import type {
 import { SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor, PlaywrightBrowserVerifier } from '@agent-foundry/executors';
 import { BrowserVerificationCoordinator, ConversationService } from '@agent-foundry/orchestrator';
-import { FileConversationRepository } from '@agent-foundry/persistence';
+import {
+  FileConversationRepository,
+  FileQualityObservationRepository,
+} from '@agent-foundry/persistence';
 import { createRuntime, type Runtime } from './runtime.js';
 
 const RESTART_APPROVAL_WORKFLOW = `
@@ -196,6 +199,9 @@ describe('mock runtime', () => {
 
     expect(runtime.browserVerifier).toBeInstanceOf(PlaywrightBrowserVerifier);
     expect(runtime.browserVerification).toBeInstanceOf(BrowserVerificationCoordinator);
+    expect(
+      (runtime as Runtime & { qualityObservations?: unknown }).qualityObservations,
+    ).toBeInstanceOf(FileQualityObservationRepository);
   });
 
   it('rejects project export when a canonical conversation is stored under another project', async () => {
