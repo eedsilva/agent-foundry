@@ -17,6 +17,7 @@ import type {
   ExecutionResult,
   ExecutionState,
   ExecutorHealth,
+  ExecutorStreamEvent,
   ModelDefinition,
   ModelMetric,
   ModelOverrideRecord,
@@ -263,7 +264,11 @@ export interface MetricsRepository {
 
 export interface AgentExecutor {
   readonly provider: string;
-  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult>;
+  execute(
+    request: AgentExecutionRequest,
+    signal?: AbortSignal,
+    onEvent?: (event: ExecutorStreamEvent) => void,
+  ): Promise<AgentExecutionResult>;
   health(): Promise<ExecutorHealth>;
 }
 

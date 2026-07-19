@@ -1,5 +1,6 @@
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
+import { createClaudeStreamMapper } from './claude-stream-events.js';
 
 export class ClaudeCliExecutor extends BaseCliExecutor {
   readonly provider = 'claude' as const;
@@ -27,5 +28,9 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
       command: this.command,
       args,
     };
+  }
+
+  protected override createStreamMapper() {
+    return createClaudeStreamMapper();
   }
 }

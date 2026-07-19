@@ -259,6 +259,52 @@ describe('BaseCliExecutor rate limit (issue #62)', () => {
   });
 });
 
+describe('BaseCliExecutor stream tap', () => {
+  it('invokes onEvent with events produced by the subclass stream mapper as stdout arrives', async () => {
+    const { PassThrough } = await import('node:stream');
+    const stdout = new PassThrough();
+
+    class StreamingExecutor extends BaseCliExecutor {
+      readonly provider = 'claude' as const;
+      protected readonly command = 'fixture-cli';
+
+      protected async invocation(): Promise<CliInvocation> {
+        return { command: this.command, args: [] };
+      }
+
+      protected override async responseText(): Promise<string> {
+        return JSON.stringify({ type: 'result', result: JSON.stringify(completedArtifact) });
+      }
+
+      protected override createStreamMapper() {
+        return (line: string) =>
+          line.includes('hello') ? [{ type: 'status' as const, phase: 'hello' }] : [];
+      }
+    }
+
+    const resultPromise = new Promise<{ exitCode: number; stdout: string }>((resolve) => {
+      execaMock.mockImplementationOnce(() => {
+        const promise = Promise.resolve().then(() => {
+          stdout.write('{"line":"hello"}\n');
+          stdout.write('{"line":"world"}\n');
+          stdout.end();
+          return { exitCode: 0, stdout: '', stderr: '' };
+        });
+        Object.assign(promise, { stdout, stderr: null, pid: 1, kill: () => true });
+        resolve(promise as unknown as { exitCode: number; stdout: string });
+        return promise;
+      });
+    });
+    void resultPromise;
+
+    const events: unknown[] = [];
+    const executor = new StreamingExecutor(1_000_000);
+    await executor.execute(request, undefined, (event) => events.push(event));
+
+    expect(events).toEqual([{ type: 'status', phase: 'hello' }]);
+  });
+});
+
 describe('BaseCliExecutor output', () => {
   it('reads the output file directly and falls back to stdout when it is absent', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'executor-output-test-'));
