@@ -16,7 +16,9 @@ import {
   DecideChangeRequestRequestSchema,
   DecideChangeRequestResponseSchema,
   DecideOperationRequestSchema,
+  DiscardDraftRequestSchema,
   PathSegmentSchema,
+  RetryProjectRequestSchema,
   RetryStepRequestSchema,
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
@@ -444,6 +446,18 @@ export async function buildApp(
     return runtime.projectService.exportRunAudit(runId);
   });
 
+  app.get('/runs/:runId/draft', async (request) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    return runtime.projectService.getDraft(runId);
+  });
+
+  app.post('/runs/:runId/draft/discard', async (request, reply) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    const input = DiscardDraftRequestSchema.parse(request.body);
+    const run = await runtime.projectService.discardDraft(runId, input);
+    return reply.status(200).send({ run });
+  });
+
   app.post('/runs/:runId/approvals/:requestId/decide', async (request, reply) => {
     const { runId, requestId } = z
       .object({ runId: PathSegmentSchema, requestId: PathSegmentSchema })
@@ -455,7 +469,8 @@ export async function buildApp(
 
   app.post('/projects/:projectId/retry', async (request, reply) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
-    const project = await runtime.projectService.retry(projectId);
+    const input = RetryProjectRequestSchema.parse(request.body ?? {});
+    const project = await runtime.projectService.retry(projectId, input);
     return reply.status(202).send({ project });
   });
 
