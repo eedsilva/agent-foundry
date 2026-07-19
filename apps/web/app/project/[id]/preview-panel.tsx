@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ArtifactReference,
   BrowserVerificationReport,
   PreviewLogEntry,
+  PreviewSelectionResult,
   PreviewSession,
   StoredArtifact,
   WorkflowRun,
@@ -13,6 +14,7 @@ import {
   getActivePreviewSession,
   getArtifactBlobUrl,
   getPreviewLogs,
+  resolvePreviewSelection,
   startPreview,
   stopPreview,
 } from '../../../lib/api';
@@ -143,6 +145,10 @@ export function PreviewPanel({
   const [tab, setTab] = useState<'logs' | 'verification'>('logs');
   const [logs, setLogs] = useState<PreviewLogEntry[]>([]);
   const [panelError, setPanelError] = useState('');
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [selectionResult, setSelectionResult] = useState<PreviewSelectionResult | null>(null);
+  const [selectionError, setSelectionError] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -185,6 +191,40 @@ export function PreviewPanel({
       if (timer) clearTimeout(timer);
     };
   }, [projectId, session]);
+
+  useEffect(() => {
+    if (!session?.url) return;
+    const previewOrigin = new URL(session.url).origin;
+    function onMessage(event: MessageEvent) {
+      if (event.origin !== previewOrigin) return;
+      if (event.data?.type !== 'af:selection:result') return;
+      setSelecting(false);
+      const payload = event.data.payload;
+      resolvePreviewSelection(projectId, session!.id, {
+        previewUrl: session!.url!,
+        domPath: payload.domPath,
+        boundingBox: payload.boundingBox,
+        computedStyle: payload.computedStyle,
+        candidates: payload.candidates,
+      })
+        .then(setSelectionResult)
+        .catch((cause) =>
+          setSelectionError(cause instanceof Error ? cause.message : String(cause)),
+        );
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [projectId, session]);
+
+  function toggleSelecting() {
+    if (!session?.url || !iframeRef.current?.contentWindow) return;
+    setSelectionResult(null);
+    setSelecting(true);
+    iframeRef.current.contentWindow.postMessage(
+      { type: 'af:selection:start' },
+      new URL(session.url).origin,
+    );
+  }
 
   async function start() {
     try {
@@ -245,10 +285,14 @@ export function PreviewPanel({
             <button className="secondaryButton" onClick={() => void stop()}>
               Parar preview
             </button>
+            <button className="secondaryButton" onClick={toggleSelecting}>
+              {selecting ? 'Clique em um elemento…' : 'Selecionar elemento'}
+            </button>
           </div>
           {session.url ? (
             <div className="previewFrameWrap">
               <iframe
+                ref={iframeRef}
                 src={session.url}
                 width={VIEWPORTS[viewport].width}
                 height={VIEWPORTS[viewport].height}
@@ -258,6 +302,51 @@ export function PreviewPanel({
           ) : (
             <p className="hint">Preview iniciando…</p>
           )}
+          {selectionError ? <p className="errorBox">{selectionError}</p> : null}
+          {selectionResult?.status === 'resolved' ? (
+            <div className="panel">
+              <p>
+                Elemento mapeado para: <strong>{selectionResult.file}</strong>
+              </p>
+            </div>
+          ) : null}
+          {selectionResult?.status === 'ambiguous' ? (
+            <div className="panel">
+              <p>Seleção ambígua — escolha o arquivo correto:</p>
+              <ul>
+                {selectionResult.candidates?.map((file) => (
+                  <li key={file}>
+                    <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
+                      {file}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
+                Descartar
+              </button>
+            </div>
+          ) : null}
+          {selectionResult?.status === 'unsupported' ? (
+            <div className="panel">
+              <p>Não foi possível mapear este elemento a um arquivo de origem.</p>
+              <p className="hint">{selectionResult.domPath}</p>
+              {selectionResult.screenshot ? (
+                <BlobMedia
+                  src={getArtifactBlobUrl(
+                    projectId,
+                    selectionResult.screenshot.name,
+                    selectionResult.screenshot.revision,
+                  )}
+                  alt={selectionResult.domPath}
+                  kind="image"
+                />
+              ) : null}
+              <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
+                Fechar
+              </button>
+            </div>
+          ) : null}
         </>
       )}
 
