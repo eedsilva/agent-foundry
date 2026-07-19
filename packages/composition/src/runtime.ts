@@ -174,9 +174,11 @@ export async function createRuntime(
     ids,
   );
   const browserVerifier = new PlaywrightBrowserVerifier();
-  const previewSelectionService = new PreviewSelectionService(workspaces, browserVerifier, {
-    previewBaseUrl: `http://${config.apiHost}:${config.apiPort}/preview`,
-  });
+  const previewSelectionService = new PreviewSelectionService(
+    workspaces,
+    browserVerifier,
+    `http://${config.apiHost}:${config.apiPort}/preview`,
+  );
   const browserEvidenceLimits = {
     maxScreenshotBytes: config.artifactMaxScreenshotBytes,
     maxTraceBytes: config.artifactMaxTraceBytes,

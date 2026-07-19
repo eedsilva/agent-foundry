@@ -194,19 +194,14 @@ export function PreviewPanel({
 
   useEffect(() => {
     if (!session?.url) return;
-    const previewOrigin = new URL(session.url).origin;
+    const { id: sessionId, url: previewUrl } = session;
+    const previewOrigin = new URL(previewUrl).origin;
     function onMessage(event: MessageEvent) {
       if (event.origin !== previewOrigin) return;
       if (event.data?.type !== 'af:selection:result') return;
       setSelecting(false);
       const payload = event.data.payload;
-      resolvePreviewSelection(projectId, session!.id, {
-        previewUrl: session!.url!,
-        domPath: payload.domPath,
-        boundingBox: payload.boundingBox,
-        computedStyle: payload.computedStyle,
-        candidates: payload.candidates,
-      })
+      resolvePreviewSelection(projectId, sessionId, { previewUrl, ...payload })
         .then(setSelectionResult)
         .catch((cause) =>
           setSelectionError(cause instanceof Error ? cause.message : String(cause)),
@@ -312,14 +307,10 @@ export function PreviewPanel({
           ) : null}
           {selectionResult?.status === 'ambiguous' ? (
             <div className="panel">
-              <p>Seleção ambígua — escolha o arquivo correto:</p>
+              <p>Seleção ambígua — candidatos:</p>
               <ul>
                 {selectionResult.candidates?.map((file) => (
-                  <li key={file}>
-                    <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
-                      {file}
-                    </button>
-                  </li>
+                  <li key={file}>{file}</li>
                 ))}
               </ul>
               <button className="secondaryButton" onClick={() => setSelectionResult(null)}>

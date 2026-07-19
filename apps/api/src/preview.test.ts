@@ -324,7 +324,6 @@ describe('POST /projects/:projectId/preview/:sessionId/selection', () => {
           previewUrl: `${baseUrl}/preview/${session.id}/`,
           domPath: 'div[1]',
           boundingBox: { x: 0, y: 0, width: 10, height: 10 },
-          computedStyle: {},
           candidates: [],
         }),
       },
@@ -346,7 +345,6 @@ describe('POST /projects/:projectId/preview/:sessionId/selection', () => {
         previewUrl: `${baseUrl}/preview/${session.id}/`,
         domPath: 'div[1]',
         boundingBox: { x: 0, y: 0, width: 10, height: 10 },
-        computedStyle: {},
         candidates: [],
       }),
     });

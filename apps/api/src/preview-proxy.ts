@@ -28,12 +28,18 @@ const HOP_BY_HOP = new Set([
 
 export function registerPreviewProxy(app: FastifyInstance, runtime: Runtime): void {
   const allowedPort = String(runtime.config.apiPort);
+  // webOrigin is CORS's comma-separated allow-list (see app.ts); the inspector
+  // script's parent-origin check is a single strict `===`. Built once at
+  // startup, not per-request: parentOrigin is fixed for the process lifetime,
+  // and buildInspectorScript's output is a pure function of it.
+  const parentOrigin = runtime.config.webOrigin.split(',')[0]?.trim() ?? runtime.config.webOrigin;
+  const inspectorScriptTag = `<script>${buildInspectorScript(parentOrigin)}</script>`;
 
   app.all('/preview/:sessionId', (request, reply) =>
-    handleHttp(request, reply, runtime, allowedPort),
+    handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
   );
   app.all('/preview/:sessionId/*', (request, reply) =>
-    handleHttp(request, reply, runtime, allowedPort),
+    handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
   );
 
   app.server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
@@ -46,6 +52,7 @@ async function handleHttp(
   reply: FastifyReply,
   runtime: Runtime,
   allowedPort: string,
+  inspectorScriptTag: string,
 ): Promise<void> {
   // DNS-rebinding defense: reject anything whose Host header isn't this API's own
   // loopback host:port. This runs BEFORE any token check or upstream connection.
@@ -89,9 +96,7 @@ async function handleHttp(
         sessionId,
         resolved.port,
         cookieValue,
-        // webOrigin is CORS's comma-separated allow-list (see app.ts); the
-        // inspector script's parent-origin check is a single strict `===`.
-        runtime.config.webOrigin.split(',')[0]?.trim() ?? runtime.config.webOrigin,
+        inspectorScriptTag,
       ),
   );
   upstreamReq.on('error', () => {
@@ -107,7 +112,7 @@ function respondFromUpstream(
   sessionId: string,
   upstreamPort: number,
   cookieValue: string | undefined,
-  parentOrigin: string,
+  inspectorScriptTag: string,
 ): void {
   const headers = sanitizeResponseHeaders(upstreamRes.headers, sessionId, upstreamPort);
   if (cookieValue) {
@@ -131,7 +136,7 @@ function respondFromUpstream(
   const chunks: Buffer[] = [];
   upstreamRes.on('data', (chunk: Buffer) => chunks.push(chunk));
   upstreamRes.on('end', () => {
-    const html = injectInspectorScript(Buffer.concat(chunks).toString('utf8'), parentOrigin);
+    const html = injectInspectorScript(Buffer.concat(chunks).toString('utf8'), inspectorScriptTag);
     const rewritten = Buffer.from(html, 'utf8');
     delete headers['content-length']; // body length changed; let Node recompute framing
     raw.writeHead(upstreamRes.statusCode ?? 502, {
@@ -143,16 +148,15 @@ function respondFromUpstream(
   upstreamRes.on('error', () => raw.destroy());
 }
 
-function injectInspectorScript(html: string, parentOrigin: string): string {
+function injectInspectorScript(html: string, inspectorScriptTag: string): string {
   if (!html.includes('</body>')) return html;
-  const scriptTag = `<script>${buildInspectorScript(parentOrigin)}</script>`;
   // Replacement must be a function, not a string: String.replace interprets
   // "$"-sequences in a *string* replacement specially (e.g. the literal
   // `__reactFiber$` inside the embedded findReactFiber source is followed by
   // a quote, so "$'" was parsed as the "insert text after the match" pattern
   // and silently corrupted the injected script). A function's return value is
   // inserted verbatim, with no $-pattern interpretation.
-  return html.replace('</body>', () => `${scriptTag}</body>`);
+  return html.replace('</body>', () => `${inspectorScriptTag}</body>`);
 }
 
 async function handleUpgrade(

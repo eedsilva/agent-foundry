@@ -678,25 +678,11 @@ const PreviewSelectionBoundingBoxSchema = z
   })
   .strict();
 
-const PreviewSelectionComputedStyleSchema = z
-  .object({
-    display: z.string().optional(),
-    position: z.string().optional(),
-    width: z.string().optional(),
-    height: z.string().optional(),
-    color: z.string().optional(),
-    backgroundColor: z.string().optional(),
-    fontSize: z.string().optional(),
-    fontFamily: z.string().optional(),
-  })
-  .strict();
-
 export const PreviewSelectionRequestSchema = z
   .object({
     previewUrl: z.string().min(1),
     domPath: z.string().min(1),
     boundingBox: PreviewSelectionBoundingBoxSchema,
-    computedStyle: PreviewSelectionComputedStyleSchema,
     candidates: z.array(PreviewSelectionCandidateSchema),
   })
   .strict();
@@ -706,8 +692,6 @@ export const PreviewSelectionResultSchema = z
   .object({
     status: z.enum(['resolved', 'ambiguous', 'unsupported']),
     domPath: z.string().min(1),
-    boundingBox: PreviewSelectionBoundingBoxSchema,
-    computedStyle: PreviewSelectionComputedStyleSchema,
     file: z.string().min(1).optional(),
     candidates: z.array(z.string().min(1)).optional(),
     screenshot: ArtifactReferenceSchema.optional(),

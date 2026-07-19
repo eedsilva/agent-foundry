@@ -890,15 +890,10 @@ describe('browser verification contracts', () => {
 });
 
 describe('PreviewSelectionResultSchema', () => {
-  const boundingBox = { x: 0, y: 0, width: 100, height: 20 };
-  const computedStyle = { display: 'block' };
-
   it('accepts a resolved result with a file and no candidates/screenshot', () => {
     const result = PreviewSelectionResultSchema.parse({
       status: 'resolved',
       domPath: 'div[1]>span[1]',
-      boundingBox,
-      computedStyle,
       file: 'src/App.tsx',
     });
     expect(result.file).toBe('src/App.tsx');
@@ -909,8 +904,6 @@ describe('PreviewSelectionResultSchema', () => {
       PreviewSelectionResultSchema.parse({
         status: 'resolved',
         domPath: 'div[1]',
-        boundingBox,
-        computedStyle,
       }),
     ).toThrow();
   });
@@ -919,8 +912,6 @@ describe('PreviewSelectionResultSchema', () => {
     const result = PreviewSelectionResultSchema.parse({
       status: 'ambiguous',
       domPath: 'div[1]',
-      boundingBox,
-      computedStyle,
       candidates: ['src/Card.tsx', 'src/Button.tsx'],
     });
     expect(result.candidates).toHaveLength(2);
@@ -931,8 +922,6 @@ describe('PreviewSelectionResultSchema', () => {
       PreviewSelectionResultSchema.parse({
         status: 'ambiguous',
         domPath: 'div[1]',
-        boundingBox,
-        computedStyle,
         candidates: ['src/Card.tsx'],
       }),
     ).toThrow();
@@ -943,8 +932,6 @@ describe('PreviewSelectionResultSchema', () => {
       PreviewSelectionResultSchema.parse({
         status: 'unsupported',
         domPath: 'div[1]',
-        boundingBox,
-        computedStyle,
         file: 'src/App.tsx',
       }),
     ).toThrow();
@@ -954,8 +941,6 @@ describe('PreviewSelectionResultSchema', () => {
     const result = PreviewSelectionResultSchema.parse({
       status: 'unsupported',
       domPath: 'div[1]',
-      boundingBox,
-      computedStyle,
       screenshot: { name: 'selection-42.png', revision: 1, sha256: 'a'.repeat(64) },
     });
     expect(result.screenshot?.name).toBe('selection-42.png');
@@ -968,7 +953,6 @@ describe('PreviewSelectionRequestSchema', () => {
       previewUrl: 'http://127.0.0.1:4000/preview/session-1/?token=abc',
       domPath: 'div[1]',
       boundingBox: { x: 0, y: 0, width: 10, height: 10 },
-      computedStyle: {},
       candidates: [{ fileName: 'src/App.tsx', line: 3, column: 5, componentName: 'App' }],
     });
     expect(request.candidates).toHaveLength(1);

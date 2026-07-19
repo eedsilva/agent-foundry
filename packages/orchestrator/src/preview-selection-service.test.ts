@@ -3,14 +3,12 @@ import type { PreviewSelectionRequest } from '@agent-foundry/contracts';
 import { PreviewSelectionService } from './preview-selection-service.js';
 
 const boundingBox = { x: 0, y: 0, width: 10, height: 10 };
-const computedStyle = {};
 
 function baseRequest(overrides: Partial<PreviewSelectionRequest> = {}): PreviewSelectionRequest {
   return {
     previewUrl: 'http://127.0.0.1:4000/preview/session-1/?token=abc',
     domPath: 'div[1]',
     boundingBox,
-    computedStyle,
     candidates: [],
     ...overrides,
   };
@@ -26,9 +24,11 @@ function makeService(
   const screenshots = {
     captureSelectionScreenshot: overrides.captureSelectionScreenshot ?? vi.fn(async () => null),
   };
-  const service = new PreviewSelectionService(workspaces, screenshots, {
-    previewBaseUrl: 'http://127.0.0.1:4000/preview',
-  });
+  const service = new PreviewSelectionService(
+    workspaces,
+    screenshots,
+    'http://127.0.0.1:4000/preview',
+  );
   return { service, screenshots };
 }
 

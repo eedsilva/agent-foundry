@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   ArtifactReferenceSchema,
   type PreviewSelectionRequest,
@@ -9,16 +8,13 @@ import {
   type SelectionScreenshotCapturer,
   type WorkspaceManager,
 } from '@agent-foundry/domain';
-
-export interface PreviewSelectionServiceConfig {
-  previewBaseUrl: string;
-}
+import { sha256 } from './idempotency.js';
 
 export class PreviewSelectionService {
   constructor(
     private readonly workspaces: Pick<WorkspaceManager, 'workspacePath'>,
     private readonly screenshots: Pick<SelectionScreenshotCapturer, 'captureSelectionScreenshot'>,
-    private readonly config: PreviewSelectionServiceConfig,
+    private readonly previewBaseUrl: string,
   ) {}
 
   async resolve(input: {
@@ -35,28 +31,24 @@ export class PreviewSelectionService {
       if (relative && !resolvedFiles.includes(relative)) resolvedFiles.push(relative);
     }
 
-    const base = {
-      domPath: request.domPath,
-      boundingBox: request.boundingBox,
-      computedStyle: request.computedStyle,
-    };
+    const domPath = request.domPath;
 
     if (resolvedFiles.length === 1) {
-      return { ...base, status: 'resolved', file: resolvedFiles[0] };
+      return { domPath, status: 'resolved', file: resolvedFiles[0] };
     }
     if (resolvedFiles.length >= 2) {
-      return { ...base, status: 'ambiguous', candidates: resolvedFiles };
+      return { domPath, status: 'ambiguous', candidates: resolvedFiles };
     }
 
     const screenshot = await this.captureFallbackScreenshot(input.sessionId, request);
-    return { ...base, status: 'unsupported', ...(screenshot ? { screenshot } : {}) };
+    return { domPath, status: 'unsupported', ...(screenshot ? { screenshot } : {}) };
   }
 
   private async captureFallbackScreenshot(
     sessionId: string,
     request: PreviewSelectionRequest,
   ): Promise<PreviewSelectionResult['screenshot']> {
-    const expectedPrefix = `${this.config.previewBaseUrl}/${sessionId}/`;
+    const expectedPrefix = `${this.previewBaseUrl}/${sessionId}/`;
     if (!request.previewUrl.startsWith(expectedPrefix)) return undefined;
     const buffer = await this.screenshots.captureSelectionScreenshot({
       url: request.previewUrl,
@@ -67,7 +59,7 @@ export class PreviewSelectionService {
     return ArtifactReferenceSchema.parse({
       name: `preview-selection-${sessionId}-${Date.now()}.png`,
       revision: 1,
-      sha256: createHash('sha256').update(buffer).digest('hex'),
+      sha256: sha256(buffer),
       sizeBytes: buffer.byteLength,
     });
   }
