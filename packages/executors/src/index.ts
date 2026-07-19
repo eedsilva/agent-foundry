@@ -12,3 +12,4 @@ export * from './preview-port.js';
 export * from './node-preview-runner.js';
 export * from './browser-verifier.js';
 export * from './local-execution-plane.js';
+export * from './claude-stream-events.js';
