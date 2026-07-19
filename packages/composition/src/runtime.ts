@@ -44,6 +44,7 @@ import {
   WorkerLoop,
   WorkflowOrchestrator,
   PreviewService,
+  PreviewSelectionService,
   QualityObservationService,
   BrowserVerificationCoordinator,
   type BrowserEvidenceLimits,
@@ -90,6 +91,7 @@ export interface Runtime {
   previewLogs: FilePreviewLogRepository;
   previewLifecycleLock: FilePreviewLifecycleLock;
   previewService: PreviewService;
+  previewSelectionService: PreviewSelectionService;
   projectVersions: FileProjectVersionRepository;
   projectVersionService: ProjectVersionService;
 }
@@ -172,6 +174,9 @@ export async function createRuntime(
     ids,
   );
   const browserVerifier = new PlaywrightBrowserVerifier();
+  const previewSelectionService = new PreviewSelectionService(workspaces, browserVerifier, {
+    previewBaseUrl: `http://${config.apiHost}:${config.apiPort}/preview`,
+  });
   const browserEvidenceLimits = {
     maxScreenshotBytes: config.artifactMaxScreenshotBytes,
     maxTraceBytes: config.artifactMaxTraceBytes,
@@ -312,6 +317,7 @@ export async function createRuntime(
     previewLogs,
     previewLifecycleLock,
     previewService,
+    previewSelectionService,
     projectVersions,
     projectVersionService,
   };
