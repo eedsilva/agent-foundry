@@ -4,12 +4,15 @@ import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
 import {
   BranchVersionRequestSchema,
+  ClassifyMessageResponseSchema,
   CreateProjectRequestSchema,
   CreateModelOverrideRequestSchema,
   CreateAttachmentRequestSchema,
   CreateMessageRequestSchema,
   CreateOperationRequestSchema,
   DecideApprovalRequestSchema,
+  DecideChangeRequestRequestSchema,
+  DecideChangeRequestResponseSchema,
   DecideOperationRequestSchema,
   PathSegmentSchema,
   RetryStepRequestSchema,
@@ -229,6 +232,33 @@ export async function buildApp(
       const { action } = DecideOperationRequestSchema.parse(request.body);
       const operation = await runtime.operationService.decide(projectId, operationId, action);
       return reply.status(200).send({ operation });
+    },
+  );
+
+  app.post(
+    '/projects/:projectId/conversation/messages/:messageId/classify',
+    async (request, reply) => {
+      const { projectId, messageId } = z
+        .object({ projectId: PathSegmentSchema, messageId: PathSegmentSchema })
+        .parse(request.params);
+      const changeRequest = await runtime.operationService.classify(projectId, messageId);
+      return reply.status(201).send(ClassifyMessageResponseSchema.parse({ changeRequest }));
+    },
+  );
+
+  app.post(
+    '/projects/:projectId/conversation/change-requests/:changeRequestId/decide',
+    async (request, reply) => {
+      const { projectId, changeRequestId } = z
+        .object({ projectId: PathSegmentSchema, changeRequestId: PathSegmentSchema })
+        .parse(request.params);
+      const input = DecideChangeRequestRequestSchema.parse(request.body);
+      const result = await runtime.operationService.decideChangeRequest(
+        projectId,
+        changeRequestId,
+        input,
+      );
+      return reply.status(200).send(DecideChangeRequestResponseSchema.parse(result));
     },
   );
 

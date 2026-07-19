@@ -435,3 +435,116 @@ describe('conversation API', () => {
     expect(operation.runId).toBeUndefined();
   });
 });
+
+describe('classify and decide change request', () => {
+  it('classifies a message, lets the user confirm it as-is, and starts a plan operation', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime);
+    const messageResponse = await post(baseUrl, `/projects/${projectId}/conversation/messages`, {
+      role: 'user',
+      content: [{ type: 'text', text: 'Let us think about the onboarding flow.' }],
+    });
+    const { message } = (await messageResponse.json()) as { message: Message };
+
+    const classifyResponse = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/messages/${message.id}/classify`,
+      {},
+    );
+    expect(classifyResponse.status).toBe(201);
+    const { changeRequest } = (await classifyResponse.json()) as {
+      changeRequest: { id: string; suggestedKind: string };
+    };
+    expect(changeRequest.suggestedKind).toBe('plan');
+
+    const decideResponse = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/change-requests/${changeRequest.id}/decide`,
+      { action: 'confirm', kind: 'plan' },
+    );
+    expect(decideResponse.status).toBe(200);
+    const decided = (await decideResponse.json()) as {
+      changeRequest: { status: string };
+      operation: { kind: string };
+    };
+    expect(decided.changeRequest.status).toBe('confirmed');
+    expect(decided.operation.kind).toBe('plan');
+  });
+
+  it('lets the user correct a build suggestion to plan before anything executes', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime);
+    const messageResponse = await post(baseUrl, `/projects/${projectId}/conversation/messages`, {
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page with email and password.' }],
+    });
+    const { message } = (await messageResponse.json()) as { message: Message };
+    const classifyResponse = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/messages/${message.id}/classify`,
+      {},
+    );
+    const { changeRequest } = (await classifyResponse.json()) as {
+      changeRequest: { id: string; suggestedKind: string };
+    };
+    expect(changeRequest.suggestedKind).toBe('build');
+
+    const decideResponse = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/change-requests/${changeRequest.id}/decide`,
+      { action: 'confirm', kind: 'plan' },
+    );
+    const decided = (await decideResponse.json()) as { operation: { kind: string } };
+    expect(decided.operation.kind).toBe('plan');
+  });
+
+  it('roadmap scenario: a later requirement change classifies and references an earlier confirmed decision', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime);
+
+    const firstMessage = await post(baseUrl, `/projects/${projectId}/conversation/messages`, {
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a login page with email and password fields.' }],
+    });
+    const { message: firstMsg } = (await firstMessage.json()) as { message: Message };
+    const firstClassify = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/messages/${firstMsg.id}/classify`,
+      {},
+    );
+    const { changeRequest: firstCr } = (await firstClassify.json()) as {
+      changeRequest: { id: string };
+    };
+    await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/change-requests/${firstCr.id}/decide`,
+      {
+        action: 'confirm',
+        kind: 'build',
+        directExecution: true,
+      },
+    );
+
+    const secondMessage = await post(baseUrl, `/projects/${projectId}/conversation/messages`, {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: 'Actually change the login page to use magic links instead of a password field.',
+        },
+      ],
+    });
+    const { message: secondMsg } = (await secondMessage.json()) as { message: Message };
+    const secondClassify = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/messages/${secondMsg.id}/classify`,
+      {},
+    );
+    expect(secondClassify.status).toBe(201);
+    const { changeRequest: secondCr } = (await secondClassify.json()) as {
+      changeRequest: { suggestedKind: string; referencedDecisionIds: string[] };
+    };
+    expect(secondCr.suggestedKind).toBe('build');
+    expect(secondCr.referencedDecisionIds).toContain(firstCr.id);
+  });
+});
