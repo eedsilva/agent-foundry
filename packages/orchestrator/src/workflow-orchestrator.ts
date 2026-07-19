@@ -31,6 +31,7 @@ import {
   BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
   DEFAULT_BROWSER_EVIDENCE_POLICY,
   EXECUTION_PROTOCOL_VERSION,
+  isWorkflowRunStatusTerminal,
 } from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
@@ -146,13 +147,7 @@ export class WorkflowOrchestrator {
       await this.finalizeEmergencyCeiling(run.id, projectId);
       return;
     }
-    if (
-      run.status === 'cancelled' ||
-      run.status === 'completed' ||
-      run.status === 'failed' ||
-      run.status === 'rejected'
-    )
-      return;
+    if (isWorkflowRunStatusTerminal(run.status)) return;
     if (run.status === 'cancel_requested') {
       await this.finalizeCancellation(run.id, projectId);
       return;
@@ -1929,7 +1924,16 @@ export class WorkflowOrchestrator {
         secrets: [],
       },
       signal,
-      (event) => this.persistStreamEvent(runId, stepRunId, attemptId, event),
+      (event) =>
+        persistStreamEvent(
+          this.stepEvents,
+          this.ids,
+          this.clock,
+          runId,
+          stepRunId,
+          attemptId,
+          event,
+        ),
     );
     // A result that arrives after cancellation was requested must never be promoted.
     throwIfCancelled(signal, runId);
@@ -2272,15 +2276,6 @@ export class WorkflowOrchestrator {
       message,
       data: options.data ?? {},
     });
-  }
-
-  private persistStreamEvent(
-    runId: string,
-    stepRunId: string,
-    attemptId: string,
-    event: ExecutorStreamEvent,
-  ): void {
-    persistStreamEvent(this.stepEvents, this.ids, this.clock, runId, stepRunId, attemptId, event);
   }
 }
 

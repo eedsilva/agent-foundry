@@ -63,7 +63,10 @@ import {
 import { BlobMedia, PreviewPanel, VerificationReportView } from './preview-panel';
 import { formatObservedUsage } from './format-usage.js';
 import { findDiffApprovalVersions } from '../../../lib/diff-approval';
-import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
+import {
+  BrowserVerificationReportSchema,
+  isWorkflowRunStatusTerminal,
+} from '@agent-foundry/contracts';
 
 const PROJECT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 const NO_PREDECESSOR_VERSION_MESSAGE = 'Nenhuma versão anterior para comparar.';
@@ -191,6 +194,20 @@ function eventBadges(event: ProjectEvent): string[] {
     badges.push(`${data.name} r${data.revision}`);
   }
   return badges;
+}
+
+/** A completed operation's diff/artifact links show once its run is no longer in flight, and (for plans) only after approval has been decided. */
+function showsCompletedOperationLinks(
+  operation: Operation,
+  latestOperation: Operation | undefined,
+  latestOperationRunTerminal: boolean,
+): boolean {
+  return (
+    operation.artifactReferences.length > 0 &&
+    (operation.id !== latestOperation?.id || latestOperationRunTerminal) &&
+    (operation.kind !== 'plan' ||
+      Boolean(operation.approval && operation.approval.status !== 'pending'))
+  );
 }
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
@@ -391,7 +408,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         const next = await getRunDetail(latestOperation.runId!);
         if (!active) return;
         setActiveOperationRun(next);
-        if (!PROJECT_TERMINAL_STATUSES.has(next.run.status)) {
+        if (!isWorkflowRunStatusTerminal(next.run.status)) {
           timer = setTimeout(poll, 1_500);
         }
       } catch {
@@ -409,7 +426,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     !latestOperation?.runId ||
     !activeOperationRun ||
     activeOperationRun.run.id !== latestOperation.runId ||
-    PROJECT_TERMINAL_STATUSES.has(activeOperationRun.run.status);
+    isWorkflowRunStatusTerminal(activeOperationRun.run.status);
 
   const activeOperation =
     latestOperation && !latestOperationRunTerminal ? latestOperation : undefined;
@@ -847,10 +864,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   </div>
                 ) : null}
                 {operation &&
-                operation.artifactReferences.length > 0 &&
-                (operation.id !== latestOperation?.id || latestOperationRunTerminal) &&
-                (operation.kind !== 'plan' ||
-                  (operation.approval && operation.approval.status !== 'pending')) ? (
+                showsCompletedOperationLinks(
+                  operation,
+                  latestOperation,
+                  latestOperationRunTerminal,
+                ) ? (
                   <div className="operationLinks">
                     <a href={`/project/${detail.project.id}/versions`}>Ver diff</a>
                     {operation.artifactReferences.map((ref) => (

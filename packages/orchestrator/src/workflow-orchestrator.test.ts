@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   RouteDecisionSchema,
   WorkflowDefinitionSchema,
-  type AgentStreamEvent,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
@@ -10,7 +9,6 @@ import {
   type HarnessRepository,
   type MetricsRepository,
   type ModelRouter,
-  type StepEventRepository,
   type VerificationService,
   type WorkflowRepository,
 } from '@agent-foundry/domain';
@@ -25,6 +23,7 @@ import {
   InMemoryProjects,
   InMemoryRuns,
   InMemoryStepAttempts,
+  InMemoryStepEvents,
   InMemoryStepRuns,
   MODELS,
   SequentialIds,
@@ -77,19 +76,7 @@ function makeOrchestrator(versions?: ProjectVersionService) {
   const approvalDecisions = new InMemoryApprovalDecisions(power);
   const artifacts = new InMemoryArtifacts(power);
   const events = new InMemoryEvents(power);
-  const stepEvents = {
-    events: [] as AgentStreamEvent[],
-    async append(event) {
-      const sequence = this.events.filter((existing) => existing.runId === event.runId).length + 1;
-      const parsed = { ...event, sequence } as AgentStreamEvent;
-      this.events.push(parsed);
-      return parsed;
-    },
-    async list(runId, options = {}) {
-      const cursor = options.cursor ?? 0;
-      return this.events.filter((event) => event.runId === runId && event.sequence > cursor);
-    },
-  } satisfies StepEventRepository & { events: AgentStreamEvent[] };
+  const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces(power);
   const executor = new ControllableExecutor({}, workspaces);
 
