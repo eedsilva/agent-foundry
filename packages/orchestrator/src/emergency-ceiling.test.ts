@@ -796,4 +796,31 @@ describe('draft inspection, retry, and discard', () => {
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
     await expect(harness.service.getDraft('run-1')).rejects.toThrow('has no preserved draft');
   });
+
+  it('demonstrates the ceiling reached by consecutive repairs, then discards the draft only with an actor, recording an audit event', async () => {
+    const harness = makeHarness({}, undefined, { workflow: QUALITY_LOOP });
+    await seedRun(harness);
+
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toMatchObject({ name: 'EmergencyCeilingError', reason: 'consecutive-repairs' });
+
+    const run = await harness.runs.get('run-1');
+    expect(run?.execution?.ceiling?.reason).toBe('consecutive-repairs');
+    const draftBranch = run!.execution!.ceiling!.draftBranch!;
+    expect(harness.workspaces.drafts).toContain(draftBranch);
+
+    const discarded = await harness.service.discardDraft('run-1', {
+      actor: { kind: 'user', id: 'ed' },
+      reason: 'bad attempt, starting over',
+    });
+    expect(discarded.execution?.ceiling?.discardedBy).toEqual({ kind: 'user', id: 'ed' });
+    expect(harness.workspaces.drafts).not.toContain(draftBranch);
+    const auditEvents = harness.events.types().filter((type) => type === 'run.draft_discarded');
+    expect(auditEvents).toHaveLength(1);
+
+    // Idempotent: discarding again is a no-op, not a duplicate audit entry.
+    await harness.service.discardDraft('run-1', { actor: { kind: 'user', id: 'ed' } });
+    expect(harness.events.types().filter((type) => type === 'run.draft_discarded')).toHaveLength(1);
+  });
 });
