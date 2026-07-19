@@ -217,6 +217,27 @@ export const CreateModelOverrideResponseSchema = z
   .strict();
 export type CreateModelOverrideResponse = z.infer<typeof CreateModelOverrideResponseSchema>;
 
+export const DraftDetailResponseSchema = z
+  .object({ draftBranch: z.string().min(1), diff: z.string() })
+  .strict();
+export type DraftDetailResponse = z.infer<typeof DraftDetailResponseSchema>;
+
+export const DiscardDraftRequestSchema = z
+  .object({ actor: ActorRefSchema, reason: z.string().trim().min(1).optional() })
+  .strict();
+export type DiscardDraftRequest = z.infer<typeof DiscardDraftRequestSchema>;
+
+export const DiscardDraftResponseSchema = z.object({ run: WorkflowRunSchema }).strict();
+export type DiscardDraftResponse = z.infer<typeof DiscardDraftResponseSchema>;
+
+export const RetryProjectRequestSchema = z
+  .object({
+    prompt: z.string().trim().min(1).optional(),
+    override: CreateModelOverrideRequestSchema.omit({ scope: true }).optional(),
+  })
+  .strict();
+export type RetryProjectRequest = z.infer<typeof RetryProjectRequestSchema>;
+
 export const RetryPlanResponseSchema = z.object({
   target: StepRunSchema,
   downstream: z.array(StepRunSchema),
