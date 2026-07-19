@@ -20,6 +20,7 @@ import {
   type ProjectEvent,
   type ResumeBlockedResponse,
   type RetryPlanResponse,
+  type RetryProjectRequest,
   type RouteDecision,
   type RunDetailResponse,
   type StepRun,
@@ -34,10 +35,12 @@ import {
   decideChangeRequest,
   decideOperation,
   createModelOverride,
+  discardDraft,
   eventStreamUrl,
   getArtifact,
   getConversation,
   getArtifactBlobUrl,
+  getDraft,
   getProject,
   getRetryPlan,
   getRunDetail,
@@ -57,6 +60,7 @@ import {
   executionEvidence,
   modelOverrideRequest,
   retryMode,
+  retryProjectOverride,
   retryRequest,
 } from '../../../lib/model-overrides';
 import { BlobMedia, PreviewPanel, VerificationReportView } from './preview-panel';
@@ -224,6 +228,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [decideDiff, setDecideDiff] = useState<string | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+  const [draftDiff, setDraftDiff] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState('');
+  const [projectRetryWithPin, setProjectRetryWithPin] = useState(false);
   const [previousArtifact, setPreviousArtifact] = useState<StoredArtifact | null>(null);
   const [conversation, setConversation] = useState<ConversationPageResponse | null>(null);
   const [draft, setDraft] = useState('');
@@ -465,6 +472,49 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   async function retry() {
     try {
       await retryProject(id);
+      setResumeBlocked(null);
+      refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function loadDraftDiff() {
+    if (!run) return;
+    try {
+      const { diff } = await getDraft(run.id);
+      setDraftDiff(diff);
+      setDraftError('');
+    } catch (cause) {
+      setDraftError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function discardCurrentDraft() {
+    if (!run) return;
+    const confirmed = window.confirm(
+      'Discard this draft? The preserved branch will be deleted; this cannot be undone.',
+    );
+    if (!confirmed) return;
+    const actorId = decidedBy.trim() || window.prompt('Informe quem está descartando.', '')?.trim();
+    if (!actorId) return;
+    try {
+      await discardDraft(run.id, { actor: { kind: 'user', id: actorId } });
+      setDraftDiff(null);
+      setDraftError('');
+      refresh();
+    } catch (cause) {
+      setDraftError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function retryWithPrompt(prompt: string, override?: RetryProjectRequest['override']) {
+    try {
+      const input = {
+        ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+        ...(override ? { override } : {}),
+      };
+      await retryProject(id, input);
       setResumeBlocked(null);
       refresh();
     } catch (cause) {
@@ -899,6 +949,64 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               </div>
             ) : null}
           </dl>
+
+          {evidence.draftBranch ? (
+            <div className="panel">
+              <div className="panelHeader">
+                <h2>Draft preservado</h2>
+                <span className="hint">{evidence.draftBranch}</span>
+              </div>
+              {draftError ? <p className="errorBox">{draftError}</p> : null}
+              <button
+                type="button"
+                className="secondaryButton"
+                onClick={() => void loadDraftDiff()}
+              >
+                {draftDiff === null ? 'Ver diff' : 'Recarregar diff'}
+              </button>
+              {draftDiff !== null ? <DiffView parts={unifiedDiffToSpans(draftDiff)} /> : null}
+              <button
+                type="button"
+                className="secondaryButton"
+                onClick={() => void discardCurrentDraft()}
+              >
+                Descartar draft
+              </button>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const data = new FormData(event.currentTarget);
+                  const prompt = data.get('retryPrompt');
+                  try {
+                    const override = projectRetryWithPin
+                      ? retryProjectOverride(runtimeModels, pinFields(data))
+                      : undefined;
+                    void retryWithPrompt(typeof prompt === 'string' ? prompt : '', override);
+                    event.currentTarget.reset();
+                  } catch (cause) {
+                    setError(cause instanceof Error ? cause.message : String(cause));
+                  }
+                }}
+              >
+                <label>
+                  Novo prompt para a nova tentativa (opcional)
+                  <textarea name="retryPrompt" rows={3} />
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={projectRetryWithPin}
+                    onChange={(event) => setProjectRetryWithPin(event.target.checked)}
+                  />{' '}
+                  Fixar um modelo para esta tentativa
+                </label>
+                {projectRetryWithPin ? <ModelPinFields models={runnableModels} /> : null}
+                <button className="secondaryButton" type="submit">
+                  Tentar novamente a partir deste draft
+                </button>
+              </form>
+            </div>
+          ) : null}
 
           <form onSubmit={(event) => void submitOverride(event)}>
             <div className="modelPinGrid">
