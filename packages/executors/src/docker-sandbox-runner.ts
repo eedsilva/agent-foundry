@@ -1,5 +1,8 @@
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, relative, sep } from 'node:path';
 import { execa } from 'execa';
-import type { SandboxSpec } from '@agent-foundry/contracts';
+import type { SandboxSnapshot, SandboxSnapshotFile, SandboxSpec } from '@agent-foundry/contracts';
 import type { SandboxHandle, SandboxRunner } from '@agent-foundry/domain';
 import { RunCancelledError, errorMessage, type SandboxExecRequest, type SandboxExecResult } from '@agent-foundry/domain';
 
@@ -118,10 +121,43 @@ export class DockerSandboxRunner implements SandboxRunner {
     }
   }
 
+  async snapshot(sandbox: SandboxHandle, allowedPaths: readonly string[]): Promise<SandboxSnapshot> {
+    const tempDir = await mkdtemp(join(tmpdir(), 'agent-foundry-sandbox-'));
+    try {
+      for (const relativePath of allowedPaths) {
+        const tarResult = await execa(
+          'docker',
+          ['exec', sandbox.id, 'tar', '-cf', '-', '-C', SANDBOX_WORKSPACE_PATH, relativePath],
+          { reject: false, encoding: 'buffer' },
+        );
+        if (tarResult.exitCode !== 0) continue; // path does not exist in the sandbox — nothing to export
+        await execa('tar', ['-xf', '-', '-C', tempDir], { input: tarResult.stdout, reject: false });
+      }
+      return { files: await collectFiles(tempDir, tempDir) };
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }
+
   async destroy(sandbox: SandboxHandle): Promise<void> {
     const result = await execa('docker', ['rm', '-f', sandbox.id], { reject: false });
     if (result.exitCode !== 0 && !/No such container/.test(result.stderr ?? '')) {
       throw new Error(`docker rm failed: ${result.stderr || result.stdout}`);
     }
   }
+}
+
+async function collectFiles(root: string, dir: string): Promise<SandboxSnapshotFile[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files: SandboxSnapshotFile[] = [];
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await collectFiles(root, fullPath)));
+    } else if (entry.isFile()) {
+      const content = await readFile(fullPath);
+      files.push({ path: relative(root, fullPath).split(sep).join('/'), content: new Uint8Array(content) });
+    }
+  }
+  return files;
 }

@@ -234,6 +234,30 @@ describe.skipIf(!hasDocker)(
         runner.exec(handle, { command: 'sleep', args: ['5'], timeoutMs: 10_000 }, controller.signal),
       ).rejects.toThrow(/cancelled/);
     });
+
+    it('extracts allowed files and directories from the workspace', async () => {
+      const handle = await runner.create(spec());
+      created.push(handle.id);
+      await runner.exec(handle, {
+        command: 'sh',
+        args: ['-c', 'echo hello > out.txt && mkdir sub && echo nested > sub/n.txt'],
+        timeoutMs: 5_000,
+      });
+
+      const snapshot = await runner.snapshot(handle, ['out.txt', 'sub']);
+      const byPath = Object.fromEntries(
+        snapshot.files.map((file) => [file.path, Buffer.from(file.content).toString('utf8').trim()]),
+      );
+      expect(byPath['out.txt']).toBe('hello');
+      expect(byPath['sub/n.txt']).toBe('nested');
+    });
+
+    it('silently skips an allowed path that does not exist', async () => {
+      const handle = await runner.create(spec());
+      created.push(handle.id);
+      const snapshot = await runner.snapshot(handle, ['does-not-exist']);
+      expect(snapshot.files).toEqual([]);
+    });
   },
   60_000,
 );
