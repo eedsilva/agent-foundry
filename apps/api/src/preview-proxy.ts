@@ -50,9 +50,9 @@ export function registerPreviewProxy(app: FastifyInstance, runtime: Runtime): vo
       payload: IncomingMessage,
       done: (err: Error | null, body?: unknown) => void,
     ): void => done(null, payload);
-    instance.addContentTypeParser('application/json', passthroughParser);
-    instance.addContentTypeParser('text/plain', passthroughParser);
-    instance.addContentTypeParser('*', passthroughParser);
+    for (const contentType of ['application/json', 'text/plain', '*']) {
+      instance.addContentTypeParser(contentType, passthroughParser);
+    }
 
     instance.all('/preview/:sessionId', (request, reply) =>
       handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
