@@ -151,6 +151,38 @@ describe('preview reverse proxy', () => {
     expect(received.cookie ?? '').toContain('app_pref=keep'); // other cookies survive
   }, 20_000);
 
+  it('forwards a JSON POST body to the session upstream instead of draining it', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const started = await startPreview(baseUrl, runtime, 'json-body');
+    const target = new URL(started.url);
+    target.pathname += 'echo-body';
+    const response = await fetch(target, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ foo: 'bar' }),
+    });
+    expect(response.status).toBe(200);
+    const echoed = (await response.json()) as { contentType: string; body: string };
+    expect(echoed.contentType).toBe('application/json');
+    expect(JSON.parse(echoed.body)).toEqual({ foo: 'bar' });
+  }, 20_000);
+
+  it('forwards a form-urlencoded POST body without a 415', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const started = await startPreview(baseUrl, runtime, 'form-body');
+    const target = new URL(started.url);
+    target.pathname += 'echo-body';
+    const response = await fetch(target, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'foo=bar',
+    });
+    expect(response.status).toBe(200);
+    const echoed = (await response.json()) as { contentType: string; body: string };
+    expect(echoed.contentType).toBe('application/x-www-form-urlencoded');
+    expect(echoed.body).toBe('foo=bar');
+  }, 20_000);
+
   it('rejects a request with a mismatched Host header', async () => {
     const { baseUrl, runtime } = await startApi();
     const started = await startPreview(baseUrl, runtime, 'host');
