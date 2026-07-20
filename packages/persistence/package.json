@@ -21,6 +21,9 @@
   "dependencies": {
     "@agent-foundry/contracts": "0.1.0",
     "@agent-foundry/domain": "0.1.0",
+    "@aws-sdk/client-s3": "^3.1090.0",
+    "@aws-sdk/lib-storage": "^3.1090.0",
+    "@aws-sdk/s3-request-presigner": "^3.1090.0",
     "execa": "^10.0.0",
     "yaml": "^2.8.1"
   }

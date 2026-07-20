@@ -17,3 +17,4 @@ export * from './conversation-repository.js';
 export * from './project-version-repository.js';
 export * from './blob/fs-blob-store.js';
 export * from './blob/signing.js';
+export * from './blob/s3-blob-store.js';
