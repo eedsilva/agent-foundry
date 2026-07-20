@@ -49,6 +49,11 @@ export function keyToPath(dataDir: string, key: string): string {
   return join(dataDir, 'blobs', encodeURIComponent(key));
 }
 
+/** Derives the artifact-shaped object key for a given artifact revision (see keyToPath). */
+export function blobKeyFor(projectId: string, name: string, revision: number): string {
+  return `projects/${projectId}/artifacts/${name}/${String(revision).padStart(6, '0')}`;
+}
+
 export class FsBlobStore implements BlobStore {
   constructor(
     private readonly dataDir: string,

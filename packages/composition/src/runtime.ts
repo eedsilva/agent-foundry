@@ -32,6 +32,7 @@ import {
   FileStepRunRepository,
   FileWorkflowRunRepository,
   FileWorkspaceManager,
+  FsBlobStore,
   YamlPolicyRepository,
   YamlWorkflowRepository,
 } from '@agent-foundry/persistence';
@@ -110,7 +111,14 @@ export async function createRuntime(
   const stepAttempts = new FileStepAttemptRepository(config.dataDir);
   const approvalRequests = new FileApprovalRequestRepository(config.dataDir);
   const approvalDecisions = new FileApprovalDecisionRepository(config.dataDir);
-  const artifacts = new FileArtifactStore(config.dataDir);
+  // ponytail: inline dev signing secret/base URL; Task 4 wires real values through RuntimeConfig.
+  const artifacts = new FileArtifactStore(
+    config.dataDir,
+    new FsBlobStore(config.dataDir, {
+      signingSecret: 'dev-secret-not-used-yet',
+      publicBaseUrl: 'http://127.0.0.1',
+    }),
+  );
   const conversations = new FileConversationRepository(config.dataDir);
   const events = new FileEventStore(config.dataDir);
   const stepEvents = new FileStepEventRepository(config.dataDir);

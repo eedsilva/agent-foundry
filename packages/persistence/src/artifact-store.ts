@@ -1,5 +1,4 @@
-import { createReadStream } from 'node:fs';
-import { readdir, rm } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import {
@@ -10,17 +9,16 @@ import {
   type RouteDecision,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
-import type { ArtifactBlobPutInput, ArtifactStore } from '@agent-foundry/domain';
+import type { ArtifactBlobPutInput, ArtifactStore, BlobStore } from '@agent-foundry/domain';
 import {
   atomicWriteJson,
-  atomicWriteStream,
   ensureDir,
-  exists,
   readJsonOrNull,
   safeSegment,
   sha256,
   withDirectoryLock,
 } from './fs-utils.js';
+import { blobKeyFor } from './blob/fs-blob-store.js';
 
 interface ArtifactIndex {
   artifacts: Record<string, ArtifactMetadata[]>;
@@ -30,12 +28,11 @@ function metadataPath(root: string, name: string, revision: number): string {
   return join(root, name, `${String(revision).padStart(6, '0')}.json`);
 }
 
-function blobPath(root: string, name: string, revision: number): string {
-  return join(root, name, 'blobs', `${String(revision).padStart(6, '0')}.bin`);
-}
-
 export class FileArtifactStore implements ArtifactStore {
-  constructor(private readonly dataDir: string) {}
+  constructor(
+    private readonly dataDir: string,
+    private readonly blobStore: BlobStore,
+  ) {}
 
   async put(input: {
     projectId: string;
@@ -112,10 +109,13 @@ export class FileArtifactStore implements ArtifactStore {
       const index = (await readJsonOrNull<ArtifactIndex>(indexPath)) ?? { artifacts: {} };
       const revisions = index.artifacts[name] ?? [];
       const revision = revisions.length + 1;
-      const { sha256: hash, sizeBytes } = await atomicWriteStream(
-        blobPath(root, name, revision),
+      const { sha256: hash, sizeBytes } = await this.blobStore.put(
+        {
+          key: blobKeyFor(projectId, name, revision),
+          contentType: input.contentType,
+          maxBytes: input.maxBytes,
+        },
         source,
-        input.maxBytes,
       );
 
       const metadata = ArtifactMetadataSchema.parse({
@@ -146,10 +146,8 @@ export class FileArtifactStore implements ArtifactStore {
   }
 
   async getBlobStream(projectId: string, name: string, revision: number): Promise<Readable | null> {
-    const root = join(this.dataDir, 'projects', safeSegment(projectId), 'artifacts');
-    const path = blobPath(root, safeSegment(name), revision);
-    if (!(await exists(path))) return null;
-    return createReadStream(path);
+    const key = blobKeyFor(safeSegment(projectId), safeSegment(name), revision);
+    return this.blobStore.getStream(key);
   }
 
   async reapExpired(now: Date): Promise<number> {
@@ -176,9 +174,9 @@ export class FileArtifactStore implements ArtifactStore {
                 metadata.expiresAt &&
                 metadata.expiresAt <= nowIso
               ) {
-                await rm(blobPath(artifactsRoot, safeSegment(name), metadata.revision), {
-                  force: true,
-                });
+                await this.blobStore.delete(
+                  blobKeyFor(projectId, safeSegment(name), metadata.revision),
+                );
                 metadata.blobDeleted = true;
                 const stored = StoredArtifactSchema.parse({ metadata, content: null });
                 await atomicWriteJson(
