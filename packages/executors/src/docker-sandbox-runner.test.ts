@@ -39,8 +39,13 @@ describe('buildCreateArgs', () => {
       `--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=${SANDBOX_TMP_SIZE_MIB}m,mode=1777`,
       PINNED_IMAGE,
       'sleep',
-      'infinity',
+      '60',
     ]);
+  });
+
+  it('bounds the keep-alive sleep to the spec TTL, rounded up to whole seconds', () => {
+    const args = buildCreateArgs(spec({ ttlMs: 1_500 }));
+    expect(args.slice(-2)).toEqual(['sleep', '2']);
   });
 
   it('never emits --privileged and always drops all capabilities', () => {
@@ -102,5 +107,20 @@ describe('buildCreateArgs', () => {
     expect(() =>
       buildCreateArgs(spec({ mounts: [{ source: '/host/x', target: '/tmp', readOnly: false }] })),
     ).toThrow(/reserved/);
+  });
+
+  it.each(['/', '/var/run', '/run', '/proc', '/sys', '/dev', '/etc'])(
+    'rejects a mount sourced from the sensitive root %s even without "docker.sock" in the path',
+    (root) => {
+      expect(() =>
+        buildCreateArgs(spec({ mounts: [{ source: root, target: '/mnt/x', readOnly: true }] })),
+      ).toThrow(/too broad/);
+    },
+  );
+
+  it('rejects a mount targeting a sensitive root', () => {
+    expect(() =>
+      buildCreateArgs(spec({ mounts: [{ source: '/host/x', target: '/etc', readOnly: false }] })),
+    ).toThrow(/too broad/);
   });
 });

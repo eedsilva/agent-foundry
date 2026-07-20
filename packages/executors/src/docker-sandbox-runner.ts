@@ -16,6 +16,11 @@ export const SANDBOX_TMP_SIZE_MIB = 64;
 
 const RESERVED_MOUNT_TARGETS = new Set([SANDBOX_WORKSPACE_PATH, '/tmp']);
 
+// Mounting one of these wholesale would expose the host Docker socket (or other
+// sensitive host state) without the mount's source/target literally containing
+// "docker.sock" — e.g. mounting /var/run instead of /var/run/docker.sock.
+const SENSITIVE_MOUNT_ROOTS = new Set(['/', '/var/run', '/run', '/proc', '/sys', '/dev', '/etc']);
+
 function assertDigestPinned(spec: SandboxSpec): void {
   if (!spec.image.includes('@sha256:')) {
     throw new Error(`Sandbox image must be pinned by digest (got "${spec.image}").`);
@@ -26,6 +31,11 @@ function assertMountsAreSafe(spec: SandboxSpec): void {
   for (const mount of spec.mounts) {
     if (mount.source.includes('docker.sock') || mount.target.includes('docker.sock')) {
       throw new Error('Sandbox mounts must never reference the host Docker socket.');
+    }
+    if (SENSITIVE_MOUNT_ROOTS.has(mount.source) || SENSITIVE_MOUNT_ROOTS.has(mount.target)) {
+      throw new Error(
+        `Sandbox mount "${mount.source}" -> "${mount.target}" is too broad; mount a specific subpath instead of a whole system directory.`,
+      );
     }
     if (RESERVED_MOUNT_TARGETS.has(mount.target)) {
       throw new Error(
@@ -58,7 +68,10 @@ export function buildCreateArgs(spec: SandboxSpec): string[] {
   for (const mount of spec.mounts) {
     args.push('-v', `${mount.source}:${mount.target}${mount.readOnly ? ':ro' : ''}`);
   }
-  args.push(spec.image, 'sleep', 'infinity');
+  // A bounded keep-alive, not `sleep infinity`: if the control plane crashes between
+  // create() and destroy(), the container self-reaps at its own TTL instead of running
+  // forever as an orphan.
+  args.push(spec.image, 'sleep', String(Math.ceil(spec.ttlMs / 1000)));
   return args;
 }
 

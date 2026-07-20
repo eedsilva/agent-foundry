@@ -24,14 +24,23 @@ already uses for agent CLIs.
   `--network=none|bridge` (from `SandboxSpec.network.mode`). It never passes `--privileged`.
 - The workspace and `/tmp` are `--tmpfs` mounts, not host bind mounts. Because the root filesystem
   is read-only, there is no container writable layer left to quota separately — every writable byte
-  is one of these two size-capped tmpfs mounts. This is also why the disk ceiling
-  (`SandboxSpec.resources.diskMiB`) is applied as the workspace tmpfs's `size=` rather than via
-  `--storage-opt size=`: that flag only works on overlay2-over-xfs-with-pquota, which errors on this
-  project's development machine and is not guaranteed on `ubuntu-latest` GitHub runners either
-  (verified by hand before writing this ADR).
+  the runner itself provisions is one of these two size-capped tmpfs mounts. This is also why the
+  disk ceiling (`SandboxSpec.resources.diskMiB`) is applied as the workspace tmpfs's `size=` rather
+  than via `--storage-opt size=`: that flag only works on overlay2-over-xfs-with-pquota, which errors
+  on this project's development machine and is not guaranteed on `ubuntu-latest` GitHub runners either
+  (verified by hand before writing this ADR). This ceiling covers only the space the runner itself
+  provisions — a caller-supplied writable `SandboxSpec.mounts` entry (`readOnly: false`) is a host
+  bind mount and is deliberately outside `diskMiB`'s scope; its size is the host filesystem's concern,
+  not this runner's. Nothing in the codebase constructs a writable mount today (see Scope boundary).
 - `create()` rejects (before any Docker call) an image not pinned by digest (`@sha256:` must appear
-  in `SandboxSpec.image`), and rejects any mount whose source or target references `docker.sock`, or
-  whose target collides with the reserved `/workspace` or `/tmp` paths.
+  in `SandboxSpec.image`); rejects any mount whose source or target references `docker.sock` or
+  resolves to a small denylist of sensitive system roots (`/`, `/var/run`, `/run`, `/proc`, `/sys`,
+  `/dev`, `/etc`) — closing the gap where mounting a parent directory of the socket would otherwise
+  bypass a literal `docker.sock` substring check; and rejects any mount whose target collides with the
+  reserved `/workspace` or `/tmp` paths.
+- The keep-alive command is `sleep <ceil(ttlMs / 1000)>`, not `sleep infinity`: if the control plane
+  crashes between `create()` and `destroy()`, the container self-reaps at its own TTL instead of
+  running forever as an orphan.
 - `exec()` runs `docker exec -w /workspace <id> <command> <args...>` (no shell interpolation),
   streaming stdout/stderr chunks, honoring `timeoutMs` (throws on timeout), and honoring
   `AbortSignal` by throwing the same `RunCancelledError` used elsewhere in this codebase.
