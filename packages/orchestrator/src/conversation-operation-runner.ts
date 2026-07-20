@@ -22,7 +22,6 @@ import {
   type IdGenerator,
   type MetricsRepository,
   type ModelRouter,
-  type ProjectVersionRepository,
   type StepAttemptRepository,
   type StepEventRepository,
   type StepRunRepository,
@@ -34,6 +33,7 @@ import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 import { CONVERSATION_WORKFLOW_ID, buildConversationStep } from './conversation-step-config.js';
 import { compileContext } from './context-compiler.js';
 import { artifactReference, persistStreamEvent, runError } from './workflow-orchestrator.js';
+import { ProjectVersionService } from './project-version-service.js';
 
 export interface ConversationOperationRunnerOptions {
   agentTimeoutMs: number;
@@ -53,7 +53,7 @@ export class ConversationOperationRunner {
     private readonly executors: ExecutorRegistry,
     private readonly workspaces: WorkspaceManager,
     private readonly conversations: ConversationRepository,
-    private readonly projectVersions: ProjectVersionRepository,
+    private readonly projectVersions: ProjectVersionService,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly options: ConversationOperationRunnerOptions,
@@ -215,6 +215,15 @@ export class ConversationOperationRunner {
       const commit = step.mutatesWorkspace
         ? await this.workspaces.commit(projectId, `conversation(${kind}): ${step.title}`)
         : null;
+      const projectVersion = commit
+        ? await this.projectVersions.recordFromStep({
+            projectId,
+            runId,
+            stepRunId: stepRun.id,
+            attemptId: attempt.id,
+            commit,
+          })
+        : null;
       const executionRoute = { ...route, executed: route.selected };
       const artifact = await this.artifacts.put({
         projectId,
@@ -255,6 +264,7 @@ export class ConversationOperationRunner {
       await this.conversations.updateOperation({
         ...operation,
         artifactReferences: [artifactReference(artifact)],
+        ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
       });
       await this.metrics.record({
         modelId: route.selected.model.id,
