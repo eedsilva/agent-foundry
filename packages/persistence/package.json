@@ -22,6 +22,7 @@
     "@agent-foundry/contracts": "0.1.0",
     "@agent-foundry/domain": "0.1.0",
     "execa": "^10.0.0",
+    "postgres": "^3.4.9",
     "yaml": "^2.8.1"
   }
 }
