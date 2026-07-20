@@ -15,7 +15,9 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-async function startApi(): Promise<{ app: FastifyInstance; runtime: Runtime }> {
+async function startApi(
+  buildAppOptions: Parameters<typeof buildApp>[1] = {},
+): Promise<{ app: FastifyInstance; runtime: Runtime }> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-blob-url-'));
   dirs.push(dataDir);
   const runtime = await createRuntime({
@@ -26,7 +28,7 @@ async function startApi(): Promise<{ app: FastifyInstance; runtime: Runtime }> {
     AUTO_INSTALL_DEPENDENCIES: 'false',
     WORKER_ID: 'blob-url-worker',
   });
-  const app = await buildApp(runtime);
+  const app = await buildApp(runtime, buildAppOptions);
   apps.push(app);
   return { app, runtime };
 }
@@ -133,5 +135,58 @@ describe('signed blob download URLs', () => {
       url: '/projects/does-not-exist/artifacts/whatever/blob-url',
     });
     expect(response.statusCode).toBe(404);
+  });
+});
+
+describe('blob route rate limiting', () => {
+  it('429s a caller past the fixed-window ceiling, then resets in the next window', async () => {
+    let now = 1_700_000_000_000;
+    const { app } = await startApi({ now: () => now });
+
+    for (let i = 0; i < 60; i += 1) {
+      const response = await app.inject({ method: 'GET', url: '/blobs/nope?token=bad' });
+      expect(response.statusCode).not.toBe(429);
+    }
+    const limited = await app.inject({ method: 'GET', url: '/blobs/nope?token=bad' });
+    expect(limited.statusCode).toBe(429);
+
+    now += 60_000; // roll into the next fixed window
+    const afterReset = await app.inject({ method: 'GET', url: '/blobs/nope?token=bad' });
+    expect(afterReset.statusCode).not.toBe(429);
+  });
+
+  it('shares the budget across both authorizing blob routes, per caller IP', async () => {
+    const now = 1_700_000_000_000;
+    const { app } = await startApi({ now: () => now });
+
+    for (let i = 0; i < 60; i += 1) {
+      const response = await app.inject({ method: 'GET', url: '/blobs/nope?token=bad' });
+      expect(response.statusCode).not.toBe(429);
+    }
+    const limited = await app.inject({
+      method: 'GET',
+      url: '/projects/does-not-exist/artifacts/whatever/blob-url',
+    });
+    expect(limited.statusCode).toBe(429);
+  });
+
+  it('does not rate-limit ordinary traffic, and tracks callers independently by IP', async () => {
+    const { app } = await startApi();
+
+    for (let i = 0; i < 10; i += 1) {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/blobs/nope?token=bad',
+        remoteAddress: '10.0.0.1',
+      });
+      expect(response.statusCode).not.toBe(429);
+    }
+    // A different caller starts with a fresh budget.
+    const otherCaller = await app.inject({
+      method: 'GET',
+      url: '/blobs/nope?token=bad',
+      remoteAddress: '10.0.0.2',
+    });
+    expect(otherCaller.statusCode).not.toBe(429);
   });
 });

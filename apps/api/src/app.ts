@@ -35,9 +35,12 @@ import {
   ValidationError,
 } from '@agent-foundry/domain';
 import { registerPreviewProxy } from './preview-proxy.js';
+import { createFixedWindowRateLimiter } from './rate-limit.js';
 
 interface BuildAppOptions {
   loggerStream?: { write(message: string): void };
+  /** Test-only clock override for the blob route rate limiter. */
+  now?: () => number;
 }
 
 interface LoggableRequest {
@@ -208,34 +211,51 @@ export async function buildApp(
     return reply.send(result.stream);
   });
 
+  // Both routes below authorize access to blob storage (mint or verify a
+  // signed token), so they're the ones an attacker would hammer to brute
+  // force tokens or churn signed URLs. 60 req/min/IP is generous for normal
+  // use and cheap to raise later if it's ever too tight.
+  const blobRateLimiter = createFixedWindowRateLimiter(60, 60_000, options.now);
+  const blobRateLimit = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    if (!blobRateLimiter.allow(request.ip)) {
+      await reply
+        .status(429)
+        .send({ error: 'TooManyRequests', message: 'Rate limit exceeded. Try again shortly.' });
+    }
+  };
+
   // "Downloads usam URL assinada curta e autorização do projeto": same
   // project/artifact/blobDeleted checks as the /blob route above, but hands
   // back a short-lived signed URL instead of streaming the bytes itself.
-  app.get('/projects/:projectId/artifacts/:name/blob-url', async (request, reply) => {
-    const { projectId, name } = z
-      .object({ projectId: PathSegmentSchema, name: PathSegmentSchema })
-      .parse(request.params);
-    const { revision } = z
-      .object({ revision: z.coerce.number().int().positive().optional() })
-      .parse(request.query);
-    const artifact = await runtime.projectService.getArtifact(projectId, name, revision);
-    if (artifact.metadata.blobDeleted) {
-      return reply.status(410).send({ error: 'Gone', message: `Artifact ${name} has expired.` });
-    }
-    const key = blobKeyFor(projectId, artifact.metadata.name, artifact.metadata.revision);
-    const url = await runtime.blobStore.createSignedDownloadUrl(key, {
-      expiresInSeconds: BLOB_URL_TTL_SECONDS,
-    });
-    return reply.send({
-      url,
-      expiresAt: new Date(Date.now() + BLOB_URL_TTL_SECONDS * 1000).toISOString(),
-    });
-  });
+  app.get(
+    '/projects/:projectId/artifacts/:name/blob-url',
+    { onRequest: blobRateLimit },
+    async (request, reply) => {
+      const { projectId, name } = z
+        .object({ projectId: PathSegmentSchema, name: PathSegmentSchema })
+        .parse(request.params);
+      const { revision } = z
+        .object({ revision: z.coerce.number().int().positive().optional() })
+        .parse(request.query);
+      const artifact = await runtime.projectService.getArtifact(projectId, name, revision);
+      if (artifact.metadata.blobDeleted) {
+        return reply.status(410).send({ error: 'Gone', message: `Artifact ${name} has expired.` });
+      }
+      const key = blobKeyFor(projectId, artifact.metadata.name, artifact.metadata.revision);
+      const url = await runtime.blobStore.createSignedDownloadUrl(key, {
+        expiresInSeconds: BLOB_URL_TTL_SECONDS,
+      });
+      return reply.send({
+        url,
+        expiresAt: new Date(Date.now() + BLOB_URL_TTL_SECONDS * 1000).toISOString(),
+      });
+    },
+  );
 
   // fs mode only: S3 mode's createSignedDownloadUrl already returns a direct
   // presigned S3 URL, so there's nothing for this API to serve.
   if (runtime.config.blobStoreMode === 'fs') {
-    app.get('/blobs/*', async (request, reply) => {
+    app.get('/blobs/*', { onRequest: blobRateLimit }, async (request, reply) => {
       const encodedKey = (request.params as { '*'?: string })['*'] ?? '';
       const key = decodeURIComponent(encodedKey);
       const { token } = z.object({ token: z.string() }).parse(request.query);
