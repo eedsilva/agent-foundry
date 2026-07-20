@@ -2,25 +2,16 @@ import { createReadStream, type Dirent } from 'node:fs';
 import { readdir, rm, stat as fsStat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
-import type {
-  BlobListEntry,
-  BlobPutInput,
-  BlobStat,
-  BlobStore,
-  SignedUrlOptions,
-} from '@agent-foundry/domain';
+import type { BlobListEntry, BlobPutInput, BlobStat, BlobStore } from '@agent-foundry/domain';
 import { BlobIntegrityError } from '@agent-foundry/domain';
-import {
-  atomicWriteJson,
-  atomicWriteStream,
-  exists,
-  readJsonOrNull,
-  safeSegment,
-} from '../fs-utils.js';
+import { REVISION_DIGITS } from '../artifact-store.js';
+import { atomicWriteJson, atomicWriteStream, readJsonOrNull, safeSegment } from '../fs-utils.js';
 import { signBlobToken } from './signing.js';
 
-/** Keys shaped like an existing FileArtifactStore revision (see Task 2's keymap). */
-const ARTIFACT_KEY_PATTERN = /^projects\/([^/]+)\/artifacts\/([^/]+)\/(\d{6})$/;
+/** Keys shaped like an existing FileArtifactStore revision (see artifact-store.ts's blobKeyFor). */
+const ARTIFACT_KEY_PATTERN = new RegExp(
+  `^projects/([^/]+)/artifacts/([^/]+)/(\\d{${REVISION_DIGITS}})$`,
+);
 
 interface BlobMeta {
   sha256: string;
@@ -34,9 +25,9 @@ function metaPath(path: string): string {
 
 /**
  * Resolves a blob key to its on-disk path. Production keys are always
- * artifact-shaped (`projects/<p>/artifacts/<n>/<revision:6>`, see blobKeyFor)
- * and resolve onto the existing FileArtifactStore layout so Task 2 can
- * delegate without migrating bytes.
+ * artifact-shaped (`projects/<p>/artifacts/<n>/<revision:6>`, see
+ * artifact-store.ts's blobKeyFor) and resolve onto the existing
+ * FileArtifactStore layout so Task 2 can delegate without migrating bytes.
  */
 export function keyToPath(dataDir: string, key: string): string {
   const match = ARTIFACT_KEY_PATTERN.exec(key);
@@ -53,11 +44,6 @@ export function keyToPath(dataDir: string, key: string): string {
     'blobs',
     `${revision}.bin`,
   );
-}
-
-/** Derives the artifact-shaped object key for a given artifact revision (see keyToPath). */
-export function blobKeyFor(projectId: string, name: string, revision: number): string {
-  return `projects/${projectId}/artifacts/${name}/${String(revision).padStart(6, '0')}`;
 }
 
 export class FsBlobStore implements BlobStore {
@@ -84,8 +70,14 @@ export class FsBlobStore implements BlobStore {
 
   async getStream(key: string): Promise<Readable | null> {
     const path = keyToPath(this.dataDir, key);
-    if (!(await exists(path))) return null;
-    return createReadStream(path);
+    return new Promise((resolve, reject) => {
+      const stream = createReadStream(path);
+      stream.once('open', () => resolve(stream));
+      stream.once('error', (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') resolve(null);
+        else reject(error);
+      });
+    });
   }
 
   async stat(key: string): Promise<BlobStat | null> {
@@ -117,22 +109,20 @@ export class FsBlobStore implements BlobStore {
     return artifactShaped.filter((entry) => entry.key.startsWith(prefix));
   }
 
-  async createSignedDownloadUrl(key: string, options: SignedUrlOptions): Promise<string> {
-    const expiresAtMs = Date.now() + options.expiresInSeconds * 1000;
+  async createSignedDownloadUrl(key: string, expiresInSeconds: number): Promise<string> {
+    const expiresAtMs = Date.now() + expiresInSeconds * 1000;
     const token = signBlobToken(this.options.signingSecret, key, expiresAtMs);
     return `${this.options.publicBaseUrl}/blobs/${encodeURIComponent(key)}?token=${token}`;
   }
 }
 
-async function readdirSafe(dir: string): Promise<string[]> {
-  return readdir(dir).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  });
-}
-
-async function readdirWithTypesSafe(dir: string): Promise<Dirent[]> {
-  return readdir(dir, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+function readdirSafe(dir: string): Promise<string[]>;
+function readdirSafe(dir: string, options: { withFileTypes: true }): Promise<Dirent[]>;
+async function readdirSafe(
+  dir: string,
+  options?: { withFileTypes: true },
+): Promise<string[] | Dirent[]> {
+  return readdir(dir, options as { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return [];
     throw error;
   });
@@ -146,7 +136,7 @@ async function listArtifactBlobs(projectsRoot: string): Promise<BlobListEntry[]>
   const projectIds = await readdirSafe(projectsRoot);
   for (const projectId of projectIds) {
     const artifactsRoot = join(projectsRoot, projectId, 'artifacts');
-    const nameEntries = await readdirWithTypesSafe(artifactsRoot);
+    const nameEntries = await readdirSafe(artifactsRoot, { withFileTypes: true });
     for (const nameEntry of nameEntries) {
       if (!nameEntry.isDirectory()) continue;
       const blobsDir = join(artifactsRoot, nameEntry.name, 'blobs');

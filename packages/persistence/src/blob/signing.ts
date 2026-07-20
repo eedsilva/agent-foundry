@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { constantTimeEquals } from '@agent-foundry/domain';
 
 function hmac(secret: string, key: string, expiresAtMs: number): string {
   return createHmac('sha256', secret).update(`${key}\n${expiresAtMs}`).digest('hex');
@@ -21,5 +22,5 @@ export function verifyBlobToken(
 
   const actual = Buffer.from(token.slice(separator + 1), 'hex');
   const expected = Buffer.from(hmac(secret, key, expiresAtMs), 'hex');
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+  return constantTimeEquals(actual, expected);
 }

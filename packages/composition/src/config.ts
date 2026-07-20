@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
+import { createTextFileExclusiveSync } from '@agent-foundry/persistence';
 import { getDeploymentProfile } from './deployment-profiles.js';
 
 const booleanFromEnv = z
@@ -221,23 +222,21 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
  * every later start (and every other process pointed at the same DATA_DIR)
  * just reads it back.
  *
- * The create is atomic: `flag: 'wx'` fails with EEXIST instead of overwriting
- * if another process won the race, and we fall back to reading whatever that
- * process wrote. No existence pre-check, so there's no TOCTOU window.
+ * Fast path: every start after the first just reads the file. Only on ENOENT
+ * do we generate a candidate secret and race to create it; the create itself
+ * is torn-write-safe (temp file + link, see createTextFileExclusiveSync) and
+ * falls back to reading whatever a concurrent winner wrote.
  */
 function loadOrCreateBlobSigningSecret(dataDir: string): string {
   const path = resolve(dataDir, 'blob-signing-secret');
-  mkdirSync(dataDir, { recursive: true });
-  const secret = randomBytes(32).toString('hex');
   try {
-    writeFileSync(path, secret, { mode: 0o600, flag: 'wx' });
-    return secret;
+    return readFileSync(path, 'utf8').trim();
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      return readFileSync(path, 'utf8').trim();
-    }
-    throw error;
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
+  const secret = randomBytes(32).toString('hex');
+  const created = createTextFileExclusiveSync(path, secret, 0o600);
+  return created ? secret : readFileSync(path, 'utf8').trim();
 }
 
 function findRepoRoot(start: string): string {

@@ -137,6 +137,9 @@ class InMemoryProjects implements ProjectRepository {
   list(): Promise<Project[]> {
     return Promise.resolve([...this.store.values()]);
   }
+  listAll(): Promise<Project[]> {
+    return Promise.resolve([...this.store.values()]);
+  }
 }
 
 class InMemoryRuns implements WorkflowRunRepository {

@@ -129,7 +129,7 @@ describe('FsBlobStore', () => {
 
   it('createSignedDownloadUrl embeds a verifiable HMAC token', async () => {
     const key = 'projects/p1/artifacts/report/000001';
-    const url = await store.createSignedDownloadUrl(key, { expiresInSeconds: 60 });
+    const url = await store.createSignedDownloadUrl(key, 60);
     expect(url.startsWith(`https://example.test/blobs/${encodeURIComponent(key)}?token=`)).toBe(
       true,
     );

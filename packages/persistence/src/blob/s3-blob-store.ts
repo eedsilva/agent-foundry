@@ -11,13 +11,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type {
-  BlobListEntry,
-  BlobPutInput,
-  BlobStat,
-  BlobStore,
-  SignedUrlOptions,
-} from '@agent-foundry/domain';
+import type { BlobListEntry, BlobPutInput, BlobStat, BlobStore } from '@agent-foundry/domain';
 import { ArtifactTooLargeError, BlobIntegrityError } from '@agent-foundry/domain';
 
 export interface S3BlobStoreOptions {
@@ -129,8 +123,10 @@ export class S3BlobStore implements BlobStore {
 
     // sha256 is only known once the stream has fully drained, so it can't be
     // set at upload time; a same-bucket copy rewrites the object's metadata
-    // without re-streaming the (already uploaded) bytes.
-    await this.client.send(
+    // without re-streaming the (already uploaded) bytes. The copy response
+    // already carries the fields a follow-up HeadObjectCommand would have
+    // re-fetched, so there's no need for that extra round-trip.
+    const copyResult = await this.client.send(
       new CopyObjectCommand({
         Bucket: this.bucket,
         Key: input.key,
@@ -141,18 +137,14 @@ export class S3BlobStore implements BlobStore {
       }),
     );
 
-    const head = await this.client.send(
-      new HeadObjectCommand({ Bucket: this.bucket, Key: input.key }),
-    );
-
     return {
       key: input.key,
       sha256,
       sizeBytes,
       contentType: input.contentType,
-      createdAt: (head.LastModified ?? new Date()).toISOString(),
-      ...(head.ServerSideEncryption
-        ? { encryption: { algorithm: head.ServerSideEncryption } }
+      createdAt: (copyResult.CopyObjectResult?.LastModified ?? new Date()).toISOString(),
+      ...(copyResult.ServerSideEncryption
+        ? { encryption: { algorithm: copyResult.ServerSideEncryption } }
         : {}),
     };
   }
@@ -220,8 +212,8 @@ export class S3BlobStore implements BlobStore {
     return results;
   }
 
-  async createSignedDownloadUrl(key: string, options: SignedUrlOptions): Promise<string> {
+  async createSignedDownloadUrl(key: string, expiresInSeconds: number): Promise<string> {
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
-    return getSignedUrl(this.client, command, { expiresIn: options.expiresInSeconds });
+    return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
   }
 }

@@ -53,7 +53,15 @@ describeMinio('S3BlobStore (MinIO)', ({ store, endpoint }) => {
     expect(stat.sizeBytes).toBe(content.byteLength);
     expect(stat.sha256).toBe(expectedSha256);
 
-    await expect(blobStore.stat(key)).resolves.toEqual(stat);
+    // put()'s createdAt comes from CopyObjectResult's LastModified (XML body,
+    // sub-second precision); stat()'s comes from HeadObject's Last-Modified
+    // (an HTTP date header, always truncated to whole seconds) — so the two
+    // legitimately differ by up to ~1s even though both name "now". Assert
+    // everything else byte-for-byte and only require createdAt to be a valid
+    // timestamp.
+    const restated = await blobStore.stat(key);
+    expect(restated).toEqual({ ...stat, createdAt: expect.any(String) });
+    expect(Number.isNaN(Date.parse(restated!.createdAt))).toBe(false);
 
     const readBack = await blobStore.getStream(key);
     if (!readBack) throw new Error('expected a stream for a key that was just written');
@@ -172,7 +180,7 @@ describeMinio('S3BlobStore (MinIO)', ({ store, endpoint }) => {
     const content = Buffer.from('signed content');
     await blobStore.put({ key, contentType: 'text/plain', maxBytes: 1024 }, streamOf(content));
 
-    const url = await blobStore.createSignedDownloadUrl(key, { expiresInSeconds: 60 });
+    const url = await blobStore.createSignedDownloadUrl(key, 60);
     expect(url).toContain('X-Amz-Expires=60');
 
     const response = await fetch(url);
@@ -187,7 +195,7 @@ describeMinio('S3BlobStore (MinIO)', ({ store, endpoint }) => {
       streamOf(Buffer.from('will expire')),
     );
 
-    const url = await blobStore.createSignedDownloadUrl(key, { expiresInSeconds: 1 });
+    const url = await blobStore.createSignedDownloadUrl(key, 1);
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
     const response = await fetch(url);

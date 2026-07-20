@@ -10,6 +10,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Runtime } from '@agent-foundry/composition';
 import { isLoopbackHost } from '@agent-foundry/composition';
 import { buildInspectorScript } from './preview-inspector-script.js';
+import { wildcardParam } from './request-util.js';
 
 // Keep-alive so proxied asset/HMR-poll bursts reuse one upstream TCP connection
 // instead of opening a fresh socket to the dev server per request.
@@ -61,7 +62,7 @@ async function handleHttp(
     return;
   }
   const { sessionId } = request.params as { sessionId: string };
-  const upstreamPath = '/' + ((request.params as { '*'?: string })['*'] ?? '');
+  const upstreamPath = '/' + wildcardParam(request);
   const url = new URL(request.url, 'http://internal');
   const queryToken = url.searchParams.get('token') ?? undefined;
   const cookieToken = readCookieToken(request.headers.cookie, sessionId);

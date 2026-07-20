@@ -55,6 +55,8 @@ export interface ProjectRepository {
   get(projectId: string): Promise<Project | null>;
   update(project: Project, expectedVersion: number): Promise<Project>;
   list(limit?: number): Promise<Project[]>;
+  /** Every project, unpaged — for sweeps (e.g. blob GC) that must see the whole set. */
+  listAll(): Promise<Project[]>;
 }
 
 export interface ConversationRepository {
@@ -477,10 +479,6 @@ export interface BlobPutInput {
   expectedSha256?: string;
 }
 
-export interface SignedUrlOptions {
-  expiresInSeconds: number;
-}
-
 /** A blob key with its creation time — returned by BlobStore.list(), used by GC. */
 export type BlobListEntry = { key: string; createdAt: string };
 
@@ -491,5 +489,5 @@ export interface BlobStore {
   delete(key: string): Promise<void>;
   /** All keys under a prefix, with creation time — used by GC. */
   list(prefix: string): Promise<BlobListEntry[]>;
-  createSignedDownloadUrl(key: string, options: SignedUrlOptions): Promise<string>;
+  createSignedDownloadUrl(key: string, expiresInSeconds: number): Promise<string>;
 }

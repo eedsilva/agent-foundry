@@ -18,14 +18,25 @@ import {
   sha256,
   withDirectoryLock,
 } from './fs-utils.js';
-import { blobKeyFor } from './blob/fs-blob-store.js';
 
 interface ArtifactIndex {
   artifacts: Record<string, ArtifactMetadata[]>;
 }
 
+/** Digits an artifact revision is zero-padded to, shared with fs-blob-store's key pattern. */
+export const REVISION_DIGITS = 6;
+
+export function formatRevision(revision: number): string {
+  return String(revision).padStart(REVISION_DIGITS, '0');
+}
+
+/** True owner of the artifact-name+revision -> blob-store-key mapping (see fs-blob-store.ts's keyToPath). */
+export function blobKeyFor(projectId: string, name: string, revision: number): string {
+  return `projects/${projectId}/artifacts/${name}/${formatRevision(revision)}`;
+}
+
 function metadataPath(root: string, name: string, revision: number): string {
-  return join(root, name, `${String(revision).padStart(6, '0')}.json`);
+  return join(root, name, `${formatRevision(revision)}.json`);
 }
 
 export class FileArtifactStore implements ArtifactStore {

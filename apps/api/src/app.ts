@@ -36,6 +36,7 @@ import {
 } from '@agent-foundry/domain';
 import { registerPreviewProxy } from './preview-proxy.js';
 import { createFixedWindowRateLimiter } from './rate-limit.js';
+import { wildcardParam } from './request-util.js';
 
 interface BuildAppOptions {
   loggerStream?: { write(message: string): void };
@@ -237,14 +238,16 @@ export async function buildApp(
       const { revision } = z
         .object({ revision: z.coerce.number().int().positive().optional() })
         .parse(request.query);
-      const artifact = await runtime.projectService.getArtifact(projectId, name, revision);
-      if (artifact.metadata.blobDeleted) {
+      const metadata = await runtime.projectService.getArtifactBlobMetadata(
+        projectId,
+        name,
+        revision,
+      );
+      if (metadata === 'gone') {
         return reply.status(410).send({ error: 'Gone', message: `Artifact ${name} has expired.` });
       }
-      const key = blobKeyFor(projectId, artifact.metadata.name, artifact.metadata.revision);
-      const url = await runtime.blobStore.createSignedDownloadUrl(key, {
-        expiresInSeconds: BLOB_URL_TTL_SECONDS,
-      });
+      const key = blobKeyFor(projectId, metadata.name, metadata.revision);
+      const url = await runtime.blobStore.createSignedDownloadUrl(key, BLOB_URL_TTL_SECONDS);
       return reply.send({
         url,
         expiresAt: new Date(Date.now() + BLOB_URL_TTL_SECONDS * 1000).toISOString(),
@@ -256,8 +259,7 @@ export async function buildApp(
   // presigned S3 URL, so there's nothing for this API to serve.
   if (runtime.config.blobStoreMode === 'fs') {
     app.get('/blobs/*', { onRequest: blobRateLimit }, async (request, reply) => {
-      const encodedKey = (request.params as { '*'?: string })['*'] ?? '';
-      const key = decodeURIComponent(encodedKey);
+      const key = decodeURIComponent(wildcardParam(request));
       const { token } = z.object({ token: z.string() }).parse(request.query);
       if (!verifyBlobToken(runtime.config.blobSigningSecret!, key, token, Date.now())) {
         return reply

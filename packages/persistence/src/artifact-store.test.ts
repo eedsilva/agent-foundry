@@ -222,7 +222,8 @@ describe('FileArtifactStore blob delegation to BlobStore', () => {
         return real.delete(key);
       },
       list: (prefix) => real.list(prefix),
-      createSignedDownloadUrl: (key, options) => real.createSignedDownloadUrl(key, options),
+      createSignedDownloadUrl: (key, expiresInSeconds) =>
+        real.createSignedDownloadUrl(key, expiresInSeconds),
     };
 
     const store = new FileArtifactStore(dataDir, spy);

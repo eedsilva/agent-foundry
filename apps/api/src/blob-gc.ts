@@ -19,26 +19,25 @@ export async function sweepUnreferencedBlobs(
 ): Promise<number> {
   const [blobs, projects] = await Promise.all([
     runtime.blobStore.list('projects/'),
-    runtime.projects.list(Number.MAX_SAFE_INTEGER),
+    runtime.projects.listAll(),
   ]);
 
+  const metadataByProject = await Promise.all(
+    projects.map((project) => runtime.artifacts.listMetadata(project.id)),
+  );
   const referenced = new Set<string>();
-  for (const project of projects) {
-    const metadata = await runtime.artifacts.listMetadata(project.id);
+  for (const metadata of metadataByProject) {
     for (const item of metadata) {
       if (item.storage === 'blob' && !item.blobDeleted) {
-        referenced.add(blobKeyFor(project.id, item.name, item.revision));
+        referenced.add(blobKeyFor(item.projectId, item.name, item.revision));
       }
     }
   }
 
   const cutoffMs = now.getTime() - graceMs;
-  let deleted = 0;
-  for (const blob of blobs) {
-    if (referenced.has(blob.key)) continue;
-    if (Date.parse(blob.createdAt) > cutoffMs) continue;
-    await runtime.blobStore.delete(blob.key);
-    deleted += 1;
-  }
-  return deleted;
+  const stale = blobs.filter(
+    (blob) => !referenced.has(blob.key) && Date.parse(blob.createdAt) <= cutoffMs,
+  );
+  const results = await Promise.allSettled(stale.map((blob) => runtime.blobStore.delete(blob.key)));
+  return results.filter((result) => result.status === 'fulfilled').length;
 }
