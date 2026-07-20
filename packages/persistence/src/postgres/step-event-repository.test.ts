@@ -56,6 +56,10 @@ describePostgres('Postgres step event repository', (ctx) => {
 
     const after = await repository.list('run-1', { cursor: 1, limit: 5 });
     expect(after.map((event) => event.id)).toEqual(['evt-2', 'evt-3']);
+
+    // No options: cursor defaults to 0 and the limit clause is omitted entirely.
+    const all = await repository.list('run-1');
+    expect(all.map((event) => event.id)).toEqual(['evt-1', 'evt-2', 'evt-3']);
   });
 
   it('redacts assistant_delta text at write time', async () => {
