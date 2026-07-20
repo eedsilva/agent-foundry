@@ -71,10 +71,10 @@
   Run:
 
   ```bash
-  npm test -- --run packages/model-router/src/score-router.test.ts
+  npx vitest run packages/model-router/src/score-router.test.ts --pool=threads --maxWorkers=1
   ```
 
-  Expected: the new test fails because the current guard requires `rl.remaining === 0`, so Claude remains eligible and is not rejected.
+  Expected: the focused router test fails because the current guard requires `rl.remaining === 0`, so Claude remains eligible and is not rejected.
 
 - [ ] **Step 3: Replace the conjunctive guard with the reset-based guard**
 
@@ -97,10 +97,10 @@
   Run:
 
   ```bash
-  npm test -- --run packages/model-router/src/score-router.test.ts
+  npx vitest run packages/model-router/src/score-router.test.ts --pool=threads --maxWorkers=1
   ```
 
-  Expected: all router tests pass, including the resetAt-only provider regression.
+  Expected: the focused router suite passes, including the resetAt-only provider regression.
 
 - [ ] **Step 5: Review the focused diff and commit**
 
