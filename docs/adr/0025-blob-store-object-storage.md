@@ -56,6 +56,14 @@ window is what makes "revision allocated, bytes uploaded, metadata write still p
 the blob stays invisible to readers (nothing references it yet) but isn't swept until it's either finished
 or old enough to be recognized as abandoned.
 
+**Supabase** is the intended hosted backend for this project's stack (see `agent-foundry-project-goal` /
+Ed's generated-app defaults): Supabase Storage exposes an S3-compatible API at
+`https://<project-ref>.storage.supabase.co/storage/v1/s3`, and `supabase start` exposes the same protocol
+locally. Because `S3BlobStore` only ever speaks the S3 protocol — endpoint, region, path-style flag, and a
+key pair — Supabase needs no dedicated adapter or `supabase-js` dependency; it's just another
+`S3_ENDPOINT`/`S3_FORCE_PATH_STYLE=true` combination, exactly like MinIO or AWS S3. One adapter, three
+interchangeable backends.
+
 ## Alternatives considered
 
 **Reference counting instead of GC-with-grace** was considered and rejected for this iteration.

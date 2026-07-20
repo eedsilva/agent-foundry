@@ -506,7 +506,7 @@ Bytes de artifact (o `content` binário/grande, não o metadata) passam por um p
 | `S3_SECRET_ACCESS_KEY` | —          | obrigatório em modo `s3`                                         |
 | `S3_FORCE_PATH_STYLE`  | `false`    | necessário para MinIO e outros endpoints path-style              |
 
-Em modo `s3`, os cinco vars `S3_*` (exceto `S3_FORCE_PATH_STYLE`) são obrigatórios — a config falha ao carregar (via `superRefine`) citando cada var ausente. Em modo `fs`, se `BLOB_SIGNING_SECRET` não for definido, a API deriva um segredo por instalação na primeira vez que precisa dele: 32 bytes aleatórios em hex, gravados uma única vez em `DATA_DIR/blob-signing-secret` com permissão `0600` e reaproveitados depois. Defina `BLOB_SIGNING_SECRET` explicitamente para fixá-lo (por exemplo, ao restaurar um `DATA_DIR` em outra máquina) ou quando múltiplos processos escrevem no mesmo `DATA_DIR` novo simultaneamente — a derivação não é atômica entre processos.
+Em modo `s3`, os cinco vars `S3_*` (exceto `S3_FORCE_PATH_STYLE`) são obrigatórios — a config falha ao carregar (via `superRefine`) citando cada var ausente. Em modo `fs`, se `BLOB_SIGNING_SECRET` não for definido, a API deriva um segredo por instalação na primeira vez que precisa dele: 32 bytes aleatórios em hex, gravados uma única vez em `DATA_DIR/blob-signing-secret` com permissão `0600` e reaproveitados depois (criação atômica via `wx`, então dois processos disputando um `DATA_DIR` novo convergem para o mesmo segredo — quem perde a corrida apenas lê o que o outro gravou). Defina `BLOB_SIGNING_SECRET` explicitamente para fixá-lo, por exemplo ao restaurar um `DATA_DIR` em outra máquina.
 
 Downloads usam URL assinada curta e autorização do projeto, nos dois modos:
 
@@ -522,9 +522,41 @@ GET /blobs/*?token=<token>
 
 Registrada somente quando `BLOB_STORE_MODE=fs` (não existe em modo `s3` — as URLs presigned da S3 já servem os bytes diretamente). O token é HMAC-SHA256 (`${key}\n${expiresAtMs}`, comparação com `timingSafeEqual`); token inválido ou expirado retorna `403`, blob ausente retorna `404`.
 
-### MinIO local (quickstart)
+### Supabase Storage (hospedado, recomendado)
 
-`docker-compose.yml` traz um serviço `minio` comentado, junto com os envs `S3_*` correspondentes nos serviços `api`/`worker` e o volume `minio_data`. Para usar:
+Supabase Storage expõe a mesma API S3-compatível que `S3BlobStore` já fala — não existe (nem precisa existir) um adapter `supabase-js` separado: o protocolo S3 é um adapter só, três backends possíveis (Supabase, MinIO, AWS S3).
+
+**Hospedado:**
+
+1. Crie um bucket pelo dashboard do Supabase (Storage → New bucket).
+2. Gere um par de chaves de acesso S3 em Project Settings → Storage → S3 Connection. Essas chaves dão acesso total a todos os buckets do projeto e ignoram RLS — trate como segredo de servidor, nunca as exponha no client.
+3. Configure:
+   ```
+   BLOB_STORE_MODE=s3
+   S3_ENDPOINT=https://<project-ref>.storage.supabase.co/storage/v1/s3
+   S3_REGION=<região exibida na página de configuração S3>
+   S3_BUCKET=<bucket criado no passo 1>
+   S3_ACCESS_KEY_ID=<gerado no passo 2>
+   S3_SECRET_ACCESS_KEY=<gerado no passo 2>
+   S3_FORCE_PATH_STYLE=true
+   ```
+   O formato de `S3_ENDPOINT` acima é o documentado pela Supabase para o host dedicado de storage (melhor para uploads grandes); a própria página de configuração S3 do dashboard mostra o endpoint e a região exatos do seu projeto — confira lá antes de configurar, já que isso pode variar por conta/região.
+
+**Local (dev):** `supabase start` sobe uma stack local que já expõe a mesma API S3-compatível, sem custo de conta hospedada:
+
+```
+S3_ENDPOINT=http://127.0.0.1:54321/storage/v1/s3
+S3_REGION=local
+S3_FORCE_PATH_STYLE=true
+```
+
+Chaves de acesso locais saem de `supabase status -o env`.
+
+`DATABASE_URL` para o Postgres do Supabase é configuração separada (persistência, não object storage) — ver a PR #53.
+
+### MinIO local (quickstart, fallback neutro)
+
+MinIO não depende de conta hospedada e é a stack que os testes automatizados deste repo sobem (via `testcontainers`, ver abaixo) — use-o para dev/CI sem Supabase, ou como referência de qualquer outro endpoint S3-compatível. `docker-compose.yml` traz um serviço `minio` comentado, junto com os envs `S3_*` correspondentes nos serviços `api`/`worker` e o volume `minio_data`. Para usar:
 
 1. Descomente o bloco `minio:` e o volume `minio_data:` no fim do arquivo, e os blocos `S3_*`/`BLOB_STORE_MODE: s3` em `api` e `worker` (mantenha os dois em sincronia).
 2. Suba com `docker compose up minio api worker`. O MinIO expõe a API em `:9000` e o console web em `:9001`; as credenciais padrão (`minioadmin`/`minioadmin`) servem só para desenvolvimento — troque antes de expor a instância.

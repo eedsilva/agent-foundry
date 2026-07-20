@@ -16,7 +16,8 @@ services:
       EXECUTOR_MODE: mock
       # Blob storage defaults to fs mode (bytes under DATA_DIR, signing secret
       # auto-derived there too) — nothing else to set. Uncomment to point at
-      # the MinIO service below instead (or any S3-compatible endpoint).
+      # the MinIO service below instead (or any S3-compatible endpoint,
+      # including Supabase Storage's S3 API — see docs/OPERATIONS.md).
       # BLOB_STORE_MODE: s3
       # S3_ENDPOINT: http://minio:9000
       # S3_REGION: us-east-1
