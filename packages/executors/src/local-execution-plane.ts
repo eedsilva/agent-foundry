@@ -2,6 +2,7 @@ import {
   EXECUTION_PROTOCOL_VERSION,
   type ExecutionRequest,
   type ExecutionResult,
+  type ExecutorStreamEvent,
 } from '@agent-foundry/contracts';
 import {
   EmergencyCeilingError,
@@ -26,11 +27,15 @@ export class LocalExecutionPlane implements ExecutionPlane {
     private readonly workspaces: Pick<WorkspaceManager, 'workspacePath'>,
   ) {}
 
-  async submit(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult> {
+  async submit(
+    request: ExecutionRequest,
+    signal?: AbortSignal,
+    onEvent?: (event: ExecutorStreamEvent) => void,
+  ): Promise<ExecutionResult> {
     const executor = this.executors.get(request.agent.provider);
     const cwd = this.workspaces.workspacePath(request.workspace.projectId);
     try {
-      const result = await executor.execute({ ...request.agent, cwd }, signal);
+      const result = await executor.execute({ ...request.agent, cwd }, signal, onEvent);
       return {
         protocolVersion: EXECUTION_PROTOCOL_VERSION,
         executionId: request.executionId,

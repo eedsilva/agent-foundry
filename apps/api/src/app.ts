@@ -55,6 +55,8 @@ const CanonicalDecimalSchema = z
   .regex(/^(0|[1-9]\d*)$/)
   .transform(Number);
 
+const NonNegativeCursorSchema = CanonicalDecimalSchema.pipe(z.number().int().nonnegative());
+
 export async function buildApp(
   runtime: Runtime,
   options: BuildAppOptions = {},
@@ -389,6 +391,24 @@ export async function buildApp(
       lastId,
       (after) => runtime.events.list(projectId, 500, after),
       (event) => event.id,
+    );
+  });
+
+  app.get('/runs/:runId/events/stream', async (request, reply) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    const { cursor } = z
+      .object({ cursor: NonNegativeCursorSchema.optional() })
+      .parse(request.query);
+    const header = request.headers['last-event-id'];
+    const lastSequence =
+      cursor ?? (typeof header === 'string' && header ? NonNegativeCursorSchema.parse(header) : 0);
+    await streamSse(
+      request,
+      reply,
+      allowedOrigins,
+      lastSequence,
+      (after) => runtime.stepEvents.list(runId, { cursor: after ?? 0, limit: 500 }),
+      (event) => event.sequence,
     );
   });
 

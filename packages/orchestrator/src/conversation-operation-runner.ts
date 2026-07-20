@@ -24,6 +24,7 @@ import {
   type ModelRouter,
   type ProjectVersionRepository,
   type StepAttemptRepository,
+  type StepEventRepository,
   type StepRunRepository,
   type WorkflowRunRepository,
   type WorkspaceManager,
@@ -32,7 +33,7 @@ import { buildTaskProfile } from './task-profiler.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 import { CONVERSATION_WORKFLOW_ID, buildConversationStep } from './conversation-step-config.js';
 import { compileContext } from './context-compiler.js';
-import { artifactReference, runError } from './workflow-orchestrator.js';
+import { artifactReference, persistStreamEvent, runError } from './workflow-orchestrator.js';
 
 export interface ConversationOperationRunnerOptions {
   agentTimeoutMs: number;
@@ -45,6 +46,7 @@ export class ConversationOperationRunner {
     private readonly stepAttempts: StepAttemptRepository,
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
+    private readonly stepEvents: StepEventRepository,
     private readonly harness: HarnessRepository,
     private readonly router: ModelRouter,
     private readonly metrics: MetricsRepository,
@@ -196,7 +198,19 @@ export class ConversationOperationRunner {
         timeoutMs: this.options.agentTimeoutMs,
         outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
       };
-      const result = await this.executors.get(route.selected.model.provider).execute(request);
+      const result = await this.executors
+        .get(route.selected.model.provider)
+        .execute(request, undefined, (event) =>
+          persistStreamEvent(
+            this.stepEvents,
+            this.ids,
+            this.clock,
+            runId,
+            stepRun.id,
+            attempt!.id,
+            event,
+          ),
+        );
 
       const commit = step.mutatesWorkspace
         ? await this.workspaces.commit(projectId, `conversation(${kind}): ${step.title}`)
@@ -231,6 +245,17 @@ export class ConversationOperationRunner {
         runState.version,
       );
       succeeded = true;
+      // Records the artifact this operation produced on the Operation itself
+      // (not just the StepAttempt) so the chat UI can link a completed
+      // Operation to its diff/artifacts without waiting on the separate
+      // plan-approval decision — build operations have no approval step at
+      // all, so this is their only completion signal. Runs after `succeeded
+      // = true` like metrics/events below: a failure here must not trigger
+      // the rollback path for a run that already durably completed.
+      await this.conversations.updateOperation({
+        ...operation,
+        artifactReferences: [artifactReference(artifact)],
+      });
       await this.metrics.record({
         modelId: route.selected.model.id,
         taskKind: step.taskKind,
@@ -280,6 +305,18 @@ export class ConversationOperationRunner {
           transitionWorkflowRun(runState, 'failed', this.clock.now(), { error: runErr }),
           runState.version,
         );
+      }
+      if (operation.artifactReferences.length > 0) {
+        // A build started from an approved plan inherits the plan's own
+        // artifactReferences at creation time (OperationService.start), before
+        // this run ever executes. If the run then fails, that inherited
+        // reference must not linger — otherwise the chat UI would show diff/
+        // artifact links for a failed operation as if it had produced them.
+        try {
+          await this.conversations.updateOperation({ ...operation, artifactReferences: [] });
+        } catch {
+          // best-effort; the failed-state transitions above are the durable record
+        }
       }
       try {
         await this.events.append({

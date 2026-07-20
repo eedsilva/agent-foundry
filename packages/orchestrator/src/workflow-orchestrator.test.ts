@@ -23,6 +23,7 @@ import {
   InMemoryProjects,
   InMemoryRuns,
   InMemoryStepAttempts,
+  InMemoryStepEvents,
   InMemoryStepRuns,
   MODELS,
   SequentialIds,
@@ -75,6 +76,7 @@ function makeOrchestrator(versions?: ProjectVersionService) {
   const approvalDecisions = new InMemoryApprovalDecisions(power);
   const artifacts = new InMemoryArtifacts(power);
   const events = new InMemoryEvents(power);
+  const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces(power);
   const executor = new ControllableExecutor({}, workspaces);
 
@@ -131,6 +133,7 @@ function makeOrchestrator(versions?: ProjectVersionService) {
     approvalDecisions,
     artifacts,
     events,
+    stepEvents,
     workflows,
     new InMemoryPolicies(DEFAULT_POLICY),
     harnessRepo,

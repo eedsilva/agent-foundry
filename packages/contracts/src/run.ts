@@ -20,6 +20,17 @@ export const WorkflowRunStatusSchema = z.enum([
 ]);
 export type WorkflowRunStatus = z.infer<typeof WorkflowRunStatusSchema>;
 
+const terminalWorkflowRunStatuses: readonly WorkflowRunStatus[] = [
+  'cancelled',
+  'completed',
+  'failed',
+  'rejected',
+];
+
+export function isWorkflowRunStatusTerminal(status: WorkflowRunStatus): boolean {
+  return terminalWorkflowRunStatuses.includes(status);
+}
+
 export const StepRunStatusSchema = z.enum([
   'pending',
   'running',

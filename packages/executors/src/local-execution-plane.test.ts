@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { EXECUTION_PROTOCOL_VERSION, type ExecutionRequest } from '@agent-foundry/contracts';
+import {
+  EXECUTION_PROTOCOL_VERSION,
+  type ExecutionRequest,
+  type ExecutorStreamEvent,
+} from '@agent-foundry/contracts';
 import {
   EmergencyCeilingError,
   ExecutionError,
@@ -22,6 +26,17 @@ const AGENT_REQUEST: ExecutionRequest['agent'] = {
   prompt: 'do the thing',
   mutatesWorkspace: false,
   timeoutMs: 60_000,
+};
+
+const completedArtifact = {
+  schemaVersion: '1' as const,
+  status: 'completed' as const,
+  summary: 'done',
+  data: {},
+  decisions: [],
+  assumptions: [],
+  risks: [],
+  nextActions: [],
 };
 
 function request(): ExecutionRequest {
@@ -61,16 +76,7 @@ function makeExecutor(behavior: 'succeed' | 'fail' | 'cancel' | 'ceiling'): Agen
         durationMs: 5,
         stdout: '{}',
         stderr: '',
-        output: {
-          schemaVersion: '1' as const,
-          status: 'completed' as const,
-          summary: 'done',
-          data: {},
-          decisions: [],
-          assumptions: [],
-          risks: [],
-          nextActions: [],
-        },
+        output: completedArtifact,
       };
     },
     async health() {
@@ -137,5 +143,39 @@ describe('LocalExecutionPlane', () => {
       workspacePath: () => '/data/projects/project-1/workspace',
     });
     await expect(plane.status('attempt-1')).rejects.toThrow(/does not support/i);
+  });
+
+  it('threads onEvent through to the executor', async () => {
+    const events: unknown[] = [];
+    const executor: AgentExecutor = {
+      provider: 'codex',
+      execute: async (
+        agentRequest,
+        _signal?: AbortSignal,
+        onEvent?: (event: ExecutorStreamEvent) => void,
+      ) => {
+        onEvent?.({ type: 'status', phase: 'started' });
+        return {
+          runId: agentRequest.runId,
+          stepRunId: agentRequest.stepRunId,
+          attemptId: agentRequest.attemptId,
+          provider: 'codex',
+          model: agentRequest.model,
+          exitCode: 0,
+          durationMs: 1,
+          stdout: '',
+          stderr: '',
+          output: completedArtifact,
+        };
+      },
+      health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
+    };
+    const plane = new LocalExecutionPlane(registryFor(executor), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+
+    await plane.submit(request(), undefined, (event) => events.push(event));
+
+    expect(events).toEqual([{ type: 'status', phase: 'started' }]);
   });
 });

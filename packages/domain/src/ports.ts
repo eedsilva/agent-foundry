@@ -3,6 +3,8 @@ import type {
   AgentExecutionRequest,
   AgentExecutionResult,
   AgentRole,
+  AgentStreamEvent,
+  AgentStreamEventInput,
   ApprovalDecision,
   ApprovalRequest,
   Attachment,
@@ -16,6 +18,7 @@ import type {
   ExecutionResult,
   ExecutionState,
   ExecutorHealth,
+  ExecutorStreamEvent,
   ModelDefinition,
   ModelMetric,
   ModelOverrideRecord,
@@ -165,6 +168,11 @@ export interface EventStore {
   list(projectId: string, limit?: number, afterId?: string): Promise<ProjectEvent[]>;
 }
 
+export interface StepEventRepository {
+  append(event: AgentStreamEventInput): Promise<AgentStreamEvent>;
+  list(runId: string, options?: { cursor?: number; limit?: number }): Promise<AgentStreamEvent[]>;
+}
+
 /**
  * Claim grants a lease with a monotonic fencingToken. heartbeat, ack, and nack
  * all validate that token against the on-disk lease and throw LeaseLostError
@@ -269,7 +277,11 @@ export interface QualityObservationRepository {
 
 export interface AgentExecutor {
   readonly provider: string;
-  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult>;
+  execute(
+    request: AgentExecutionRequest,
+    signal?: AbortSignal,
+    onEvent?: (event: ExecutorStreamEvent) => void,
+  ): Promise<AgentExecutionResult>;
   health(): Promise<ExecutorHealth>;
 }
 
@@ -295,7 +307,11 @@ export interface ExecutionStatus {
  * call-and-await shape.
  */
 export interface ExecutionPlane {
-  submit(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult>;
+  submit(
+    request: ExecutionRequest,
+    signal?: AbortSignal,
+    onEvent?: (event: ExecutorStreamEvent) => void,
+  ): Promise<ExecutionResult>;
   cancel(executionId: string): Promise<void>;
   status(executionId: string): Promise<ExecutionStatus>;
 }

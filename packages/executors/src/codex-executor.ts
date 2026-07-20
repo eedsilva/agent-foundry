@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
+import { createCodexStreamMapper } from './codex-stream-events.js';
 import { promptWithOutputSchema } from './output-schema-prompt.js';
 
 export class CodexCliExecutor extends BaseCliExecutor {
@@ -45,5 +46,9 @@ export class CodexCliExecutor extends BaseCliExecutor {
         ? { environment: { RUST_LOG: 'codex_core::session::session=debug' } }
         : {}),
     };
+  }
+
+  protected override createStreamMapper() {
+    return createCodexStreamMapper();
   }
 }

@@ -3,9 +3,11 @@ import type {
   AgentExecutionRequest,
   AgentExecutionResult,
   AgentStep,
+  AgentStreamEventInput,
   ApprovalGateStep,
   ArtifactReference,
   ExecutableStep,
+  ExecutorStreamEvent,
   Project,
   ProjectEvent,
   ProjectPolicy,
@@ -29,6 +31,7 @@ import {
   BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
   DEFAULT_BROWSER_EVIDENCE_POLICY,
   EXECUTION_PROTOCOL_VERSION,
+  isWorkflowRunStatusTerminal,
 } from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
@@ -47,6 +50,7 @@ import type {
   PolicyRepository,
   ProjectRepository,
   StepAttemptRepository,
+  StepEventRepository,
   StepRunRepository,
   VerificationService,
   WorkflowRunRepository,
@@ -110,6 +114,7 @@ export class WorkflowOrchestrator {
     private readonly approvalDecisions: ApprovalDecisionRepository,
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
+    private readonly stepEvents: StepEventRepository,
     private readonly workflows: WorkflowRepository,
     private readonly policies: PolicyRepository,
     private readonly harness: HarnessRepository,
@@ -144,13 +149,7 @@ export class WorkflowOrchestrator {
       await this.finalizeEmergencyCeiling(run.id, projectId);
       return;
     }
-    if (
-      run.status === 'cancelled' ||
-      run.status === 'completed' ||
-      run.status === 'failed' ||
-      run.status === 'rejected'
-    )
-      return;
+    if (isWorkflowRunStatusTerminal(run.status)) return;
     if (run.status === 'cancel_requested') {
       await this.finalizeCancellation(run.id, projectId);
       return;
@@ -781,8 +780,9 @@ export class WorkflowOrchestrator {
               timeoutAt: new Date(requestTimestamp.getTime() + node.timeout.afterMs).toISOString(),
             }
           : {};
+      const approvalRequestId = this.ids.next();
       await this.approvalRequests.create({
-        id: this.ids.next(),
+        id: approvalRequestId,
         runId,
         stepRunId: stepRun.id,
         nodeId: node.id,
@@ -791,6 +791,16 @@ export class WorkflowOrchestrator {
         ...timeout,
         createdAt: requestTimestamp.toISOString(),
       });
+      await this.stepEvents
+        .append({
+          id: this.ids.next(),
+          runId,
+          stepRunId: stepRun.id,
+          createdAt: this.clock.now().toISOString(),
+          type: 'approval',
+          approvalRequestId,
+        })
+        .catch(() => undefined);
       throw new ApprovalRequiredError(runId, node.id);
     }
 
@@ -1931,6 +1941,16 @@ export class WorkflowOrchestrator {
         secrets: [],
       },
       signal,
+      (event) =>
+        persistStreamEvent(
+          this.stepEvents,
+          this.ids,
+          this.clock,
+          runId,
+          stepRunId,
+          attemptId,
+          event,
+        ),
     );
     // A result that arrives after cancellation was requested must never be promoted.
     throwIfCancelled(signal, runId);
@@ -2274,6 +2294,32 @@ export class WorkflowOrchestrator {
       data: options.data ?? {},
     });
   }
+}
+
+/**
+ * Shared by WorkflowOrchestrator and ConversationOperationRunner — both feed
+ * the same executor onEvent callback into a StepEventRepository the same way.
+ * Best-effort: a dropped live stream event never fails the run itself; the
+ * final Message/Operation is still persisted normally.
+ */
+export function persistStreamEvent(
+  stepEvents: StepEventRepository,
+  ids: IdGenerator,
+  clock: Clock,
+  runId: string,
+  stepRunId: string,
+  attemptId: string,
+  event: ExecutorStreamEvent,
+): void {
+  const input: AgentStreamEventInput = {
+    id: ids.next(),
+    runId,
+    stepRunId,
+    attemptId,
+    createdAt: clock.now().toISOString(),
+    ...event,
+  };
+  stepEvents.append(input).catch(() => undefined);
 }
 
 export function artifactReference(artifact: StoredArtifact) {

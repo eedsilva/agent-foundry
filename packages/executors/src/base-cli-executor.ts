@@ -4,6 +4,7 @@ import type {
   AgentExecutionRequest,
   AgentExecutionResult,
   ExecutorHealth,
+  ExecutorStreamEvent,
   Provider,
   ProviderRateLimit,
 } from '@agent-foundry/contracts';
@@ -37,7 +38,10 @@ interface CliResult {
 interface CliSubprocess extends PromiseLike<CliResult> {
   pid?: number;
   kill?(signal?: NodeJS.Signals): boolean;
-  stdout?: { destroy(): void } | null;
+  stdout?: {
+    on(event: 'data', listener: (chunk: Buffer | string) => void): void;
+    destroy(): void;
+  } | null;
   stderr?: { destroy(): void } | null;
 }
 
@@ -55,6 +59,16 @@ export abstract class BaseCliExecutor implements AgentExecutor {
 
   protected abstract invocation(request: AgentExecutionRequest): Promise<CliInvocation>;
 
+  /**
+   * Providers with an incremental JSONL stdout format (Claude, Codex) override
+   * this to return a per-invocation, stateful line mapper. Providers without
+   * one (mock, agy) leave it undefined — onEvent is then simply never called,
+   * and callers must already treat onEvent as optional.
+   */
+  protected createStreamMapper(): ((line: string) => ExecutorStreamEvent[]) | undefined {
+    return undefined;
+  }
+
   protected async responseText(invocation: CliInvocation, stdout: string): Promise<string> {
     if (invocation.outputFile) {
       try {
@@ -69,12 +83,13 @@ export abstract class BaseCliExecutor implements AgentExecutor {
   async execute(
     request: AgentExecutionRequest,
     signal?: AbortSignal,
+    onEvent?: (event: ExecutorStreamEvent) => void,
   ): Promise<AgentExecutionResult> {
     if (signal?.aborted) throw new RunCancelledError(request.runId);
     const startedAt = Date.now();
     const invocation = await this.invocation(request);
     try {
-      return await this.executeInvocation(request, invocation, startedAt, signal);
+      return await this.executeInvocation(request, invocation, startedAt, signal, onEvent);
     } finally {
       const directories = new Set(
         [invocation.outputDirectory, invocation.metadataDirectory].filter((path): path is string =>
@@ -96,6 +111,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     invocation: CliInvocation,
     startedAt: number,
     signal?: AbortSignal,
+    onEvent?: (event: ExecutorStreamEvent) => void,
   ): Promise<AgentExecutionResult> {
     let result: CliResult;
     let onAbort: (() => void) | undefined;
@@ -114,6 +130,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         ...(invocation.input !== undefined ? { input: invocation.input } : {}),
         ...(invocation.environment ? { env: cleanEnvironment(invocation.environment) } : {}),
       }) as unknown as CliSubprocess;
+      if (onEvent) attachStreamTap(subprocess, this.createStreamMapper(), onEvent);
       if (signal) {
         onAbort = () => {
           void terminateProcessTree(subprocess, this.killGraceMs);
@@ -219,6 +236,25 @@ async function readBoundedFile(path: string, maxBytes: number): Promise<string> 
   } catch {
     return '';
   }
+}
+
+function attachStreamTap(
+  subprocess: CliSubprocess,
+  mapLine: ((line: string) => ExecutorStreamEvent[]) | undefined,
+  onEvent: (event: ExecutorStreamEvent) => void,
+): void {
+  if (!mapLine || !subprocess.stdout) return;
+  let buffer = '';
+  subprocess.stdout.on('data', (chunk: Buffer | string) => {
+    buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    let newlineIndex = buffer.indexOf('\n');
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 1);
+      if (line.trim()) for (const event of mapLine(line)) onEvent(event);
+      newlineIndex = buffer.indexOf('\n');
+    }
+  });
 }
 
 function waitForCliResult(subprocess: CliSubprocess, hardTimeoutMs: number): Promise<CliResult> {

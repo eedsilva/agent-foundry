@@ -5,6 +5,7 @@ import { diffLines } from 'diff';
 import {
   taskCategoryLevels,
   VerificationReportSchema,
+  type AgentStreamEvent,
   type ApprovalAction,
   type ApprovalGateStep,
   type ApprovalListResponse,
@@ -29,6 +30,7 @@ import {
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
+  cancelRun,
   classifyMessage,
   compareVersions,
   decideApproval,
@@ -52,8 +54,10 @@ import {
   resumeRun,
   retryProject,
   retryStep,
+  runEventsStreamUrl,
   sendMessage,
 } from '../../../lib/api';
+import { mergeStreamEvents } from '../../../lib/agent-stream';
 import { mergeEvents } from '../../../lib/events';
 import {
   agentStepTargets,
@@ -66,7 +70,10 @@ import {
 import { BlobMedia, PreviewPanel, VerificationReportView } from './preview-panel';
 import { formatObservedUsage } from './format-usage.js';
 import { findDiffApprovalVersions } from '../../../lib/diff-approval';
-import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
+import {
+  BrowserVerificationReportSchema,
+  isWorkflowRunStatusTerminal,
+} from '@agent-foundry/contracts';
 
 const PROJECT_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'rejected']);
 const NO_PREDECESSOR_VERSION_MESSAGE = 'Nenhuma versão anterior para comparar.';
@@ -196,6 +203,20 @@ function eventBadges(event: ProjectEvent): string[] {
   return badges;
 }
 
+/** A completed operation's diff/artifact links show once its run is no longer in flight, and (for plans) only after approval has been decided. */
+function showsCompletedOperationLinks(
+  operation: Operation,
+  latestOperation: Operation | undefined,
+  latestOperationRunTerminal: boolean,
+): boolean {
+  return (
+    operation.artifactReferences.length > 0 &&
+    (operation.id !== latestOperation?.id || latestOperationRunTerminal) &&
+    (operation.kind !== 'plan' ||
+      Boolean(operation.approval && operation.approval.status !== 'pending'))
+  );
+}
+
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [detail, setDetail] = useState<ProjectDetailResponse | null>(null);
@@ -209,6 +230,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [refreshTick, setRefreshTick] = useState(0);
   const [events, setEvents] = useState<ProjectEvent[]>([]);
   const [live, setLive] = useState(false);
+  const [streamEvents, setStreamEvents] = useState<AgentStreamEvent[]>([]);
+  const [streamEventsRunId, setStreamEventsRunId] = useState<string | undefined>(undefined);
+  const [activeOperationRun, setActiveOperationRun] = useState<RunDetailResponse | null>(null);
   const [approvals, setApprovals] = useState<ApprovalListResponse['approvals']>([]);
   const [workflowDef, setWorkflowDef] = useState<WorkflowDefinition | null>(null);
   const [runtimeModels, setRuntimeModels] = useState<ModelDefinition[]>([]);
@@ -374,6 +398,72 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   }, [routes]);
 
   const run = runDetail?.run;
+
+  // Conversation operations (plan/build sent from the Conversa panel below)
+  // each run under their OWN WorkflowRun — a different run than `run` above,
+  // which only tracks the project's original DAG run. Only the most recently
+  // created operation can plausibly still be in flight (operations are
+  // processed one at a time), so its own run status — not artifactReferences
+  // emptiness — is what "in flight" actually means: a build started from an
+  // approved plan inherits the plan's artifactReferences at creation, before
+  // its own run ever executes, so emptiness alone would wrongly call it
+  // "done" from birth.
+  const latestOperation = conversation?.operations.at(-1);
+
+  useEffect(() => {
+    if (!latestOperation?.runId) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await getRunDetail(latestOperation.runId!);
+        if (!active) return;
+        setActiveOperationRun(next);
+        if (!isWorkflowRunStatusTerminal(next.run.status)) {
+          timer = setTimeout(poll, 1_500);
+        }
+      } catch {
+        // best-effort; the live-activity panel just won't update this tick
+      }
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [latestOperation?.runId]);
+
+  const latestOperationRunTerminal =
+    !latestOperation?.runId ||
+    !activeOperationRun ||
+    activeOperationRun.run.id !== latestOperation.runId ||
+    isWorkflowRunStatusTerminal(activeOperationRun.run.status);
+
+  const activeOperation =
+    latestOperation && !latestOperationRunTerminal ? latestOperation : undefined;
+
+  // `sequence` is scoped per-run, so events from a new run must not be merged
+  // against a previous run's — adjusting state during render (React's
+  // documented pattern for "reset state when a prop changes") rather than in
+  // the effect below, which must only ever subscribe/unsubscribe.
+  if (activeOperation?.runId !== streamEventsRunId) {
+    setStreamEventsRunId(activeOperation?.runId);
+    setStreamEvents([]);
+  }
+
+  useEffect(() => {
+    if (!activeOperation?.runId) return;
+    const source = new EventSource(runEventsStreamUrl(activeOperation.runId));
+    source.onmessage = (message) => {
+      try {
+        const event = JSON.parse(message.data) as AgentStreamEvent;
+        setStreamEvents((current) => mergeStreamEvents(current, [event]));
+      } catch {
+        // Malformed frame; drop it silently.
+      }
+    };
+    return () => source.close();
+  }, [activeOperation?.runId]);
 
   useEffect(() => {
     if (
@@ -618,6 +708,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     }
   }
 
+  async function cancel(runId: string) {
+    try {
+      await cancelRun(runId);
+      refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   async function openRetryPlan(step: StepRun) {
     if (!run) return;
     try {
@@ -806,6 +905,73 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       </>
                     ) : null}
                   </span>
+                ) : null}
+                {operation && operation.runId && operation.id === activeOperation?.id ? (
+                  <div className="agentStreamActivity">
+                    {streamEvents
+                      .filter((streamEvent) => streamEvent.runId === operation.runId)
+                      .map((streamEvent) => {
+                        if (streamEvent.type === 'assistant_delta') {
+                          return <p key={streamEvent.id}>{streamEvent.text}</p>;
+                        }
+                        if (streamEvent.type === 'tool_start' || streamEvent.type === 'tool_end') {
+                          return (
+                            <details key={streamEvent.id}>
+                              <summary>{streamEvent.summary}</summary>
+                              {streamEvent.type === 'tool_end' && streamEvent.detail ? (
+                                <pre>{streamEvent.detail}</pre>
+                              ) : null}
+                            </details>
+                          );
+                        }
+                        if (streamEvent.type === 'status') {
+                          return <small key={streamEvent.id}>{streamEvent.phase}…</small>;
+                        }
+                        if (streamEvent.type === 'error') {
+                          return (
+                            <p key={streamEvent.id} className="errorBox">
+                              {streamEvent.message}
+                            </p>
+                          );
+                        }
+                        // No 'approval' case: ConversationOperationRunner (the only
+                        // emitter feeding this stream) never emits it — only
+                        // WorkflowOrchestrator's approval-gate does, for the
+                        // unrelated project DAG run this panel doesn't subscribe to.
+                        return null;
+                      })}
+                    <button
+                      className="secondaryButton"
+                      onClick={() => void cancel(operation.runId!)}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                ) : null}
+                {operation &&
+                showsCompletedOperationLinks(
+                  operation,
+                  latestOperation,
+                  latestOperationRunTerminal,
+                ) ? (
+                  <div className="operationLinks">
+                    <a href={`/project/${detail.project.id}/versions`}>Ver diff</a>
+                    {operation.artifactReferences.map((ref) => (
+                      <button
+                        key={`${ref.name}-${ref.revision}`}
+                        className="secondaryButton"
+                        onClick={() =>
+                          void getArtifact(detail.project.id, ref.name, ref.revision)
+                            .then(openArtifact)
+                            .catch((cause: unknown) =>
+                              setError(cause instanceof Error ? cause.message : String(cause)),
+                            )
+                        }
+                      >
+                        {ref.name}
+                      </button>
+                    ))}
+                  </div>
                 ) : null}
               </li>
             );

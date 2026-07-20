@@ -13,7 +13,12 @@ import type {
   StepRunRepository,
   WorkflowRunRepository,
 } from '@agent-foundry/domain';
-import type { ProjectVersion, WorkflowRun } from '@agent-foundry/contracts';
+import type {
+  AgentExecutionRequest,
+  ExecutorStreamEvent,
+  ProjectVersion,
+  WorkflowRun,
+} from '@agent-foundry/contracts';
 import {
   AgentExecutorFromExecutionPlane,
   ControllableExecutor,
@@ -22,6 +27,7 @@ import {
   InMemoryEvents,
   InMemoryRuns,
   InMemoryStepAttempts,
+  InMemoryStepEvents,
   InMemoryStepRuns,
   MemoryConversations,
   MODELS,
@@ -109,6 +115,7 @@ function setup(harness: HarnessRepository = harnessRepo) {
   const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
   const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
   const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
+  const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces({ on: true });
   const conversations = new MemoryConversations();
   const projectVersions = new MemoryProjectVersions();
@@ -123,6 +130,7 @@ function setup(harness: HarnessRepository = harnessRepo) {
     stepAttempts,
     artifacts,
     events,
+    stepEvents,
     harness,
     router,
     metrics,
@@ -140,6 +148,7 @@ function setup(harness: HarnessRepository = harnessRepo) {
     stepAttempts,
     artifacts,
     events,
+    stepEvents,
     workspaces,
     conversations,
     projectVersions,
@@ -203,7 +212,16 @@ describe('ConversationOperationRunner', () => {
     expect((await runs.get(runId))?.status).toBe('completed');
     expect(workspaces.checkpoints).toEqual([]);
     expect(workspaces.commits).toEqual([]);
-    expect(await artifacts.getLatest('project-1', `operation-${operationId}`)).not.toBeNull();
+    const artifact = await artifacts.getLatest('project-1', `operation-${operationId}`);
+    expect(artifact).not.toBeNull();
+    const operation = await conversations.getOperation('project-1', operationId);
+    expect(operation?.artifactReferences).toEqual([
+      {
+        name: artifact!.metadata.name,
+        revision: artifact!.metadata.revision,
+        sha256: artifact!.metadata.sha256,
+      },
+    ]);
   });
 
   it('completes a build operation and commits the touched workspace', async () => {
@@ -215,7 +233,90 @@ describe('ConversationOperationRunner', () => {
     expect((await runs.get(runId))?.status).toBe('completed');
     expect(workspaces.checkpoints).toHaveLength(1);
     expect(workspaces.commits).toHaveLength(1);
-    expect(await artifacts.getLatest('project-1', `operation-${operationId}`)).not.toBeNull();
+    const artifact = await artifacts.getLatest('project-1', `operation-${operationId}`);
+    expect(artifact).not.toBeNull();
+    const operation = await conversations.getOperation('project-1', operationId);
+    expect(operation?.artifactReferences).toEqual([
+      {
+        name: artifact!.metadata.name,
+        revision: artifact!.metadata.revision,
+        sha256: artifact!.metadata.sha256,
+      },
+    ]);
+  });
+
+  it('persists live executor stream events via StepEventRepository', async () => {
+    const workspaces = new FakeWorkspaces({ on: true });
+    const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
+    const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
+    const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
+    const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
+    const stepEvents = new InMemoryStepEvents();
+    const conversations = new MemoryConversations();
+    const projectVersions = new MemoryProjectVersions();
+    // ControllableExecutor/AgentExecutorFromExecutionPlane predate onEvent and
+    // don't forward it, so this test uses a minimal streaming stub instead.
+    const executors: ExecutorRegistry = {
+      get: () => ({
+        provider: 'mock',
+        execute: async (
+          _request: AgentExecutionRequest,
+          _signal: AbortSignal | undefined,
+          onEvent?: (event: ExecutorStreamEvent) => void,
+        ) => {
+          onEvent?.({ type: 'status', phase: 'started' });
+          return {
+            runId: 'run-1',
+            stepRunId: 'unused',
+            attemptId: 'unused',
+            provider: 'mock' as const,
+            model: 'mock',
+            exitCode: 0,
+            durationMs: 1,
+            stdout: '',
+            stderr: '',
+            output: {
+              schemaVersion: '1' as const,
+              status: 'completed' as const,
+              summary: 'done',
+              data: {},
+              decisions: [],
+              assumptions: [],
+              risks: [],
+              nextActions: [],
+            },
+          };
+        },
+        health: async () => ({ provider: 'mock', available: true, message: 'ok' }),
+      }),
+      health: () => Promise.resolve([]),
+    };
+    const runner = new ConversationOperationRunner(
+      runs,
+      stepRuns,
+      stepAttempts,
+      artifacts,
+      events,
+      stepEvents,
+      harnessRepo,
+      router,
+      metrics,
+      executors,
+      workspaces,
+      conversations,
+      projectVersions,
+      new FixedClock(),
+      new SequentialIds(),
+      { agentTimeoutMs: 60_000 },
+    );
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+
+    await runner.run('project-1', runId, operationId);
+
+    const streamEvents = await stepEvents.list(runId);
+    expect(streamEvents).toHaveLength(1);
+    expect(streamEvents[0]).toMatchObject({ runId, type: 'status', phase: 'started' });
   });
 
   it('marks the run failed and rolls back the checkpoint when the executor fails', async () => {
@@ -225,6 +326,7 @@ describe('ConversationOperationRunner', () => {
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
+    const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
     const executor = new ControllableExecutor(
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
@@ -240,6 +342,7 @@ describe('ConversationOperationRunner', () => {
       stepAttempts,
       artifacts,
       events,
+      stepEvents,
       harnessRepo,
       router,
       metrics,
@@ -262,6 +365,91 @@ describe('ConversationOperationRunner', () => {
     expect(workspaces.commits).toEqual([]);
   });
 
+  it('clears an artifactReferences inherited from the plan when a build-from-plan run fails', async () => {
+    const workspaces = new FakeWorkspaces({ on: true });
+    const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
+    const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
+    const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
+    const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
+    const stepEvents = new InMemoryStepEvents();
+    const conversations = new MemoryConversations();
+    const executor = new ControllableExecutor(
+      { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
+      workspaces,
+    );
+    const executors: ExecutorRegistry = {
+      get: () => new AgentExecutorFromExecutionPlane(executor),
+      health: () => Promise.resolve([]),
+    };
+    const runner = new ConversationOperationRunner(
+      runs,
+      stepRuns,
+      stepAttempts,
+      artifacts,
+      events,
+      stepEvents,
+      harnessRepo,
+      router,
+      metrics,
+      executors,
+      workspaces,
+      conversations,
+      new MemoryProjectVersions(),
+      new FixedClock(),
+      new SequentialIds(),
+      { agentTimeoutMs: 60_000 },
+    );
+
+    await conversations.createConversation({
+      id: 'project-1',
+      projectId: 'project-1',
+      createdAt: '2026-07-18T12:00:00.000Z',
+    });
+    await conversations.appendMessage({
+      id: 'message-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Add a dark mode toggle' }],
+      createdAt: '2026-07-18T12:00:00.000Z',
+    });
+    const runId = 'run-1';
+    const operationId = 'operation-1';
+    await runs.create({
+      id: runId,
+      projectId: 'project-1',
+      workflowId: 'conversation-build',
+      status: 'queued',
+      version: 1,
+      createdAt: '2026-07-18T12:00:00.000Z',
+      updatedAt: '2026-07-18T12:00:00.000Z',
+    });
+    // Simulates OperationService.start() copying the approved plan's own
+    // artifactReferences onto a new build operation, before this run ever
+    // executes — the exact inherited-reference scenario a failed run must
+    // not leave behind.
+    await conversations.createOperation({
+      id: operationId,
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      messageId: 'message-1',
+      kind: 'build',
+      idempotencyKey: 'a'.repeat(64),
+      runId,
+      artifactReferences: [{ name: 'operation-plan-1', revision: 1, sha256: 'b'.repeat(64) }],
+      planOperationId: 'plan-1',
+      createdAt: '2026-07-18T12:00:00.000Z',
+    });
+
+    await runner.run('project-1', runId, operationId);
+
+    const run = (await runs.get(runId)) as WorkflowRun;
+    expect(run.status).toBe('failed');
+    const operation = await conversations.getOperation('project-1', operationId);
+    expect(operation?.artifactReferences).toEqual([]);
+  });
+
   it('keeps the completed run and commit intact when appending the completion event fails', async () => {
     const workspaces = new FakeWorkspaces({ on: true });
     const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
@@ -272,6 +460,7 @@ describe('ConversationOperationRunner', () => {
     events.onBeforeAppend = () => {
       throw new Error('event store unavailable');
     };
+    const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
     const executor = new ControllableExecutor({}, workspaces);
     const executors: ExecutorRegistry = {
@@ -284,6 +473,7 @@ describe('ConversationOperationRunner', () => {
       stepAttempts,
       artifacts,
       events,
+      stepEvents,
       harnessRepo,
       router,
       metrics,
@@ -321,6 +511,7 @@ describe('ConversationOperationRunner', () => {
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
+    const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
     const executor = new ControllableExecutor({}, workspaces);
     const executors: ExecutorRegistry = {
@@ -333,6 +524,7 @@ describe('ConversationOperationRunner', () => {
       stepAttempts,
       artifacts,
       events,
+      stepEvents,
       harnessRepo,
       router,
       metrics,
@@ -365,6 +557,7 @@ describe('ConversationOperationRunner', () => {
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
+    const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
     const executor = new ControllableExecutor(
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
@@ -380,6 +573,7 @@ describe('ConversationOperationRunner', () => {
       stepAttempts,
       artifacts,
       events,
+      stepEvents,
       harnessRepo,
       router,
       metrics,
@@ -414,6 +608,7 @@ describe('ConversationOperationRunner', () => {
     events.onBeforeAppend = () => {
       throw new Error('event store unavailable');
     };
+    const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
     const executor = new ControllableExecutor(
       { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
@@ -429,6 +624,7 @@ describe('ConversationOperationRunner', () => {
       stepAttempts,
       artifacts,
       events,
+      stepEvents,
       harnessRepo,
       router,
       metrics,

@@ -23,6 +23,7 @@ import {
   InMemoryProjects,
   InMemoryRuns,
   InMemoryStepAttempts,
+  InMemoryStepEvents,
   InMemoryStepRuns,
   MemoryConversations,
   MODELS,
@@ -110,6 +111,7 @@ async function runOperation(kind: 'plan' | 'build') {
   const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
   const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
   const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
+  const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces({ on: true });
   const executor = new ControllableExecutor({}, workspaces);
   const executors: ExecutorRegistry = {
@@ -164,6 +166,7 @@ async function runOperation(kind: 'plan' | 'build') {
     stepAttempts,
     artifacts,
     events,
+    stepEvents,
     harnessRepo,
     router,
     metrics,

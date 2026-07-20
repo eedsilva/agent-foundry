@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type { ProjectEvent } from '@agent-foundry/contracts';
+import type { AgentStreamEvent, ProjectEvent } from '@agent-foundry/contracts';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 
@@ -47,18 +47,18 @@ async function createProject(baseUrl: string): Promise<string> {
 
 // Reads SSE frames until `minEvents` data events are collected (or the timeout
 // aborts). Leaves the connection open; the caller aborts it to disconnect.
-async function readSse(
+async function readSse<T = ProjectEvent>(
   url: string,
   headers: Record<string, string>,
   minEvents: number,
   timeoutMs = 10_000,
-): Promise<{ events: ProjectEvent[]; abort: () => void }> {
+): Promise<{ events: T[]; abort: () => void }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const response = await fetch(url, { headers, signal: controller.signal });
   expect(response.status).toBe(200);
   expect(response.headers.get('content-type')).toContain('text/event-stream');
-  const events: ProjectEvent[] = [];
+  const events: T[] = [];
   const abort = (): void => controller.abort();
   try {
     if (response.body && minEvents > 0) {
@@ -74,8 +74,7 @@ async function readSse(
           const frame = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
           const dataLine = frame.split('\n').find((line) => line.startsWith('data:'));
-          if (dataLine)
-            events.push(JSON.parse(dataLine.slice('data:'.length).trim()) as ProjectEvent);
+          if (dataLine) events.push(JSON.parse(dataLine.slice('data:'.length).trim()) as T);
         }
       }
     }
@@ -153,5 +152,107 @@ describe('GET /projects/:projectId/events/stream', () => {
     );
     abort();
     expect(events.map((event) => event.id)).toEqual(tail);
+  });
+});
+
+describe('GET /runs/:runId/events/stream', () => {
+  it('streams run events and recovers missed events by cursor on reconnect', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const runId = 'run-stream-test';
+    await runtime.stepEvents.append({
+      id: 'evt-1',
+      runId,
+      stepRunId: 'step-1',
+      attemptId: 'attempt-1',
+      createdAt: new Date().toISOString(),
+      type: 'status',
+      phase: 'started',
+    });
+
+    const { events: first, abort: abortFirst } = await readSse<AgentStreamEvent>(
+      `${baseUrl}/runs/${runId}/events/stream`,
+      {},
+      1,
+    );
+    abortFirst();
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({ type: 'status', phase: 'started', sequence: 1 });
+
+    await runtime.stepEvents.append({
+      id: 'evt-2',
+      runId,
+      stepRunId: 'step-1',
+      attemptId: 'attempt-1',
+      createdAt: new Date().toISOString(),
+      type: 'assistant_delta',
+      text: 'Hello',
+    });
+
+    const { events: afterCursor, abort: abortSecond } = await readSse<AgentStreamEvent>(
+      `${baseUrl}/runs/${runId}/events/stream?cursor=1`,
+      {},
+      1,
+    );
+    abortSecond();
+    expect(afterCursor).toHaveLength(1);
+    expect(afterCursor[0]).toMatchObject({ type: 'assistant_delta', text: 'Hello', sequence: 2 });
+  });
+
+  it('recovers a tool_end missed while disconnected mid-tool-call, with no duplicate tool_start', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const runId = 'run-reconnect-test';
+    const stepRunId = 'step-1';
+    const attemptId = 'attempt-1';
+
+    await runtime.stepEvents.append({
+      id: 'evt-start',
+      runId,
+      stepRunId,
+      attemptId,
+      createdAt: new Date().toISOString(),
+      type: 'tool_start',
+      toolName: 'Read',
+      summary: 'Read: src/app.ts',
+    });
+
+    // Client connects and observes the tool_start, then "disconnects" (this is
+    // exactly what the first readSse call already simulates: open,
+    // collect available frames, close).
+    const { events: beforeDisconnect, abort: abortFirst } = await readSse<AgentStreamEvent>(
+      `${baseUrl}/runs/${runId}/events/stream`,
+      {},
+      1,
+    );
+    abortFirst();
+    expect(beforeDisconnect).toHaveLength(1);
+    expect(beforeDisconnect[0]).toMatchObject({ type: 'tool_start', sequence: 1 });
+    const lastSeenSequence = beforeDisconnect[0]!.sequence as number;
+
+    // While disconnected, the tool finishes.
+    await runtime.stepEvents.append({
+      id: 'evt-end',
+      runId,
+      stepRunId,
+      attemptId,
+      createdAt: new Date().toISOString(),
+      type: 'tool_end',
+      toolName: 'Read',
+      summary: 'Read completed',
+      ok: true,
+    });
+
+    // Reconnect using the last-seen cursor.
+    const { events: afterReconnect, abort: abortSecond } = await readSse<AgentStreamEvent>(
+      `${baseUrl}/runs/${runId}/events/stream?cursor=${lastSeenSequence}`,
+      {},
+      1,
+    );
+    abortSecond();
+
+    expect(afterReconnect).toHaveLength(1);
+    expect(afterReconnect[0]).toMatchObject({ type: 'tool_end', ok: true, sequence: 2 });
+    expect(afterReconnect.some((event: AgentStreamEvent) => event.type === 'tool_start')).toBe(
+      false,
+    );
   });
 });

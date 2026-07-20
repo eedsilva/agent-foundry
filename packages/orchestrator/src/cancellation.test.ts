@@ -49,7 +49,7 @@ import {
   type WorkspaceManager,
 } from '@agent-foundry/domain';
 import { ProjectService } from './project-service.js';
-import { DEFAULT_POLICY, InMemoryPolicies } from './testing/harness.js';
+import { DEFAULT_POLICY, InMemoryPolicies, InMemoryStepEvents } from './testing/harness.js';
 import { WorkflowOrchestrator } from './workflow-orchestrator.js';
 
 const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
@@ -527,6 +527,7 @@ function makeHarness(
   const approvalDecisions = new InMemoryApprovalDecisions();
   const artifacts = new InMemoryArtifacts();
   const events = new InMemoryEvents();
+  const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces();
   const executor = new ControllableExecutor(behaviors);
   const verifier = new ControllableVerifier(options.blockingVerifier ?? false);
@@ -587,6 +588,7 @@ function makeHarness(
     approvalDecisions,
     artifacts,
     events,
+    stepEvents,
     workflows,
     new InMemoryPolicies(DEFAULT_POLICY),
     harness,
