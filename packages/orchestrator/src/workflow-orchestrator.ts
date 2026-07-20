@@ -2030,10 +2030,10 @@ export class WorkflowOrchestrator {
         }),
         attempt.version,
       );
-      if (failureRecordError) throw failureRecordError;
-      if (error instanceof EmergencyCeilingError) throw error;
       span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
       span.setAttribute('foundry.force_sample', true);
+      if (failureRecordError) throw failureRecordError;
+      if (error instanceof EmergencyCeilingError) throw error;
       await this.metrics.record({
         modelId: candidate.model.id,
         taskKind: step.taskKind,

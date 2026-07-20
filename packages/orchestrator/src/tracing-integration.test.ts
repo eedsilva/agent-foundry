@@ -2,7 +2,21 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { makeHarness, rateLimitError, seedRun } from './testing/harness.js';
+import { EmergencyCeilingError, type Clock } from '@agent-foundry/domain';
+import { makeHarness, makeStores, rateLimitError, seedRun } from './testing/harness.js';
+
+// Deterministic clock only advances when told to — mirrors the one in
+// emergency-ceiling.test.ts, used here to force the four-hour active-time
+// ceiling to trip from inside a failing attempt.
+class TestClock implements Clock {
+  constructor(private time = Date.parse('2026-07-16T12:00:00.000Z')) {}
+  now(): Date {
+    return new Date(this.time);
+  }
+  advance(ms: number): void {
+    this.time += ms;
+  }
+}
 
 /**
  * Exercises the orchestrator's span coverage end to end: `foundry.run` →
@@ -127,5 +141,33 @@ describe('orchestrator span coverage', () => {
     // (known at span start) and because it failed (set reactively).
     expect(second?.attributes['foundry.attempt.sequence']).toBe(2);
     expect(second?.attributes['foundry.force_sample']).toBe(true);
+  });
+
+  // Regression for the force_sample gap: executeAgentAttempt's catch block
+  // used to throw EmergencyCeilingError (a durable-failure path, distinct
+  // from cancellation) before the span was marked ERROR/force_sample. Here
+  // the 'implement' step's failure advances a deterministic clock past the
+  // four-hour active-time ceiling, so classifyFailure reclassifies the
+  // failure as EmergencyCeilingError — exercising exactly that path.
+  it('marks the attempt span ERROR with force_sample when the attempt fails via EmergencyCeilingError', async () => {
+    const clock = new TestClock();
+    const stores = makeStores(clock);
+    const failure = (): never => {
+      clock.advance(14_400_000);
+      throw new Error('implement failed');
+    };
+    const harness = makeHarness({ implement: { kind: 'fail-always', error: failure } }, stores);
+    await seedRun(harness);
+
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toBeInstanceOf(EmergencyCeilingError);
+
+    const spans = exporter.getFinishedSpans();
+    const failedAttempts = spans.filter(
+      (span) => span.name === 'foundry.attempt' && span.status.code === SpanStatusCode.ERROR,
+    );
+    expect(failedAttempts).toHaveLength(1);
+    expect(failedAttempts[0]?.attributes['foundry.force_sample']).toBe(true);
   });
 });

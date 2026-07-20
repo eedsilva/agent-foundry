@@ -88,4 +88,63 @@ describe('apps/api foundry.request span', () => {
     expect(response?.status).toBe(404);
     expect(exporter.getFinishedSpans().some((item) => item.name === 'foundry.request')).toBe(false);
   });
+
+  // Regression: onResponse only fires on raw finish/error, never on a client
+  // disconnect, so a request whose client aborts mid-flight used to leave its
+  // span open forever (never exported, and never removed from the tracking
+  // map). Streams a request body that never completes so the route's JSON
+  // body parser blocks and the handler never runs — a deterministic
+  // "in-flight" request with no race against the response completing
+  // normally — then aborts the client connection.
+  it('ends and exports the foundry.request span when the client aborts before a response is sent', async () => {
+    const { baseUrl } = await startApi();
+
+    await postWithStalledBodyThenAbort(baseUrl);
+    const spans = exporter.getFinishedSpans().filter((item) => item.name === 'foundry.request');
+    expect(spans).toHaveLength(1);
+    expect(spans[0]?.attributes).toMatchObject({
+      'http.method': 'POST',
+      'http.route': '/projects',
+    });
+
+    // Repeating the abort proves the tracking map's entry was actually
+    // removed (not just left to be garbage-collected): a second aborted
+    // request produces exactly one more finished span, not zero (leaked)
+    // and not a double-end error.
+    await postWithStalledBodyThenAbort(baseUrl);
+    const spansAfterSecondAbort = exporter
+      .getFinishedSpans()
+      .filter((item) => item.name === 'foundry.request');
+    expect(spansAfterSecondAbort).toHaveLength(2);
+  });
 });
+
+// Sends a POST whose body stream stalls mid-request (so the JSON body parser
+// blocks and the route handler never runs), then aborts the client
+// connection. Node's fetch type doesn't yet declare `duplex`, required by the
+// underlying undici implementation for streamed request bodies.
+async function postWithStalledBodyThenAbort(baseUrl: string): Promise<void> {
+  const controller = new AbortController();
+  const body = new ReadableStream<Uint8Array>({
+    start(streamController) {
+      streamController.enqueue(new TextEncoder().encode('{"name":"x"'));
+      // Never enqueue the rest or close — the server's body parser waits forever.
+    },
+  });
+
+  const pending = fetch(`${baseUrl}/projects`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body,
+    signal: controller.signal,
+    duplex: 'half',
+  } as RequestInit & { duplex: 'half' }).catch(() => undefined);
+
+  // Give the server a beat to receive headers (span created in onRequest)
+  // and start waiting on the body; well under the 100ms budget.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  controller.abort();
+  await pending;
+  // Let the server's raw 'close' handler run.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}

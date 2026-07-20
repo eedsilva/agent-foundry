@@ -98,6 +98,16 @@ export async function buildApp(
       },
     });
     requestSpans.set(request, span);
+    // onResponse only fires on raw finish/error, never on a client-aborted
+    // connection — this fallback ends+removes the span so it isn't leaked
+    // (never exported) when the client disconnects early. Deleted from the
+    // map before ending so a normal completion racing this can't double-end.
+    request.raw.on('close', () => {
+      const tracked = requestSpans.get(request);
+      if (!tracked) return;
+      requestSpans.delete(request);
+      tracked.end();
+    });
     context.with(trace.setSpan(context.active(), span), done);
   });
   app.addHook('onResponse', async (request, reply) => {
