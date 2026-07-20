@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Exclude a provider from routing whenever its health reports a future rate-limit reset, including providers that omit `remaining`.
+**Goal:** Exclude a provider from routing whenever its health reports a future rate-limit reset and exhausted or omitted quota, including providers that omit `remaining`.
 
-**Architecture:** Keep the rate-limit decision in `ScoreBasedModelRouter.constraintRejection`, the shared guard that every constrained route uses. Treat a future `resetAt` as the hard-limit signal; do not change the health contract, parser, scoring, or fallback selection. Prove the public `route()` result rejects a provider whose rate limit has only `resetAt`.
+**Architecture:** Keep the rate-limit decision in `ScoreBasedModelRouter.constraintRejection`, the shared guard that every constrained route uses. Treat a future `resetAt` with `remaining` zero or omitted as the hard-limit signal, while preserving routability when a provider reports positive remaining quota; do not change the health contract, parser, scoring, or fallback selection. Prove the public `route()` result rejects a provider whose rate limit has only `resetAt` and keeps a provider with positive remaining quota routable.
 
 **Tech Stack:** TypeScript, Vitest, npm workspaces, GitHub Actions, Playwright.
 
@@ -13,6 +13,7 @@
 - Work only in `/Users/edsilva/Documents/ed/agent-foundry-worktrees/issue-190-reset-at-gate` on `fix/issue-190-reset-at-gate`; never push code to `main`.
 - Do not add dependencies, types, parsers, abstractions, or configuration for this single shared guard.
 - Preserve existing behavior when `resetAt` is absent or in the past.
+- Preserve existing behavior when a provider reports positive `remaining` alongside a future `resetAt`.
 - Use TDD: observe the focused regression fail before changing production code, then make it pass with the smallest shared-router change.
 - Before the PR, pass `npm run check`, `npm run e2e --workspace @agent-foundry/api`, `npm run doctor`, and `git diff --check`.
 
@@ -24,7 +25,7 @@
 - `packages/model-router/src/score-router.test.ts` owns public routing behavior tests and already verifies the adjacent `remaining: 0` plus future `resetAt` scenario.
 - `docs/superpowers/plans/2026-07-20-issue-190-reset-at-gate.md` records the issue-specific execution and validation steps.
 
-### Task 1: Gate Future ResetAt Without Requiring Remaining
+### Task 1: Gate Future ResetAt for Exhausted or Unspecified Quota
 
 **Files:**
 
@@ -76,7 +77,7 @@
 
   Expected: the focused router test fails because the current guard requires `rl.remaining === 0`, so Claude remains eligible and is not rejected.
 
-- [ ] **Step 3: Replace the conjunctive guard with the reset-based guard**
+- [ ] **Step 3: Allow reset-only rate limits without blocking positive quota**
 
   In `packages/model-router/src/score-router.ts`, replace:
 
@@ -87,10 +88,14 @@
   with:
 
   ```ts
-  if (rl?.resetAt && new Date(rl.resetAt).getTime() > Date.now()) {
+  if (
+    rl?.resetAt &&
+    (rl.remaining === 0 || rl.remaining === undefined) &&
+    new Date(rl.resetAt).getTime() > Date.now()
+  ) {
   ```
 
-  Leave the rejection message and every budget branch unchanged. The reset timestamp is already the health contract's hard-limit expiry signal, so no new parser or fallback logic is required.
+  Leave the rejection message and every budget branch unchanged. A missing quota value plus a future reset is the provider's hard-limit signal, while a positive quota value keeps the provider eligible; no new parser or fallback logic is required.
 
 - [ ] **Step 4: Run the focused router suite to verify GREEN**
 
@@ -150,6 +155,7 @@
 
   ```text
   A future resetAt with no remaining field rejects the provider.
+  A future resetAt with positive remaining stays routable.
   A future resetAt keeps the existing rejection message.
   No change affects absent or expired resetAt behavior.
   No code outside the router guard, its public test, and the required plan is added.

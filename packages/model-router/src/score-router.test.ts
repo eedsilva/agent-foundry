@@ -455,6 +455,31 @@ describe('ScoreBasedModelRouter', () => {
     });
   });
 
+  it('keeps a model routable when its provider reports positive remaining quota', async () => {
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const health = new Map([
+      [
+        'claude',
+        {
+          provider: 'claude' as const,
+          available: true,
+          message: 'ok',
+          rateLimit: { remaining: 1, resetAt: '2999-01-01T00:00:00.000Z' },
+        },
+      ],
+    ]);
+
+    const decision = await router.route(profile, undefined, { providerHealth: health });
+
+    expect(
+      [decision.selected, ...decision.fallbacks].map((candidate) => candidate.model.id),
+    ).toContain('claude-metered');
+    expect(decision.rejected).not.toContainEqual({
+      modelId: 'claude-metered',
+      reason: 'rate-limited until 2999-01-01T00:00:00.000Z',
+    });
+  });
+
   it('rejects a metered model that exceeds the cost budget', async () => {
     const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
     const decision = await router.route(profile, undefined, {
