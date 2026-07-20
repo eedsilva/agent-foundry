@@ -459,3 +459,35 @@ export interface ProjectVersionRepository {
   /** Only the `protected` flag is ever updated after creation. */
   update(version: ProjectVersion, expectedVersion: number): Promise<ProjectVersion>;
 }
+
+export interface BlobStat {
+  key: string;
+  sha256: string;
+  sizeBytes: number;
+  contentType: string;
+  createdAt: string; // ISO datetime
+  encryption?: { algorithm: string };
+}
+
+export interface BlobPutInput {
+  key: string;
+  contentType: string;
+  maxBytes: number;
+  /** When provided, the store must verify the streamed content hashes to this value and fail otherwise. */
+  expectedSha256?: string;
+}
+
+export interface SignedUrlOptions {
+  expiresInSeconds: number;
+  filename?: string;
+}
+
+export interface BlobStore {
+  put(input: BlobPutInput, source: Readable): Promise<BlobStat>;
+  getStream(key: string): Promise<Readable | null>;
+  stat(key: string): Promise<BlobStat | null>;
+  delete(key: string): Promise<void>;
+  /** All keys under a prefix, with creation time — used by GC. */
+  list(prefix: string): Promise<Array<{ key: string; createdAt: string }>>;
+  createSignedDownloadUrl(key: string, options: SignedUrlOptions): Promise<string>;
+}
