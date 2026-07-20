@@ -488,6 +488,68 @@ Antes do upgrade, faça snapshot de `DATA_DIR`. Um rollback de código não apag
 
 `StepAttempt.error` guarda somente nome, mensagem, código e exit code. stdout/stderr permanecem limitados aos audit artifacts locais já existentes; esses artifacts podem conter resposta do provider e devem ficar protegidos junto com `DATA_DIR`, fora de logs públicos e descrições de issue/PR.
 
+## Armazenamento de blobs (object storage)
+
+Bytes de artifact (o `content` binário/grande, não o metadata) passam por um port `BlobStore` com dois adapters intercambiáveis: `FsBlobStore` (padrão, bytes sob `DATA_DIR`) e `S3BlobStore` (qualquer endpoint compatível com S3, incluindo MinIO). `FileArtifactStore` delega toda leitura/escrita de bytes ao `BlobStore` configurado; a chave do objeto é **derivada e imutável** — `blobKeyFor(projectId, name, revision)` produz `projects/<projectId>/artifacts/<name>/<revision:6 dígitos>` — nunca gravada em metadata separado. Ver ADR 0025 para a decisão completa (port, keymap, split HMAC vs. presigned, GC com grace period).
+
+### Modos e variáveis
+
+| Variável               | Padrão     | Função                                                           |
+| ---------------------- | ---------- | ---------------------------------------------------------------- |
+| `BLOB_STORE_MODE`      | `fs`       | `fs` ou `s3`                                                     |
+| `BLOB_SIGNING_SECRET`  | derivado   | segredo HMAC para URLs assinadas em modo `fs` (ver abaixo)       |
+| `BLOB_GC_GRACE_MS`     | `86400000` | idade mínima (ms) de um blob não referenciado antes do GC apagar |
+| `S3_ENDPOINT`          | —          | obrigatório em modo `s3`                                         |
+| `S3_REGION`            | —          | obrigatório em modo `s3`                                         |
+| `S3_BUCKET`            | —          | obrigatório em modo `s3`                                         |
+| `S3_ACCESS_KEY_ID`     | —          | obrigatório em modo `s3`                                         |
+| `S3_SECRET_ACCESS_KEY` | —          | obrigatório em modo `s3`                                         |
+| `S3_FORCE_PATH_STYLE`  | `false`    | necessário para MinIO e outros endpoints path-style              |
+
+Em modo `s3`, os cinco vars `S3_*` (exceto `S3_FORCE_PATH_STYLE`) são obrigatórios — a config falha ao carregar (via `superRefine`) citando cada var ausente. Em modo `fs`, se `BLOB_SIGNING_SECRET` não for definido, a API deriva um segredo por instalação na primeira vez que precisa dele: 32 bytes aleatórios em hex, gravados uma única vez em `DATA_DIR/blob-signing-secret` com permissão `0600` e reaproveitados depois. Defina `BLOB_SIGNING_SECRET` explicitamente para fixá-lo (por exemplo, ao restaurar um `DATA_DIR` em outra máquina) ou quando múltiplos processos escrevem no mesmo `DATA_DIR` novo simultaneamente — a derivação não é atômica entre processos.
+
+Downloads usam URL assinada curta e autorização do projeto, nos dois modos:
+
+```bash
+GET /projects/:projectId/artifacts/:name/blob-url?revision=<n>
+```
+
+Repete as mesmas checagens de projeto/artifact/`blobDeleted` da rota `/blob` existente e retorna `{ url, expiresAt }` com TTL de 300 segundos. Em modo `s3` a URL é um presigned S3 URL direto (`GetObjectCommand` + `getSignedUrl`); a API nunca proxeia os bytes. Em modo `fs` a URL aponta para uma rota própria da API:
+
+```bash
+GET /blobs/*?token=<token>
+```
+
+Registrada somente quando `BLOB_STORE_MODE=fs` (não existe em modo `s3` — as URLs presigned da S3 já servem os bytes diretamente). O token é HMAC-SHA256 (`${key}\n${expiresAtMs}`, comparação com `timingSafeEqual`); token inválido ou expirado retorna `403`, blob ausente retorna `404`.
+
+### MinIO local (quickstart)
+
+`docker-compose.yml` traz um serviço `minio` comentado, junto com os envs `S3_*` correspondentes nos serviços `api`/`worker` e o volume `minio_data`. Para usar:
+
+1. Descomente o bloco `minio:` e o volume `minio_data:` no fim do arquivo, e os blocos `S3_*`/`BLOB_STORE_MODE: s3` em `api` e `worker` (mantenha os dois em sincronia).
+2. Suba com `docker compose up minio api worker`. O MinIO expõe a API em `:9000` e o console web em `:9001`; as credenciais padrão (`minioadmin`/`minioadmin`) servem só para desenvolvimento — troque antes de expor a instância.
+3. A API cria o bucket configurado (`S3_BUCKET`, padrão `agent-foundry`) e passa a usar `S3BlobStore` a partir do próximo start.
+
+Para testes automatizados, `packages/persistence/src/blob/s3-testing.ts` sobe um container MinIO efêmero via `testcontainers` (mesma política skip-sem-Docker/throw-em-CI dos demais harnesses de container deste repo) — não é usado em produção, só pelos testes de `s3-blob-store.test.ts`.
+
+### Compatibilidade de chaves (sem migração)
+
+`FsBlobStore` resolve chaves no formato de artifact (`projects/<p>/artifacts/<n>/<revision:6>`) para o layout legado já existente em disco (`projects/<p>/artifacts/<n>/blobs/<revision>.bin`) — o mesmo arquivo que o código anterior a esta feature já escrevia. Um `DATA_DIR` existente continua servindo blobs antigos sem qualquer passo de migração. Chaves fora desse formato (uso futuro) vão para `DATA_DIR/blobs/<chave-codificada>`.
+
+### GC com grace period
+
+A varredura periódica da API (mesmo intervalo do reaper de artifacts, `ARTIFACT_REAP_INTERVAL_MS`) roda `sweepUnreferencedBlobs` depois de `reapExpired`: lista todas as chaves sob `projects/` no `BlobStore`, monta o conjunto de chaves referenciadas a partir do metadata de artifact de todo projeto (`storage === 'blob' && !blobDeleted`) e apaga as chaves que **não** estão nesse conjunto **e** têm `createdAt` mais antigo que `BLOB_GC_GRACE_MS` (padrão 24h). O grace period existe para cobrir a janela entre alocar a revisão, terminar o upload dos bytes e gravar o metadata — sem ele, um upload em andamento ou um processo que morreu entre essas etapas seria apagado como "órfão" antes de ter chance de se completar ou de ser reconhecido como abandonado de fato.
+
+### Garantias de integridade
+
+O sha256 é calculado em streaming durante a escrita (via `atomicWriteStream` em modo `fs`, via o `Transform` `meteredStream` + multipart `Upload` em modo `s3`), nunca lido de volta do conteúdo depois. Quando o chamador informa `expectedSha256`, um mismatch apaga os bytes recém-escritos e lança `BlobIntegrityError`; estourar `maxBytes` aborta o upload/escrita (`ArtifactTooLargeError`) sem deixar bytes parciais para trás.
+
+Os dois adapters falham seguro em `stat()`: `FsBlobStore` retorna `null` quando o sidecar `<path>.meta.json` está ausente, e `S3BlobStore` retorna `null` quando o metadata `sha256` do objeto está ausente — o que cobre a janela do `put()` em modo `s3` entre o multipart `Upload` terminar e o `CopyObjectCommand` subsequente (que anexa o `sha256` como metadata) completar. Nos dois casos, uma escrita incompleta fica invisível para leitores (em vez de aparentar um blob válido com hash vazio) e naturalmente elegível para o GC descrito acima, ao invés de ser servida corrompida.
+
+### Rollback
+
+Reverter para `BLOB_STORE_MODE=fs` é seguro a qualquer momento: blobs já gravados em modo `fs` continuam funcionando via o keymap legado acima, sem necessidade de migração. A única perda é para blobs que foram gravados **enquanto** o modo `s3` estava ativo — esses bytes ficam no bucket S3/MinIO (não são apagados automaticamente), mas o adapter `fs` não os enxerga, então artifacts criados nessa janela ficam inacessíveis até uma migração manual dos objetos de volta para `DATA_DIR` ou até reativar o modo `s3`. Dados escritos antes ou depois da janela em modo `s3` não são afetados.
+
 ## Backup
 
 Em uso local, faça snapshot de todo `DATA_DIR`, incluindo `runs/`. Para restore, preserve permissões e `.git` dos workspaces. O arquivo `artifacts/index.json` pode ser reconstruído a partir das revisões, mas o MVP não inclui ferramenta automática para isso.

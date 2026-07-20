@@ -23,6 +23,7 @@
 ### Task 1: `BlobStore` port + `FsBlobStore` adapter (streaming, hashing, HMAC signed URLs)
 
 **Files:**
+
 - Modify: `packages/domain/src/ports.ts` (append port — do not touch existing interfaces)
 - Create: `packages/persistence/src/blob/fs-blob-store.ts`
 - Create: `packages/persistence/src/blob/signing.ts`
@@ -77,6 +78,7 @@ New domain error in `packages/domain/src/errors.ts`: `BlobIntegrityError` (field
 export function signBlobToken(secret: string, key: string, expiresAtMs: number): string;
 export function verifyBlobToken(secret: string, key: string, token: string, nowMs: number): boolean;
 ```
+
 HMAC-SHA256 over `${key}\n${expiresAtMs}`, token = `${expiresAtMs}.${hex}`; verify recomputes + `timingSafeEqual` + expiry check.
 
 `FsBlobStore` constructor: `(dataDir: string, options: { signingSecret: string; publicBaseUrl: string })`. `createSignedDownloadUrl` returns `${publicBaseUrl}/blobs/${encodeURIComponent(key)}?token=${signBlobToken(...)}` (route added in Task 4). Storage path: see keymap in Task 2 (artifact-shaped keys map onto the legacy layout; all other keys → `DATA_DIR/blobs/<safe-encoded-key>`). Reuse `atomicWriteStream` from `../fs-utils.js` for streaming+hash+maxBytes; after write, when `expectedSha256` set and mismatched → delete file, throw `BlobIntegrityError`. `stat` persists no sidecar: recompute size from `fs.stat` and store sha256+contentType in a tiny sidecar JSON `<path>.meta.json` written atomically (needed because Fs has no object metadata; GC `list` walks the directory using file mtimes as `createdAt`).
@@ -92,11 +94,13 @@ HMAC-SHA256 over `${key}\n${expiresAtMs}`, token = `${expiresAtMs}.${hex}`; veri
 ### Task 2: Route `FileArtifactStore` blob bytes through `BlobStore`
 
 **Files:**
+
 - Modify: `packages/persistence/src/artifact-store.ts`
 - Modify: `packages/persistence/src/artifact-store.test.ts` (only to inject the store; existing assertions stay untouched and must keep passing)
 - Test additions in the same test file for delegation behavior
 
 **Interfaces:**
+
 - Consumes: `BlobStore`, `FsBlobStore` (Task 1).
 - Produces: `FileArtifactStore` constructor gains an injected blob store: `(dataDir: string, blobStore: BlobStore)` (update call sites in `packages/composition/src/runtime.ts` minimally in this task — construct an `FsBlobStore` with config-derived secret/base URL; full config plumbing lands in Task 4). Metadata gains nothing new — object key is DERIVED (`blobKeyFor(projectId, name, revision)` exported helper `projects/<projectId>/artifacts/<name>/<revision:6-digit>`), keeping metadata immutable and this PR migration-free.
 - **Keymap note (backward compatibility):** `FsBlobStore` maps artifact-shaped keys `projects/<p>/artifacts/<n>/<r:6>` to the LEGACY path `projects/<p>/artifacts/<n>/blobs/<r:6>.bin` (exact same file the current code writes), so existing DATA_DIRs keep serving old blobs with zero migration. Implement the mapping inside `FsBlobStore`'s path resolution (`keyToPath`), with a unit test asserting the exact legacy path is produced. Non-artifact keys (future callers) go under `DATA_DIR/blobs/`.
@@ -111,6 +115,7 @@ Steps: extend tests (delegation + legacy-path compat using a pre-seeded legacy `
 ### Task 3: `S3BlobStore` (streaming multipart, presigned URLs, MinIO tests)
 
 **Files:**
+
 - Modify: `packages/persistence/package.json` (add `@aws-sdk/client-s3`, `@aws-sdk/lib-storage`, `@aws-sdk/s3-request-presigner` — latest 3.x)
 - Modify: root `package.json` devDeps: `testcontainers` (generic; already transitively present via @testcontainers/postgresql? declare explicitly)
 - Create: `packages/persistence/src/blob/s3-blob-store.ts`
@@ -118,6 +123,7 @@ Steps: extend tests (delegation + legacy-path compat using a pre-seeded legacy `
 - Test: `packages/persistence/src/blob/s3-blob-store.test.ts`
 
 **Interfaces:**
+
 - Consumes: `BlobStore` port, `BlobIntegrityError` (Task 1).
 - Produces: `S3BlobStore implements BlobStore`, constructor `(options: { endpoint?: string; region: string; bucket: string; accessKeyId: string; secretAccessKey: string; forcePathStyle?: boolean })`. `put`: wrap source in a hashing/size-counting/maxBytes-enforcing `Transform` (shared helper `meteredStream(maxBytes)` — extract into `packages/persistence/src/blob/metered-stream.ts` if not trivially reusable from fs-utils), pipe through `new Upload({client, params:{Bucket, Key, Body, ContentType, Metadata:{sha256}}})` for multipart streaming; abort the upload + throw on cap/integrity violation; sha256/encryption metadata stored as S3 object metadata (`x-amz-meta-sha256`; `encryption` from `ServerSideEncryption` when the bucket reports it). `stat` = `HeadObjectCommand` (null on 404/NotFound). `createSignedDownloadUrl` = `getSignedUrl(client, new GetObjectCommand({Bucket, Key, ResponseContentDisposition: filename ? attachment : undefined}), {expiresIn})`. `list` = paginated `ListObjectsV2Command`.
 - `s3-testing.ts`: `describeMinio(name, fn: (ctx: { store: () => S3BlobStore }) => void)` — GenericContainer `minio/minio:latest`, cmd `server /data`, env MINIO_ROOT_USER/PASSWORD, waits for port 9000, creates bucket `test-bucket` via `CreateBucketCommand`; same Docker skip/CI-throw policy as the Postgres harness in the sibling branch (self-contained copy here — do NOT import across branches).
@@ -131,6 +137,7 @@ Steps: failing tests → implement → PASS → typecheck → commit `feat(persi
 ### Task 4: Config + API wiring — mode switch, signed-URL endpoint, blob GC
 
 **Files:**
+
 - Modify: `packages/composition/src/config.ts` (`BLOB_STORE_MODE: z.enum(['fs','s3']).default('fs')`; `BLOB_SIGNING_SECRET: z.string().min(16).optional()` — default: derive a stable per-installation secret file under DATA_DIR (`blob-signing-secret` written once with 0600, read thereafter) so fs mode works out of the box; `S3_ENDPOINT/S3_REGION/S3_BUCKET/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY/S3_FORCE_PATH_STYLE` optional strings; superRefine: mode s3 requires the five S3 vars)
 - Modify: `packages/composition/src/runtime.ts` (construct `FsBlobStore` or `S3BlobStore`; expose `blobStore: BlobStore` on `Runtime`; pass into `FileArtifactStore`)
 - Modify: `apps/api/src/app.ts`:
