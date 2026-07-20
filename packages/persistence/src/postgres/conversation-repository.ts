@@ -47,6 +47,7 @@ export class PostgresConversationRepository implements ConversationRepository {
 
   async getSnapshot(projectId: string): Promise<ConversationSnapshot> {
     return this.sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + projectId}))`;
       const conversation = await selectConversation(tx, projectId);
       const messageRows = await tx<{ data: unknown }[]>`
         select data from conversation_messages
@@ -162,9 +163,14 @@ export class PostgresConversationRepository implements ConversationRepository {
         }
         return existing;
       }
-      await tx`
-        insert into conversation_operations (id, project_id, idempotency_key, created_at, data)
-        values (${parsed.id}, ${parsed.projectId}, ${parsed.idempotencyKey}, ${parsed.createdAt}, ${tx.json(parsed as any)})`;
+      try {
+        await tx`
+          insert into conversation_operations (id, project_id, idempotency_key, created_at, data)
+          values (${parsed.id}, ${parsed.projectId}, ${parsed.idempotencyKey}, ${parsed.createdAt}, ${tx.json(parsed as any)})`;
+      } catch (error) {
+        if (isUniqueViolation(error)) throw new Error(`Operation ${parsed.id} already exists`);
+        throw error;
+      }
       return parsed;
     });
   }
@@ -245,7 +251,12 @@ async function selectConversation(db: ISql, projectId: string): Promise<Conversa
   const rows = await db<
     { data: unknown }[]
   >`select data from conversations where project_id = ${projectId}`;
-  return rows[0] ? ConversationSchema.parse(rows[0].data) : null;
+  if (!rows[0]) return null;
+  const conversation = ConversationSchema.parse(rows[0].data);
+  if (conversation.id !== projectId || conversation.projectId !== projectId) {
+    throw new ValidationError('Conversation identity does not match requested project');
+  }
+  return conversation;
 }
 
 async function requireConversation(

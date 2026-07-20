@@ -276,6 +276,48 @@ describePostgres('Postgres conversation repository', (ctx) => {
     ).rejects.toBeInstanceOf(NotFoundError);
   });
 
+  it('takes one locked aggregate snapshot under concurrent writes', async () => {
+    const sql = ctx.db();
+    await new PostgresProjectRepository(sql).create(project());
+    const repo = new PostgresConversationRepository(sql);
+    await repo.createConversation(conversation());
+
+    // The advisory lock in getSnapshot must serialize against the lock taken by
+    // appendMessage/createOperation, so a concurrent batch can never be observed
+    // half-applied (operation present referencing a message that is missing).
+    // Real concurrency is racy, so repeat several interleavings rather than sleep.
+    for (let index = 0; index < 5; index++) {
+      const messageId = `message-${index}`;
+      const operationId = `operation-${index}`;
+      const [snapshot] = await Promise.all([
+        repo.getSnapshot('project-1'),
+        (async () => {
+          await repo.appendMessage({
+            id: messageId,
+            projectId: 'project-1',
+            conversationId: 'project-1',
+            role: 'user',
+            content: [{ type: 'text', text: `message ${index}` }],
+            createdAt,
+          });
+          await repo.createOperation(
+            operation({
+              id: operationId,
+              messageId,
+              idempotencyKey: `${'b'.repeat(63)}${index}`,
+            }),
+          );
+        })(),
+      ]);
+
+      const messageIds = new Set(snapshot.messages.map((message) => message.id));
+      const sawOperation = snapshot.operations.some((op) => op.id === operationId);
+      if (sawOperation) {
+        expect(messageIds.has(messageId)).toBe(true);
+      }
+    }
+  });
+
   it('redacts message content and attachment names before persisting', async () => {
     const sql = ctx.db();
     await new PostgresProjectRepository(sql).create(project());
