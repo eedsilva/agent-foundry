@@ -1,4 +1,4 @@
-# ADR 0025: Postgres adapters for domain metadata, behind a PERSISTENCE_MODE switch
+# ADR 0026: Postgres adapters for domain metadata, behind a PERSISTENCE_MODE switch
 
 - Status: Accepted
 - Date: 2026-07-20
@@ -15,6 +15,8 @@ Add `packages/persistence/src/postgres/`: one adapter class per swapped port (`P
 Schema migrations are embedded TypeScript/SQL (`postgres/migrations.ts`), applied by `migrateUp`/`migrateDown`/`assertSchemaCurrent` under an advisory lock (`pg_advisory_lock`) so concurrent boots or CI runs never race the same schema forward. Optimistic-concurrency writes reuse the file adapters' compare-and-swap contract (`VersionConflictError` on a stale `expectedVersion`), enforced in Postgres with a conditional `UPDATE ... WHERE version = $expected`.
 
 `packages/composition` gains `PERSISTENCE_MODE: 'file' | 'postgres'` (default `file`) and an optional `DATABASE_URL`, validated together: `postgres` without `DATABASE_URL` is a fail-fast config error, not a runtime surprise. In postgres mode, `createRuntime` builds the client, calls `assertSchemaCurrent` once at boot — schema drift fails startup with a `db:migrate` pointer rather than auto-migrating in front of a running app — then constructs the ten Postgres adapters. Everything else (queue, metrics, quality observations, previews, model overrides, project versions, workflows, policies, workspaces) stays file-based in both modes; this ADR does not attempt a full production data plane in one step.
+
+Because the adapters speak plain Postgres wire protocol through `postgres.js` rather than a provider SDK, a hosted Supabase project's Postgres instance works as `DATABASE_URL` with no code change and no `supabase-js` dependency — Supabase is the recommended default hosted target for this metadata layer (see `docs/OPERATIONS.md`'s "Migração para Postgres" for the connection string and pooler guidance); self-hosted Postgres (the `docker-compose.yml` service) remains supported as the non-hosted alternative.
 
 ## Alternatives considered
 

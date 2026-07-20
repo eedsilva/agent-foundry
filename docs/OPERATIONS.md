@@ -450,7 +450,11 @@ Teste mudanças de harness em projetos fixos e compare:
 
 ## Migração para Postgres
 
-`PERSISTENCE_MODE` alterna projects, runs, steps, attempts, approval requests/decisions, events, step events, conversations e artifacts entre disco (`file`, padrão) e Postgres. Queue, metrics, quality observations, previews, model overrides, project versions, workflows, policies e workspaces continuam em `DATA_DIR` nos dois modos — ADR 0025 registra a decisão e o que ainda falta para uma data plane de produção completa.
+`PERSISTENCE_MODE` alterna projects, runs, steps, attempts, approval requests/decisions, events, step events, conversations e artifacts entre disco (`file`, padrão) e Postgres. Queue, metrics, quality observations, previews, model overrides, project versions, workflows, policies e workspaces continuam em `DATA_DIR` nos dois modos — ADR 0026 registra a decisão e o que ainda falta para uma data plane de produção completa.
+
+### Supabase Postgres (opção hospedada padrão)
+
+Supabase é o backend hospedado padrão para banco e storage do agent-foundry. Para usar o Postgres de um projeto Supabase como `DATABASE_URL`: no dashboard, abra Connect → connection string e copie a URI — prefira a session pooler connection string (porta 6543, `...pooler.supabase.com`) para processos de longa duração como a API e o worker; a conexão direta (porta 5432) também funciona, mas é mais sujeita a limite de conexões simultâneas em plano free. Essa URL funciona sem alterações com `PERSISTENCE_MODE=postgres` e `npm run db:migrate` — nenhuma dependência de `supabase-js` é necessária (ver ADR 0026). Para desenvolvimento local sem depender da nuvem, `supabase start` (Supabase CLI) sobe um Postgres local equivalente em `postgresql://postgres:postgres@127.0.0.1:54322/postgres`. Para blobs (screenshots, traces, bundles), ver a seção de Supabase Storage adicionada pelo PR do #54.
 
 ### Habilitar
 
@@ -459,7 +463,7 @@ PERSISTENCE_MODE=postgres
 DATABASE_URL=postgres://foundry:foundry@localhost:5432/foundry
 ```
 
-`DATABASE_URL` é obrigatório quando `PERSISTENCE_MODE=postgres`; sem ele, `loadRuntimeConfig` falha no boot com `PERSISTENCE_MODE=postgres requires DATABASE_URL` em vez de silenciosamente cair para disco. O serviço `postgres` do `docker-compose.yml` sobe um Postgres 17 local (`foundry`/`foundry`/`foundry`) com healthcheck; as linhas `PERSISTENCE_MODE`/`DATABASE_URL` dos serviços `api` e `worker` estão comentadas porque o padrão de deploy continua `file`.
+`DATABASE_URL` é obrigatório quando `PERSISTENCE_MODE=postgres`; sem ele, `loadRuntimeConfig` falha no boot com `PERSISTENCE_MODE=postgres requires DATABASE_URL` em vez de silenciosamente cair para disco. O serviço `postgres` do `docker-compose.yml` sobe um Postgres 17 local (`foundry`/`foundry`/`foundry`) com healthcheck; as linhas `PERSISTENCE_MODE`/`DATABASE_URL` dos serviços `api` e `worker` estão comentadas porque o padrão de deploy continua `file`. Para usar Supabase em vez do Postgres local do Compose, substitua `DATABASE_URL` pela connection string do Supabase descrita acima.
 
 ### Migrar
 
