@@ -48,7 +48,9 @@ describePostgres('postgres migrator', (ctx) => {
     const [first, second] = await Promise.all([migrateUp(sql), migrateUp(sql)]);
     const combined = [...(first ?? []), ...(second ?? [])].sort((a, b) => a - b);
     expect(combined).toEqual(MIGRATIONS.map((m) => m.version));
-    const rows = await sql<{ version: number }[]>`select version from schema_migrations order by version`;
+    const rows = await sql<
+      { version: number }[]
+    >`select version from schema_migrations order by version`;
     expect(rows.map((r) => r.version)).toEqual(MIGRATIONS.map((m) => m.version));
   });
 });

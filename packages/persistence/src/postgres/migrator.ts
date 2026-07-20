@@ -12,7 +12,10 @@ export function latestVersion(): number {
 // to one connection, so the unlock could land on a different session, leaking the
 // lock while a concurrent migrator races past it. sql.reserve() pins the whole
 // lock/work/unlock sequence to a single reserved connection, per the library docs.
-async function withMigrationLock<T>(sql: PostgresDb, fn: (reserved: PostgresDb) => Promise<T>): Promise<T> {
+async function withMigrationLock<T>(
+  sql: PostgresDb,
+  fn: (reserved: PostgresDb) => Promise<T>,
+): Promise<T> {
   const reserved = await sql.reserve();
   try {
     await reserved`select pg_advisory_lock(${MIGRATION_LOCK_KEY})`;
@@ -44,7 +47,10 @@ async function appliedVersions(sql: PostgresDb): Promise<Set<number>> {
 // NOT have it at runtime, even though the package's TS types claim `ReservedSql extends
 // Sql`. Since a reserved connection is already pinned to one physical connection, a
 // transaction there is just begin/commit/rollback issued directly on it.
-async function withReservedTransaction(reserved: PostgresDb, run: () => Promise<void>): Promise<void> {
+async function withReservedTransaction(
+  reserved: PostgresDb,
+  run: () => Promise<void>,
+): Promise<void> {
   await reserved.unsafe('begin');
   try {
     await run();
