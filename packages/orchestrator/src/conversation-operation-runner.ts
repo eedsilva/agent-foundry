@@ -215,15 +215,6 @@ export class ConversationOperationRunner {
       const commit = step.mutatesWorkspace
         ? await this.workspaces.commit(projectId, `conversation(${kind}): ${step.title}`)
         : null;
-      const projectVersion = commit
-        ? await this.projectVersions.recordFromStep({
-            projectId,
-            runId,
-            stepRunId: stepRun.id,
-            attemptId: attempt.id,
-            commit,
-          })
-        : null;
       const executionRoute = { ...route, executed: route.selected };
       const artifact = await this.artifacts.put({
         projectId,
@@ -254,6 +245,19 @@ export class ConversationOperationRunner {
         runState.version,
       );
       succeeded = true;
+      // Recorded here (after succeeded = true, not right after `commit`)
+      // so a failure in recordFromStep hits the `if (succeeded) return`
+      // guard in the catch block below instead of orphaning a
+      // ProjectVersion for a commit that a later failure would roll back.
+      const projectVersion = commit
+        ? await this.projectVersions.recordFromStep({
+            projectId,
+            runId,
+            stepRunId: stepRun.id,
+            attemptId: attempt.id,
+            commit,
+          })
+        : null;
       // Records the artifact this operation produced on the Operation itself
       // (not just the StepAttempt) so the chat UI can link a completed
       // Operation to its diff/artifacts without waiting on the separate
