@@ -35,7 +35,10 @@ class FixtureExecutor extends BaseCliExecutor {
     };
   }
 
-  protected override async responseText(): Promise<string> {
+  protected override async responseText(
+    _invocation: CliInvocation,
+    _stdout: string,
+  ): Promise<string> {
     return this.provider === 'codex'
       ? JSON.stringify(completedArtifact)
       : JSON.stringify({ type: 'result', output: completedArtifact });
