@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { context, trace, SpanStatusCode, type Span } from '@opentelemetry/api';
 import type { Runtime } from '@agent-foundry/composition';
 import { listRisks, getRiskById } from '@agent-foundry/composition';
-import { TRACER_NAME } from '@agent-foundry/domain';
+import { currentTraceIds, TRACER_NAME } from '@agent-foundry/domain';
 import {
   BranchVersionRequestSchema,
   ClassifyMessageResponseSchema,
@@ -67,6 +67,7 @@ export async function buildApp(
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       serializers: { req: serializeRequest },
+      mixin: () => currentTraceIds(),
       ...(options.loggerStream ? { stream: options.loggerStream } : {}),
     },
     bodyLimit: 1_000_000,

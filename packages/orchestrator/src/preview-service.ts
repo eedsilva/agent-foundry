@@ -15,6 +15,7 @@ import {
   expirePreviewSession,
   isPreviewSessionExpired,
   isPreviewSessionTerminal,
+  recordPreviewSessions,
   redactString,
   redactUnknown,
   transitionPreviewSession,
@@ -479,8 +480,15 @@ export class PreviewService {
     });
   }
 
+  // ponytail: every lifecycle transition (start, stop, reap, crash-restart,
+  // failure finalization) funnels through here, so recording the active-
+  // session gauge on every persist keeps it accurate without hunting down
+  // each individual start/stop call site. One extra listActive() read per
+  // persist; sessions are local-file-backed and cheap to enumerate.
   private async persist(session: PreviewSession): Promise<PreviewSession> {
-    return this.sessions.update(session, session.version);
+    const updated = await this.sessions.update(session, session.version);
+    recordPreviewSessions((await this.sessions.listActive()).length);
+    return updated;
   }
 
   private async requireSession(sessionId: string) {

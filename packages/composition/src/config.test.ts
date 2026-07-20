@@ -112,6 +112,30 @@ describe('artifact retention configuration', () => {
   });
 });
 
+describe('OpenTelemetry configuration', () => {
+  it('defaults to no endpoint/service name, ratio 1, a 60s slow-run threshold', () => {
+    const config = loadRuntimeConfig(base);
+    expect(config.otelExporterOtlpEndpoint).toBeUndefined();
+    expect(config.otelServiceName).toBeUndefined();
+    expect(config.otelTracesSamplerRatio).toBe(1);
+    expect(config.otelSlowRunThresholdMs).toBe(60_000);
+  });
+
+  it('honors OTEL_* overrides', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
+      OTEL_SERVICE_NAME: 'agent-foundry-api',
+      OTEL_TRACES_SAMPLER_RATIO: '0.25',
+      OTEL_SLOW_RUN_THRESHOLD_MS: '30000',
+    });
+    expect(config.otelExporterOtlpEndpoint).toBe('http://localhost:4318');
+    expect(config.otelServiceName).toBe('agent-foundry-api');
+    expect(config.otelTracesSamplerRatio).toBe(0.25);
+    expect(config.otelSlowRunThresholdMs).toBe(30_000);
+  });
+});
+
 describe('isLoopbackHost', () => {
   it.each(['localhost', 'LOCALHOST', '127.0.0.1', '127.9.8.7', '::1', '[::1]'])(
     'accepts %s',

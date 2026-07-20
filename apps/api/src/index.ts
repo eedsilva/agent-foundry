@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { config as loadDotEnv } from 'dotenv';
-import { createRuntime } from '@agent-foundry/composition';
+import { createRuntime, startTelemetry } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 import { startPreviewReaper } from './preview-reaper.js';
 import { startArtifactReaper } from './artifact-reaper.js';
@@ -8,6 +8,12 @@ import { startArtifactReaper } from './artifact-reaper.js';
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
 
 const runtime = await createRuntime();
+const telemetry = startTelemetry({
+  serviceName: runtime.config.otelServiceName ?? 'agent-foundry-api',
+  endpoint: runtime.config.otelExporterOtlpEndpoint,
+  sampleRatio: runtime.config.otelTracesSamplerRatio,
+  slowRunThresholdMs: runtime.config.otelSlowRunThresholdMs,
+});
 
 // Log deployment profile at startup
 console.log(`[info] Deployment profile: ${runtime.config.deploymentProfile}`);
@@ -37,6 +43,9 @@ if (runtime.config.runWorkerInline) {
 
 const shutdown = async (signal: string): Promise<void> => {
   app.log.info({ signal }, 'Shutting down');
+  await telemetry.shutdown().catch((error: unknown) => {
+    app.log.error(error, 'Telemetry shutdown failed');
+  });
   abortController.abort();
   runtime.worker.stop();
   runtime.leaseReaper.stop();

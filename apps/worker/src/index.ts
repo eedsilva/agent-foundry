@@ -1,15 +1,24 @@
 import { resolve } from 'node:path';
 import { config as loadDotEnv } from 'dotenv';
 import pino from 'pino';
-import { createRuntime } from '@agent-foundry/composition';
+import { createRuntime, currentTraceIds, startTelemetry } from '@agent-foundry/composition';
 
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
-const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
-const runtime = await createRuntime();
+const logger = pino({ level: process.env.LOG_LEVEL ?? 'info', mixin: () => currentTraceIds() });
+const runtime = await createRuntime(undefined, undefined, { workerLogger: logger });
+const telemetry = startTelemetry({
+  serviceName: runtime.config.otelServiceName ?? 'agent-foundry-worker',
+  endpoint: runtime.config.otelExporterOtlpEndpoint,
+  sampleRatio: runtime.config.otelTracesSamplerRatio,
+  slowRunThresholdMs: runtime.config.otelSlowRunThresholdMs,
+});
 const abortController = new AbortController();
 
 const shutdown = (signal: string): void => {
   logger.info({ signal }, 'Received shutdown signal; stopping');
+  void telemetry.shutdown().catch((error: unknown) => {
+    logger.error(error, 'Telemetry shutdown failed');
+  });
   abortController.abort();
   runtime.worker.stop();
   runtime.leaseReaper.stop();

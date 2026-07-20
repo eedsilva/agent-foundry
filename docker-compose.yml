@@ -14,6 +14,12 @@ services:
       MODEL_CATALOG_PATH: /app/models/catalog.yaml
       RUN_WORKER_INLINE: 'false'
       EXECUTOR_MODE: mock
+      # OpenTelemetry is off unless OTEL_EXPORTER_OTLP_ENDPOINT is set — no
+      # bundled collector service; point this at your own OTLP-compatible target.
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      # OTEL_SERVICE_NAME: agent-foundry-api
+      # OTEL_TRACES_SAMPLER_RATIO: '1'
+      # OTEL_SLOW_RUN_THRESHOLD_MS: '60000'
     volumes:
       - agent_data:/app/data
     ports:
@@ -31,6 +37,10 @@ services:
       WORKFLOWS_DIR: /app/workflows
       MODEL_CATALOG_PATH: /app/models/catalog.yaml
       EXECUTOR_MODE: mock
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      # OTEL_SERVICE_NAME: agent-foundry-worker
+      # OTEL_TRACES_SAMPLER_RATIO: '1'
+      # OTEL_SLOW_RUN_THRESHOLD_MS: '60000'
     volumes:
       - agent_data:/app/data
 

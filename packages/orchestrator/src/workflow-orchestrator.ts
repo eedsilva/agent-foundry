@@ -70,6 +70,9 @@ import {
   errorMessage,
   getValueAtPath,
   normalizeApprovalDecision,
+  recordRunDuration,
+  recordStepRetry,
+  recordTokenUsage,
   transitionStepAttempt,
   transitionStepRun,
   transitionWorkflowRun,
@@ -146,6 +149,7 @@ export class WorkflowOrchestrator {
     workflowId?: string,
     requestedRunId?: string,
   ): Promise<void> {
+    const startedAt = Date.now();
     const project = await this.projects.get(projectId);
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
     const workflow = await this.workflows.get(workflowId ?? project.workflowId);
@@ -213,6 +217,9 @@ export class WorkflowOrchestrator {
       await this.assertExecutionMayContinue(run.id, cancellation.signal);
       run = await this.completeRun(run.id);
       await this.syncProjectSummary(run);
+      const durationMs = Date.now() - startedAt;
+      span.setAttribute('foundry.run.duration_ms', durationMs);
+      recordRunDuration(durationMs, { status: 'completed' });
       // No dedupe key here: a terminal run early-returns on redelivery, and a
       // step retry legitimately completes the same run a second time.
       await this.emit(projectId, 'project.completed', `Workflow ${workflow.id} completed.`, {
@@ -254,6 +261,9 @@ export class WorkflowOrchestrator {
         run = latest;
       }
       await this.syncProjectSummary(run);
+      const durationMs = Date.now() - startedAt;
+      span.setAttribute('foundry.run.duration_ms', durationMs);
+      recordRunDuration(durationMs, { status: 'failed' });
       await this.emit(projectId, 'project.failed', errorMessage(error), {
         runId: run.id,
       });
@@ -1784,6 +1794,7 @@ export class WorkflowOrchestrator {
       const candidate = candidates[index];
       if (!candidate) continue;
       throwIfCancelled(signal, runId);
+      if (index > 0) recordStepRetry();
       if (checkpoint && index > 0) await this.workspaces.rollback(project.id, checkpoint);
 
       const timestamp = this.clock.now().toISOString();
@@ -2211,6 +2222,17 @@ export class WorkflowOrchestrator {
         : {}),
       ...(result.usage?.quotaUnits !== undefined ? { quotaUnits: result.usage.quotaUnits } : {}),
     });
+    if (result.usage?.inputTokens !== undefined || result.usage?.outputTokens !== undefined) {
+      recordTokenUsage({
+        modelId: candidate.model.id,
+        ...(result.usage?.inputTokens !== undefined
+          ? { inputTokens: result.usage.inputTokens }
+          : {}),
+        ...(result.usage?.outputTokens !== undefined
+          ? { outputTokens: result.usage.outputTokens }
+          : {}),
+      });
+    }
     return result;
   }
 
