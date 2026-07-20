@@ -12,6 +12,7 @@ import type {
   StepAttemptRepository,
   StepRunRepository,
   WorkflowRunRepository,
+  WorkspaceManager,
 } from '@agent-foundry/domain';
 import type {
   AgentExecutionRequest,
@@ -73,6 +74,19 @@ class MemoryProjectVersions implements ProjectVersionRepository {
     this.store[index] = version;
     return Promise.resolve(version);
   }
+}
+
+function newProjectVersionService(
+  workspaces: WorkspaceManager,
+  artifacts: ArtifactStore,
+): ProjectVersionService {
+  return new ProjectVersionService(
+    new MemoryProjectVersions(),
+    workspaces,
+    artifacts,
+    new FixedClock(),
+    new SequentialIds(),
+  );
 }
 
 const harnessRepo: HarnessRepository = {
@@ -278,13 +292,7 @@ describe('ConversationOperationRunner', () => {
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
-    const projectVersions = new ProjectVersionService(
-      new MemoryProjectVersions(),
-      workspaces,
-      artifacts,
-      new FixedClock(),
-      new SequentialIds(),
-    );
+    const projectVersions = newProjectVersionService(workspaces, artifacts);
     // ControllableExecutor/AgentExecutorFromExecutionPlane predate onEvent and
     // don't forward it, so this test uses a minimal streaming stub instead.
     const executors: ExecutorRegistry = {
@@ -379,13 +387,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new ProjectVersionService(
-        new MemoryProjectVersions(),
-        workspaces,
-        artifacts,
-        new FixedClock(),
-        new SequentialIds(),
-      ),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -431,13 +433,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new ProjectVersionService(
-        new MemoryProjectVersions(),
-        workspaces,
-        artifacts,
-        new FixedClock(),
-        new SequentialIds(),
-      ),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -522,13 +518,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new ProjectVersionService(
-        new MemoryProjectVersions(),
-        workspaces,
-        artifacts,
-        new FixedClock(),
-        new SequentialIds(),
-      ),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -579,13 +569,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new ProjectVersionService(
-        new MemoryProjectVersions(),
-        workspaces,
-        artifacts,
-        new FixedClock(),
-        new SequentialIds(),
-      ),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -634,13 +618,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new ProjectVersionService(
-        new MemoryProjectVersions(),
-        workspaces,
-        artifacts,
-        new FixedClock(),
-        new SequentialIds(),
-      ),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -691,13 +669,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new ProjectVersionService(
-        new MemoryProjectVersions(),
-        workspaces,
-        artifacts,
-        new FixedClock(),
-        new SequentialIds(),
-      ),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
