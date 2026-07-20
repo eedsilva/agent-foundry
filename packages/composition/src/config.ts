@@ -221,19 +221,23 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
  * every later start (and every other process pointed at the same DATA_DIR)
  * just reads it back.
  *
- * ponytail: read-check-then-write isn't atomic across processes, so two
- * processes racing on a brand-new DATA_DIR could each persist a different
- * secret. Harmless here — signing and verifying both happen inside the same
- * API process — but an upgrade path exists (write to a temp file + atomic
- * rename) if that ever stops being true.
+ * The create is atomic: `flag: 'wx'` fails with EEXIST instead of overwriting
+ * if another process won the race, and we fall back to reading whatever that
+ * process wrote. No existence pre-check, so there's no TOCTOU window.
  */
 function loadOrCreateBlobSigningSecret(dataDir: string): string {
   const path = resolve(dataDir, 'blob-signing-secret');
-  if (existsSync(path)) return readFileSync(path, 'utf8').trim();
   mkdirSync(dataDir, { recursive: true });
   const secret = randomBytes(32).toString('hex');
-  writeFileSync(path, secret, { mode: 0o600 });
-  return secret;
+  try {
+    writeFileSync(path, secret, { mode: 0o600, flag: 'wx' });
+    return secret;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      return readFileSync(path, 'utf8').trim();
+    }
+    throw error;
+  }
 }
 
 function findRepoRoot(start: string): string {

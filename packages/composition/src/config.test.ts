@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -266,6 +266,16 @@ describe('blob store configuration', () => {
     const secretPath = join(dataDir, 'blob-signing-secret');
     const stat = statSync(secretPath);
     expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it('reads a secret another process already won the race to create, instead of overwriting it', async () => {
+    const dataDir = await tempDataDir();
+    mkdirSync(dataDir, { recursive: true });
+    const secretPath = join(dataDir, 'blob-signing-secret');
+    writeFileSync(secretPath, 'winner-secret', { mode: 0o600 });
+
+    const config = loadRuntimeConfig({ ...base, DATA_DIR: dataDir });
+    expect(config.blobSigningSecret).toBe('winner-secret');
   });
 
   it('honors a BLOB_GC_GRACE_MS override', () => {
