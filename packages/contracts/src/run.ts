@@ -152,6 +152,9 @@ export const RunExecutionStateSchema = z
         reason: z.enum(['active-time', 'consecutive-repairs']),
         reachedAt: z.string().datetime(),
         draftBranch: z.string().min(1).optional(),
+        draftCommit: z.string().min(1).optional(),
+        discardedAt: z.string().datetime().optional(),
+        discardedBy: ActorRefSchema.optional(),
       })
       .strict()
       .optional(),

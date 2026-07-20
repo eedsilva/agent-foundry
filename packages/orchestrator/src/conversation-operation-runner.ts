@@ -22,6 +22,7 @@ import {
   type IdGenerator,
   type MetricsRepository,
   type ModelRouter,
+  type ProjectVersionRepository,
   type StepAttemptRepository,
   type StepEventRepository,
   type StepRunRepository,
@@ -31,6 +32,7 @@ import {
 import { buildTaskProfile } from './task-profiler.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 import { CONVERSATION_WORKFLOW_ID, buildConversationStep } from './conversation-step-config.js';
+import { compileContext } from './context-compiler.js';
 import { artifactReference, persistStreamEvent, runError } from './workflow-orchestrator.js';
 
 export interface ConversationOperationRunnerOptions {
@@ -51,6 +53,7 @@ export class ConversationOperationRunner {
     private readonly executors: ExecutorRegistry,
     private readonly workspaces: WorkspaceManager,
     private readonly conversations: ConversationRepository,
+    private readonly projectVersions: ProjectVersionRepository,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly options: ConversationOperationRunnerOptions,
@@ -62,7 +65,25 @@ export class ConversationOperationRunner {
     const kind: 'plan' | 'build' = operation.kind === 'build' ? 'build' : 'plan';
     const message = await this.requireMessage(projectId, operation.messageId);
     const planArtifact = await this.loadPlanArtifact(projectId, operation);
-    const step = buildConversationStep({ operationId, kind, message, planArtifact });
+    const changeRequest = operation.changeRequestId
+      ? ((await this.conversations.getChangeRequest(projectId, operation.changeRequestId)) ??
+        undefined)
+      : undefined;
+    const allChangeRequests = await this.conversations.listChangeRequests(projectId);
+    const versions = await this.projectVersions.list(projectId, 5);
+    const compiledContext = compileContext({
+      message,
+      changeRequest,
+      allChangeRequests,
+      versions,
+    });
+    const step = buildConversationStep({
+      operationId,
+      kind,
+      message,
+      planArtifact,
+      contextDigest: compiledContext.digest,
+    });
 
     let runState = await this.runs.update(
       transitionWorkflowRun(initialRun, 'running', this.clock.now()),
@@ -97,6 +118,15 @@ export class ConversationOperationRunner {
         stack: 'conversation',
         tags: step.harnessTags,
       });
+      if (changeRequest) {
+        await this.conversations.updateChangeRequest({
+          ...changeRequest,
+          contextSources: [
+            ...compiledContext.sources,
+            ...harness.files.map((file) => ({ type: 'harness-fragment' as const, id: file.path })),
+          ],
+        });
+      }
       const profile = buildTaskProfile({ step, harness, artifacts: [], policy: undefined });
       const route = await this.router.route(profile);
       checkpoint = step.mutatesWorkspace

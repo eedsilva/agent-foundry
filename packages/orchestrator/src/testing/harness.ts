@@ -16,11 +16,16 @@ import {
   type ApprovalDecision,
   type ApprovalRequest,
   type ArtifactMetadata,
+  type Attachment,
+  type ChangeRequest,
+  type Conversation,
   type ExecutionRequest,
   type ExecutionResult,
   type ExecutorHealth,
+  type Message,
   type ModelDefinition,
   type ModelOverrideRecord,
+  type Operation,
   type Project,
   type ProjectEvent,
   type ProjectPolicy,
@@ -45,6 +50,8 @@ import {
   type ArtifactBlobPutInput,
   type ArtifactStore,
   type Clock,
+  type ConversationRepository,
+  type ConversationSnapshot,
   type EventStore,
   type ExecutionPlane,
   type ExecutionStatus,
@@ -66,6 +73,7 @@ import {
 } from '@agent-foundry/domain';
 import { ProjectService } from '../project-service.js';
 import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
+import type { QualityObservationService } from '../quality-observation-service.js';
 import { WorkflowOrchestrator } from '../workflow-orchestrator.js';
 
 const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
@@ -438,6 +446,7 @@ export class InMemoryArtifacts implements ArtifactStore {
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.actor ? { actor: input.actor } : {}),
       ...(input.sourceDecisionId ? { sourceDecisionId: input.sourceDecisionId } : {}),
+      ...(input.routeDecision ? { routeDecision: input.routeDecision } : {}),
       sha256: createHash('sha256').update(JSON.stringify(input.content)).digest('hex'),
     };
     const stored: StoredArtifact = { metadata, content: input.content };
@@ -549,6 +558,100 @@ export class InMemoryStepEvents implements StepEventRepository {
   }
 }
 
+export class MemoryConversations implements ConversationRepository {
+  private conversation: Conversation | undefined;
+  readonly messages: Message[] = [];
+  readonly attachments: Attachment[] = [];
+  readonly operations: Operation[] = [];
+  readonly changeRequests: ChangeRequest[] = [];
+
+  createConversation(conversation: Conversation): Promise<void> {
+    this.conversation = conversation;
+    return Promise.resolve();
+  }
+  getConversation(projectId: string): Promise<Conversation | null> {
+    return Promise.resolve(
+      this.conversation && this.conversation.projectId === projectId ? this.conversation : null,
+    );
+  }
+  getSnapshot(projectId: string): Promise<ConversationSnapshot> {
+    return Promise.resolve({
+      conversation:
+        this.conversation && this.conversation.projectId === projectId ? this.conversation : null,
+      messages: this.messages.filter((m) => m.projectId === projectId),
+      attachments: this.attachments.filter((a) => a.projectId === projectId),
+      operations: this.operations.filter((o) => o.projectId === projectId),
+      changeRequests: this.changeRequests.filter((c) => c.projectId === projectId),
+    });
+  }
+  appendMessage(message: Omit<Message, 'sequence'>): Promise<Message> {
+    const sequence = this.messages.filter((m) => m.projectId === message.projectId).length + 1;
+    const stored: Message = { ...message, sequence };
+    this.messages.push(stored);
+    return Promise.resolve(stored);
+  }
+  listMessages(
+    projectId: string,
+    options?: { cursor?: number; limit?: number },
+  ): Promise<Message[]> {
+    const cursor = options?.cursor ?? 0;
+    const limit = options?.limit;
+    const filtered = this.messages
+      .filter((m) => m.projectId === projectId && m.sequence > cursor)
+      .sort((a, b) => a.sequence - b.sequence);
+    return Promise.resolve(limit ? filtered.slice(0, limit) : filtered);
+  }
+  createAttachment(attachment: Attachment): Promise<Attachment> {
+    this.attachments.push(attachment);
+    return Promise.resolve(attachment);
+  }
+  getAttachment(projectId: string, attachmentId: string): Promise<Attachment | null> {
+    return Promise.resolve(
+      this.attachments.find((a) => a.projectId === projectId && a.id === attachmentId) ?? null,
+    );
+  }
+  listAttachments(projectId: string): Promise<Attachment[]> {
+    return Promise.resolve(this.attachments.filter((a) => a.projectId === projectId));
+  }
+  createOperation(operation: Operation): Promise<Operation> {
+    this.operations.push(operation);
+    return Promise.resolve(operation);
+  }
+  getOperation(projectId: string, operationId: string): Promise<Operation | null> {
+    return Promise.resolve(
+      this.operations.find((o) => o.projectId === projectId && o.id === operationId) ?? null,
+    );
+  }
+  updateOperation(operation: Operation): Promise<Operation> {
+    const index = this.operations.findIndex((o) => o.id === operation.id);
+    if (index === -1) throw new Error(`operation ${operation.id} missing`);
+    this.operations[index] = operation;
+    return Promise.resolve(operation);
+  }
+  listOperations(projectId: string): Promise<Operation[]> {
+    return Promise.resolve(this.operations.filter((o) => o.projectId === projectId));
+  }
+  createChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest> {
+    this.changeRequests.push(changeRequest);
+    return Promise.resolve(changeRequest);
+  }
+  getChangeRequest(projectId: string, changeRequestId: string): Promise<ChangeRequest | null> {
+    return Promise.resolve(
+      this.changeRequests.find((c) => c.projectId === projectId && c.id === changeRequestId) ??
+        null,
+    );
+  }
+  updateChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest> {
+    const index = this.changeRequests.findIndex((c) => c.id === changeRequest.id);
+    if (index === -1) throw new Error(`change request ${changeRequest.id} missing`);
+    this.changeRequests[index] = changeRequest;
+    return Promise.resolve(changeRequest);
+  }
+  listChangeRequests(projectId: string): Promise<ChangeRequest[]> {
+    return Promise.resolve(this.changeRequests.filter((c) => c.projectId === projectId));
+  }
+}
+
 /** Mimics git: commits only when the executor touched the workspace. */
 export class FakeWorkspaces implements WorkspaceManager {
   readonly checkpoints: string[] = [];
@@ -574,11 +677,17 @@ export class FakeWorkspaces implements WorkspaceManager {
   ensure(): Promise<void> {
     return Promise.resolve();
   }
-  writePrd(): Promise<void> {
+  lastPrd: string | undefined;
+  writePrd(_projectId: string, prd: string): Promise<void> {
+    this.lastPrd = prd;
     return Promise.resolve();
   }
-  writeRunContext(): Promise<{ requestPath: string; schemaPath: string }> {
+  lastRequestMarkdown: string | undefined;
+  writeRunContext(input: {
+    requestMarkdown: string;
+  }): Promise<{ requestPath: string; schemaPath: string }> {
     checkPower(this.power);
+    this.lastRequestMarkdown = input.requestMarkdown;
     return Promise.resolve({ requestPath: 'request.md', schemaPath: 'schema.json' });
   }
   ensureGit(): Promise<void> {
@@ -702,7 +811,8 @@ export function disconnectError(): Error {
   return new Error('ECONNRESET: execution plane disconnected before the run completed');
 }
 
-export class ControllableExecutor implements ExecutionPlane {
+export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
+  readonly provider = 'mock';
   readonly startCounts = new Map<string, number>();
   private readonly gates = new Map<string, () => void>();
   private readonly states = new Map<string, ExecutionStatus['state']>();
@@ -754,6 +864,19 @@ export class ControllableExecutor implements ExecutionPlane {
 
   async status(executionId: string): Promise<ExecutionStatus> {
     return { executionId, state: this.states.get(executionId) ?? 'pending' };
+  }
+
+  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult> {
+    return this.executeInternal(request, signal);
+  }
+
+  health(): Promise<ExecutorHealth> {
+    return Promise.resolve({
+      provider: this.provider,
+      available: true,
+      version: 'test',
+      message: 'Controllable test executor is available.',
+    });
   }
 
   private executeInternal(
@@ -924,6 +1047,7 @@ export function makeHarness(
     workflow?: WorkflowDefinition;
     verification?: () => VerificationReport | Promise<VerificationReport>;
     browserVerification?: BrowserVerificationCoordinator;
+    qualityObservationService?: QualityObservationService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
   } = {},
 ) {
@@ -1088,6 +1212,7 @@ export function makeHarness(
     stores.modelOverrides,
     undefined,
     opts.browserVerification,
+    opts.qualityObservationService,
   );
   const service = new ProjectService(
     stores.projects,

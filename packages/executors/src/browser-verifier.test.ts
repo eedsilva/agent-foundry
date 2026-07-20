@@ -13,6 +13,8 @@ import { DEFAULT_BROWSER_EVIDENCE_POLICY } from '@agent-foundry/contracts';
 import { PlaywrightBrowserVerifier } from './browser-verifier.js';
 
 const TOKEN = 'preview-token-that-must-never-leak';
+// Verification caps at 60 seconds; allow fixture servers 30 seconds to close long-poll connections.
+const BROWSER_TEST_TIMEOUT_MS = 90_000;
 const PLAN_ARTIFACT: ArtifactReference = {
   name: 'browser-test-plan',
   revision: 1,
@@ -103,6 +105,8 @@ function expectRedacted(value: unknown): void {
   expect(JSON.stringify(value)).not.toContain(TOKEN);
 }
 
+// Keep a suite timeout without creating a body-wide indentation-only diff.
+// prettier-ignore
 describe('PlaywrightBrowserVerifier', () => {
   it('executes a declarative create/update/delete plan in real Chromium', async () => {
     const requests: string[] = [];
@@ -293,7 +297,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps[1]?.error).toContain('Missing');
     expect(report.steps[2]?.durationMs).toBe(0);
     expectRedacted(report);
-  }, 15_000);
+  });
 
   it('rejects HTTP errors, console errors, and uncaught exceptions as passive failures', async () => {
     const origin = await serve((request, response) => {
@@ -1340,7 +1344,7 @@ describe('PlaywrightBrowserVerifier', () => {
 
     expect(report.approved).toBe(false);
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed']);
-  }, 15_000);
+  });
 
   it('blocks a redirect to a forbidden origin before the sentinel receives it', async () => {
     let sentinelRequests = 0;
@@ -1553,7 +1557,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(sentinelRequests).toBe(0);
     expect(report.approved).toBe(true);
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed']);
-  }, 15_000);
+  });
 
   it('permits a 201 Location header without following it as a redirect', async () => {
     let sentinelRequests = 0;
@@ -1609,7 +1613,7 @@ describe('PlaywrightBrowserVerifier', () => {
 
     expect(report.approved).toBe(true);
     expect(report.steps[0]?.status).toBe('passed');
-  }, 15_000);
+  });
 
   it('does not synthesize a failure after Playwright route fetch default timeout', async () => {
     const origin = await serve((request, response) => {
@@ -1654,7 +1658,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(
       report.steps.flatMap(({ observations }) => observations).map(({ kind }) => kind),
     ).not.toContain('request-failed');
-  }, 55_000);
+  });
 
   it('caps observations at 100', async () => {
     const origin = await serve((_request, response) => {
@@ -1821,5 +1825,34 @@ describe('PlaywrightBrowserVerifier', () => {
 
     expect(evidence.video).toBeInstanceOf(Buffer);
     expect(evidence.video!.byteLength).toBeGreaterThan(0);
+  });
+}, BROWSER_TEST_TIMEOUT_MS);
+
+describe('captureSelectionScreenshot', () => {
+  it('returns a PNG buffer clipped to the given region', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        '<html><body style="margin:0"><div style="width:50px;height:50px;background:red"></div></body></html>',
+      );
+    });
+    const verifier = new PlaywrightBrowserVerifier();
+    const buffer = await verifier.captureSelectionScreenshot({
+      url: `${origin}/`,
+      clip: { x: 0, y: 0, width: 50, height: 50 },
+      viewport: { width: 200, height: 200 },
+    });
+    expect(buffer).not.toBeNull();
+    expect(buffer?.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a'); // PNG magic bytes
+  });
+
+  it('returns null when navigation fails', async () => {
+    const verifier = new PlaywrightBrowserVerifier();
+    const buffer = await verifier.captureSelectionScreenshot({
+      url: 'http://127.0.0.1:1/', // nothing listens here
+      clip: { x: 0, y: 0, width: 10, height: 10 },
+      viewport: { width: 100, height: 100 },
+    });
+    expect(buffer).toBeNull();
   });
 });

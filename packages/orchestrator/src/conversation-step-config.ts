@@ -53,14 +53,16 @@ export function buildConversationStep(input: {
   kind: 'plan' | 'build';
   message: Message;
   planArtifact?: { content: unknown } | undefined;
+  contextDigest?: string | undefined;
 }): AgentStep {
   const base = STEP_BASE[input.kind];
   const planSection = input.planArtifact
     ? `\n\n## Approved plan\n\n\`\`\`json\n${JSON.stringify(input.planArtifact.content, null, 2)}\n\`\`\`\n`
     : '';
+  const contextSection = input.contextDigest ? `\n\n${input.contextDigest}` : '';
   return {
     ...base,
     id: `conversation-${input.kind}-${input.operationId}`,
-    instructions: `${messageText(input.message)}${planSection}`,
+    instructions: `${messageText(input.message)}${contextSection}${planSection}`,
   };
 }

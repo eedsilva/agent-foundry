@@ -9,6 +9,7 @@ import type {
   ApprovalRequest,
   Attachment,
   ArtifactMetadata,
+  ChangeRequest,
   Conversation,
   ArtifactReference,
   BrowserEvidencePolicy,
@@ -32,6 +33,8 @@ import type {
   ProjectPolicy,
   ProjectEvent,
   ProjectVersion,
+  QualityObservation,
+  QualityObservationQuery,
   QueueJob,
   RouteDecision,
   RouteOverrideProvenance,
@@ -70,6 +73,10 @@ export interface ConversationRepository {
   getOperation(projectId: string, operationId: string): Promise<Operation | null>;
   updateOperation(operation: Operation): Promise<Operation>;
   listOperations(projectId: string): Promise<Operation[]>;
+  createChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest>;
+  getChangeRequest(projectId: string, changeRequestId: string): Promise<ChangeRequest | null>;
+  updateChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest>;
+  listChangeRequests(projectId: string): Promise<ChangeRequest[]>;
 }
 
 export interface ConversationSnapshot {
@@ -77,6 +84,7 @@ export interface ConversationSnapshot {
   messages: Message[];
   attachments: Attachment[];
   operations: Operation[];
+  changeRequests: ChangeRequest[];
 }
 
 export interface WorkflowRunRepository {
@@ -262,6 +270,11 @@ export interface MetricsRepository {
   }): Promise<void>;
 }
 
+export interface QualityObservationRepository {
+  record(observation: QualityObservation): Promise<void>;
+  list(query: QualityObservationQuery): Promise<QualityObservation[]>;
+}
+
 export interface AgentExecutor {
   readonly provider: string;
   execute(
@@ -345,6 +358,20 @@ export interface BrowserVerifier {
     },
     signal: AbortSignal,
   ): Promise<{ report: BrowserVerificationReport; evidence: BrowserVerificationEvidence }>;
+}
+
+/**
+ * On-demand, single-shot screenshot capture against a live preview session —
+ * separate from BrowserVerifier's scheduled verify() flow, which requires a
+ * full BrowserTestPlan/allowedOrigins/evidencePolicy. Used only for the
+ * "unsupported selection" fallback (packages/orchestrator/src/preview-selection-service.ts).
+ */
+export interface SelectionScreenshotCapturer {
+  captureSelectionScreenshot(input: {
+    url: string;
+    clip: { x: number; y: number; width: number; height: number };
+    viewport: { width: number; height: number };
+  }): Promise<Buffer | null>;
 }
 
 export interface PreviewSessionRecord {

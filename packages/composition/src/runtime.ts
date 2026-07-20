@@ -21,6 +21,7 @@ import {
   FileJobQueue,
   FileMetricsRepository,
   FileModelOverrideRepository,
+  FileQualityObservationRepository,
   FileProjectRepository,
   FilePreviewLifecycleLock,
   FilePreviewLogRepository,
@@ -44,6 +45,8 @@ import {
   WorkerLoop,
   WorkflowOrchestrator,
   PreviewService,
+  PreviewSelectionService,
+  QualityObservationService,
   BrowserVerificationCoordinator,
   type BrowserEvidenceLimits,
 } from '@agent-foundry/orchestrator';
@@ -66,6 +69,7 @@ export interface Runtime {
   stepEvents: FileStepEventRepository;
   queue: FileJobQueue;
   metrics: FileMetricsRepository;
+  qualityObservations: FileQualityObservationRepository;
   modelOverrides: FileModelOverrideRepository;
   workflows: YamlWorkflowRepository;
   policies: YamlPolicyRepository;
@@ -89,6 +93,7 @@ export interface Runtime {
   previewLogs: FilePreviewLogRepository;
   previewLifecycleLock: FilePreviewLifecycleLock;
   previewService: PreviewService;
+  previewSelectionService: PreviewSelectionService;
   projectVersions: FileProjectVersionRepository;
   projectVersionService: ProjectVersionService;
 }
@@ -111,6 +116,8 @@ export async function createRuntime(
   const stepEvents = new FileStepEventRepository(config.dataDir);
   const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
   const metrics = new FileMetricsRepository(config.dataDir);
+  const qualityObservations = new FileQualityObservationRepository(config.dataDir);
+  const qualityObservationService = new QualityObservationService(qualityObservations, clock, ids);
   const modelOverrides = new FileModelOverrideRepository(config.dataDir);
   const workflows = new YamlWorkflowRepository(config.workflowsDir);
   const policies = new YamlPolicyRepository(config.policiesDir);
@@ -120,7 +127,7 @@ export async function createRuntime(
     gitAuthorEmail: config.gitAuthorEmail,
   });
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
-  const router = new ScoreBasedModelRouter(catalog, metrics);
+  const router = new ScoreBasedModelRouter(catalog, metrics, qualityObservations);
   const executors =
     config.executorMode === 'mock'
       ? new MockExecutorRegistry(new MockAgentExecutor())
@@ -170,6 +177,11 @@ export async function createRuntime(
     ids,
   );
   const browserVerifier = new PlaywrightBrowserVerifier();
+  const previewSelectionService = new PreviewSelectionService(
+    workspaces,
+    browserVerifier,
+    `http://${config.apiHost}:${config.apiPort}/preview`,
+  );
   const browserEvidenceLimits = {
     maxScreenshotBytes: config.artifactMaxScreenshotBytes,
     maxTraceBytes: config.artifactMaxTraceBytes,
@@ -209,6 +221,7 @@ export async function createRuntime(
     modelOverrides,
     projectVersionService,
     browserVerification,
+    qualityObservationService,
   );
   const projectService = new ProjectService(
     projects,
@@ -228,6 +241,7 @@ export async function createRuntime(
     clock,
     ids,
     modelOverrides,
+    qualityObservationService,
   );
   const conversationService = new ConversationService(
     projects,
@@ -250,11 +264,20 @@ export async function createRuntime(
     executors,
     workspaces,
     conversations,
+    projectVersions,
     clock,
     ids,
     { agentTimeoutMs: config.agentTimeoutMs },
   );
-  const operationService = new OperationService(conversations, runs, queue, artifacts, clock, ids);
+  const operationService = new OperationService(
+    conversations,
+    runs,
+    queue,
+    artifacts,
+    clock,
+    ids,
+    conversationService,
+  );
   const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
     workerId: config.workerId,
     pollIntervalMs: config.workerPollIntervalMs,
@@ -278,6 +301,7 @@ export async function createRuntime(
     stepEvents,
     queue,
     metrics,
+    qualityObservations,
     modelOverrides,
     workflows,
     policies,
@@ -301,6 +325,7 @@ export async function createRuntime(
     previewLogs,
     previewLifecycleLock,
     previewService,
+    previewSelectionService,
     projectVersions,
     projectVersionService,
   };

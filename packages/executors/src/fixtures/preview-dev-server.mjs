@@ -38,6 +38,32 @@ const server = createServer((req, res) => {
     res.end();
     return;
   }
+  if (req.url === '/dom-source-map-fixture') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<html><body>
+<div id="simple" style="width:120px;height:24px;background:#eee">Simple</div>
+<div id="wrapper" style="width:120px;height:24px;background:#eee">Wrapper</div>
+<div id="generated" style="width:120px;height:24px;background:#eee">Generated</div>
+<script>
+  document.getElementById('simple').__reactFiber$fixture = {
+    type: { name: 'Greeting' },
+    return: null,
+    _debugSource: { fileName: 'src/Greeting.tsx', lineNumber: 4, columnNumber: 3 },
+  };
+  document.getElementById('wrapper').__reactFiber$fixture = {
+    type: { name: 'Button' },
+    return: {
+      type: { name: 'Card' },
+      return: null,
+      _debugSource: { fileName: 'src/Card.tsx', lineNumber: 12, columnNumber: 3 },
+    },
+    _debugSource: { fileName: 'src/Button.tsx', lineNumber: 8, columnNumber: 5 },
+  };
+  // 'generated' has no __reactFiber$* property at all — the unsupported/degrade path.
+</script>
+</body></html>`);
+    return;
+  }
   res.writeHead(200, { 'content-type': 'text/plain' });
   res.end('ok:' + req.url);
 });

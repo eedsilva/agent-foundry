@@ -9,7 +9,10 @@ import {
   CreateModelOverrideResponseSchema,
   CreateOperationRequestSchema,
   CreateOperationResponseSchema,
+  CreateQualityObservationRequestSchema,
+  CreateQualityObservationResponseSchema,
   DecideApprovalRequestSchema,
+  DecideChangeRequestRequestSchema,
   DecideOperationRequestSchema,
   DecideOperationResponseSchema,
   ProjectExportResponseSchema,
@@ -351,5 +354,90 @@ describe('DecideApprovalRequestSchema (#14)', () => {
       'approval-request',
       'approval-decision',
     ]);
+  });
+});
+
+describe('StartOperationRequestSchema', () => {
+  it('accepts an optional changeRequestId', () => {
+    const parsed = StartOperationRequestSchema.parse({
+      kind: 'plan',
+      changeRequestId: 'cr-1',
+    });
+    expect(parsed.changeRequestId).toBe('cr-1');
+  });
+});
+
+describe('DecideChangeRequestRequestSchema', () => {
+  it('accepts a reject action with no kind', () => {
+    expect(DecideChangeRequestRequestSchema.parse({ action: 'reject' })).toEqual({
+      action: 'reject',
+    });
+  });
+
+  it('accepts a confirm action for a non-build kind with no plan fields', () => {
+    const parsed = DecideChangeRequestRequestSchema.parse({ action: 'confirm', kind: 'plan' });
+    expect(parsed).toEqual({ action: 'confirm', kind: 'plan' });
+  });
+
+  it('requires exactly one of planOperationId/directExecution when confirming a build', () => {
+    expect(() =>
+      DecideChangeRequestRequestSchema.parse({ action: 'confirm', kind: 'build' }),
+    ).toThrow();
+    expect(() =>
+      DecideChangeRequestRequestSchema.parse({
+        action: 'confirm',
+        kind: 'build',
+        directExecution: true,
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe('quality observation HTTP contracts (#64)', () => {
+  const qualityObservation = {
+    id: 'quality-1',
+    source: 'human-edit' as const,
+    subject: {
+      modelId: 'producer',
+      taskKind: 'implementation' as const,
+      role: 'developer' as const,
+      taxonomyVersion: '2' as const,
+      category: 'implementation/backend' as const,
+      artifact: { name: 'implementation', revision: 1, sha256: 'a'.repeat(64) },
+    },
+    evaluator: { kind: 'human' as const, id: 'ed' },
+    blind: false,
+    rubric: 'post-review-edit',
+    score: 0.8,
+    evidence: [{ kind: 'human-edit' as const, summary: 'Human accepted the implementation.' }],
+    observedAt: conversationCreatedAt,
+  };
+
+  it('accepts delayed human and system input with strict evaluator attribution', () => {
+    expect(
+      CreateQualityObservationRequestSchema.parse({
+        source: 'human-edit',
+        artifact: qualityObservation.subject.artifact,
+        evaluator: qualityObservation.evaluator,
+        rubric: qualityObservation.rubric,
+        score: qualityObservation.score,
+        evidence: qualityObservation.evidence,
+      }),
+    ).toMatchObject({ source: 'human-edit', evaluator: { kind: 'human' } });
+    expect(() =>
+      CreateQualityObservationRequestSchema.parse({
+        source: 'post-merge-regression',
+        artifact: qualityObservation.subject.artifact,
+        evaluator: qualityObservation.evaluator,
+        rubric: 'production-regression',
+        score: 0,
+        evidence: [{ kind: 'regression', summary: 'Production check failed after merge.' }],
+      }),
+    ).toThrow(/system evaluator/);
+    expect(
+      CreateQualityObservationResponseSchema.parse({ observation: qualityObservation }),
+    ).toEqual({
+      observation: qualityObservation,
+    });
   });
 });

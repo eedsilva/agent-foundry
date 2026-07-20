@@ -16,6 +16,7 @@ import {
   AttachmentSchema,
   ConversationSchema,
   MessageSchema,
+  OperationKindSchema,
   OperationObjectSchema,
   OperationSchema,
   requireExactlyOnePlanSource,
@@ -27,6 +28,8 @@ import {
   StepRunSchema,
   WorkflowRunSchema,
 } from './run.js';
+import { ChangeRequestSchema } from './change-request.js';
+import { QualityObservationInputSchema, QualityObservationSchema } from './quality.js';
 
 export const CreateAttachmentRequestSchema = z
   .object({
@@ -66,6 +69,7 @@ export const StartOperationRequestSchema = z
     kind: z.enum(['plan', 'build']),
     planOperationId: PathSegmentSchema.optional(),
     directExecution: z.boolean().optional(),
+    changeRequestId: PathSegmentSchema.optional(),
   })
   .strict()
   .superRefine(requireExactlyOnePlanSource);
@@ -81,6 +85,34 @@ export type DecideOperationRequest = z.infer<typeof DecideOperationRequestSchema
 
 export const DecideOperationResponseSchema = z.object({ operation: OperationSchema }).strict();
 export type DecideOperationResponse = z.infer<typeof DecideOperationResponseSchema>;
+
+export const ClassifyMessageResponseSchema = z
+  .object({ changeRequest: ChangeRequestSchema })
+  .strict();
+export type ClassifyMessageResponse = z.infer<typeof ClassifyMessageResponseSchema>;
+
+export const DecideChangeRequestRequestSchema = z
+  .discriminatedUnion('action', [
+    z.object({ action: z.literal('reject') }).strict(),
+    z
+      .object({
+        action: z.literal('confirm'),
+        kind: OperationKindSchema,
+        planOperationId: PathSegmentSchema.optional(),
+        directExecution: z.boolean().optional(),
+      })
+      .strict(),
+  ])
+  .superRefine((input, ctx) => {
+    if (input.action !== 'confirm' || input.kind !== 'build') return;
+    requireExactlyOnePlanSource(input, ctx);
+  });
+export type DecideChangeRequestRequest = z.infer<typeof DecideChangeRequestRequestSchema>;
+
+export const DecideChangeRequestResponseSchema = z
+  .object({ changeRequest: ChangeRequestSchema, operation: OperationSchema.optional() })
+  .strict();
+export type DecideChangeRequestResponse = z.infer<typeof DecideChangeRequestResponseSchema>;
 
 export const ConversationPageResponseSchema = z
   .object({
@@ -117,6 +149,16 @@ export const CreateProjectResponseSchema = z.object({
   project: ProjectSchema,
 });
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
+
+export const CreateQualityObservationRequestSchema = QualityObservationInputSchema;
+export type CreateQualityObservationRequest = z.infer<typeof CreateQualityObservationRequestSchema>;
+
+export const CreateQualityObservationResponseSchema = z
+  .object({ observation: QualityObservationSchema })
+  .strict();
+export type CreateQualityObservationResponse = z.infer<
+  typeof CreateQualityObservationResponseSchema
+>;
 
 export const ProjectDetailResponseSchema = z.object({
   project: ProjectSchema,
@@ -174,6 +216,24 @@ export const CreateModelOverrideResponseSchema = z
   .object({ override: ModelOverrideRecordSchema })
   .strict();
 export type CreateModelOverrideResponse = z.infer<typeof CreateModelOverrideResponseSchema>;
+
+export const DraftDetailResponseSchema = z
+  .object({ draftBranch: z.string().min(1), diff: z.string() })
+  .strict();
+export type DraftDetailResponse = z.infer<typeof DraftDetailResponseSchema>;
+
+export const DiscardDraftRequestSchema = z
+  .object({ actor: ActorRefSchema, reason: z.string().trim().min(1).optional() })
+  .strict();
+export type DiscardDraftRequest = z.infer<typeof DiscardDraftRequestSchema>;
+
+export const RetryProjectRequestSchema = z
+  .object({
+    prompt: z.string().trim().min(1).optional(),
+    override: CreateModelOverrideRequestSchema.omit({ scope: true }).optional(),
+  })
+  .strict();
+export type RetryProjectRequest = z.infer<typeof RetryProjectRequestSchema>;
 
 export const RetryPlanResponseSchema = z.object({
   target: StepRunSchema,

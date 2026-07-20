@@ -1,4 +1,11 @@
-import type { Operation, StartOperationRequest, WorkflowRun } from '@agent-foundry/contracts';
+import type {
+  ChangeRequest,
+  DecideChangeRequestRequest,
+  Operation,
+  StartOperationRequest,
+  WorkflowRun,
+} from '@agent-foundry/contracts';
+import { ChangeRequestSchema } from '@agent-foundry/contracts';
 import {
   NotFoundError,
   ValidationError,
@@ -10,6 +17,8 @@ import {
   type WorkflowRunRepository,
 } from '@agent-foundry/domain';
 import { CONVERSATION_WORKFLOW_ID } from './conversation-step-config.js';
+import { classifyMessage } from './message-classifier.js';
+import type { ConversationService } from './conversation-service.js';
 import { sha256 } from './idempotency.js';
 
 export class OperationService {
@@ -20,7 +29,84 @@ export class OperationService {
     private readonly artifacts: ArtifactStore,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly conversationService: ConversationService,
   ) {}
+
+  async classify(projectId: string, messageId: string): Promise<ChangeRequest> {
+    const message = (await this.conversations.listMessages(projectId)).find(
+      (item) => item.id === messageId,
+    );
+    if (!message) throw new NotFoundError(`Message ${messageId} not found`);
+
+    const priorChangeRequests = await this.conversations.listChangeRequests(projectId);
+    const existing = priorChangeRequests.find((cr) => cr.messageId === messageId);
+    if (existing) return existing;
+
+    const result = classifyMessage({ message, priorChangeRequests });
+    return this.conversations.createChangeRequest(
+      ChangeRequestSchema.parse({
+        id: this.ids.next(),
+        projectId,
+        conversationId: projectId,
+        messageId,
+        suggestedKind: result.suggestedKind,
+        summary: result.summary,
+        rationale: result.rationale,
+        referencedDecisionIds: result.referencedDecisionIds,
+        contextSources: [],
+        status: 'proposed',
+        createdAt: this.clock.now().toISOString(),
+      }),
+    );
+  }
+
+  async decideChangeRequest(
+    projectId: string,
+    changeRequestId: string,
+    input: DecideChangeRequestRequest,
+  ): Promise<{ changeRequest: ChangeRequest; operation?: Operation }> {
+    const changeRequest = await this.conversations.getChangeRequest(projectId, changeRequestId);
+    if (!changeRequest) throw new NotFoundError(`Change request ${changeRequestId} not found`);
+    if (changeRequest.status !== 'proposed') {
+      throw new ValidationError(`Change request ${changeRequestId} has already been decided`);
+    }
+
+    if (input.action === 'reject') {
+      const rejected = await this.conversations.updateChangeRequest({
+        ...changeRequest,
+        status: 'rejected',
+        decidedAt: this.clock.now().toISOString(),
+      });
+      return { changeRequest: rejected };
+    }
+
+    const operation =
+      input.kind === 'plan' || input.kind === 'build'
+        ? await this.start(projectId, changeRequest.messageId, {
+            kind: input.kind,
+            planOperationId: input.planOperationId,
+            directExecution: input.directExecution,
+            changeRequestId: changeRequest.id,
+          })
+        : await this.conversationService.createOperation(projectId, changeRequest.messageId, {
+            kind: input.kind,
+            // IdempotencyKeySchema requires 64 lowercase hex chars — changeRequest.id itself
+            // (a PathSegmentSchema id) does not match, so hash it the same way start() hashes
+            // operationId/runId into idempotencyKey() below.
+            idempotencyKey: sha256(changeRequest.id),
+            changeRequestId: changeRequest.id,
+            artifactReferences: [],
+          });
+
+    const confirmed = await this.conversations.updateChangeRequest({
+      ...changeRequest,
+      status: 'confirmed',
+      confirmedKind: input.kind,
+      operationId: operation.id,
+      decidedAt: this.clock.now().toISOString(),
+    });
+    return { changeRequest: confirmed, operation };
+  }
 
   async start(
     projectId: string,
@@ -70,6 +156,7 @@ export class OperationService {
       idempotencyKey: this.idempotencyKey(operationId, runId),
       runId,
       artifactReferences,
+      ...(input.changeRequestId ? { changeRequestId: input.changeRequestId } : {}),
       ...(input.kind === 'plan' ? { approval: { status: 'pending' as const } } : {}),
       ...(input.kind === 'build' && input.planOperationId
         ? { planOperationId: input.planOperationId }

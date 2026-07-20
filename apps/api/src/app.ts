@@ -5,14 +5,22 @@ import type { Runtime } from '@agent-foundry/composition';
 import { listRisks, getRiskById } from '@agent-foundry/composition';
 import {
   BranchVersionRequestSchema,
+  ClassifyMessageResponseSchema,
+  CreateQualityObservationRequestSchema,
   CreateProjectRequestSchema,
   CreateModelOverrideRequestSchema,
   CreateAttachmentRequestSchema,
   CreateMessageRequestSchema,
   CreateOperationRequestSchema,
   DecideApprovalRequestSchema,
+  DecideChangeRequestRequestSchema,
+  DecideChangeRequestResponseSchema,
   DecideOperationRequestSchema,
+  DiscardDraftRequestSchema,
   PathSegmentSchema,
+  PreviewSelectionRequestSchema,
+  PreviewSelectionResultSchema,
+  RetryProjectRequestSchema,
   RetryStepRequestSchema,
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
@@ -170,6 +178,16 @@ export async function buildApp(
     return runtime.projectService.getArtifact(projectId, name, revision);
   });
 
+  app.post('/projects/:projectId/quality-observations', async (request, reply) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const input = CreateQualityObservationRequestSchema.parse(request.body);
+    const observation = await runtime.projectService.recordDelayedQualityObservation(
+      projectId,
+      input,
+    );
+    return reply.status(201).send({ observation });
+  });
+
   app.get('/projects/:projectId/artifacts/:name/blob', async (request, reply) => {
     const { projectId, name } = z
       .object({ projectId: PathSegmentSchema, name: PathSegmentSchema })
@@ -247,6 +265,33 @@ export async function buildApp(
       const { action } = DecideOperationRequestSchema.parse(request.body);
       const operation = await runtime.operationService.decide(projectId, operationId, action);
       return reply.status(200).send({ operation });
+    },
+  );
+
+  app.post(
+    '/projects/:projectId/conversation/messages/:messageId/classify',
+    async (request, reply) => {
+      const { projectId, messageId } = z
+        .object({ projectId: PathSegmentSchema, messageId: PathSegmentSchema })
+        .parse(request.params);
+      const changeRequest = await runtime.operationService.classify(projectId, messageId);
+      return reply.status(201).send(ClassifyMessageResponseSchema.parse({ changeRequest }));
+    },
+  );
+
+  app.post(
+    '/projects/:projectId/conversation/change-requests/:changeRequestId/decide',
+    async (request, reply) => {
+      const { projectId, changeRequestId } = z
+        .object({ projectId: PathSegmentSchema, changeRequestId: PathSegmentSchema })
+        .parse(request.params);
+      const input = DecideChangeRequestRequestSchema.parse(request.body);
+      const result = await runtime.operationService.decideChangeRequest(
+        projectId,
+        changeRequestId,
+        input,
+      );
+      return reply.status(200).send(DecideChangeRequestResponseSchema.parse(result));
     },
   );
 
@@ -423,6 +468,18 @@ export async function buildApp(
     return runtime.projectService.exportRunAudit(runId);
   });
 
+  app.get('/runs/:runId/draft', async (request) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    return runtime.projectService.getDraft(runId);
+  });
+
+  app.post('/runs/:runId/draft/discard', async (request, reply) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    const input = DiscardDraftRequestSchema.parse(request.body);
+    const run = await runtime.projectService.discardDraft(runId, input);
+    return reply.status(200).send({ run });
+  });
+
   app.post('/runs/:runId/approvals/:requestId/decide', async (request, reply) => {
     const { runId, requestId } = z
       .object({ runId: PathSegmentSchema, requestId: PathSegmentSchema })
@@ -434,7 +491,8 @@ export async function buildApp(
 
   app.post('/projects/:projectId/retry', async (request, reply) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
-    const project = await runtime.projectService.retry(projectId);
+    const input = RetryProjectRequestSchema.parse(request.body ?? {});
+    const project = await runtime.projectService.retry(projectId, input);
     return reply.status(202).send({ project });
   });
 
@@ -480,6 +538,20 @@ export async function buildApp(
       .parse(request.query);
     await requireProjectSession(runtime, projectId, sessionId);
     return runtime.previewService.logs(sessionId, cursor, limit);
+  });
+
+  app.post('/projects/:projectId/preview/:sessionId/selection', async (request, reply) => {
+    const { projectId, sessionId } = z
+      .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
+      .parse(request.params);
+    await requireProjectSession(runtime, projectId, sessionId);
+    const input = PreviewSelectionRequestSchema.parse(request.body);
+    const result = await runtime.previewSelectionService.resolve({
+      projectId,
+      sessionId,
+      request: input,
+    });
+    return reply.status(200).send(PreviewSelectionResultSchema.parse(result));
   });
 
   registerPreviewProxy(app, runtime);

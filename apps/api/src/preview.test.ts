@@ -309,3 +309,45 @@ describe('preview reaper schedule', () => {
     vi.useRealTimers();
   });
 });
+
+describe('POST /projects/:projectId/preview/:sessionId/selection', () => {
+  it('resolves a selection with no candidates as unsupported', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const session = await createActiveSession(runtime, projectId);
+    const response = await fetch(
+      `${baseUrl}/projects/${projectId}/preview/${session.id}/selection`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          previewUrl: `${baseUrl}/preview/${session.id}/`,
+          domPath: 'div[1]',
+          boundingBox: { x: 0, y: 0, width: 10, height: 10 },
+          candidates: [],
+        }),
+      },
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { status: string };
+    expect(body.status).toBe('unsupported');
+  });
+
+  it("404s for a selection posted against another project's session", async () => {
+    const { baseUrl, runtime } = await startApi();
+    const ownerId = await createProject(baseUrl);
+    const otherId = await createProject(baseUrl);
+    const session = await createActiveSession(runtime, ownerId);
+    const response = await fetch(`${baseUrl}/projects/${otherId}/preview/${session.id}/selection`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        previewUrl: `${baseUrl}/preview/${session.id}/`,
+        domPath: 'div[1]',
+        boundingBox: { x: 0, y: 0, width: 10, height: 10 },
+        candidates: [],
+      }),
+    });
+    expect(response.status).toBe(404);
+  });
+});

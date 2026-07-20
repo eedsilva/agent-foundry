@@ -15,6 +15,7 @@ import {
   type BrowserVerificationEvidence,
   type BrowserVerifier,
   type CapturedScreenshot,
+  type SelectionScreenshotCapturer,
 } from '@agent-foundry/domain';
 import {
   chromium,
@@ -28,6 +29,7 @@ import {
 } from 'playwright';
 
 const ACTION_TIMEOUT_MS = 10_000;
+const SCREENSHOT_TIMEOUT_MS = 2_000;
 const RUN_TIMEOUT_MS = 60_000;
 const MAX_OBSERVATIONS = 100;
 const MAX_TRACKED_TIMER_DELAY_MS = 1_000;
@@ -103,7 +105,7 @@ function installTimerTracker(input: { key: string; maxDelayMs: number }): void {
 
 type Observation = BrowserVerificationReport['steps'][number]['observations'][number];
 type StepReport = BrowserVerificationReport['steps'][number];
-export class PlaywrightBrowserVerifier implements BrowserVerifier {
+export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScreenshotCapturer {
   async verify(
     input: Parameters<BrowserVerifier['verify']>[0],
     signal: AbortSignal,
@@ -622,6 +624,36 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     };
   }
 
+  /** On-demand, single-shot screenshot against a live preview session — not
+   * the scheduled verify() flow. Launches its own short-lived browser/context,
+   * navigates once, and screenshots the given viewport-relative clip.
+   * ponytail: no route()/permitted() policy enforcement here — this only ever
+   * navigates to the caller-supplied, already-authorized preview session URL
+   * (validated by the caller against its own session record before this is
+   * invoked). Revisit if ever exposed to a caller-supplied arbitrary URL. */
+  async captureSelectionScreenshot(input: {
+    url: string;
+    clip: { x: number; y: number; width: number; height: number };
+    viewport: { width: number; height: number };
+  }): Promise<Buffer | null> {
+    let browser: Browser | undefined;
+    try {
+      browser = await chromium.launch({ headless: true });
+      const context = await browser.newContext({ viewport: input.viewport });
+      const page = await context.newPage();
+      await page.goto(input.url, { timeout: ACTION_TIMEOUT_MS });
+      return await page.screenshot({
+        type: 'png',
+        clip: input.clip,
+        timeout: SCREENSHOT_TIMEOUT_MS,
+      });
+    } catch {
+      return null; // best-effort: the UI degrades to "no screenshot" rather than failing selection
+    } finally {
+      await browser?.close().catch(() => undefined);
+    }
+  }
+
   private async captureScreenshot(
     page: Page,
     stepId: string,
@@ -630,7 +662,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
     sink: CapturedScreenshot[],
   ): Promise<void> {
     try {
-      const buffer = await page.screenshot({ type: 'png' });
+      const buffer = await page.screenshot({ type: 'png', timeout: SCREENSHOT_TIMEOUT_MS });
       sink.push({ stepId, url: sanitizeUrl(page.url(), token), viewport, buffer });
     } catch {
       // Best-effort evidence: a closed or mid-navigation page must not fail verification.
@@ -648,14 +680,14 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
       case 'goto': {
         const url = resolvePlanPath(prefixUrl, action.path);
         if (initialNavigation && token) url.searchParams.set('token', token);
-        await page.goto(url.href);
+        await page.goto(url.href, { timeout: ACTION_TIMEOUT_MS });
         return;
       }
       case 'click':
-        await locator(page, action.locator).click();
+        await locator(page, action.locator).click({ timeout: ACTION_TIMEOUT_MS });
         return;
       case 'fill':
-        await locator(page, action.locator).fill(action.value);
+        await locator(page, action.locator).fill(action.value, { timeout: ACTION_TIMEOUT_MS });
     }
   }
 
@@ -666,24 +698,33 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier {
   ): Promise<void> {
     switch (assertion.kind) {
       case 'visible':
-        await locator(page, assertion.locator).waitFor({ state: 'visible' });
+        await locator(page, assertion.locator).waitFor({
+          state: 'visible',
+          timeout: ACTION_TIMEOUT_MS,
+        });
         return;
       case 'hidden':
-        await locator(page, assertion.locator).waitFor({ state: 'hidden' });
+        await locator(page, assertion.locator).waitFor({
+          state: 'hidden',
+          timeout: ACTION_TIMEOUT_MS,
+        });
         return;
       case 'containsText': {
         await locator(page, assertion.locator)
           .filter({ hasText: assertion.expected })
-          .waitFor({ state: 'attached' });
+          .waitFor({ state: 'attached', timeout: ACTION_TIMEOUT_MS });
         return;
       }
       case 'url': {
         const expected = resolvePlanPath(prefixUrl, assertion.path);
-        await page.waitForURL((url) => {
-          const actual = new URL(url);
-          actual.searchParams.delete('token');
-          return actual.href === expected.href;
-        });
+        await page.waitForURL(
+          (url) => {
+            const actual = new URL(url);
+            actual.searchParams.delete('token');
+            return actual.href === expected.href;
+          },
+          { timeout: ACTION_TIMEOUT_MS },
+        );
       }
     }
   }

@@ -11,14 +11,17 @@ import {
   type ApprovalListResponse,
   type ApprovalRequest,
   type ActorRef,
+  type ChangeRequest,
   type ConversationPageResponse,
   type Message,
   type ModelDefinition,
   type Operation,
+  type OperationKind,
   type ProjectDetailResponse,
   type ProjectEvent,
   type ResumeBlockedResponse,
   type RetryPlanResponse,
+  type RetryProjectRequest,
   type RouteDecision,
   type RunDetailResponse,
   type StepRun,
@@ -28,14 +31,18 @@ import {
 } from '@agent-foundry/contracts';
 import {
   cancelRun,
+  classifyMessage,
   compareVersions,
   decideApproval,
+  decideChangeRequest,
   decideOperation,
   createModelOverride,
+  discardDraft,
   eventStreamUrl,
   getArtifact,
   getConversation,
   getArtifactBlobUrl,
+  getDraft,
   getProject,
   getRetryPlan,
   getRunDetail,
@@ -49,7 +56,6 @@ import {
   retryStep,
   runEventsStreamUrl,
   sendMessage,
-  startOperation,
 } from '../../../lib/api';
 import { mergeStreamEvents } from '../../../lib/agent-stream';
 import { mergeEvents } from '../../../lib/events';
@@ -58,6 +64,7 @@ import {
   executionEvidence,
   modelOverrideRequest,
   retryMode,
+  retryProjectOverride,
   retryRequest,
 } from '../../../lib/model-overrides';
 import { BlobMedia, PreviewPanel, VerificationReportView } from './preview-panel';
@@ -245,12 +252,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [decideDiff, setDecideDiff] = useState<string | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+  const [draftDiff, setDraftDiff] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState('');
+  const [projectRetryWithPin, setProjectRetryWithPin] = useState(false);
   const [previousArtifact, setPreviousArtifact] = useState<StoredArtifact | null>(null);
   const [conversation, setConversation] = useState<ConversationPageResponse | null>(null);
   const [draft, setDraft] = useState('');
   const [mode, setMode] = useState<'plan' | 'build'>('plan');
   const [buildChoice, setBuildChoice] = useState<'plan' | 'direct'>('plan');
   const [conversationError, setConversationError] = useState('');
+  const [pendingChangeRequest, setPendingChangeRequest] = useState<ChangeRequest | null>(null);
 
   function openArtifact(artifact: StoredArtifact) {
     setSelected(artifact);
@@ -558,6 +569,49 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     }
   }
 
+  async function loadDraftDiff() {
+    if (!run) return;
+    try {
+      const { diff } = await getDraft(run.id);
+      setDraftDiff(diff);
+      setDraftError('');
+    } catch (cause) {
+      setDraftError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function discardCurrentDraft() {
+    if (!run) return;
+    const confirmed = window.confirm(
+      'Discard this draft? The preserved branch will be deleted; this cannot be undone.',
+    );
+    if (!confirmed) return;
+    const actorId = decidedBy.trim() || window.prompt('Informe quem está descartando.', '')?.trim();
+    if (!actorId) return;
+    try {
+      await discardDraft(run.id, { actor: { kind: 'user', id: actorId } });
+      setDraftDiff(null);
+      setDraftError('');
+      refresh();
+    } catch (cause) {
+      setDraftError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function retryWithPrompt(prompt: string, override?: RetryProjectRequest['override']) {
+    try {
+      const input = {
+        ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+        ...(override ? { override } : {}),
+      };
+      await retryProject(id, input);
+      setResumeBlocked(null);
+      refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   const latestApprovedPlan = conversation?.operations
     .filter((op) => op.kind === 'plan' && op.approval?.status === 'approved')
     .at(-1);
@@ -570,19 +624,50 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         role: 'user',
         content: [{ type: 'text', text: draft }],
       });
-      if (mode === 'plan') {
-        await startOperation(id, message.id, { kind: 'plan' });
-      } else if (buildChoice === 'plan' && latestApprovedPlan) {
-        await startOperation(id, message.id, {
-          kind: 'build',
-          planOperationId: latestApprovedPlan.id,
-        });
-      } else {
-        await startOperation(id, message.id, { kind: 'build', directExecution: true });
-      }
       setDraft('');
       setConversationError('');
+      const { changeRequest } = await classifyMessage(id, message.id);
+      setPendingChangeRequest(changeRequest);
+      if (changeRequest.suggestedKind === 'plan' || changeRequest.suggestedKind === 'build') {
+        setMode(changeRequest.suggestedKind);
+      }
       setConversation(await getConversation(id));
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function confirmChangeRequest() {
+    if (!pendingChangeRequest) return;
+    const kind: OperationKind =
+      pendingChangeRequest.suggestedKind === 'plan' ||
+      pendingChangeRequest.suggestedKind === 'build'
+        ? mode
+        : pendingChangeRequest.suggestedKind;
+    try {
+      await decideChangeRequest(id, pendingChangeRequest.id, {
+        action: 'confirm',
+        kind,
+        ...(kind === 'build'
+          ? buildChoice === 'plan' && latestApprovedPlan
+            ? { planOperationId: latestApprovedPlan.id }
+            : { directExecution: true }
+          : {}),
+      });
+      setPendingChangeRequest(null);
+      setConversationError('');
+      setConversation(await getConversation(id));
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function discardChangeRequest() {
+    if (!pendingChangeRequest) return;
+    try {
+      await decideChangeRequest(id, pendingChangeRequest.id, { action: 'reject' });
+      setPendingChangeRequest(null);
+      setConversationError('');
     } catch (cause) {
       setConversationError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -894,6 +979,31 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </ul>
         <form onSubmit={(event) => void submitMessage(event)}>
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} />
+          {pendingChangeRequest && (
+            <div className="panel" style={{ marginBottom: '0.5rem' }}>
+              <p>
+                Suggested: <strong>{pendingChangeRequest.suggestedKind}</strong> —{' '}
+                {pendingChangeRequest.rationale}
+              </p>
+              {pendingChangeRequest.referencedDecisionIds.length > 0 && (
+                <p>References: {pendingChangeRequest.referencedDecisionIds.join(', ')}</p>
+              )}
+              {(pendingChangeRequest.suggestedKind === 'plan' ||
+                pendingChangeRequest.suggestedKind === 'build') && (
+                <p>Use the Plan/Build toggle below to confirm or correct this before sending.</p>
+              )}
+              <button type="button" onClick={() => void confirmChangeRequest()}>
+                Confirm{' '}
+                {pendingChangeRequest.suggestedKind === 'plan' ||
+                pendingChangeRequest.suggestedKind === 'build'
+                  ? mode
+                  : pendingChangeRequest.suggestedKind}
+              </button>
+              <button type="button" onClick={() => void discardChangeRequest()}>
+                Discard
+              </button>
+            </div>
+          )}
           <div className="modelPinGrid">
             <label>
               <input type="radio" checked={mode === 'plan'} onChange={() => setMode('plan')} /> Plan
@@ -1005,6 +1115,64 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               </div>
             ) : null}
           </dl>
+
+          {evidence.draftBranch ? (
+            <div className="panel">
+              <div className="panelHeader">
+                <h2>Draft preservado</h2>
+                <span className="hint">{evidence.draftBranch}</span>
+              </div>
+              {draftError ? <p className="errorBox">{draftError}</p> : null}
+              <button
+                type="button"
+                className="secondaryButton"
+                onClick={() => void loadDraftDiff()}
+              >
+                {draftDiff === null ? 'Ver diff' : 'Recarregar diff'}
+              </button>
+              {draftDiff !== null ? <DiffView parts={unifiedDiffToSpans(draftDiff)} /> : null}
+              <button
+                type="button"
+                className="secondaryButton"
+                onClick={() => void discardCurrentDraft()}
+              >
+                Descartar draft
+              </button>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const data = new FormData(event.currentTarget);
+                  const prompt = data.get('retryPrompt');
+                  try {
+                    const override = projectRetryWithPin
+                      ? retryProjectOverride(runtimeModels, pinFields(data))
+                      : undefined;
+                    void retryWithPrompt(typeof prompt === 'string' ? prompt : '', override);
+                    event.currentTarget.reset();
+                  } catch (cause) {
+                    setError(cause instanceof Error ? cause.message : String(cause));
+                  }
+                }}
+              >
+                <label>
+                  Novo prompt para a nova tentativa (opcional)
+                  <textarea name="retryPrompt" rows={3} />
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={projectRetryWithPin}
+                    onChange={(event) => setProjectRetryWithPin(event.target.checked)}
+                  />{' '}
+                  Fixar um modelo para esta tentativa
+                </label>
+                {projectRetryWithPin ? <ModelPinFields models={runnableModels} /> : null}
+                <button className="secondaryButton" type="submit">
+                  Tentar novamente a partir deste draft
+                </button>
+              </form>
+            </div>
+          ) : null}
 
           <form onSubmit={(event) => void submitOverride(event)}>
             <div className="modelPinGrid">

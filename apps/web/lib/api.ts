@@ -1,21 +1,29 @@
 import type {
   ApprovalConflictResponse,
   ApprovalListResponse,
+  ClassifyMessageResponse,
   ConversationPageResponse,
   CreateMessageRequest,
   CreateModelOverrideRequest,
   CreateModelOverrideResponse,
   DecideApprovalRequest,
   DecideApprovalResponse,
+  DecideChangeRequestRequest,
+  DecideChangeRequestResponse,
+  DiscardDraftRequest,
+  DraftDetailResponse,
   Message,
   Operation,
   PreviewLogPage,
+  PreviewSelectionRequest,
+  PreviewSelectionResult,
   PreviewSession,
   Project,
   ProjectDetailResponse,
   ProjectVersion,
   ResumeBlockedResponse,
   RetryPlanResponse,
+  RetryProjectRequest,
   RetryStepRequest,
   RunDetailResponse,
   RuntimeInfoResponse,
@@ -76,15 +84,31 @@ export function runEventsStreamUrl(runId: string): string {
   return `${API_URL}/runs/${encodeURIComponent(runId)}/events/stream`;
 }
 
-export async function retryProject(id: string): Promise<Project> {
+export async function retryProject(id: string, input?: RetryProjectRequest): Promise<Project> {
   const response = await api<{ project: Project }>(`/projects/${encodeURIComponent(id)}/retry`, {
     method: 'POST',
+    ...(input ? { body: JSON.stringify(input) } : {}),
   });
   return response.project;
 }
 
 export function getRunDetail(runId: string): Promise<RunDetailResponse> {
   return api<RunDetailResponse>(`/runs/${encodeURIComponent(runId)}`);
+}
+
+export function getDraft(runId: string): Promise<DraftDetailResponse> {
+  return api<DraftDetailResponse>(`/runs/${encodeURIComponent(runId)}/draft`);
+}
+
+export async function discardDraft(
+  runId: string,
+  input: DiscardDraftRequest,
+): Promise<WorkflowRun> {
+  const response = await api<{ run: WorkflowRun }>(
+    `/runs/${encodeURIComponent(runId)}/draft/discard`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return response.run;
 }
 
 export function createModelOverride(
@@ -281,6 +305,27 @@ export async function decideOperation(
   return response.operation;
 }
 
+export function classifyMessage(
+  projectId: string,
+  messageId: string,
+): Promise<ClassifyMessageResponse> {
+  return api<ClassifyMessageResponse>(
+    `/projects/${encodeURIComponent(projectId)}/conversation/messages/${encodeURIComponent(messageId)}/classify`,
+    { method: 'POST' },
+  );
+}
+
+export function decideChangeRequest(
+  projectId: string,
+  changeRequestId: string,
+  input: DecideChangeRequestRequest,
+): Promise<DecideChangeRequestResponse> {
+  return api<DecideChangeRequestResponse>(
+    `/projects/${encodeURIComponent(projectId)}/conversation/change-requests/${encodeURIComponent(changeRequestId)}/decide`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
 export function getActivePreviewSession(
   projectId: string,
 ): Promise<{ session: PreviewSession | null }> {
@@ -303,6 +348,17 @@ export function stopPreview(
   return api<{ session: PreviewSession }>(
     `/projects/${encodeURIComponent(projectId)}/preview/${encodeURIComponent(sessionId)}/stop`,
     { method: 'POST' },
+  );
+}
+
+export function resolvePreviewSelection(
+  projectId: string,
+  sessionId: string,
+  input: PreviewSelectionRequest,
+): Promise<PreviewSelectionResult> {
+  return api<PreviewSelectionResult>(
+    `/projects/${encodeURIComponent(projectId)}/preview/${encodeURIComponent(sessionId)}/selection`,
+    { method: 'POST', body: JSON.stringify(input) },
   );
 }
 

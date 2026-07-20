@@ -94,8 +94,9 @@ Desde a ADR 0023, o orquestrador submete trabalho de agente pela port `Execution
 (`submit`/`cancel`/`status`) em vez de chamar `ExecutorRegistry` diretamente. `LocalExecutionPlane`
 (em `packages/executors`) é a única implementação hoje: roda as CLIs no mesmo processo do control
 plane, in-process, confiável apenas para desenvolvimento local — sem mudança de comportamento ou de
-fronteira de confiança em relação ao `ExecutorRegistry` direto de antes. No diagrama de sequência
-abaixo, o participante `E` (Executor) agora é alcançado através dessa port.
+fronteira de confiança em relação ao `ExecutorRegistry` direto de antes. `SandboxRunner` é o contrato
+do próximo runner, mas nenhum backend está conectado ainda. No diagrama de sequência abaixo, o
+participante `E` (Executor) agora é alcançado através dessa port.
 
 ### `packages/composition`
 
@@ -230,6 +231,30 @@ Uma operação `'build'` só pode ser criada com exatamente uma das duas condiç
 - `directExecution: true`: indica escolha explícita de pular o plano, registrada para auditoria.
 
 Tentar criar um build sem nenhuma das duas, ou referenciar um plano não-aprovado, resulta em `400 ValidationError`.
+
+### Classificação de mensagem e compilação de contexto
+
+`OperationService.classify()` (packages/orchestrator) roda uma classificação determinística e pura
+sobre o texto da mensagem (`message-classifier.ts` — sem chamada a modelo, sem I/O) e persiste um
+`ChangeRequest` com `status: 'proposed'`, o `OperationKind` sugerido, uma justificativa, e
+`referencedDecisionIds` — outros `ChangeRequest`s `confirmed` cujo resumo compartilha duas ou mais
+palavras significativas com a mensagem atual. `classify()` é idempotente por mensagem.
+
+`OperationService.decideChangeRequest()` é o único caminho que transforma uma classificação em
+`Operation`: `'reject'` marca o change request como `rejected` sem criar nada; `'confirm'` aceita um
+`kind` que pode divergir da sugestão — essa divergência é a correção do usuário — e só então cria a
+`Operation`, via `start()` para `plan`/`build` ou via `ConversationService.createOperation()` para os
+demais kinds. `Build` nunca é criado automaticamente a partir de `classify()`.
+
+`ConversationOperationRunner` compila um digest limitado (`context-compiler.ts`, também
+determinístico) a partir do `ChangeRequest` da operação: decisões `confirmed` referenciadas ou
+recentes ficam detalhadas ("Pinned decisions"), `ChangeRequest`s `proposed` ficam sempre detalhados
+("Unresolved feedback"), `ProjectVersion`s recentes aparecem com seu id, e todo o resto vira uma
+linha compacta com id + resumo — nunca desaparece da lista de `sources`, só perde detalhe. Após
+`harness.select()`, os caminhos dos fragmentos de harness selecionados (as "knowledge files" do
+prompt — não existe ainda um repositório de arquivos de conhecimento enviados pelo usuário; ver
+`v06-knowledge-attachments-shell`) são adicionados a `sources` e persistidos de volta no
+`ChangeRequest`, independente do sucesso da execução do agente.
 
 ## Conversa persistida por projeto
 

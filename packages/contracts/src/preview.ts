@@ -658,3 +658,72 @@ export const BrowserVerificationReportSchema = z
     }
   });
 export type BrowserVerificationReport = z.infer<typeof BrowserVerificationReportSchema>;
+
+export const PreviewSelectionCandidateSchema = z
+  .object({
+    fileName: z.string().min(1),
+    line: z.number().int().positive(),
+    column: z.number().int().positive(),
+    componentName: z.string().min(1).optional(),
+  })
+  .strict();
+export type PreviewSelectionCandidate = z.infer<typeof PreviewSelectionCandidateSchema>;
+
+const PreviewSelectionBoundingBoxSchema = z
+  .object({
+    x: z.number(),
+    y: z.number(),
+    width: z.number().nonnegative(),
+    height: z.number().nonnegative(),
+  })
+  .strict();
+
+export const PreviewSelectionRequestSchema = z
+  .object({
+    previewUrl: z.string().min(1),
+    domPath: z.string().min(1),
+    boundingBox: PreviewSelectionBoundingBoxSchema,
+    candidates: z.array(PreviewSelectionCandidateSchema),
+  })
+  .strict();
+export type PreviewSelectionRequest = z.infer<typeof PreviewSelectionRequestSchema>;
+
+export const PreviewSelectionResultSchema = z
+  .object({
+    status: z.enum(['resolved', 'ambiguous', 'unsupported']),
+    domPath: z.string().min(1),
+    file: z.string().min(1).optional(),
+    candidates: z.array(z.string().min(1)).optional(),
+    screenshot: ArtifactReferenceSchema.optional(),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (result.status === 'resolved' && !result.file) {
+      context.addIssue({ code: 'custom', path: ['file'], message: 'resolved requires file' });
+    }
+    if (result.status !== 'resolved' && result.file) {
+      context.addIssue({ code: 'custom', path: ['file'], message: 'Only resolved may set file' });
+    }
+    if (result.status === 'ambiguous' && (!result.candidates || result.candidates.length < 2)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['candidates'],
+        message: 'ambiguous requires 2+ candidates',
+      });
+    }
+    if (result.status !== 'ambiguous' && result.candidates) {
+      context.addIssue({
+        code: 'custom',
+        path: ['candidates'],
+        message: 'Only ambiguous may set candidates',
+      });
+    }
+    if (result.status !== 'unsupported' && result.screenshot) {
+      context.addIssue({
+        code: 'custom',
+        path: ['screenshot'],
+        message: 'Only unsupported may set screenshot',
+      });
+    }
+  });
+export type PreviewSelectionResult = z.infer<typeof PreviewSelectionResultSchema>;
