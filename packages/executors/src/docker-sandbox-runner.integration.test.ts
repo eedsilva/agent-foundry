@@ -87,6 +87,153 @@ describe.skipIf(!hasDocker)(
         /pinned by digest/,
       );
     });
+
+    it('runs as the configured non-root user', async () => {
+      const handle = await runner.create(spec({ user: '1000:1000' }));
+      created.push(handle.id);
+      const result = await runner.exec(handle, { command: 'id', args: ['-u'], timeoutMs: 5_000 });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('1000');
+    });
+
+    it('has an all-zero effective capability set', async () => {
+      const handle = await runner.create(spec());
+      created.push(handle.id);
+      const result = await runner.exec(handle, {
+        command: 'sh',
+        args: ['-c', 'grep CapEff /proc/self/status'],
+        timeoutMs: 5_000,
+      });
+      expect(result.stdout.trim()).toBe('CapEff:\t0000000000000000');
+    });
+
+    it('rejects writes outside the workspace and tmp on the read-only rootfs', async () => {
+      const handle = await runner.create(spec());
+      created.push(handle.id);
+      const result = await runner.exec(handle, {
+        command: 'sh',
+        args: ['-c', 'touch /etc/should-fail'],
+        timeoutMs: 5_000,
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toMatch(/Read-only file system/);
+    });
+
+    it('allows writes inside the workspace tmpfs', async () => {
+      const handle = await runner.create(spec());
+      created.push(handle.id);
+      const result = await runner.exec(handle, {
+        command: 'sh',
+        args: ['-c', `echo hello > ${SANDBOX_WORKSPACE_PATH}/ok.txt && cat ${SANDBOX_WORKSPACE_PATH}/ok.txt`],
+        timeoutMs: 5_000,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('hello');
+    });
+
+    it('enforces the pids limit', async () => {
+      const handle = await runner.create(spec({ resources: { cpuMillis: 500, memoryMiB: 128, diskMiB: 64, pids: 4 } }));
+      created.push(handle.id);
+      // Verified by hand: execing immediately after create/start races the container's own
+      // startup and can fail with an unrelated "procReady not received" OCI error instead of
+      // exercising the pids limit. A short settle delay makes the "Cannot fork" failure — the
+      // actual behavior under test — reproduce consistently across three manual trials.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const result = await runner.exec(handle, {
+        command: 'sh',
+        args: ['-c', 'for i in 1 2 3 4 5 6 7 8; do sleep 5 & done; wait'],
+        timeoutMs: 5_000,
+      });
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    it('has no network route when network mode is none', async () => {
+      const handle = await runner.create(spec({ network: { mode: 'none', allowedHosts: [] } }));
+      created.push(handle.id);
+      const result = await runner.exec(handle, {
+        command: 'sh',
+        args: ['-c', 'cat /proc/net/route | wc -l'],
+        timeoutMs: 5_000,
+      });
+      expect(result.stdout.trim()).toBe('1'); // header row only, no routes
+    });
+
+    it('has a default route when network mode is allowlist', async () => {
+      const handle = await runner.create(spec({ network: { mode: 'allowlist', allowedHosts: ['example.com'] } }));
+      created.push(handle.id);
+      const result = await runner.exec(handle, {
+        command: 'sh',
+        args: ['-c', 'cat /proc/net/route | wc -l'],
+        timeoutMs: 5_000,
+      });
+      expect(Number(result.stdout.trim())).toBeGreaterThan(1);
+    });
+
+    it('honors a read-only bind mount', async () => {
+      const { mkdtemp, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const hostDir = await mkdtemp(join(tmpdir(), 'sandbox-mount-'));
+      await writeFile(join(hostDir, 'seed.txt'), 'seed');
+
+      const handle = await runner.create(
+        spec({ mounts: [{ source: hostDir, target: '/mnt/cache', readOnly: true }] }),
+      );
+      created.push(handle.id);
+
+      const read = await runner.exec(handle, { command: 'cat', args: ['/mnt/cache/seed.txt'], timeoutMs: 5_000 });
+      expect(read.stdout.trim()).toBe('seed');
+
+      const write = await runner.exec(handle, {
+        command: 'sh',
+        args: ['-c', 'echo x > /mnt/cache/new.txt'],
+        timeoutMs: 5_000,
+      });
+      expect(write.exitCode).not.toBe(0);
+      expect(write.stderr).toMatch(/Read-only file system/);
+    });
+
+    it('streams stdout and stderr chunks via onOutput', async () => {
+      const handle = await runner.create(spec());
+      created.push(handle.id);
+      const chunks: Array<{ stream: string; text: string }> = [];
+      await runner.exec(handle, {
+        command: 'sh',
+        args: ['-c', 'echo out-line; echo err-line >&2'],
+        timeoutMs: 5_000,
+        onOutput: (chunk) => chunks.push(chunk),
+      });
+      expect(chunks.some((c) => c.stream === 'stdout' && c.text.includes('out-line'))).toBe(true);
+      expect(chunks.some((c) => c.stream === 'stderr' && c.text.includes('err-line'))).toBe(true);
+    });
+
+    it('throws when the command exceeds its timeout', async () => {
+      const handle = await runner.create(spec());
+      created.push(handle.id);
+      await expect(
+        runner.exec(handle, { command: 'sleep', args: ['5'], timeoutMs: 300 }),
+      ).rejects.toThrow(/timeout/);
+    });
+
+    it('throws RunCancelledError when the signal is already aborted', async () => {
+      const handle = await runner.create(spec());
+      created.push(handle.id);
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        runner.exec(handle, { command: 'sleep', args: ['1'], timeoutMs: 5_000 }, controller.signal),
+      ).rejects.toThrow(/cancelled/);
+    });
+
+    it('throws RunCancelledError when aborted mid-execution', async () => {
+      const handle = await runner.create(spec());
+      created.push(handle.id);
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 200);
+      await expect(
+        runner.exec(handle, { command: 'sleep', args: ['5'], timeoutMs: 10_000 }, controller.signal),
+      ).rejects.toThrow(/cancelled/);
+    });
   },
   60_000,
 );

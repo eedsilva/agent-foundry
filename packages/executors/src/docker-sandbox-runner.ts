@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import type { SandboxSpec } from '@agent-foundry/contracts';
 import type { SandboxHandle, SandboxRunner } from '@agent-foundry/domain';
+import { RunCancelledError, errorMessage, type SandboxExecRequest, type SandboxExecResult } from '@agent-foundry/domain';
 
 export const SANDBOX_WORKSPACE_PATH = '/workspace';
 export const SANDBOX_TMP_SIZE_MIB = 64;
@@ -67,6 +68,54 @@ export class DockerSandboxRunner implements SandboxRunner {
       throw new Error(`docker start failed: ${started.stderr || started.stdout}`);
     }
     return { id };
+  }
+
+  async exec(
+    sandbox: SandboxHandle,
+    request: SandboxExecRequest,
+    signal?: AbortSignal,
+  ): Promise<SandboxExecResult> {
+    if (signal?.aborted) throw new RunCancelledError();
+
+    const subprocess = execa(
+      'docker',
+      ['exec', '-w', SANDBOX_WORKSPACE_PATH, sandbox.id, request.command, ...request.args],
+      { timeout: request.timeoutMs, reject: false, all: false, encoding: 'utf8' },
+    );
+
+    if (request.onOutput) {
+      subprocess.stdout?.on('data', (chunk: Buffer | string) => {
+        request.onOutput?.({ stream: 'stdout', text: chunk.toString() });
+      });
+      subprocess.stderr?.on('data', (chunk: Buffer | string) => {
+        request.onOutput?.({ stream: 'stderr', text: chunk.toString() });
+      });
+    }
+
+    let onAbort: (() => void) | undefined;
+    if (signal) {
+      onAbort = () => subprocess.kill('SIGKILL');
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    try {
+      const result = await subprocess;
+      if (signal?.aborted) throw new RunCancelledError();
+      if (result.timedOut) {
+        throw new Error(`Sandbox exec exceeded its ${String(request.timeoutMs)}ms timeout.`);
+      }
+      return {
+        exitCode: result.exitCode ?? -1,
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+      };
+    } catch (error) {
+      if (signal?.aborted) throw new RunCancelledError();
+      if (error instanceof Error) throw error;
+      throw new Error(errorMessage(error));
+    } finally {
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+    }
   }
 
   async destroy(sandbox: SandboxHandle): Promise<void> {
