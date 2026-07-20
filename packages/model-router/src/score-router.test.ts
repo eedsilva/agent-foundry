@@ -441,6 +441,52 @@ describe('ScoreBasedModelRouter', () => {
     expect(decision.rejected.some((r) => r.reason.startsWith('over-budget'))).toBe(true);
   });
 
+  it('does not treat attempts without reported cost as zero-cost history', async () => {
+    const now = new Date().toISOString();
+    const metrics = new MemoryMetrics(
+      new Map([
+        [
+          'partially-priced:implementation:developer',
+          {
+            modelId: 'partially-priced',
+            taskKind: 'implementation',
+            role: 'developer',
+            taxonomyVersion: '2',
+            category: 'implementation/frontend',
+            attempts: 10,
+            successes: 10,
+            totalDurationMs: 1_000,
+            totalInputTokens: 0,
+            totalOutputTokens: 0,
+            totalEstimatedCostUsd: 2,
+            costKnownCount: 2,
+            consecutiveFailures: 0,
+            qualityEvaluations: 0,
+            qualityApprovals: 0,
+            updatedAt: now,
+          },
+        ],
+      ]),
+    );
+    const router = new ScoreBasedModelRouter(
+      [
+        model('partially-priced', {
+          billingMode: 'metered',
+          pricing: { inputUsdPerMillionTokens: 3, outputUsdPerMillionTokens: 15 },
+        }),
+        model('subscription-fallback', { provider: 'codex' }),
+      ],
+      metrics,
+    );
+
+    const decision = await router.route(profile, undefined, { budget: { maxCostUsd: 0.5 } });
+
+    expect(decision.rejected).toContainEqual({
+      modelId: 'partially-priced',
+      reason: 'over-budget: est $1.0000 > $0.5',
+    });
+  });
+
   it('ignores absent constraints (unchanged behavior)', async () => {
     const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
     const a = await router.route(profile);

@@ -309,8 +309,9 @@ function estimateCostUsd(
   profile: TaskProfile,
   metric: ModelMetric | null,
 ): number | null {
-  if (metric && metric.attempts > 0 && metric.totalEstimatedCostUsd > 0) {
-    return metric.totalEstimatedCostUsd / metric.attempts;
+  const costKnownCount = metric?.costKnownCount ?? 0;
+  if (metric && costKnownCount > 0 && metric.totalEstimatedCostUsd > 0) {
+    return metric.totalEstimatedCostUsd / costKnownCount;
   }
   if (!model.pricing) return null;
   return (
