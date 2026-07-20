@@ -77,6 +77,9 @@ export class S3BlobStore implements BlobStore {
     const { sha256, sizeBytes } = digest();
 
     if (input.expectedSha256 && input.expectedSha256 !== sha256) {
+      // Best-effort delete: if this fails, the corrupt object may persist (still
+      // metadata-less, so stat() treats it as incomplete/GC'able), but the
+      // BlobIntegrityError below still fires either way.
       await this.client
         .send(new DeleteObjectCommand({ Bucket: this.bucket, Key: input.key }))
         .catch(() => undefined);
@@ -128,9 +131,14 @@ export class S3BlobStore implements BlobStore {
   async stat(key: string): Promise<BlobStat | null> {
     try {
       const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      // put() finalizes in two phases (multipart Upload, then a CopyObjectCommand that
+      // attaches sha256); a process death or Copy failure between them leaves an object
+      // with no sha256 metadata. Treat that as an incomplete write, not a valid blob, so
+      // it stays invisible to readers and eligible for GC as unreferenced.
+      if (!head.Metadata?.sha256) return null;
       return {
         key,
-        sha256: head.Metadata?.sha256 ?? '',
+        sha256: head.Metadata.sha256,
         sizeBytes: head.ContentLength ?? 0,
         contentType: head.ContentType ?? 'application/octet-stream',
         createdAt: (head.LastModified ?? new Date()).toISOString(),

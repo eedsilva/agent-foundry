@@ -1,9 +1,10 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { beforeEach, expect, it } from 'vitest';
 import { ArtifactTooLargeError, BlobIntegrityError } from '@agent-foundry/domain';
 import type { S3BlobStore } from './s3-blob-store.js';
-import { describeMinio } from './s3-testing.js';
+import { describeMinio, MINIO_BUCKET, MINIO_CREDENTIALS } from './s3-testing.js';
 
 function streamOf(content: Buffer): Readable {
   return Readable.from([content]);
@@ -30,7 +31,7 @@ function uniqueKey(label: string): string {
   return `blob-store-tests/${label}/${randomUUID()}`;
 }
 
-describeMinio('S3BlobStore (MinIO)', ({ store }) => {
+describeMinio('S3BlobStore (MinIO)', ({ store, endpoint }) => {
   let blobStore: S3BlobStore;
 
   beforeEach(() => {
@@ -57,6 +58,34 @@ describeMinio('S3BlobStore (MinIO)', ({ store }) => {
     const readBack = await blobStore.getStream(key);
     if (!readBack) throw new Error('expected a stream for a key that was just written');
     expectBytesEqual(await readAll(readBack), content);
+  });
+
+  it('stat() returns null for an object written without sha256 metadata (simulated incomplete two-phase put)', async () => {
+    const key = uniqueKey('no-metadata');
+
+    // Bypass S3BlobStore.put() entirely: write straight through a raw client to
+    // simulate the process dying between the multipart Upload and the follow-up
+    // CopyObjectCommand that attaches sha256, so no sha256 metadata is ever set.
+    const rawClient = new S3Client({
+      endpoint: endpoint(),
+      region: 'us-east-1',
+      forcePathStyle: true,
+      credentials: MINIO_CREDENTIALS,
+    });
+    try {
+      await rawClient.send(
+        new PutObjectCommand({
+          Bucket: MINIO_BUCKET,
+          Key: key,
+          Body: Buffer.from('orphaned upload'),
+          ContentType: 'text/plain',
+        }),
+      );
+    } finally {
+      rawClient.destroy();
+    }
+
+    await expect(blobStore.stat(key)).resolves.toBeNull();
   });
 
   it('streams an 8MB blob (exceeding one 5MB multipart chunk) byte-identically', async () => {
