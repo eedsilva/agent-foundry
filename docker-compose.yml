@@ -14,6 +14,8 @@ services:
       MODEL_CATALOG_PATH: /app/models/catalog.yaml
       RUN_WORKER_INLINE: 'false'
       EXECUTOR_MODE: mock
+      # PERSISTENCE_MODE: postgres
+      # DATABASE_URL: postgres://foundry:foundry@postgres:5432/foundry
     volumes:
       - agent_data:/app/data
     ports:
@@ -31,8 +33,24 @@ services:
       WORKFLOWS_DIR: /app/workflows
       MODEL_CATALOG_PATH: /app/models/catalog.yaml
       EXECUTOR_MODE: mock
+      # PERSISTENCE_MODE: postgres
+      # DATABASE_URL: postgres://foundry:foundry@postgres:5432/foundry
     volumes:
       - agent_data:/app/data
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: foundry
+      POSTGRES_PASSWORD: foundry
+      POSTGRES_DB: foundry
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U foundry']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   web:
     build:
@@ -48,3 +66,4 @@ services:
 
 volumes:
   agent_data:
+  postgres_data:

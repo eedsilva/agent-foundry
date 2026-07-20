@@ -450,17 +450,30 @@ Teste mudanças de harness em projetos fixos e compare:
 
 ## Migração para Postgres
 
-Uma sequência razoável:
+`PERSISTENCE_MODE` alterna projects, runs, steps, attempts, approval requests/decisions, events, step events, conversations e artifacts entre disco (`file`, padrão) e Postgres. Queue, metrics, quality observations, previews, model overrides, project versions, workflows, policies e workspaces continuam em `DATA_DIR` nos dois modos — ADR 0025 registra a decisão e o que ainda falta para uma data plane de produção completa.
 
-1. implementar `ProjectRepository`, `ArtifactStore`, `EventStore`, `JobQueue` e `MetricsRepository` em Postgres;
-2. preservar os contratos do domínio;
-3. usar transação para criar projeto + artefato PRD + job;
-4. usar `FOR UPDATE SKIP LOCKED` ou broker com leases;
-5. armazenar blobs grandes em object storage;
-6. manter metadados e hashes no banco;
-7. migrar por projeto e validar hashes.
+### Habilitar
 
-Não coloque toda a lógica do orquestrador em stored procedure. O banco deve garantir consistência, não virar o novo monólito mágico.
+```env
+PERSISTENCE_MODE=postgres
+DATABASE_URL=postgres://foundry:foundry@localhost:5432/foundry
+```
+
+`DATABASE_URL` é obrigatório quando `PERSISTENCE_MODE=postgres`; sem ele, `loadRuntimeConfig` falha no boot com `PERSISTENCE_MODE=postgres requires DATABASE_URL` em vez de silenciosamente cair para disco. O serviço `postgres` do `docker-compose.yml` sobe um Postgres 17 local (`foundry`/`foundry`/`foundry`) com healthcheck; as linhas `PERSISTENCE_MODE`/`DATABASE_URL` dos serviços `api` e `worker` estão comentadas porque o padrão de deploy continua `file`.
+
+### Migrar
+
+```bash
+DATABASE_URL=postgres://foundry:foundry@localhost:5432/foundry npm run db:migrate
+```
+
+Roda `migrateUp` (migrations SQL embarcadas, seriadas por `pg_advisory_lock`) e imprime as versões aplicadas ou `schema up to date`. Rode antes do primeiro boot em modo postgres e após qualquer upgrade que adicione migration nova. A API e o worker nunca migram sozinhos: `assertSchemaCurrent` roda uma vez no boot e falha fechado, apontando para este comando, se a versão do schema estiver atrás do binário.
+
+### Rollback
+
+Pare API e worker, volte `PERSISTENCE_MODE` para `file` (ou remova a variável) e reinicie. Dados gravados em modo postgres não são sincronizados de volta para `DATA_DIR`: o rollback restaura o comportamento em disco a partir do estado que já existia lá, não migra o conteúdo do Postgres. Para voltar a operar sobre os dados gravados em Postgres, mantenha `PERSISTENCE_MODE=postgres` e trate o banco como a fonte de verdade — não alterne os dois modos como se fossem réplicas do mesmo estado.
+
+Blobs de artifact (screenshots, traces, bundles) hoje vivem em `bytea` dentro do Postgres; isso é um teto conhecido de tamanho/memória e fica para #54 (object storage). Até lá, evite `PERSISTENCE_MODE=postgres` em projetos que gerem evidência binária grande.
 
 ## Escala
 

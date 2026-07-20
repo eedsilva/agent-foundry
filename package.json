@@ -21,6 +21,7 @@
     "build:packages": "npm run build --workspace @agent-foundry/contracts && npm run build --workspace @agent-foundry/domain && npm run build --workspace @agent-foundry/persistence && npm run build --workspace @agent-foundry/harness && npm run build --workspace @agent-foundry/model-router && npm run build --workspace @agent-foundry/executors && npm run build --workspace @agent-foundry/orchestrator && npm run build --workspace @agent-foundry/composition",
     "build:apps": "npm run build --workspace @agent-foundry/api && npm run build --workspace @agent-foundry/worker && npm run build --workspace @agent-foundry/web",
     "doctor": "node scripts/doctor.mjs",
+    "db:migrate": "node scripts/db-migrate.mjs",
     "canary:providers": "tsx scripts/provider-canaries.ts",
     "dogfood:run": "tsx scripts/dogfood.ts",
     "check": "npm run format:check && npm run lint && npm run architecture:check && npm run roadmap:check && npm run typecheck && npm test && npm run build",

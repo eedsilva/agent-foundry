@@ -27,6 +27,7 @@
 ### Task 1: Postgres test harness, migration runner, initial schema
 
 **Files:**
+
 - Modify: `packages/persistence/package.json` (add `"postgres": "^3.4.7"` to dependencies)
 - Modify: root `package.json` (add `"@testcontainers/postgresql": "^11.5.0"` to devDependencies)
 - Create: `packages/persistence/src/postgres/migrations.ts`
@@ -36,6 +37,7 @@
 - Test: `packages/persistence/src/postgres/migrator.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing from other tasks.
 - Produces (relied on by every later task):
   - `client.ts`: `createPostgresClient(url: string): Sql` and `export type PostgresDb = Sql` (porsager `Sql` type re-export).
@@ -50,6 +52,7 @@ cd /Users/edsilva/Documents/ed/agent-foundry/.claude/worktrees/issue-53-postgres
 npm install postgres@^3.4.7 --workspace @agent-foundry/persistence
 npm install -D @testcontainers/postgresql@^11.5.0 -w .
 ```
+
 (`-w .` targets the root workspace; verify both package.json diffs and a single root `package-lock.json` update.)
 
 - [ ] **Step 2: Write the failing migrator test**
@@ -337,7 +340,10 @@ export function latestVersion(): number {
 // to one connection, so the unlock could land on a different session, leaking the
 // lock while a concurrent migrator races past it. sql.reserve() pins the whole
 // lock/work/unlock sequence to a single reserved connection, per the library docs.
-async function withMigrationLock<T>(sql: PostgresDb, fn: (reserved: PostgresDb) => Promise<T>): Promise<T> {
+async function withMigrationLock<T>(
+  sql: PostgresDb,
+  fn: (reserved: PostgresDb) => Promise<T>,
+): Promise<T> {
   const reserved = await sql.reserve();
   try {
     await reserved`select pg_advisory_lock(${MIGRATION_LOCK_KEY})`;
@@ -369,7 +375,10 @@ async function appliedVersions(sql: PostgresDb): Promise<Set<number>> {
 // NOT have it at runtime, even though the package's TS types claim `ReservedSql extends
 // Sql`. Since a reserved connection is already pinned to one physical connection, a
 // transaction there is just begin/commit/rollback issued directly on it.
-async function withReservedTransaction(reserved: PostgresDb, run: () => Promise<void>): Promise<void> {
+async function withReservedTransaction(
+  reserved: PostgresDb,
+  run: () => Promise<void>,
+): Promise<void> {
   await reserved.unsafe('begin');
   try {
     await run();
@@ -449,10 +458,7 @@ if (process.env.CI && !dockerAvailable) {
   throw new Error('CI requires Docker for Postgres tests; refusing to skip.');
 }
 
-export function describePostgres(
-  name: string,
-  fn: (ctx: { db: () => PostgresDb }) => void,
-): void {
+export function describePostgres(name: string, fn: (ctx: { db: () => PostgresDb }) => void): void {
   const suite = dockerAvailable ? describe : describe.skip;
   suite(name, () => {
     let sql: PostgresDb | undefined;
@@ -510,6 +516,7 @@ git add -A && git commit -m "feat(persistence): add postgres migration runner, i
 ### Task 2: Versioned CRUD helpers + project/run/step/attempt repositories
 
 **Files:**
+
 - Create: `packages/persistence/src/postgres/versioned.ts`
 - Create: `packages/persistence/src/postgres/project-repository.ts`
 - Create: `packages/persistence/src/postgres/run-repositories.ts`
@@ -517,10 +524,11 @@ git add -A && git commit -m "feat(persistence): add postgres migration runner, i
 - Test: `packages/persistence/src/postgres/run-repositories.test.ts`
 
 **Interfaces:**
+
 - Consumes: `PostgresDb` from `./client.js`; `describePostgres` from `./testing.js`.
 - Produces:
   - `versioned.ts`:
-    - `insertVersioned(sql, opts: { table: string; entity: string; id: string; version: number; columns: Record<string, unknown>; data: unknown }): Promise<void>` — throws `Error(\`\${entity} \${id} already exists\`)` on PK conflict and `Error` when `version !== 1` (mirror `createVersioned` in `packages/persistence/src/run-repositories.ts`).
+    - `insertVersioned(sql, opts: { table: string; entity: string; id: string; version: number; columns: Record<string, unknown>; data: unknown }): Promise<void>` — throws `Error(\`\${entity} \${id} already exists\`)`on PK conflict and`Error`when`version !== 1`(mirror`createVersioned`in`packages/persistence/src/run-repositories.ts`).
     - `updateVersioned<T>(sql, opts: { table: string; entity: string; id: string; keyColumns: Record<string, string>; expectedVersion: number; nextData: unknown; columns: Record<string, unknown> }): Promise<void>` — single `UPDATE … WHERE <keys> AND version = expected` setting `version = expected + 1`; on 0 rows re-select by keys → missing → `NotFoundError(entity, id)`; present → `VersionConflictError(entity, id, expectedVersion, actualVersion)` (import both from `@agent-foundry/domain`).
   - `PostgresProjectRepository implements ProjectRepository` — constructor `(sql: PostgresDb)`.
   - `PostgresWorkflowRunRepository`, `PostgresStepRunRepository`, `PostgresStepAttemptRepository` implementing their ports, constructor `(sql: PostgresDb)`.
@@ -529,6 +537,7 @@ git add -A && git commit -m "feat(persistence): add postgres migration runner, i
 Behavioral oracle: `packages/persistence/src/project-repository.ts`, `run-repositories.ts` and their tests. Entity (de)serialization: `ProjectSchema.parse(row.data)` etc. — schemas from `@agent-foundry/contracts` (`ProjectSchema`, `WorkflowRunSchema`, `StepRunSchema`, `StepAttemptSchema`). The `update` methods must persist `next.version = expectedVersion + 1` inside `data` too (file adapters store the bumped version in the JSON document; keep column and `data->>'version'` equal).
 
 Key SQL shapes (use these):
+
 - `ProjectRepository.list(limit=50)`: `select data from projects order by created_at desc, id desc limit ${limit}`.
 - `WorkflowRunRepository.list(projectId, limit=50)`: same ordering filtered by `project_id` — mirrors file adapter's `createdAt` desc sort.
 - `StepAttemptRepository.list(runId, stepRunId)`: `order by sequence asc`.
@@ -598,8 +607,9 @@ export async function updateVersioned(
 }
 ```
 
-  (If `NotFoundError`'s constructor signature differs, match `packages/domain/src/errors.ts` exactly — check before writing.) `sql.unsafe` with parameter placeholders `$1…$n` is safe here: table/column names come from our own code, never from input; values are always parameterized. Keep JSON writes as `JSON.stringify(...)::jsonb` via parameter (porsager serializes objects for jsonb columns automatically when using tagged templates — for `unsafe`, pass the string and cast in SQL: `data = $k::jsonb`; verify against porsager docs in node_modules README and adjust — whichever compiles and passes tests, keep consistent everywhere).
-  - Column duplication per entity: `projects` → `{status, created_at, updated_at}`; `workflow_runs` → `{project_id, status, created_at, updated_at}`; `step_runs` → `{run_id, status, created_at, updated_at}` (key = `(run_id, id)`); `step_attempts` → `{run_id, step_run_id, sequence, status, created_at, updated_at}` (key = `(run_id, step_run_id, id)`).
+(If `NotFoundError`'s constructor signature differs, match `packages/domain/src/errors.ts` exactly — check before writing.) `sql.unsafe` with parameter placeholders `$1…$n` is safe here: table/column names come from our own code, never from input; values are always parameterized. Keep JSON writes as `JSON.stringify(...)::jsonb` via parameter (porsager serializes objects for jsonb columns automatically when using tagged templates — for `unsafe`, pass the string and cast in SQL: `data = $k::jsonb`; verify against porsager docs in node_modules README and adjust — whichever compiles and passes tests, keep consistent everywhere).
+
+- Column duplication per entity: `projects` → `{status, created_at, updated_at}`; `workflow_runs` → `{project_id, status, created_at, updated_at}`; `step_runs` → `{run_id, status, created_at, updated_at}` (key = `(run_id, id)`); `step_attempts` → `{run_id, step_run_id, sequence, status, created_at, updated_at}` (key = `(run_id, step_run_id, id)`).
 - [ ] **Step 4: Run tests, expect PASS.**
 - [ ] **Step 5: Typecheck** — `npm run typecheck`.
 - [ ] **Step 6: Commit** — `feat(persistence): postgres project/run/step/attempt repositories with CAS (#53)`.
@@ -609,16 +619,19 @@ export async function updateVersioned(
 ### Task 3: Event store + step-event repository (cursor pagination, dedupe, sequence)
 
 **Files:**
+
 - Create: `packages/persistence/src/postgres/event-store.ts`
 - Create: `packages/persistence/src/postgres/step-event-repository.ts`
 - Test: `packages/persistence/src/postgres/event-store.test.ts`
 - Test: `packages/persistence/src/postgres/step-event-repository.test.ts`
 
 **Interfaces:**
+
 - Consumes: `PostgresDb`, `describePostgres` (Task 1). Requires a project row to exist (FK): tests insert a minimal project via `PostgresProjectRepository` (Task 2) or raw SQL.
 - Produces: `PostgresEventStore implements EventStore` (`append`, `list(projectId, limit=500, afterId?)`), `PostgresStepEventRepository implements StepEventRepository` (`append(input): Promise<AgentStreamEvent>`, `list(runId, {cursor, limit})`). Constructors `(sql: PostgresDb)`.
 
 Behavioral oracle: `packages/persistence/src/event-store.ts` (+ test) and `packages/persistence/src/step-event-repository.ts` (+ test). Critical behaviors to reproduce exactly:
+
 - `EventStore.append` redacts BEFORE persisting: `redactEvent` from `@agent-foundry/domain` (same call the file store makes), then inserts. With `dedupeKey`: `insert … on conflict (project_id, dedupe_key) where dedupe_key is not null do nothing` — the partial unique index replaces the file store's full-file scan. Appending a duplicate dedupeKey is a silent no-op.
 - `EventStore.list` without `afterId`: LAST `limit` events in ascending id order (`select data from project_events where project_id = ${p} order by id desc limit ${limit}` then reverse in JS). With `afterId`: `where project_id = ${p} and id > ${afterId} order by id asc limit ${limit}` (ULID string comparison — matches file fallback semantics; exact-id-position lookup and string `>` coincide for ULIDs, and the file adapter's fallback is `>` anyway).
 - `StepEventRepository.append` assigns `sequence = max(existing)+1` transactionally and applies the SAME redaction as the file impl (reuse the `redactPayload` logic — copy the function; it is 25 lines, private in the file adapter). Serialize per run with `sql.begin` + `select pg_advisory_xact_lock(hashtext('step_events:' || ${runId}))` then `insert … sequence = (select coalesce(max(sequence), 0) + 1 from step_events where run_id = ${runId})` via a `returning data` insert-select. Parse result through `AgentStreamEventSchema` and return it.
@@ -633,18 +646,21 @@ Steps: failing tests → implement → pass → `npm run typecheck` → commit `
 ### Task 4: Conversation + approval repositories
 
 **Files:**
+
 - Create: `packages/persistence/src/postgres/conversation-repository.ts`
 - Create: `packages/persistence/src/postgres/approval-repositories.ts`
 - Test: `packages/persistence/src/postgres/conversation-repository.test.ts`
 - Test: `packages/persistence/src/postgres/approval-repositories.test.ts`
 
 **Interfaces:**
+
 - Consumes: Tasks 1-2 exports.
 - Produces: `PostgresConversationRepository implements ConversationRepository`, `PostgresApprovalRequestRepository implements ApprovalRequestRepository`, `PostgresApprovalDecisionRepository implements ApprovalDecisionRepository`. Constructors `(sql: PostgresDb)`.
 
 Behavioral oracle: `packages/persistence/src/conversation-repository.ts` (READ IT FULLY — it has existence checks like `requireConversation`, message-content redaction before persisting, and idempotency semantics on `createOperation`/`createChangeRequest`; reproduce all of them, including thrown error types/messages) and `approval-repositories.ts` (+ both test files).
 
 Implementation notes:
+
 - All conversation mutations: `sql.begin` + `pg_advisory_xact_lock(hashtext('conversation:' || ${projectId}))` — one serialization scope per project, mirroring the file adapter's single conversation lock.
 - `appendMessage`: sequence = `coalesce(max(sequence),0)+1` within the locked transaction; redact content blocks exactly as the file adapter does (find its redaction call and copy it); return the parsed `Message`.
 - `listMessages(projectId, {cursor, limit})`: `sequence > cursor order by sequence asc`, `limit` when provided — cursor pagination via the PK index.
@@ -661,14 +677,17 @@ Steps: failing tests → implement → pass → typecheck → commit `feat(persi
 ### Task 5: Artifact store (metadata + inline content + bytea blobs + reap)
 
 **Files:**
+
 - Create: `packages/persistence/src/postgres/artifact-store.ts`
 - Test: `packages/persistence/src/postgres/artifact-store.test.ts`
 
 **Interfaces:**
+
 - Consumes: Tasks 1-2 exports.
 - Produces: `PostgresArtifactStore implements ArtifactStore` — full port: `put`, `putBlob`, `getBlobStream`, `getLatest`, `getRevision`, `listLatest`, `listMetadata`, plus `reapExpired(now: Date): Promise<number>` (same extra method the file store exposes for the API reaper).
 
 Behavioral oracle: `packages/persistence/src/artifact-store.ts` + test. Reproduce:
+
 - Revision allocation: inside `sql.begin` + `pg_advisory_xact_lock(hashtext('artifacts:' || ${projectId}))`, `revision = coalesce(max(revision),0)+1` per `(project_id, name)`.
 - `put` idempotency: before allocating, look up an existing row matching `idempotency_key` (or, failing that, `source_decision_id`) for the same `(project_id, name)`; on hit return that revision's `StoredArtifact` (metadata from `data`, content from `content`).
 - `put` computes `sha256` of `JSON.stringify(content)` exactly as the file store does (copy the hashing call from `fs-utils.ts`'s `sha256` helper or reimplement with `node:crypto` identically).
@@ -687,6 +706,7 @@ Steps: failing tests → implement → pass → typecheck → commit `feat(persi
 ### Task 6: Composition wiring, migrate script, compose service, docs
 
 **Files:**
+
 - Modify: `packages/persistence/src/index.ts` (export the `postgres/` modules: client, migrator, all `Postgres*` classes — follow the existing barrel style)
 - Modify: `packages/composition/src/config.ts`
 - Modify: `packages/composition/src/runtime.ts`
@@ -699,6 +719,7 @@ Steps: failing tests → implement → pass → typecheck → commit `feat(persi
 - Test: `packages/composition/src/runtime.postgres.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 1-5.
 - Produces: `RuntimeConfig` gains `persistenceMode: 'file' | 'postgres'` and `databaseUrl?: string`; `createRuntime` in postgres mode constructs the 9 Postgres adapters (projects, runs, steps, attempts, approvalRequests, approvalDecisions, events, stepEvents, conversations, artifacts) and calls `assertSchemaCurrent` once at boot; everything else (queue, metrics, quality, previews, model overrides, project versions, workflows, policies, workspaces) stays file-based. Runtime member types for the swapped nine widen from concrete `File*` classes to their port interfaces (plus `reapExpired` for artifacts: declare the runtime member as `ArtifactStore & { reapExpired(now: Date): Promise<number> }` or add `reapExpired` to the `ArtifactStore` port — pick adding it to the port, both impls already have it, and update `packages/domain/src/ports.ts` accordingly).
 
@@ -717,7 +738,9 @@ if (!url) {
 }
 const sql = createPostgresClient(url);
 const applied = await migrateUp(sql);
-console.log(applied.length === 0 ? 'schema up to date' : `applied migrations: ${applied.join(', ')}`);
+console.log(
+  applied.length === 0 ? 'schema up to date' : `applied migrations: ${applied.join(', ')}`,
+);
 await sql.end({ timeout: 5 });
 ```
 
@@ -726,19 +749,19 @@ await sql.end({ timeout: 5 });
 `docker-compose.yml` service (additive):
 
 ```yaml
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_USER: foundry
-      POSTGRES_PASSWORD: foundry
-      POSTGRES_DB: foundry
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U foundry']
-      interval: 5s
-      timeout: 3s
-      retries: 10
+postgres:
+  image: postgres:17-alpine
+  environment:
+    POSTGRES_USER: foundry
+    POSTGRES_PASSWORD: foundry
+    POSTGRES_DB: foundry
+  volumes:
+    - postgres_data:/var/lib/postgresql/data
+  healthcheck:
+    test: ['CMD-SHELL', 'pg_isready -U foundry']
+    interval: 5s
+    timeout: 3s
+    retries: 10
 ```
 
 (plus `postgres_data` under top-level `volumes:`; do NOT point `api`/`worker` at it by default — file mode stays the shipped default. Add a commented `# PERSISTENCE_MODE: postgres` + `# DATABASE_URL: postgres://foundry:foundry@postgres:5432/foundry` pair in both services' `environment:` blocks.)
