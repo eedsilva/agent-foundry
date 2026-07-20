@@ -12,6 +12,7 @@ import type {
   StepAttemptRepository,
   StepRunRepository,
   WorkflowRunRepository,
+  WorkspaceManager,
 } from '@agent-foundry/domain';
 import type {
   AgentExecutionRequest,
@@ -33,6 +34,7 @@ import {
   MODELS,
 } from './testing/harness.js';
 import { ConversationOperationRunner } from './conversation-operation-runner.js';
+import { ProjectVersionService } from './project-version-service.js';
 
 class FixedClock implements Clock {
   now(): Date {
@@ -72,6 +74,19 @@ class MemoryProjectVersions implements ProjectVersionRepository {
     this.store[index] = version;
     return Promise.resolve(version);
   }
+}
+
+function newProjectVersionService(
+  workspaces: WorkspaceManager,
+  artifacts: ArtifactStore,
+): ProjectVersionService {
+  return new ProjectVersionService(
+    new MemoryProjectVersions(),
+    workspaces,
+    artifacts,
+    new FixedClock(),
+    new SequentialIds(),
+  );
 }
 
 const harnessRepo: HarnessRepository = {
@@ -119,6 +134,15 @@ function setup(harness: HarnessRepository = harnessRepo) {
   const workspaces = new FakeWorkspaces({ on: true });
   const conversations = new MemoryConversations();
   const projectVersions = new MemoryProjectVersions();
+  const clock = new FixedClock();
+  const ids = new SequentialIds();
+  const projectVersionService = new ProjectVersionService(
+    projectVersions,
+    workspaces,
+    artifacts,
+    clock,
+    ids,
+  );
   const executor = new ControllableExecutor({}, workspaces);
   const executors: ExecutorRegistry = {
     get: () => new AgentExecutorFromExecutionPlane(executor),
@@ -137,9 +161,9 @@ function setup(harness: HarnessRepository = harnessRepo) {
     executors,
     workspaces,
     conversations,
-    projectVersions,
-    new FixedClock(),
-    new SequentialIds(),
+    projectVersionService,
+    clock,
+    ids,
     { agentTimeoutMs: 60_000 },
   );
   return {
@@ -203,8 +227,8 @@ async function seed(
 }
 
 describe('ConversationOperationRunner', () => {
-  it('completes a plan operation without touching the workspace', async () => {
-    const { runs, artifacts, workspaces, conversations, runner } = setup();
+  it('completes a plan operation without touching the workspace or recording a version', async () => {
+    const { runs, artifacts, workspaces, conversations, projectVersions, runner } = setup();
     const { runId, operationId } = await seed(conversations, runs, 'plan');
 
     await runner.run('project-1', runId, operationId);
@@ -222,10 +246,12 @@ describe('ConversationOperationRunner', () => {
         sha256: artifact!.metadata.sha256,
       },
     ]);
+    expect(operation?.projectVersionId).toBeUndefined();
+    expect(await projectVersions.list('project-1')).toEqual([]);
   });
 
-  it('completes a build operation and commits the touched workspace', async () => {
-    const { runs, artifacts, workspaces, conversations, runner } = setup();
+  it('completes a build operation, commits the touched workspace, and records exactly one ProjectVersion', async () => {
+    const { runs, artifacts, workspaces, conversations, projectVersions, runner } = setup();
     const { runId, operationId } = await seed(conversations, runs, 'build');
 
     await runner.run('project-1', runId, operationId);
@@ -235,6 +261,17 @@ describe('ConversationOperationRunner', () => {
     expect(workspaces.commits).toHaveLength(1);
     const artifact = await artifacts.getLatest('project-1', `operation-${operationId}`);
     expect(artifact).not.toBeNull();
+
+    const versions = await projectVersions.list('project-1');
+    expect(versions).toHaveLength(1);
+    const [version] = versions;
+    expect(version).toMatchObject({
+      projectId: 'project-1',
+      runId,
+      kind: 'run',
+      commit: workspaces.commits[0],
+    });
+
     const operation = await conversations.getOperation('project-1', operationId);
     expect(operation?.artifactReferences).toEqual([
       {
@@ -243,6 +280,7 @@ describe('ConversationOperationRunner', () => {
         sha256: artifact!.metadata.sha256,
       },
     ]);
+    expect(operation?.projectVersionId).toBe(version!.id);
   });
 
   it('persists live executor stream events via StepEventRepository', async () => {
@@ -254,7 +292,7 @@ describe('ConversationOperationRunner', () => {
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
-    const projectVersions = new MemoryProjectVersions();
+    const projectVersions = newProjectVersionService(workspaces, artifacts);
     // ControllableExecutor/AgentExecutorFromExecutionPlane predate onEvent and
     // don't forward it, so this test uses a minimal streaming stub instead.
     const executors: ExecutorRegistry = {
@@ -349,7 +387,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -395,7 +433,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -480,7 +518,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -531,7 +569,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -580,7 +618,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -631,7 +669,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },

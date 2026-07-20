@@ -22,7 +22,6 @@ import {
   type IdGenerator,
   type MetricsRepository,
   type ModelRouter,
-  type ProjectVersionRepository,
   type StepAttemptRepository,
   type StepEventRepository,
   type StepRunRepository,
@@ -34,6 +33,7 @@ import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 import { CONVERSATION_WORKFLOW_ID, buildConversationStep } from './conversation-step-config.js';
 import { compileContext } from './context-compiler.js';
 import { artifactReference, persistStreamEvent, runError } from './workflow-orchestrator.js';
+import { ProjectVersionService } from './project-version-service.js';
 
 export interface ConversationOperationRunnerOptions {
   agentTimeoutMs: number;
@@ -53,7 +53,7 @@ export class ConversationOperationRunner {
     private readonly executors: ExecutorRegistry,
     private readonly workspaces: WorkspaceManager,
     private readonly conversations: ConversationRepository,
-    private readonly projectVersions: ProjectVersionRepository,
+    private readonly projectVersions: ProjectVersionService,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly options: ConversationOperationRunnerOptions,
@@ -245,6 +245,19 @@ export class ConversationOperationRunner {
         runState.version,
       );
       succeeded = true;
+      // Recorded here (after succeeded = true, not right after `commit`)
+      // so a failure in recordFromStep hits the `if (succeeded) return`
+      // guard in the catch block below instead of orphaning a
+      // ProjectVersion for a commit that a later failure would roll back.
+      const projectVersion = commit
+        ? await this.projectVersions.recordFromStep({
+            projectId,
+            runId,
+            stepRunId: stepRun.id,
+            attemptId: attempt.id,
+            commit,
+          })
+        : null;
       // Records the artifact this operation produced on the Operation itself
       // (not just the StepAttempt) so the chat UI can link a completed
       // Operation to its diff/artifacts without waiting on the separate
@@ -255,6 +268,7 @@ export class ConversationOperationRunner {
       await this.conversations.updateOperation({
         ...operation,
         artifactReferences: [artifactReference(artifact)],
+        ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
       });
       await this.metrics.record({
         modelId: route.selected.model.id,
