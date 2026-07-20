@@ -36,4 +36,19 @@ describePostgres('postgres migrator', (ctx) => {
     await expect(assertSchemaCurrent(sql)).rejects.toThrow(/db:migrate/);
     await migrateUp(sql);
   });
+
+  // Regression guard for the advisory lock racing two concurrent migrators (issue #53).
+  // This only fails *plausibly*, not reliably, under the broken (non-reserved-connection)
+  // locking -- timing-dependent races are inherently flaky to catch in a unit test. The
+  // real proof that the lock can't leak across connections is the sql.reserve() structure
+  // in withMigrationLock itself, not this test.
+  it('applies each migration exactly once under concurrent migrateUp', async () => {
+    const sql = ctx.db();
+    await migrateDown(sql, 0);
+    const [first, second] = await Promise.all([migrateUp(sql), migrateUp(sql)]);
+    const combined = [...(first ?? []), ...(second ?? [])].sort((a, b) => a - b);
+    expect(combined).toEqual(MIGRATIONS.map((m) => m.version));
+    const rows = await sql<{ version: number }[]>`select version from schema_migrations order by version`;
+    expect(rows.map((r) => r.version)).toEqual(MIGRATIONS.map((m) => m.version));
+  });
 });
