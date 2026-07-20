@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SandboxSpec } from '@agent-foundry/contracts';
+import { runSandboxLifecycle } from '@agent-foundry/domain';
 import { DockerSandboxRunner, SANDBOX_WORKSPACE_PATH } from './docker-sandbox-runner.js';
 
 const PINNED_IMAGE = 'node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3';
@@ -257,6 +258,21 @@ describe.skipIf(!hasDocker)(
       created.push(handle.id);
       const snapshot = await runner.snapshot(handle, ['does-not-exist']);
       expect(snapshot.files).toEqual([]);
+    });
+
+    it('runs the full runSandboxLifecycle contract against a real container', async () => {
+      const { result, snapshot } = await runSandboxLifecycle(
+        runner,
+        spec(),
+        {
+          command: 'sh',
+          args: ['-c', 'echo hi > report.txt && mkdir secrets && echo s > secrets/.env'],
+          timeoutMs: 5_000,
+        },
+        ['report.txt'],
+      );
+      expect(result.exitCode).toBe(0);
+      expect(snapshot.files.map((f) => f.path)).toEqual(['report.txt']);
     });
   },
   60_000,
