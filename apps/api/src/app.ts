@@ -2,7 +2,7 @@ import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
-import { listRisks, getRiskById } from '@agent-foundry/composition';
+import { blobKeyFor, listRisks, getRiskById, verifyBlobToken } from '@agent-foundry/composition';
 import {
   BranchVersionRequestSchema,
   ClassifyMessageResponseSchema,
@@ -56,6 +56,8 @@ const CanonicalDecimalSchema = z
   .transform(Number);
 
 const NonNegativeCursorSchema = CanonicalDecimalSchema.pipe(z.number().int().nonnegative());
+
+const BLOB_URL_TTL_SECONDS = 300;
 
 export async function buildApp(
   runtime: Runtime,
@@ -205,6 +207,55 @@ export async function buildApp(
     }
     return reply.send(result.stream);
   });
+
+  // "Downloads usam URL assinada curta e autorização do projeto": same
+  // project/artifact/blobDeleted checks as the /blob route above, but hands
+  // back a short-lived signed URL instead of streaming the bytes itself.
+  app.get('/projects/:projectId/artifacts/:name/blob-url', async (request, reply) => {
+    const { projectId, name } = z
+      .object({ projectId: PathSegmentSchema, name: PathSegmentSchema })
+      .parse(request.params);
+    const { revision } = z
+      .object({ revision: z.coerce.number().int().positive().optional() })
+      .parse(request.query);
+    const artifact = await runtime.projectService.getArtifact(projectId, name, revision);
+    if (artifact.metadata.blobDeleted) {
+      return reply.status(410).send({ error: 'Gone', message: `Artifact ${name} has expired.` });
+    }
+    const key = blobKeyFor(projectId, artifact.metadata.name, artifact.metadata.revision);
+    const url = await runtime.blobStore.createSignedDownloadUrl(key, {
+      expiresInSeconds: BLOB_URL_TTL_SECONDS,
+    });
+    return reply.send({
+      url,
+      expiresAt: new Date(Date.now() + BLOB_URL_TTL_SECONDS * 1000).toISOString(),
+    });
+  });
+
+  // fs mode only: S3 mode's createSignedDownloadUrl already returns a direct
+  // presigned S3 URL, so there's nothing for this API to serve.
+  if (runtime.config.blobStoreMode === 'fs') {
+    app.get('/blobs/*', async (request, reply) => {
+      const encodedKey = (request.params as { '*'?: string })['*'] ?? '';
+      const key = decodeURIComponent(encodedKey);
+      const { token } = z.object({ token: z.string() }).parse(request.query);
+      if (!verifyBlobToken(runtime.config.blobSigningSecret!, key, token, Date.now())) {
+        return reply
+          .status(403)
+          .send({ error: 'Forbidden', message: 'Invalid or expired download token.' });
+      }
+      const [stat, stream] = await Promise.all([
+        runtime.blobStore.stat(key),
+        runtime.blobStore.getStream(key),
+      ]);
+      if (!stat || !stream) {
+        return reply.status(404).send({ error: 'NotFound', message: 'Blob not found.' });
+      }
+      reply.header('content-type', stat.contentType);
+      reply.header('content-length', String(stat.sizeBytes));
+      return reply.send(stream);
+    });
+  }
 
   app.get('/projects/:projectId/conversation', async (request) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);

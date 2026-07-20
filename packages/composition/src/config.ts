@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
@@ -9,45 +10,74 @@ const booleanFromEnv = z
   .default('false')
   .transform((value) => value === 'true');
 
-const ConfigSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  API_HOST: z.string().default('127.0.0.1'),
-  API_PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
-  WEB_ORIGIN: z.string().default('http://localhost:3000'),
-  DATA_DIR: z.string().default('.data'),
-  HARNESS_DIR: z.string().default('harness'),
-  WORKFLOWS_DIR: z.string().default('workflows'),
-  POLICIES_DIR: z.string().default('policies'),
-  MODEL_CATALOG_PATH: z.string().default('models/catalog.yaml'),
-  EXECUTOR_MODE: z.enum(['real', 'mock']).default('mock'),
-  RUN_WORKER_INLINE: booleanFromEnv,
-  AUTO_INSTALL_DEPENDENCIES: booleanFromEnv,
-  ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: booleanFromEnv,
-  AGENT_TIMEOUT_MS: z.coerce.number().int().positive().default(1_200_000),
-  VERIFICATION_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
-  MAX_CLI_OUTPUT_BYTES: z.coerce.number().int().positive().default(20_000_000),
-  WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(750),
-  CANCEL_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(500),
-  WORKER_ID: z.string().default(`worker-${process.pid}`),
-  QUEUE_LEASE_MS: z.coerce.number().int().positive().default(60_000),
-  QUEUE_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
-  QUEUE_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
-  GIT_AUTHOR_NAME: z.string().default('Agent Foundry'),
-  GIT_AUTHOR_EMAIL: z.string().email().default('agent-foundry@localhost'),
-  PREVIEW_TTL_SECONDS: z.coerce.number().int().positive().default(1_800),
-  PREVIEW_STARTUP_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
-  PREVIEW_HEALTH_PATH: z.string().startsWith('/').default('/'),
-  PREVIEW_HEALTH_INTERVAL_MS: z.coerce.number().int().positive().default(1_000),
-  PREVIEW_HEALTH_FAILURE_THRESHOLD: z.coerce.number().int().positive().default(3),
-  PREVIEW_MAX_RESTARTS: z.coerce.number().int().nonnegative().default(2),
-  PREVIEW_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(5_000),
-  PREVIEW_LOG_MAX_BYTES: z.coerce.number().int().positive().default(1_000_000),
-  ARTIFACT_MAX_SCREENSHOT_BYTES: z.coerce.number().int().positive().default(5_000_000),
-  ARTIFACT_MAX_TRACE_BYTES: z.coerce.number().int().positive().default(20_000_000),
-  ARTIFACT_MAX_VIDEO_BYTES: z.coerce.number().int().positive().default(50_000_000),
-  ARTIFACT_RETENTION_SECONDS: z.coerce.number().int().positive().default(604_800),
-  ARTIFACT_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
-});
+const ConfigSchema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    API_HOST: z.string().default('127.0.0.1'),
+    API_PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
+    WEB_ORIGIN: z.string().default('http://localhost:3000'),
+    DATA_DIR: z.string().default('.data'),
+    HARNESS_DIR: z.string().default('harness'),
+    WORKFLOWS_DIR: z.string().default('workflows'),
+    POLICIES_DIR: z.string().default('policies'),
+    MODEL_CATALOG_PATH: z.string().default('models/catalog.yaml'),
+    EXECUTOR_MODE: z.enum(['real', 'mock']).default('mock'),
+    RUN_WORKER_INLINE: booleanFromEnv,
+    AUTO_INSTALL_DEPENDENCIES: booleanFromEnv,
+    ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: booleanFromEnv,
+    AGENT_TIMEOUT_MS: z.coerce.number().int().positive().default(1_200_000),
+    VERIFICATION_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
+    MAX_CLI_OUTPUT_BYTES: z.coerce.number().int().positive().default(20_000_000),
+    WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(750),
+    CANCEL_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(500),
+    WORKER_ID: z.string().default(`worker-${process.pid}`),
+    QUEUE_LEASE_MS: z.coerce.number().int().positive().default(60_000),
+    QUEUE_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
+    QUEUE_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
+    GIT_AUTHOR_NAME: z.string().default('Agent Foundry'),
+    GIT_AUTHOR_EMAIL: z.string().email().default('agent-foundry@localhost'),
+    PREVIEW_TTL_SECONDS: z.coerce.number().int().positive().default(1_800),
+    PREVIEW_STARTUP_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+    PREVIEW_HEALTH_PATH: z.string().startsWith('/').default('/'),
+    PREVIEW_HEALTH_INTERVAL_MS: z.coerce.number().int().positive().default(1_000),
+    PREVIEW_HEALTH_FAILURE_THRESHOLD: z.coerce.number().int().positive().default(3),
+    PREVIEW_MAX_RESTARTS: z.coerce.number().int().nonnegative().default(2),
+    PREVIEW_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(5_000),
+    PREVIEW_LOG_MAX_BYTES: z.coerce.number().int().positive().default(1_000_000),
+    ARTIFACT_MAX_SCREENSHOT_BYTES: z.coerce.number().int().positive().default(5_000_000),
+    ARTIFACT_MAX_TRACE_BYTES: z.coerce.number().int().positive().default(20_000_000),
+    ARTIFACT_MAX_VIDEO_BYTES: z.coerce.number().int().positive().default(50_000_000),
+    ARTIFACT_RETENTION_SECONDS: z.coerce.number().int().positive().default(604_800),
+    ARTIFACT_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+    BLOB_STORE_MODE: z.enum(['fs', 's3']).default('fs'),
+    BLOB_SIGNING_SECRET: z.string().min(16).optional(),
+    BLOB_GC_GRACE_MS: z.coerce.number().int().positive().default(86_400_000),
+    S3_ENDPOINT: z.string().optional(),
+    S3_REGION: z.string().optional(),
+    S3_BUCKET: z.string().optional(),
+    S3_ACCESS_KEY_ID: z.string().optional(),
+    S3_SECRET_ACCESS_KEY: z.string().optional(),
+    S3_FORCE_PATH_STYLE: booleanFromEnv,
+  })
+  .superRefine((parsed, ctx) => {
+    if (parsed.BLOB_STORE_MODE !== 's3') return;
+    const required = [
+      'S3_ENDPOINT',
+      'S3_REGION',
+      'S3_BUCKET',
+      'S3_ACCESS_KEY_ID',
+      'S3_SECRET_ACCESS_KEY',
+    ] as const;
+    for (const key of required) {
+      if (!parsed[key]) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `${key} is required when BLOB_STORE_MODE=s3`,
+        });
+      }
+    }
+  });
 
 export interface RuntimeConfig {
   environment: 'development' | 'test' | 'production';
@@ -89,6 +119,16 @@ export interface RuntimeConfig {
   artifactMaxVideoBytes: number;
   artifactRetentionSeconds: number;
   artifactReapIntervalMs: number;
+  blobStoreMode: 'fs' | 's3';
+  /** Only set in fs mode (explicit env var, or a derived per-installation secret). */
+  blobSigningSecret?: string;
+  blobGcGraceMs: number;
+  s3Endpoint?: string;
+  s3Region?: string;
+  s3Bucket?: string;
+  s3AccessKeyId?: string;
+  s3SecretAccessKey?: string;
+  s3ForcePathStyle: boolean;
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -115,6 +155,11 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     parsed.ALLOW_UNSAFE_REMOTE_REAL_EXECUTION,
   );
   const deploymentProfile = profileSpec?.name ?? 'custom';
+  const dataDir = resolve(rootDir, parsed.DATA_DIR);
+  const blobSigningSecret =
+    parsed.BLOB_STORE_MODE === 'fs'
+      ? (parsed.BLOB_SIGNING_SECRET ?? loadOrCreateBlobSigningSecret(dataDir))
+      : undefined;
 
   return {
     environment: parsed.NODE_ENV,
@@ -123,7 +168,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     apiHost: parsed.API_HOST,
     apiPort: parsed.API_PORT,
     webOrigin: parsed.WEB_ORIGIN,
-    dataDir: resolve(rootDir, parsed.DATA_DIR),
+    dataDir,
     harnessDir: resolve(rootDir, parsed.HARNESS_DIR),
     workflowsDir: resolve(rootDir, parsed.WORKFLOWS_DIR),
     policiesDir: resolve(rootDir, parsed.POLICIES_DIR),
@@ -156,7 +201,39 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     artifactMaxVideoBytes: parsed.ARTIFACT_MAX_VIDEO_BYTES,
     artifactRetentionSeconds: parsed.ARTIFACT_RETENTION_SECONDS,
     artifactReapIntervalMs: parsed.ARTIFACT_REAP_INTERVAL_MS,
+    blobStoreMode: parsed.BLOB_STORE_MODE,
+    ...(blobSigningSecret !== undefined ? { blobSigningSecret } : {}),
+    blobGcGraceMs: parsed.BLOB_GC_GRACE_MS,
+    ...(parsed.S3_ENDPOINT !== undefined ? { s3Endpoint: parsed.S3_ENDPOINT } : {}),
+    ...(parsed.S3_REGION !== undefined ? { s3Region: parsed.S3_REGION } : {}),
+    ...(parsed.S3_BUCKET !== undefined ? { s3Bucket: parsed.S3_BUCKET } : {}),
+    ...(parsed.S3_ACCESS_KEY_ID !== undefined ? { s3AccessKeyId: parsed.S3_ACCESS_KEY_ID } : {}),
+    ...(parsed.S3_SECRET_ACCESS_KEY !== undefined
+      ? { s3SecretAccessKey: parsed.S3_SECRET_ACCESS_KEY }
+      : {}),
+    s3ForcePathStyle: parsed.S3_FORCE_PATH_STYLE,
   };
+}
+
+/**
+ * fs mode works out of the box without any signing secret configured: the
+ * first process to start generates one and persists it under DATA_DIR;
+ * every later start (and every other process pointed at the same DATA_DIR)
+ * just reads it back.
+ *
+ * ponytail: read-check-then-write isn't atomic across processes, so two
+ * processes racing on a brand-new DATA_DIR could each persist a different
+ * secret. Harmless here — signing and verifying both happen inside the same
+ * API process — but an upgrade path exists (write to a temp file + atomic
+ * rename) if that ever stops being true.
+ */
+function loadOrCreateBlobSigningSecret(dataDir: string): string {
+  const path = resolve(dataDir, 'blob-signing-secret');
+  if (existsSync(path)) return readFileSync(path, 'utf8').trim();
+  mkdirSync(dataDir, { recursive: true });
+  const secret = randomBytes(32).toString('hex');
+  writeFileSync(path, secret, { mode: 0o600 });
+  return secret;
 }
 
 function findRepoRoot(start: string): string {

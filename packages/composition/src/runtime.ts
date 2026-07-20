@@ -33,6 +33,7 @@ import {
   FileWorkflowRunRepository,
   FileWorkspaceManager,
   FsBlobStore,
+  S3BlobStore,
   YamlPolicyRepository,
   YamlWorkflowRepository,
 } from '@agent-foundry/persistence';
@@ -52,7 +53,7 @@ import {
   type BrowserEvidenceLimits,
 } from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
-import type { BrowserVerifier } from '@agent-foundry/domain';
+import type { BlobStore, BrowserVerifier } from '@agent-foundry/domain';
 import { BrowserTestPlanArtifactSchema, type PreviewSession } from '@agent-foundry/contracts';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
 
@@ -65,6 +66,7 @@ export interface Runtime {
   approvalRequests: FileApprovalRequestRepository;
   approvalDecisions: FileApprovalDecisionRepository;
   artifacts: FileArtifactStore;
+  blobStore: BlobStore;
   conversations: FileConversationRepository;
   events: FileEventStore;
   stepEvents: FileStepEventRepository;
@@ -111,14 +113,23 @@ export async function createRuntime(
   const stepAttempts = new FileStepAttemptRepository(config.dataDir);
   const approvalRequests = new FileApprovalRequestRepository(config.dataDir);
   const approvalDecisions = new FileApprovalDecisionRepository(config.dataDir);
-  // ponytail: inline dev signing secret/base URL; Task 4 wires real values through RuntimeConfig.
-  const artifacts = new FileArtifactStore(
-    config.dataDir,
-    new FsBlobStore(config.dataDir, {
-      signingSecret: 'dev-secret-not-used-yet',
-      publicBaseUrl: 'http://127.0.0.1',
-    }),
-  );
+  const blobStore: BlobStore =
+    config.blobStoreMode === 's3'
+      ? new S3BlobStore({
+          // superRefine in config.ts guarantees these are set whenever mode is 's3'.
+          ...(config.s3Endpoint !== undefined ? { endpoint: config.s3Endpoint } : {}),
+          region: config.s3Region!,
+          bucket: config.s3Bucket!,
+          accessKeyId: config.s3AccessKeyId!,
+          secretAccessKey: config.s3SecretAccessKey!,
+          forcePathStyle: config.s3ForcePathStyle,
+        })
+      : new FsBlobStore(config.dataDir, {
+          // fs mode always derives or reads blobSigningSecret in config.ts.
+          signingSecret: config.blobSigningSecret!,
+          publicBaseUrl: `http://${config.apiHost}:${config.apiPort}`,
+        });
+  const artifacts = new FileArtifactStore(config.dataDir, blobStore);
   const conversations = new FileConversationRepository(config.dataDir);
   const events = new FileEventStore(config.dataDir);
   const stepEvents = new FileStepEventRepository(config.dataDir);
@@ -304,6 +315,7 @@ export async function createRuntime(
     approvalRequests,
     approvalDecisions,
     artifacts,
+    blobStore,
     conversations,
     events,
     stepEvents,
