@@ -1,4 +1,6 @@
+import { execa } from 'execa';
 import type { SandboxSpec } from '@agent-foundry/contracts';
+import type { SandboxHandle, SandboxRunner } from '@agent-foundry/domain';
 
 export const SANDBOX_WORKSPACE_PATH = '/workspace';
 export const SANDBOX_TMP_SIZE_MIB = 64;
@@ -49,4 +51,28 @@ export function buildCreateArgs(spec: SandboxSpec): string[] {
   }
   args.push(spec.image, 'sleep', 'infinity');
   return args;
+}
+
+export class DockerSandboxRunner implements SandboxRunner {
+  async create(spec: SandboxSpec): Promise<SandboxHandle> {
+    const args = buildCreateArgs(spec);
+    const created = await execa('docker', args, { reject: false });
+    if (created.exitCode !== 0) {
+      throw new Error(`docker create failed: ${created.stderr || created.stdout}`);
+    }
+    const id = created.stdout.trim();
+    const started = await execa('docker', ['start', id], { reject: false });
+    if (started.exitCode !== 0) {
+      await execa('docker', ['rm', '-f', id], { reject: false });
+      throw new Error(`docker start failed: ${started.stderr || started.stdout}`);
+    }
+    return { id };
+  }
+
+  async destroy(sandbox: SandboxHandle): Promise<void> {
+    const result = await execa('docker', ['rm', '-f', sandbox.id], { reject: false });
+    if (result.exitCode !== 0 && !/No such container/.test(result.stderr ?? '')) {
+      throw new Error(`docker rm failed: ${result.stderr || result.stdout}`);
+    }
+  }
 }
