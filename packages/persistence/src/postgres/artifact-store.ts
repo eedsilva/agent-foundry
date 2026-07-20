@@ -140,6 +140,9 @@ export class PostgresArtifactStore implements ArtifactStore {
         ...(input.attemptId ? { attemptId: input.attemptId } : {}),
         storage: 'blob',
         sizeBytes,
+        // retentionSeconds: 0 must still expire immediately, so this checks
+        // !== undefined rather than truthiness like the fields above (the file
+        // adapter's truthy check silently skips expiry for 0 — see reap test).
         ...(input.retentionSeconds !== undefined
           ? { expiresAt: new Date(Date.now() + input.retentionSeconds * 1000).toISOString() }
           : {}),
