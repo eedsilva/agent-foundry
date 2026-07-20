@@ -528,7 +528,7 @@ Registrada somente quando `BLOB_STORE_MODE=fs` (não existe em modo `s3` — as 
 
 1. Descomente o bloco `minio:` e o volume `minio_data:` no fim do arquivo, e os blocos `S3_*`/`BLOB_STORE_MODE: s3` em `api` e `worker` (mantenha os dois em sincronia).
 2. Suba com `docker compose up minio api worker`. O MinIO expõe a API em `:9000` e o console web em `:9001`; as credenciais padrão (`minioadmin`/`minioadmin`) servem só para desenvolvimento — troque antes de expor a instância.
-3. A API cria o bucket configurado (`S3_BUCKET`, padrão `agent-foundry`) e passa a usar `S3BlobStore` a partir do próximo start.
+3. Crie o bucket configurado (`S3_BUCKET`, padrão `agent-foundry`) antes do primeiro start — pelo console web em `:9001` ou via `mc mb local/agent-foundry`. A API não cria buckets; sem esse passo o primeiro write de artifact falha com `NoSuchBucket`. Feito isso, a API passa a usar `S3BlobStore` a partir do próximo start.
 
 Para testes automatizados, `packages/persistence/src/blob/s3-testing.ts` sobe um container MinIO efêmero via `testcontainers` (mesma política skip-sem-Docker/throw-em-CI dos demais harnesses de container deste repo) — não é usado em produção, só pelos testes de `s3-blob-store.test.ts`.
 
