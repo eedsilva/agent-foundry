@@ -137,7 +137,7 @@ export class ScoreBasedModelRouter implements ModelRouter {
     if (!constraints) return null;
     const health = constraints.providerHealth?.get(model.provider);
     const rl = health?.rateLimit;
-    if (rl && rl.remaining === 0 && rl.resetAt && new Date(rl.resetAt).getTime() > Date.now()) {
+    if (rl?.resetAt && new Date(rl.resetAt).getTime() > Date.now()) {
       return `rate-limited until ${rl.resetAt}`;
     }
     const budget = constraints.budget;
