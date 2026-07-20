@@ -31,7 +31,6 @@ describe('model override request helpers', () => {
             id: 'override-1',
             runId: 'run-1',
             sequence: 1,
-            modelId: 'codex-fast',
             createdAt: '2026-07-16T00:00:00.000Z',
             ...modelOverrideRequest(models, { kind: 'run' }, audit),
           },

@@ -14,6 +14,8 @@ import {
   PreviewEvidenceSchema,
   PreviewFailureDiagnosticSchema,
   PreviewLogPageSchema,
+  PreviewSelectionRequestSchema,
+  PreviewSelectionResultSchema,
   PreviewSessionReferenceSchema,
   PreviewSessionSchema,
   type PreviewSession,
@@ -884,5 +886,75 @@ describe('browser verification contracts', () => {
         ],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('PreviewSelectionResultSchema', () => {
+  it('accepts a resolved result with a file and no candidates/screenshot', () => {
+    const result = PreviewSelectionResultSchema.parse({
+      status: 'resolved',
+      domPath: 'div[1]>span[1]',
+      file: 'src/App.tsx',
+    });
+    expect(result.file).toBe('src/App.tsx');
+  });
+
+  it('rejects a resolved result missing file', () => {
+    expect(() =>
+      PreviewSelectionResultSchema.parse({
+        status: 'resolved',
+        domPath: 'div[1]',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts an ambiguous result with 2+ candidates', () => {
+    const result = PreviewSelectionResultSchema.parse({
+      status: 'ambiguous',
+      domPath: 'div[1]',
+      candidates: ['src/Card.tsx', 'src/Button.tsx'],
+    });
+    expect(result.candidates).toHaveLength(2);
+  });
+
+  it('rejects an ambiguous result with fewer than 2 candidates', () => {
+    expect(() =>
+      PreviewSelectionResultSchema.parse({
+        status: 'ambiguous',
+        domPath: 'div[1]',
+        candidates: ['src/Card.tsx'],
+      }),
+    ).toThrow();
+  });
+
+  it('rejects an unsupported result carrying a file', () => {
+    expect(() =>
+      PreviewSelectionResultSchema.parse({
+        status: 'unsupported',
+        domPath: 'div[1]',
+        file: 'src/App.tsx',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts an unsupported result with a screenshot artifact reference', () => {
+    const result = PreviewSelectionResultSchema.parse({
+      status: 'unsupported',
+      domPath: 'div[1]',
+      screenshot: { name: 'selection-42.png', revision: 1, sha256: 'a'.repeat(64) },
+    });
+    expect(result.screenshot?.name).toBe('selection-42.png');
+  });
+});
+
+describe('PreviewSelectionRequestSchema', () => {
+  it('accepts a raw client payload with zero or more candidates', () => {
+    const request = PreviewSelectionRequestSchema.parse({
+      previewUrl: 'http://127.0.0.1:4000/preview/session-1/?token=abc',
+      domPath: 'div[1]',
+      boundingBox: { x: 0, y: 0, width: 10, height: 10 },
+      candidates: [{ fileName: 'src/App.tsx', line: 3, column: 5, componentName: 'App' }],
+    });
+    expect(request.candidates).toHaveLength(1);
   });
 });

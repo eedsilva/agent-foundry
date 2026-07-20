@@ -1827,3 +1827,32 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(evidence.video!.byteLength).toBeGreaterThan(0);
   });
 }, BROWSER_TEST_TIMEOUT_MS);
+
+describe('captureSelectionScreenshot', () => {
+  it('returns a PNG buffer clipped to the given region', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        '<html><body style="margin:0"><div style="width:50px;height:50px;background:red"></div></body></html>',
+      );
+    });
+    const verifier = new PlaywrightBrowserVerifier();
+    const buffer = await verifier.captureSelectionScreenshot({
+      url: `${origin}/`,
+      clip: { x: 0, y: 0, width: 50, height: 50 },
+      viewport: { width: 200, height: 200 },
+    });
+    expect(buffer).not.toBeNull();
+    expect(buffer?.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a'); // PNG magic bytes
+  });
+
+  it('returns null when navigation fails', async () => {
+    const verifier = new PlaywrightBrowserVerifier();
+    const buffer = await verifier.captureSelectionScreenshot({
+      url: 'http://127.0.0.1:1/', // nothing listens here
+      clip: { x: 0, y: 0, width: 10, height: 10 },
+      viewport: { width: 100, height: 100 },
+    });
+    expect(buffer).toBeNull();
+  });
+});

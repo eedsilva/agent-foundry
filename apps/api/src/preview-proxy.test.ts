@@ -294,3 +294,75 @@ describe('preview reverse proxy', () => {
     expect(upgraded).toBe(true);
   }, 20_000);
 });
+
+describe('inspector script injection', () => {
+  async function startPreviewWithHtmlFixture(
+    baseUrl: string,
+    runtime: Runtime,
+    script: string,
+    id: string,
+  ) {
+    const projectResponse = await fetch(`${baseUrl}/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: `Inject ${id}`, prd: 'x'.repeat(60) }),
+    });
+    const { project } = (await projectResponse.json()) as { project: { id: string } };
+    await runtime.workspaces.ensure(project.id);
+    const workspacePath = runtime.workspaces.workspacePath(project.id);
+    await writeFile(join(workspacePath, 'server.mjs'), script);
+    await writeFile(
+      join(workspacePath, 'package.json'),
+      JSON.stringify({ scripts: { dev: 'node server.mjs' } }),
+    );
+    const startResponse = await fetch(`${baseUrl}/projects/${project.id}/preview`, {
+      method: 'POST',
+    });
+    const started = (await startResponse.json()) as { session: { id: string }; url: string };
+    cleanups.push(() => runtime.previewService.stop(started.session.id).then(() => undefined));
+    return started;
+  }
+
+  const HTML_FIXTURE = `
+import { createServer } from 'node:http';
+const port = Number(process.env.PORT ?? 0);
+createServer((_req, res) => {
+  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+  res.end('<html><body><div>hello</div></body></html>');
+}).listen(port, '127.0.0.1', () => console.log('  VITE fixture  ready\\n\\n  ➜  Local:   http://127.0.0.1:' + port + '/\\n'));
+`;
+
+  const JSON_FIXTURE = `
+import { createServer } from 'node:http';
+const port = Number(process.env.PORT ?? 0);
+createServer((_req, res) => {
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ ok: true }));
+}).listen(port, '127.0.0.1', () => console.log('  VITE fixture  ready\\n\\n  ➜  Local:   http://127.0.0.1:' + port + '/\\n'));
+`;
+
+  it('injects the inspector script into a text/html response before </body>', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const started = await startPreviewWithHtmlFixture(baseUrl, runtime, HTML_FIXTURE, 'html');
+    const body = await fetch(started.url).then((response) => response.text());
+    expect(body).toContain('af:selection:start');
+    expect(body.indexOf('af:selection:start')).toBeLessThan(body.indexOf('</body>'));
+    // Regression check: injectInspectorScript used to pass the script tag as a
+    // *string* replacement to html.replace('</body>', ...), and the embedded
+    // findReactFiber source contains the literal "__reactFiber$" — the "$'"
+    // there is a special string-replacement pattern (insert the text after
+    // the match), so it silently overwrote that "$" with whatever followed
+    // </body> in the source (here, "</html>"), corrupting the script into
+    // invalid JS. Assert the "$" survives intact (quote style is transform-
+    // dependent — esbuild emits double quotes, tsc keeps single — so match
+    // only the part the bug actually corrupts).
+    expect(body).toContain('__reactFiber$');
+  });
+
+  it('does not touch a non-HTML response', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const started = await startPreviewWithHtmlFixture(baseUrl, runtime, JSON_FIXTURE, 'json');
+    const body = await fetch(started.url).then((response) => response.text());
+    expect(body).toBe('{"ok":true}');
+  });
+});

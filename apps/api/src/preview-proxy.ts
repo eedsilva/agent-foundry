@@ -9,6 +9,7 @@ import type { Socket } from 'node:net';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Runtime } from '@agent-foundry/composition';
 import { isLoopbackHost } from '@agent-foundry/composition';
+import { buildInspectorScript } from './preview-inspector-script.js';
 
 // Keep-alive so proxied asset/HMR-poll bursts reuse one upstream TCP connection
 // instead of opening a fresh socket to the dev server per request.
@@ -27,12 +28,18 @@ const HOP_BY_HOP = new Set([
 
 export function registerPreviewProxy(app: FastifyInstance, runtime: Runtime): void {
   const allowedPort = String(runtime.config.apiPort);
+  // webOrigin is CORS's comma-separated allow-list (see app.ts); the inspector
+  // script's parent-origin check is a single strict `===`. Built once at
+  // startup, not per-request: parentOrigin is fixed for the process lifetime,
+  // and buildInspectorScript's output is a pure function of it.
+  const parentOrigin = runtime.config.webOrigin.split(',')[0]?.trim() ?? runtime.config.webOrigin;
+  const inspectorScriptTag = `<script>${buildInspectorScript(parentOrigin)}</script>`;
 
   app.all('/preview/:sessionId', (request, reply) =>
-    handleHttp(request, reply, runtime, allowedPort),
+    handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
   );
   app.all('/preview/:sessionId/*', (request, reply) =>
-    handleHttp(request, reply, runtime, allowedPort),
+    handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
   );
 
   app.server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
@@ -45,6 +52,7 @@ async function handleHttp(
   reply: FastifyReply,
   runtime: Runtime,
   allowedPort: string,
+  inspectorScriptTag: string,
 ): Promise<void> {
   // DNS-rebinding defense: reject anything whose Host header isn't this API's own
   // loopback host:port. This runs BEFORE any token check or upstream connection.
@@ -81,7 +89,15 @@ async function handleHttp(
       headers: sanitizeRequestHeaders(request.headers, sessionId),
       agent: upstreamAgent,
     },
-    (upstreamRes) => respondFromUpstream(upstreamRes, raw, sessionId, resolved.port, cookieValue),
+    (upstreamRes) =>
+      respondFromUpstream(
+        upstreamRes,
+        raw,
+        sessionId,
+        resolved.port,
+        cookieValue,
+        inspectorScriptTag,
+      ),
   );
   upstreamReq.on('error', () => {
     if (!raw.headersSent) raw.writeHead(502);
@@ -96,6 +112,7 @@ function respondFromUpstream(
   sessionId: string,
   upstreamPort: number,
   cookieValue: string | undefined,
+  inspectorScriptTag: string,
 ): void {
   const headers = sanitizeResponseHeaders(upstreamRes.headers, sessionId, upstreamPort);
   if (cookieValue) {
@@ -105,8 +122,41 @@ function respondFromUpstream(
       ? [...(Array.isArray(existing) ? existing : [existing]), cookie]
       : cookie;
   }
-  raw.writeHead(upstreamRes.statusCode ?? 502, headers);
-  upstreamRes.pipe(raw);
+  const contentType = headers['content-type'];
+  const isHtml = typeof contentType === 'string' && contentType.startsWith('text/html');
+  if (!isHtml) {
+    raw.writeHead(upstreamRes.statusCode ?? 502, headers);
+    upstreamRes.pipe(raw);
+    return;
+  }
+  // ponytail: buffers the full HTML body in memory before forwarding (loses
+  // today's fully-streamed proxying for HTML documents only — JS/CSS/HMR
+  // chunks are untouched above). Fine for typical page sizes; revisit with a
+  // streaming </body> boundary scan if huge SSR pages ever matter.
+  const chunks: Buffer[] = [];
+  upstreamRes.on('data', (chunk: Buffer) => chunks.push(chunk));
+  upstreamRes.on('end', () => {
+    const html = injectInspectorScript(Buffer.concat(chunks).toString('utf8'), inspectorScriptTag);
+    const rewritten = Buffer.from(html, 'utf8');
+    delete headers['content-length']; // body length changed; let Node recompute framing
+    raw.writeHead(upstreamRes.statusCode ?? 502, {
+      ...headers,
+      'content-length': String(rewritten.byteLength),
+    });
+    raw.end(rewritten);
+  });
+  upstreamRes.on('error', () => raw.destroy());
+}
+
+function injectInspectorScript(html: string, inspectorScriptTag: string): string {
+  if (!html.includes('</body>')) return html;
+  // Replacement must be a function, not a string: String.replace interprets
+  // "$"-sequences in a *string* replacement specially (e.g. the literal
+  // `__reactFiber$` inside the embedded findReactFiber source is followed by
+  // a quote, so "$'" was parsed as the "insert text after the match" pattern
+  // and silently corrupted the injected script). A function's return value is
+  // inserted verbatim, with no $-pattern interpretation.
+  return html.replace('</body>', () => `${inspectorScriptTag}</body>`);
 }
 
 async function handleUpgrade(

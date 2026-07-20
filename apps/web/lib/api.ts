@@ -15,6 +15,8 @@ import type {
   Message,
   Operation,
   PreviewLogPage,
+  PreviewSelectionRequest,
+  PreviewSelectionResult,
   PreviewSession,
   Project,
   ProjectDetailResponse,
@@ -335,6 +337,17 @@ export function stopPreview(
   return api<{ session: PreviewSession }>(
     `/projects/${encodeURIComponent(projectId)}/preview/${encodeURIComponent(sessionId)}/stop`,
     { method: 'POST' },
+  );
+}
+
+export function resolvePreviewSelection(
+  projectId: string,
+  sessionId: string,
+  input: PreviewSelectionRequest,
+): Promise<PreviewSelectionResult> {
+  return api<PreviewSelectionResult>(
+    `/projects/${encodeURIComponent(projectId)}/preview/${encodeURIComponent(sessionId)}/selection`,
+    { method: 'POST', body: JSON.stringify(input) },
   );
 }
 

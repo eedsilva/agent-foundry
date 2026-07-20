@@ -68,7 +68,7 @@ export function policyHash(policy: ProjectPolicy): string {
   return sha256(stableStringify(policy));
 }
 
-export function sha256(value: string): string {
+export function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
