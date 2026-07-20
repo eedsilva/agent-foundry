@@ -9,7 +9,7 @@ import type {
   ProviderRateLimit,
 } from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
-import { ExecutionError, RunCancelledError, errorMessage } from '@agent-foundry/domain';
+import { ExecutionError, RunCancelledError, errorMessage, withSpan } from '@agent-foundry/domain';
 import {
   extractExecutedModel,
   extractRateLimit,
@@ -89,7 +89,12 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     const startedAt = Date.now();
     const invocation = await this.invocation(request);
     try {
-      return await this.executeInvocation(request, invocation, startedAt, signal, onEvent);
+      // Command name only — args/prompt text must never land on a span.
+      return await withSpan(
+        'foundry.cli',
+        { 'foundry.provider': this.provider, 'foundry.cli.command': invocation.command },
+        () => this.executeInvocation(request, invocation, startedAt, signal, onEvent),
+      );
     } finally {
       const directories = new Set(
         [invocation.outputDirectory, invocation.metadataDirectory].filter((path): path is string =>

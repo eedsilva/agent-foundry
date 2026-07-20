@@ -18,6 +18,7 @@ import {
   redactString,
   redactUnknown,
   transitionPreviewSession,
+  withSpan,
   type ArtifactStore,
   type Clock,
   type EventStore,
@@ -113,7 +114,11 @@ export class PreviewService {
       session = await this.persist(session);
 
       try {
-        session = await this.runner.start(session);
+        session = await withSpan(
+          'foundry.preview',
+          { 'foundry.preview.session_id': session.id },
+          () => this.runner.start(session),
+        );
       } catch (error) {
         const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
           failurePhase: 'start',

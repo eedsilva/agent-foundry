@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs';
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import type { AgentExecutionRequest, Provider } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
 
@@ -322,5 +325,63 @@ describe('BaseCliExecutor output', () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+// The orchestrator's mock-executor test harness never reaches this file (see
+// tracing-integration.test.ts), so the foundry.cli span is exercised here
+// directly against a stubbed execa process instead.
+describe('BaseCliExecutor foundry.cli span', () => {
+  let exporter: InMemorySpanExporter;
+  let provider: NodeTracerProvider;
+
+  beforeAll(() => {
+    exporter = new InMemorySpanExporter();
+    provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+    provider.register();
+  });
+
+  afterEach(() => {
+    exporter.reset();
+  });
+
+  afterAll(async () => {
+    await provider.shutdown();
+    trace.disable();
+    context.disable();
+    propagation.disable();
+  });
+
+  it('records the command name only, never args, and succeeds', async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify(completedArtifact),
+    });
+
+    await new FixtureExecutor(1_000_000).execute(request);
+
+    const spans = exporter.getFinishedSpans();
+    const cliSpan = spans.find((span) => span.name === 'foundry.cli');
+    expect(cliSpan).toBeDefined();
+    expect(cliSpan?.attributes).toEqual({
+      'foundry.provider': 'codex',
+      'foundry.cli.command': 'fixture-cli',
+    });
+    expect(cliSpan?.status.code).not.toBe(SpanStatusCode.ERROR);
+  });
+
+  it('marks the span ERROR on a nonzero exit without leaking stdout/stderr into attributes', async () => {
+    execaMock.mockResolvedValueOnce({ exitCode: 1, stderr: 'boom', stdout: '' });
+
+    await expect(new FixtureExecutor(1_000_000).execute(request)).rejects.toThrow();
+
+    const spans = exporter.getFinishedSpans();
+    const cliSpan = spans.find((span) => span.name === 'foundry.cli');
+    expect(cliSpan?.status.code).toBe(SpanStatusCode.ERROR);
+    expect(Object.keys(cliSpan?.attributes ?? {})).toEqual([
+      'foundry.provider',
+      'foundry.cli.command',
+    ]);
   });
 });

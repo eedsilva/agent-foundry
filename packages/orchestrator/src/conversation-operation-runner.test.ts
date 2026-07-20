@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import type {
   ArtifactStore,
   Clock,
@@ -755,5 +758,86 @@ describe('ConversationOperationRunner context compilation', () => {
     await runner.run('project-1', runId, operationId);
 
     expect((await runs.get(runId))?.status).toBe('completed');
+  });
+});
+
+describe('ConversationOperationRunner foundry.operation span', () => {
+  let exporter: InMemorySpanExporter;
+  let provider: NodeTracerProvider;
+
+  beforeAll(() => {
+    exporter = new InMemorySpanExporter();
+    provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+    provider.register();
+  });
+
+  afterEach(() => {
+    exporter.reset();
+  });
+
+  afterAll(async () => {
+    await provider.shutdown();
+    trace.disable();
+    context.disable();
+    propagation.disable();
+  });
+
+  it('wraps a successful run in a foundry.operation span', async () => {
+    const { runs, conversations, runner } = setup();
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+
+    await runner.run('project-1', runId, operationId);
+
+    const span = exporter.getFinishedSpans().find((item) => item.name === 'foundry.operation');
+    expect(span).toBeDefined();
+    expect(span?.attributes).toMatchObject({
+      'foundry.operation.id': operationId,
+      'foundry.operation.kind': 'build',
+    });
+    expect(span?.status.code).not.toBe(SpanStatusCode.ERROR);
+  });
+
+  it('marks the span ERROR with force_sample when the run fails', async () => {
+    const workspaces = new FakeWorkspaces({ on: true });
+    const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
+    const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
+    const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
+    const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
+    const stepEvents = new InMemoryStepEvents();
+    const conversations = new MemoryConversations();
+    const executor = new ControllableExecutor(
+      { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
+      workspaces,
+    );
+    const executors: ExecutorRegistry = {
+      get: () => new AgentExecutorFromExecutionPlane(executor),
+      health: () => Promise.resolve([]),
+    };
+    const runner = new ConversationOperationRunner(
+      runs,
+      stepRuns,
+      stepAttempts,
+      artifacts,
+      events,
+      stepEvents,
+      harnessRepo,
+      router,
+      metrics,
+      executors,
+      workspaces,
+      conversations,
+      new MemoryProjectVersions(),
+      new FixedClock(),
+      new SequentialIds(),
+      { agentTimeoutMs: 60_000 },
+    );
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+
+    await runner.run('project-1', runId, operationId);
+
+    const span = exporter.getFinishedSpans().find((item) => item.name === 'foundry.operation');
+    expect(span?.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span?.attributes['foundry.force_sample']).toBe(true);
   });
 });

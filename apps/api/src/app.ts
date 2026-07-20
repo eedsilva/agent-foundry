@@ -1,8 +1,10 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { context, trace, SpanStatusCode, type Span } from '@opentelemetry/api';
 import type { Runtime } from '@agent-foundry/composition';
 import { listRisks, getRiskById } from '@agent-foundry/composition';
+import { TRACER_NAME } from '@agent-foundry/domain';
 import {
   BranchVersionRequestSchema,
   ClassifyMessageResponseSchema,
@@ -75,6 +77,36 @@ export async function buildApp(
   await app.register(cors, {
     origin: allowedOrigins,
     methods: ['GET', 'POST', 'OPTIONS'],
+  });
+
+  // ponytail: SSE routes (identified by their `/stream` suffix) hijack the
+  // reply (see streamSse below), and Fastify never runs onResponse for a
+  // hijacked reply — a span opened here for those routes would never end. The
+  // simplest correct cut is to skip request spans on hijacked routes entirely;
+  // add explicit end-at-headers-sent instrumentation in streamSse if SSE
+  // request-level tracing becomes a requirement.
+  const requestSpans = new WeakMap<FastifyRequest, Span>();
+  app.addHook('onRequest', (request, _reply, done) => {
+    if (request.routeOptions.url?.endsWith('/stream')) {
+      done();
+      return;
+    }
+    const span = trace.getTracer(TRACER_NAME).startSpan('foundry.request', {
+      attributes: {
+        'http.method': request.method,
+        'http.route': request.routeOptions.url ?? request.url,
+      },
+    });
+    requestSpans.set(request, span);
+    context.with(trace.setSpan(context.active(), span), done);
+  });
+  app.addHook('onResponse', async (request, reply) => {
+    const span = requestSpans.get(request);
+    if (!span) return;
+    requestSpans.delete(request);
+    span.setAttribute('http.status_code', reply.statusCode);
+    if (reply.statusCode >= 500) span.setStatus({ code: SpanStatusCode.ERROR });
+    span.end();
   });
 
   app.setErrorHandler((error, _request, reply) => {

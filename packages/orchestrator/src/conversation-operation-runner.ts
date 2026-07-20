@@ -7,12 +7,14 @@ import type {
   WorkflowRun,
 } from '@agent-foundry/contracts';
 import { AGENT_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
+import { SpanStatusCode, type Span } from '@opentelemetry/api';
 import {
   NotFoundError,
   errorMessage,
   transitionStepAttempt,
   transitionStepRun,
   transitionWorkflowRun,
+  withSpan,
   type ArtifactStore,
   type Clock,
   type ConversationRepository,
@@ -60,9 +62,21 @@ export class ConversationOperationRunner {
   ) {}
 
   async run(projectId: string, runId: string, operationId: string): Promise<void> {
+    return withSpan('foundry.operation', { 'foundry.operation.id': operationId }, (span) =>
+      this.runTraced(projectId, runId, operationId, span),
+    );
+  }
+
+  private async runTraced(
+    projectId: string,
+    runId: string,
+    operationId: string,
+    span: Span,
+  ): Promise<void> {
     const initialRun = await this.requireRun(runId);
     const operation = await this.requireOperation(projectId, operationId);
     const kind: 'plan' | 'build' = operation.kind === 'build' ? 'build' : 'plan';
+    span.setAttribute('foundry.operation.kind', kind);
     const message = await this.requireMessage(projectId, operation.messageId);
     const planArtifact = await this.loadPlanArtifact(projectId, operation);
     const changeRequest = operation.changeRequestId
@@ -280,6 +294,8 @@ export class ConversationOperationRunner {
         // against records that have moved past these local versions.
         return;
       }
+      span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+      span.setAttribute('foundry.force_sample', true);
       if (checkpoint) {
         try {
           await this.workspaces.rollback(projectId, checkpoint);

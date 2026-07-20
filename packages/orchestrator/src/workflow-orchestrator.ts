@@ -1,3 +1,4 @@
+import { SpanStatusCode, type Span } from '@opentelemetry/api';
 import type {
   AgentArtifact,
   AgentExecutionRequest,
@@ -73,6 +74,7 @@ import {
   transitionStepRun,
   transitionWorkflowRun,
   VersionConflictError,
+  withSpan,
 } from '@agent-foundry/domain';
 import type { ProjectVersionService } from './project-version-service.js';
 import { buildTaskProfile } from './task-profiler.js';
@@ -133,6 +135,17 @@ export class WorkflowOrchestrator {
   ) {}
 
   async runProject(projectId: string, workflowId?: string, requestedRunId?: string): Promise<void> {
+    return withSpan('foundry.run', { 'foundry.project.id': projectId }, (span) =>
+      this.runProjectTraced(projectId, span, workflowId, requestedRunId),
+    );
+  }
+
+  private async runProjectTraced(
+    projectId: string,
+    span: Span,
+    workflowId?: string,
+    requestedRunId?: string,
+  ): Promise<void> {
     const project = await this.projects.get(projectId);
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
     const workflow = await this.workflows.get(workflowId ?? project.workflowId);
@@ -143,6 +156,8 @@ export class WorkflowOrchestrator {
         `Run ${run.id} does not belong to project/workflow ${projectId}/${workflow.id}`,
       );
     }
+    span.setAttribute('foundry.run.id', run.id);
+    span.setAttribute('foundry.workflow.id', workflow.id);
     // A ceiling can crash after the terminal state write but before summary
     // sync or event append, so failed redelivery finishes those idempotently.
     if (run.status === 'failed' && run.execution?.ceiling) {
@@ -735,6 +750,22 @@ export class WorkflowOrchestrator {
     node: ApprovalGateStep,
     runId: string,
   ): Promise<StoredArtifact> {
+    return withSpan(
+      'foundry.step',
+      {
+        'foundry.step.node_id': node.id,
+        'foundry.step.id': node.id,
+        'foundry.step.type': 'approval-gate',
+      },
+      () => this.executeApprovalGateTraced(project, node, runId),
+    );
+  }
+
+  private async executeApprovalGateTraced(
+    project: Project,
+    node: ApprovalGateStep,
+    runId: string,
+  ): Promise<StoredArtifact> {
     const reviewed = await this.artifacts.getLatest(project.id, node.artifact);
     if (!reviewed) throw new NotFoundError(`Missing input artifact(s): ${node.artifact}`);
     const idempotencyKey = approvalGateIdempotencyKey({
@@ -852,6 +883,24 @@ export class WorkflowOrchestrator {
     runId: string,
     signal: AbortSignal,
   ): Promise<StoredArtifact> {
+    return withSpan(
+      'foundry.step',
+      {
+        'foundry.step.node_id': node.id,
+        'foundry.step.id': node.id,
+        'foundry.step.type': 'quality-loop',
+      },
+      () => this.executeQualityLoopTraced(project, workflow, node, runId, signal),
+    );
+  }
+
+  private async executeQualityLoopTraced(
+    project: Project,
+    workflow: WorkflowDefinition,
+    node: QualityLoopStep,
+    runId: string,
+    signal: AbortSignal,
+  ): Promise<StoredArtifact> {
     let qualitySubject: StoredArtifact | null = null;
     let browserPlan: ArtifactReference | undefined;
     if (node.setup) {
@@ -940,6 +989,37 @@ export class WorkflowOrchestrator {
   }
 
   private async executeStep(
+    project: Project,
+    workflow: WorkflowDefinition,
+    step: ExecutableStep,
+    runId: string,
+    nodeId: string,
+    signal: AbortSignal,
+    iteration?: number,
+    pinnedArtifacts: ArtifactReference[] = [],
+  ): Promise<StoredArtifact> {
+    return withSpan(
+      'foundry.step',
+      {
+        'foundry.step.node_id': nodeId,
+        'foundry.step.id': step.id,
+        'foundry.step.type': step.type,
+      },
+      () =>
+        this.executeStepTraced(
+          project,
+          workflow,
+          step,
+          runId,
+          nodeId,
+          signal,
+          iteration,
+          pinnedArtifacts,
+        ),
+    );
+  }
+
+  private async executeStepTraced(
     project: Project,
     workflow: WorkflowDefinition,
     step: ExecutableStep,
@@ -1311,7 +1391,7 @@ export class WorkflowOrchestrator {
       );
     }
     const timestamp = this.clock.now().toISOString();
-    let attempt: StepAttempt = {
+    const attempt: StepAttempt = {
       id: this.ids.next(),
       runId,
       stepRunId: stepRun.id,
@@ -1335,6 +1415,40 @@ export class WorkflowOrchestrator {
       outputArtifacts: [],
     };
     await this.stepAttempts.create(attempt);
+    return withSpan(
+      'foundry.attempt',
+      {
+        'foundry.attempt.id': attempt.id,
+        'foundry.attempt.sequence': attempt.sequence,
+        'foundry.model.id': attempt.model,
+        'foundry.provider': attempt.provider,
+      },
+      (span) =>
+        this.executeVerifyStepAttempt(
+          project,
+          step,
+          runId,
+          stepRun,
+          policy,
+          signal,
+          idempotencyKey,
+          attempt,
+          span,
+        ),
+    );
+  }
+
+  private async executeVerifyStepAttempt(
+    project: Project,
+    step: VerifyStep,
+    runId: string,
+    stepRun: StepRun,
+    policy: ProjectPolicy,
+    signal: AbortSignal,
+    idempotencyKey: string,
+    attempt: StepAttempt,
+    span: Span,
+  ): Promise<StoredArtifact> {
     const startedAt = Date.now();
     try {
       const report = await this.verifier.verify(
@@ -1386,6 +1500,10 @@ export class WorkflowOrchestrator {
       const error = await this.classifyFailure(runId, signal, caught);
       if (attempt.status === 'running') {
         const cancelled = isCancellation(error, signal);
+        if (!cancelled) {
+          span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+          span.setAttribute('foundry.force_sample', true);
+        }
         await this.stepAttempts.update(
           transitionStepAttempt(attempt, cancelled ? 'cancelled' : 'failed', this.clock.now(), {
             durationMs: Date.now() - startedAt,
@@ -1410,12 +1528,13 @@ export class WorkflowOrchestrator {
     browserPlan: StoredArtifact,
     iteration?: number,
   ): Promise<StoredArtifact> {
-    if (!this.browserVerification) {
+    const browserVerification = this.browserVerification;
+    if (!browserVerification) {
       throw new ExecutionError('Browser verification is not configured');
     }
     const timestamp = this.clock.now().toISOString();
     const planReference = artifactReference(browserPlan);
-    let attempt: StepAttempt = {
+    const attempt: StepAttempt = {
       id: this.ids.next(),
       runId,
       stepRunId: stepRun.id,
@@ -1439,11 +1558,51 @@ export class WorkflowOrchestrator {
       outputArtifacts: [],
     };
     await this.stepAttempts.create(attempt);
+    return withSpan(
+      'foundry.attempt',
+      {
+        'foundry.attempt.id': attempt.id,
+        'foundry.attempt.sequence': attempt.sequence,
+        'foundry.model.id': attempt.model,
+        'foundry.provider': attempt.provider,
+      },
+      (span) =>
+        this.executeBrowserVerifyStepAttempt(
+          project,
+          step,
+          runId,
+          stepRun,
+          policy,
+          signal,
+          idempotencyKey,
+          planReference,
+          browserPlan,
+          browserVerification,
+          attempt,
+          span,
+        ),
+    );
+  }
+
+  private async executeBrowserVerifyStepAttempt(
+    project: Project,
+    step: VerifyStep,
+    runId: string,
+    stepRun: StepRun,
+    policy: ProjectPolicy,
+    signal: AbortSignal,
+    idempotencyKey: string,
+    planReference: ArtifactReference,
+    browserPlan: StoredArtifact,
+    browserVerification: BrowserVerificationCoordinator,
+    attempt: StepAttempt,
+    span: Span,
+  ): Promise<StoredArtifact> {
     const startedAt = Date.now();
     try {
       let artifact = await this.findArtifactByKey(project.id, step.outputArtifact, idempotencyKey);
       if (!artifact) {
-        const report = await this.browserVerification.verify(
+        const report = await browserVerification.verify(
           {
             projectId: project.id,
             workspacePath: this.workspaces.workspacePath(project.id),
@@ -1523,6 +1682,10 @@ export class WorkflowOrchestrator {
       const error = await this.classifyFailure(runId, signal, caught);
       if (attempt.status === 'running') {
         const cancelled = isCancellation(error, signal);
+        if (!cancelled) {
+          span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+          span.setAttribute('foundry.force_sample', true);
+        }
         await this.stepAttempts.update(
           transitionStepAttempt(attempt, cancelled ? 'cancelled' : 'failed', this.clock.now(), {
             durationMs: Date.now() - startedAt,
@@ -1624,7 +1787,7 @@ export class WorkflowOrchestrator {
       if (checkpoint && index > 0) await this.workspaces.rollback(project.id, checkpoint);
 
       const timestamp = this.clock.now().toISOString();
-      let attempt: StepAttempt = {
+      const attempt: StepAttempt = {
         id: this.ids.next(),
         runId,
         stepRunId: stepRun.id,
@@ -1655,179 +1818,243 @@ export class WorkflowOrchestrator {
         outputArtifacts: [],
       };
       await this.stepAttempts.create(attempt);
-      let requestMarkdown = '';
-      const attemptStartedAt = Date.now();
-      try {
-        requestMarkdown = compileRequestMarkdown({
-          projectId: project.id,
-          runId,
-          stepRunId: stepRun.id,
-          attemptId: attempt.id,
-          workflowId: workflow.id,
-          stack: workflow.stack,
-          step,
-          harness,
-          artifacts: inputArtifacts,
-          workspacePath: this.workspaces.workspacePath(project.id),
-        });
-        await this.workspaces.writeRunContext({
-          projectId: project.id,
-          runId,
-          stepRunId: stepRun.id,
-          attemptId: attempt.id,
-          requestMarkdown,
-          outputSchema,
-        });
-        const workspaceRef = checkpoint ?? (await this.workspaces.head(project.id)) ?? runId;
-        const result = await this.executeCandidate(
-          project,
-          step,
-          runId,
-          stepRun.id,
-          attempt.id,
-          candidate,
-          profile,
-          signal,
-          outputSchema,
-          workspaceRef,
-        );
-        await this.assertExecutionMayContinue(runId, signal);
-        const commit = step.mutatesWorkspace
-          ? await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`)
-          : null;
-        const executionRoute: RouteDecision = {
-          ...route,
-          executed: candidate,
-          attemptedModelIds: candidates.slice(0, index + 1).map((attempted) => attempted.model.id),
-        };
-        const artifact = await this.artifacts.put({
-          projectId: project.id,
-          name: step.outputArtifact,
-          content: result.output,
-          createdBy: `${step.role}:${candidate.model.provider}/${candidate.model.model || 'default'}`,
-          runId,
-          stepRunId: stepRun.id,
-          attemptId: attempt.id,
-          routeDecision: executionRoute,
-          idempotencyKey,
-        });
-        const auditArtifact = await this.persistRunRecord(
-          project.id,
-          step,
-          result,
-          candidate.model.id,
-          runId,
-          stepRun.id,
-          attempt.id,
-          requestMarkdown,
-          harness,
-          inputArtifacts,
-        );
-        attempt = await this.stepAttempts.update(
-          transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
-            durationMs: result.durationMs,
-            ...(result.executedModel ? { executedModel: result.executedModel } : {}),
-            ...(result.usage ? { usage: result.usage } : {}),
-            ...(commit ? { commit } : {}),
-            routeDecision: executionRoute,
-            outputArtifacts: [artifactReference(artifact), artifactReference(auditArtifact)],
-          }),
-          attempt.version,
-        );
-        await this.appendDecisions(project.id, step, result.output, runId, stepRun.id, attempt.id);
-        await this.emitArtifactCreated(project.id, artifact, step.id, runId);
-        await this.emit(project.id, 'agent.completed', result.output.summary, {
-          nodeId: step.id,
-          runId,
-          data: {
-            modelId: candidate.model.id,
-            provider: candidate.model.provider,
-            durationMs: result.durationMs,
-            status: result.output.status,
-            attemptId: attempt.id,
-          },
-        });
-        if (commit && this.versions) {
-          await this.versions.recordFromStep({
-            projectId: project.id,
-            runId,
-            stepRunId: stepRun.id,
-            attemptId: attempt.id,
-            commit,
-          });
-        }
-        return artifact;
-      } catch (caught) {
-        const error = await this.classifyFailure(runId, signal, caught);
-        if (attempt.status !== 'running') throw error;
-        if (isCancellation(error, signal)) {
-          await this.stepAttempts.update(
-            transitionStepAttempt(attempt, 'cancelled', this.clock.now(), {
-              durationMs: Date.now() - attemptStartedAt,
-            }),
-            attempt.version,
-          );
-          if (checkpoint) await this.workspaces.rollback(project.id, checkpoint);
-          throw error instanceof RunCancelledError ? error : new RunCancelledError(runId);
-        }
-        lastError = error;
-        let failureArtifact: StoredArtifact | undefined;
-        let failureRecordError: unknown;
-        try {
-          failureArtifact = await this.persistFailureRecord(
-            project.id,
+
+      // A fallback candidate (index > 0) is already known to be a retry when
+      // its span starts; an ordinary first-candidate failure marks force_sample
+      // reactively (see executeAgentAttempt's catch) once it's known to fail.
+      const outcome = await withSpan(
+        'foundry.attempt',
+        {
+          'foundry.attempt.id': attempt.id,
+          'foundry.attempt.sequence': attempt.sequence,
+          'foundry.model.id': candidate.model.id,
+          'foundry.provider': candidate.model.provider,
+          ...(index > 0 ? { 'foundry.force_sample': true } : {}),
+        },
+        (span) =>
+          this.executeAgentAttempt(
+            project,
+            workflow,
             step,
             runId,
-            stepRun.id,
-            attempt.id,
-            index + 1,
-            candidate.model.id,
-            candidate.model.provider,
-            error,
-            Date.now() - attemptStartedAt,
-            requestMarkdown,
+            stepRun,
+            signal,
+            checkpoint,
+            candidate,
+            candidates,
+            index,
+            attempt,
+            route,
             harness,
+            outputSchema,
             inputArtifacts,
-          );
-        } catch (recordError) {
-          failureRecordError = recordError;
-        }
-        attempt = await this.stepAttempts.update(
-          transitionStepAttempt(attempt, 'failed', this.clock.now(), {
-            durationMs: Date.now() - attemptStartedAt,
-            error: runError(error),
-            ...(failureArtifact ? { outputArtifacts: [artifactReference(failureArtifact)] } : {}),
-          }),
-          attempt.version,
-        );
-        if (failureRecordError) throw failureRecordError;
-        if (error instanceof EmergencyCeilingError) throw error;
-        await this.metrics.record({
-          modelId: candidate.model.id,
-          taskKind: step.taskKind,
-          role: step.role,
-          taxonomyVersion: profile.taxonomyVersion,
-          category: profile.category,
-          success: false,
-          durationMs: Date.now() - attemptStartedAt,
-        });
-        await this.emit(project.id, 'agent.failed', errorMessage(error), {
-          nodeId: step.id,
-          runId,
-          data: {
-            modelId: candidate.model.id,
-            provider: candidate.model.provider,
-            attempt: index + 1,
-            attemptId: attempt.id,
-          },
-        });
-      }
+            idempotencyKey,
+            profile,
+            span,
+          ),
+      );
+      if (outcome.status === 'succeeded') return outcome.artifact;
+      lastError = outcome.error;
     }
 
     if (checkpoint) await this.workspaces.rollback(project.id, checkpoint);
     throw lastError instanceof Error
       ? lastError
       : new ExecutionError(`All candidates failed for step ${step.id}`);
+  }
+
+  private async executeAgentAttempt(
+    project: Project,
+    workflow: WorkflowDefinition,
+    step: AgentStep,
+    runId: string,
+    stepRun: StepRun,
+    signal: AbortSignal,
+    checkpoint: string | null,
+    candidate: RankedModel,
+    candidates: RankedModel[],
+    index: number,
+    initialAttempt: StepAttempt,
+    route: RouteDecision,
+    harness: HarnessSelection,
+    outputSchema: Record<string, unknown>,
+    inputArtifacts: StoredArtifact[],
+    idempotencyKey: string,
+    profile: TaskProfile,
+    span: Span,
+  ): Promise<
+    { status: 'succeeded'; artifact: StoredArtifact } | { status: 'failed'; error: unknown }
+  > {
+    let attempt = initialAttempt;
+    let requestMarkdown = '';
+    const attemptStartedAt = Date.now();
+    try {
+      requestMarkdown = compileRequestMarkdown({
+        projectId: project.id,
+        runId,
+        stepRunId: stepRun.id,
+        attemptId: attempt.id,
+        workflowId: workflow.id,
+        stack: workflow.stack,
+        step,
+        harness,
+        artifacts: inputArtifacts,
+        workspacePath: this.workspaces.workspacePath(project.id),
+      });
+      await this.workspaces.writeRunContext({
+        projectId: project.id,
+        runId,
+        stepRunId: stepRun.id,
+        attemptId: attempt.id,
+        requestMarkdown,
+        outputSchema,
+      });
+      const workspaceRef = checkpoint ?? (await this.workspaces.head(project.id)) ?? runId;
+      const result = await this.executeCandidate(
+        project,
+        step,
+        runId,
+        stepRun.id,
+        attempt.id,
+        candidate,
+        profile,
+        signal,
+        outputSchema,
+        workspaceRef,
+      );
+      await this.assertExecutionMayContinue(runId, signal);
+      const commit = step.mutatesWorkspace
+        ? await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`)
+        : null;
+      const executionRoute: RouteDecision = {
+        ...route,
+        executed: candidate,
+        attemptedModelIds: candidates.slice(0, index + 1).map((attempted) => attempted.model.id),
+      };
+      const artifact = await this.artifacts.put({
+        projectId: project.id,
+        name: step.outputArtifact,
+        content: result.output,
+        createdBy: `${step.role}:${candidate.model.provider}/${candidate.model.model || 'default'}`,
+        runId,
+        stepRunId: stepRun.id,
+        attemptId: attempt.id,
+        routeDecision: executionRoute,
+        idempotencyKey,
+      });
+      const auditArtifact = await this.persistRunRecord(
+        project.id,
+        step,
+        result,
+        candidate.model.id,
+        runId,
+        stepRun.id,
+        attempt.id,
+        requestMarkdown,
+        harness,
+        inputArtifacts,
+      );
+      attempt = await this.stepAttempts.update(
+        transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
+          durationMs: result.durationMs,
+          ...(result.executedModel ? { executedModel: result.executedModel } : {}),
+          ...(result.usage ? { usage: result.usage } : {}),
+          ...(commit ? { commit } : {}),
+          routeDecision: executionRoute,
+          outputArtifacts: [artifactReference(artifact), artifactReference(auditArtifact)],
+        }),
+        attempt.version,
+      );
+      await this.appendDecisions(project.id, step, result.output, runId, stepRun.id, attempt.id);
+      await this.emitArtifactCreated(project.id, artifact, step.id, runId);
+      await this.emit(project.id, 'agent.completed', result.output.summary, {
+        nodeId: step.id,
+        runId,
+        data: {
+          modelId: candidate.model.id,
+          provider: candidate.model.provider,
+          durationMs: result.durationMs,
+          status: result.output.status,
+          attemptId: attempt.id,
+        },
+      });
+      if (commit && this.versions) {
+        await this.versions.recordFromStep({
+          projectId: project.id,
+          runId,
+          stepRunId: stepRun.id,
+          attemptId: attempt.id,
+          commit,
+        });
+      }
+      return { status: 'succeeded', artifact };
+    } catch (caught) {
+      const error = await this.classifyFailure(runId, signal, caught);
+      if (attempt.status !== 'running') throw error;
+      if (isCancellation(error, signal)) {
+        await this.stepAttempts.update(
+          transitionStepAttempt(attempt, 'cancelled', this.clock.now(), {
+            durationMs: Date.now() - attemptStartedAt,
+          }),
+          attempt.version,
+        );
+        if (checkpoint) await this.workspaces.rollback(project.id, checkpoint);
+        throw error instanceof RunCancelledError ? error : new RunCancelledError(runId);
+      }
+      let failureArtifact: StoredArtifact | undefined;
+      let failureRecordError: unknown;
+      try {
+        failureArtifact = await this.persistFailureRecord(
+          project.id,
+          step,
+          runId,
+          stepRun.id,
+          attempt.id,
+          index + 1,
+          candidate.model.id,
+          candidate.model.provider,
+          error,
+          Date.now() - attemptStartedAt,
+          requestMarkdown,
+          harness,
+          inputArtifacts,
+        );
+      } catch (recordError) {
+        failureRecordError = recordError;
+      }
+      attempt = await this.stepAttempts.update(
+        transitionStepAttempt(attempt, 'failed', this.clock.now(), {
+          durationMs: Date.now() - attemptStartedAt,
+          error: runError(error),
+          ...(failureArtifact ? { outputArtifacts: [artifactReference(failureArtifact)] } : {}),
+        }),
+        attempt.version,
+      );
+      if (failureRecordError) throw failureRecordError;
+      if (error instanceof EmergencyCeilingError) throw error;
+      span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+      span.setAttribute('foundry.force_sample', true);
+      await this.metrics.record({
+        modelId: candidate.model.id,
+        taskKind: step.taskKind,
+        role: step.role,
+        taxonomyVersion: profile.taxonomyVersion,
+        category: profile.category,
+        success: false,
+        durationMs: Date.now() - attemptStartedAt,
+      });
+      await this.emit(project.id, 'agent.failed', errorMessage(error), {
+        nodeId: step.id,
+        runId,
+        data: {
+          modelId: candidate.model.id,
+          provider: candidate.model.provider,
+          attempt: index + 1,
+          attemptId: attempt.id,
+        },
+      });
+      return { status: 'failed', error };
+    }
   }
 
   private async resolveModelPin(
