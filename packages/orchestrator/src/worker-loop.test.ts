@@ -1,6 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { context, propagation, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import type { QueueJob } from '@agent-foundry/contracts';
-import { LeaseLostError, type JobQueue } from '@agent-foundry/domain';
+import {
+  currentTraceIds,
+  LeaseLostError,
+  serializeTraceContext,
+  withSpan,
+  type JobQueue,
+} from '@agent-foundry/domain';
 import { WorkerLoop } from './worker-loop.js';
 import type { WorkflowOrchestrator } from './workflow-orchestrator.js';
 
@@ -201,6 +210,54 @@ describe('WorkerLoop heartbeat renewal', () => {
 
     expect(run).toHaveBeenCalledWith('project-1', 'run-1', 'operation-1');
     expect(runProject).not.toHaveBeenCalled();
+    expect(queue.ack).toHaveBeenCalled();
+  });
+});
+
+describe('WorkerLoop job span trace propagation', () => {
+  let exporter: InMemorySpanExporter;
+  let provider: NodeTracerProvider;
+
+  beforeAll(() => {
+    exporter = new InMemorySpanExporter();
+    provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+    provider.register();
+  });
+
+  afterAll(async () => {
+    await provider.shutdown();
+    trace.disable();
+    context.disable();
+    propagation.disable();
+  });
+
+  it('links the dispatched job span to the trace that enqueued the job', async () => {
+    let enqueuingTraceId = '';
+    let carrier: Record<string, string> = {};
+    await withSpan('foundry.request', {}, async (span) => {
+      enqueuingTraceId = span.spanContext().traceId;
+      carrier = serializeTraceContext();
+    });
+    expect(enqueuingTraceId).not.toBe('');
+
+    const claimedJob = job({ traceContext: carrier });
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(claimedJob) });
+
+    let dispatchedTraceId = '';
+    const orchestrator = {
+      runProject: vi.fn().mockImplementation(async () => {
+        dispatchedTraceId = currentTraceIds().traceId ?? '';
+      }),
+    } as unknown as WorkflowOrchestrator;
+
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+    });
+
+    await worker.runOnce();
+
+    expect(dispatchedTraceId).toBe(enqueuingTraceId);
     expect(queue.ack).toHaveBeenCalled();
   });
 });

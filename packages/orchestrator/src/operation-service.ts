@@ -8,6 +8,7 @@ import type {
 import { ChangeRequestSchema } from '@agent-foundry/contracts';
 import {
   NotFoundError,
+  serializeTraceContext,
   ValidationError,
   type ArtifactStore,
   type Clock,
@@ -165,6 +166,7 @@ export class OperationService {
       createdAt: now,
     });
 
+    const traceContext = serializeTraceContext();
     await this.queue.enqueue({
       id: this.ids.next(),
       type: 'run-conversation-operation',
@@ -177,6 +179,7 @@ export class OperationService {
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
+      ...(Object.keys(traceContext).length > 0 ? { traceContext } : {}),
     });
 
     return operation;
