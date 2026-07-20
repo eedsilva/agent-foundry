@@ -1,7 +1,10 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SandboxSpec } from '@agent-foundry/contracts';
-import { runSandboxLifecycle } from '@agent-foundry/domain';
+import { runSandboxLifecycle, type SandboxHandle } from '@agent-foundry/domain';
 import { DockerSandboxRunner, SANDBOX_WORKSPACE_PATH } from './docker-sandbox-runner.js';
 
 const PINNED_IMAGE = 'node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3';
@@ -35,6 +38,12 @@ describe.skipIf(!hasDocker)(
     const runner = new DockerSandboxRunner();
     const created: string[] = [];
 
+    async function createTracked(overrides?: Partial<SandboxSpec>): Promise<SandboxHandle> {
+      const handle = await runner.create(spec(overrides));
+      created.push(handle.id);
+      return handle;
+    }
+
     afterEach(async () => {
       while (created.length > 0) {
         const id = created.pop();
@@ -43,34 +52,35 @@ describe.skipIf(!hasDocker)(
     });
 
     it('creates a running container matching the hardening flags', async () => {
-      const handle = await runner.create(spec());
-      created.push(handle.id);
+      const handle = await createTracked();
 
-      const inspect = await execa('docker', [
-        'inspect',
-        handle.id,
-        '--format',
-        '{{.State.Running}} {{.HostConfig.Memory}} {{.HostConfig.NanoCpus}} {{.HostConfig.PidsLimit}} {{.HostConfig.NetworkMode}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.Privileged}}',
-      ]);
-      expect(inspect.stdout.trim()).toBe('true 134217728 500000000 32 none true false');
-
-      const capDrop = await execa('docker', [
-        'inspect',
-        handle.id,
-        '--format',
-        '{{json .HostConfig.CapDrop}}',
-      ]);
-      expect(JSON.parse(capDrop.stdout)).toEqual(['ALL']);
-
-      const tmpfs = await execa('docker', [
-        'inspect',
-        handle.id,
-        '--format',
-        '{{json .HostConfig.Tmpfs}}',
-      ]);
-      expect(JSON.parse(tmpfs.stdout)).toEqual({
-        [SANDBOX_WORKSPACE_PATH]: 'rw,nosuid,nodev,size=64m,mode=1777',
-        '/tmp': 'rw,nosuid,nodev,noexec,size=64m,mode=1777',
+      const inspect = await execa('docker', ['inspect', handle.id, '--format', '{{json .}}']);
+      const { State, HostConfig } = JSON.parse(inspect.stdout) as {
+        State: { Running: boolean };
+        HostConfig: {
+          Memory: number;
+          NanoCpus: number;
+          PidsLimit: number;
+          NetworkMode: string;
+          ReadonlyRootfs: boolean;
+          Privileged: boolean;
+          CapDrop: string[];
+          Tmpfs: Record<string, string>;
+        };
+      };
+      expect(State.Running).toBe(true);
+      expect(HostConfig).toMatchObject({
+        Memory: 134217728,
+        NanoCpus: 500000000,
+        PidsLimit: 32,
+        NetworkMode: 'none',
+        ReadonlyRootfs: true,
+        Privileged: false,
+        CapDrop: ['ALL'],
+        Tmpfs: {
+          [SANDBOX_WORKSPACE_PATH]: 'rw,nosuid,nodev,size=64m,mode=1777',
+          '/tmp': 'rw,nosuid,nodev,noexec,size=64m,mode=1777',
+        },
       });
 
       await runner.destroy(handle);
@@ -78,7 +88,7 @@ describe.skipIf(!hasDocker)(
     });
 
     it('destroy is idempotent for the same handle', async () => {
-      const handle = await runner.create(spec());
+      const handle = await createTracked();
       await runner.destroy(handle);
       await expect(runner.destroy(handle)).resolves.toBeUndefined();
     });
@@ -90,16 +100,14 @@ describe.skipIf(!hasDocker)(
     });
 
     it('runs as the configured non-root user', async () => {
-      const handle = await runner.create(spec({ user: '1000:1000' }));
-      created.push(handle.id);
+      const handle = await createTracked({ user: '1000:1000' });
       const result = await runner.exec(handle, { command: 'id', args: ['-u'], timeoutMs: 5_000 });
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe('1000');
     });
 
     it('has an all-zero effective capability set', async () => {
-      const handle = await runner.create(spec());
-      created.push(handle.id);
+      const handle = await createTracked();
       const result = await runner.exec(handle, {
         command: 'sh',
         args: ['-c', 'grep CapEff /proc/self/status'],
@@ -109,8 +117,7 @@ describe.skipIf(!hasDocker)(
     });
 
     it('rejects writes outside the workspace and tmp on the read-only rootfs', async () => {
-      const handle = await runner.create(spec());
-      created.push(handle.id);
+      const handle = await createTracked();
       const result = await runner.exec(handle, {
         command: 'sh',
         args: ['-c', 'touch /etc/should-fail'],
@@ -121,8 +128,7 @@ describe.skipIf(!hasDocker)(
     });
 
     it('allows writes inside the workspace tmpfs', async () => {
-      const handle = await runner.create(spec());
-      created.push(handle.id);
+      const handle = await createTracked();
       const result = await runner.exec(handle, {
         command: 'sh',
         args: [
@@ -136,10 +142,9 @@ describe.skipIf(!hasDocker)(
     });
 
     it('enforces the pids limit', async () => {
-      const handle = await runner.create(
-        spec({ resources: { cpuMillis: 500, memoryMiB: 128, diskMiB: 64, pids: 4 } }),
-      );
-      created.push(handle.id);
+      const handle = await createTracked({
+        resources: { cpuMillis: 500, memoryMiB: 128, diskMiB: 64, pids: 4 },
+      });
       // Verified by hand: execing immediately after create/start races the container's own
       // startup and can fail with an unrelated "procReady not received" OCI error instead of
       // exercising the pids limit. A short settle delay makes the "Cannot fork" failure — the
@@ -154,8 +159,7 @@ describe.skipIf(!hasDocker)(
     });
 
     it('has no network route when network mode is none', async () => {
-      const handle = await runner.create(spec({ network: { mode: 'none', allowedHosts: [] } }));
-      created.push(handle.id);
+      const handle = await createTracked({ network: { mode: 'none', allowedHosts: [] } });
       const result = await runner.exec(handle, {
         command: 'sh',
         args: ['-c', 'cat /proc/net/route | wc -l'],
@@ -165,10 +169,9 @@ describe.skipIf(!hasDocker)(
     });
 
     it('has a default route when network mode is allowlist', async () => {
-      const handle = await runner.create(
-        spec({ network: { mode: 'allowlist', allowedHosts: ['example.com'] } }),
-      );
-      created.push(handle.id);
+      const handle = await createTracked({
+        network: { mode: 'allowlist', allowedHosts: ['example.com'] },
+      });
       const result = await runner.exec(handle, {
         command: 'sh',
         args: ['-c', 'cat /proc/net/route | wc -l'],
@@ -178,16 +181,12 @@ describe.skipIf(!hasDocker)(
     });
 
     it('honors a read-only bind mount', async () => {
-      const { mkdtemp, writeFile } = await import('node:fs/promises');
-      const { tmpdir } = await import('node:os');
-      const { join } = await import('node:path');
       const hostDir = await mkdtemp(join(tmpdir(), 'sandbox-mount-'));
       await writeFile(join(hostDir, 'seed.txt'), 'seed');
 
-      const handle = await runner.create(
-        spec({ mounts: [{ source: hostDir, target: '/mnt/cache', readOnly: true }] }),
-      );
-      created.push(handle.id);
+      const handle = await createTracked({
+        mounts: [{ source: hostDir, target: '/mnt/cache', readOnly: true }],
+      });
 
       const read = await runner.exec(handle, {
         command: 'cat',
@@ -206,8 +205,7 @@ describe.skipIf(!hasDocker)(
     });
 
     it('streams stdout and stderr chunks via onOutput', async () => {
-      const handle = await runner.create(spec());
-      created.push(handle.id);
+      const handle = await createTracked();
       const chunks: Array<{ stream: string; text: string }> = [];
       await runner.exec(handle, {
         command: 'sh',
@@ -220,16 +218,14 @@ describe.skipIf(!hasDocker)(
     });
 
     it('throws when the command exceeds its timeout', async () => {
-      const handle = await runner.create(spec());
-      created.push(handle.id);
+      const handle = await createTracked();
       await expect(
         runner.exec(handle, { command: 'sleep', args: ['5'], timeoutMs: 300 }),
       ).rejects.toThrow(/timeout/);
     });
 
     it('throws RunCancelledError when the signal is already aborted', async () => {
-      const handle = await runner.create(spec());
-      created.push(handle.id);
+      const handle = await createTracked();
       const controller = new AbortController();
       controller.abort();
       await expect(
@@ -238,8 +234,7 @@ describe.skipIf(!hasDocker)(
     });
 
     it('throws RunCancelledError when aborted mid-execution', async () => {
-      const handle = await runner.create(spec());
-      created.push(handle.id);
+      const handle = await createTracked();
       const controller = new AbortController();
       setTimeout(() => controller.abort(), 200);
       await expect(
@@ -252,8 +247,7 @@ describe.skipIf(!hasDocker)(
     });
 
     it('extracts allowed files and directories from the workspace', async () => {
-      const handle = await runner.create(spec());
-      created.push(handle.id);
+      const handle = await createTracked();
       await runner.exec(handle, {
         command: 'sh',
         args: ['-c', 'echo hello > out.txt && mkdir sub && echo nested > sub/n.txt'],
@@ -272,8 +266,7 @@ describe.skipIf(!hasDocker)(
     });
 
     it('silently skips an allowed path that does not exist', async () => {
-      const handle = await runner.create(spec());
-      created.push(handle.id);
+      const handle = await createTracked();
       const snapshot = await runner.snapshot(handle, ['does-not-exist']);
       expect(snapshot.files).toEqual([]);
     });
