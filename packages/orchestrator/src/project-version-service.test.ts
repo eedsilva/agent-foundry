@@ -144,6 +144,9 @@ class FakeArtifacts implements ArtifactStore {
   listMetadata(): Promise<ArtifactMetadata[]> {
     return Promise.resolve(this.metadata);
   }
+  reapExpired(): Promise<number> {
+    return Promise.resolve(0);
+  }
 }
 
 function artifactMeta(name: string, revision: number, sha256: string): ArtifactMetadata {

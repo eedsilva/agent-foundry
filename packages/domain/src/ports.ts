@@ -161,6 +161,8 @@ export interface ArtifactStore {
   getRevision(projectId: string, name: string, revision: number): Promise<StoredArtifact | null>;
   listLatest(projectId: string): Promise<StoredArtifact[]>;
   listMetadata(projectId: string, name?: string): Promise<ArtifactMetadata[]>;
+  /** Marks expired blob artifacts deleted (metadata survives); returns the count reaped. */
+  reapExpired(now: Date): Promise<number>;
 }
 
 export interface EventStore {
