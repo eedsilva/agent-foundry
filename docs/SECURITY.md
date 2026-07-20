@@ -36,7 +36,7 @@ Esses controles reduzem risco. Eles não formam uma barreira forte de isolamento
 
 ### Isolamento de processo
 
-O worker real roda com as permissões do usuário do host. Um comando permitido pela CLI pode alcançar tudo que esse usuário alcança. O sandbox do fornecedor ajuda, mas não substitui uma fronteira operacional independente. A ADR 0023 introduz a port `ExecutionPlane`, e a ADR 0024 define o contrato de ciclo de vida `SandboxRunner`; nenhum backend está conectado ainda, então as CLIs continuam rodando com as permissões do host até #47 fornecer isolamento rootless.
+O worker real roda com as permissões do usuário do host. Um comando permitido pela CLI pode alcançar tudo que esse usuário alcança. O sandbox do fornecedor ajuda, mas não substitui uma fronteira operacional independente. A ADR 0023 introduz a port `ExecutionPlane`, a ADR 0024 define o contrato de ciclo de vida `SandboxRunner`, e a ADR 0025 entrega `DockerSandboxRunner` — um backend rootless real (usuário não-root, sem privileged, capabilities zeradas, rootfs read-only, limites de CPU/memória/pids/disco aplicados). Nenhum caminho de execução hoje constrói um `SandboxSpec`; `LocalExecutionPlane` continua sendo o caminho ativo até a política de rede (`v07-network-policy`) e o secret broker (`v07-secret-broker`) permitirem trocar o padrão com segurança.
 
 ### Rede
 

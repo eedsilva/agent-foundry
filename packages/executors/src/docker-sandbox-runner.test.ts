@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { SandboxSpec } from '@agent-foundry/contracts';
-import { buildCreateArgs, SANDBOX_TMP_SIZE_MIB, SANDBOX_WORKSPACE_PATH } from './docker-sandbox-runner.js';
+import {
+  buildCreateArgs,
+  SANDBOX_TMP_SIZE_MIB,
+  SANDBOX_WORKSPACE_PATH,
+} from './docker-sandbox-runner.js';
 
-const PINNED_IMAGE =
-  'node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3';
+const PINNED_IMAGE = 'node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3';
 
 function spec(overrides: Partial<SandboxSpec> = {}): SandboxSpec {
   return {
@@ -48,7 +51,9 @@ describe('buildCreateArgs', () => {
   });
 
   it('maps network mode allowlist to the bridge network', () => {
-    const args = buildCreateArgs(spec({ network: { mode: 'allowlist', allowedHosts: ['example.com'] } }));
+    const args = buildCreateArgs(
+      spec({ network: { mode: 'allowlist', allowedHosts: ['example.com'] } }),
+    );
     expect(args).toContain('--network=bridge');
   });
 
@@ -76,14 +81,20 @@ describe('buildCreateArgs', () => {
   it('rejects a mount referencing the host Docker socket', () => {
     expect(() =>
       buildCreateArgs(
-        spec({ mounts: [{ source: '/var/run/docker.sock', target: '/var/run/docker.sock', readOnly: false }] }),
+        spec({
+          mounts: [
+            { source: '/var/run/docker.sock', target: '/var/run/docker.sock', readOnly: false },
+          ],
+        }),
       ),
     ).toThrow(/Docker socket/);
   });
 
   it('rejects a mount targeting the reserved workspace path', () => {
     expect(() =>
-      buildCreateArgs(spec({ mounts: [{ source: '/host/x', target: SANDBOX_WORKSPACE_PATH, readOnly: false }] })),
+      buildCreateArgs(
+        spec({ mounts: [{ source: '/host/x', target: SANDBOX_WORKSPACE_PATH, readOnly: false }] }),
+      ),
     ).toThrow(/reserved/);
   });
 

@@ -4,7 +4,12 @@ import { join, relative, sep } from 'node:path';
 import { execa } from 'execa';
 import type { SandboxSnapshot, SandboxSnapshotFile, SandboxSpec } from '@agent-foundry/contracts';
 import type { SandboxHandle, SandboxRunner } from '@agent-foundry/domain';
-import { RunCancelledError, errorMessage, type SandboxExecRequest, type SandboxExecResult } from '@agent-foundry/domain';
+import {
+  RunCancelledError,
+  errorMessage,
+  type SandboxExecRequest,
+  type SandboxExecResult,
+} from '@agent-foundry/domain';
 
 export const SANDBOX_WORKSPACE_PATH = '/workspace';
 export const SANDBOX_TMP_SIZE_MIB = 64;
@@ -121,7 +126,10 @@ export class DockerSandboxRunner implements SandboxRunner {
     }
   }
 
-  async snapshot(sandbox: SandboxHandle, allowedPaths: readonly string[]): Promise<SandboxSnapshot> {
+  async snapshot(
+    sandbox: SandboxHandle,
+    allowedPaths: readonly string[],
+  ): Promise<SandboxSnapshot> {
     const tempDir = await mkdtemp(join(tmpdir(), 'agent-foundry-sandbox-'));
     try {
       for (const relativePath of allowedPaths) {
@@ -156,7 +164,10 @@ async function collectFiles(root: string, dir: string): Promise<SandboxSnapshotF
       files.push(...(await collectFiles(root, fullPath)));
     } else if (entry.isFile()) {
       const content = await readFile(fullPath);
-      files.push({ path: relative(root, fullPath).split(sep).join('/'), content: new Uint8Array(content) });
+      files.push({
+        path: relative(root, fullPath).split(sep).join('/'),
+        content: new Uint8Array(content),
+      });
     }
   }
   return files;

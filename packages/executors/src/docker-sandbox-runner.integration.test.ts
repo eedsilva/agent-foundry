@@ -125,7 +125,10 @@ describe.skipIf(!hasDocker)(
       created.push(handle.id);
       const result = await runner.exec(handle, {
         command: 'sh',
-        args: ['-c', `echo hello > ${SANDBOX_WORKSPACE_PATH}/ok.txt && cat ${SANDBOX_WORKSPACE_PATH}/ok.txt`],
+        args: [
+          '-c',
+          `echo hello > ${SANDBOX_WORKSPACE_PATH}/ok.txt && cat ${SANDBOX_WORKSPACE_PATH}/ok.txt`,
+        ],
         timeoutMs: 5_000,
       });
       expect(result.exitCode).toBe(0);
@@ -133,7 +136,9 @@ describe.skipIf(!hasDocker)(
     });
 
     it('enforces the pids limit', async () => {
-      const handle = await runner.create(spec({ resources: { cpuMillis: 500, memoryMiB: 128, diskMiB: 64, pids: 4 } }));
+      const handle = await runner.create(
+        spec({ resources: { cpuMillis: 500, memoryMiB: 128, diskMiB: 64, pids: 4 } }),
+      );
       created.push(handle.id);
       // Verified by hand: execing immediately after create/start races the container's own
       // startup and can fail with an unrelated "procReady not received" OCI error instead of
@@ -160,7 +165,9 @@ describe.skipIf(!hasDocker)(
     });
 
     it('has a default route when network mode is allowlist', async () => {
-      const handle = await runner.create(spec({ network: { mode: 'allowlist', allowedHosts: ['example.com'] } }));
+      const handle = await runner.create(
+        spec({ network: { mode: 'allowlist', allowedHosts: ['example.com'] } }),
+      );
       created.push(handle.id);
       const result = await runner.exec(handle, {
         command: 'sh',
@@ -182,7 +189,11 @@ describe.skipIf(!hasDocker)(
       );
       created.push(handle.id);
 
-      const read = await runner.exec(handle, { command: 'cat', args: ['/mnt/cache/seed.txt'], timeoutMs: 5_000 });
+      const read = await runner.exec(handle, {
+        command: 'cat',
+        args: ['/mnt/cache/seed.txt'],
+        timeoutMs: 5_000,
+      });
       expect(read.stdout.trim()).toBe('seed');
 
       const write = await runner.exec(handle, {
@@ -232,7 +243,11 @@ describe.skipIf(!hasDocker)(
       const controller = new AbortController();
       setTimeout(() => controller.abort(), 200);
       await expect(
-        runner.exec(handle, { command: 'sleep', args: ['5'], timeoutMs: 10_000 }, controller.signal),
+        runner.exec(
+          handle,
+          { command: 'sleep', args: ['5'], timeoutMs: 10_000 },
+          controller.signal,
+        ),
       ).rejects.toThrow(/cancelled/);
     });
 
@@ -247,7 +262,10 @@ describe.skipIf(!hasDocker)(
 
       const snapshot = await runner.snapshot(handle, ['out.txt', 'sub']);
       const byPath = Object.fromEntries(
-        snapshot.files.map((file) => [file.path, Buffer.from(file.content).toString('utf8').trim()]),
+        snapshot.files.map((file) => [
+          file.path,
+          Buffer.from(file.content).toString('utf8').trim(),
+        ]),
       );
       expect(byPath['out.txt']).toBe('hello');
       expect(byPath['sub/n.txt']).toBe('nested');
