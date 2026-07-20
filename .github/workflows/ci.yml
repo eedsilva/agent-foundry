@@ -144,7 +144,10 @@ jobs:
       - name: Pull the pinned sandbox base image
         run: docker pull node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0
+        # Pinned by commit, not the floating v0 tag: this is the one third-party
+        # (non actions/*) action in this workflow, and CodeQL flags floating tags
+        # on third-party actions as a supply-chain risk.
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
           format: spdx-json
