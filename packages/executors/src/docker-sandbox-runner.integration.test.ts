@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -182,6 +182,11 @@ describe.skipIf(!hasDocker)(
 
     it('honors a read-only bind mount', async () => {
       const hostDir = await mkdtemp(join(tmpdir(), 'sandbox-mount-'));
+      // mkdtemp defaults to 0700 (owner-only). The sandbox container runs as a fixed
+      // uid (1000:1000 in this test), which on a real Linux bind mount (unlike Docker
+      // Desktop's virtualized filesystem) can't even traverse a directory it doesn't
+      // own unless it's group/other-executable.
+      await chmod(hostDir, 0o755);
       await writeFile(join(hostDir, 'seed.txt'), 'seed');
 
       const handle = await createTracked({
