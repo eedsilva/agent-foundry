@@ -95,8 +95,10 @@ Desde a ADR 0023, o orquestrador submete trabalho de agente pela port `Execution
 (em `packages/executors`) é a única implementação hoje: roda as CLIs no mesmo processo do control
 plane, in-process, confiável apenas para desenvolvimento local — sem mudança de comportamento ou de
 fronteira de confiança em relação ao `ExecutorRegistry` direto de antes. `SandboxRunner` é o contrato
-do próximo runner, mas nenhum backend está conectado ainda. No diagrama de sequência abaixo, o
-participante `E` (Executor) agora é alcançado através dessa port.
+do próximo runner; `DockerSandboxRunner` (ADR-0025, `packages/executors`) é sua primeira
+implementação real, mas nenhum caminho de execução a conecta ainda — isso chega com a política de
+rede e o secret broker. No diagrama de sequência abaixo, o participante `E` (Executor) agora é
+alcançado através dessa port.
 
 ### `packages/composition`
 
