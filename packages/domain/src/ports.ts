@@ -479,8 +479,10 @@ export interface BlobPutInput {
 
 export interface SignedUrlOptions {
   expiresInSeconds: number;
-  filename?: string;
 }
+
+/** A blob key with its creation time — returned by BlobStore.list(), used by GC. */
+export type BlobListEntry = { key: string; createdAt: string };
 
 export interface BlobStore {
   put(input: BlobPutInput, source: Readable): Promise<BlobStat>;
@@ -488,6 +490,6 @@ export interface BlobStore {
   stat(key: string): Promise<BlobStat | null>;
   delete(key: string): Promise<void>;
   /** All keys under a prefix, with creation time — used by GC. */
-  list(prefix: string): Promise<Array<{ key: string; createdAt: string }>>;
+  list(prefix: string): Promise<BlobListEntry[]>;
   createSignedDownloadUrl(key: string, options: SignedUrlOptions): Promise<string>;
 }

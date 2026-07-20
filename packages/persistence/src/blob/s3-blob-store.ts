@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import type { Readable } from 'node:stream';
+import { Transform } from 'node:stream';
 import {
   CopyObjectCommand,
   DeleteObjectCommand,
@@ -9,9 +11,14 @@ import {
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type { BlobPutInput, BlobStat, BlobStore, SignedUrlOptions } from '@agent-foundry/domain';
-import { BlobIntegrityError } from '@agent-foundry/domain';
-import { meteredStream } from './metered-stream.js';
+import type {
+  BlobListEntry,
+  BlobPutInput,
+  BlobStat,
+  BlobStore,
+  SignedUrlOptions,
+} from '@agent-foundry/domain';
+import { ArtifactTooLargeError, BlobIntegrityError } from '@agent-foundry/domain';
 
 export interface S3BlobStoreOptions {
   endpoint?: string;
@@ -30,6 +37,40 @@ function encodeKeySegments(key: string): string {
 function isNotFoundError(error: unknown): boolean {
   const meta = (error as { $metadata?: { httpStatusCode?: number } } | undefined)?.$metadata;
   return meta?.httpStatusCode === 404;
+}
+
+interface MeteredStream {
+  /** Pass-through Transform: hashes and counts bytes, errors once maxBytes is exceeded. */
+  transform: Transform;
+  /** Call only after the transform has finished (e.g. once the sink awaits completion). */
+  digest(): { sha256: string; sizeBytes: number };
+}
+
+/**
+ * Hashes and size-caps a stream as it uploads to S3. Only caller is put();
+ * FsBlobStore doesn't need this since it hashes from a completed temp file instead.
+ */
+function meteredStream(maxBytes: number): MeteredStream {
+  const hash = createHash('sha256');
+  let sizeBytes = 0;
+
+  const transform = new Transform({
+    transform(chunk: unknown, _encoding, callback) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+      sizeBytes += buffer.byteLength;
+      if (sizeBytes > maxBytes) {
+        callback(new ArtifactTooLargeError(maxBytes));
+        return;
+      }
+      hash.update(buffer);
+      callback(null, buffer);
+    },
+  });
+
+  return {
+    transform,
+    digest: () => ({ sha256: hash.digest('hex'), sizeBytes }),
+  };
 }
 
 export class S3BlobStore implements BlobStore {
@@ -156,8 +197,8 @@ export class S3BlobStore implements BlobStore {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
-  async list(prefix: string): Promise<Array<{ key: string; createdAt: string }>> {
-    const results: Array<{ key: string; createdAt: string }> = [];
+  async list(prefix: string): Promise<BlobListEntry[]> {
+    const results: BlobListEntry[] = [];
     let continuationToken: string | undefined;
     do {
       const page = await this.client.send(
@@ -180,13 +221,7 @@ export class S3BlobStore implements BlobStore {
   }
 
   async createSignedDownloadUrl(key: string, options: SignedUrlOptions): Promise<string> {
-    const command = new GetObjectCommand({
-      Bucket: this.bucket,
-      Key: key,
-      ResponseContentDisposition: options.filename
-        ? `attachment; filename="${options.filename}"`
-        : undefined,
-    });
+    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     return getSignedUrl(this.client, command, { expiresIn: options.expiresInSeconds });
   }
 }

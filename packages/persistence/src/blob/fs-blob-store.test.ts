@@ -61,13 +61,12 @@ describe('FsBlobStore', () => {
     );
   });
 
-  it('maps non-artifact-shaped keys under DATA_DIR/blobs', () => {
-    const path = keyToPath(dataDir, 'misc/some-key');
-    expect(path).toBe(join(dataDir, 'blobs', encodeURIComponent('misc/some-key')));
+  it('rejects non-artifact-shaped keys', () => {
+    expect(() => keyToPath(dataDir, 'misc/some-key')).toThrow(/artifact-shaped/);
   });
 
   it('throws ArtifactTooLargeError and leaves nothing behind when maxBytes is exceeded', async () => {
-    const key = 'oversized';
+    const key = 'projects/p1/artifacts/oversized/000001';
     await expect(
       store.put({ key, contentType: 'text/plain', maxBytes: 4 }, streamOf('hello world')),
     ).rejects.toThrow(ArtifactTooLargeError);
@@ -77,7 +76,7 @@ describe('FsBlobStore', () => {
   });
 
   it('throws BlobIntegrityError and leaves nothing behind on a sha256 mismatch', async () => {
-    const key = 'checked';
+    const key = 'projects/p1/artifacts/checked/000001';
     await expect(
       store.put(
         { key, contentType: 'text/plain', maxBytes: 1024, expectedSha256: 'deadbeef' },
@@ -90,12 +89,13 @@ describe('FsBlobStore', () => {
   });
 
   it('returns null from getStream and stat for a missing key', async () => {
-    await expect(store.getStream('nope')).resolves.toBeNull();
-    await expect(store.stat('nope')).resolves.toBeNull();
+    const key = 'projects/p1/artifacts/missing/000001';
+    await expect(store.getStream(key)).resolves.toBeNull();
+    await expect(store.stat(key)).resolves.toBeNull();
   });
 
   it('delete is idempotent', async () => {
-    const key = 'deletable';
+    const key = 'projects/p1/artifacts/deletable/000001';
     await store.put({ key, contentType: 'text/plain', maxBytes: 1024 }, streamOf('bye'));
     await store.delete(key);
     await expect(store.stat(key)).resolves.toBeNull();
@@ -114,10 +114,6 @@ describe('FsBlobStore', () => {
     await store.put(
       { key: 'projects/p2/artifacts/other/000001', contentType: 'text/plain', maxBytes: 1024 },
       streamOf('c'),
-    );
-    await store.put(
-      { key: 'misc/plain-key', contentType: 'text/plain', maxBytes: 1024 },
-      streamOf('d'),
     );
 
     const entries = await store.list('projects/p1/artifacts/report/');
