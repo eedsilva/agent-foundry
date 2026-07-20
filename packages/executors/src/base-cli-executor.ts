@@ -156,6 +156,8 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     if (signal?.aborted) throw new RunCancelledError(request.runId);
     const stdout = outputText(result.stdout);
     const stderr = outputText(result.stderr);
+    const rateLimit = extractRateLimit(this.provider, stdout);
+    if (rateLimit) this.lastRateLimit = rateLimit;
     if (result.exitCode !== 0) {
       throw new ExecutionError(`${this.provider} CLI exited with code ${String(result.exitCode)}`, {
         provider: this.provider,
@@ -169,8 +171,6 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     const response = await this.responseText(invocation, stdout);
     const output = parseAgentArtifact(this.provider, response);
     const usage = extractUsage(this.provider, stdout);
-    const rateLimit = extractRateLimit(this.provider, stdout);
-    if (rateLimit) this.lastRateLimit = rateLimit;
     const metadata = invocation.metadataFile
       ? await readBoundedFile(invocation.metadataFile, this.maxOutputBytes)
       : '';
