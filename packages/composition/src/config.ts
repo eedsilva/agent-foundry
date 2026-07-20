@@ -138,6 +138,10 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     API_PORT: env.API_PORT ?? env.PORT,
     WORKER_POLL_INTERVAL_MS: env.WORKER_POLL_INTERVAL_MS ?? env.WORKER_POLL_MS,
     MAX_CLI_OUTPUT_BYTES: env.MAX_CLI_OUTPUT_BYTES ?? env.MAX_AGENT_OUTPUT_BYTES,
+    // A custom S3_ENDPOINT means a non-AWS S3-compatible store (MinIO, Supabase
+    // Storage, ...), and those all require path-style addressing. Default to it
+    // whenever an endpoint is set; an explicit S3_FORCE_PATH_STYLE always wins.
+    S3_FORCE_PATH_STYLE: env.S3_FORCE_PATH_STYLE ?? (env.S3_ENDPOINT ? 'true' : undefined),
   };
   const parsed = ConfigSchema.parse(normalized);
   const rootDir = findRepoRoot(env.REPO_ROOT ?? env.INIT_CWD ?? process.cwd());

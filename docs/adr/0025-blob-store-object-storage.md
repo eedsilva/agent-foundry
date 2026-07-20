@@ -6,9 +6,14 @@
 
 ## Context
 
-Issue #54 requires artifact bytes to scale past a single local filesystem: a self-hosted deployment
+Issue #54 (roadmap key `v08-object-storage`, part of the `v0.8 - Production Data Plane` milestone, under
+epic #52) requires artifact bytes to scale past a single local filesystem: a self-hosted deployment
 should be able to point at any S3-compatible bucket (AWS S3, MinIO, ...) without changing how artifacts
-are created, read, or expired. `FileArtifactStore` previously read and wrote blob bytes directly against
+are created, read, or expired. Its exit criteria require put/get/delete with hash/size/content-type/
+encryption metadata, an immutable object key referenced from artifact metadata, downloads via short-lived
+signed URL under project authorization, multipart/streaming with no full-buffer, and GC of unreferenced
+blobs after a grace period — the required-tests line names large blob, wrong hash, expired URL, and GC.
+`FileArtifactStore` previously read and wrote blob bytes directly against
 `DATA_DIR`, mixing storage-backend concerns into artifact lifecycle logic and leaving no seam for a second
 backend.
 

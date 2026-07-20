@@ -283,7 +283,7 @@ describe('blob store configuration', () => {
     expect(config.blobGcGraceMs).toBe(1000);
   });
 
-  it('accepts s3 mode when all required S3 vars are present', () => {
+  it('accepts s3 mode when all required S3 vars are present, defaulting path-style on for a custom endpoint', () => {
     const config = loadRuntimeConfig({
       ...base,
       BLOB_STORE_MODE: 's3',
@@ -299,12 +299,14 @@ describe('blob store configuration', () => {
     expect(config.s3Bucket).toBe('agent-foundry');
     expect(config.s3AccessKeyId).toBe('key');
     expect(config.s3SecretAccessKey).toBe('secret');
-    expect(config.s3ForcePathStyle).toBe(false);
+    // A custom S3_ENDPOINT implies a non-AWS store (MinIO, Supabase Storage, ...),
+    // which all require path-style addressing — defaulted on without an explicit env var.
+    expect(config.s3ForcePathStyle).toBe(true);
     // s3 mode never needs the fs-mode signing secret file.
     expect(config.blobSigningSecret).toBeUndefined();
   });
 
-  it('honors S3_FORCE_PATH_STYLE for S3-compatible stores like MinIO', () => {
+  it('honors an explicit S3_FORCE_PATH_STYLE=false override even with a custom endpoint', () => {
     const config = loadRuntimeConfig({
       ...base,
       BLOB_STORE_MODE: 's3',
@@ -313,9 +315,15 @@ describe('blob store configuration', () => {
       S3_BUCKET: 'agent-foundry',
       S3_ACCESS_KEY_ID: 'key',
       S3_SECRET_ACCESS_KEY: 'secret',
-      S3_FORCE_PATH_STYLE: 'true',
+      S3_FORCE_PATH_STYLE: 'false',
     });
-    expect(config.s3ForcePathStyle).toBe(true);
+    expect(config.s3ForcePathStyle).toBe(false);
+  });
+
+  it('defaults S3_FORCE_PATH_STYLE to false when BLOB_STORE_MODE is fs (no endpoint configured)', async () => {
+    const dataDir = await tempDataDir();
+    const config = loadRuntimeConfig({ ...base, DATA_DIR: dataDir });
+    expect(config.s3ForcePathStyle).toBe(false);
   });
 
   it('rejects s3 mode missing required S3 vars', () => {

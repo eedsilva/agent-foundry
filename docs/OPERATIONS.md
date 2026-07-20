@@ -494,17 +494,17 @@ Bytes de artifact (o `content` binário/grande, não o metadata) passam por um p
 
 ### Modos e variáveis
 
-| Variável               | Padrão     | Função                                                           |
-| ---------------------- | ---------- | ---------------------------------------------------------------- |
-| `BLOB_STORE_MODE`      | `fs`       | `fs` ou `s3`                                                     |
-| `BLOB_SIGNING_SECRET`  | derivado   | segredo HMAC para URLs assinadas em modo `fs` (ver abaixo)       |
-| `BLOB_GC_GRACE_MS`     | `86400000` | idade mínima (ms) de um blob não referenciado antes do GC apagar |
-| `S3_ENDPOINT`          | —          | obrigatório em modo `s3`                                         |
-| `S3_REGION`            | —          | obrigatório em modo `s3`                                         |
-| `S3_BUCKET`            | —          | obrigatório em modo `s3`                                         |
-| `S3_ACCESS_KEY_ID`     | —          | obrigatório em modo `s3`                                         |
-| `S3_SECRET_ACCESS_KEY` | —          | obrigatório em modo `s3`                                         |
-| `S3_FORCE_PATH_STYLE`  | `false`    | necessário para MinIO e outros endpoints path-style              |
+| Variável               | Padrão                                                  | Função                                                                                                                                                                                            |
+| ---------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BLOB_STORE_MODE`      | `fs`                                                    | `fs` ou `s3`                                                                                                                                                                                      |
+| `BLOB_SIGNING_SECRET`  | derivado                                                | segredo HMAC para URLs assinadas em modo `fs` (ver abaixo)                                                                                                                                        |
+| `BLOB_GC_GRACE_MS`     | `86400000`                                              | idade mínima (ms) de um blob não referenciado antes do GC apagar                                                                                                                                  |
+| `S3_ENDPOINT`          | —                                                       | obrigatório em modo `s3`                                                                                                                                                                          |
+| `S3_REGION`            | —                                                       | obrigatório em modo `s3`                                                                                                                                                                          |
+| `S3_BUCKET`            | —                                                       | obrigatório em modo `s3`                                                                                                                                                                          |
+| `S3_ACCESS_KEY_ID`     | —                                                       | obrigatório em modo `s3`                                                                                                                                                                          |
+| `S3_SECRET_ACCESS_KEY` | —                                                       | obrigatório em modo `s3`                                                                                                                                                                          |
+| `S3_FORCE_PATH_STYLE`  | `true` se `S3_ENDPOINT` estiver definido, senão `false` | necessário para MinIO, Supabase Storage e outros endpoints path-style (endpoint customizado ⇒ não-AWS ⇒ path-style; defina explicitamente `false` para sobrepor num S3 real virtual-hosted-style) |
 
 Em modo `s3`, os cinco vars `S3_*` (exceto `S3_FORCE_PATH_STYLE`) são obrigatórios — a config falha ao carregar (via `superRefine`) citando cada var ausente. Em modo `fs`, se `BLOB_SIGNING_SECRET` não for definido, a API deriva um segredo por instalação na primeira vez que precisa dele: 32 bytes aleatórios em hex, gravados uma única vez em `DATA_DIR/blob-signing-secret` com permissão `0600` e reaproveitados depois (criação atômica via `wx`, então dois processos disputando um `DATA_DIR` novo convergem para o mesmo segredo — quem perde a corrida apenas lê o que o outro gravou). Defina `BLOB_SIGNING_SECRET` explicitamente para fixá-lo, por exemplo ao restaurar um `DATA_DIR` em outra máquina.
 
