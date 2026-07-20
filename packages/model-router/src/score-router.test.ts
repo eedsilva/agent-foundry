@@ -432,6 +432,54 @@ describe('ScoreBasedModelRouter', () => {
     expect(decision.rejected.some((r) => r.reason.startsWith('rate-limited'))).toBe(true);
   });
 
+  it('excludes a model when its provider reports only a future rate-limit reset', async () => {
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const health = new Map([
+      [
+        'claude',
+        {
+          provider: 'claude' as const,
+          available: true,
+          message: 'ok',
+          rateLimit: { resetAt: '2999-01-01T00:00:00.000Z' },
+        },
+      ],
+    ]);
+
+    const decision = await router.route(profile, undefined, { providerHealth: health });
+
+    expect(decision.selected.model.provider).not.toBe('claude');
+    expect(decision.rejected).toContainEqual({
+      modelId: 'claude-metered',
+      reason: 'rate-limited until 2999-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('keeps a model routable when its provider reports positive remaining quota', async () => {
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const health = new Map([
+      [
+        'claude',
+        {
+          provider: 'claude' as const,
+          available: true,
+          message: 'ok',
+          rateLimit: { remaining: 1, resetAt: '2999-01-01T00:00:00.000Z' },
+        },
+      ],
+    ]);
+
+    const decision = await router.route(profile, undefined, { providerHealth: health });
+
+    expect(
+      [decision.selected, ...decision.fallbacks].map((candidate) => candidate.model.id),
+    ).toContain('claude-metered');
+    expect(decision.rejected).not.toContainEqual({
+      modelId: 'claude-metered',
+      reason: 'rate-limited until 2999-01-01T00:00:00.000Z',
+    });
+  });
+
   it('rejects a metered model that exceeds the cost budget', async () => {
     const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
     const decision = await router.route(profile, undefined, {
