@@ -1,7 +1,7 @@
 import { NotFoundError, VersionConflictError } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
 
-function isUniqueViolation(error: unknown): boolean {
+export function isUniqueViolation(error: unknown): boolean {
   return (
     error instanceof Error && 'code' in error && (error as { code?: unknown }).code === '23505'
   );
