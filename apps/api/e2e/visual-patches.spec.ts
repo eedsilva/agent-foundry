@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
+import { execa } from 'execa';
 import { buildApp } from '../src/app.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -102,20 +103,36 @@ async function createProject(): Promise<string> {
 async function seedWorkspace(projectId: string): Promise<string> {
   await runtime.workspaces.ensure(projectId);
   const workspacePath = runtime.workspaces.workspacePath(projectId);
-  const workspaceFile = join(workspacePath, 'server.mjs');
-  await writeFile(workspaceFile, await readFile(FIXTURE_SCRIPT, 'utf8'));
+  await writeFile(join(workspacePath, 'server.mjs'), await readFile(FIXTURE_SCRIPT, 'utf8'));
   await writeFile(
     join(workspacePath, 'package.json'),
     JSON.stringify({ scripts: { dev: 'node server.mjs' } }),
   );
-  return workspaceFile;
+  await runtime.workspaces.checkpoint(projectId, 'visual patches e2e baseline');
+  return workspacePath;
 }
 
-async function openSelectedFixture(
-  page: Page,
-): Promise<{ selected: Locator; workspaceFile: string }> {
+interface WorkspaceState {
+  head: string;
+  status: string;
+}
+
+async function workspaceState(workspacePath: string): Promise<WorkspaceState> {
+  const [head, status] = await Promise.all([
+    execa('git', ['rev-parse', 'HEAD'], { cwd: workspacePath }),
+    execa('git', ['status', '--porcelain'], { cwd: workspacePath }),
+  ]);
+  return { head: head.stdout, status: status.stdout };
+}
+
+async function openSelectedFixture(page: Page): Promise<{
+  projectId: string;
+  selected: Locator;
+  workspacePath: string;
+  baseline: WorkspaceState;
+}> {
   const projectId = await createProject();
-  const workspaceFile = await seedWorkspace(projectId);
+  const workspacePath = await seedWorkspace(projectId);
   await page.goto(`${webBaseUrl}/project/${projectId}`);
   await page.getByRole('button', { name: 'Iniciar preview' }).click();
   const iframe = page.locator('.previewFrameWrap iframe');
@@ -132,17 +149,36 @@ async function openSelectedFixture(
   const selected = page.frameLocator('.previewFrameWrap iframe').locator('#simple');
   await selected.click();
   await expect(page.getByText('src/Greeting.tsx')).toBeVisible({ timeout: 10_000 });
-  return { selected, workspaceFile };
+  const baseline = await workspaceState(workspacePath);
+  expect(baseline.status).toBe('');
+  return { projectId, selected, workspacePath, baseline };
 }
 
-function watchPromotionRequests(page: Page): string[] {
+function watchOperationMutations(page: Page): string[] {
   const requests: string[] = [];
   page.on('request', (request) => {
-    if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/visual-edits')) {
+    const pathname = new URL(request.url()).pathname;
+    if (
+      request.method() === 'POST' &&
+      (/\/visual-edits$/.test(pathname) ||
+        /\/conversation\/messages\/[^/]+\/operations$/.test(pathname) ||
+        /\/conversation\/(?:operations|change-requests)\/[^/]+\/decide$/.test(pathname))
+    ) {
       requests.push(request.url());
     }
   });
   return requests;
+}
+
+async function expectNoPromotion(input: {
+  projectId: string;
+  workspacePath: string;
+  baseline: WorkspaceState;
+  operationMutations: string[];
+}): Promise<void> {
+  expect(input.operationMutations).toEqual([]);
+  expect(await runtime.conversations.listOperations(input.projectId)).toEqual([]);
+  expect(await workspaceState(input.workspacePath)).toEqual(input.baseline);
 }
 
 async function previewEdit(
@@ -160,65 +196,60 @@ async function previewEdit(
 }
 
 test('temporarily previews text before any promotion request', async ({ page }) => {
-  const promotions = watchPromotionRequests(page);
-  const { selected, workspaceFile } = await openSelectedFixture(page);
-  const sourceBefore = await readFile(workspaceFile, 'utf8');
+  const operationMutations = watchOperationMutations(page);
+  const fixture = await openSelectedFixture(page);
 
   await previewEdit(page, 'text', 'Simple', 'Temporary text');
 
-  await expect(selected).toHaveText('Temporary text');
-  expect(promotions).toEqual([]);
-  expect(await readFile(workspaceFile, 'utf8')).toBe(sourceBefore);
+  await expect(fixture.selected).toHaveText('Temporary text');
+  await expectNoPromotion({ ...fixture, operationMutations });
 });
 
 test('temporarily previews padding before any promotion request', async ({ page }) => {
-  const promotions = watchPromotionRequests(page);
-  const { selected, workspaceFile } = await openSelectedFixture(page);
-  const sourceBefore = await readFile(workspaceFile, 'utf8');
+  const operationMutations = watchOperationMutations(page);
+  const fixture = await openSelectedFixture(page);
 
   await previewEdit(page, 'padding', '0px', '12px');
 
-  await expect(selected).toHaveCSS('padding', '12px');
-  expect(promotions).toEqual([]);
-  expect(await readFile(workspaceFile, 'utf8')).toBe(sourceBefore);
+  await expect(fixture.selected).toHaveCSS('padding', '12px');
+  await expectNoPromotion({ ...fixture, operationMutations });
 });
 
 test('temporarily previews an existing color token before any promotion request', async ({
   page,
 }) => {
-  const promotions = watchPromotionRequests(page);
-  const { selected, workspaceFile } = await openSelectedFixture(page);
-  const sourceBefore = await readFile(workspaceFile, 'utf8');
+  const operationMutations = watchOperationMutations(page);
+  const fixture = await openSelectedFixture(page);
 
   await previewEdit(page, 'color', '', 'var(--fixture-accent)');
 
-  await expect(selected).toHaveCSS('color', 'rgb(12, 34, 56)');
-  expect(promotions).toEqual([]);
-  expect(await readFile(workspaceFile, 'utf8')).toBe(sourceBefore);
+  await expect(fixture.selected).toHaveCSS('color', 'rgb(12, 34, 56)');
+  expect(await fixture.selected.evaluate((element) => element.style.color)).toBe(
+    'var(--fixture-accent)',
+  );
+  await expectNoPromotion({ ...fixture, operationMutations });
 });
 
 test('temporarily previews responsive layout only at its breakpoint before promotion', async ({
   page,
 }) => {
-  const promotions = watchPromotionRequests(page);
-  const { selected, workspaceFile } = await openSelectedFixture(page);
-  const sourceBefore = await readFile(workspaceFile, 'utf8');
+  const operationMutations = watchOperationMutations(page);
+  const fixture = await openSelectedFixture(page);
 
   await previewEdit(page, 'display', 'block', 'grid', 'md');
 
-  await expect(selected).toHaveCSS('display', 'grid');
+  await expect(fixture.selected).toHaveCSS('display', 'grid');
   await page.getByRole('button', { name: 'Mobile' }).click();
-  await expect(selected).toHaveCSS('display', 'block');
+  await expect(fixture.selected).toHaveCSS('display', 'block');
   await page.getByRole('button', { name: 'Desktop' }).click();
-  await expect(selected).toHaveCSS('display', 'grid');
-  expect(promotions).toEqual([]);
-  expect(await readFile(workspaceFile, 'utf8')).toBe(sourceBefore);
+  await expect(fixture.selected).toHaveCSS('display', 'grid');
+  await expectNoPromotion({ ...fixture, operationMutations });
 });
 
 test('routes an invalid direct request into conversation without promoting it', async ({
   page,
 }) => {
-  const promotions = watchPromotionRequests(page);
+  const operationMutations = watchOperationMutations(page);
   const conversationMessages: string[] = [];
   page.on('request', (request) => {
     if (
@@ -228,13 +259,13 @@ test('routes an invalid direct request into conversation without promoting it', 
       conversationMessages.push(request.url());
     }
   });
-  const { selected } = await openSelectedFixture(page);
+  const fixture = await openSelectedFixture(page);
 
   await previewEdit(page, 'backgroundColor', '#eee', 'url(javascript:x)');
 
   await expect(page.getByText('Edição direta inválida')).toBeVisible();
   await expect(page.getByText('visual-edit', { exact: true })).toBeVisible({ timeout: 10_000 });
-  await expect(selected).toHaveText('Simple');
+  await expect(fixture.selected).toHaveText('Simple');
   expect(conversationMessages).toHaveLength(1);
-  expect(promotions).toEqual([]);
+  await expectNoPromotion({ ...fixture, operationMutations });
 });
