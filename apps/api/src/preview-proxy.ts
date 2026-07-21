@@ -10,6 +10,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Runtime } from '@agent-foundry/composition';
 import { isLoopbackHost } from '@agent-foundry/composition';
 import { buildInspectorScript } from './preview-inspector-script.js';
+import { wildcardParam } from './request-util.js';
 
 // Keep-alive so proxied asset/HMR-poll bursts reuse one upstream TCP connection
 // instead of opening a fresh socket to the dev server per request.
@@ -35,12 +36,32 @@ export function registerPreviewProxy(app: FastifyInstance, runtime: Runtime): vo
   const parentOrigin = runtime.config.webOrigin.split(',')[0]?.trim() ?? runtime.config.webOrigin;
   const inspectorScriptTag = `<script>${buildInspectorScript(parentOrigin)}</script>`;
 
-  app.all('/preview/:sessionId', (request, reply) =>
-    handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
-  );
-  app.all('/preview/:sessionId/*', (request, reply) =>
-    handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
-  );
+  void app.register(async (instance) => {
+    // The previewed app's body is opaque to us and must reach it byte-for-byte:
+    // Fastify's default parsers would otherwise buffer-and-drain application/json
+    // and text/plain before handleHttp's request.raw.pipe() runs (leaving the
+    // upstream an empty body), and reject any other content type with a 415
+    // before the handler even runs. Handing the raw stream straight back via
+    // `done(null, payload)` skips parsing entirely, leaving request.raw
+    // unconsumed for the proxy to pipe through untouched. Scoped to this
+    // encapsulated child instance only, so every other route keeps normal
+    // JSON body parsing.
+    const passthroughParser = (
+      _request: FastifyRequest,
+      payload: IncomingMessage,
+      done: (err: Error | null, body?: unknown) => void,
+    ): void => done(null, payload);
+    for (const contentType of ['application/json', 'text/plain', '*']) {
+      instance.addContentTypeParser(contentType, passthroughParser);
+    }
+
+    instance.all('/preview/:sessionId', (request, reply) =>
+      handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
+    );
+    instance.all('/preview/:sessionId/*', (request, reply) =>
+      handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
+    );
+  });
 
   app.server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
     void handleUpgrade(req, socket, head, runtime, allowedPort);
@@ -61,7 +82,7 @@ async function handleHttp(
     return;
   }
   const { sessionId } = request.params as { sessionId: string };
-  const upstreamPath = '/' + ((request.params as { '*'?: string })['*'] ?? '');
+  const upstreamPath = '/' + wildcardParam(request);
   const url = new URL(request.url, 'http://internal');
   const queryToken = url.searchParams.get('token') ?? undefined;
   const cookieToken = readCookieToken(request.headers.cookie, sessionId);

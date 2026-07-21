@@ -1,4 +1,5 @@
 export * from './ports.js';
+export * from './crypto.js';
 export * from './errors.js';
 export * from './utils.js';
 export * from './system.js';

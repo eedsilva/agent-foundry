@@ -20,10 +20,23 @@ services:
       # OTEL_SERVICE_NAME: agent-foundry-api
       # OTEL_TRACES_SAMPLER_RATIO: '1'
       # OTEL_SLOW_RUN_THRESHOLD_MS: '60000'
+      # Blob storage defaults to fs mode (bytes under DATA_DIR, signing secret
+      # auto-derived there too) — nothing else to set. Uncomment to point at
+      # the MinIO service below instead (or any S3-compatible endpoint,
+      # including Supabase Storage's S3 API — see docs/OPERATIONS.md).
+      # BLOB_STORE_MODE: s3
+      # S3_ENDPOINT: http://minio:9000
+      # S3_REGION: us-east-1
+      # S3_BUCKET: agent-foundry
+      # S3_ACCESS_KEY_ID: minioadmin
+      # S3_SECRET_ACCESS_KEY: minioadmin
+      # S3_FORCE_PATH_STYLE: 'true'
     volumes:
       - agent_data:/app/data
     ports:
       - '4000:4000'
+    # depends_on:
+    #   - minio
 
   worker:
     build:
@@ -41,8 +54,33 @@ services:
       # OTEL_SERVICE_NAME: agent-foundry-worker
       # OTEL_TRACES_SAMPLER_RATIO: '1'
       # OTEL_SLOW_RUN_THRESHOLD_MS: '60000'
+      # Keep in sync with the api service's blob storage settings above.
+      # BLOB_STORE_MODE: s3
+      # S3_ENDPOINT: http://minio:9000
+      # S3_REGION: us-east-1
+      # S3_BUCKET: agent-foundry
+      # S3_ACCESS_KEY_ID: minioadmin
+      # S3_SECRET_ACCESS_KEY: minioadmin
+      # S3_FORCE_PATH_STYLE: 'true'
     volumes:
       - agent_data:/app/data
+    # depends_on:
+    #   - minio
+
+  # S3-compatible object storage for BLOB_STORE_MODE=s3. Uncomment this
+  # block and the api/worker S3_* env vars above to switch off fs-mode
+  # blob storage.
+  # minio:
+  #   image: minio/minio
+  #   command: server /data --console-address :9001
+  #   environment:
+  #     MINIO_ROOT_USER: minioadmin
+  #     MINIO_ROOT_PASSWORD: minioadmin
+  #   volumes:
+  #     - minio_data:/data
+  #   ports:
+  #     - '9000:9000'
+  #     - '9001:9001'
 
   web:
     build:
@@ -58,3 +96,4 @@ services:
 
 volumes:
   agent_data:
+  # minio_data:

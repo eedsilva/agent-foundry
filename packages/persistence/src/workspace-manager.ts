@@ -121,6 +121,13 @@ export class FileWorkspaceManager implements WorkspaceManager {
     }
   }
 
+  async isClean(projectId: string): Promise<boolean> {
+    const status = await execa('git', ['status', '--porcelain'], {
+      cwd: this.workspacePath(projectId),
+    });
+    return status.stdout === '';
+  }
+
   async checkpoint(projectId: string, label: string): Promise<string> {
     await this.ensureGit(projectId);
     const cwd = this.workspacePath(projectId);

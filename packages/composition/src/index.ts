@@ -13,3 +13,4 @@ export type { TelemetryHandle, TelemetryOptions } from './telemetry.js';
 // scripts/check-architecture.mjs) can wire its pino `mixin` without reaching
 // into @agent-foundry/domain directly.
 export { currentTraceIds } from '@agent-foundry/domain';
+export { blobKeyFor, signBlobToken, verifyBlobToken } from '@agent-foundry/persistence';

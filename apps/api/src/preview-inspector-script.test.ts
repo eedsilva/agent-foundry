@@ -1,5 +1,50 @@
-import { describe, expect, it } from 'vitest';
+import { runInNewContext } from 'node:vm';
+import { describe, expect, it, vi } from 'vitest';
 import { buildInspectorScript } from './preview-inspector-script.js';
+
+function inspectorHarness(initialWidth = 1280) {
+  const listeners = new Map<string, (event: Record<string, unknown>) => void>();
+  const postMessage = vi.fn();
+  const window = {
+    innerWidth: initialWidth,
+    parent: { postMessage },
+    addEventListener(type: string, listener: (event: Record<string, unknown>) => void) {
+      listeners.set(type, listener);
+    },
+  };
+  const document = {
+    addEventListener(type: string, listener: (event: Record<string, unknown>) => void) {
+      listeners.set(type, listener);
+    },
+  };
+  runInNewContext(buildInspectorScript('https://app.example.com'), { document, window });
+  const target = {
+    tagName: 'P',
+    previousElementSibling: null,
+    parentElement: null,
+    getBoundingClientRect: () => ({ x: 0, y: 0, width: 10, height: 10 }),
+    textContent: 'Before',
+    style: { color: 'red' },
+  };
+  listeners.get('message')!({
+    origin: 'https://app.example.com',
+    data: { type: 'af:selection:start' },
+  });
+  listeners.get('click')!({
+    target,
+    preventDefault: vi.fn(),
+    stopPropagation: vi.fn(),
+  });
+  return {
+    listeners,
+    postMessage,
+    target,
+    resize(width: number) {
+      window.innerWidth = width;
+      listeners.get('resize')?.({});
+    },
+  };
+}
 
 describe('buildInspectorScript', () => {
   it('embeds the given parent origin as a JSON string literal', () => {
@@ -17,6 +62,85 @@ describe('buildInspectorScript', () => {
     const script = buildInspectorScript('https://app.example.com');
     expect(script).toContain('af:selection:start');
     expect(script).toContain('af:selection:result');
+  });
+
+  it('temporarily applies text to the last selected element and clears it', () => {
+    const { listeners, target } = inspectorHarness();
+    const message = listeners.get('message')!;
+
+    message({
+      origin: 'https://app.example.com',
+      data: {
+        type: 'af:visual-edit:preview',
+        payload: { property: 'text', newValue: 'After' },
+      },
+    });
+    expect(target.textContent).toBe('After');
+
+    message({
+      origin: 'https://app.example.com',
+      data: { type: 'af:visual-edit:clear' },
+    });
+    expect(target.textContent).toBe('Before');
+  });
+
+  it('temporarily applies style to the last selected element and clears it', () => {
+    const { listeners, target } = inspectorHarness();
+    const message = listeners.get('message')!;
+
+    message({
+      origin: 'https://app.example.com',
+      data: {
+        type: 'af:visual-edit:preview',
+        payload: { property: 'color', newValue: 'blue' },
+      },
+    });
+    expect(target.style.color).toBe('blue');
+
+    message({
+      origin: 'https://app.example.com',
+      data: { type: 'af:visual-edit:clear' },
+    });
+    expect(target.style.color).toBe('red');
+  });
+
+  it('applies a responsive style only while the iframe viewport matches its breakpoint', () => {
+    const { listeners, resize, target } = inspectorHarness(375);
+    const message = listeners.get('message')!;
+
+    message({
+      origin: 'https://app.example.com',
+      data: {
+        type: 'af:visual-edit:preview',
+        payload: { property: 'color', newValue: 'blue', breakpoint: 'md' },
+      },
+    });
+    expect(target.style.color).toBe('red');
+
+    resize(768);
+    expect(target.style.color).toBe('blue');
+
+    resize(767);
+    expect(target.style.color).toBe('red');
+
+    message({
+      origin: 'https://app.example.com',
+      data: { type: 'af:visual-edit:clear' },
+    });
+    resize(1280);
+    expect(target.style.color).toBe('red');
+  });
+
+  it('ignores visual-edit messages from another origin', () => {
+    const { listeners, target } = inspectorHarness();
+    listeners.get('message')!({
+      origin: 'https://evil.example.com',
+      data: {
+        type: 'af:visual-edit:preview',
+        payload: { property: 'text', newValue: 'Compromised' },
+      },
+    });
+    expect(target.textContent).toBe('Before');
   });
 
   it('is wrapped in an IIFE so it never leaks globals into the preview page', () => {

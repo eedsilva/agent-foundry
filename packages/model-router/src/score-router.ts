@@ -137,7 +137,11 @@ export class ScoreBasedModelRouter implements ModelRouter {
     if (!constraints) return null;
     const health = constraints.providerHealth?.get(model.provider);
     const rl = health?.rateLimit;
-    if (rl && rl.remaining === 0 && rl.resetAt && new Date(rl.resetAt).getTime() > Date.now()) {
+    if (
+      rl?.resetAt &&
+      (rl.remaining === 0 || rl.remaining === undefined) &&
+      new Date(rl.resetAt).getTime() > Date.now()
+    ) {
       return `rate-limited until ${rl.resetAt}`;
     }
     const budget = constraints.budget;
@@ -309,8 +313,9 @@ function estimateCostUsd(
   profile: TaskProfile,
   metric: ModelMetric | null,
 ): number | null {
-  if (metric && metric.attempts > 0 && metric.totalEstimatedCostUsd > 0) {
-    return metric.totalEstimatedCostUsd / metric.attempts;
+  const costKnownCount = metric?.costKnownCount ?? 0;
+  if (metric && costKnownCount > 0 && metric.totalEstimatedCostUsd > 0) {
+    return metric.totalEstimatedCostUsd / costKnownCount;
   }
   if (!model.pricing) return null;
   return (

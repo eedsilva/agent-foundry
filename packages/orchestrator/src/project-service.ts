@@ -222,20 +222,34 @@ export class ProjectService {
     return observation;
   }
 
+  /**
+   * Shared authorization/lookup step for both blob-serving routes: resolves
+   * the project + artifact (throwing NotFoundError if either is missing) and
+   * applies the one access rule that matters for blob access — an artifact
+   * whose blob was already reaped reads as 'gone', not as its (now-stale)
+   * metadata. getArtifactBlob and the /blob-url route's
+   * getArtifactBlobMetadata both route through this, so neither can drift
+   * out of sync on what "authorized" means.
+   */
+  async getArtifactBlobMetadata(
+    projectId: string,
+    name: string,
+    revision?: number,
+  ): Promise<ArtifactMetadata | 'gone'> {
+    const artifact = await this.getArtifact(projectId, name, revision);
+    return artifact.metadata.blobDeleted ? 'gone' : artifact.metadata;
+  }
+
   async getArtifactBlob(
     projectId: string,
     name: string,
     revision?: number,
   ): Promise<{ metadata: ArtifactMetadata; stream: NodeJS.ReadableStream } | 'gone'> {
-    const artifact = await this.getArtifact(projectId, name, revision);
-    if (artifact.metadata.blobDeleted) return 'gone';
-    const stream = await this.artifacts.getBlobStream(
-      projectId,
-      artifact.metadata.name,
-      artifact.metadata.revision,
-    );
+    const metadata = await this.getArtifactBlobMetadata(projectId, name, revision);
+    if (metadata === 'gone') return 'gone';
+    const stream = await this.artifacts.getBlobStream(projectId, metadata.name, metadata.revision);
     if (!stream) return 'gone';
-    return { metadata: artifact.metadata, stream };
+    return { metadata, stream };
   }
 
   async retry(projectId: string, input?: RetryProjectRequest): Promise<Project> {

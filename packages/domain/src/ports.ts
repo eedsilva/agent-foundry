@@ -55,6 +55,8 @@ export interface ProjectRepository {
   get(projectId: string): Promise<Project | null>;
   update(project: Project, expectedVersion: number): Promise<Project>;
   list(limit?: number): Promise<Project[]>;
+  /** Every project, unpaged — for sweeps (e.g. blob GC) that must see the whole set. */
+  listAll(): Promise<Project[]>;
 }
 
 export interface ConversationRepository {
@@ -421,6 +423,7 @@ export interface WorkspaceManager {
     outputSchema: Record<string, unknown>;
   }): Promise<{ requestPath: string; schemaPath: string }>;
   ensureGit(projectId: string): Promise<void>;
+  isClean(projectId: string): Promise<boolean>;
   checkpoint(projectId: string, label: string): Promise<string>;
   rollback(projectId: string, ref: string): Promise<void>;
   preserveDraft(
@@ -451,11 +454,42 @@ export interface IdGenerator {
   next(): string;
 }
 
-/** Create-only, immutable ledger: revert/branch always append a new version, never mutate an existing one. */
+/** Append-only ledger once promoted; failed promotion may discard its exact, still-unpromoted write. */
 export interface ProjectVersionRepository {
   create(version: ProjectVersion): Promise<void>;
+  discardUnpromoted(version: ProjectVersion): Promise<void>;
   get(projectId: string, versionId: string): Promise<ProjectVersion | null>;
   list(projectId: string, limit?: number): Promise<ProjectVersion[]>;
   /** Only the `protected` flag is ever updated after creation. */
   update(version: ProjectVersion, expectedVersion: number): Promise<ProjectVersion>;
+}
+
+export interface BlobStat {
+  key: string;
+  sha256: string;
+  sizeBytes: number;
+  contentType: string;
+  createdAt: string; // ISO datetime
+  encryption?: { algorithm: string };
+}
+
+export interface BlobPutInput {
+  key: string;
+  contentType: string;
+  maxBytes: number;
+  /** When provided, the store must verify the streamed content hashes to this value and fail otherwise. */
+  expectedSha256?: string;
+}
+
+/** A blob key with its creation time — returned by BlobStore.list(), used by GC. */
+export type BlobListEntry = { key: string; createdAt: string };
+
+export interface BlobStore {
+  put(input: BlobPutInput, source: Readable): Promise<BlobStat>;
+  getStream(key: string): Promise<Readable | null>;
+  stat(key: string): Promise<BlobStat | null>;
+  delete(key: string): Promise<void>;
+  /** All keys under a prefix, with creation time — used by GC. */
+  list(prefix: string): Promise<BlobListEntry[]>;
+  createSignedDownloadUrl(key: string, expiresInSeconds: number): Promise<string>;
 }

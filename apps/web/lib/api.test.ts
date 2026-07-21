@@ -15,6 +15,7 @@ import {
   getDraft,
   getPreviewLogs,
   listVersions,
+  promotePreviewVisualEdit,
   resumeRun,
   retryProject,
   revertToVersion,
@@ -177,6 +178,29 @@ const session: PreviewSession = {
 };
 
 describe('preview API client', () => {
+  it('posts the exact structured visual edit to the selected live session', async () => {
+    const visualEdit = {
+      target: { domPath: 'main > h1', file: 'src/App.tsx', line: 12, column: 5 },
+      property: 'text' as const,
+      oldValue: 'Old title',
+      newValue: 'New title',
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        message: { id: 'message-1' },
+        operation: { id: 'operation-1', visualEdit },
+      }),
+    );
+
+    await promotePreviewVisualEdit('project-1', 'preview-1', visualEdit);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/projects/project-1/preview/preview-1/visual-edits',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(visualEdit) }),
+    );
+    fetchMock.mockRestore();
+  });
+
   it('gets the active preview session', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ session }));
 

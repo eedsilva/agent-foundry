@@ -32,6 +32,8 @@ import {
   FileStepRunRepository,
   FileWorkflowRunRepository,
   FileWorkspaceManager,
+  FsBlobStore,
+  S3BlobStore,
   YamlPolicyRepository,
   YamlWorkflowRepository,
 } from '@agent-foundry/persistence';
@@ -52,7 +54,7 @@ import {
   type JobLogger,
 } from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
-import type { BrowserVerifier } from '@agent-foundry/domain';
+import type { BlobStore, BrowserVerifier } from '@agent-foundry/domain';
 import { BrowserTestPlanArtifactSchema, type PreviewSession } from '@agent-foundry/contracts';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
 
@@ -65,6 +67,7 @@ export interface Runtime {
   approvalRequests: FileApprovalRequestRepository;
   approvalDecisions: FileApprovalDecisionRepository;
   artifacts: FileArtifactStore;
+  blobStore: BlobStore;
   conversations: FileConversationRepository;
   events: FileEventStore;
   stepEvents: FileStepEventRepository;
@@ -117,7 +120,23 @@ export async function createRuntime(
   const stepAttempts = new FileStepAttemptRepository(config.dataDir);
   const approvalRequests = new FileApprovalRequestRepository(config.dataDir);
   const approvalDecisions = new FileApprovalDecisionRepository(config.dataDir);
-  const artifacts = new FileArtifactStore(config.dataDir);
+  const blobStore: BlobStore =
+    config.blobStoreMode === 's3'
+      ? new S3BlobStore({
+          // superRefine in config.ts guarantees these are set whenever mode is 's3'.
+          ...(config.s3Endpoint !== undefined ? { endpoint: config.s3Endpoint } : {}),
+          region: config.s3Region!,
+          bucket: config.s3Bucket!,
+          accessKeyId: config.s3AccessKeyId!,
+          secretAccessKey: config.s3SecretAccessKey!,
+          forcePathStyle: config.s3ForcePathStyle,
+        })
+      : new FsBlobStore(config.dataDir, {
+          // fs mode always derives or reads blobSigningSecret in config.ts.
+          signingSecret: config.blobSigningSecret!,
+          publicBaseUrl: `http://${config.apiHost}:${config.apiPort}`,
+        });
+  const artifacts = new FileArtifactStore(config.dataDir, blobStore);
   const conversations = new FileConversationRepository(config.dataDir);
   const events = new FileEventStore(config.dataDir);
   const stepEvents = new FileStepEventRepository(config.dataDir);
@@ -271,10 +290,10 @@ export async function createRuntime(
     executors,
     workspaces,
     conversations,
-    projectVersions,
+    projectVersionService,
     clock,
     ids,
-    { agentTimeoutMs: config.agentTimeoutMs },
+    { agentTimeoutMs: config.agentTimeoutMs, verifier, browserVerification },
   );
   const operationService = new OperationService(
     conversations,
@@ -284,6 +303,7 @@ export async function createRuntime(
     clock,
     ids,
     conversationService,
+    workspaces,
   );
   const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
     workerId: config.workerId,
@@ -304,6 +324,7 @@ export async function createRuntime(
     approvalRequests,
     approvalDecisions,
     artifacts,
+    blobStore,
     conversations,
     events,
     stepEvents,
@@ -401,7 +422,17 @@ function mockBrowserVerificationCoordinator(
             observations: [],
           })),
         },
-        evidence: { screenshots: [] },
+        evidence: {
+          screenshots: plan.steps.map((step) => ({
+            stepId: step.id,
+            url: input.session.url ?? 'http://127.0.0.1/',
+            viewport: plan.viewport,
+            buffer: Buffer.from(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEAQH/2p8lWQAAAABJRU5ErkJggg==',
+              'base64',
+            ),
+          })),
+        },
       });
     },
   };

@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   PreviewFailureDiagnosticSchema,
   PreviewSessionSchema,
@@ -12,6 +12,7 @@ import {
 import {
   NotFoundError,
   PreviewAccessDeniedError,
+  constantTimeEquals,
   expirePreviewSession,
   isPreviewSessionExpired,
   isPreviewSessionTerminal,
@@ -529,10 +530,4 @@ function mintToken(): string {
 
 function digestToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
-}
-
-function constantTimeEquals(a: string, b: string): boolean {
-  const bufferA = Buffer.from(a);
-  const bufferB = Buffer.from(b);
-  return bufferA.length === bufferB.length && timingSafeEqual(bufferA, bufferB);
 }

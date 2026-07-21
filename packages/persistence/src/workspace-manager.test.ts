@@ -5,6 +5,24 @@ import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 import { FileWorkspaceManager } from './workspace-manager.js';
 
+describe('FileWorkspaceManager.isClean', () => {
+  it('detects tracked and untracked baseline changes without mutating them', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+
+    expect(await manager.isClean(projectId)).toBe(true);
+    await writeFile(join(workspace, 'untracked.txt'), 'keep me\n');
+    expect(await manager.isClean(projectId)).toBe(false);
+    expect(await readFile(join(workspace, 'untracked.txt'), 'utf8')).toBe('keep me\n');
+  });
+});
+
 describe('FileWorkspaceManager.preserveDraft', () => {
   it('preserves failed work on a draft branch and restores the verified checkpoint', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));

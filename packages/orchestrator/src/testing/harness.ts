@@ -220,6 +220,9 @@ export class InMemoryProjects implements ProjectRepository {
   list(): Promise<Project[]> {
     return Promise.resolve([...this.store.values()]);
   }
+  listAll(): Promise<Project[]> {
+    return Promise.resolve([...this.store.values()]);
+  }
 }
 
 export class InMemoryRuns implements WorkflowRunRepository {
@@ -692,6 +695,9 @@ export class FakeWorkspaces implements WorkspaceManager {
   }
   ensureGit(): Promise<void> {
     return Promise.resolve();
+  }
+  isClean(): Promise<boolean> {
+    return Promise.resolve(!this.dirty);
   }
   checkpoint(): Promise<string> {
     checkPower(this.power);

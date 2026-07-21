@@ -181,6 +181,28 @@ describe('conversation aggregate contracts (#36)', () => {
     expect(OperationSchema.parse(buildDirect)).toMatchObject({ directExecution: true });
   });
 
+  it('attaches the exact structured patch to a direct visual-edit operation', () => {
+    const visualEdit = {
+      target: { domPath: 'main > h1', file: 'src/App.tsx', line: 12, column: 5 },
+      property: 'text' as const,
+      oldValue: 'Old title',
+      newValue: 'New title',
+    };
+    expect(
+      OperationSchema.parse({
+        id: 'operation-visual-1',
+        projectId: 'project-1',
+        conversationId: 'project-1',
+        messageId: 'message-visual-1',
+        kind: 'visual-edit',
+        idempotencyKey: 'd'.repeat(64),
+        artifactReferences: [],
+        visualEdit,
+        createdAt,
+      }),
+    ).toMatchObject({ visualEdit });
+  });
+
   it('rejects a build operation with neither or both plan gates', () => {
     const base = {
       id: 'operation-4',

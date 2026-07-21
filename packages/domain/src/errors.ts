@@ -28,6 +28,18 @@ export class ArtifactTooLargeError extends Error {
   }
 }
 
+export class BlobIntegrityError extends Error {
+  override readonly name = 'BlobIntegrityError';
+
+  constructor(
+    readonly key: string,
+    readonly expectedSha256: string,
+    readonly actualSha256: string,
+  ) {
+    super(`Blob ${key} expected sha256 ${expectedSha256} but got ${actualSha256}`);
+  }
+}
+
 export class ExecutionError extends Error {
   override readonly name = 'ExecutionError';
 
@@ -120,6 +132,18 @@ export class VersionConflictError extends Error {
   ) {
     super(
       `Version conflict for ${entity} ${id}: expected ${expectedVersion}, found ${actualVersion}`,
+    );
+  }
+}
+
+/** The exact provisional version changed or became protected before compensation acquired its lock. */
+export class ProjectVersionDiscardRefusedError extends Error {
+  override readonly name = 'ProjectVersionDiscardRefusedError';
+  readonly code = 'PROJECT_VERSION_DISCARD_REFUSED';
+
+  constructor(readonly versionId: string) {
+    super(
+      `Project version ${versionId} no longer matches the unpromoted version and cannot be discarded`,
     );
   }
 }

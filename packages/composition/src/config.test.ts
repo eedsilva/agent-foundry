@@ -1,5 +1,8 @@
-import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { isLoopbackHost, loadRuntimeConfig } from './config.js';
 
 const root = resolve(import.meta.dirname, '../../..');
@@ -246,5 +249,125 @@ describe('Loopback Binding Validation', () => {
       ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'true',
     });
     expect(config.deploymentProfile).toBe('custom');
+  });
+});
+
+describe('blob store configuration', () => {
+  const dirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+  async function tempDataDir(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'agent-foundry-config-'));
+    dirs.push(dir);
+    return dir;
+  }
+
+  it('defaults to fs mode with a 300s-capable signing secret and the default GC grace period', async () => {
+    const dataDir = await tempDataDir();
+    const config = loadRuntimeConfig({ ...base, DATA_DIR: dataDir });
+    expect(config.blobStoreMode).toBe('fs');
+    expect(config.blobSigningSecret).toBeDefined();
+    expect(config.blobSigningSecret!.length).toBeGreaterThanOrEqual(16);
+    expect(config.blobGcGraceMs).toBe(86_400_000);
+  });
+
+  it('honors an explicit BLOB_SIGNING_SECRET instead of deriving one', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      DATA_DIR: '.data-unused-for-this-test',
+      BLOB_SIGNING_SECRET: 'x'.repeat(32),
+    });
+    expect(config.blobSigningSecret).toBe('x'.repeat(32));
+  });
+
+  it('derives a per-installation signing secret file once, then reuses it', async () => {
+    const dataDir = await tempDataDir();
+    const first = loadRuntimeConfig({ ...base, DATA_DIR: dataDir });
+    const second = loadRuntimeConfig({ ...base, DATA_DIR: dataDir });
+    expect(second.blobSigningSecret).toBe(first.blobSigningSecret);
+
+    const secretPath = join(dataDir, 'blob-signing-secret');
+    const stat = statSync(secretPath);
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it('reads a secret another process already won the race to create, instead of overwriting it', async () => {
+    const dataDir = await tempDataDir();
+    mkdirSync(dataDir, { recursive: true });
+    const secretPath = join(dataDir, 'blob-signing-secret');
+    writeFileSync(secretPath, 'winner-secret', { mode: 0o600 });
+
+    const config = loadRuntimeConfig({ ...base, DATA_DIR: dataDir });
+    expect(config.blobSigningSecret).toBe('winner-secret');
+  });
+
+  it('honors a BLOB_GC_GRACE_MS override', () => {
+    const config = loadRuntimeConfig({ ...base, BLOB_GC_GRACE_MS: '1000' });
+    expect(config.blobGcGraceMs).toBe(1000);
+  });
+
+  it('accepts s3 mode when all required S3 vars are present, defaulting path-style on for a custom endpoint', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      BLOB_STORE_MODE: 's3',
+      S3_ENDPOINT: 'http://minio:9000',
+      S3_REGION: 'us-east-1',
+      S3_BUCKET: 'agent-foundry',
+      S3_ACCESS_KEY_ID: 'key',
+      S3_SECRET_ACCESS_KEY: 'secret',
+    });
+    expect(config.blobStoreMode).toBe('s3');
+    expect(config.s3Endpoint).toBe('http://minio:9000');
+    expect(config.s3Region).toBe('us-east-1');
+    expect(config.s3Bucket).toBe('agent-foundry');
+    expect(config.s3AccessKeyId).toBe('key');
+    expect(config.s3SecretAccessKey).toBe('secret');
+    // A custom S3_ENDPOINT implies a non-AWS store (MinIO, Supabase Storage, ...),
+    // which all require path-style addressing — defaulted on without an explicit env var.
+    expect(config.s3ForcePathStyle).toBe(true);
+    // s3 mode never needs the fs-mode signing secret file.
+    expect(config.blobSigningSecret).toBeUndefined();
+  });
+
+  it('honors an explicit S3_FORCE_PATH_STYLE=false override even with a custom endpoint', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      BLOB_STORE_MODE: 's3',
+      S3_ENDPOINT: 'http://minio:9000',
+      S3_REGION: 'us-east-1',
+      S3_BUCKET: 'agent-foundry',
+      S3_ACCESS_KEY_ID: 'key',
+      S3_SECRET_ACCESS_KEY: 'secret',
+      S3_FORCE_PATH_STYLE: 'false',
+    });
+    expect(config.s3ForcePathStyle).toBe(false);
+  });
+
+  it('defaults S3_FORCE_PATH_STYLE to false when BLOB_STORE_MODE is fs (no endpoint configured)', async () => {
+    const dataDir = await tempDataDir();
+    const config = loadRuntimeConfig({ ...base, DATA_DIR: dataDir });
+    expect(config.s3ForcePathStyle).toBe(false);
+  });
+
+  it('rejects s3 mode missing required S3 vars', () => {
+    expect(() => loadRuntimeConfig({ ...base, BLOB_STORE_MODE: 's3' })).toThrow();
+  });
+
+  it('reports each missing S3 var individually', () => {
+    try {
+      loadRuntimeConfig({
+        ...base,
+        BLOB_STORE_MODE: 's3',
+        S3_REGION: 'us-east-1',
+        S3_BUCKET: 'agent-foundry',
+      });
+      expect.unreachable('expected loadRuntimeConfig to throw');
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain('S3_ENDPOINT');
+      expect(message).toContain('S3_ACCESS_KEY_ID');
+      expect(message).toContain('S3_SECRET_ACCESS_KEY');
+    }
   });
 });

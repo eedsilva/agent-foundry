@@ -28,6 +28,23 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify(req.headers));
     return;
   }
+  if (req.url === '/echo-body') {
+    // Echoes the request's content-type and raw body bytes, so proxy tests can
+    // assert the body actually arrived (not drained/empty) for content types
+    // Fastify's own body parser would otherwise consume or reject upstream.
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          contentType: req.headers['content-type'] ?? null,
+          body: Buffer.concat(chunks).toString('utf8'),
+        }),
+      );
+    });
+    return;
+  }
   if (req.url === '/redirect-external') {
     res.writeHead(302, { location: 'http://evil.example/steal' });
     res.end();
@@ -40,7 +57,7 @@ const server = createServer((req, res) => {
   }
   if (req.url === '/dom-source-map-fixture') {
     res.writeHead(200, { 'content-type': 'text/html' });
-    res.end(`<html><body>
+    res.end(`<html><body style="--fixture-accent: rgb(12, 34, 56)">
 <div id="simple" style="width:120px;height:24px;background:#eee">Simple</div>
 <div id="wrapper" style="width:120px;height:24px;background:#eee">Wrapper</div>
 <div id="generated" style="width:120px;height:24px;background:#eee">Generated</div>

@@ -1,20 +1,24 @@
 import type {
   ChangeRequest,
   DecideChangeRequestRequest,
+  Message,
   Operation,
   StartOperationRequest,
+  VisualEdit,
   WorkflowRun,
 } from '@agent-foundry/contracts';
-import { ChangeRequestSchema } from '@agent-foundry/contracts';
+import { ChangeRequestSchema, VisualEditSchema } from '@agent-foundry/contracts';
 import {
   NotFoundError,
   serializeTraceContext,
   ValidationError,
+  resolveWorkspaceRelativePath,
   type ArtifactStore,
   type Clock,
   type ConversationRepository,
   type IdGenerator,
   type JobQueue,
+  type WorkspaceManager,
   type WorkflowRunRepository,
 } from '@agent-foundry/domain';
 import { CONVERSATION_WORKFLOW_ID } from './conversation-step-config.js';
@@ -31,7 +35,33 @@ export class OperationService {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly conversationService: ConversationService,
+    private readonly workspaces: Pick<WorkspaceManager, 'workspacePath'>,
   ) {}
+
+  async promoteVisualEdit(
+    projectId: string,
+    input: VisualEdit,
+  ): Promise<{ message: Message; operation: Operation }> {
+    const parsed = VisualEditSchema.safeParse(input);
+    if (!parsed.success) throw new ValidationError('Invalid visual edit');
+    const visualEdit = parsed.data;
+    const source = resolveWorkspaceRelativePath(
+      this.workspaces.workspacePath(projectId),
+      visualEdit.target.file,
+    );
+    if (source !== visualEdit.target.file) {
+      throw new ValidationError('Visual edit source must be inside the project workspace');
+    }
+    const message = await this.conversationService.createMessage(projectId, {
+      role: 'user',
+      content: [{ type: 'text', text: canonicalVisualEditMessage(visualEdit) }],
+    });
+    const operation = await this.start(projectId, message.id, {
+      kind: 'visual-edit',
+      visualEdit,
+    });
+    return { message, operation };
+  }
 
   async classify(projectId: string, messageId: string): Promise<ChangeRequest> {
     const message = (await this.conversations.listMessages(projectId)).find(
@@ -82,11 +112,15 @@ export class OperationService {
     }
 
     const operation =
-      input.kind === 'plan' || input.kind === 'build'
+      input.kind === 'plan' || input.kind === 'build' || input.kind === 'visual-edit'
         ? await this.start(projectId, changeRequest.messageId, {
             kind: input.kind,
-            planOperationId: input.planOperationId,
-            directExecution: input.directExecution,
+            ...(input.kind === 'build'
+              ? {
+                  planOperationId: input.planOperationId,
+                  directExecution: input.directExecution,
+                }
+              : {}),
             changeRequestId: changeRequest.id,
           })
         : await this.conversationService.createOperation(projectId, changeRequest.messageId, {
@@ -112,7 +146,9 @@ export class OperationService {
   async start(
     projectId: string,
     messageId: string,
-    input: StartOperationRequest,
+    input:
+      | StartOperationRequest
+      | { kind: 'visual-edit'; visualEdit?: VisualEdit; changeRequestId?: string },
   ): Promise<Operation> {
     const message = (await this.conversations.listMessages(projectId)).find(
       (item) => item.id === messageId,
@@ -163,6 +199,7 @@ export class OperationService {
         ? { planOperationId: input.planOperationId }
         : {}),
       ...(input.kind === 'build' && input.directExecution ? { directExecution: true } : {}),
+      ...(input.kind === 'visual-edit' && input.visualEdit ? { visualEdit: input.visualEdit } : {}),
       createdAt: now,
     });
 
@@ -226,4 +263,8 @@ export class OperationService {
   protected idempotencyKey(operationId: string, runId: string): string {
     return sha256(`${operationId}:${runId}`);
   }
+}
+
+function canonicalVisualEditMessage(edit: VisualEdit): string {
+  return `Apply direct visual edit in ${edit.target.file} at ${edit.target.domPath}: ${edit.property} from ${JSON.stringify(edit.oldValue)} to ${JSON.stringify(edit.newValue)}${edit.breakpoint ? ` at ${edit.breakpoint}` : ''}.`;
 }

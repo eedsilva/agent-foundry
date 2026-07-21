@@ -351,3 +351,77 @@ describe('POST /projects/:projectId/preview/:sessionId/selection', () => {
     expect(response.status).toBe(404);
   });
 });
+
+describe('POST /projects/:projectId/preview/:sessionId/visual-edits', () => {
+  const edit = {
+    target: { domPath: 'main > h1', file: 'src/App.tsx', line: 12, column: 5 },
+    property: 'text',
+    oldValue: 'Old title',
+    newValue: 'New title',
+  };
+
+  it('promotes an exact patch only from a live project-owned session', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const session = await createActiveSession(runtime, projectId);
+
+    const response = await fetch(
+      `${baseUrl}/projects/${projectId}/preview/${session.id}/visual-edits`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(edit),
+      },
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      message: { role: 'user' },
+      operation: { kind: 'visual-edit', visualEdit: edit },
+    });
+  });
+
+  it('rejects stopped and foreign preview sessions without creating an operation', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const ownerId = await createProject(baseUrl);
+    const otherId = await createProject(baseUrl);
+    const stopped = await createStoredSession(runtime, ownerId);
+    const live = await createActiveSession(runtime, ownerId);
+
+    const [stoppedResponse, foreignResponse] = await Promise.all([
+      fetch(`${baseUrl}/projects/${ownerId}/preview/${stopped.id}/visual-edits`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(edit),
+      }),
+      fetch(`${baseUrl}/projects/${otherId}/preview/${live.id}/visual-edits`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(edit),
+      }),
+    ]);
+
+    expect(stoppedResponse.status).toBe(400);
+    expect(foreignResponse.status).toBe(404);
+    expect(await runtime.conversations.listOperations(ownerId)).toEqual([]);
+    expect(await runtime.conversations.listOperations(otherId)).toEqual([]);
+  });
+
+  it('rejects a source outside the project workspace', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const session = await createActiveSession(runtime, projectId);
+
+    const response = await fetch(
+      `${baseUrl}/projects/${projectId}/preview/${session.id}/visual-edits`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...edit, target: { ...edit.target, file: '../outside.tsx' } }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await runtime.conversations.listOperations(projectId)).toEqual([]);
+  });
+});

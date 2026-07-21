@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -89,6 +89,56 @@ describe('FileProjectVersionRepository', () => {
     const repository = new FileProjectVersionRepository(await makeDataDir());
 
     await expect(repository.create(makeVersion({ version: 2 }))).rejects.toThrow();
+  });
+
+  it('discards the exact unpromoted version used for failed-promotion compensation', async () => {
+    const repository = new FileProjectVersionRepository(await makeDataDir());
+    const version = makeVersion();
+    await repository.create(version);
+
+    await repository.discardUnpromoted(version);
+
+    expect(await repository.get('project-1', 'version-1')).toBeNull();
+  });
+
+  it('refuses to discard a version that was updated after it was recorded', async () => {
+    const repository = new FileProjectVersionRepository(await makeDataDir());
+    const version = makeVersion();
+    await repository.create(version);
+    const promoted = await repository.update({ ...version, protected: true }, version.version);
+
+    await expect(repository.discardUnpromoted(version)).rejects.toThrow(
+      'no longer matches the unpromoted version',
+    );
+    expect(await repository.get('project-1', 'version-1')).toEqual(promoted);
+  });
+
+  it('holds discard validation and unlink behind the record update lock', async () => {
+    const dataDir = await makeDataDir();
+    const repository = new FileProjectVersionRepository(dataDir);
+    const version = makeVersion();
+    await repository.create(version);
+    const recordPath = join(
+      dataDir,
+      'projects',
+      version.projectId,
+      'versions',
+      `${version.id}.json`,
+    );
+    const lockPath = `${recordPath}.lock`;
+    await mkdir(lockPath);
+    let settled = false;
+
+    const discard = repository.discardUnpromoted(version).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(settled).toBe(false);
+    expect(await repository.get(version.projectId, version.id)).toEqual(version);
+    await rm(lockPath, { recursive: true });
+    await discard;
+    expect(await repository.get(version.projectId, version.id)).toBeNull();
   });
 
   it('rejects one of two concurrent updates with a stale expectedVersion', async () => {
