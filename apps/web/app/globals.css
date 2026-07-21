@@ -628,6 +628,10 @@ dd {
     12px/1.65 ui-monospace,
     monospace;
 }
+.diffPane {
+  max-width: 100%;
+  overflow-x: auto;
+}
 .diffAdded {
   background: rgba(217, 255, 82, 0.14);
   color: var(--accent);
@@ -661,6 +665,11 @@ dd {
   height: 36px;
   font-size: 22px;
 }
+@media (max-width: 1000px) {
+  .builderGrid {
+    grid-template-columns: 1fr;
+  }
+}
 @media (max-width: 850px) {
   .shell {
     width: min(100% - 24px, 1240px);
@@ -670,9 +679,6 @@ dd {
   .projectHero,
   .grid,
   .dashboardGrid {
-    grid-template-columns: 1fr;
-  }
-  .builderGrid {
     grid-template-columns: 1fr;
   }
   .runtimeCard {
