@@ -346,4 +346,25 @@ describe('FileJobQueue lease semantics', () => {
 
     expect(await queue.claim('worker-b')).toBeNull();
   });
+
+  it('round-trips an optional traceContext through enqueue and claim', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    const traceContext = { traceparent: '00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01' };
+
+    await queue.enqueue({ ...baseJob(), traceContext });
+
+    expect((await queue.claim('worker-a'))?.traceContext).toEqual(traceContext);
+  });
+
+  it('leaves traceContext undefined when a job was enqueued without one', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+
+    await queue.enqueue(baseJob());
+
+    expect((await queue.claim('worker-a'))?.traceContext).toBeUndefined();
+  });
 });

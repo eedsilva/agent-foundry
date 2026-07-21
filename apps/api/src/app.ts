@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
 import { blobKeyFor, listRisks, getRiskById, verifyBlobToken } from '@agent-foundry/composition';
+import { currentTraceIds } from '@agent-foundry/domain';
 import {
   BranchVersionRequestSchema,
   ClassifyMessageResponseSchema,
@@ -38,6 +39,7 @@ import {
 } from '@agent-foundry/domain';
 import { registerPreviewProxy } from './preview-proxy.js';
 import { createFixedWindowRateLimiter } from './rate-limit.js';
+import { registerRequestTracing } from './request-tracing.js';
 import { wildcardParam } from './request-util.js';
 
 interface BuildAppOptions {
@@ -73,6 +75,7 @@ export async function buildApp(
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       serializers: { req: serializeRequest },
+      mixin: () => currentTraceIds(),
       ...(options.loggerStream ? { stream: options.loggerStream } : {}),
     },
     bodyLimit: 1_000_000,
@@ -84,6 +87,13 @@ export async function buildApp(
     origin: allowedOrigins,
     methods: ['GET', 'POST', 'OPTIONS'],
   });
+
+  // Telemetry off (no OTLP endpoint) => these hooks are never registered =>
+  // zero per-request span/WeakMap cost on the inert path. See
+  // request-tracing.ts for what gets registered and why.
+  if (runtime.config.otelExporterOtlpEndpoint) {
+    registerRequestTracing(app);
+  }
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {

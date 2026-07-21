@@ -372,26 +372,112 @@ decisão e os limites.
 
 ## Observabilidade
 
-Hoje existem três trilhas:
+Três trilhas locais já existiam antes de qualquer SDK de tracing:
 
 - `events.jsonl` para linha do tempo;
 - `DATA_DIR/runs/` para estado consultável e versionado de run, step e attempt;
 - artefatos `run-*` para contexto, harness e diagnósticos detalhados de cada attempt;
 - `metrics/models.json` para roteamento.
 
-Para produção, exporte eventos estruturados para um backend de logs e métricas, mas aplique redaction antes de enviar prompts e stdout.
+Por cima delas, a API e o worker instrumentam OpenTelemetry (traces + métricas) e correlacionam
+logs estruturados com o trace ativo. Sem configuração, tudo isso é inerte: nenhum SDK é registrado,
+`withSpan`/os helpers de métrica seguem sendo os no-ops padrão de `@opentelemetry/api`, e o único
+custo é o overhead desprezível dessas chamadas no-op.
 
-Métricas úteis:
+### Habilitar
 
-- tempo de fila;
-- duração por node;
-- taxa de fallback;
-- taxa de aprovação por primeira tentativa;
-- número de reparos;
-- custo ou quota por projeto;
-- falhas por executor e versão;
-- defeitos descobertos após aprovação;
-- intervenção humana por entrega.
+```env
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_SERVICE_NAME=agent-foundry-api
+OTEL_TRACES_SAMPLER_RATIO=1
+OTEL_SLOW_RUN_THRESHOLD_MS=60000
+```
+
+`OTEL_EXPORTER_OTLP_ENDPOINT` não configurado (o padrão) é o interruptor: nada é registrado. Ao
+definir, `apps/api` e `apps/worker` cada um chama `startTelemetry` no boot com seu próprio
+`OTEL_SERVICE_NAME` (`agent-foundry-api` / `agent-foundry-worker` por padrão) e fazem `await
+telemetry.shutdown()` no handler de `SIGINT`/`SIGTERM`, antes de fechar o resto — traces e métricas
+em voo são drenados para o coletor antes do processo sair. Traces vão para
+`<endpoint>/v1/traces`, métricas para `<endpoint>/v1/metrics`, ambos no formato OTLP/HTTP. Não há
+coletor embutido — aponte para qualquer backend compatível (Collector, Jaeger, Tempo, etc.).
+
+A instrumentação é manual, não `NodeSDK`/auto-instrumentation: só os pontos listados abaixo emitem
+spans, e nada de HTTP/fs/etc. de terceiros é interceptado automaticamente.
+
+### Árvore de spans
+
+Uma requisição encadeia `foundry.request` → `foundry.job` → `foundry.run` → `foundry.step` →
+`foundry.attempt` → `foundry.cli`, com `foundry.operation` e `foundry.preview` como raízes
+paralelas para chat/build e preview. O contexto atravessa a fila: `job.traceContext` (serializado
+via `serializeTraceContext()` quando o job é enfileirado) é extraído pelo worker
+(`withExtractedContext`) antes de abrir `foundry.job`, então job e request compartilham `traceId`.
+
+| Span                | Onde                                                                 | Atributos principais                                                                                                           |
+| ------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `foundry.request`   | `apps/api/src/app.ts` (hook `onRequest`/`onResponse` no app inteiro) | `http.method`, `http.route`, `http.status_code`                                                                                |
+| `foundry.job`       | `worker-loop.ts`, ao tirar um job da fila                            | `foundry.job.id`, `foundry.job.type`, `foundry.job.attempts`, `foundry.queue.wait_ms`                                          |
+| `foundry.run`       | `workflow-orchestrator.ts`, por execução de workflow                 | `foundry.project.id`, `foundry.run.id`, `foundry.workflow.id`, `foundry.run.duration_ms` (ao terminar)                         |
+| `foundry.step`      | `workflow-orchestrator.ts`, por node do workflow                     | `foundry.step.node_id`, `foundry.step.id`, `foundry.step.type`                                                                 |
+| `foundry.attempt`   | `workflow-orchestrator.ts`, por tentativa de step                    | `foundry.attempt.id`, `foundry.attempt.sequence`, `foundry.model.id`, `foundry.provider`, `foundry.force_sample` (condicional) |
+| `foundry.cli`       | `base-cli-executor.ts`, ao invocar a CLI do provider                 | `foundry.provider`, `foundry.cli.command` — nunca args/prompt, que nunca chegam a um span                                      |
+| `foundry.operation` | `conversation-operation-runner.ts`, por operação de chat/build       | `foundry.operation.id`, `foundry.operation.kind`, `foundry.force_sample` (em falha)                                            |
+| `foundry.preview`   | `preview-service.ts`, ao iniciar uma sessão de preview               | `foundry.preview.session_id`                                                                                                   |
+
+Rotas SSE (sufixo `/stream`) não abrem `foundry.request`: elas fazem `reply.hijack()` e o Fastify
+nunca dispara `onResponse` numa reply hijacked, então um span aberto ali vazaria (nunca terminaria).
+Todas as outras rotas — incluindo as de blob (`/blobs/*`, `/projects/:id/artifacts/:name/blob-url`)
+— passam pelo hook normalmente porque não são hijacked. Um listener em `request.raw.on('close', …)`
+fecha o span também quando o cliente desconecta antes da resposta terminar.
+
+### Métricas
+
+| Métrica                           | Tipo      | Descrição                                                  |
+| --------------------------------- | --------- | ---------------------------------------------------------- |
+| `foundry.run.duration_ms`         | histogram | duração do run, com atributo `status`                      |
+| `foundry.step.retries`            | counter   | reparos/retries de step                                    |
+| `foundry.queue.wait_ms`           | histogram | tempo entre enfileirar e o worker pegar o job              |
+| `foundry.tokens.input`            | histogram | tokens de entrada por attempt, com `foundry.model.id`      |
+| `foundry.tokens.output`           | histogram | tokens de saída por attempt, com `foundry.model.id`        |
+| `foundry.preview.active_sessions` | gauge     | sessões de preview ativas (proxy de utilização do sandbox) |
+
+Exportadas via `PeriodicExportingMetricReader` a cada 15s para `<endpoint>/v1/metrics`.
+
+### Correlação de logs
+
+Ambos os processos usam pino com `mixin: () => currentTraceIds()`: todo log emitido enquanto há um
+span ativo carrega `traceId`/`spanId` automaticamente, sem passá-los explicitamente em cada
+chamada. Sem telemetria habilitada, `currentTraceIds()` devolve `{}` e o mixin não adiciona nada.
+
+### Redaction
+
+Todo exporter de trace passa por `RedactingSpanExporter`, que aplica `redactString` (o mesmo
+filtro usado em `events.jsonl` e nos artefatos) em atributos, na mensagem de status e em nome e
+atributos de cada evento — inclusive `exception.message`/`exception.stacktrace` de
+`span.recordException`, que senão escapariam da redação normal de atributos. É o único ponto de
+filtro: nenhum outro exporter/processor de trace é registrado sem passar por ele. `foundry.cli`
+carrega apenas o nome do comando, nunca args ou stdout/stdin — prompts não chegam a um span.
+
+### Sampling
+
+`OTEL_TRACES_SAMPLER_RATIO` controla a fração de traces amostrados por `TraceIdRatioBased` na raiz
+(`ParentBasedSampler`), mas dois mecanismos preservam sinal fora dessa fração:
+
+1. **Head**: um span cuja fábrica marcou `foundry.force_sample: true` na criação (ex.: retries de
+   fallback, tentativas além da primeira) é sempre `RECORD_AND_SAMPLED`, ratio à parte.
+2. **Export-time (tail)**: `KeepErrorsSampler` nunca devolve `NOT_RECORD` — rebaixa para `RECORD`
+   qualquer span que o ratio teria descartado, mantendo seus dados vivos até `onEnd`.
+   `TailSpanProcessor` decide ali, com status/atributos/duração já conhecidos, se exporta mesmo
+   assim: status `ERROR`, `foundry.force_sample` setado reativamente no catch (ex.: falha de
+   operação/run, quando o resultado só é conhecido depois do span ter começado), ou
+   `foundry.run.duration_ms` acima de `OTEL_SLOW_RUN_THRESHOLD_MS` (span marcado `foundry.slow` por
+   `RedactingSpanExporter`). Um span mantido assim é exportado uma vez, direto pelo mesmo exporter
+   (logo, também redigido).
+
+`ponytail`: `TailSpanProcessor` mantém cada span _recorded_ em memória até terminar — aceitável na
+escala atual. Se isso deixar de ser verdade, o upgrade é um tail sampler do lado do coletor
+(spans sempre exportados pelo SDK, retenção decidida a jusante) — recomendado de qualquer forma
+para operações que já rodam um Collector: ele pode reter traces lentos/com erro observando a árvore
+inteira, sem o SDK precisar manter nada vivo.
 
 ### Feedback humano e export de auditoria
 

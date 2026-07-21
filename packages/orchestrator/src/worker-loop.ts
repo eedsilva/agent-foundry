@@ -1,13 +1,26 @@
 import type { QueueJob } from '@agent-foundry/contracts';
 import type { JobQueue } from '@agent-foundry/domain';
-import { errorMessage } from '@agent-foundry/domain';
+import {
+  errorMessage,
+  recordQueueWait,
+  withExtractedContext,
+  withSpan,
+} from '@agent-foundry/domain';
 import type { ConversationOperationRunner } from './conversation-operation-runner.js';
 import type { WorkflowOrchestrator } from './workflow-orchestrator.js';
+
+/** Structural — deliberately not `pino.Logger` so orchestrator stays free of a pino dependency; apps/worker passes a real pino child-logger factory in. */
+export interface JobLogger {
+  child(bindings: Record<string, unknown>): JobLogger;
+  info(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+}
 
 export interface WorkerLoopOptions {
   workerId: string;
   pollIntervalMs: number;
   heartbeatIntervalMs?: number;
+  logger?: JobLogger;
 }
 
 interface HeartbeatState {
@@ -31,18 +44,41 @@ export class WorkerLoop {
 
     const state: HeartbeatState = { job, leaseLost: false };
     const stopHeartbeat = this.startHeartbeat(state);
+    const queueWaitMs = Date.now() - Date.parse(job.availableAt);
+    recordQueueWait(queueWaitMs);
+    const log = this.options.logger?.child({
+      jobId: job.id,
+      runId: job.runId,
+      projectId: job.projectId,
+    });
 
     try {
-      if (job.type === 'run-project') {
-        await this.orchestrator.runProject(job.projectId, job.workflowId, job.runId);
-      } else {
-        if (!job.runId || !job.operationId) {
-          throw new Error(`run-conversation-operation job ${job.id} is missing runId/operationId`);
-        }
-        await this.operationRunner.run(job.projectId, job.runId, job.operationId);
-      }
+      await withExtractedContext(job.traceContext, () =>
+        withSpan(
+          'foundry.job',
+          {
+            'foundry.job.id': job.id,
+            'foundry.job.type': job.type,
+            'foundry.job.attempts': job.attempts,
+            'foundry.queue.wait_ms': queueWaitMs,
+          },
+          async () => {
+            if (job.type === 'run-project') {
+              await this.orchestrator.runProject(job.projectId, job.workflowId, job.runId);
+            } else {
+              if (!job.runId || !job.operationId) {
+                throw new Error(
+                  `run-conversation-operation job ${job.id} is missing runId/operationId`,
+                );
+              }
+              await this.operationRunner.run(job.projectId, job.runId, job.operationId);
+            }
+          },
+        ),
+      );
       stopHeartbeat();
       if (!state.leaseLost) await this.queue.ack(state.job, this.options.workerId);
+      log?.info('job completed');
     } catch (error) {
       stopHeartbeat();
       if (!state.leaseLost) {
@@ -52,6 +88,7 @@ export class WorkerLoop {
           error instanceof Error ? error : new Error(errorMessage(error)),
         );
       }
+      log?.error({ err: error }, 'job failed');
     }
     return true;
   }

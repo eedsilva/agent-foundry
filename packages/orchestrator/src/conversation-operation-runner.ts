@@ -12,6 +12,7 @@ import {
   BrowserTestPlanArtifactSchema,
   DEFAULT_BROWSER_EVIDENCE_POLICY,
 } from '@agent-foundry/contracts';
+import { SpanStatusCode, type Span } from '@opentelemetry/api';
 import {
   NotFoundError,
   ProjectVersionDiscardRefusedError,
@@ -20,6 +21,7 @@ import {
   transitionStepAttempt,
   transitionStepRun,
   transitionWorkflowRun,
+  withSpan,
   type ArtifactStore,
   type Clock,
   type ConversationRepository,
@@ -71,6 +73,17 @@ export class ConversationOperationRunner {
   ) {}
 
   async run(projectId: string, runId: string, operationId: string): Promise<void> {
+    return withSpan('foundry.operation', { 'foundry.operation.id': operationId }, (span) =>
+      this.runTraced(projectId, runId, operationId, span),
+    );
+  }
+
+  private async runTraced(
+    projectId: string,
+    runId: string,
+    operationId: string,
+    span: Span,
+  ): Promise<void> {
     const initialRun = await this.requireRun(runId);
     const operation = await this.requireOperation(projectId, operationId);
     if (initialRun.projectId !== projectId) {
@@ -81,6 +94,7 @@ export class ConversationOperationRunner {
     }
     const kind: 'plan' | 'build' | 'visual-edit' =
       operation.kind === 'build' || operation.kind === 'visual-edit' ? operation.kind : 'plan';
+    span.setAttribute('foundry.operation.kind', kind);
     const message = await this.requireMessage(projectId, operation.messageId);
     const planArtifact = await this.loadPlanArtifact(projectId, operation);
     const changeRequest = operation.changeRequestId
@@ -314,6 +328,13 @@ export class ConversationOperationRunner {
         // against records that have moved past these local versions.
         return;
       }
+      // Reactive — the outcome wasn't known when the span started.
+      // KeepErrorsSampler now records every span (never NOT_RECORD), so this
+      // isn't a no-op on a non-recording span; TailSpanProcessor reads the
+      // ERROR status/attribute at onEnd and exports regardless of head
+      // sampling (see telemetry.ts).
+      span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+      span.setAttribute('foundry.force_sample', true);
       const compensationFailures: CompensationFailure[] = [];
       let operationRestored = !operationPromoted;
       if (operationPromoted) {

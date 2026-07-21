@@ -145,6 +145,7 @@ export const QueueJobSchema = z.object({
   lastError: z.string().optional(),
   leaseEpoch: z.number().int().nonnegative().default(0),
   lease: QueueLeaseSchema.optional(),
+  traceContext: z.record(z.string(), z.string()).optional(),
 });
 export type QueueJob = z.infer<typeof QueueJobSchema>;
 

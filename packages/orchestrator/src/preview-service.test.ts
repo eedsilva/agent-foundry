@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import {
   PreviewFailureDiagnosticSchema,
   ProjectEventSchema,
@@ -716,5 +719,50 @@ describe('PreviewService durable lifecycle', () => {
         (await built.artifacts.getLatest('project-1', `preview-failure-${session.id}`))?.content,
       ).phase,
     ).toBe('runtime');
+  });
+});
+
+describe('PreviewService foundry.preview span', () => {
+  let exporter: InMemorySpanExporter;
+  let provider: NodeTracerProvider;
+
+  beforeAll(() => {
+    exporter = new InMemorySpanExporter();
+    provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+    provider.register();
+  });
+
+  afterEach(() => {
+    exporter.reset();
+  });
+
+  afterAll(async () => {
+    await provider.shutdown();
+    trace.disable();
+    context.disable();
+    propagation.disable();
+  });
+
+  it('wraps a successful PreviewRunner.start in a foundry.preview span', async () => {
+    const { service } = await buildService();
+
+    const { session } = await start(service);
+
+    const span = exporter.getFinishedSpans().find((item) => item.name === 'foundry.preview');
+    expect(span).toBeDefined();
+    expect(span?.attributes).toMatchObject({ 'foundry.preview.session_id': session.id });
+    expect(span?.status.code).not.toBe(SpanStatusCode.ERROR);
+  });
+
+  it('marks the span ERROR when PreviewRunner.start throws', async () => {
+    const runner = new FakePreviewRunner();
+    runner.startThrows = 1;
+    const { service } = await buildService({ runner });
+
+    const { session } = await start(service);
+
+    expect(session.status).toBe('failed');
+    const span = exporter.getFinishedSpans().find((item) => item.name === 'foundry.preview');
+    expect(span?.status.code).toBe(SpanStatusCode.ERROR);
   });
 });

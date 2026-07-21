@@ -1,7 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { context, propagation, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import type { QueueJob } from '@agent-foundry/contracts';
-import { LeaseLostError, type JobQueue } from '@agent-foundry/domain';
-import { WorkerLoop } from './worker-loop.js';
+import {
+  currentTraceIds,
+  LeaseLostError,
+  serializeTraceContext,
+  withSpan,
+  type JobQueue,
+} from '@agent-foundry/domain';
+import { WorkerLoop, type JobLogger } from './worker-loop.js';
 import type { WorkflowOrchestrator } from './workflow-orchestrator.js';
 
 function job(overrides: Partial<QueueJob> = {}): QueueJob {
@@ -51,6 +60,20 @@ function fakeQueue(overrides: Partial<JobQueue> = {}): JobQueue {
     reapExpired: vi.fn().mockResolvedValue([]),
     ...overrides,
   };
+}
+
+// Structural fake matching JobLogger — child() returns itself so call sites
+// (job.child({...}).info(...)) are observable via the same spies.
+function fakeLogger(): JobLogger & {
+  child: ReturnType<typeof vi.fn>;
+  info: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+} {
+  const info = vi.fn();
+  const error = vi.fn();
+  const logger = { child: vi.fn(), info, error };
+  logger.child.mockReturnValue(logger);
+  return logger;
 }
 
 function fakeOperationRunner(
@@ -201,6 +224,109 @@ describe('WorkerLoop heartbeat renewal', () => {
 
     expect(run).toHaveBeenCalledWith('project-1', 'run-1', 'operation-1');
     expect(runProject).not.toHaveBeenCalled();
+    expect(queue.ack).toHaveBeenCalled();
+  });
+});
+
+describe('WorkerLoop job logger', () => {
+  it('scopes a child logger to jobId/runId/projectId and logs completion on success', async () => {
+    const claimedJob = job({ id: 'job-9', runId: 'run-9', projectId: 'project-9' });
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(claimedJob) });
+    const orchestrator = {
+      runProject: vi.fn().mockResolvedValue(undefined),
+    } as unknown as WorkflowOrchestrator;
+    const logger = fakeLogger();
+
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+      logger,
+    });
+
+    await worker.runOnce();
+
+    expect(logger.child).toHaveBeenCalledWith({
+      jobId: 'job-9',
+      runId: 'run-9',
+      projectId: 'project-9',
+    });
+    expect(logger.info).toHaveBeenCalledWith('job completed');
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('scopes a child logger to jobId/runId/projectId and logs failure when the run throws', async () => {
+    const claimedJob = job({ id: 'job-9', runId: 'run-9', projectId: 'project-9' });
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(claimedJob) });
+    const orchestrator = {
+      runProject: vi.fn().mockRejectedValue(new Error('boom')),
+    } as unknown as WorkflowOrchestrator;
+    const logger = fakeLogger();
+
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+      logger,
+    });
+
+    await worker.runOnce();
+
+    expect(logger.child).toHaveBeenCalledWith({
+      jobId: 'job-9',
+      runId: 'run-9',
+      projectId: 'project-9',
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      { err: expect.objectContaining({ message: 'boom' }) },
+      'job failed',
+    );
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+});
+
+describe('WorkerLoop job span trace propagation', () => {
+  let exporter: InMemorySpanExporter;
+  let provider: NodeTracerProvider;
+
+  beforeAll(() => {
+    exporter = new InMemorySpanExporter();
+    provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+    provider.register();
+  });
+
+  afterAll(async () => {
+    await provider.shutdown();
+    trace.disable();
+    context.disable();
+    propagation.disable();
+  });
+
+  it('links the dispatched job span to the trace that enqueued the job', async () => {
+    let enqueuingTraceId = '';
+    let carrier: Record<string, string> = {};
+    await withSpan('foundry.request', {}, async (span) => {
+      enqueuingTraceId = span.spanContext().traceId;
+      carrier = serializeTraceContext();
+    });
+    expect(enqueuingTraceId).not.toBe('');
+
+    const claimedJob = job({ traceContext: carrier });
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(claimedJob) });
+
+    let dispatchedTraceId = '';
+    const orchestrator = {
+      runProject: vi.fn().mockImplementation(async () => {
+        dispatchedTraceId = currentTraceIds().traceId ?? '';
+      }),
+    } as unknown as WorkflowOrchestrator;
+
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+    });
+
+    await worker.runOnce();
+
+    expect(dispatchedTraceId).toBe(enqueuingTraceId);
     expect(queue.ack).toHaveBeenCalled();
   });
 });

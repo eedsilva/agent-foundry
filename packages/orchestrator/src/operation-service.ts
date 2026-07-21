@@ -10,6 +10,7 @@ import type {
 import { ChangeRequestSchema, VisualEditSchema } from '@agent-foundry/contracts';
 import {
   NotFoundError,
+  traceContextField,
   ValidationError,
   resolveWorkspaceRelativePath,
   type ArtifactStore,
@@ -214,6 +215,7 @@ export class OperationService {
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
+      ...traceContextField(),
     });
 
     return operation;

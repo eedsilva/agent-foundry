@@ -18,7 +18,9 @@ import {
   isPreviewSessionTerminal,
   redactString,
   redactUnknown,
+  registerActiveSessionsCallback,
   transitionPreviewSession,
+  withSpan,
   type ArtifactStore,
   type Clock,
   type EventStore,
@@ -72,6 +74,7 @@ export class PreviewService {
     this.healthIntervalMs = config.healthIntervalMs ?? DEFAULT_HEALTH_INTERVAL_MS;
     this.healthFailureThreshold = config.healthFailureThreshold ?? DEFAULT_HEALTH_FAILURE_THRESHOLD;
     this.maxRestarts = config.maxRestarts ?? DEFAULT_MAX_RESTARTS;
+    registerActiveSessionsCallback(async () => (await this.sessions.listActive()).length);
   }
 
   async start(input: StartPreviewInput): Promise<{ session: PreviewSession; url: string }> {
@@ -114,7 +117,11 @@ export class PreviewService {
       session = await this.persist(session);
 
       try {
-        session = await this.runner.start(session);
+        session = await withSpan(
+          'foundry.preview',
+          { 'foundry.preview.session_id': session.id },
+          () => this.runner.start(session),
+        );
       } catch (error) {
         const failing = transitionPreviewSession(session, 'failing', this.clock.now(), {
           failurePhase: 'start',
@@ -475,6 +482,14 @@ export class PreviewService {
     });
   }
 
+  // ponytail: the active-sessions gauge is now an observable pull metric
+  // (registered once in the constructor), so persist() no longer pays a
+  // listActive() scan on every lifecycle transition — that cost moves to
+  // once per metric export interval. It's still an O(total historical
+  // session dirs) scan each time, because reap() never deletes terminal
+  // session directories. Upgrade path: reap gc of terminal session dirs, or
+  // track active count with an in-memory counter instead of a listActive()
+  // scan.
   private async persist(session: PreviewSession): Promise<PreviewSession> {
     return this.sessions.update(session, session.version);
   }
