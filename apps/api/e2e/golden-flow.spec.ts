@@ -1,16 +1,23 @@
 import { createServer } from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
+import { MockAgentExecutor } from '@agent-foundry/executors';
+import type { AgentExecutor } from '@agent-foundry/domain';
 import type { TaskProfile } from '@agent-foundry/contracts';
 import { buildApp } from '../src/app.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
 const FIXTURE_SCRIPT = resolve(REPO_ROOT, 'packages/executors/src/fixtures/preview-dev-server.mjs');
+const REFERENCE_IMAGE = resolve(import.meta.dirname, 'fixtures/design-reference.png');
+const BUILDER_SCREENSHOT = resolve(
+  REPO_ROOT,
+  'test-results/issue-43-knowledge-builder-desktop.png',
+);
 const BROWSER_TEST_PLAN = {
   schemaVersion: '1' as const,
   status: 'completed' as const,
@@ -119,6 +126,10 @@ test.afterAll(async () => {
   await Promise.all([apiClose(), ...dirs.map((dir) => rm(dir, { recursive: true, force: true }))]);
 });
 
+test.afterEach(async ({ page }) => {
+  await page.close();
+});
+
 async function createProject(): Promise<string> {
   const response = await fetch(`${apiBaseUrl}/projects`, {
     method: 'POST',
@@ -206,6 +217,43 @@ async function getRun(projectId: string): Promise<{ id: string; status: string }
   return run;
 }
 
+async function runConversationJob(): Promise<void> {
+  expect(await runtime.worker.runOnce()).toBe(true);
+}
+
+function installGoldenFixtureExecutor(): void {
+  const mock = new MockAgentExecutor();
+  let buildSequence = 0;
+  const executor: AgentExecutor = {
+    provider: mock.provider,
+    health: () => mock.health(),
+    execute: async (request, signal) => {
+      const result = await mock.execute(request, signal);
+      if (request.stepId.includes('conversation-build')) {
+        buildSequence += 1;
+        await writeFile(join(request.cwd, 'build-sequence.txt'), `${buildSequence}\n`);
+      }
+      if (request.stepId.includes('conversation-visual-edit')) {
+        const target = join(request.cwd, 'src', 'Greeting.tsx');
+        const source = await readFile(target, 'utf8');
+        if (!source.includes("'#eee'")) throw new Error('visual-edit fixture source is stale');
+        await writeFile(target, source.replace("'#eee'", "'#ddd'"));
+      }
+      return result;
+    },
+  };
+  (runtime.executors as { get: () => AgentExecutor }).get = () => executor;
+}
+
+async function pinnedKnowledgePrompt(projectId: string): Promise<string> {
+  const runsPath = join(runtime.workspaces.workspacePath(projectId), '.orchestrator', 'runs');
+  const requests = (await readdir(runsPath, { recursive: true }))
+    .filter((path) => path.endsWith('REQUEST.md'))
+    .map((path) => join(runsPath, path));
+  const contents = await Promise.all(requests.map((path) => readFile(path, 'utf8')));
+  return contents.find((content) => content.includes('## Pinned knowledge files')) ?? '';
+}
+
 test('golden flow: change request, preview, browser tests, diff approval, axe', async ({
   page,
 }) => {
@@ -248,7 +296,9 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   await expect(iframe).toHaveAttribute('width', '375');
 
   await page.getByRole('button', { name: 'Console, rede e testes' }).click();
-  await expect(page.getByText('Load the root page')).toBeVisible();
+  await expect(
+    page.getByRole('region', { name: 'Preview' }).getByText('Load the root page'),
+  ).toBeVisible();
   await expect(page.locator('.screenshotFilmstrip img').first()).toBeVisible();
 
   // Exclude the previewed iframe's own document: it's the fixture dev
@@ -284,4 +334,247 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   expect(await runtime.worker.runOnce()).toBe(true);
   const finalRun = await getRun(projectId);
   expect(finalRun.status).toBe('completed');
+});
+
+test('golden flow: attach reference, plan, build, visual edit, revert, rebuild', async ({
+  page,
+}) => {
+  const projectId = await createProject();
+  await seedWorkspaceAndPlan(projectId);
+  await mkdir(join(runtime.workspaces.workspacePath(projectId), 'src'));
+  await writeFile(
+    join(runtime.workspaces.workspacePath(projectId), 'src', 'Greeting.tsx'),
+    "export const greetingBackground = '#eee';\n",
+    { flag: 'wx' },
+  );
+  expect(await runtime.worker.runOnce()).toBe(true);
+
+  await page.goto(`${webBaseUrl}/project/${projectId}`);
+  const regions = {
+    chat: page.getByRole('region', { name: 'Chat' }),
+    preview: page.getByRole('region', { name: 'Preview' }),
+    changes: page.getByRole('region', { name: 'Changes' }),
+  };
+  await expect(regions.chat).toBeVisible({ timeout: 30_000 });
+  await expect(regions.preview).toBeVisible();
+  await expect(regions.changes).toBeVisible();
+  const decideModalHeading = page.getByRole('heading', { name: /Human diff approval/ });
+  await page.getByRole('button', { name: 'approve' }).first().click();
+  await page.getByLabel('Decidido por').fill('golden-flow-reviewer');
+  await page.getByRole('button', { name: /Confirmar approve/ }).click();
+  await expect(decideModalHeading).not.toBeVisible();
+  expect(await runtime.worker.runOnce()).toBe(true);
+  await expect.poll(() => getRun(projectId)).toMatchObject({ status: 'completed' });
+  installGoldenFixtureExecutor();
+
+  await page.getByLabel('Adicionar knowledge file').setInputFiles(REFERENCE_IMAGE);
+  let knowledge = page.locator('.knowledgeFileList article').filter({
+    hasText: 'design-reference.png',
+  });
+  await expect(knowledge).toContainText('design-reference · v1 · fixado');
+  const image = knowledge.getByRole('img', { name: 'design-reference.png' });
+  await expect(image).toBeVisible();
+  expect(await image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1);
+
+  await knowledge.getByRole('button', { name: 'Desafixar design-reference.png' }).click();
+  await expect(knowledge).not.toContainText('fixado');
+  await knowledge.getByRole('button', { name: 'Fixar design-reference.png' }).click();
+  await expect(knowledge).toContainText('fixado');
+  await knowledge.getByLabel('Substituir design-reference.png').setInputFiles(REFERENCE_IMAGE);
+  await expect(knowledge).toContainText('design-reference · v2 · fixado');
+
+  const chatInput = regions.chat.locator('form textarea');
+  await chatInput.fill('Consider the attached reference before execution.');
+  await regions.chat.getByRole('button', { name: 'Enviar' }).click();
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        /\/conversation\/change-requests\/[^/]+\/decide$/.test(new URL(response.url()).pathname),
+    ),
+    regions.chat.getByRole('button', { name: 'Confirm plan' }).click(),
+  ]);
+  await runConversationJob();
+  await expect(
+    regions.chat.locator('.operationBadge').filter({ hasText: 'plan, pending' }),
+  ).toBeVisible();
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        /\/conversation\/operations\/[^/]+\/decide$/.test(new URL(response.url()).pathname),
+    ),
+    regions.chat.getByRole('button', { name: 'Aprovar' }).click(),
+  ]);
+  await expect(
+    regions.chat.locator('.operationBadge').filter({ hasText: 'plan, approved' }),
+  ).toBeVisible();
+  await expect(pinnedKnowledgePrompt(projectId)).resolves.toContain(
+    'design-reference.png v2 · design-reference',
+  );
+
+  await regions.chat.getByLabel('Build (vai alterar código e consumir budget)').check();
+  await chatInput.fill('Build the approved implementation');
+  await regions.chat.getByRole('button', { name: 'Enviar' }).click();
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        /\/conversation\/change-requests\/[^/]+\/decide$/.test(new URL(response.url()).pathname),
+    ),
+    regions.chat.getByRole('button', { name: 'Confirm build' }).click(),
+  ]);
+  await runConversationJob();
+  await expect(
+    regions.chat.locator('.operationBadge').filter({ hasText: 'build' }).last(),
+  ).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'Preview' })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'Iniciar preview' }).click();
+  const iframe = page.locator('.previewFrameWrap iframe');
+  await expect(iframe).toBeVisible({ timeout: 30_000 });
+  const src = await iframe.getAttribute('src');
+  if (!src) throw new Error('preview iframe has no src');
+  const fixtureUrl = new URL(src);
+  fixtureUrl.pathname = `${fixtureUrl.pathname.replace(/\/$/, '')}/dom-source-map-fixture`;
+  const iframeHandle = await page.waitForSelector('.previewFrameWrap iframe');
+  const frame = await iframeHandle.contentFrame();
+  if (!frame) throw new Error('preview iframe has no content frame');
+  await frame.goto(fixtureUrl.toString());
+  await page.getByRole('button', { name: 'Selecionar elemento' }).click();
+  const selected = page.frameLocator('.previewFrameWrap iframe').locator('#simple');
+  await selected.click();
+  await expect(page.getByText('src/Greeting.tsx')).toBeVisible();
+  await page.getByLabel('Propriedade').selectOption('backgroundColor');
+  await page.getByLabel('Valor atual').fill('#eee');
+  await page.getByLabel('Novo valor').fill('#ddd');
+  await page.getByRole('button', { name: 'Pré-visualizar alteração' }).click();
+  await expect(selected).toHaveCSS('background-color', 'rgb(221, 221, 221)');
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        /\/preview\/[^/]+\/visual-edits$/.test(new URL(response.url()).pathname),
+    ),
+    page.getByRole('button', { name: 'Aplicar alteração' }).click(),
+  ]);
+  await runConversationJob();
+  await expect
+    .poll(() =>
+      readFile(join(runtime.workspaces.workspacePath(projectId), 'src', 'Greeting.tsx'), 'utf8'),
+    )
+    .toContain("'#ddd'");
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        /\/preview\/[^/]+\/stop$/.test(new URL(response.url()).pathname),
+    ),
+    page.getByRole('button', { name: 'Parar preview' }).click(),
+  ]);
+
+  await page.reload();
+  const [visualVersion, baselineVersion] = await runtime.projectVersionService.list(projectId, 50);
+  if (!visualVersion || !baselineVersion) throw new Error('golden versions were not recorded');
+  const versionArticle = (commit: string, kind = 'run') =>
+    page
+      .locator('.versionList article')
+      .filter({ hasText: commit.slice(0, 7) })
+      .filter({ has: page.getByText(kind, { exact: true }) });
+  await expect(versionArticle(baselineVersion.commit)).toBeVisible({ timeout: 30_000 });
+  await expect(versionArticle(visualVersion.commit)).toBeVisible();
+  await versionArticle(baselineVersion.commit).getByRole('checkbox').check();
+  await versionArticle(visualVersion.commit).getByRole('checkbox').check();
+  await page.getByRole('button', { name: 'Comparar selecionadas' }).click();
+  await expect(page.locator('.diffPane')).toContainText("'#ddd'");
+
+  page.once('dialog', (dialog) => dialog.accept('golden-flow'));
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        /\/versions\/[^/]+\/branch$/.test(new URL(response.url()).pathname),
+    ),
+    versionArticle(baselineVersion.commit)
+      .getByRole('button', { name: 'Criar branch da versão 1' })
+      .click(),
+  ]);
+  await expect(versionArticle(baselineVersion.commit, 'branch')).toBeVisible();
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        /\/versions\/[^/]+\/protect$/.test(new URL(response.url()).pathname),
+    ),
+    versionArticle(baselineVersion.commit)
+      .getByRole('button', { name: 'Proteger versão 1' })
+      .click(),
+  ]);
+  await expect
+    .poll(async () => runtime.projectVersions.get(projectId, baselineVersion.id))
+    .toMatchObject({ protected: true });
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        /\/versions\/[^/]+\/revert$/.test(new URL(response.url()).pathname),
+    ),
+    versionArticle(baselineVersion.commit).locator('[data-version-action="revert"]').click(),
+  ]);
+  const [revertVersion] = await runtime.projectVersionService.list(projectId, 50);
+  await expect(versionArticle(revertVersion!.commit, 'revert')).toBeVisible();
+
+  const refreshedChat = page.getByRole('region', { name: 'Chat' });
+  await refreshedChat.getByLabel('Build (vai alterar código e consumir budget)').check();
+  await refreshedChat.locator('form textarea').fill('Rebuild the approved implementation');
+  await refreshedChat.getByRole('button', { name: 'Enviar' }).click();
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        /\/conversation\/change-requests\/[^/]+\/decide$/.test(new URL(response.url()).pathname),
+    ),
+    refreshedChat.getByRole('button', { name: 'Confirm build' }).click(),
+  ]);
+  await runConversationJob();
+
+  await page.reload();
+  await expect.poll(() => runtime.projectVersionService.list(projectId, 50)).toHaveLength(5);
+  const [rebuiltVersion] = await runtime.projectVersionService.list(projectId, 50);
+  await expect(versionArticle(rebuiltVersion!.commit)).toBeVisible({ timeout: 30_000 });
+  const changes = page.getByRole('region', { name: 'Changes' });
+  await expect(changes).toContainText('Checks');
+  await expect(changes).toContainText('passed');
+  const workspacePath = runtime.workspaces.workspacePath(projectId);
+  await expect(changes.getByRole('link', { name: 'Open in editor' })).toHaveAttribute(
+    'href',
+    `vscode://file/${encodeURIComponent(workspacePath)}`,
+  );
+
+  await mkdir(resolve(BUILDER_SCREENSHOT, '..'), { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await page.screenshot({ path: BUILDER_SCREENSHOT, fullPage: true });
+  expect((await stat(BUILDER_SCREENSHOT)).size).toBeGreaterThan(0);
+  await test.info().attach('knowledge builder desktop', {
+    path: BUILDER_SCREENSHOT,
+    contentType: 'image/png',
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileRegions = [
+    page.getByRole('region', { name: 'Chat' }),
+    page.getByRole('region', { name: 'Preview' }),
+    page.getByRole('region', { name: 'Changes' }),
+  ];
+  for (const region of mobileRegions) await expect(region).toBeVisible();
+  const boxes = await Promise.all(mobileRegions.map((region) => region.boundingBox()));
+  expect(boxes[0]!.y).toBeLessThan(boxes[1]!.y);
+  expect(boxes[1]!.y).toBeLessThan(boxes[2]!.y);
+
+  knowledge = page.locator('.knowledgeFileList article').filter({
+    hasText: 'design-reference.png',
+  });
+  await knowledge.getByRole('button', { name: 'Remover design-reference.png' }).click();
+  await expect(page.getByText('Nenhum knowledge file ativo.')).toBeVisible();
 });

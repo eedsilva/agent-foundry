@@ -579,3 +579,35 @@ npm run e2e --workspace @agent-foundry/api
 npm run doctor
 git diff --check
 ```
+
+## Knowledge builder golden flow — 2026-07-21
+
+`apps/api/e2e/golden-flow.spec.ts` now proves the user-visible issue #43 journey through the existing
+application harness and browser:
+
+- upload a checked-in 1x1 PNG as a pinned `design-reference`, render its stored bytes, unpin, repin,
+  replace it as v2, and finally remove it from the active project;
+- confirm that the pinned v2 artifact reference reaches the real plan request, approve the plan, build,
+  select a preview element, preview and apply a source visual edit, and receive real workspace and
+  browser-verification results;
+- compare the build and visual-edit versions, create a branch, protect the baseline, revert without
+  rewriting history, rebuild, and observe passed checks in Changes;
+- verify the percent-encoded local `vscode://file/` link; and
+- capture the three visible Chat / Preview / Changes regions at 1440 px, then assert that the same named
+  regions remain visible in that order at 390 x 844.
+
+Focused command:
+
+```bash
+npm run e2e --workspace @agent-foundry/api -- --grep "attach reference"
+```
+
+The focused run passed 1 / 1. Its stable local desktop evidence path is
+`test-results/issue-43-knowledge-builder-desktop.png`; Playwright also attaches the same image to its
+test result. The screenshot is runtime evidence, not a committed visual baseline.
+
+The conversation executor is a deterministic fixture installed inside the existing golden-flow runtime
+after the seeded workflow completes. It does not call a model or external provider. Project APIs, the
+Next.js page, preview lifecycle, source selection/edit request, workspace mutation/version services,
+browser-verification coordinator, and browser interactions are the real application paths. There is no
+image-generation or raster-editing step.
