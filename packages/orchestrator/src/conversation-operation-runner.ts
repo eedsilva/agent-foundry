@@ -4,7 +4,6 @@ import type {
   AgentExecutionRequest,
   AgentExecutionResult,
   ArtifactReference,
-  BrowserVerificationReport,
   KnowledgeFile,
   Message,
   Operation,
@@ -23,7 +22,6 @@ import {
   BlobIntegrityError,
   NotFoundError,
   ProjectVersionDiscardRefusedError,
-  RunCancelledError,
   ValidationError,
   errorMessage,
   transitionStepAttempt,
@@ -56,7 +54,6 @@ import type { BrowserVerificationCoordinator } from './browser-verification-coor
 
 export interface ConversationOperationRunnerOptions {
   agentTimeoutMs: number;
-  cancelPollIntervalMs?: number;
   verifier?: VerificationService;
   browserVerification?: Pick<BrowserVerificationCoordinator, 'verify'>;
 }
@@ -90,13 +87,6 @@ export class ConversationOperationRunner {
     }
     if (operation.runId !== runId) {
       throw new ValidationError(`Operation ${operationId} is not bound to workflow run ${runId}`);
-    }
-    if (initialRun.status === 'cancel_requested') {
-      await this.runs.update(
-        transitionWorkflowRun(initialRun, 'cancelled', this.clock.now()),
-        initialRun.version,
-      );
-      return;
     }
     const kind: 'plan' | 'build' | 'visual-edit' =
       operation.kind === 'build' || operation.kind === 'visual-edit' ? operation.kind : 'plan';
@@ -155,8 +145,6 @@ export class ConversationOperationRunner {
     let recordedVersion: ProjectVersion | null = null;
     let operationPromoted = false;
     let succeeded = false;
-    const cancellation = new AbortController();
-    const stopWatching = this.watchForCancellation(runId, cancellation);
     try {
       const knowledgeInputs = await this.loadKnowledgeInputs(projectId, activeKnowledge);
       if (operation.visualEdit && !(await this.workspaces.isClean(projectId))) {
@@ -246,49 +234,44 @@ export class ConversationOperationRunner {
         timeoutMs: this.options.agentTimeoutMs,
         outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
         inputArtifacts: inputReferences,
-        ...(knowledgeInputs.length > 0
-          ? {
-              attachments: knowledgeInputs.map(({ path, content, artifact }) => ({
-                name: path,
-                mediaType: artifact.metadata.contentType,
-                sha256: artifact.metadata.sha256,
-                sizeBytes: content.byteLength,
-                contentBase64: Buffer.from(content).toString('base64'),
-              })),
-            }
-          : {}),
       };
-      await this.workspaces.writeRunContext({
-        projectId,
-        runId,
-        stepRunId: stepRun.id,
-        attemptId: attempt.id,
-        requestMarkdown,
-        outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
-      });
-      request.prompt = executionPrompt(request.prompt, knowledgeInputs);
-      const result: AgentExecutionResult = await this.executors
-        .get(route.selected.model.provider)
-        .execute(request, cancellation.signal, (event) =>
-          persistStreamEvent(
-            this.stepEvents,
-            this.ids,
-            this.clock,
-            runId,
-            stepRun.id,
-            attempt!.id,
-            event,
-          ),
-        );
+      let result: AgentExecutionResult;
+      let executionInputRoot: string | undefined;
+      try {
+        const context = await this.workspaces.writeRunContext({
+          projectId,
+          runId,
+          stepRunId: stepRun.id,
+          attemptId: attempt.id,
+          requestMarkdown,
+          outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+          inputFiles: knowledgeInputs.map(({ path, content }) => ({ path, content })),
+        });
+        executionInputRoot = context.executionInputs?.root;
+        const privatePaths = context.executionInputs?.paths ?? [];
+        if (privatePaths.length !== knowledgeInputs.length) {
+          throw new ValidationError('Knowledge execution inputs were not materialized completely');
+        }
+        request.prompt = executionPrompt(request.prompt, knowledgeInputs, privatePaths);
+        result = await this.executors
+          .get(route.selected.model.provider)
+          .execute(request, undefined, (event) =>
+            persistStreamEvent(
+              this.stepEvents,
+              this.ids,
+              this.clock,
+              runId,
+              stepRun.id,
+              attempt!.id,
+              event,
+            ),
+          );
+      } finally {
+        if (executionInputRoot) await this.workspaces.removeRunInputFiles(executionInputRoot);
+      }
 
       const directEvidence = operation.visualEdit
-        ? await this.verifyDirectVisualEdit(
-            projectId,
-            runId,
-            operation,
-            attempt,
-            cancellation.signal,
-          )
+        ? await this.verifyDirectVisualEdit(projectId, runId, operation, attempt)
         : [];
       const commit = step.mutatesWorkspace
         ? await this.workspaces.commit(projectId, `conversation(${kind}): ${step.title}`)
@@ -357,13 +340,6 @@ export class ConversationOperationRunner {
         data: { operationId, runId, kind },
       });
     } catch (error) {
-      const latestRun = await this.runs.get(runId);
-      if (
-        !cancellation.signal.aborted &&
-        (latestRun?.status === 'cancel_requested' || latestRun?.status === 'cancelled')
-      ) {
-        cancellation.abort(new RunCancelledError(runId));
-      }
       if (succeeded) {
         // The operation already durably completed (attempt/stepRun/runState all
         // reached their terminal success state); this failure is a secondary,
@@ -411,47 +387,6 @@ export class ConversationOperationRunner {
         compensationFailures.length > 0
           ? new PromotionCompensationError(error, compensationFailures)
           : error;
-      const cancelled = isCancellation(terminalError, cancellation.signal);
-      if (cancelled && compensationFailures.length === 0) {
-        if (attempt && attempt.status === 'running') {
-          await this.stepAttempts.update(
-            transitionStepAttempt(attempt, 'cancelled', this.clock.now()),
-            attempt.version,
-          );
-        }
-        if (stepRun.status === 'running') {
-          stepRun = await this.stepRuns.update(
-            transitionStepRun(stepRun, 'cancelled', this.clock.now()),
-            stepRun.version,
-          );
-        }
-        let currentRun = await this.requireRun(runId);
-        if (currentRun.status === 'running') {
-          currentRun = await this.runs.update(
-            transitionWorkflowRun(currentRun, 'cancel_requested', this.clock.now()),
-            currentRun.version,
-          );
-        }
-        if (currentRun.status === 'cancel_requested') {
-          await this.runs.update(
-            transitionWorkflowRun(currentRun, 'cancelled', this.clock.now()),
-            currentRun.version,
-          );
-        }
-        try {
-          await this.events.append({
-            id: this.ids.next(),
-            projectId,
-            type: 'run.cancelled',
-            message: `${step.title} cancelled.`,
-            createdAt: this.clock.now().toISOString(),
-            data: { operationId, runId, kind },
-          });
-        } catch {
-          // best-effort; terminal state is durable
-        }
-        return;
-      }
       const runErr = runError(terminalError);
       if (attempt && attempt.status === 'running') {
         await this.stepAttempts.update(
@@ -496,8 +431,6 @@ export class ConversationOperationRunner {
         // best-effort event; durable state (WorkflowRun/StepRun) is already recorded above
       }
       if (terminalError instanceof PromotionCompensationError) throw terminalError;
-    } finally {
-      stopWatching();
     }
   }
 
@@ -505,8 +438,7 @@ export class ConversationOperationRunner {
     projectId: string,
     runId: string,
     operation: Operation,
-    agentAttempt: StepAttempt,
-    signal: AbortSignal,
+    attempt: StepAttempt,
   ): Promise<Operation['artifactReferences']> {
     const visualEdit = operation.visualEdit;
     if (!visualEdit) return [];
@@ -517,22 +449,19 @@ export class ConversationOperationRunner {
       throw new ValidationError('Direct visual-edit verification is not configured');
     }
 
-    const verification = await this.options.verifier.verify(
-      {
-        workspacePath: this.workspaces.workspacePath(projectId),
-        scripts: ['typecheck', 'lint', 'test', 'build'],
-        includeGitDiffCheck: true,
-      },
-      signal,
-    );
+    const verification = await this.options.verifier.verify({
+      workspacePath: this.workspaces.workspacePath(projectId),
+      scripts: ['typecheck', 'lint', 'test', 'build'],
+      includeGitDiffCheck: true,
+    });
     const verificationArtifact = await this.artifacts.put({
       projectId,
       name: `visual-edit-verification-${operation.id}`,
       content: verification,
       createdBy: 'workspace-verifier:visual-edit',
       runId,
-      stepRunId: agentAttempt.stepRunId,
-      attemptId: agentAttempt.id,
+      stepRunId: attempt.stepRunId,
+      attemptId: attempt.id,
     });
     if (!verification.approved) throw new ValidationError(verification.summary);
 
@@ -542,78 +471,29 @@ export class ConversationOperationRunner {
       content: directVisualEditBrowserPlan(operation, visualEdit),
       createdBy: 'conversation-runner:visual-edit',
       runId,
-      stepRunId: agentAttempt.stepRunId,
-      attemptId: agentAttempt.id,
+      stepRunId: attempt.stepRunId,
+      attemptId: attempt.id,
     });
-    const timestamp = this.clock.now().toISOString();
-    let browserAttempt: StepAttempt = {
-      id: this.ids.next(),
-      runId,
-      stepRunId: agentAttempt.stepRunId,
-      sequence: 2,
-      executorKind: 'verification',
-      provider: 'internal',
-      model: 'browser-verifier',
-      status: 'running',
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      startedAt: timestamp,
-      context: {
+    const browserReport = await this.options.browserVerification.verify(
+      {
         projectId,
-        workflowId: CONVERSATION_WORKFLOW_ID['visual-edit'],
-        nodeId: agentAttempt.context.nodeId,
-        stepId: 'visual-edit-browser',
-      },
-      inputArtifacts: [artifactReference(planArtifact)],
-      outputArtifacts: [],
-    };
-    await this.stepAttempts.create(browserAttempt);
-    const browserStartedAt = Date.now();
-    let browserReport: BrowserVerificationReport;
-    let browserArtifact: StoredArtifact;
-    try {
-      browserReport = await this.options.browserVerification.verify(
-        {
-          projectId,
-          workspacePath: this.workspaces.workspacePath(projectId),
-          runId,
-          plan: planArtifact,
-          allowedOrigins: [],
-          evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
-        },
-        signal,
-      );
-      browserArtifact = await this.artifacts.put({
-        projectId,
-        name: `visual-edit-browser-report-${operation.id}`,
-        content: browserReport,
-        createdBy: 'verifier:visual-edit-browser',
+        workspacePath: this.workspaces.workspacePath(projectId),
         runId,
-        stepRunId: browserAttempt.stepRunId,
-        attemptId: browserAttempt.id,
-      });
-      browserAttempt = await this.stepAttempts.update(
-        transitionStepAttempt(browserAttempt, 'succeeded', this.clock.now(), {
-          durationMs: Date.now() - browserStartedAt,
-          outputArtifacts: [artifactReference(browserArtifact)],
-        }),
-        browserAttempt.version,
-      );
-    } catch (error) {
-      if (browserAttempt.status === 'running') {
-        await this.stepAttempts.update(
-          transitionStepAttempt(
-            browserAttempt,
-            isCancellation(error, signal) ? 'cancelled' : 'failed',
-            this.clock.now(),
-            isCancellation(error, signal) ? {} : { error: runError(error) },
-          ),
-          browserAttempt.version,
-        );
-      }
-      throw error;
-    }
+        plan: planArtifact,
+        allowedOrigins: [],
+        evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
+      },
+      new AbortController().signal,
+    );
+    const browserArtifact = await this.artifacts.put({
+      projectId,
+      name: `visual-edit-browser-report-${operation.id}`,
+      content: browserReport,
+      createdBy: 'browser-verifier:visual-edit',
+      runId,
+      stepRunId: attempt.stepRunId,
+      attemptId: attempt.id,
+    });
     if (!browserReport.approved) throw new ValidationError(browserReport.summary);
     if (
       visualEdit.property !== 'text' &&
@@ -640,31 +520,6 @@ export class ConversationOperationRunner {
     const run = await this.runs.get(runId);
     if (!run) throw new NotFoundError(`Workflow run ${runId} not found`);
     return run;
-  }
-
-  private watchForCancellation(runId: string, controller: AbortController): () => void {
-    let stopped = false;
-    let timer: NodeJS.Timeout;
-    const poll = async (): Promise<void> => {
-      if (stopped || controller.signal.aborted) return;
-      try {
-        const run = await this.runs.get(runId);
-        if (run && (run.status === 'cancel_requested' || run.status === 'cancelled')) {
-          controller.abort(new RunCancelledError(runId));
-          return;
-        }
-      } catch {
-        // A transient repository read retries on the next tick.
-      }
-      if (!stopped) {
-        timer = setTimeout(() => void poll(), this.options.cancelPollIntervalMs ?? 100);
-      }
-    };
-    timer = setTimeout(() => void poll(), this.options.cancelPollIntervalMs ?? 100);
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
   }
 
   private async requireOperation(projectId: string, operationId: string): Promise<Operation> {
@@ -786,16 +641,14 @@ function knowledgeContext(files: KnowledgeFile[]): string {
     .join('\n')}`;
 }
 
-function executionPrompt(prompt: string, inputs: KnowledgeInput[]): string {
+function executionPrompt(prompt: string, inputs: KnowledgeInput[], privatePaths: string[]): string {
   if (inputs.length === 0) return prompt;
   const files = inputs
-    .map(({ reference, path }) => `${reference.name}@${reference.revision}: attachment ${path}`)
+    .map(
+      ({ reference }, index) => `${reference.name}@${reference.revision}: ${privatePaths[index]}`,
+    )
     .join('; ');
-  return `${prompt} Read these request-private knowledge attachments: ${files}.`;
-}
-
-function isCancellation(error: unknown, signal: AbortSignal): boolean {
-  return signal.aborted || error instanceof RunCancelledError;
+  return `${prompt} For this request only, read these execution-private knowledge inputs outside the workspace: ${files}. Do not inspect sibling input directories.`;
 }
 
 interface CompensationFailure {

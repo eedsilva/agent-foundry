@@ -1,16 +1,9 @@
 import { readFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type {
-  AgentExecutionRequest,
-  AgentExecutionResult,
-  ExecutorHealth,
-  KnowledgeFile,
-  Message,
-} from '@agent-foundry/contracts';
-import type { AgentExecutor } from '@agent-foundry/domain';
+import type { KnowledgeFile, Message } from '@agent-foundry/contracts';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 
@@ -33,35 +26,11 @@ async function startApi(existingDir?: string): Promise<StartedApi> {
     DATA_DIR: dataDir,
     EXECUTOR_MODE: 'mock',
     AUTO_INSTALL_DEPENDENCIES: 'false',
-    CANCEL_POLL_INTERVAL_MS: '10',
   });
   const app = await buildApp(runtime);
   apps.push(app);
   const baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
   return { app, runtime, baseUrl, dataDir };
-}
-
-class HangingAttachmentExecutor implements AgentExecutor {
-  readonly provider = 'mock';
-  request: AgentExecutionRequest | undefined;
-  released = false;
-
-  execute(request: AgentExecutionRequest, signal?: AbortSignal): Promise<AgentExecutionResult> {
-    this.request = request;
-    return new Promise((_resolve, reject) => {
-      const cancel = () => {
-        this.request = undefined;
-        this.released = true;
-        reject(signal?.reason ?? new Error('cancelled'));
-      };
-      if (signal?.aborted) cancel();
-      else signal?.addEventListener('abort', cancel, { once: true });
-    });
-  }
-
-  health(): Promise<ExecutorHealth> {
-    return Promise.resolve({ provider: 'mock', available: true, message: 'test' });
-  }
 }
 
 async function createProject(runtime: Runtime, name = 'Conversation API'): Promise<string> {
@@ -173,46 +142,6 @@ afterEach(async () => {
 });
 
 describe('conversation API', () => {
-  it('cancels a hung knowledge operation through POST /runs/:runId/cancel and releases its attachment', async () => {
-    const { baseUrl, runtime } = await startApi();
-    const projectId = await createProject(runtime);
-    expect(await runtime.worker.runOnce()).toBe(true);
-    const executor = new HangingAttachmentExecutor();
-    runtime.executors.get = () => executor;
-    const bytes = Buffer.from('private-plan-image');
-    const upload = await post(baseUrl, `/projects/${projectId}/knowledge-files`, {
-      name: 'design.png',
-      purpose: 'design-reference',
-      pinned: true,
-      mediaType: 'image/png',
-      contentBase64: bytes.toString('base64'),
-    });
-    expect(upload.status).toBe(201);
-    const message = await createMessage(baseUrl, projectId, 'Plan from the attached design.');
-    const operationResponse = await post(
-      baseUrl,
-      `/projects/${projectId}/conversation/messages/${message.id}/operations`,
-      { kind: 'plan' },
-    );
-    const { operation } = (await operationResponse.json()) as {
-      operation: { runId: string };
-    };
-    const pending = runtime.worker.runOnce();
-    await vi.waitFor(() => expect(executor.request?.attachments).toHaveLength(1));
-
-    const cancel = await post(baseUrl, `/runs/${operation.runId}/cancel`, {});
-
-    expect(cancel.status).toBe(202);
-    await expect(pending).resolves.toBe(true);
-    await vi.waitFor(async () => {
-      const response = await fetch(`${baseUrl}/runs/${operation.runId}`);
-      const detail = (await response.json()) as { run: { status: string } };
-      expect(detail.run.status).toBe('cancelled');
-    });
-    expect(executor.released).toBe(true);
-    expect(executor.request).toBeUndefined();
-  });
-
   it('accepts an image as an ordinary reference', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(runtime, 'Image reference');

@@ -290,12 +290,7 @@ export async function createRuntime(
     projectVersionService,
     clock,
     ids,
-    {
-      agentTimeoutMs: config.agentTimeoutMs,
-      cancelPollIntervalMs: config.cancelPollIntervalMs,
-      verifier,
-      browserVerification,
-    },
+    { agentTimeoutMs: config.agentTimeoutMs, verifier, browserVerification },
   );
   const operationService = new OperationService(
     conversations,

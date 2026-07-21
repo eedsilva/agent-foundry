@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,23 +17,6 @@ class NodeScriptExecutor extends BaseCliExecutor {
 
   protected invocation(): Promise<CliInvocation> {
     return Promise.resolve({ command: 'node', args: ['-e', this.script] });
-  }
-}
-
-class AttachmentNodeExecutor extends BaseCliExecutor {
-  readonly provider: Provider = 'codex';
-  protected readonly command = 'node';
-  seenPrompt = '';
-
-  protected invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
-    this.seenPrompt = request.prompt;
-    const path = request.prompt.match(/capability (\/(?:dev|proc)\/(?:self\/)?fd\/\d+)/)?.[1];
-    const script = [
-      "const fs = require('node:fs');",
-      `const content = fs.readFileSync(${JSON.stringify(path)}, 'utf8');`,
-      "process.stdout.write(JSON.stringify({schemaVersion:'1',status:'completed',summary:'read',data:{content},decisions:[],assumptions:[],risks:[],nextActions:[]}));",
-    ].join('\n');
-    return Promise.resolve({ command: 'node', args: ['-e', script] });
   }
 }
 
@@ -66,33 +48,6 @@ function isAlive(pid: number): boolean {
 }
 
 describe.runIf(process.platform !== 'win32')('BaseCliExecutor cancellation', () => {
-  it('exposes each attachment only as an inherited, unlinked file descriptor capability', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'executor-attachment-test-'));
-    const content = Buffer.from('private-image-bytes');
-    const executor = new AttachmentNodeExecutor(1_000_000);
-    try {
-      const result = await executor.execute({
-        ...request(directory),
-        attachments: [
-          {
-            name: 'knowledge/design/v1.png',
-            mediaType: 'image/png',
-            sha256: createHash('sha256').update(content).digest('hex'),
-            sizeBytes: content.byteLength,
-            contentBase64: content.toString('base64'),
-          },
-        ],
-      });
-
-      expect(result.output.data).toEqual({ content: content.toString('utf8') });
-      expect(executor.seenPrompt).toMatch(/knowledge\/design\/v1\.png: capability \/dev\/fd\/3/);
-      expect(executor.seenPrompt).not.toContain(directory);
-      expect(executor.seenPrompt).not.toContain('execution-inputs');
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
   it('SIGTERMs the process group and SIGKILLs the whole tree after the grace period', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'executor-cancel-test-'));
     const pidFile = join(directory, 'pids');

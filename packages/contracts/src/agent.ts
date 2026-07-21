@@ -25,20 +25,6 @@ export const AgentArtifactSchema = z.object({
 });
 export type AgentArtifact = z.infer<typeof AgentArtifactSchema>;
 
-export const AgentExecutionAttachmentSchema = z
-  .object({
-    name: z.string().min(1),
-    mediaType: z.string().min(1),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    sizeBytes: z.number().int().nonnegative(),
-    contentBase64: z
-      .string()
-      .min(1)
-      .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
-  })
-  .strict();
-export type AgentExecutionAttachment = z.infer<typeof AgentExecutionAttachmentSchema>;
-
 export const AGENT_ARTIFACT_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -95,7 +81,6 @@ export const AgentExecutionRequestSchema = z.object({
   timeoutMs: z.number().int().positive(),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   inputArtifacts: z.array(ArtifactReferenceSchema).optional(),
-  attachments: z.array(AgentExecutionAttachmentSchema).optional(),
 });
 export type AgentExecutionRequest = z.infer<typeof AgentExecutionRequestSchema>;
 
