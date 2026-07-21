@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { config as loadDotEnv } from 'dotenv';
-import { createRuntime, startTelemetry } from '@agent-foundry/composition';
+import { createRuntime, loadRuntimeConfig, startTelemetry } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 import { startPreviewReaper } from './preview-reaper.js';
 import { startArtifactReaper } from './artifact-reaper.js';
@@ -8,13 +8,19 @@ import { sweepUnreferencedBlobs } from './blob-gc.js';
 
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
 
-const runtime = await createRuntime();
+// Telemetry must start before createRuntime: createRuntime constructs
+// PreviewService, whose constructor registers an observable-gauge callback
+// via @opentelemetry/api. Before startTelemetry runs, that call resolves to
+// the noop meter, whose addCallback silently discards the callback instead
+// of queueing it — so `foundry.preview.active_sessions` would never report.
+const config = loadRuntimeConfig(process.env);
 const telemetry = startTelemetry({
-  serviceName: runtime.config.otelServiceName ?? 'agent-foundry-api',
-  endpoint: runtime.config.otelExporterOtlpEndpoint,
-  sampleRatio: runtime.config.otelTracesSamplerRatio,
-  slowRunThresholdMs: runtime.config.otelSlowRunThresholdMs,
+  serviceName: config.otelServiceName ?? 'agent-foundry-api',
+  endpoint: config.otelExporterOtlpEndpoint,
+  sampleRatio: config.otelTracesSamplerRatio,
+  slowRunThresholdMs: config.otelSlowRunThresholdMs,
 });
+const runtime = await createRuntime(process.env, config);
 
 // Log deployment profile at startup
 console.log(`[info] Deployment profile: ${runtime.config.deploymentProfile}`);

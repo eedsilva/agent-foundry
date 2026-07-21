@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { metrics } from '@opentelemetry/api';
 import {
   AggregationTemporality,
@@ -94,6 +94,36 @@ describe('telemetry metrics helpers with a registered MeterProvider', () => {
       .find((candidate) => candidate.descriptor.name === 'foundry.preview.active_sessions');
     const point = (metric as GaugeMetricData).dataPoints[0];
     expect(point?.value).toBe(5);
+
+    await provider.shutdown();
+  });
+
+  // Regression for the "bad order" bug: an entrypoint calling createRuntime
+  // (and so constructing PreviewService) before startTelemetry means this
+  // callback is first registered against the noop meter, whose addCallback
+  // discards rather than queues it. Without replaying every stored callback
+  // on the next meter-identity change, `early` below would never fire again
+  // — orphaned forever on a gauge the SDK never collects from. Asserting
+  // `early` was invoked (rather than reading the gauge's final value, which
+  // multiple concurrently-attached callbacks would race to overwrite) is
+  // what actually proves re-attachment happened, not just that a fresh call
+  // still works.
+  it('replays a callback registered before the real MeterProvider once a later call observes the new meter', async () => {
+    const early = vi.fn(() => 4);
+    registerActiveSessionsCallback(early); // bad order: only the noop meter exists yet
+
+    const exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+    const reader = new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 100_000 });
+    const provider = new MeterProvider({ readers: [reader] });
+    metrics.setGlobalMeterProvider(provider);
+
+    // A later call (e.g. a second PreviewService, or telemetry finally
+    // starting) is what notices the meter changed and replays every stored
+    // callback, including `early`, onto the new real gauge.
+    registerActiveSessionsCallback(() => 4);
+
+    await reader.collect();
+    expect(early).toHaveBeenCalled();
 
     await provider.shutdown();
   });

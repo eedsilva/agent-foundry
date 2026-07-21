@@ -80,22 +80,43 @@ export function recordTokenUsage(usage: TokenUsageAttributes): void {
 let cachedActiveSessionsGauge: { meter: Meter; gauge: ObservableGauge } | undefined;
 
 /**
+ * Every `cb` ever passed to `registerActiveSessionsCallback`, kept so a
+ * meter-identity change can replay all of them onto the new gauge — not
+ * just the one passed on the call that noticed the change. Belt-and-suspenders
+ * for entrypoint ordering: if a caller (PreviewService's constructor today)
+ * registers before `startTelemetry` runs, its callback lands on the noop
+ * meter, whose `addCallback` discards rather than queues it — that callback
+ * is otherwise gone for good. Replaying the full list on the next call that
+ * observes a real meter recovers it, making registration order-independent.
+ */
+const registeredActiveSessionsCallbacks: Array<() => Promise<number> | number> = [];
+
+/**
  * Registers `cb` as the pull source for the `foundry.preview.active_sessions`
  * gauge: the SDK calls it once per metric export interval instead of on
  * every session mutation (see PreviewService, its sole caller). The gauge is
  * memoized the same way `currentInstruments` memoizes the synchronous
- * instruments above — recreated, and `cb` re-attached, only if the meter
- * identity has changed since the last call.
+ * instruments above — recreated, and every registered callback re-attached,
+ * only if the meter identity has changed since the last call.
  */
 export function registerActiveSessionsCallback(cb: () => Promise<number> | number): void {
+  registeredActiveSessionsCallbacks.push(cb);
   const meter = metrics.getMeter(TRACER_NAME);
   if (!cachedActiveSessionsGauge || cachedActiveSessionsGauge.meter !== meter) {
     cachedActiveSessionsGauge = {
       meter,
       gauge: meter.createObservableGauge('foundry.preview.active_sessions'),
     };
+    for (const registered of registeredActiveSessionsCallbacks) {
+      attachActiveSessionsCallback(registered);
+    }
+    return;
   }
-  cachedActiveSessionsGauge.gauge.addCallback(async (result) => {
+  attachActiveSessionsCallback(cb);
+}
+
+function attachActiveSessionsCallback(cb: () => Promise<number> | number): void {
+  cachedActiveSessionsGauge!.gauge.addCallback(async (result) => {
     result.observe(await cb());
   });
 }
