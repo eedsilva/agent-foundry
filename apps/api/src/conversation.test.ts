@@ -142,6 +142,24 @@ afterEach(async () => {
 });
 
 describe('conversation API', () => {
+  it('accepts an image as an ordinary reference', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime, 'Image reference');
+
+    const response = await post(baseUrl, `/projects/${projectId}/knowledge-files`, {
+      name: 'reference.png',
+      mediaType: 'image/png',
+      purpose: 'reference',
+      pinned: true,
+      contentBase64: Buffer.from('image').toString('base64'),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      knowledgeFile: { mediaType: 'image/png', purpose: 'reference' },
+    });
+  });
+
   it('persists project-scoped knowledge uploads as immutable artifact revisions', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(runtime, 'Knowledge API');

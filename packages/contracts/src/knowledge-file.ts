@@ -48,19 +48,21 @@ export const KnowledgeFileSchema = z
         message: 'Must name the final revision',
       });
     }
+    for (const [index, revision] of file.revisions.entries()) {
+      if (revision.artifact.name !== `knowledge-${file.id}`) {
+        context.addIssue({
+          code: 'custom',
+          path: ['revisions', index, 'artifact', 'name'],
+          message: 'Artifact name must match the knowledge file id',
+        });
+      }
+    }
     for (let index = 1; index < file.revisions.length; index += 1) {
       if (file.revisions[index]!.version <= file.revisions[index - 1]!.version) {
         context.addIssue({
           code: 'custom',
           path: ['revisions', index, 'version'],
           message: 'Revisions must be ordered by increasing version',
-        });
-      }
-      if (file.revisions[index]!.artifact.name !== file.revisions[0]!.artifact.name) {
-        context.addIssue({
-          code: 'custom',
-          path: ['revisions', index, 'artifact', 'name'],
-          message: 'Revisions must reference one artifact',
         });
       }
     }

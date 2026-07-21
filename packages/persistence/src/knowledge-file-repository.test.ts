@@ -8,11 +8,15 @@ import { FileKnowledgeFileRepository } from './knowledge-file-repository.js';
 const temporaryDirectories: string[] = [];
 const createdAt = '2026-07-21T12:00:00.000Z';
 
-function revision(version: number, sha256: string): KnowledgeFileRevision {
+function revision(
+  version: number,
+  sha256: string,
+  artifactName = 'knowledge-file-1',
+): KnowledgeFileRevision {
   return {
     version,
     artifact: {
-      name: 'knowledge-file-1',
+      name: artifactName,
       revision: version,
       sha256,
       sizeBytes: version,
@@ -69,7 +73,12 @@ describe('FileKnowledgeFileRepository', () => {
 
   it('removes a file from the active index without mutating a different project', async () => {
     await repository.save(file);
-    await repository.save({ ...file, id: 'other', projectId: 'project-2' });
+    await repository.save({
+      ...file,
+      id: 'other',
+      projectId: 'project-2',
+      revisions: [revision(1, 'a'.repeat(64), 'knowledge-other')],
+    });
 
     await repository.remove('project-1', file.id);
 
@@ -85,6 +94,10 @@ describe('FileKnowledgeFileRepository', () => {
         revisions: [revision(2, 'b'.repeat(64)), revision(1, 'a'.repeat(64))],
       }),
     ).rejects.toThrow();
+  });
+
+  it('rejects a revision artifact that does not belong to the knowledge file id', async () => {
+    await expect(repository.save({ ...file, id: 'file-2' })).rejects.toThrow();
   });
 
   it('rejects persisted cross-project entries and duplicate ids', async () => {

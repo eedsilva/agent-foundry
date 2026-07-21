@@ -865,7 +865,7 @@ async function uploadKnowledgeRevision(
   input: CreateKnowledgeFileRequest,
 ): Promise<KnowledgeFileRevision> {
   const isImage = input.mediaType.startsWith('image/');
-  if ((input.purpose === 'reference') === isImage) {
+  if (input.purpose !== 'reference' && !isImage) {
     throw new ValidationError('Knowledge file purpose does not match its media type.');
   }
   const bytes = Buffer.from(input.contentBase64, 'base64');
