@@ -3,8 +3,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
+import { execa } from 'execa';
 import { buildApp } from '../src/app.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -113,7 +114,7 @@ async function createProject(): Promise<string> {
   return project.id;
 }
 
-async function seedDomSourceMapFixture(projectId: string): Promise<void> {
+async function seedDomSourceMapFixture(projectId: string): Promise<string> {
   await runtime.workspaces.ensure(projectId);
   const workspacePath = runtime.workspaces.workspacePath(projectId);
   const fixtureSource = await readFile(FIXTURE_SCRIPT, 'utf8');
@@ -122,6 +123,8 @@ async function seedDomSourceMapFixture(projectId: string): Promise<void> {
     join(workspacePath, 'package.json'),
     JSON.stringify({ scripts: { dev: 'node server.mjs' } }),
   );
+  await runtime.workspaces.checkpoint(projectId, 'DOM source map e2e baseline');
+  return workspacePath;
 }
 
 async function startPreviewAndSelect(page: Page, projectId: string) {
@@ -148,6 +151,77 @@ async function startPreviewAndSelect(page: Page, projectId: string) {
   return page.frameLocator('.previewFrameWrap iframe').locator('body');
 }
 
+interface WorkspaceState {
+  head: string;
+  status: string;
+}
+
+async function workspaceState(workspacePath: string): Promise<WorkspaceState> {
+  const [head, status] = await Promise.all([
+    execa('git', ['rev-parse', 'HEAD'], { cwd: workspacePath }),
+    execa('git', ['status', '--porcelain'], { cwd: workspacePath }),
+  ]);
+  return { head: head.stdout, status: status.stdout };
+}
+
+async function openSelectedFixture(page: Page): Promise<{
+  projectId: string;
+  selected: Locator;
+  workspacePath: string;
+  baseline: WorkspaceState;
+}> {
+  const projectId = await createProject();
+  const workspacePath = await seedDomSourceMapFixture(projectId);
+  const frameBody = await startPreviewAndSelect(page, projectId);
+  const selected = frameBody.locator('#simple');
+  await selected.click();
+  await expect(page.getByText('src/Greeting.tsx')).toBeVisible({ timeout: 10_000 });
+  const baseline = await workspaceState(workspacePath);
+  expect(baseline.status).toBe('');
+  return { projectId, selected, workspacePath, baseline };
+}
+
+function watchOperationMutations(page: Page): string[] {
+  const requests: string[] = [];
+  page.on('request', (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (
+      request.method() === 'POST' &&
+      (/\/visual-edits$/.test(pathname) ||
+        /\/conversation\/messages\/[^/]+\/operations$/.test(pathname) ||
+        /\/conversation\/(?:operations|change-requests)\/[^/]+\/decide$/.test(pathname))
+    ) {
+      requests.push(request.url());
+    }
+  });
+  return requests;
+}
+
+async function expectNoPromotion(input: {
+  projectId: string;
+  workspacePath: string;
+  baseline: WorkspaceState;
+  operationMutations: string[];
+}): Promise<void> {
+  expect(input.operationMutations).toEqual([]);
+  expect(await runtime.conversations.listOperations(input.projectId)).toEqual([]);
+  expect(await workspaceState(input.workspacePath)).toEqual(input.baseline);
+}
+
+async function previewEdit(
+  page: Page,
+  property: string,
+  oldValue: string,
+  newValue: string,
+  breakpoint = '',
+): Promise<void> {
+  await page.getByLabel('Propriedade').selectOption(property);
+  await page.getByLabel('Valor atual').fill(oldValue);
+  await page.getByLabel('Novo valor').fill(newValue);
+  await page.getByLabel('Breakpoint').selectOption(breakpoint);
+  await page.getByRole('button', { name: 'Pré-visualizar alteração' }).click();
+}
+
 test('clicking a simple component resolves to its source file', async ({ page }) => {
   const projectId = await createProject();
   await seedDomSourceMapFixture(projectId);
@@ -157,42 +231,90 @@ test('clicking a simple component resolves to its source file', async ({ page })
 });
 
 test('previews and clears a text edit without changing workspace source', async ({ page }) => {
-  const projectId = await createProject();
-  await seedDomSourceMapFixture(projectId);
-  const workspaceFile = join(runtime.workspaces.workspacePath(projectId), 'server.mjs');
+  const operationMutations = watchOperationMutations(page);
+  const fixture = await openSelectedFixture(page);
+  const workspaceFile = join(fixture.workspacePath, 'server.mjs');
   const sourceBefore = await readFile(workspaceFile, 'utf8');
-  const frameBody = await startPreviewAndSelect(page, projectId);
-  const selected = frameBody.locator('#simple');
-  await selected.click();
-  await expect(page.getByText('src/Greeting.tsx')).toBeVisible({ timeout: 10_000 });
 
   await expect(page.getByLabel('Valor atual')).toBeVisible({ timeout: 5_000 });
-  await page.getByLabel('Valor atual').fill('Simple');
-  await page.getByLabel('Novo valor').fill('Edited in preview');
-  await page.getByRole('button', { name: 'Pré-visualizar alteração' }).click();
-  await expect(selected).toHaveText('Edited in preview');
+  await previewEdit(page, 'text', 'Simple', 'Edited in preview');
+  await expect(fixture.selected).toHaveText('Edited in preview');
 
   await page.getByRole('button', { name: 'Limpar alteração' }).click();
-  await expect(selected).toHaveText('Simple');
+  await expect(fixture.selected).toHaveText('Simple');
   expect(await readFile(workspaceFile, 'utf8')).toBe(sourceBefore);
+  await expectNoPromotion({ ...fixture, operationMutations });
+});
+
+test('temporarily previews padding before any promotion request', async ({ page }) => {
+  const operationMutations = watchOperationMutations(page);
+  const fixture = await openSelectedFixture(page);
+
+  await previewEdit(page, 'padding', '0px', '12px');
+
+  await expect(fixture.selected).toHaveCSS('padding', '12px');
+  await expectNoPromotion({ ...fixture, operationMutations });
+});
+
+test('temporarily previews an existing color token before any promotion request', async ({
+  page,
+}) => {
+  const operationMutations = watchOperationMutations(page);
+  const fixture = await openSelectedFixture(page);
+
+  await previewEdit(page, 'color', '', 'var(--fixture-accent)');
+
+  await expect(fixture.selected).toHaveCSS('color', 'rgb(12, 34, 56)');
+  expect(await fixture.selected.evaluate((element) => element.style.color)).toBe(
+    'var(--fixture-accent)',
+  );
+  await expectNoPromotion({ ...fixture, operationMutations });
+});
+
+test('temporarily previews responsive layout only at its breakpoint before promotion', async ({
+  page,
+}) => {
+  const operationMutations = watchOperationMutations(page);
+  const fixture = await openSelectedFixture(page);
+
+  await previewEdit(page, 'display', 'block', 'grid', 'md');
+
+  await expect(fixture.selected).toHaveCSS('display', 'grid');
+  await page.getByRole('button', { name: 'Mobile' }).click();
+  await expect(fixture.selected).toHaveCSS('display', 'block');
+  await page.getByRole('button', { name: 'Desktop' }).click();
+  await expect(fixture.selected).toHaveCSS('display', 'grid');
+  await expectNoPromotion({ ...fixture, operationMutations });
 });
 
 test('routes an unsafe direct edit through chat classification', async ({ page }) => {
-  const projectId = await createProject();
-  await seedDomSourceMapFixture(projectId);
-  const frameBody = await startPreviewAndSelect(page, projectId);
-  const selected = frameBody.locator('#simple');
-  await selected.click();
-  await expect(page.getByText('src/Greeting.tsx')).toBeVisible({ timeout: 10_000 });
+  const operationMutations = watchOperationMutations(page);
+  const fixture = await openSelectedFixture(page);
 
-  await page.getByLabel('Propriedade').selectOption('backgroundColor');
-  await page.getByLabel('Valor atual').fill('#eee');
-  await page.getByLabel('Novo valor').fill('url(javascript:x)');
-  await page.getByRole('button', { name: 'Pré-visualizar alteração' }).click();
+  await previewEdit(page, 'backgroundColor', '#eee', 'url(javascript:x)');
 
   await expect(page.getByText('Edição direta inválida')).toBeVisible();
   await expect(page.getByText('visual-edit', { exact: true })).toBeVisible({ timeout: 10_000 });
-  await expect(selected).toHaveText('Simple');
+  await expect(fixture.selected).toHaveText('Simple');
+  await expectNoPromotion({ ...fixture, operationMutations });
+});
+
+test('routes a conversational-only property through chat classification', async ({ page }) => {
+  const operationMutations = watchOperationMutations(page);
+  const fixture = await openSelectedFixture(page);
+  await page.getByLabel('Propriedade').evaluate((element) => {
+    const option = document.createElement('option');
+    option.value = 'fontFamily';
+    option.textContent = 'fontFamily';
+    element.append(option);
+  });
+
+  await previewEdit(page, 'fontFamily', 'sans-serif', 'serif');
+
+  await expect(page.getByText('Edição direta inválida')).toBeVisible();
+  await expect(page.getByText('visual-edit', { exact: true })).toBeVisible({ timeout: 10_000 });
+  expect(await fixture.selected.evaluate((element) => element.style.fontFamily)).toBe('');
+  await expectNoPromotion({ ...fixture, operationMutations });
 });
 
 test('routes a legacy resolved selection without coordinates through chat', async ({ page }) => {

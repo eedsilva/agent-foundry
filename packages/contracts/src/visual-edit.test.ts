@@ -41,6 +41,18 @@ describe('VisualEditSchema', () => {
   });
 
   it.each([
+    'borderColor',
+    'fontFamily',
+    'letterSpacing',
+    'height',
+    'minWidth',
+    'minHeight',
+    'maxHeight',
+  ])('keeps %s conversational-only', (property) => {
+    expect(accepts(property, 'initial', 'changed')).toThrow();
+  });
+
+  it.each([
     ['unknown property', { target, property: 'position', oldValue: 'static', newValue: 'fixed' }],
     [
       'unsafe CSS value',

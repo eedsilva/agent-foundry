@@ -5,7 +5,6 @@ export const VisualEditPropertySchema = z.enum([
   'text',
   'color',
   'backgroundColor',
-  'borderColor',
   'margin',
   'marginTop',
   'marginRight',
@@ -19,11 +18,9 @@ export const VisualEditPropertySchema = z.enum([
   'gap',
   'rowGap',
   'columnGap',
-  'fontFamily',
   'fontSize',
   'fontWeight',
   'lineHeight',
-  'letterSpacing',
   'textAlign',
   'display',
   'flexDirection',
@@ -34,11 +31,7 @@ export const VisualEditPropertySchema = z.enum([
   'gridTemplateColumns',
   'gridTemplateRows',
   'width',
-  'height',
-  'minWidth',
   'maxWidth',
-  'minHeight',
-  'maxHeight',
 ]);
 export type VisualEditProperty = z.infer<typeof VisualEditPropertySchema>;
 
