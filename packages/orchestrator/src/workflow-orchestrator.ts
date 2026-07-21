@@ -1511,6 +1511,11 @@ export class WorkflowOrchestrator {
       if (attempt.status === 'running') {
         const cancelled = isCancellation(error, signal);
         if (!cancelled) {
+          // Reactive — the outcome wasn't known when the span started.
+          // KeepErrorsSampler now records every span (never NOT_RECORD), so
+          // this isn't a no-op on a non-recording span; TailSpanProcessor
+          // reads the ERROR status/attribute at onEnd and exports
+          // regardless of head sampling (see telemetry.ts).
           span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
           span.setAttribute('foundry.force_sample', true);
         }
@@ -1693,6 +1698,11 @@ export class WorkflowOrchestrator {
       if (attempt.status === 'running') {
         const cancelled = isCancellation(error, signal);
         if (!cancelled) {
+          // Reactive — the outcome wasn't known when the span started.
+          // KeepErrorsSampler now records every span (never NOT_RECORD), so
+          // this isn't a no-op on a non-recording span; TailSpanProcessor
+          // reads the ERROR status/attribute at onEnd and exports
+          // regardless of head sampling (see telemetry.ts).
           span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
           span.setAttribute('foundry.force_sample', true);
         }
@@ -1831,8 +1841,13 @@ export class WorkflowOrchestrator {
       await this.stepAttempts.create(attempt);
 
       // A fallback candidate (index > 0) is already known to be a retry when
-      // its span starts; an ordinary first-candidate failure marks force_sample
-      // reactively (see executeAgentAttempt's catch) once it's known to fail.
+      // its span starts, so it's marked force_sample here for
+      // RECORD_AND_SAMPLED at head-sampling time. An ordinary first-candidate
+      // failure instead marks force_sample reactively (see
+      // executeAgentAttempt's catch) once it's known to fail — that now
+      // works too: KeepErrorsSampler records every span, so the reactive
+      // write isn't a no-op, and TailSpanProcessor's export-time predicate
+      // picks it up at onEnd regardless of the head-sampling outcome.
       const outcome = await withSpan(
         'foundry.attempt',
         {
@@ -2041,6 +2056,11 @@ export class WorkflowOrchestrator {
         }),
         attempt.version,
       );
+      // Reactive — the outcome wasn't known when the span started.
+      // KeepErrorsSampler now records every span (never NOT_RECORD), so this
+      // isn't a no-op on a non-recording span; TailSpanProcessor reads the
+      // ERROR status/attribute at onEnd and exports regardless of head
+      // sampling (see telemetry.ts).
       span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
       span.setAttribute('foundry.force_sample', true);
       if (failureRecordError) throw failureRecordError;

@@ -12,7 +12,10 @@ import { buildApp } from './app.js';
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
 
-async function startApi(): Promise<{ app: FastifyInstance; baseUrl: string }> {
+async function startApi(options?: {
+  loggerStream?: { write(message: string): void };
+  registerRoutes?: (app: FastifyInstance) => void;
+}): Promise<{ app: FastifyInstance; baseUrl: string }> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-tracing-'));
   dirs.push(dataDir);
   const runtime = await createRuntime({
@@ -23,8 +26,9 @@ async function startApi(): Promise<{ app: FastifyInstance; baseUrl: string }> {
     AUTO_INSTALL_DEPENDENCIES: 'false',
     WORKER_ID: 'tracing-worker',
   });
-  const app = await buildApp(runtime);
+  const app = await buildApp(runtime, options);
   apps.push(app);
+  options?.registerRoutes?.(app);
   const baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
   return { app, baseUrl };
 }
@@ -69,6 +73,39 @@ describe('apps/api foundry.request span', () => {
       'http.status_code': 200,
     });
     expect(span?.status.code).not.toBe(SpanStatusCode.ERROR);
+  });
+
+  // Regression: pino's `mixin: () => currentTraceIds()` (wired in buildApp)
+  // is how request logs get correlated to a trace. Prove it end to end — a
+  // log line written while the foundry.request span is active carries that
+  // exact span's traceId/spanId, not just "some" id.
+  it('carries the active foundry.request span traceId/spanId on a request-scoped log line', async () => {
+    const lines: string[] = [];
+    const { baseUrl } = await startApi({
+      loggerStream: { write: (message) => lines.push(message) },
+      registerRoutes: (app) => {
+        app.get('/__mixin_probe__', async (request) => {
+          request.log.info('mixin probe line');
+          return { ok: true };
+        });
+      },
+    });
+
+    const response = await fetch(`${baseUrl}/__mixin_probe__`);
+    expect(response.status).toBe(200);
+
+    const span = exporter
+      .getFinishedSpans()
+      .find((item) => item.attributes['http.route'] === '/__mixin_probe__');
+    expect(span).toBeDefined();
+    const { traceId, spanId } = span!.spanContext();
+
+    const probeLine = lines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.msg === 'mixin probe line');
+    expect(probeLine).toBeDefined();
+    expect(probeLine?.traceId).toBe(traceId);
+    expect(probeLine?.spanId).toBe(spanId);
   });
 
   // ponytail: SSE routes hijack the reply and Fastify never fires onResponse

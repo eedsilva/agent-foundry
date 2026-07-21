@@ -22,6 +22,7 @@
 ### Task 1: `withSpan` helper + contracts `traceContext` + queue propagation
 
 **Files:**
+
 - Create: `packages/domain/src/tracing.ts`
 - Modify: `packages/domain/src/index.ts` (barrel)
 - Modify: `packages/domain/package.json` (+ `@opentelemetry/api`)
@@ -37,7 +38,14 @@
 
 ```ts
 // packages/domain/src/tracing.ts
-import { context, propagation, trace, SpanStatusCode, type Attributes, type Span } from '@opentelemetry/api';
+import {
+  context,
+  propagation,
+  trace,
+  SpanStatusCode,
+  type Attributes,
+  type Span,
+} from '@opentelemetry/api';
 
 export const TRACER_NAME = 'agent-foundry';
 
@@ -49,12 +57,16 @@ export async function withSpan<T>(
 // - starts an active span via trace.getTracer(TRACER_NAME), sets attributes,
 //   on throw: span.recordException + setStatus(ERROR) + rethrow; always span.end().
 
-export function serializeTraceContext(): Record<string, string>;   // propagation.inject into {}
-export function withExtractedContext<T>(carrier: Record<string, string> | undefined, fn: () => Promise<T>): Promise<T>; // propagation.extract + context.with
+export function serializeTraceContext(): Record<string, string>; // propagation.inject into {}
+export function withExtractedContext<T>(
+  carrier: Record<string, string> | undefined,
+  fn: () => Promise<T>,
+): Promise<T>; // propagation.extract + context.with
 export function currentTraceIds(): { traceId?: string; spanId?: string }; // from active span, undefined when none/invalid
 ```
 
 Span taxonomy + attribute names (used across Tasks 1-3; keep these exact strings, they are the contract):
+
 - `foundry.request` (api), `foundry.job` (worker; attrs `foundry.job.id/type/attempts`, `foundry.queue.wait_ms`), `foundry.run` (attrs `foundry.project.id`, `foundry.run.id`, `foundry.workflow.id`), `foundry.step` (`foundry.step.node_id`, `foundry.step.id`, `foundry.step.type`), `foundry.attempt` (`foundry.attempt.id/sequence`, `foundry.model.id`, `foundry.provider`), `foundry.cli` (`foundry.provider`, `foundry.cli.command`), `foundry.preview` (`foundry.preview.session_id`), `foundry.operation` (`foundry.operation.id/kind`).
 - Error/retry paths set `foundry.force_sample: true` when starting the span (retry attempt >1, nack path, failure finalizers).
 
@@ -69,6 +81,7 @@ Span taxonomy + attribute names (used across Tasks 1-3; keep these exact strings
 ### Task 2: Span coverage — API request, run/step/attempt, CLI, preview, operation
 
 **Files:**
+
 - Modify: `apps/api/src/app.ts`: Fastify `onRequest`/`onResponse` hooks creating `foundry.request` span (method, route, status; skip SSE routes' long-lived spans — end request span at headers-sent for hijacked SSE replies; simplest correct cut: create request spans only for non-hijacked routes, note as `ponytail:` comment), and pino log correlation (Task 3 wires the mixin; here ensure the span is active across the handler via `context.with`).
 - Modify: `packages/orchestrator/src/workflow-orchestrator.ts`: `runProject` → `foundry.run` span; `executeStep`/`executeApprovalGate`/`executeQualityLoop` → `foundry.step`; attempt execution (`executeAgentStep`/`executeVerifyStep`/`executeBrowserVerifyStep`) → `foundry.attempt` (attrs incl. routed model; `foundry.force_sample` on retries/failures).
 - Modify: `packages/orchestrator/src/conversation-operation-runner.ts`: `foundry.operation` span wrapping `run`.
@@ -87,6 +100,7 @@ Span taxonomy + attribute names (used across Tasks 1-3; keep these exact strings
 ### Task 3: Metrics + pino correlation + composition SDK (exporters, sampler, redaction)
 
 **Files:**
+
 - Create: `packages/composition/src/telemetry.ts` (+ deps in `packages/composition/package.json`)
 - Create: `packages/domain/src/telemetry-metrics.ts` — meter helpers: `recordRunDuration(ms, {status})`, `recordStepRetry()`, `recordQueueWait(ms)`, `recordTokenUsage({inputTokens?, outputTokens?, modelId})`, `recordPreviewSessions(active)` via `metrics.getMeter(TRACER_NAME)` histograms/counters/gauge — no-op without SDK. Call sites: worker-loop (queue wait — already computed in Task 1; call helper there), workflow-orchestrator `completeRun`/failure finalizers (run duration+status), retry path (step retries), the existing `metrics.record(...)` call sites (token usage — piggyback where usage is already in hand), preview service session start/stop (gauge via observable callback reading `listActive().length`).
 - Modify: `apps/api/src/app.ts` pino config + `apps/worker/src/index.ts` pino init: `mixin: () => currentTraceIds()` (adds `traceId`/`spanId` to every log line when a span is active); worker job logs become child loggers `logger.child({ jobId, runId, projectId })` in `WorkerLoop` — pass an optional `log` callback… (Worker currently has no logger injected: add optional `logger?: { child/info/error }`-shaped param to `WorkerLoop` options, typed structurally to avoid a pino dep in orchestrator; apps/worker passes pino in.)
@@ -99,16 +113,19 @@ Span taxonomy + attribute names (used across Tasks 1-3; keep these exact strings
 
 ```ts
 // packages/composition/src/telemetry.ts
-export interface TelemetryHandle { shutdown(): Promise<void>; }
+export interface TelemetryHandle {
+  shutdown(): Promise<void>;
+}
 export function startTelemetry(options: {
   serviceName: string;
-  endpoint?: string;          // undefined => returns inert handle, registers nothing
+  endpoint?: string; // undefined => returns inert handle, registers nothing
   sampleRatio: number;
   slowRunThresholdMs: number;
 }): TelemetryHandle;
 ```
 
 Inside: NodeSDK (or manual `NodeTracerProvider` + `PeriodicExportingMetricReader` — whichever wires cleanly without auto-instrumentations) with:
+
 - `RedactingSpanProcessor` wrapping `BatchSpanProcessor`: `onEnd(span)` clones/mutates string attributes through `redactString` before delegating (implement via a delegating SpanProcessor; attributes are mutable on `ReadableSpan.attributes` record — if not, wrap the exporter instead and rewrite attributes on the span data objects passed to `export()`; the exporter-wrapper approach is simpler and test-provable: implement `RedactingSpanExporter`).
 - `KeepErrorsSampler`: `shouldSample` → delegate `ParentBasedSampler(TraceIdRatioBased(ratio))`; if attributes `foundry.force_sample === true` → RECORD_AND_SAMPLED regardless.
 - Metrics: OTLP metric exporter, 15s interval.

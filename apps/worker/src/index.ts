@@ -14,17 +14,17 @@ const telemetry = startTelemetry({
 });
 const abortController = new AbortController();
 
-const shutdown = (signal: string): void => {
+const shutdown = async (signal: string): Promise<void> => {
   logger.info({ signal }, 'Received shutdown signal; stopping');
-  void telemetry.shutdown().catch((error: unknown) => {
+  await telemetry.shutdown().catch((error: unknown) => {
     logger.error(error, 'Telemetry shutdown failed');
   });
   abortController.abort();
   runtime.worker.stop();
   runtime.leaseReaper.stop();
 };
-process.once('SIGINT', () => shutdown('SIGINT'));
-process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => void shutdown('SIGINT'));
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
 logger.info(
   { workerId: runtime.config.workerId, executorMode: runtime.config.executorMode },

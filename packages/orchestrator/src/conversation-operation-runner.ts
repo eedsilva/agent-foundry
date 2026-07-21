@@ -294,6 +294,11 @@ export class ConversationOperationRunner {
         // against records that have moved past these local versions.
         return;
       }
+      // Reactive — the outcome wasn't known when the span started.
+      // KeepErrorsSampler now records every span (never NOT_RECORD), so this
+      // isn't a no-op on a non-recording span; TailSpanProcessor reads the
+      // ERROR status/attribute at onEnd and exports regardless of head
+      // sampling (see telemetry.ts).
       span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
       span.setAttribute('foundry.force_sample', true);
       if (checkpoint) {
