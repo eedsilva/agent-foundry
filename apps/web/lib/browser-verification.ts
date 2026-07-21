@@ -11,7 +11,7 @@ export function latestBrowserVerificationReport(
   const orderedRunIds = typeof runIds === 'string' ? [runIds] : runIds;
   for (const runId of orderedRunIds) {
     const candidates = artifacts
-      .filter((artifact) => artifact.metadata.runId === runId)
+      .filter((artifact) => artifact.metadata.runId === runId && isCanonicalBrowserReport(artifact))
       .map((artifact) => ({
         artifact,
         parsed: BrowserVerificationReportSchema.safeParse(artifact.content),
@@ -35,4 +35,13 @@ export function latestBrowserVerificationReport(
     return latest.parsed.data;
   }
   return null;
+}
+
+function isCanonicalBrowserReport(artifact: StoredArtifact): boolean {
+  return (
+    (artifact.metadata.name === 'browser-verification.report' &&
+      /^verifier:[a-zA-Z0-9._-]+$/.test(artifact.metadata.createdBy)) ||
+    (artifact.metadata.name.startsWith('visual-edit-browser-report-') &&
+      artifact.metadata.createdBy === 'browser-verifier:visual-edit')
+  );
 }

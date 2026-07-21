@@ -377,7 +377,8 @@ async function seedVisualEdit(
 async function seed(
   conversations: MemoryConversations,
   runs: WorkflowRunRepository,
-  kind: 'plan' | 'build',
+  kind: 'plan' | 'build' | 'explain' | 'repair',
+  suffix = '1',
 ): Promise<{ runId: string; operationId: string }> {
   await conversations.createConversation({
     id: 'project-1',
@@ -385,15 +386,15 @@ async function seed(
     createdAt: '2026-07-18T12:00:00.000Z',
   });
   await conversations.appendMessage({
-    id: 'message-1',
+    id: `message-${suffix}`,
     projectId: 'project-1',
     conversationId: 'project-1',
     role: 'user',
     content: [{ type: 'text', text: 'Add a dark mode toggle' }],
     createdAt: '2026-07-18T12:00:00.000Z',
   });
-  const runId = 'run-1';
-  const operationId = 'operation-1';
+  const runId = `run-${suffix}`;
+  const operationId = `operation-${suffix}`;
   await runs.create({
     id: runId,
     projectId: 'project-1',
@@ -407,7 +408,7 @@ async function seed(
     id: operationId,
     projectId: 'project-1',
     conversationId: 'project-1',
-    messageId: 'message-1',
+    messageId: `message-${suffix}`,
     kind,
     idempotencyKey: 'a'.repeat(64),
     runId,
@@ -1422,8 +1423,93 @@ describe('ConversationOperationRunner context compilation', () => {
           content: bytes,
         },
       ]);
+      expect(workspaces.activeRunInputFiles).toEqual([]);
     },
   );
+
+  it('removes Plan knowledge bytes before a later nonknowledge operation executes', async () => {
+    const { runs, artifacts, workspaces, conversations, knowledgeFiles, runner } = setup();
+    const bytes = Buffer.from('plan-only-knowledge');
+    const metadata = await artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'knowledge-design',
+        contentType: 'image/png',
+        createdBy: 'test',
+        maxBytes: 1024,
+      },
+      Readable.from(bytes),
+    );
+    knowledgeFiles.files = [
+      knowledge('design', {
+        revisions: [
+          {
+            version: 1,
+            artifact: {
+              name: metadata.name,
+              revision: metadata.revision,
+              sha256: metadata.sha256,
+              sizeBytes: metadata.sizeBytes,
+            },
+            createdAt: metadata.createdAt,
+          },
+        ],
+      }),
+    ];
+    const plan = await seed(conversations, runs, 'plan');
+
+    await runner.run('project-1', plan.runId, plan.operationId);
+
+    expect(workspaces.activeRunInputFiles).toEqual([]);
+    const explain = await seed(conversations, runs, 'explain', 'explain');
+    await runner.run('project-1', explain.runId, explain.operationId);
+    expect(workspaces.activeRunInputFiles).toEqual([]);
+    expect(workspaces.lastRunInputFiles).toEqual([]);
+  });
+
+  it('terminalizes the run when pinned knowledge blob integrity validation fails', async () => {
+    const { runs, stepRuns, artifacts, conversations, knowledgeFiles, runner } = setup();
+    const metadata = await artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'knowledge-design',
+        contentType: 'image/png',
+        createdBy: 'test',
+        maxBytes: 1024,
+      },
+      Readable.from(Buffer.from('actual')),
+    );
+    knowledgeFiles.files = [
+      knowledge('design', {
+        revisions: [
+          {
+            version: 1,
+            artifact: {
+              name: metadata.name,
+              revision: metadata.revision,
+              sha256: 'f'.repeat(64),
+              sizeBytes: metadata.sizeBytes,
+            },
+            createdAt: metadata.createdAt,
+          },
+        ],
+      }),
+    ];
+    const { runId, operationId } = await seed(conversations, runs, 'plan');
+
+    await expect(runner.run('project-1', runId, operationId)).resolves.toBeUndefined();
+
+    await expect(runs.get(runId)).resolves.toMatchObject({
+      status: 'failed',
+      error: {
+        name: 'BlobIntegrityError',
+        message: expect.stringContaining('expected sha256'),
+      },
+    });
+    await expect(stepRuns.list(runId)).resolves.toEqual([
+      expect.objectContaining({ status: 'failed' }),
+    ]);
+  });
 
   it('embeds the compiled context digest in the compiled instructions and records sources on the change request', async () => {
     const fragmentHarness: HarnessRepository = {

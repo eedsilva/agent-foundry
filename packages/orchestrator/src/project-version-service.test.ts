@@ -89,6 +89,9 @@ class FakeWorkspaces implements WorkspaceManager {
   writeRunContext(): Promise<{ requestPath: string; schemaPath: string }> {
     return Promise.resolve({ requestPath: 'request.md', schemaPath: 'schema.json' });
   }
+  removeRunInputFiles(): Promise<void> {
+    return Promise.resolve();
+  }
   ensureGit(): Promise<void> {
     return Promise.resolve();
   }

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
 import type {
   AgentExecutionRequest,
+  AgentExecutionResult,
   ArtifactReference,
   KnowledgeFile,
   Message,
@@ -107,7 +108,6 @@ export class ConversationOperationRunner {
       operation.kind === 'plan' || operation.kind === 'build'
         ? await this.knowledgeFiles.list(projectId)
         : [];
-    const knowledgeInputs = await this.loadKnowledgeInputs(projectId, activeKnowledge, runId);
     const step = buildConversationStep({
       operationId,
       kind,
@@ -146,6 +146,7 @@ export class ConversationOperationRunner {
     let operationPromoted = false;
     let succeeded = false;
     try {
+      const knowledgeInputs = await this.loadKnowledgeInputs(projectId, activeKnowledge, runId);
       if (operation.visualEdit && !(await this.workspaces.isClean(projectId))) {
         throw new ValidationError('Direct visual edits require a clean workspace baseline');
       }
@@ -217,16 +218,6 @@ export class ConversationOperationRunner {
         artifacts: inputArtifacts,
         workspacePath: this.workspaces.workspacePath(projectId),
       });
-      await this.workspaces.writeRunContext({
-        projectId,
-        runId,
-        stepRunId: stepRun.id,
-        attemptId: attempt.id,
-        requestMarkdown,
-        outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
-        inputFiles: knowledgeInputs.map(({ path, content }) => ({ path, content })),
-      });
-
       const request: AgentExecutionRequest = {
         runId,
         stepRunId: stepRun.id,
@@ -244,19 +235,36 @@ export class ConversationOperationRunner {
         outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
         inputArtifacts: inputReferences,
       };
-      const result = await this.executors
-        .get(route.selected.model.provider)
-        .execute(request, undefined, (event) =>
-          persistStreamEvent(
-            this.stepEvents,
-            this.ids,
-            this.clock,
-            runId,
-            stepRun.id,
-            attempt!.id,
-            event,
-          ),
+      let result: AgentExecutionResult;
+      try {
+        await this.workspaces.writeRunContext({
+          projectId,
+          runId,
+          stepRunId: stepRun.id,
+          attemptId: attempt.id,
+          requestMarkdown,
+          outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+          inputFiles: knowledgeInputs.map(({ path, content }) => ({ path, content })),
+        });
+        result = await this.executors
+          .get(route.selected.model.provider)
+          .execute(request, undefined, (event) =>
+            persistStreamEvent(
+              this.stepEvents,
+              this.ids,
+              this.clock,
+              runId,
+              stepRun.id,
+              attempt!.id,
+              event,
+            ),
+          );
+      } finally {
+        await this.workspaces.removeRunInputFiles(
+          projectId,
+          knowledgeInputs.map(({ path }) => path),
         );
+      }
 
       const directEvidence = operation.visualEdit
         ? await this.verifyDirectVisualEdit(projectId, runId, operation, attempt)

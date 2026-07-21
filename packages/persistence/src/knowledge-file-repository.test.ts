@@ -113,6 +113,25 @@ describe('FileKnowledgeFileRepository', () => {
     ).rejects.toThrow('not found');
   });
 
+  it('advances the CAS timestamp when a mutation reports the same wall-clock time', async () => {
+    await repository.save(file);
+
+    const winner = await repository.update('project-1', file.id, file.updatedAt, (current) => ({
+      ...current,
+      pinned: false,
+      updatedAt: current.updatedAt,
+    }));
+
+    expect(winner.updatedAt).not.toBe(file.updatedAt);
+    await expect(
+      repository.update('project-1', file.id, file.updatedAt, (current) => ({
+        ...current,
+        pinned: true,
+        updatedAt: current.updatedAt,
+      })),
+    ).rejects.toThrow('changed since it was read');
+  });
+
   it('rejects malformed identity and revision indexes', async () => {
     await expect(repository.save({ ...file, currentVersion: 2 })).rejects.toThrow();
     await expect(

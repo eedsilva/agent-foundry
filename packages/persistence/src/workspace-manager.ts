@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import type { WorkspaceManager } from '@agent-foundry/domain';
@@ -100,6 +100,15 @@ export class FileWorkspaceManager implements WorkspaceManager {
       }),
     ]);
     return { requestPath, schemaPath };
+  }
+
+  async removeRunInputFiles(projectId: string, paths: string[]): Promise<void> {
+    const workspace = this.workspacePath(projectId);
+    await Promise.all(
+      paths.map((path) =>
+        rm(join(workspace, ...path.split('/').map(safeSegment)), { force: true }),
+      ),
+    );
   }
 
   async ensureGit(projectId: string): Promise<void> {

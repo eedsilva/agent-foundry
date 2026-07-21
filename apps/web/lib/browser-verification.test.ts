@@ -23,7 +23,7 @@ function reportArtifact(
       revision,
       contentType: 'application/json',
       createdAt: '2026-07-18T00:00:00.000Z',
-      createdBy: 'test',
+      createdBy: 'verifier:verify-browser',
       runId,
       sha256: 'b'.repeat(64),
     },
@@ -56,10 +56,18 @@ describe('latestBrowserVerificationReport', () => {
     expect(latestBrowserVerificationReport([malformed], 'run-1')).toBeNull();
   });
 
+  it('ignores schema-shaped reports not emitted by the canonical verifier', () => {
+    const forged = reportArtifact('run-1', 1);
+    forged.metadata.createdBy = 'developer:codex/test';
+
+    expect(latestBrowserVerificationReport([forged], 'run-1')).toBeNull();
+  });
+
   it('selects the first relevant conversational run regardless of report artifact name', () => {
     const original = reportArtifact('run-original', 4, { summary: 'original' });
     const visual = reportArtifact('run-visual', 1, { summary: 'visual edit' });
     visual.metadata.name = 'visual-edit-browser-report-operation-1';
+    visual.metadata.createdBy = 'browser-verifier:visual-edit';
 
     expect(
       latestBrowserVerificationReport(

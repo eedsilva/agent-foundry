@@ -105,7 +105,11 @@ export class FileKnowledgeFileRepository implements KnowledgeFileRepository {
       if (current.updatedAt !== expectedUpdatedAt) {
         throw new KnowledgeFileConflictError(safeKnowledgeFileId);
       }
-      const updated = KnowledgeFileSchema.parse(await mutation(current));
+      const mutated = KnowledgeFileSchema.parse(await mutation(current));
+      const updated = KnowledgeFileSchema.parse({
+        ...mutated,
+        updatedAt: strictlyAdvancingTimestamp(current.updatedAt, mutated.updatedAt),
+      });
       if (updated.id !== current.id || updated.projectId !== current.projectId) {
         throw new ValidationError('Knowledge file identity is immutable');
       }
@@ -163,4 +167,8 @@ export class FileKnowledgeFileRepository implements KnowledgeFileRepository {
       operation,
     );
   }
+}
+
+function strictlyAdvancingTimestamp(current: string, candidate: string): string {
+  return new Date(Math.max(Date.parse(candidate), Date.parse(current) + 1)).toISOString();
 }

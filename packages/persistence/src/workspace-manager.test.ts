@@ -5,6 +5,31 @@ import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 import { FileWorkspaceManager } from './workspace-manager.js';
 
+describe('FileWorkspaceManager run inputs', () => {
+  it('removes execution-only input bytes while retaining the run request', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const inputPath = '.orchestrator/runs/run-1/knowledge/design/v1.png';
+    const { requestPath } = await manager.writeRunContext({
+      projectId: 'project-1',
+      runId: 'run-1',
+      stepRunId: 'step-1',
+      attemptId: 'attempt-1',
+      requestMarkdown: 'Read the execution input.',
+      outputSchema: {},
+      inputFiles: [{ path: inputPath, content: Buffer.from('private bytes') }],
+    });
+
+    await manager.removeRunInputFiles('project-1', [inputPath]);
+
+    await expect(readFile(join(manager.workspacePath('project-1'), inputPath))).rejects.toThrow();
+    await expect(readFile(requestPath, 'utf8')).resolves.toBe('Read the execution input.');
+  });
+});
+
 describe('FileWorkspaceManager.isClean', () => {
   it('detects tracked and untracked baseline changes without mutating them', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));

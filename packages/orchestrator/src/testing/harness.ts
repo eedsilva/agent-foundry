@@ -702,9 +702,17 @@ export class FakeWorkspaces implements WorkspaceManager {
     checkPower(this.power);
     this.lastRequestMarkdown = input.requestMarkdown;
     this.lastRunInputFiles = input.inputFiles ?? [];
+    this.activeRunInputFiles = input.inputFiles ?? [];
     return Promise.resolve({ requestPath: 'request.md', schemaPath: 'schema.json' });
   }
   lastRunInputFiles: Array<{ path: string; content: Uint8Array }> = [];
+  activeRunInputFiles: Array<{ path: string; content: Uint8Array }> = [];
+  removeRunInputFiles(_projectId: string, paths: string[]): Promise<void> {
+    this.activeRunInputFiles = this.activeRunInputFiles.filter(
+      (file) => !paths.includes(file.path),
+    );
+    return Promise.resolve();
+  }
   ensureGit(): Promise<void> {
     return Promise.resolve();
   }
