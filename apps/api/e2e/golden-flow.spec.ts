@@ -8,7 +8,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { MockAgentExecutor } from '@agent-foundry/executors';
 import type { AgentExecutor } from '@agent-foundry/domain';
-import type { TaskProfile } from '@agent-foundry/contracts';
+import type { OperationKind, TaskProfile } from '@agent-foundry/contracts';
 import { buildApp } from '../src/app.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -126,10 +126,6 @@ test.afterAll(async () => {
   await Promise.all([apiClose(), ...dirs.map((dir) => rm(dir, { recursive: true, force: true }))]);
 });
 
-test.afterEach(async ({ page }) => {
-  await page.close();
-});
-
 async function createProject(): Promise<string> {
   const response = await fetch(`${apiBaseUrl}/projects`, {
     method: 'POST',
@@ -245,13 +241,23 @@ function installGoldenFixtureExecutor(): void {
   (runtime.executors as { get: () => AgentExecutor }).get = () => executor;
 }
 
-async function pinnedKnowledgePrompt(projectId: string): Promise<string> {
-  const runsPath = join(runtime.workspaces.workspacePath(projectId), '.orchestrator', 'runs');
-  const requests = (await readdir(runsPath, { recursive: true }))
+async function latestOperationRequest(projectId: string, kind: OperationKind): Promise<string> {
+  const operation = (await runtime.conversations.listOperations(projectId))
+    .filter((candidate) => candidate.kind === kind)
+    .at(-1);
+  if (!operation?.runId) throw new Error(`latest ${kind} operation has no run`);
+  const runPath = join(
+    runtime.workspaces.workspacePath(projectId),
+    '.orchestrator',
+    'runs',
+    operation.runId,
+  );
+  const request = (await readdir(runPath, { recursive: true }))
     .filter((path) => path.endsWith('REQUEST.md'))
-    .map((path) => join(runsPath, path));
-  const contents = await Promise.all(requests.map((path) => readFile(path, 'utf8')));
-  return contents.find((content) => content.includes('## Pinned knowledge files')) ?? '';
+    .sort()
+    .at(-1);
+  if (!request) throw new Error(`latest ${kind} operation has no request`);
+  return readFile(join(runPath, request), 'utf8');
 }
 
 test('golden flow: change request, preview, browser tests, diff approval, axe', async ({
@@ -342,11 +348,8 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   const projectId = await createProject();
   await seedWorkspaceAndPlan(projectId);
   await mkdir(join(runtime.workspaces.workspacePath(projectId), 'src'));
-  await writeFile(
-    join(runtime.workspaces.workspacePath(projectId), 'src', 'Greeting.tsx'),
-    "export const greetingBackground = '#eee';\n",
-    { flag: 'wx' },
-  );
+  const greetingPath = join(runtime.workspaces.workspacePath(projectId), 'src', 'Greeting.tsx');
+  await writeFile(greetingPath, "export const greetingBackground = '#eee';\n", { flag: 'wx' });
   expect(await runtime.worker.runOnce()).toBe(true);
 
   await page.goto(`${webBaseUrl}/project/${projectId}`);
@@ -382,6 +385,10 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await expect(knowledge).toContainText('fixado');
   await knowledge.getByLabel('Substituir design-reference.png').setInputFiles(REFERENCE_IMAGE);
   await expect(knowledge).toContainText('design-reference · v2 · fixado');
+  const [knowledgeFile] = await runtime.knowledgeFiles.list(projectId);
+  if (!knowledgeFile) throw new Error('knowledge fixture was not persisted');
+  const expectedKnowledgeContext =
+    `- design-reference.png v2 · design-reference · ` + `artifact knowledge-${knowledgeFile.id}@2`;
 
   const chatInput = regions.chat.locator('form textarea');
   await chatInput.fill('Consider the attached reference before execution.');
@@ -409,8 +416,8 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await expect(
     regions.chat.locator('.operationBadge').filter({ hasText: 'plan, approved' }),
   ).toBeVisible();
-  await expect(pinnedKnowledgePrompt(projectId)).resolves.toContain(
-    'design-reference.png v2 · design-reference',
+  await expect(latestOperationRequest(projectId, 'plan')).resolves.toContain(
+    expectedKnowledgeContext,
   );
 
   await regions.chat.getByLabel('Build (vai alterar código e consumir budget)').check();
@@ -428,6 +435,9 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await expect(
     regions.chat.locator('.operationBadge').filter({ hasText: 'build' }).last(),
   ).toBeVisible();
+  const buildRequest = await latestOperationRequest(projectId, 'build');
+  expect(buildRequest).toContain('- Workflow: conversation-build');
+  expect(buildRequest).toContain(expectedKnowledgeContext);
 
   await page.reload();
   await expect(page.getByRole('region', { name: 'Preview' })).toBeVisible({ timeout: 30_000 });
@@ -460,11 +470,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     page.getByRole('button', { name: 'Aplicar alteração' }).click(),
   ]);
   await runConversationJob();
-  await expect
-    .poll(() =>
-      readFile(join(runtime.workspaces.workspacePath(projectId), 'src', 'Greeting.tsx'), 'utf8'),
-    )
-    .toContain("'#ddd'");
+  await expect.poll(() => readFile(greetingPath, 'utf8')).toContain("'#ddd'");
   await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -522,8 +528,12 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     ),
     versionArticle(baselineVersion.commit).locator('[data-version-action="revert"]').click(),
   ]);
+  const revertedGreeting = await readFile(greetingPath, 'utf8');
+  expect(revertedGreeting).toContain("'#eee'");
+  expect(revertedGreeting).not.toContain("'#ddd'");
   const [revertVersion] = await runtime.projectVersionService.list(projectId, 50);
   await expect(versionArticle(revertVersion!.commit, 'revert')).toBeVisible();
+  const buildSequencePath = join(runtime.workspaces.workspacePath(projectId), 'build-sequence.txt');
 
   const refreshedChat = page.getByRole('region', { name: 'Chat' });
   await refreshedChat.getByLabel('Build (vai alterar código e consumir budget)').check();
@@ -538,6 +548,10 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     refreshedChat.getByRole('button', { name: 'Confirm build' }).click(),
   ]);
   await runConversationJob();
+  const rebuiltGreeting = await readFile(greetingPath, 'utf8');
+  expect(rebuiltGreeting).toContain("'#eee'");
+  expect(rebuiltGreeting).not.toContain("'#ddd'");
+  await expect(readFile(buildSequencePath, 'utf8')).resolves.toBe('2\n');
 
   await page.reload();
   await expect.poll(() => runtime.projectVersionService.list(projectId, 50)).toHaveLength(5);

@@ -587,11 +587,14 @@ application harness and browser:
 
 - upload a checked-in 1x1 PNG as a pinned `design-reference`, render its stored bytes, unpin, repin,
   replace it as v2, and finally remove it from the active project;
-- confirm that the pinned v2 artifact reference reaches the real plan request, approve the plan, build,
-  select a preview element, preview and apply a source visual edit, and receive real workspace and
-  browser-verification results;
-- compare the build and visual-edit versions, create a branch, protect the baseline, revert without
-  rewriting history, rebuild, and observe passed checks in Changes;
+- confirm that the complete pinned v2 artifact line reaches the real Plan request and the latest Build
+  operation's exact `conversation-build` request, approve the plan, build, select a preview element,
+  preview and apply a source visual edit, and receive real workspace and browser-verification results;
+- compare the build and visual-edit versions, create a branch, protect the baseline, and revert without
+  rewriting history; immediately after the exact Revert response, read the real workspace and prove
+  `Greeting.tsx` changed from visual `#ddd` back to baseline `#eee`;
+- rebuild from that reverted tree, prove `Greeting.tsx` remains `#eee` while the deterministic
+  rebuild-only sequence advances from 1 to 2, and observe passed checks in Changes;
 - verify the percent-encoded local `vscode://file/` link; and
 - capture the three visible Chat / Preview / Changes regions at 1440 px, then assert that the same named
   regions remain visible in that order at 390 x 844.
