@@ -16,9 +16,9 @@ import {
   expirePreviewSession,
   isPreviewSessionExpired,
   isPreviewSessionTerminal,
-  recordPreviewSessions,
   redactString,
   redactUnknown,
+  registerActiveSessionsCallback,
   transitionPreviewSession,
   withSpan,
   type ArtifactStore,
@@ -74,6 +74,7 @@ export class PreviewService {
     this.healthIntervalMs = config.healthIntervalMs ?? DEFAULT_HEALTH_INTERVAL_MS;
     this.healthFailureThreshold = config.healthFailureThreshold ?? DEFAULT_HEALTH_FAILURE_THRESHOLD;
     this.maxRestarts = config.maxRestarts ?? DEFAULT_MAX_RESTARTS;
+    registerActiveSessionsCallback(async () => (await this.sessions.listActive()).length);
   }
 
   async start(input: StartPreviewInput): Promise<{ session: PreviewSession; url: string }> {
@@ -481,15 +482,16 @@ export class PreviewService {
     });
   }
 
-  // ponytail: every lifecycle transition (start, stop, reap, crash-restart,
-  // failure finalization) funnels through here, so recording the active-
-  // session gauge on every persist keeps it accurate without hunting down
-  // each individual start/stop call site. One extra listActive() read per
-  // persist; sessions are local-file-backed and cheap to enumerate.
+  // ponytail: the active-sessions gauge is now an observable pull metric
+  // (registered once in the constructor), so persist() no longer pays a
+  // listActive() scan on every lifecycle transition — that cost moves to
+  // once per metric export interval. It's still an O(total historical
+  // session dirs) scan each time, because reap() never deletes terminal
+  // session directories. Upgrade path: reap gc of terminal session dirs, or
+  // track active count with an in-memory counter instead of a listActive()
+  // scan.
   private async persist(session: PreviewSession): Promise<PreviewSession> {
-    const updated = await this.sessions.update(session, session.version);
-    recordPreviewSessions((await this.sessions.listActive()).length);
-    return updated;
+    return this.sessions.update(session, session.version);
   }
 
   private async requireSession(sessionId: string) {

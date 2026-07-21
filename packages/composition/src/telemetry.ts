@@ -174,13 +174,23 @@ export class KeepErrorsSampler implements Sampler {
  * which is acceptable at this app's scale; a collector-side tail sampler
  * (spans always exported, retention decided downstream) is the upgrade if
  * that stops being true.
+ *
+ * Owns its own `BatchSpanProcessor` (built from `exporter`) rather than
+ * taking one as a separate constructor argument: the direct tail export
+ * above and the batched export both have to go through the *same* exporter
+ * instance (so a kept span gets the same redaction/slow-stamping either
+ * way), and building the batch processor internally makes that invariant
+ * structural instead of a call-site convention that could drift.
  */
 export class TailSpanProcessor implements SpanProcessor {
+  private readonly delegate: SpanProcessor;
+
   constructor(
-    private readonly delegate: SpanProcessor,
     private readonly exporter: SpanExporter,
     private readonly slowRunThresholdMs: number,
-  ) {}
+  ) {
+    this.delegate = new BatchSpanProcessor(exporter);
+  }
 
   onStart(span: Span, parentContext: Context): void {
     this.delegate.onStart(span, parentContext);
@@ -237,13 +247,7 @@ export function startTelemetry(options: TelemetryOptions): TelemetryHandle {
   const tracerProvider = new NodeTracerProvider({
     resource,
     sampler: new KeepErrorsSampler(options.sampleRatio),
-    spanProcessors: [
-      new TailSpanProcessor(
-        new BatchSpanProcessor(traceExporter),
-        traceExporter,
-        options.slowRunThresholdMs,
-      ),
-    ],
+    spanProcessors: [new TailSpanProcessor(traceExporter, options.slowRunThresholdMs)],
   });
   tracerProvider.register();
 

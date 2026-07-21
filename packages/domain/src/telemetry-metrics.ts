@@ -1,15 +1,25 @@
-import { metrics, type Attributes } from '@opentelemetry/api';
+import {
+  metrics,
+  type Attributes,
+  type Counter,
+  type Histogram,
+  type Meter,
+  type ObservableGauge,
+} from '@opentelemetry/api';
 import { TRACER_NAME } from './tracing.js';
 
 /**
- * Meter helpers for the `foundry.*` metric contract. Each function resolves
- * `metrics.getMeter(TRACER_NAME)` and creates its instrument fresh on every
- * call rather than caching one at module load: the metrics API (unlike the
- * trace API) has no proxy/delegate indirection, so an instrument created
- * before a MeterProvider is registered would stay bound to the no-op meter
- * forever. Creating per-call is cheap — the SDK dedupes storage by
- * descriptor — and keeps these helpers correctly no-op until
- * `startTelemetry` (packages/composition) registers a real MeterProvider.
+ * Meter helpers for the `foundry.*` metric contract. Unlike `trace.getTracer`
+ * (a ProxyTracer that cheaply resolves a cached delegate — see tracing.ts),
+ * `metrics.getMeter` does NOT cheaply dedupe per call: `MetricsAPI.getMeter`
+ * forwards straight to the current MeterProvider's `getMeter` every time —
+ * a registry scan plus a wrapper allocation, with no delegate shortcut. So
+ * instruments are memoized here instead of created fresh per call, keyed on
+ * the *identity* of the Meter object `getMeter` returns: a MeterProvider
+ * (including the shared no-op meter before an SDK one is registered) returns
+ * the same Meter reference for a given name, so the cache only needs to
+ * invalidate on the one transition where that reference actually changes —
+ * `startTelemetry` registering a real MeterProvider.
  */
 
 export interface TokenUsageAttributes {
@@ -18,32 +28,74 @@ export interface TokenUsageAttributes {
   modelId: string;
 }
 
+interface Instruments {
+  meter: Meter;
+  runDuration: Histogram;
+  stepRetries: Counter;
+  queueWait: Histogram;
+  tokensInput: Histogram;
+  tokensOutput: Histogram;
+}
+
+let cachedInstruments: Instruments | undefined;
+
+function currentInstruments(): Instruments {
+  const meter = metrics.getMeter(TRACER_NAME);
+  if (!cachedInstruments || cachedInstruments.meter !== meter) {
+    cachedInstruments = {
+      meter,
+      runDuration: meter.createHistogram('foundry.run.duration_ms', { unit: 'ms' }),
+      stepRetries: meter.createCounter('foundry.step.retries'),
+      queueWait: meter.createHistogram('foundry.queue.wait_ms', { unit: 'ms' }),
+      tokensInput: meter.createHistogram('foundry.tokens.input'),
+      tokensOutput: meter.createHistogram('foundry.tokens.output'),
+    };
+  }
+  return cachedInstruments;
+}
+
 export function recordRunDuration(ms: number, attributes: { status: string }): void {
-  metrics
-    .getMeter(TRACER_NAME)
-    .createHistogram('foundry.run.duration_ms', { unit: 'ms' })
-    .record(ms, attributes as Attributes);
+  currentInstruments().runDuration.record(ms, attributes as Attributes);
 }
 
 export function recordStepRetry(): void {
-  metrics.getMeter(TRACER_NAME).createCounter('foundry.step.retries').add(1);
+  currentInstruments().stepRetries.add(1);
 }
 
 export function recordQueueWait(ms: number): void {
-  metrics.getMeter(TRACER_NAME).createHistogram('foundry.queue.wait_ms', { unit: 'ms' }).record(ms);
+  currentInstruments().queueWait.record(ms);
 }
 
 export function recordTokenUsage(usage: TokenUsageAttributes): void {
-  const meter = metrics.getMeter(TRACER_NAME);
+  const { tokensInput, tokensOutput } = currentInstruments();
   const attributes: Attributes = { 'foundry.model.id': usage.modelId };
   if (usage.inputTokens !== undefined) {
-    meter.createHistogram('foundry.tokens.input').record(usage.inputTokens, attributes);
+    tokensInput.record(usage.inputTokens, attributes);
   }
   if (usage.outputTokens !== undefined) {
-    meter.createHistogram('foundry.tokens.output').record(usage.outputTokens, attributes);
+    tokensOutput.record(usage.outputTokens, attributes);
   }
 }
 
-export function recordPreviewSessions(active: number): void {
-  metrics.getMeter(TRACER_NAME).createGauge('foundry.preview.active_sessions').record(active);
+let cachedActiveSessionsGauge: { meter: Meter; gauge: ObservableGauge } | undefined;
+
+/**
+ * Registers `cb` as the pull source for the `foundry.preview.active_sessions`
+ * gauge: the SDK calls it once per metric export interval instead of on
+ * every session mutation (see PreviewService, its sole caller). The gauge is
+ * memoized the same way `currentInstruments` memoizes the synchronous
+ * instruments above — recreated, and `cb` re-attached, only if the meter
+ * identity has changed since the last call.
+ */
+export function registerActiveSessionsCallback(cb: () => Promise<number> | number): void {
+  const meter = metrics.getMeter(TRACER_NAME);
+  if (!cachedActiveSessionsGauge || cachedActiveSessionsGauge.meter !== meter) {
+    cachedActiveSessionsGauge = {
+      meter,
+      gauge: meter.createObservableGauge('foundry.preview.active_sessions'),
+    };
+  }
+  cachedActiveSessionsGauge.gauge.addCallback(async (result) => {
+    result.observe(await cb());
+  });
 }

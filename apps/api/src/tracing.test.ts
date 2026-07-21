@@ -15,17 +15,25 @@ const dirs: string[] = [];
 async function startApi(options?: {
   loggerStream?: { write(message: string): void };
   registerRoutes?: (app: FastifyInstance) => void;
+  /** Default true: buildApp only registers the request-tracing hooks when an OTLP endpoint is configured. */
+  telemetryEnabled?: boolean;
 }): Promise<{ app: FastifyInstance; baseUrl: string }> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-tracing-'));
   dirs.push(dataDir);
-  const runtime = await createRuntime({
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     REPO_ROOT: resolve(import.meta.dirname, '../../..'),
     DATA_DIR: dataDir,
     EXECUTOR_MODE: 'mock',
     AUTO_INSTALL_DEPENDENCIES: 'false',
     WORKER_ID: 'tracing-worker',
-  });
+  };
+  if (options?.telemetryEnabled ?? true) {
+    env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://127.0.0.1:4318';
+  } else {
+    delete env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  }
+  const runtime = await createRuntime(env);
   const app = await buildApp(runtime, options);
   apps.push(app);
   options?.registerRoutes?.(app);
@@ -153,6 +161,24 @@ describe('apps/api foundry.request span', () => {
       .getFinishedSpans()
       .filter((item) => item.name === 'foundry.request');
     expect(spansAfterSecondAbort).toHaveLength(2);
+  });
+
+  // Regression: buildApp only registers the onRequest/onResponse
+  // request-tracing hooks when runtime.config.otelExporterOtlpEndpoint is
+  // set (see app.ts) — with telemetry off, request-tracing.ts's hooks must
+  // never run at all, not just export nothing. Proven here the same way as
+  // the other tests: through the exporter, since that's the only externally
+  // observable effect a registered-but-inert hook vs. a never-registered
+  // hook could have.
+  it('registers no request-tracing hooks — and exports no foundry.request spans — when no OTLP endpoint is configured', async () => {
+    const { baseUrl } = await startApi({ telemetryEnabled: false });
+
+    const response = await fetch(`${baseUrl}/health`);
+    expect(response.status).toBe(200);
+
+    expect(
+      exporter.getFinishedSpans().filter((item) => item.name === 'foundry.request'),
+    ).toHaveLength(0);
   });
 });
 

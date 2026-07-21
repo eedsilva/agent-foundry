@@ -12,6 +12,12 @@ import { errorMessage } from './utils.js';
 /** Shared tracer name for every span this codebase creates. */
 export const TRACER_NAME = 'agent-foundry';
 
+// trace.getTracer returns a ProxyTracer that resolves its real delegate
+// lazily on each call (see ProxyTracer._getTracer in @opentelemetry/api) —
+// safe to grab once at module load, before startTelemetry registers the SDK
+// tracer provider, and it'll still pick up the real tracer once one exists.
+const tracer = trace.getTracer(TRACER_NAME);
+
 /**
  * Runs `fn` inside a new active span named `name` with `attributes` set at
  * creation. On throw, records the exception and an ERROR status before
@@ -24,7 +30,6 @@ export async function withSpan<T>(
   attributes: Attributes,
   fn: (span: Span) => Promise<T>,
 ): Promise<T> {
-  const tracer = trace.getTracer(TRACER_NAME);
   return tracer.startActiveSpan(name, { attributes }, async (span) => {
     try {
       return await fn(span);

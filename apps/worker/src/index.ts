@@ -5,7 +5,7 @@ import { createRuntime, currentTraceIds, startTelemetry } from '@agent-foundry/c
 
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info', mixin: () => currentTraceIds() });
-const runtime = await createRuntime(undefined, undefined, { workerLogger: logger });
+const runtime = await createRuntime(undefined, undefined, logger);
 const telemetry = startTelemetry({
   serviceName: runtime.config.otelServiceName ?? 'agent-foundry-worker',
   endpoint: runtime.config.otelExporterOtlpEndpoint,

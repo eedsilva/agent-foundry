@@ -6,11 +6,7 @@ import {
   SpanStatusCode,
   type Attributes,
 } from '@opentelemetry/api';
-import {
-  BatchSpanProcessor,
-  type ReadableSpan,
-  type SpanExporter,
-} from '@opentelemetry/sdk-trace-base';
+import { type ReadableSpan, type SpanExporter } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { currentTraceIds, withSpan } from '@agent-foundry/domain';
 import {
@@ -195,7 +191,7 @@ describe('TailSpanProcessor export-time keep', () => {
     const redacting = new RedactingSpanExporter(delegate, 60_000);
     provider = new NodeTracerProvider({
       sampler: new KeepErrorsSampler(0),
-      spanProcessors: [new TailSpanProcessor(new BatchSpanProcessor(redacting), redacting, 60_000)],
+      spanProcessors: [new TailSpanProcessor(redacting, 60_000)],
     });
     const tracer = provider.getTracer('test');
 
@@ -216,7 +212,7 @@ describe('TailSpanProcessor export-time keep', () => {
     const redacting = new RedactingSpanExporter(delegate, 60_000);
     provider = new NodeTracerProvider({
       sampler: new KeepErrorsSampler(0),
-      spanProcessors: [new TailSpanProcessor(new BatchSpanProcessor(redacting), redacting, 60_000)],
+      spanProcessors: [new TailSpanProcessor(redacting, 60_000)],
     });
     const tracer = provider.getTracer('test');
 
@@ -236,7 +232,7 @@ describe('TailSpanProcessor export-time keep', () => {
     const redacting = new RedactingSpanExporter(delegate, 1_000);
     provider = new NodeTracerProvider({
       sampler: new KeepErrorsSampler(0),
-      spanProcessors: [new TailSpanProcessor(new BatchSpanProcessor(redacting), redacting, 1_000)],
+      spanProcessors: [new TailSpanProcessor(redacting, 1_000)],
     });
     const tracer = provider.getTracer('test');
 
@@ -258,7 +254,7 @@ describe('TailSpanProcessor export-time keep', () => {
     const redacting = new RedactingSpanExporter(delegate, 60_000);
     provider = new NodeTracerProvider({
       sampler: new KeepErrorsSampler(1),
-      spanProcessors: [new TailSpanProcessor(new BatchSpanProcessor(redacting), redacting, 60_000)],
+      spanProcessors: [new TailSpanProcessor(redacting, 60_000)],
     });
     const tracer = provider.getTracer('test');
 

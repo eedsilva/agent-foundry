@@ -1,10 +1,9 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { context, trace, SpanStatusCode, type Span } from '@opentelemetry/api';
 import type { Runtime } from '@agent-foundry/composition';
 import { blobKeyFor, listRisks, getRiskById, verifyBlobToken } from '@agent-foundry/composition';
-import { currentTraceIds, TRACER_NAME } from '@agent-foundry/domain';
+import { currentTraceIds } from '@agent-foundry/domain';
 import {
   BranchVersionRequestSchema,
   ClassifyMessageResponseSchema,
@@ -40,6 +39,7 @@ import {
 } from '@agent-foundry/domain';
 import { registerPreviewProxy } from './preview-proxy.js';
 import { createFixedWindowRateLimiter } from './rate-limit.js';
+import { registerRequestTracing } from './request-tracing.js';
 import { wildcardParam } from './request-util.js';
 
 interface BuildAppOptions {
@@ -88,45 +88,12 @@ export async function buildApp(
     methods: ['GET', 'POST', 'OPTIONS'],
   });
 
-  // ponytail: SSE routes (identified by their `/stream` suffix) hijack the
-  // reply (see streamSse below), and Fastify never runs onResponse for a
-  // hijacked reply — a span opened here for those routes would never end. The
-  // simplest correct cut is to skip request spans on hijacked routes entirely;
-  // add explicit end-at-headers-sent instrumentation in streamSse if SSE
-  // request-level tracing becomes a requirement.
-  const requestSpans = new WeakMap<FastifyRequest, Span>();
-  app.addHook('onRequest', (request, _reply, done) => {
-    if (request.routeOptions.url?.endsWith('/stream')) {
-      done();
-      return;
-    }
-    const span = trace.getTracer(TRACER_NAME).startSpan('foundry.request', {
-      attributes: {
-        'http.method': request.method,
-        'http.route': request.routeOptions.url ?? request.url,
-      },
-    });
-    requestSpans.set(request, span);
-    // onResponse only fires on raw finish/error, never on a client-aborted
-    // connection — this fallback ends+removes the span so it isn't leaked
-    // (never exported) when the client disconnects early. Deleted from the
-    // map before ending so a normal completion racing this can't double-end.
-    request.raw.on('close', () => {
-      const tracked = requestSpans.get(request);
-      if (!tracked) return;
-      requestSpans.delete(request);
-      tracked.end();
-    });
-    context.with(trace.setSpan(context.active(), span), done);
-  });
-  app.addHook('onResponse', async (request, reply) => {
-    const span = requestSpans.get(request);
-    if (!span) return;
-    requestSpans.delete(request);
-    span.setAttribute('http.status_code', reply.statusCode);
-    if (reply.statusCode >= 500) span.setStatus({ code: SpanStatusCode.ERROR });
-    span.end();
-  });
+  // Telemetry off (no OTLP endpoint) => these hooks are never registered =>
+  // zero per-request span/WeakMap cost on the inert path. See
+  // request-tracing.ts for what gets registered and why.
+  if (runtime.config.otelExporterOtlpEndpoint) {
+    registerRequestTracing(app);
+  }
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
