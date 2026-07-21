@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import {
   ArtifactMetadataSchema,
@@ -8,14 +7,10 @@ import {
   type RouteDecision,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
-import {
-  ArtifactTooLargeError,
-  type ArtifactBlobPutInput,
-  type ArtifactStore,
-} from '@agent-foundry/domain';
-import { sha256 } from '../fs-utils.js';
+import { type ArtifactBlobPutInput, type ArtifactStore } from '@agent-foundry/domain';
+import { accumulateStreamWithCap, sha256 } from '../fs-utils.js';
 import type { PostgresDb } from './client.js';
-import { acquireScopeLock } from './versioned.js';
+import { acquireScopeLock, toJsonb } from './versioned.js';
 
 interface ArtifactRow {
   content: unknown;
@@ -93,7 +88,7 @@ export class PostgresArtifactStore implements ArtifactStore {
         ) values (
           ${metadata.projectId}, ${metadata.name}, ${metadata.revision}, ${metadata.sha256},
           ${metadata.idempotencyKey ?? null}, ${metadata.sourceDecisionId ?? null},
-          'inline', ${metadata.createdAt}, ${tx.json(input.content as any)}, ${tx.json(metadata as any)}
+          'inline', ${metadata.createdAt}, ${toJsonb(tx, input.content)}, ${toJsonb(tx, metadata)}
         )`;
 
       return StoredArtifactSchema.parse({ metadata, content: input.content });
@@ -101,25 +96,11 @@ export class PostgresArtifactStore implements ArtifactStore {
   }
 
   async putBlob(input: ArtifactBlobPutInput, source: Readable): Promise<ArtifactMetadata> {
-    const hash = createHash('sha256');
-    const chunks: Buffer[] = [];
-    let sizeBytes = 0;
-    try {
-      for await (const chunk of source) {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        sizeBytes += buffer.byteLength;
-        if (sizeBytes > input.maxBytes) throw new ArtifactTooLargeError(input.maxBytes);
-        hash.update(buffer);
-        chunks.push(buffer);
-      }
-    } catch (error) {
-      // Mid-stream failure (over maxBytes or an upstream read error): destroy the
-      // source so no reader is left dangling. No DB row is ever written on this path.
-      source.destroy();
-      throw error;
-    }
-    const bytes = Buffer.concat(chunks);
-    const shaHex = hash.digest('hex');
+    const {
+      bytes,
+      sha256: shaHex,
+      sizeBytes,
+    } = await accumulateStreamWithCap(source, input.maxBytes);
 
     return this.sql.begin(async (tx) => {
       await acquireScopeLock(tx, 'artifacts:' + input.projectId);
@@ -155,7 +136,7 @@ export class PostgresArtifactStore implements ArtifactStore {
           project_id, name, revision, sha256, storage, expires_at, created_at, content, data
         ) values (
           ${metadata.projectId}, ${metadata.name}, ${metadata.revision}, ${metadata.sha256},
-          'blob', ${metadata.expiresAt ?? null}, ${metadata.createdAt}, null, ${tx.json(metadata as any)}
+          'blob', ${metadata.expiresAt ?? null}, ${metadata.createdAt}, null, ${toJsonb(tx, metadata)}
         )`;
       // ponytail: blob bytes buffered in memory and stored as bytea (caps: ≤50MB per existing
       // ARTIFACT_MAX_* limits); issue #54 moves bytes to object storage with true streaming.

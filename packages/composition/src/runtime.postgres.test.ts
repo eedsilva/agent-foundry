@@ -9,7 +9,8 @@ import {
   migrateUp,
   type PostgresDb,
 } from '@agent-foundry/persistence';
-import { createRuntime, type Runtime } from './runtime.js';
+import { createRuntime } from './runtime.js';
+import { approveDiffGate } from './testing-helpers.js';
 
 // ponytail: duplicates the Docker-skip guard from persistence/src/postgres/testing.ts instead of
 // exporting `describePostgres` through the package barrel. Exporting it would pull
@@ -32,17 +33,6 @@ if (process.env.CI && !dockerAvailable) {
 const maybeDescribe = dockerAvailable ? describe : describe.skip;
 
 const rootDir = resolve(import.meta.dirname, '../../..');
-
-async function approveDiffGate(runtime: Runtime, runId: string): Promise<void> {
-  const [diffApproval] = (await runtime.projectService.listApprovals(runId)).filter(
-    (entry) => entry.request.nodeId === 'diff-approval',
-  );
-  if (!diffApproval) throw new Error('Expected a pending diff-approval request');
-  await runtime.projectService.decideApproval(runId, diffApproval.request.id, {
-    action: 'approve',
-    decidedBy: 'postgres-composition-test',
-  });
-}
 
 it('rejects PERSISTENCE_MODE=postgres without DATABASE_URL', async () => {
   await expect(
@@ -109,7 +99,7 @@ maybeDescribe('Postgres-backed runtime', () => {
     const runId = project.currentRunId;
 
     expect(await runtime.worker.runOnce()).toBe(true);
-    await approveDiffGate(runtime, runId);
+    await approveDiffGate(runtime, runId, 'postgres-composition-test');
     expect(await runtime.worker.runOnce()).toBe(true);
 
     const detail = await runtime.projectService.get(project.id);

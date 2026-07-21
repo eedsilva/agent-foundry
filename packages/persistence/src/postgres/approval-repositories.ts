@@ -6,7 +6,7 @@ import {
 } from '@agent-foundry/contracts';
 import type { ApprovalDecisionRepository, ApprovalRequestRepository } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
-import { isUniqueViolation } from './versioned.js';
+import { isUniqueViolation, toJsonb } from './versioned.js';
 
 /**
  * ApprovalRequest and ApprovalDecision are create-only: unlike the versioned
@@ -22,7 +22,7 @@ export class PostgresApprovalRequestRepository implements ApprovalRequestReposit
     try {
       await this.sql`
         insert into approval_requests (request_id, run_id, step_run_id, created_at, data)
-        values (${parsed.id}, ${parsed.runId}, ${parsed.stepRunId}, ${parsed.createdAt}, ${this.sql.json(parsed as any)})`;
+        values (${parsed.id}, ${parsed.runId}, ${parsed.stepRunId}, ${parsed.createdAt}, ${toJsonb(this.sql, parsed)})`;
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new Error(`Approval request ${parsed.id} already exists`);
@@ -60,7 +60,7 @@ export class PostgresApprovalDecisionRepository implements ApprovalDecisionRepos
     try {
       await this.sql`
         insert into approval_decisions (request_id, run_id, created_at, data)
-        values (${parsed.requestId}, ${parsed.runId}, ${parsed.decidedAt}, ${this.sql.json(parsed as any)})`;
+        values (${parsed.requestId}, ${parsed.runId}, ${parsed.decidedAt}, ${toJsonb(this.sql, parsed)})`;
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new Error(`Approval request ${parsed.requestId} already has a decision`);

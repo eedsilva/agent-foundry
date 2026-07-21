@@ -1,6 +1,7 @@
 import { ProjectEventSchema, type ProjectEvent } from '@agent-foundry/contracts';
 import { redactEvent, type EventStore } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
+import { toJsonb } from './versioned.js';
 
 export class PostgresEventStore implements EventStore {
   constructor(private readonly sql: PostgresDb) {}
@@ -14,7 +15,7 @@ export class PostgresEventStore implements EventStore {
       insert into project_events (id, project_id, run_id, type, dedupe_key, created_at, data)
       values (
         ${parsed.id}, ${parsed.projectId}, ${parsed.runId ?? null}, ${parsed.type},
-        ${parsed.dedupeKey ?? null}, ${parsed.createdAt}, ${this.sql.json(parsed as any)}
+        ${parsed.dedupeKey ?? null}, ${parsed.createdAt}, ${toJsonb(this.sql, parsed)}
       )
       on conflict (project_id, dedupe_key) where dedupe_key is not null do nothing`;
   }

@@ -20,8 +20,9 @@ import {
   type ConversationRepository,
   type ConversationSnapshot,
 } from '@agent-foundry/domain';
+import { operationInput } from '../conversation-repository.js';
 import type { PostgresDb } from './client.js';
-import { acquireScopeLock, isUniqueViolation } from './versioned.js';
+import { acquireScopeLock, isUniqueViolation, toJsonb } from './versioned.js';
 
 export class PostgresConversationRepository implements ConversationRepository {
   constructor(private readonly sql: PostgresDb) {}
@@ -37,7 +38,7 @@ export class PostgresConversationRepository implements ConversationRepository {
         }
         return;
       }
-      await tx`insert into conversations (project_id, data) values (${parsed.projectId}, ${tx.json(parsed as any)})`;
+      await tx`insert into conversations (project_id, data) values (${parsed.projectId}, ${toJsonb(tx, parsed)})`;
     });
   }
 
@@ -48,19 +49,24 @@ export class PostgresConversationRepository implements ConversationRepository {
   async getSnapshot(projectId: string): Promise<ConversationSnapshot> {
     return this.sql.begin(async (tx) => {
       await acquireScopeLock(tx, 'conversation:' + projectId);
-      const conversation = await selectConversation(tx, projectId);
-      const messageRows = await tx<{ data: unknown }[]>`
-        select data from conversation_messages
-        where project_id = ${projectId} order by sequence asc`;
-      const attachmentRows = await tx<{ data: unknown }[]>`
-        select data from conversation_attachments
-        where project_id = ${projectId} order by created_at asc, id asc`;
-      const operationRows = await tx<{ data: unknown }[]>`
-        select data from conversation_operations
-        where project_id = ${projectId} order by created_at asc, id asc`;
-      const changeRequestRows = await tx<{ data: unknown }[]>`
-        select data from conversation_change_requests
-        where project_id = ${projectId} order by created_at asc, id asc`;
+      // Pipelined on the same reserved tx connection (porsager sends queued queries
+      // back-to-back without waiting for each round trip) rather than run serially.
+      const [conversation, messageRows, attachmentRows, operationRows, changeRequestRows] =
+        await Promise.all([
+          selectConversation(tx, projectId),
+          tx<{ data: unknown }[]>`
+            select data from conversation_messages
+            where project_id = ${projectId} order by sequence asc`,
+          tx<{ data: unknown }[]>`
+            select data from conversation_attachments
+            where project_id = ${projectId} order by created_at asc, id asc`,
+          tx<{ data: unknown }[]>`
+            select data from conversation_operations
+            where project_id = ${projectId} order by created_at asc, id asc`,
+          tx<{ data: unknown }[]>`
+            select data from conversation_change_requests
+            where project_id = ${projectId} order by created_at asc, id asc`,
+        ]);
       return {
         conversation,
         messages: messageRows.map((row) => MessageSchema.parse(row.data)),
@@ -91,7 +97,7 @@ export class PostgresConversationRepository implements ConversationRepository {
       try {
         await tx`
           insert into conversation_messages (project_id, sequence, id, data)
-          values (${redacted.projectId}, ${redacted.sequence}, ${redacted.id}, ${tx.json(redacted as any)})`;
+          values (${redacted.projectId}, ${redacted.sequence}, ${redacted.id}, ${toJsonb(tx, redacted)})`;
       } catch (error) {
         if (isUniqueViolation(error)) throw new Error(`Message ${redacted.id} already exists`);
         throw error;
@@ -125,7 +131,7 @@ export class PostgresConversationRepository implements ConversationRepository {
       try {
         await tx`
           insert into conversation_attachments (id, project_id, created_at, data)
-          values (${redacted.id}, ${redacted.projectId}, ${redacted.createdAt}, ${tx.json(redacted as any)})`;
+          values (${redacted.id}, ${redacted.projectId}, ${redacted.createdAt}, ${toJsonb(tx, redacted)})`;
       } catch (error) {
         if (isUniqueViolation(error)) throw new Error(`Attachment ${redacted.id} already exists`);
         throw error;
@@ -166,7 +172,7 @@ export class PostgresConversationRepository implements ConversationRepository {
       try {
         await tx`
           insert into conversation_operations (id, project_id, idempotency_key, created_at, data)
-          values (${parsed.id}, ${parsed.projectId}, ${parsed.idempotencyKey}, ${parsed.createdAt}, ${tx.json(parsed as any)})`;
+          values (${parsed.id}, ${parsed.projectId}, ${parsed.idempotencyKey}, ${parsed.createdAt}, ${toJsonb(tx, parsed)})`;
       } catch (error) {
         if (isUniqueViolation(error)) throw new Error(`Operation ${parsed.id} already exists`);
         throw error;
@@ -186,7 +192,7 @@ export class PostgresConversationRepository implements ConversationRepository {
     return this.sql.begin(async (tx) => {
       await acquireScopeLock(tx, 'conversation:' + parsed.projectId);
       const result = await tx`
-        update conversation_operations set data = ${tx.json(parsed as any)}
+        update conversation_operations set data = ${toJsonb(tx, parsed)}
         where id = ${parsed.id} and project_id = ${parsed.projectId}`;
       if (result.count === 0) throw new NotFoundError(`Operation ${parsed.id} not found`);
       return parsed;
@@ -208,7 +214,7 @@ export class PostgresConversationRepository implements ConversationRepository {
       try {
         await tx`
           insert into conversation_change_requests (id, project_id, created_at, data)
-          values (${parsed.id}, ${parsed.projectId}, ${parsed.createdAt}, ${tx.json(parsed as any)})`;
+          values (${parsed.id}, ${parsed.projectId}, ${parsed.createdAt}, ${toJsonb(tx, parsed)})`;
       } catch (error) {
         if (isUniqueViolation(error)) {
           throw new Error(`Change request ${parsed.id} already exists`);
@@ -234,7 +240,7 @@ export class PostgresConversationRepository implements ConversationRepository {
     return this.sql.begin(async (tx) => {
       await acquireScopeLock(tx, 'conversation:' + parsed.projectId);
       const result = await tx`
-        update conversation_change_requests set data = ${tx.json(parsed as any)}
+        update conversation_change_requests set data = ${toJsonb(tx, parsed)}
         where id = ${parsed.id} and project_id = ${parsed.projectId}`;
       if (result.count === 0) throw new NotFoundError(`Change request ${parsed.id} not found`);
       return parsed;
@@ -271,11 +277,4 @@ async function requireConversation(
   if (conversation.id !== conversationId || conversation.projectId !== projectId) {
     throw new ValidationError('Conversation does not belong to the target project');
   }
-}
-
-// Copied from FileConversationRepository's private operationInput (conversation-repository.ts)
-// to keep idempotency-key comparison identical between the file and Postgres adapters.
-function operationInput(operation: Operation): Omit<Operation, 'id' | 'createdAt'> {
-  const { id: _id, createdAt: _createdAt, ...input } = operation;
-  return input;
 }

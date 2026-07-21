@@ -16,6 +16,17 @@ export async function acquireScopeLock(tx: ISql, scope: string): Promise<void> {
   await tx`select pg_advisory_xact_lock(hashtext(${scope}))`;
 }
 
+/**
+ * Wraps a value for insertion into a jsonb column. `ISql.json()` expects its own
+ * `JSONValue` type, but Zod's inferred output types (Operation, Message, ...) aren't
+ * structurally assignable to it even though the runtime value is always
+ * JSON-serializable -- this cast documents that mismatch once instead of at every
+ * `.json(x as any)` call site across the postgres adapters.
+ */
+export function toJsonb(sql: ISql, value: unknown) {
+  return sql.json(value as never);
+}
+
 /** Insert a new versioned row. Mirrors `createVersioned` in ../run-repositories.ts. */
 export async function insertVersioned(
   sql: PostgresDb,
@@ -35,7 +46,7 @@ export async function insertVersioned(
     id: opts.id,
     ...opts.columns,
     version: opts.version,
-    data: sql.json(opts.data as any),
+    data: toJsonb(sql, opts.data),
   };
   try {
     await sql`insert into ${sql(opts.table)} ${sql(row)}`;
@@ -70,7 +81,7 @@ export async function updateVersioned(
   const where = keys
     .map(([col, value]) => sql`${sql(col)} = ${value}`)
     .reduce((acc, clause) => sql`${acc} and ${clause}`);
-  const setRow = { data: sql.json(opts.nextData as any), ...opts.columns };
+  const setRow = { data: toJsonb(sql, opts.nextData), ...opts.columns };
 
   const result = await sql`
     update ${sql(opts.table)}

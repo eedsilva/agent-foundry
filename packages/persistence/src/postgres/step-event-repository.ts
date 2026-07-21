@@ -3,9 +3,10 @@ import {
   type AgentStreamEvent,
   type AgentStreamEventInput,
 } from '@agent-foundry/contracts';
-import { redactString, type StepEventRepository } from '@agent-foundry/domain';
+import type { StepEventRepository } from '@agent-foundry/domain';
+import { redactPayload } from '../step-event-repository.js';
 import type { PostgresDb } from './client.js';
-import { acquireScopeLock } from './versioned.js';
+import { acquireScopeLock, toJsonb } from './versioned.js';
 
 export class PostgresStepEventRepository implements StepEventRepository {
   constructor(private readonly sql: PostgresDb) {}
@@ -24,7 +25,7 @@ export class PostgresStepEventRepository implements StepEventRepository {
       const parsed = AgentStreamEventSchema.parse({ ...redacted, sequence: next });
       await tx`
         insert into step_events (run_id, sequence, data)
-        values (${event.runId}, ${next}, ${tx.json(parsed as any)})`;
+        values (${event.runId}, ${next}, ${toJsonb(tx, parsed)})`;
       return parsed;
     });
   }
@@ -40,27 +41,5 @@ export class PostgresStepEventRepository implements StepEventRepository {
       order by sequence asc
       ${options.limit === undefined ? this.sql`` : this.sql`limit ${options.limit}`}`;
     return rows.map((row) => AgentStreamEventSchema.parse(row.data));
-  }
-}
-
-// Copied from FileStepEventRepository's private redactPayload (step-event-repository.ts)
-// to keep write-time redaction identical between the file and Postgres adapters.
-function redactPayload(event: AgentStreamEventInput): AgentStreamEventInput {
-  switch (event.type) {
-    case 'assistant_delta':
-      return { ...event, text: redactString(event.text) };
-    case 'tool_start':
-      return { ...event, summary: redactString(event.summary) };
-    case 'tool_end':
-      return {
-        ...event,
-        summary: redactString(event.summary),
-        ...(event.detail !== undefined ? { detail: redactString(event.detail) } : {}),
-      };
-    case 'error':
-      return { ...event, message: redactString(event.message) };
-    case 'status':
-    case 'approval':
-      return event;
   }
 }

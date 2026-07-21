@@ -296,7 +296,9 @@ export class FileConversationRepository implements ConversationRepository {
   }
 }
 
-function operationInput(operation: Operation): Omit<Operation, 'id' | 'createdAt'> {
+// Exported so the Postgres adapter's idempotency-key comparison stays identical
+// to this file adapter's (see postgres/conversation-repository.ts).
+export function operationInput(operation: Operation): Omit<Operation, 'id' | 'createdAt'> {
   const { id: _id, createdAt: _createdAt, ...input } = operation;
   return input;
 }
