@@ -195,6 +195,25 @@ test('routes an unsafe direct edit through chat classification', async ({ page }
   await expect(selected).toHaveText('Simple');
 });
 
+test('routes a legacy resolved selection without coordinates through chat', async ({ page }) => {
+  await page.route(/\/preview\/[^/]+\/selection$/, async (route) => {
+    const response = await route.fetch();
+    const result = (await response.json()) as Record<string, unknown>;
+    delete result.line;
+    delete result.column;
+    await route.fulfill({ response, json: result });
+  });
+  const projectId = await createProject();
+  await seedDomSourceMapFixture(projectId);
+  const frameBody = await startPreviewAndSelect(page, projectId);
+  await frameBody.locator('#simple').click();
+  await expect(page.getByText('src/Greeting.tsx')).toBeVisible({ timeout: 10_000 });
+
+  await expect(page.getByLabel('Valor atual')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Continuar na conversa' }).click();
+  await expect(page.getByText('visual-edit', { exact: true })).toBeVisible({ timeout: 10_000 });
+});
+
 test('clicking a wrapped component shows the ambiguous confirm panel', async ({ page }) => {
   const projectId = await createProject();
   await seedDomSourceMapFixture(projectId);

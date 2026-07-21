@@ -918,14 +918,14 @@ describe('PreviewSelectionResultSchema', () => {
     ).toThrow();
   });
 
-  it('rejects resolved results missing source coordinates', () => {
-    expect(() =>
+  it('keeps legacy resolved results without source coordinates valid', () => {
+    expect(
       PreviewSelectionResultSchema.parse({
         status: 'resolved',
         domPath: 'div[1]',
         file: 'src/App.tsx',
       }),
-    ).toThrow();
+    ).toEqual({ status: 'resolved', domPath: 'div[1]', file: 'src/App.tsx' });
   });
 
   it('accepts an ambiguous result with 2+ candidates', () => {

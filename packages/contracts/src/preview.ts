@@ -701,12 +701,8 @@ export const PreviewSelectionResultSchema = z
   })
   .strict()
   .superRefine((result, context) => {
-    if (result.status === 'resolved' && (!result.file || !result.line || !result.column)) {
-      context.addIssue({
-        code: 'custom',
-        path: ['file'],
-        message: 'resolved requires file, line, and column',
-      });
+    if (result.status === 'resolved' && !result.file) {
+      context.addIssue({ code: 'custom', path: ['file'], message: 'resolved requires file' });
     }
     if (
       result.status !== 'resolved' &&

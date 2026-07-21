@@ -2,10 +2,11 @@ import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import { buildInspectorScript } from './preview-inspector-script.js';
 
-function inspectorHarness() {
+function inspectorHarness(initialWidth = 1280) {
   const listeners = new Map<string, (event: Record<string, unknown>) => void>();
   const postMessage = vi.fn();
   const window = {
+    innerWidth: initialWidth,
     parent: { postMessage },
     addEventListener(type: string, listener: (event: Record<string, unknown>) => void) {
       listeners.set(type, listener);
@@ -34,7 +35,15 @@ function inspectorHarness() {
     preventDefault: vi.fn(),
     stopPropagation: vi.fn(),
   });
-  return { listeners, postMessage, target };
+  return {
+    listeners,
+    postMessage,
+    target,
+    resize(width: number) {
+      window.innerWidth = width;
+      listeners.get('resize')?.({});
+    },
+  };
 }
 
 describe('buildInspectorScript', () => {
@@ -92,6 +101,33 @@ describe('buildInspectorScript', () => {
       origin: 'https://app.example.com',
       data: { type: 'af:visual-edit:clear' },
     });
+    expect(target.style.color).toBe('red');
+  });
+
+  it('applies a responsive style only while the iframe viewport matches its breakpoint', () => {
+    const { listeners, resize, target } = inspectorHarness(375);
+    const message = listeners.get('message')!;
+
+    message({
+      origin: 'https://app.example.com',
+      data: {
+        type: 'af:visual-edit:preview',
+        payload: { property: 'color', newValue: 'blue', breakpoint: 'md' },
+      },
+    });
+    expect(target.style.color).toBe('red');
+
+    resize(768);
+    expect(target.style.color).toBe('blue');
+
+    resize(767);
+    expect(target.style.color).toBe('red');
+
+    message({
+      origin: 'https://app.example.com',
+      data: { type: 'af:visual-edit:clear' },
+    });
+    resize(1280);
     expect(target.style.color).toBe('red');
   });
 

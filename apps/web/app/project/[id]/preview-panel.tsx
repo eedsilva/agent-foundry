@@ -305,6 +305,10 @@ export function PreviewPanel({
     () => (run ? latestBrowserVerificationReport(artifacts, run.id) : null),
     [artifacts, run],
   );
+  const hasCompleteResolvedSource =
+    selectionResult?.status === 'resolved' &&
+    selectionResult.line !== undefined &&
+    selectionResult.column !== undefined;
 
   return (
     <section className="panel previewPanel">
@@ -356,7 +360,7 @@ export function PreviewPanel({
             <p className="hint">Preview iniciando…</p>
           )}
           {selectionError ? <p className="errorBox">{selectionError}</p> : null}
-          {selectionResult?.status === 'resolved' ? (
+          {selectionResult?.status === 'resolved' && hasCompleteResolvedSource ? (
             <div className="panel">
               <p>
                 Elemento mapeado para: <strong>{selectionResult.file}</strong>
@@ -409,6 +413,26 @@ export function PreviewPanel({
               </button>
               <button className="secondaryButton" onClick={clearVisualEdit}>
                 Limpar alteração
+              </button>
+            </div>
+          ) : null}
+          {selectionResult?.status === 'resolved' && !hasCompleteResolvedSource ? (
+            <div className="panel">
+              <p>
+                Elemento mapeado para: <strong>{selectionResult.file}</strong>
+              </p>
+              <p className="hint">
+                A origem não inclui linha e coluna; a edição direta não está disponível.
+              </p>
+              <button
+                className="secondaryButton"
+                onClick={() =>
+                  routeToConversation(
+                    `Quero uma edição visual no elemento ${selectionResult.domPath} em ${selectionResult.file}, mas a origem não inclui linha e coluna.`,
+                  )
+                }
+              >
+                Continuar na conversa
               </button>
             </div>
           ) : null}
