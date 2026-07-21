@@ -14,6 +14,8 @@ services:
       MODEL_CATALOG_PATH: /app/models/catalog.yaml
       RUN_WORKER_INLINE: 'false'
       EXECUTOR_MODE: mock
+      # PERSISTENCE_MODE: postgres
+      # DATABASE_URL: postgres://foundry:foundry@postgres:5432/foundry
       # Blob storage defaults to fs mode (bytes under DATA_DIR, signing secret
       # auto-derived there too) — nothing else to set. Uncomment to point at
       # the MinIO service below instead (or any S3-compatible endpoint,
@@ -44,6 +46,8 @@ services:
       WORKFLOWS_DIR: /app/workflows
       MODEL_CATALOG_PATH: /app/models/catalog.yaml
       EXECUTOR_MODE: mock
+      # PERSISTENCE_MODE: postgres
+      # DATABASE_URL: postgres://foundry:foundry@postgres:5432/foundry
       # Keep in sync with the api service's blob storage settings above.
       # BLOB_STORE_MODE: s3
       # S3_ENDPOINT: http://minio:9000
@@ -72,6 +76,20 @@ services:
   #     - '9000:9000'
   #     - '9001:9001'
 
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: foundry
+      POSTGRES_PASSWORD: foundry
+      POSTGRES_DB: foundry
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U foundry']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   web:
     build:
       context: .
@@ -86,4 +104,5 @@ services:
 
 volumes:
   agent_data:
+  postgres_data:
   # minio_data:

@@ -77,6 +77,7 @@ function noArtifacts(): ArtifactStore {
     getRevision: () => Promise.resolve(null),
     listLatest: () => Promise.resolve([]),
     listMetadata: () => Promise.resolve([]),
+    reapExpired: () => Promise.resolve(0),
   };
 }
 
@@ -302,6 +303,7 @@ describe('OperationService.decide', () => {
       getRevision: () => Promise.resolve(null),
       listLatest: () => Promise.resolve([]),
       listMetadata: () => Promise.resolve([]),
+      reapExpired: () => Promise.resolve(0),
     };
     const { service, plan } = await startAndCompletePlan(artifacts);
 
