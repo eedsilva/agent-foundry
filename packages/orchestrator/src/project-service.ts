@@ -57,6 +57,7 @@ import {
   VersionConflictError,
   normalizeApprovalDecision,
   redactString,
+  traceContextField,
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
 import { policyHash, workflowHash } from './idempotency.js';
@@ -166,6 +167,7 @@ export class ProjectService {
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
+      ...traceContextField(),
     };
     await this.queue.enqueue(job);
     await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.');
@@ -291,6 +293,7 @@ export class ProjectService {
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
+      ...traceContextField(),
     });
     await this.appendEvent(projectId, 'project.queued', 'Project manually re-queued.');
     return saved;
@@ -957,6 +960,7 @@ export class ProjectService {
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
+      ...traceContextField(),
     });
   }
 

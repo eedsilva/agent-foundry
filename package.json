@@ -60,6 +60,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@opentelemetry/sdk-metrics": "^2.9.0",
+    "@opentelemetry/sdk-trace-base": "^2.9.0",
+    "@opentelemetry/sdk-trace-node": "^2.9.0",
     "@testcontainers/postgresql": "^11.14.0",
     "@types/node": "^26.1.1",
     "@types/react": "^19.1.12",

@@ -64,6 +64,7 @@ import {
   QualityObservationService,
   BrowserVerificationCoordinator,
   type BrowserEvidenceLimits,
+  type JobLogger,
 } from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
 import type {
@@ -131,6 +132,8 @@ export interface Runtime {
 export async function createRuntime(
   env: NodeJS.ProcessEnv = process.env,
   config: RuntimeConfig = loadRuntimeConfig(env),
+  /** Per-job child logger for the worker loop (e.g. a pino instance); apps/worker wires this in. Omit for a silent worker (composition stays free of a pino dependency). */
+  workerLogger?: JobLogger,
 ): Promise<Runtime> {
   const clock = new SystemClock();
   const ids = new UlidGenerator();
@@ -333,6 +336,7 @@ export async function createRuntime(
     workerId: config.workerId,
     pollIntervalMs: config.workerPollIntervalMs,
     heartbeatIntervalMs: config.queueHeartbeatIntervalMs,
+    ...(workerLogger ? { logger: workerLogger } : {}),
   });
   const leaseReaper = new QueueLeaseReaper(queue, events, clock, ids, {
     intervalMs: config.queueReapIntervalMs,
