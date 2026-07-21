@@ -6,9 +6,14 @@ import type {
   StepRun,
   WorkflowRun,
 } from '@agent-foundry/contracts';
-import { AGENT_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
+import {
+  AGENT_ARTIFACT_JSON_SCHEMA,
+  BrowserTestPlanArtifactSchema,
+  DEFAULT_BROWSER_EVIDENCE_POLICY,
+} from '@agent-foundry/contracts';
 import {
   NotFoundError,
+  ValidationError,
   errorMessage,
   transitionStepAttempt,
   transitionStepRun,
@@ -27,6 +32,7 @@ import {
   type StepRunRepository,
   type WorkflowRunRepository,
   type WorkspaceManager,
+  type VerificationService,
 } from '@agent-foundry/domain';
 import { buildTaskProfile } from './task-profiler.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
@@ -34,9 +40,12 @@ import { CONVERSATION_WORKFLOW_ID, buildConversationStep } from './conversation-
 import { compileContext } from './context-compiler.js';
 import { artifactReference, persistStreamEvent, runError } from './workflow-orchestrator.js';
 import { ProjectVersionService } from './project-version-service.js';
+import type { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
 
 export interface ConversationOperationRunnerOptions {
   agentTimeoutMs: number;
+  verifier?: VerificationService;
+  browserVerification?: Pick<BrowserVerificationCoordinator, 'verify'>;
 }
 
 export class ConversationOperationRunner {
@@ -62,7 +71,8 @@ export class ConversationOperationRunner {
   async run(projectId: string, runId: string, operationId: string): Promise<void> {
     const initialRun = await this.requireRun(runId);
     const operation = await this.requireOperation(projectId, operationId);
-    const kind: 'plan' | 'build' = operation.kind === 'build' ? 'build' : 'plan';
+    const kind: 'plan' | 'build' | 'visual-edit' =
+      operation.kind === 'build' || operation.kind === 'visual-edit' ? operation.kind : 'plan';
     const message = await this.requireMessage(projectId, operation.messageId);
     const planArtifact = await this.loadPlanArtifact(projectId, operation);
     const changeRequest = operation.changeRequestId
@@ -81,6 +91,7 @@ export class ConversationOperationRunner {
       operationId,
       kind,
       message,
+      visualEdit: operation.visualEdit,
       planArtifact,
       contextDigest: compiledContext.digest,
     });
@@ -112,6 +123,9 @@ export class ConversationOperationRunner {
     let attempt: StepAttempt | undefined;
     let succeeded = false;
     try {
+      if (operation.visualEdit && !(await this.workspaces.isClean(projectId))) {
+        throw new ValidationError('Direct visual edits require a clean workspace baseline');
+      }
       const harness = await this.harness.select({
         role: step.role,
         taskKind: step.taskKind,
@@ -212,9 +226,15 @@ export class ConversationOperationRunner {
           ),
         );
 
+      const directEvidence = operation.visualEdit
+        ? await this.verifyDirectVisualEdit(projectId, runId, operation, attempt)
+        : [];
       const commit = step.mutatesWorkspace
         ? await this.workspaces.commit(projectId, `conversation(${kind}): ${step.title}`)
         : null;
+      if (operation.visualEdit && !commit) {
+        throw new ValidationError('Direct visual edit produced no source diff');
+      }
       const executionRoute = { ...route, executed: route.selected };
       const artifact = await this.artifacts.put({
         projectId,
@@ -232,7 +252,7 @@ export class ConversationOperationRunner {
           durationMs: result.durationMs,
           ...(commit ? { commit } : {}),
           routeDecision: executionRoute,
-          outputArtifacts: [artifactReference(artifact)],
+          outputArtifacts: [artifactReference(artifact), ...directEvidence],
         }),
         attempt.version,
       );
@@ -267,7 +287,7 @@ export class ConversationOperationRunner {
       // the rollback path for a run that already durably completed.
       await this.conversations.updateOperation({
         ...operation,
-        artifactReferences: [artifactReference(artifact)],
+        artifactReferences: [artifactReference(artifact), ...directEvidence],
         ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
       });
       await this.metrics.record({
@@ -347,6 +367,88 @@ export class ConversationOperationRunner {
     }
   }
 
+  private async verifyDirectVisualEdit(
+    projectId: string,
+    runId: string,
+    operation: Operation,
+    attempt: StepAttempt,
+  ): Promise<Operation['artifactReferences']> {
+    const visualEdit = operation.visualEdit;
+    if (!visualEdit) return [];
+    if (await this.workspaces.isClean(projectId)) {
+      throw new ValidationError('Direct visual edit produced no source diff');
+    }
+    if (!this.options.verifier || !this.options.browserVerification) {
+      throw new ValidationError('Direct visual-edit verification is not configured');
+    }
+
+    const verification = await this.options.verifier.verify({
+      workspacePath: this.workspaces.workspacePath(projectId),
+      scripts: ['typecheck', 'lint', 'test', 'build'],
+      includeGitDiffCheck: true,
+    });
+    const verificationArtifact = await this.artifacts.put({
+      projectId,
+      name: `visual-edit-verification-${operation.id}`,
+      content: verification,
+      createdBy: 'workspace-verifier:visual-edit',
+      runId,
+      stepRunId: attempt.stepRunId,
+      attemptId: attempt.id,
+    });
+    if (!verification.approved) throw new ValidationError(verification.summary);
+
+    const planArtifact = await this.artifacts.put({
+      projectId,
+      name: `visual-edit-browser-plan-${operation.id}`,
+      content: directVisualEditBrowserPlan(operation, visualEdit),
+      createdBy: 'conversation-runner:visual-edit',
+      runId,
+      stepRunId: attempt.stepRunId,
+      attemptId: attempt.id,
+    });
+    const browserReport = await this.options.browserVerification.verify(
+      {
+        projectId,
+        workspacePath: this.workspaces.workspacePath(projectId),
+        runId,
+        plan: planArtifact,
+        allowedOrigins: [],
+        evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
+      },
+      new AbortController().signal,
+    );
+    const browserArtifact = await this.artifacts.put({
+      projectId,
+      name: `visual-edit-browser-report-${operation.id}`,
+      content: browserReport,
+      createdBy: 'browser-verifier:visual-edit',
+      runId,
+      stepRunId: attempt.stepRunId,
+      attemptId: attempt.id,
+    });
+    if (!browserReport.approved) throw new ValidationError(browserReport.summary);
+    if (
+      visualEdit.property !== 'text' &&
+      browserReport.previewSession.evidence.screenshots.length === 0
+    ) {
+      throw new ValidationError('Style visual edits require screenshot evidence');
+    }
+    const evidence = browserReport.previewSession.evidence;
+    return [
+      ...[verificationArtifact, planArtifact, browserArtifact].map(artifactReference),
+      ...evidence.screenshots.map(({ name, revision, sha256, sizeBytes }) => ({
+        name,
+        revision,
+        sha256,
+        ...(sizeBytes === undefined ? {} : { sizeBytes }),
+      })),
+      ...[evidence.trace, evidence.video].filter(
+        (reference): reference is NonNullable<typeof reference> => reference !== undefined,
+      ),
+    ];
+  }
+
   private async requireRun(runId: string): Promise<WorkflowRun> {
     const run = await this.runs.get(runId);
     if (!run) throw new NotFoundError(`Workflow run ${runId} not found`);
@@ -385,4 +487,42 @@ export class ConversationOperationRunner {
     );
     return artifact ? { content: artifact.content } : undefined;
   }
+}
+
+function directVisualEditBrowserPlan(
+  operation: Operation,
+  edit: NonNullable<Operation['visualEdit']>,
+) {
+  return BrowserTestPlanArtifactSchema.parse({
+    schemaVersion: '1',
+    status: 'completed',
+    summary: `Bounded browser smoke for ${edit.target.file}`,
+    data: {
+      schemaVersion: '1',
+      id: `visual-edit-${operation.id}`,
+      title: 'Verify visual edit',
+      viewport: { width: 1280, height: 800 },
+      steps: [
+        {
+          id: 'verify-visual-edit',
+          title: 'Verify visual edit',
+          action: { kind: 'goto', path: '/' },
+          assertions:
+            edit.property === 'text'
+              ? [
+                  {
+                    kind: 'containsText',
+                    locator: { by: 'text', text: edit.newValue, exact: true },
+                    expected: edit.newValue,
+                  },
+                ]
+              : [],
+        },
+      ],
+    },
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    nextActions: [],
+  });
 }

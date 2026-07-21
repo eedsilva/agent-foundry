@@ -21,6 +21,7 @@ import {
   getActivePreviewSession,
   getArtifactBlobUrl,
   getPreviewLogs,
+  promotePreviewVisualEdit,
   resolvePreviewSelection,
   startPreview,
   stopPreview,
@@ -250,7 +251,14 @@ export function PreviewPanel({
   }
 
   function previewVisualEdit() {
-    if (selectionResult?.status !== 'resolved') return;
+    const parsed = currentVisualEdit();
+    if (!parsed) return;
+    setSelectionError('');
+    postInspectorMessage({ type: 'af:visual-edit:preview', payload: parsed });
+  }
+
+  function currentVisualEdit() {
+    if (selectionResult?.status !== 'resolved') return null;
     const parsed = VisualEditSchema.safeParse({
       target: {
         domPath: selectionResult.domPath,
@@ -269,10 +277,21 @@ export function PreviewPanel({
       routeToConversation(
         `Quero uma edição visual de ${property} em ${selectionResult.file} (${selectionResult.domPath}) de ${JSON.stringify(oldValue)} para ${JSON.stringify(newValue)}${breakpoint ? ` no breakpoint ${breakpoint}` : ''}.`,
       );
-      return;
+      return null;
     }
-    setSelectionError('');
-    postInspectorMessage({ type: 'af:visual-edit:preview', payload: parsed.data });
+    return parsed.data;
+  }
+
+  async function applyVisualEdit() {
+    if (!session) return;
+    const parsed = currentVisualEdit();
+    if (!parsed) return;
+    try {
+      setSelectionError('');
+      await promotePreviewVisualEdit(projectId, session.id, parsed);
+    } catch (cause) {
+      setSelectionError(cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   function clearVisualEdit() {
@@ -410,6 +429,9 @@ export function PreviewPanel({
               </div>
               <button className="secondaryButton" onClick={previewVisualEdit}>
                 Pré-visualizar alteração
+              </button>
+              <button className="secondaryButton" onClick={() => void applyVisualEdit()}>
+                Aplicar alteração
               </button>
               <button className="secondaryButton" onClick={clearVisualEdit}>
                 Limpar alteração

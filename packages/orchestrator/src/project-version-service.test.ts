@@ -88,6 +88,9 @@ class FakeWorkspaces implements WorkspaceManager {
   ensureGit(): Promise<void> {
     return Promise.resolve();
   }
+  isClean(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
   checkpoint(): Promise<string> {
     return Promise.resolve('checkpoint');
   }

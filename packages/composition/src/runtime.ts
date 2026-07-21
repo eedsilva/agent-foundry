@@ -267,7 +267,7 @@ export async function createRuntime(
     projectVersionService,
     clock,
     ids,
-    { agentTimeoutMs: config.agentTimeoutMs },
+    { agentTimeoutMs: config.agentTimeoutMs, verifier, browserVerification },
   );
   const operationService = new OperationService(
     conversations,
@@ -277,6 +277,7 @@ export async function createRuntime(
     clock,
     ids,
     conversationService,
+    workspaces,
   );
   const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
     workerId: config.workerId,
@@ -393,7 +394,17 @@ function mockBrowserVerificationCoordinator(
             observations: [],
           })),
         },
-        evidence: { screenshots: [] },
+        evidence: {
+          screenshots: plan.steps.map((step) => ({
+            stepId: step.id,
+            url: input.session.url ?? 'http://127.0.0.1/',
+            viewport: plan.viewport,
+            buffer: Buffer.from(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEAQH/2p8lWQAAAABJRU5ErkJggg==',
+              'base64',
+            ),
+          })),
+        },
       });
     },
   };

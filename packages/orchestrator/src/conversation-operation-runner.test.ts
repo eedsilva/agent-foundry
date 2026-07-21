@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   ArtifactStore,
   Clock,
@@ -13,11 +13,15 @@ import type {
   StepRunRepository,
   WorkflowRunRepository,
   WorkspaceManager,
+  VerificationService,
 } from '@agent-foundry/domain';
 import type {
   AgentExecutionRequest,
+  BrowserVerificationReport,
   ExecutorStreamEvent,
   ProjectVersion,
+  VisualEdit,
+  VerificationReport,
   WorkflowRun,
 } from '@agent-foundry/contracts';
 import {
@@ -34,6 +38,7 @@ import {
   MODELS,
 } from './testing/harness.js';
 import { ConversationOperationRunner } from './conversation-operation-runner.js';
+import type { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
 import { ProjectVersionService } from './project-version-service.js';
 
 class FixedClock implements Clock {
@@ -124,7 +129,13 @@ const router: ModelRouter = {
   catalog: () => Promise.resolve(MODELS),
 };
 
-function setup(harness: HarnessRepository = harnessRepo) {
+function setup(
+  harness: HarnessRepository = harnessRepo,
+  direct?: {
+    verifier: VerificationService;
+    browserVerification: Pick<BrowserVerificationCoordinator, 'verify'>;
+  },
+) {
   const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
   const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
   const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
@@ -164,7 +175,7 @@ function setup(harness: HarnessRepository = harnessRepo) {
     projectVersionService,
     clock,
     ids,
-    { agentTimeoutMs: 60_000 },
+    { agentTimeoutMs: 60_000, ...direct },
   );
   return {
     runs,
@@ -178,6 +189,57 @@ function setup(harness: HarnessRepository = harnessRepo) {
     projectVersions,
     runner,
   };
+}
+
+const directVisualEdit = {
+  target: { domPath: 'main > h1', file: 'src/App.tsx', line: 12, column: 5 },
+  property: 'text' as const,
+  oldValue: 'Old title',
+  newValue: 'New title',
+};
+
+async function seedVisualEdit(
+  conversations: MemoryConversations,
+  runs: WorkflowRunRepository,
+  visualEdit: VisualEdit | null = directVisualEdit,
+): Promise<{ runId: string; operationId: string }> {
+  await conversations.createConversation({
+    id: 'project-1',
+    projectId: 'project-1',
+    createdAt: '2026-07-18T12:00:00.000Z',
+  });
+  await conversations.appendMessage({
+    id: 'message-visual',
+    projectId: 'project-1',
+    conversationId: 'project-1',
+    role: 'user',
+    content: [{ type: 'text', text: 'Make the hero title clearer.' }],
+    createdAt: '2026-07-18T12:00:00.000Z',
+  });
+  const runId = 'run-visual';
+  const operationId = 'operation-visual';
+  await runs.create({
+    id: runId,
+    projectId: 'project-1',
+    workflowId: 'conversation-visual-edit',
+    status: 'queued',
+    version: 1,
+    createdAt: '2026-07-18T12:00:00.000Z',
+    updatedAt: '2026-07-18T12:00:00.000Z',
+  });
+  await conversations.createOperation({
+    id: operationId,
+    projectId: 'project-1',
+    conversationId: 'project-1',
+    messageId: 'message-visual',
+    kind: 'visual-edit',
+    idempotencyKey: 'e'.repeat(64),
+    runId,
+    artifactReferences: [],
+    ...(visualEdit ? { visualEdit } : {}),
+    createdAt: '2026-07-18T12:00:00.000Z',
+  });
+  return { runId, operationId };
 }
 
 async function seed(
@@ -227,6 +289,250 @@ async function seed(
 }
 
 describe('ConversationOperationRunner', () => {
+  it('runs a free-form visual request as a non-mutating clarification step', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup();
+    const { runId, operationId } = await seedVisualEdit(conversations, runs, null);
+
+    await runner.run('project-1', runId, operationId);
+
+    const run = await runs.get(runId);
+    expect(run?.error).toBeUndefined();
+    expect(run?.status).toBe('completed');
+    expect(workspaces.lastRequestMarkdown).toContain('Clarify');
+    expect(workspaces.checkpoints).toEqual([]);
+    expect(workspaces.commits).toEqual([]);
+    expect(await projectVersions.list('project-1')).toEqual([]);
+  });
+
+  it('runs the exact direct patch through deterministic and browser gates before its only commit/version', async () => {
+    const order: string[] = [];
+    const verifier: VerificationService = {
+      verify: vi.fn((input): Promise<VerificationReport> => {
+        order.push('deterministic');
+        expect(input).toMatchObject({
+          scripts: ['typecheck', 'lint', 'test', 'build'],
+          includeGitDiffCheck: true,
+        });
+        return Promise.resolve({
+          schemaVersion: '1',
+          approved: true,
+          packageManager: 'npm',
+          summary: 'approved',
+          commands: [],
+          createdAt: '2026-07-18T12:00:00.000Z',
+        });
+      }),
+    };
+    const browserVerification: Pick<BrowserVerificationCoordinator, 'verify'> = {
+      verify: vi.fn((input): Promise<BrowserVerificationReport> => {
+        order.push('browser');
+        expect(input.runId).toBe('run-visual');
+        expect(input.plan.metadata.runId).toBe('run-visual');
+        expect((input.plan.content as { data: { steps: unknown[] } }).data.steps).toHaveLength(1);
+        expect(input.plan.content).toMatchObject({
+          data: {
+            steps: [
+              {
+                assertions: [
+                  expect.objectContaining({ kind: 'containsText', expected: 'New title' }),
+                ],
+              },
+            ],
+          },
+        });
+        return Promise.resolve({
+          schemaVersion: '1',
+          approved: true,
+          summary: 'browser approved',
+          planArtifact: {
+            name: input.plan.metadata.name,
+            revision: input.plan.metadata.revision,
+            sha256: input.plan.metadata.sha256,
+          },
+          previewSession: {
+            sessionId: 'preview-visual',
+            status: 'running',
+            evidence: {
+              screenshots: [
+                {
+                  name: 'browser-screenshot-preview-visual-verify-visual-edit',
+                  revision: 1,
+                  sha256: 'f'.repeat(64),
+                  stepId: 'verify-visual-edit',
+                  url: 'http://127.0.0.1/',
+                  viewport: { width: 1280, height: 800 },
+                },
+              ],
+            },
+          },
+          steps: [
+            {
+              stepId: 'verify-visual-edit',
+              title: 'Verify visual edit',
+              status: 'passed',
+              durationMs: 1,
+              observations: [],
+            },
+          ],
+        });
+      }),
+    };
+    const { runs, artifacts, workspaces, conversations, projectVersions, runner } = setup(
+      harnessRepo,
+      { verifier, browserVerification },
+    );
+    workspaces.onBeforeCommit = () => order.push('commit');
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    await runner.run('project-1', runId, operationId);
+
+    expect(workspaces.lastRequestMarkdown).toContain(JSON.stringify(directVisualEdit, null, 2));
+    expect(workspaces.lastRequestMarkdown).toContain('Tailwind');
+    expect(order).toEqual(['deterministic', 'browser', 'commit']);
+    expect(workspaces.commits).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toHaveLength(1);
+    const operation = await conversations.getOperation('project-1', operationId);
+    expect(operation?.artifactReferences.map((reference) => reference.name)).toEqual([
+      `operation-${operationId}`,
+      `visual-edit-verification-${operationId}`,
+      `visual-edit-browser-plan-${operationId}`,
+      `visual-edit-browser-report-${operationId}`,
+      'browser-screenshot-preview-visual-verify-visual-edit',
+    ]);
+    expect(
+      await artifacts.getLatest('project-1', `visual-edit-browser-report-${operationId}`),
+    ).not.toBeNull();
+  });
+
+  it('rejects a dirty direct-edit baseline before checkpointing or creating a version', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup();
+    workspaces.dirty = true;
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    await runner.run('project-1', runId, operationId);
+
+    expect((await runs.get(runId))?.status).toBe('failed');
+    expect(workspaces.checkpoints).toEqual([]);
+    expect(workspaces.commits).toEqual([]);
+    expect(await projectVersions.list('project-1')).toEqual([]);
+  });
+
+  it('rejects an empty direct-edit source diff before running verification', async () => {
+    const verify = vi.fn(() => Promise.reject(new Error('verification must not run')));
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(harnessRepo, {
+      verifier: { verify },
+      browserVerification: { verify: () => Promise.reject(new Error('browser must not run')) },
+    });
+    workspaces.isClean = () => Promise.resolve(true);
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    await runner.run('project-1', runId, operationId);
+
+    expect((await runs.get(runId))?.status).toBe('failed');
+    expect(verify).not.toHaveBeenCalled();
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(workspaces.commits).toEqual([]);
+    expect(await projectVersions.list('project-1')).toEqual([]);
+  });
+
+  it('rejects a style edit whose browser gate returns no screenshot evidence', async () => {
+    const verifier: VerificationService = {
+      verify: () =>
+        Promise.resolve({
+          schemaVersion: '1',
+          approved: true,
+          packageManager: 'npm',
+          summary: 'approved',
+          commands: [],
+          createdAt: '2026-07-18T12:00:00.000Z',
+        }),
+    };
+    const browserVerification: Pick<BrowserVerificationCoordinator, 'verify'> = {
+      verify: (input) =>
+        Promise.resolve({
+          schemaVersion: '1',
+          approved: true,
+          summary: 'browser approved without screenshots',
+          planArtifact: {
+            name: input.plan.metadata.name,
+            revision: input.plan.metadata.revision,
+            sha256: input.plan.metadata.sha256,
+          },
+          previewSession: {
+            sessionId: 'preview-visual',
+            status: 'running',
+            evidence: { screenshots: [] },
+          },
+          steps: [],
+        }),
+    };
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(harnessRepo, {
+      verifier,
+      browserVerification,
+    });
+    const { runId, operationId } = await seedVisualEdit(conversations, runs, {
+      ...directVisualEdit,
+      property: 'color',
+      oldValue: '#000000',
+      newValue: '#ffffff',
+    });
+
+    await runner.run('project-1', runId, operationId);
+
+    expect((await runs.get(runId))?.status).toBe('failed');
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(workspaces.commits).toEqual([]);
+    expect(await projectVersions.list('project-1')).toEqual([]);
+  });
+
+  it.each(['deterministic', 'browser'] as const)(
+    'rolls back and creates no version when the %s gate rejects the direct edit',
+    async (failedGate) => {
+      const verifier: VerificationService = {
+        verify: () =>
+          Promise.resolve({
+            schemaVersion: '1',
+            approved: failedGate !== 'deterministic',
+            packageManager: 'npm',
+            summary: `${failedGate} result`,
+            commands: [],
+            createdAt: '2026-07-18T12:00:00.000Z',
+          }),
+      };
+      const browserVerification: Pick<BrowserVerificationCoordinator, 'verify'> = {
+        verify: (input) =>
+          Promise.resolve({
+            schemaVersion: '1',
+            approved: failedGate !== 'browser',
+            summary: `${failedGate} result`,
+            planArtifact: {
+              name: input.plan.metadata.name,
+              revision: input.plan.metadata.revision,
+              sha256: input.plan.metadata.sha256,
+            },
+            previewSession: {
+              sessionId: 'preview-visual',
+              status: 'running',
+              evidence: { screenshots: [] },
+            },
+            steps: [],
+          }),
+      };
+      const { runs, workspaces, conversations, projectVersions, runner } = setup(harnessRepo, {
+        verifier,
+        browserVerification,
+      });
+      const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+      await runner.run('project-1', runId, operationId);
+
+      expect((await runs.get(runId))?.status).toBe('failed');
+      expect(workspaces.rollbacks).toHaveLength(1);
+      expect(workspaces.commits).toEqual([]);
+      expect(await projectVersions.list('project-1')).toEqual([]);
+    },
+  );
+
   it('completes a plan operation without touching the workspace or recording a version', async () => {
     const { runs, artifacts, workspaces, conversations, projectVersions, runner } = setup();
     const { runId, operationId } = await seed(conversations, runs, 'plan');

@@ -169,6 +169,7 @@ async function runOperation(kind: 'plan' | 'build') {
     clock,
     ids,
     conversationService,
+    workspaces,
   );
   const runner = new ConversationOperationRunner(
     runs,

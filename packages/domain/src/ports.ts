@@ -421,6 +421,7 @@ export interface WorkspaceManager {
     outputSchema: Record<string, unknown>;
   }): Promise<{ requestPath: string; schemaPath: string }>;
   ensureGit(projectId: string): Promise<void>;
+  isClean(projectId: string): Promise<boolean>;
   checkpoint(projectId: string, label: string): Promise<string>;
   rollback(projectId: string, ref: string): Promise<void>;
   preserveDraft(
