@@ -248,4 +248,29 @@ describe('TailSpanProcessor export-time keep', () => {
     expect(exported).toHaveLength(1);
     expect(exported[0]?.attributes['foundry.slow']).toBe(true);
   });
+
+  // At ratio 1 the span is head-sampled (SAMPLED trace flag set), so it goes
+  // out through the normal BatchSpanProcessor path. onEnd's alreadySampled
+  // guard must skip the tail direct-export path in that case — otherwise an
+  // ERROR span would be exported twice (once batched, once direct).
+  it('exports an already-sampled ERROR span exactly once, via the batch path', async () => {
+    const delegate = fakeDelegateExporter();
+    const redacting = new RedactingSpanExporter(delegate, 60_000);
+    provider = new NodeTracerProvider({
+      sampler: new KeepErrorsSampler(1),
+      spanProcessors: [new TailSpanProcessor(new BatchSpanProcessor(redacting), redacting, 60_000)],
+    });
+    const tracer = provider.getTracer('test');
+
+    const failing = tracer.startSpan('foundry.attempt');
+    failing.setStatus({ code: SpanStatusCode.ERROR, message: 'boom' });
+    failing.end();
+
+    await provider.forceFlush();
+
+    expect(delegate.exported).toHaveLength(1);
+    const exported = delegate.exported.flat();
+    expect(exported).toHaveLength(1);
+    expect(exported[0]?.status.code).toBe(SpanStatusCode.ERROR);
+  });
 });

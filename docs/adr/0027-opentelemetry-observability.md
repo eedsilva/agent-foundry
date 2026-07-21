@@ -46,8 +46,10 @@ SSE `/stream` routes, which `reply.hijack()` and would leak a span that never se
 workflow node), `foundry.attempt` (per step attempt, carries model/provider), `foundry.cli`
 (command name only, around the CLI child process — no args, no prompt text), `foundry.operation`
 (chat/build operations), `foundry.preview` (preview session start). `foundry.job`, `foundry.run`,
-`foundry.step`, and `foundry.attempt` nest under one trace; `foundry.operation` and `foundry.preview`
-are separate roots for their own flows.
+`foundry.step`, and `foundry.attempt` nest under one trace; `foundry.operation` nests under
+`foundry.job` (worker-loop opens the job span before invoking `ConversationOperationRunner.run`) and
+`foundry.preview` nests under `foundry.request` (opened synchronously within the route handler) when
+those parents exist.
 
 **Queue trace propagation via a schema carrier field, not a side channel.** `QueueJob` gained an
 optional `traceContext: z.record(z.string(), z.string())` field. `project-service.ts` and
