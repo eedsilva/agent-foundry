@@ -21,7 +21,7 @@ import {
   type ConversationSnapshot,
 } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
-import { isUniqueViolation } from './versioned.js';
+import { acquireScopeLock, isUniqueViolation } from './versioned.js';
 
 export class PostgresConversationRepository implements ConversationRepository {
   constructor(private readonly sql: PostgresDb) {}
@@ -29,7 +29,7 @@ export class PostgresConversationRepository implements ConversationRepository {
   async createConversation(conversation: Conversation): Promise<void> {
     const parsed = ConversationSchema.parse(conversation);
     await this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + parsed.projectId}))`;
+      await acquireScopeLock(tx, 'conversation:' + parsed.projectId);
       const existing = await selectConversation(tx, parsed.projectId);
       if (existing) {
         if (JSON.stringify(existing) !== JSON.stringify(parsed)) {
@@ -47,7 +47,7 @@ export class PostgresConversationRepository implements ConversationRepository {
 
   async getSnapshot(projectId: string): Promise<ConversationSnapshot> {
     return this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + projectId}))`;
+      await acquireScopeLock(tx, 'conversation:' + projectId);
       const conversation = await selectConversation(tx, projectId);
       const messageRows = await tx<{ data: unknown }[]>`
         select data from conversation_messages
@@ -73,7 +73,7 @@ export class PostgresConversationRepository implements ConversationRepository {
 
   async appendMessage(message: Omit<Message, 'sequence'>): Promise<Message> {
     return this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + message.projectId}))`;
+      await acquireScopeLock(tx, 'conversation:' + message.projectId);
       await requireConversation(tx, message.projectId, message.conversationId);
       const [row] = await tx<{ next: number }[]>`
         select coalesce(max(sequence), 0) + 1 as next
@@ -120,7 +120,7 @@ export class PostgresConversationRepository implements ConversationRepository {
       ...(parsed.name !== undefined ? { name: redactString(parsed.name) } : {}),
     });
     return this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + redacted.projectId}))`;
+      await acquireScopeLock(tx, 'conversation:' + redacted.projectId);
       await requireConversation(tx, redacted.projectId, redacted.conversationId);
       try {
         await tx`
@@ -150,7 +150,7 @@ export class PostgresConversationRepository implements ConversationRepository {
   async createOperation(operation: Operation): Promise<Operation> {
     const parsed = OperationSchema.parse(operation);
     return this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + parsed.projectId}))`;
+      await acquireScopeLock(tx, 'conversation:' + parsed.projectId);
       await requireConversation(tx, parsed.projectId, parsed.conversationId);
       const [existingRow] = await tx<{ data: unknown }[]>`
         select data from conversation_operations
@@ -184,7 +184,7 @@ export class PostgresConversationRepository implements ConversationRepository {
   async updateOperation(operation: Operation): Promise<Operation> {
     const parsed = OperationSchema.parse(operation);
     return this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + parsed.projectId}))`;
+      await acquireScopeLock(tx, 'conversation:' + parsed.projectId);
       const result = await tx`
         update conversation_operations set data = ${tx.json(parsed as any)}
         where id = ${parsed.id} and project_id = ${parsed.projectId}`;
@@ -203,7 +203,7 @@ export class PostgresConversationRepository implements ConversationRepository {
   async createChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest> {
     const parsed = ChangeRequestSchema.parse(changeRequest);
     return this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + parsed.projectId}))`;
+      await acquireScopeLock(tx, 'conversation:' + parsed.projectId);
       await requireConversation(tx, parsed.projectId, parsed.conversationId);
       try {
         await tx`
@@ -232,7 +232,7 @@ export class PostgresConversationRepository implements ConversationRepository {
   async updateChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest> {
     const parsed = ChangeRequestSchema.parse(changeRequest);
     return this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + parsed.projectId}))`;
+      await acquireScopeLock(tx, 'conversation:' + parsed.projectId);
       const result = await tx`
         update conversation_change_requests set data = ${tx.json(parsed as any)}
         where id = ${parsed.id} and project_id = ${parsed.projectId}`;

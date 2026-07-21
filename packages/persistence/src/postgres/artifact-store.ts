@@ -15,6 +15,7 @@ import {
 } from '@agent-foundry/domain';
 import { sha256 } from '../fs-utils.js';
 import type { PostgresDb } from './client.js';
+import { acquireScopeLock } from './versioned.js';
 
 interface ArtifactRow {
   content: unknown;
@@ -44,7 +45,7 @@ export class PostgresArtifactStore implements ArtifactStore {
     idempotencyKey?: string;
   }): Promise<StoredArtifact> {
     return this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'artifacts:' + input.projectId}))`;
+      await acquireScopeLock(tx, 'artifacts:' + input.projectId);
 
       if (input.idempotencyKey) {
         const rows = await tx<ArtifactRow[]>`
@@ -121,7 +122,7 @@ export class PostgresArtifactStore implements ArtifactStore {
     const shaHex = hash.digest('hex');
 
     return this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'artifacts:' + input.projectId}))`;
+      await acquireScopeLock(tx, 'artifacts:' + input.projectId);
 
       const [next] = await tx<{ revision: number }[]>`
         select coalesce(max(revision), 0) + 1 as revision

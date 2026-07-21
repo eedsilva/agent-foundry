@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MIGRATIONS } from './migrations.js';
-import { latestVersion, migrateDown, migrateUp } from './migrator.js';
+import { assertSchemaCurrent, latestVersion, migrateDown, migrateUp } from './migrator.js';
 import { describePostgres } from './testing.js';
 
 describe('migrations manifest', () => {
@@ -30,7 +30,6 @@ describePostgres('postgres migrator', (ctx) => {
 
   it('assertSchemaCurrent throws when behind and passes when current', async () => {
     const sql = ctx.db();
-    const { assertSchemaCurrent } = await import('./migrator.js');
     await expect(assertSchemaCurrent(sql)).resolves.toBeUndefined();
     await migrateDown(sql, 0);
     await expect(assertSchemaCurrent(sql)).rejects.toThrow(/db:migrate/);

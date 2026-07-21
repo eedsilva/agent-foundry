@@ -5,6 +5,7 @@ import {
 } from '@agent-foundry/contracts';
 import { redactString, type StepEventRepository } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
+import { acquireScopeLock } from './versioned.js';
 
 export class PostgresStepEventRepository implements StepEventRepository {
   constructor(private readonly sql: PostgresDb) {}
@@ -15,7 +16,7 @@ export class PostgresStepEventRepository implements StepEventRepository {
     // xact-scoped advisory lock (auto-released on commit) safely serializes the
     // read-max-then-insert sequence assignment per run.
     return this.sql.begin(async (tx) => {
-      await tx`select pg_advisory_xact_lock(hashtext(${'step_events:' + event.runId}))`;
+      await acquireScopeLock(tx, 'step_events:' + event.runId);
       const [row] = await tx<{ next: number }[]>`
         select coalesce(max(sequence), 0) + 1 as next
         from step_events where run_id = ${event.runId}`;

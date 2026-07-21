@@ -1,3 +1,4 @@
+import type { ISql } from 'postgres';
 import { NotFoundError, VersionConflictError } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
 
@@ -5,6 +6,14 @@ export function isUniqueViolation(error: unknown): boolean {
   return (
     error instanceof Error && 'code' in error && (error as { code?: unknown }).code === '23505'
   );
+}
+
+/** Serializes the 11 verbatim `pg_advisory_xact_lock` call sites (conversation-repository.ts,
+ * artifact-store.ts, step-event-repository.ts). Must run inside `sql.begin` -- the lock is
+ * transaction-scoped and auto-releases on commit/rollback. Unrelated to migrator.ts's
+ * session-scoped pg_advisory_lock, which pins a reserved connection instead. */
+export async function acquireScopeLock(tx: ISql, scope: string): Promise<void> {
+  await tx`select pg_advisory_xact_lock(hashtext(${scope}))`;
 }
 
 /** Insert a new versioned row. Mirrors `createVersioned` in ../run-repositories.ts. */
@@ -22,19 +31,14 @@ export async function insertVersioned(
   if (opts.version !== 1) {
     throw new Error(`New ${opts.entity} ${opts.id} must start at version 1`);
   }
-  const columnNames = ['id', ...Object.keys(opts.columns), 'version', 'data'];
-  const values: unknown[] = [
-    opts.id,
-    ...Object.values(opts.columns),
-    opts.version,
-    sql.json(opts.data as any),
-  ];
-  const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+  const row = {
+    id: opts.id,
+    ...opts.columns,
+    version: opts.version,
+    data: sql.json(opts.data as any),
+  };
   try {
-    await sql.unsafe(
-      `insert into ${opts.table} (${columnNames.join(', ')}) values (${placeholders})`,
-      values as any[],
-    );
+    await sql`insert into ${sql(opts.table)} ${sql(row)}`;
   } catch (error) {
     if (isUniqueViolation(error)) {
       throw new Error(`${opts.entity} ${opts.id} already exists`);
@@ -61,33 +65,22 @@ export async function updateVersioned(
   },
 ): Promise<void> {
   const keys = Object.entries(opts.keyColumns);
-  const columns = Object.entries(opts.columns);
-  const whereClause = keys.map(([col], i) => `${col} = $${i + 1}`).join(' and ');
-  const dataParam = keys.length + 1;
-  const columnAssignments = columns
-    .map(([col], i) => `${col} = $${keys.length + 2 + i}`)
-    .join(', ');
-  const expectedVersionParam = keys.length + 2 + columns.length;
+  // sql(obj) only builds AND-joined conditions for "in"/"values"/"update"/"insert" contexts,
+  // not "where" -- so the key/value pairs are AND-joined by hand as nested fragments instead.
+  const where = keys
+    .map(([col, value]) => sql`${sql(col)} = ${value}`)
+    .reduce((acc, clause) => sql`${acc} and ${clause}`);
+  const setRow = { data: sql.json(opts.nextData as any), ...opts.columns };
 
-  const result = await sql.unsafe(
-    `update ${opts.table}
-       set version = version + 1,
-           data = $${dataParam}${columnAssignments ? `, ${columnAssignments}` : ''}
-     where ${whereClause}
-       and version = $${expectedVersionParam}`,
-    [
-      ...keys.map(([, value]) => value),
-      sql.json(opts.nextData as any),
-      ...columns.map(([, value]) => value),
-      opts.expectedVersion,
-    ] as any[],
-  );
+  const result = await sql`
+    update ${sql(opts.table)}
+       set version = version + 1, ${sql(setRow)}
+     where ${where}
+       and version = ${opts.expectedVersion}`;
   if (result.count === 1) return;
 
-  const existing = await sql.unsafe<{ version: number }[]>(
-    `select version from ${opts.table} where ${whereClause}`,
-    keys.map(([, value]) => value) as any[],
-  );
+  const existing = await sql<{ version: number }[]>`
+    select version from ${sql(opts.table)} where ${where}`;
   const row = existing[0];
   if (!row) throw new NotFoundError(`${opts.entity} ${opts.id} not found`);
   throw new VersionConflictError(opts.entity, opts.id, opts.expectedVersion, row.version);
