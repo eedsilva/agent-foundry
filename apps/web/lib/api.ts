@@ -12,6 +12,8 @@ import type {
   DecideChangeRequestResponse,
   DiscardDraftRequest,
   DraftDetailResponse,
+  KnowledgeFile,
+  KnowledgeFilePurpose,
   Message,
   Operation,
   PreviewLogPage,
@@ -33,6 +35,16 @@ import type {
   WorkflowRun,
   VisualEdit,
 } from '@agent-foundry/contracts';
+
+export type ProjectDetail = ProjectDetailResponse & { knowledgeFiles: KnowledgeFile[] };
+
+export type KnowledgeFileUpload = {
+  name: string;
+  mediaType: string;
+  purpose: KnowledgeFilePurpose;
+  pinned: boolean;
+  contentBase64: string;
+};
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
@@ -69,8 +81,51 @@ export async function listProjects(): Promise<Project[]> {
   return response.projects;
 }
 
-export function getProject(id: string): Promise<ProjectDetailResponse> {
-  return api<ProjectDetailResponse>(`/projects/${encodeURIComponent(id)}`);
+export function getProject(id: string): Promise<ProjectDetail> {
+  return api<ProjectDetail>(`/projects/${encodeURIComponent(id)}`);
+}
+
+export async function uploadKnowledgeFile(
+  projectId: string,
+  input: KnowledgeFileUpload,
+): Promise<KnowledgeFile> {
+  const response = await api<{ knowledgeFile: KnowledgeFile }>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge-files`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return response.knowledgeFile;
+}
+
+export async function replaceKnowledgeFile(
+  projectId: string,
+  id: string,
+  input: KnowledgeFileUpload,
+): Promise<KnowledgeFile> {
+  const response = await api<{ knowledgeFile: KnowledgeFile }>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge-files`,
+    { method: 'PUT', body: JSON.stringify({ id, ...input }) },
+  );
+  return response.knowledgeFile;
+}
+
+export async function setKnowledgeFilePinned(
+  projectId: string,
+  id: string,
+  pinned: boolean,
+): Promise<KnowledgeFile> {
+  const response = await api<{ knowledgeFile: KnowledgeFile }>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge-files/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body: JSON.stringify({ pinned }) },
+  );
+  return response.knowledgeFile;
+}
+
+export async function removeKnowledgeFile(projectId: string, id: string): Promise<KnowledgeFile> {
+  const response = await api<{ knowledgeFile: KnowledgeFile }>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge-files/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  );
+  return response.knowledgeFile;
 }
 
 export function getRuntime(): Promise<RuntimeInfoResponse> {

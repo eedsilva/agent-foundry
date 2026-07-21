@@ -326,7 +326,7 @@ export function PreviewPanel({
     selectionResult.column !== undefined;
 
   return (
-    <section className="panel previewPanel">
+    <section className="panel previewPanel" role="region" aria-label="Preview">
       <div className="panelHeader">
         <h2>Preview</h2>
         {session?.status ? (

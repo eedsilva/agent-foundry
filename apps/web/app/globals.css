@@ -179,6 +179,76 @@ h2 {
   grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.8fr);
   gap: 20px;
 }
+.builderGrid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.25fr) minmax(280px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+.builderGrid > .panel {
+  min-width: 0;
+}
+.knowledgeFiles,
+.changesSection {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 16px;
+}
+.knowledgeFiles .panelHeader,
+.changesSection .panelHeader {
+  margin-bottom: 12px;
+}
+.knowledgeFileList,
+.versionList {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.knowledgeFileList article,
+.versionList article {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+.knowledgeFileList img {
+  border-radius: 8px;
+  max-height: 180px;
+  max-width: 100%;
+}
+.knowledgeFileActions,
+.versionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.fileButton {
+  display: inline-flex;
+  margin: 0;
+}
+.fileButton input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+.versionSelect {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+.versionSelect input {
+  width: auto;
+}
+.versionSelect small {
+  display: block;
+  margin-top: 5px;
+}
+.workspacePath {
+  overflow-wrap: anywhere;
+}
 .panel {
   border: 1px solid var(--line);
   background: var(--panel);
@@ -600,6 +670,9 @@ dd {
   .projectHero,
   .grid,
   .dashboardGrid {
+    grid-template-columns: 1fr;
+  }
+  .builderGrid {
     grid-template-columns: 1fr;
   }
   .runtimeCard {

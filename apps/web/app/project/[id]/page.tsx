@@ -17,7 +17,6 @@ import {
   type ModelDefinition,
   type Operation,
   type OperationKind,
-  type ProjectDetailResponse,
   type ProjectEvent,
   type ResumeBlockedResponse,
   type RetryPlanResponse,
@@ -69,7 +68,10 @@ import {
 } from '../../../lib/model-overrides';
 import { BlobMedia, PreviewPanel, VerificationReportView } from './preview-panel';
 import { formatObservedUsage } from './format-usage.js';
+import { KnowledgeFiles } from './knowledge-files';
+import { ChangesPanel, ProjectBuilderShell } from './changes-panel';
 import { findDiffApprovalVersions } from '../../../lib/diff-approval';
+import { latestBrowserVerificationReport } from '../../../lib/browser-verification';
 import {
   BrowserVerificationReportSchema,
   isWorkflowRunStatusTerminal,
@@ -219,7 +221,7 @@ function showsCompletedOperationLinks(
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [detail, setDetail] = useState<ProjectDetailResponse | null>(null);
+  const [detail, setDetail] = useState<Awaited<ReturnType<typeof getProject>> | null>(null);
   const [runDetail, setRunDetail] = useState<RunDetailResponse | null>(null);
   const [selected, setSelected] = useState<StoredArtifact | null>(null);
   const [retryPlan, setRetryPlan] = useState<{ step: StepRun; plan: RetryPlanResponse } | null>(
@@ -832,6 +834,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   }
 
   const runIsTerminal = run?.status === 'completed' || run?.status === 'failed';
+  const changesReport = run
+    ? latestBrowserVerificationReport(detail?.artifacts ?? [], run.id)
+    : null;
 
   if (!detail) {
     return <div className="shell loadingState">{error || 'Carregando execução…'}</div>;
@@ -872,191 +877,301 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
       </section>
 
-      <section className="panel">
-        <h2>Conversa</h2>
-        {conversationError ? <p className="errorBox">{conversationError}</p> : null}
-        <ul className="conversationList">
-          {(conversation?.messages ?? []).map((message: Message) => {
-            const operation = conversation?.operations.find(
-              (op: Operation) => op.messageId === message.id,
-            );
-            return (
-              <li key={message.id}>
-                <strong>{message.role}:</strong>{' '}
-                {message.content
-                  .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
-                  .join(' ')}
-                {operation ? (
-                  <span className="operationBadge">
-                    {' '}
-                    ({operation.kind}
-                    {operation.approval ? `, ${operation.approval.status}` : ''})
-                    {operation.kind === 'plan' && operation.approval?.status === 'pending' ? (
-                      <>
-                        {' '}
-                        <button
-                          className="secondaryButton"
-                          onClick={() => void decide(operation.id, 'approve')}
-                        >
-                          Aprovar
-                        </button>
-                        <button
-                          className="secondaryButton"
-                          onClick={() => void decide(operation.id, 'reject')}
-                        >
-                          Rejeitar
-                        </button>
-                      </>
-                    ) : null}
-                  </span>
-                ) : null}
-                {operation && operation.runId && operation.id === activeOperation?.id ? (
-                  <div className="agentStreamActivity">
-                    {streamEvents
-                      .filter((streamEvent) => streamEvent.runId === operation.runId)
-                      .map((streamEvent) => {
-                        if (streamEvent.type === 'assistant_delta') {
-                          return <p key={streamEvent.id}>{streamEvent.text}</p>;
-                        }
-                        if (streamEvent.type === 'tool_start' || streamEvent.type === 'tool_end') {
-                          return (
-                            <details key={streamEvent.id}>
-                              <summary>{streamEvent.summary}</summary>
-                              {streamEvent.type === 'tool_end' && streamEvent.detail ? (
-                                <pre>{streamEvent.detail}</pre>
-                              ) : null}
-                            </details>
-                          );
-                        }
-                        if (streamEvent.type === 'status') {
-                          return <small key={streamEvent.id}>{streamEvent.phase}…</small>;
-                        }
-                        if (streamEvent.type === 'error') {
-                          return (
-                            <p key={streamEvent.id} className="errorBox">
-                              {streamEvent.message}
-                            </p>
-                          );
-                        }
-                        // No 'approval' case: ConversationOperationRunner (the only
-                        // emitter feeding this stream) never emits it — only
-                        // WorkflowOrchestrator's approval-gate does, for the
-                        // unrelated project DAG run this panel doesn't subscribe to.
-                        return null;
-                      })}
-                    <button
-                      className="secondaryButton"
-                      onClick={() => void cancel(operation.runId!)}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                ) : null}
-                {operation &&
-                showsCompletedOperationLinks(
-                  operation,
-                  latestOperation,
-                  latestOperationRunTerminal,
-                ) ? (
-                  <div className="operationLinks">
-                    <a href={`/project/${detail.project.id}/versions`}>Ver diff</a>
-                    {operation.artifactReferences.map((ref) => (
-                      <button
-                        key={`${ref.name}-${ref.revision}`}
-                        className="secondaryButton"
-                        onClick={() =>
-                          void getArtifact(detail.project.id, ref.name, ref.revision)
-                            .then(openArtifact)
-                            .catch((cause: unknown) =>
-                              setError(cause instanceof Error ? cause.message : String(cause)),
-                            )
-                        }
-                      >
-                        {ref.name}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-        <form onSubmit={(event) => void submitMessage(event)}>
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} />
-          {pendingChangeRequest && (
-            <div className="panel" style={{ marginBottom: '0.5rem' }}>
-              <p>
-                Suggested: <strong>{pendingChangeRequest.suggestedKind}</strong> —{' '}
-                {pendingChangeRequest.rationale}
-              </p>
-              {pendingChangeRequest.referencedDecisionIds.length > 0 && (
-                <p>References: {pendingChangeRequest.referencedDecisionIds.join(', ')}</p>
-              )}
-              {(pendingChangeRequest.suggestedKind === 'plan' ||
-                pendingChangeRequest.suggestedKind === 'build') && (
-                <p>Use the Plan/Build toggle below to confirm or correct this before sending.</p>
-              )}
-              <button type="button" onClick={() => void confirmChangeRequest()}>
-                Confirm{' '}
-                {pendingChangeRequest.suggestedKind === 'plan' ||
-                pendingChangeRequest.suggestedKind === 'build'
-                  ? mode
-                  : pendingChangeRequest.suggestedKind}
-              </button>
-              <button type="button" onClick={() => void discardChangeRequest()}>
-                Discard
-              </button>
-            </div>
-          )}
-          <div className="modelPinGrid">
-            <label>
-              <input type="radio" checked={mode === 'plan'} onChange={() => setMode('plan')} /> Plan
-              (somente proposta, sem alterar código)
-            </label>
-            <label>
-              <input type="radio" checked={mode === 'build'} onChange={() => setMode('build')} />{' '}
-              Build (vai alterar código e consumir budget)
-            </label>
-          </div>
-          {mode === 'build' ? (
-            <div className="modelPinGrid">
-              {latestApprovedPlan ? (
-                <label>
-                  <input
-                    type="radio"
-                    checked={buildChoice === 'plan'}
-                    onChange={() => setBuildChoice('plan')}
-                  />{' '}
-                  Build a partir do plano aprovado
-                </label>
-              ) : null}
-              <label>
-                <input
-                  type="radio"
-                  checked={buildChoice === 'direct' || !latestApprovedPlan}
-                  onChange={() => setBuildChoice('direct')}
-                />{' '}
-                Build direto, sem plano (decisão explícita)
-              </label>
-              <p className="errorBox">
-                Esta ação vai alterar o código do projeto e consumir budget.
-              </p>
-            </div>
-          ) : null}
-          <button className="secondaryButton" type="submit">
-            Enviar
-          </button>
-        </form>
-      </section>
-
       {detail.project.error ? <p className="errorBox">{detail.project.error}</p> : null}
       {error ? <p className="errorBox">{error}</p> : null}
 
-      <PreviewPanel
-        projectId={id}
-        run={run ?? null}
-        artifacts={detail.artifacts}
-        onConversationalFallback={(prompt) => void classifyConversationPrompt(prompt)}
+      <ProjectBuilderShell
+        chat={
+          <section className="panel chatPanel" role="region" aria-label="Chat">
+            <h2>Conversa</h2>
+            {conversationError ? <p className="errorBox">{conversationError}</p> : null}
+            <ul className="conversationList">
+              {(conversation?.messages ?? []).map((message: Message) => {
+                const operation = conversation?.operations.find(
+                  (op: Operation) => op.messageId === message.id,
+                );
+                return (
+                  <li key={message.id}>
+                    <strong>{message.role}:</strong>{' '}
+                    {message.content
+                      .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
+                      .join(' ')}
+                    {operation ? (
+                      <span className="operationBadge">
+                        {' '}
+                        ({operation.kind}
+                        {operation.approval ? `, ${operation.approval.status}` : ''})
+                        {operation.kind === 'plan' && operation.approval?.status === 'pending' ? (
+                          <>
+                            {' '}
+                            <button
+                              className="secondaryButton"
+                              onClick={() => void decide(operation.id, 'approve')}
+                            >
+                              Aprovar
+                            </button>
+                            <button
+                              className="secondaryButton"
+                              onClick={() => void decide(operation.id, 'reject')}
+                            >
+                              Rejeitar
+                            </button>
+                          </>
+                        ) : null}
+                      </span>
+                    ) : null}
+                    {operation && operation.runId && operation.id === activeOperation?.id ? (
+                      <div className="agentStreamActivity">
+                        {streamEvents
+                          .filter((streamEvent) => streamEvent.runId === operation.runId)
+                          .map((streamEvent) => {
+                            if (streamEvent.type === 'assistant_delta') {
+                              return <p key={streamEvent.id}>{streamEvent.text}</p>;
+                            }
+                            if (
+                              streamEvent.type === 'tool_start' ||
+                              streamEvent.type === 'tool_end'
+                            ) {
+                              return (
+                                <details key={streamEvent.id}>
+                                  <summary>{streamEvent.summary}</summary>
+                                  {streamEvent.type === 'tool_end' && streamEvent.detail ? (
+                                    <pre>{streamEvent.detail}</pre>
+                                  ) : null}
+                                </details>
+                              );
+                            }
+                            if (streamEvent.type === 'status') {
+                              return <small key={streamEvent.id}>{streamEvent.phase}…</small>;
+                            }
+                            if (streamEvent.type === 'error') {
+                              return (
+                                <p key={streamEvent.id} className="errorBox">
+                                  {streamEvent.message}
+                                </p>
+                              );
+                            }
+                            // No 'approval' case: ConversationOperationRunner (the only
+                            // emitter feeding this stream) never emits it — only
+                            // WorkflowOrchestrator's approval-gate does, for the
+                            // unrelated project DAG run this panel doesn't subscribe to.
+                            return null;
+                          })}
+                        <button
+                          className="secondaryButton"
+                          onClick={() => void cancel(operation.runId!)}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : null}
+                    {operation &&
+                    showsCompletedOperationLinks(
+                      operation,
+                      latestOperation,
+                      latestOperationRunTerminal,
+                    ) ? (
+                      <div className="operationLinks">
+                        <a href={`/project/${detail.project.id}/versions`}>Ver diff</a>
+                        {operation.artifactReferences.map((ref) => (
+                          <button
+                            key={`${ref.name}-${ref.revision}`}
+                            className="secondaryButton"
+                            onClick={() =>
+                              void getArtifact(detail.project.id, ref.name, ref.revision)
+                                .then(openArtifact)
+                                .catch((cause: unknown) =>
+                                  setError(cause instanceof Error ? cause.message : String(cause)),
+                                )
+                            }
+                          >
+                            {ref.name}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+            <KnowledgeFiles
+              projectId={id}
+              knowledgeFiles={detail.knowledgeFiles}
+              onChange={(knowledgeFiles) => {
+                setDetail((current) => (current ? { ...current, knowledgeFiles } : current));
+                refresh();
+              }}
+            />
+            <form onSubmit={(event) => void submitMessage(event)}>
+              <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} />
+              {pendingChangeRequest && (
+                <div className="panel" style={{ marginBottom: '0.5rem' }}>
+                  <p>
+                    Suggested: <strong>{pendingChangeRequest.suggestedKind}</strong> —{' '}
+                    {pendingChangeRequest.rationale}
+                  </p>
+                  {pendingChangeRequest.referencedDecisionIds.length > 0 && (
+                    <p>References: {pendingChangeRequest.referencedDecisionIds.join(', ')}</p>
+                  )}
+                  {(pendingChangeRequest.suggestedKind === 'plan' ||
+                    pendingChangeRequest.suggestedKind === 'build') && (
+                    <p>
+                      Use the Plan/Build toggle below to confirm or correct this before sending.
+                    </p>
+                  )}
+                  <button type="button" onClick={() => void confirmChangeRequest()}>
+                    Confirm{' '}
+                    {pendingChangeRequest.suggestedKind === 'plan' ||
+                    pendingChangeRequest.suggestedKind === 'build'
+                      ? mode
+                      : pendingChangeRequest.suggestedKind}
+                  </button>
+                  <button type="button" onClick={() => void discardChangeRequest()}>
+                    Discard
+                  </button>
+                </div>
+              )}
+              <div className="modelPinGrid">
+                <label>
+                  <input type="radio" checked={mode === 'plan'} onChange={() => setMode('plan')} />{' '}
+                  Plan (somente proposta, sem alterar código)
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    checked={mode === 'build'}
+                    onChange={() => setMode('build')}
+                  />{' '}
+                  Build (vai alterar código e consumir budget)
+                </label>
+              </div>
+              {mode === 'build' ? (
+                <div className="modelPinGrid">
+                  {latestApprovedPlan ? (
+                    <label>
+                      <input
+                        type="radio"
+                        checked={buildChoice === 'plan'}
+                        onChange={() => setBuildChoice('plan')}
+                      />{' '}
+                      Build a partir do plano aprovado
+                    </label>
+                  ) : null}
+                  <label>
+                    <input
+                      type="radio"
+                      checked={buildChoice === 'direct' || !latestApprovedPlan}
+                      onChange={() => setBuildChoice('direct')}
+                    />{' '}
+                    Build direto, sem plano (decisão explícita)
+                  </label>
+                  <p className="errorBox">
+                    Esta ação vai alterar o código do projeto e consumir budget.
+                  </p>
+                </div>
+              ) : null}
+              <button className="secondaryButton" type="submit">
+                Enviar
+              </button>
+            </form>
+          </section>
+        }
+        preview={
+          <PreviewPanel
+            projectId={id}
+            run={run ?? null}
+            artifacts={detail.artifacts}
+            onConversationalFallback={(prompt) => void classifyConversationPrompt(prompt)}
+          />
+        }
+        changes={
+          <ChangesPanel
+            projectId={id}
+            workspacePath={detail.workspacePath}
+            checks={
+              changesReport ? (
+                <VerificationReportView report={changesReport} projectId={detail.project.id} />
+              ) : (
+                <p className="emptyState">Nenhum check de navegador disponível.</p>
+              )
+            }
+            approvals={
+              approvals.length > 0 ? (
+                <>
+                  <p className="hint">
+                    {approvals.filter((entry) => !entry.decision).length} pendente(s)
+                  </p>
+                  <div className="artifactList">
+                    {approvals.map((entry) => {
+                      const node = nodeForRequest(entry.request);
+                      return (
+                        <div key={entry.request.id}>
+                          <div style={rowStyle}>
+                            <span style={{ flex: 1 }}>
+                              <strong>{entry.request.nodeId}</strong>
+                              <small>
+                                {' '}
+                                {entry.request.artifact.name} r{entry.request.artifact.revision}
+                              </small>
+                            </span>
+                            <button
+                              className="secondaryButton"
+                              onClick={() =>
+                                void getArtifact(
+                                  detail.project.id,
+                                  entry.request.artifact.name,
+                                  entry.request.artifact.revision,
+                                )
+                                  .then(openArtifact)
+                                  .catch((cause: unknown) =>
+                                    setError(
+                                      cause instanceof Error ? cause.message : String(cause),
+                                    ),
+                                  )
+                              }
+                            >
+                              Ver artefato
+                            </button>
+                          </div>
+                          {entry.decision ? (
+                            <p className="hint">
+                              {entry.decision.action} por {entry.decision.decidedBy} em{' '}
+                              {new Date(entry.decision.decidedAt).toLocaleString('pt-BR')}
+                              {entry.decision.note ? ` — "${entry.decision.note}"` : ''}
+                            </p>
+                          ) : node ? (
+                            <div
+                              style={{
+                                display: 'flex',
+                                gap: '0.5rem',
+                                flexWrap: 'wrap',
+                                marginTop: '6px',
+                              }}
+                            >
+                              {node.actions.map((action) => (
+                                <button
+                                  key={action}
+                                  className="secondaryButton"
+                                  onClick={() => void openDecide(entry.request, node, action)}
+                                >
+                                  {action}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="hint">Aguardando definição do workflow…</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <p className="emptyState">Nenhuma aprovação registrada.</p>
+              )
+            }
+          />
+        }
       />
 
       {run?.status === 'paused' ? (
@@ -1335,74 +1450,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 })}
               </div>
             ))}
-          </div>
-        </section>
-      ) : null}
-
-      {approvals.length > 0 ? (
-        <section className="panel approvalPanel">
-          <div className="panelHeader">
-            <h2>Aprovações</h2>
-            <span className="hint">
-              {approvals.filter((entry) => !entry.decision).length} pendente(s)
-            </span>
-          </div>
-          <div className="artifactList">
-            {approvals.map((entry) => {
-              const node = nodeForRequest(entry.request);
-              return (
-                <div key={entry.request.id}>
-                  <div style={rowStyle}>
-                    <span style={{ flex: 1 }}>
-                      <strong>{entry.request.nodeId}</strong>
-                      <small>
-                        {' '}
-                        {entry.request.artifact.name} r{entry.request.artifact.revision}
-                      </small>
-                    </span>
-                    <button
-                      className="secondaryButton"
-                      onClick={() =>
-                        void getArtifact(
-                          detail.project.id,
-                          entry.request.artifact.name,
-                          entry.request.artifact.revision,
-                        )
-                          .then(openArtifact)
-                          .catch((cause: unknown) =>
-                            setError(cause instanceof Error ? cause.message : String(cause)),
-                          )
-                      }
-                    >
-                      Ver artefato
-                    </button>
-                  </div>
-                  {entry.decision ? (
-                    <p className="hint">
-                      {entry.decision.action} por {entry.decision.decidedBy} em{' '}
-                      {new Date(entry.decision.decidedAt).toLocaleString('pt-BR')}
-                      {entry.decision.note ? ` — "${entry.decision.note}"` : ''}
-                    </p>
-                  ) : node ? (
-                    <div
-                      style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '6px' }}
-                    >
-                      {node.actions.map((action) => (
-                        <button
-                          key={action}
-                          className="secondaryButton"
-                          onClick={() => void openDecide(entry.request, node, action)}
-                        >
-                          {action}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="hint">Aguardando definição do workflow…</p>
-                  )}
-                </div>
-              );
-            })}
           </div>
         </section>
       ) : null}
