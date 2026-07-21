@@ -1,7 +1,12 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { KnowledgeFileSchema, type KnowledgeFile } from '@agent-foundry/contracts';
-import { ValidationError, type KnowledgeFileRepository } from '@agent-foundry/domain';
+import {
+  KnowledgeFileConflictError,
+  NotFoundError,
+  ValidationError,
+  type KnowledgeFileRepository,
+} from '@agent-foundry/domain';
 import {
   atomicWriteJson,
   readJsonOrNull,
@@ -77,21 +82,68 @@ export class FileKnowledgeFileRepository implements KnowledgeFileRepository {
     });
   }
 
-  async remove(projectId: string, knowledgeFileId: string): Promise<void> {
+  async update(
+    projectId: string,
+    knowledgeFileId: string,
+    expectedUpdatedAt: string,
+    mutation: (current: KnowledgeFile) => KnowledgeFile | Promise<KnowledgeFile>,
+  ): Promise<KnowledgeFile> {
     const safeProjectId = safeSegment(projectId);
     const safeKnowledgeFileId = safeSegment(knowledgeFileId);
-    await this.withLock(safeProjectId, async () => {
+    return this.withLock(safeProjectId, async () => {
       const index = await this.readIndex(safeProjectId);
       if (index.files.some((file) => file.projectId !== safeProjectId)) {
         throw new ValidationError('Knowledge index contains a different project');
       }
-      await atomicWriteJson(
-        this.indexPath(safeProjectId),
-        KnowledgeFileIndexSchema.parse({
-          ...index,
-          files: index.files.filter((file) => file.id !== safeKnowledgeFileId),
-        }),
-      );
+      const position = index.files.findIndex((file) => file.id === safeKnowledgeFileId);
+      if (position < 0) {
+        throw new NotFoundError(
+          `Knowledge file ${safeKnowledgeFileId} not found in project ${safeProjectId}`,
+        );
+      }
+      const current = index.files[position]!;
+      if (current.updatedAt !== expectedUpdatedAt) {
+        throw new KnowledgeFileConflictError(safeKnowledgeFileId);
+      }
+      const updated = KnowledgeFileSchema.parse(await mutation(current));
+      if (updated.id !== current.id || updated.projectId !== current.projectId) {
+        throw new ValidationError('Knowledge file identity is immutable');
+      }
+      if (
+        updated.revisions.length < current.revisions.length ||
+        JSON.stringify(updated.revisions.slice(0, current.revisions.length)) !==
+          JSON.stringify(current.revisions)
+      ) {
+        throw new ValidationError('Knowledge file revision history is immutable');
+      }
+      index.files[position] = updated;
+      await atomicWriteJson(this.indexPath(safeProjectId), KnowledgeFileIndexSchema.parse(index));
+      return updated;
+    });
+  }
+
+  async remove(
+    projectId: string,
+    knowledgeFileId: string,
+    expectedUpdatedAt: string,
+  ): Promise<KnowledgeFile> {
+    const safeProjectId = safeSegment(projectId);
+    const safeKnowledgeFileId = safeSegment(knowledgeFileId);
+    return this.withLock(safeProjectId, async () => {
+      const index = await this.readIndex(safeProjectId);
+      const position = index.files.findIndex((file) => file.id === safeKnowledgeFileId);
+      if (position < 0) {
+        throw new NotFoundError(
+          `Knowledge file ${safeKnowledgeFileId} not found in project ${safeProjectId}`,
+        );
+      }
+      const current = index.files[position]!;
+      if (current.updatedAt !== expectedUpdatedAt) {
+        throw new KnowledgeFileConflictError(safeKnowledgeFileId);
+      }
+      index.files.splice(position, 1);
+      await atomicWriteJson(this.indexPath(safeProjectId), KnowledgeFileIndexSchema.parse(index));
+      return current;
     });
   }
 

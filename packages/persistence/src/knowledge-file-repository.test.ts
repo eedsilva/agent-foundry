@@ -80,10 +80,37 @@ describe('FileKnowledgeFileRepository', () => {
       revisions: [revision(1, 'a'.repeat(64), 'knowledge-other')],
     });
 
-    await repository.remove('project-1', file.id);
+    await repository.remove('project-1', file.id, file.updatedAt);
 
     await expect(repository.list('project-1')).resolves.toEqual([]);
     await expect(repository.list('project-2')).resolves.toHaveLength(1);
+  });
+
+  it('rejects stale updates and removals while preserving the winning state', async () => {
+    await repository.save(file);
+    const pinned = await repository.update('project-1', file.id, file.updatedAt, (current) => ({
+      ...current,
+      pinned: false,
+      updatedAt: '2026-07-21T12:01:00.000Z',
+    }));
+
+    await expect(
+      repository.update('project-1', file.id, file.updatedAt, (current) => ({
+        ...current,
+        pinned: true,
+      })),
+    ).rejects.toThrow('changed since it was read');
+    await expect(repository.remove('project-1', file.id, file.updatedAt)).rejects.toThrow(
+      'changed since it was read',
+    );
+    await expect(repository.get('project-1', file.id)).resolves.toEqual(pinned);
+
+    await expect(repository.remove('project-1', file.id, pinned.updatedAt)).resolves.toEqual(
+      pinned,
+    );
+    await expect(
+      repository.update('project-1', file.id, pinned.updatedAt, (current) => current),
+    ).rejects.toThrow('not found');
   });
 
   it('rejects malformed identity and revision indexes', async () => {

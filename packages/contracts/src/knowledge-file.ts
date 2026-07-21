@@ -82,5 +82,6 @@ export type CreateKnowledgeFileRequest = z.infer<typeof CreateKnowledgeFileReque
 
 export const UpdateKnowledgeFileRequestSchema = CreateKnowledgeFileRequestSchema.extend({
   id: PathSegmentSchema,
+  expectedUpdatedAt: z.string().datetime(),
 });
 export type UpdateKnowledgeFileRequest = z.infer<typeof UpdateKnowledgeFileRequestSchema>;

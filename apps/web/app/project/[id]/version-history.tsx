@@ -20,10 +20,12 @@ export function VersionHistory({
   projectId,
   initialVersions = [],
   embedded = false,
+  refreshKey,
 }: {
   projectId: string;
   initialVersions?: ProjectVersion[];
   embedded?: boolean;
+  refreshKey?: string;
 }) {
   const [versions, setVersions] = useState(initialVersions);
   const [loading, setLoading] = useState(initialVersions.length === 0);
@@ -52,7 +54,7 @@ export function VersionHistory({
     return () => {
       active = false;
     };
-  }, [projectId]);
+  }, [projectId, refreshKey]);
 
   function toggleSelected(id: string) {
     setSelectedIds((current) =>

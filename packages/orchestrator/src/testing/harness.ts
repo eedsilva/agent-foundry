@@ -503,7 +503,16 @@ export class InMemoryArtifacts implements ArtifactStore {
           artifact.metadata.projectId === projectId &&
           artifact.metadata.name === name &&
           artifact.metadata.revision === revision,
-      ) ?? null,
+      ) ??
+        (() => {
+          const blob = this.blobs.find(
+            (entry) =>
+              entry.metadata.projectId === projectId &&
+              entry.metadata.name === name &&
+              entry.metadata.revision === revision,
+          );
+          return blob ? { metadata: blob.metadata, content: null } : null;
+        })(),
     );
   }
   listLatest(): Promise<StoredArtifact[]> {
@@ -688,11 +697,14 @@ export class FakeWorkspaces implements WorkspaceManager {
   lastRequestMarkdown: string | undefined;
   writeRunContext(input: {
     requestMarkdown: string;
+    inputFiles?: Array<{ path: string; content: Uint8Array }>;
   }): Promise<{ requestPath: string; schemaPath: string }> {
     checkPower(this.power);
     this.lastRequestMarkdown = input.requestMarkdown;
+    this.lastRunInputFiles = input.inputFiles ?? [];
     return Promise.resolve({ requestPath: 'request.md', schemaPath: 'schema.json' });
   }
+  lastRunInputFiles: Array<{ path: string; content: Uint8Array }> = [];
   ensureGit(): Promise<void> {
     return Promise.resolve();
   }

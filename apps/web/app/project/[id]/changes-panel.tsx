@@ -32,12 +32,14 @@ export function ChangesPanel({
   initialVersions = [],
   checks,
   approvals,
+  refreshKey,
 }: {
   projectId: string;
   workspacePath: string;
   initialVersions?: ProjectVersion[];
   checks: ReactNode;
   approvals: ReactNode;
+  refreshKey?: string;
 }) {
   return (
     <section className="panel changesPanel" role="region" aria-label="Changes">
@@ -48,7 +50,12 @@ export function ChangesPanel({
         </a>
       </div>
       <p className="hint workspacePath">{workspacePath}</p>
-      <VersionHistory projectId={projectId} initialVersions={initialVersions} embedded />
+      <VersionHistory
+        projectId={projectId}
+        initialVersions={initialVersions}
+        embedded
+        refreshKey={refreshKey}
+      />
 
       <section className="changesSection">
         <h3>Checks</h3>

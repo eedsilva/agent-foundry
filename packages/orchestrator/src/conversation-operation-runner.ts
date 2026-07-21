@@ -1,11 +1,15 @@
+import { createHash } from 'node:crypto';
+import { extname } from 'node:path';
 import type {
   AgentExecutionRequest,
+  ArtifactReference,
   KnowledgeFile,
   Message,
   Operation,
   ProjectVersion,
   StepAttempt,
   StepRun,
+  StoredArtifact,
   WorkflowRun,
 } from '@agent-foundry/contracts';
 import {
@@ -14,6 +18,7 @@ import {
   DEFAULT_BROWSER_EVIDENCE_POLICY,
 } from '@agent-foundry/contracts';
 import {
+  BlobIntegrityError,
   NotFoundError,
   ProjectVersionDiscardRefusedError,
   ValidationError,
@@ -102,13 +107,14 @@ export class ConversationOperationRunner {
       operation.kind === 'plan' || operation.kind === 'build'
         ? await this.knowledgeFiles.list(projectId)
         : [];
+    const knowledgeInputs = await this.loadKnowledgeInputs(projectId, activeKnowledge, runId);
     const step = buildConversationStep({
       operationId,
       kind,
       message,
       visualEdit: operation.visualEdit,
       planArtifact,
-      contextDigest: `${compiledContext.digest}${knowledgeContext(activeKnowledge)}`,
+      contextDigest: `${compiledContext.digest}${knowledgeContext(activeKnowledge, runId)}`,
     });
 
     let runState = await this.runs.update(
@@ -158,7 +164,14 @@ export class ConversationOperationRunner {
           ],
         });
       }
-      const profile = buildTaskProfile({ step, harness, artifacts: [], policy: undefined });
+      const inputArtifacts = knowledgeInputs.map(({ artifact }) => artifact);
+      const inputReferences = knowledgeInputs.map(({ reference }) => reference);
+      const profile = buildTaskProfile({
+        step,
+        harness,
+        artifacts: inputArtifacts,
+        policy: undefined,
+      });
       const route = await this.router.route(profile);
       checkpoint = step.mutatesWorkspace
         ? await this.workspaces.checkpoint(projectId, `${step.id}-${runId}`)
@@ -187,7 +200,7 @@ export class ConversationOperationRunner {
           nodeId: step.id,
           stepId: step.id,
         },
-        inputArtifacts: [],
+        inputArtifacts: inputReferences,
         outputArtifacts: [],
       };
       await this.stepAttempts.create(attempt);
@@ -201,7 +214,7 @@ export class ConversationOperationRunner {
         stack: 'conversation',
         step,
         harness,
-        artifacts: [],
+        artifacts: inputArtifacts,
         workspacePath: this.workspaces.workspacePath(projectId),
       });
       await this.workspaces.writeRunContext({
@@ -211,6 +224,7 @@ export class ConversationOperationRunner {
         attemptId: attempt.id,
         requestMarkdown,
         outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+        inputFiles: knowledgeInputs.map(({ path, content }) => ({ path, content })),
       });
 
       const request: AgentExecutionRequest = {
@@ -228,6 +242,7 @@ export class ConversationOperationRunner {
         mutatesWorkspace: step.mutatesWorkspace,
         timeoutMs: this.options.agentTimeoutMs,
         outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+        inputArtifacts: inputReferences,
       };
       const result = await this.executors
         .get(route.selected.model.provider)
@@ -527,15 +542,90 @@ export class ConversationOperationRunner {
     );
     return artifact ? { content: artifact.content } : undefined;
   }
+
+  private async loadKnowledgeInputs(
+    projectId: string,
+    files: KnowledgeFile[],
+    runId: string,
+  ): Promise<KnowledgeInput[]> {
+    return Promise.all(
+      files
+        .filter((file) => file.pinned)
+        .map(async (file) => {
+          const reference = file.revisions.at(-1)!.artifact;
+          const artifact = await this.artifacts.getRevision(
+            projectId,
+            reference.name,
+            reference.revision,
+          );
+          if (
+            !artifact ||
+            artifact.metadata.projectId !== projectId ||
+            artifact.metadata.sha256 !== reference.sha256 ||
+            artifact.metadata.storage !== 'blob' ||
+            artifact.metadata.blobDeleted
+          ) {
+            throw new BlobIntegrityError(
+              `${projectId}/${reference.name}/${reference.revision}`,
+              reference.sha256,
+              artifact?.metadata.sha256 ?? 'missing',
+            );
+          }
+          const stream = await this.artifacts.getBlobStream(
+            projectId,
+            reference.name,
+            reference.revision,
+          );
+          if (!stream) {
+            throw new BlobIntegrityError(
+              `${projectId}/${reference.name}/${reference.revision}`,
+              reference.sha256,
+              'missing',
+            );
+          }
+          const chunks: Buffer[] = [];
+          for await (const chunk of stream) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+          }
+          const content = Buffer.concat(chunks);
+          const actualSha256 = createHash('sha256').update(content).digest('hex');
+          if (actualSha256 !== reference.sha256) {
+            throw new BlobIntegrityError(
+              `${projectId}/${reference.name}/${reference.revision}`,
+              reference.sha256,
+              actualSha256,
+            );
+          }
+          return {
+            artifact,
+            reference,
+            content,
+            path: knowledgePath(runId, file),
+          };
+        }),
+    );
+  }
 }
 
-function knowledgeContext(files: KnowledgeFile[]): string {
+interface KnowledgeInput {
+  artifact: StoredArtifact;
+  reference: ArtifactReference;
+  content: Uint8Array;
+  path: string;
+}
+
+function knowledgePath(runId: string, file: KnowledgeFile): string {
+  const extension = /^\.[a-zA-Z0-9]{1,10}$/.test(extname(file.name)) ? extname(file.name) : '';
+  return `.orchestrator/runs/${runId}/knowledge/${file.id}/v${file.currentVersion}${extension}`;
+}
+
+function knowledgeContext(files: KnowledgeFile[], runId: string): string {
   const pinned = files.filter((file) => file.pinned);
   if (pinned.length === 0) return '';
   return `\n\n## Pinned knowledge files\n\n${pinned
     .map(
       (file) =>
-        `- ${file.name} v${file.currentVersion} · ${file.purpose} · artifact ${file.revisions.at(-1)!.artifact.name}@${file.currentVersion}`,
+        `- ${file.name} v${file.currentVersion} · ${file.purpose} · artifact ${file.revisions.at(-1)!.artifact.name}@${file.currentVersion} · local file ${knowledgePath(runId, file)}`,
     )
     .join('\n')}`;
 }

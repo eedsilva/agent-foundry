@@ -193,6 +193,7 @@ describe('conversation API', () => {
       body: JSON.stringify({
         ...input,
         id: created.id,
+        expectedUpdatedAt: created.updatedAt,
         contentBase64: Buffer.from('replacement image').toString('base64'),
       }),
     });
@@ -206,7 +207,7 @@ describe('conversation API', () => {
     const crossProject = await fetch(`${baseUrl}/projects/${otherProjectId}/knowledge-files`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...input, id: created.id }),
+      body: JSON.stringify({ ...input, id: created.id, expectedUpdatedAt: created.updatedAt }),
     });
     expect(crossProject.status).toBe(404);
     await expect(runtime.knowledgeFiles.list(otherProjectId)).resolves.toEqual([]);
@@ -216,13 +217,22 @@ describe('conversation API', () => {
       {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ pinned: false }),
+        body: JSON.stringify({ pinned: false, expectedUpdatedAt: replaced.updatedAt }),
       },
     );
     expect(patchedResponse.status).toBe(200);
-    expect(await patchedResponse.json()).toMatchObject({
-      knowledgeFile: { id: created.id, pinned: false, currentVersion: 2 },
-    });
+    const patched = ((await patchedResponse.json()) as { knowledgeFile: KnowledgeFile })
+      .knowledgeFile;
+    expect(patched).toMatchObject({ id: created.id, pinned: false, currentVersion: 2 });
+    const stalePatch = await fetch(
+      `${baseUrl}/projects/${projectId}/knowledge-files/${created.id}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pinned: true, expectedUpdatedAt: replaced.updatedAt }),
+      },
+    );
+    expect(stalePatch.status).toBe(409);
 
     const listed = await fetch(`${baseUrl}/projects/${projectId}/knowledge-files`);
     expect(listed.status).toBe(200);
@@ -238,6 +248,8 @@ describe('conversation API', () => {
 
     const removed = await fetch(`${baseUrl}/projects/${projectId}/knowledge-files/${created.id}`, {
       method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedUpdatedAt: patched.updatedAt }),
     });
     expect(removed.status).toBe(200);
     expect(await removed.json()).toMatchObject({ knowledgeFile: { id: created.id } });

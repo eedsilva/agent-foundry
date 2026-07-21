@@ -86,7 +86,17 @@ export interface KnowledgeFileRepository {
   list(projectId: string): Promise<KnowledgeFile[]>;
   get(projectId: string, knowledgeFileId: string): Promise<KnowledgeFile | null>;
   save(file: KnowledgeFile): Promise<KnowledgeFile>;
-  remove(projectId: string, knowledgeFileId: string): Promise<void>;
+  update(
+    projectId: string,
+    knowledgeFileId: string,
+    expectedUpdatedAt: string,
+    mutation: (current: KnowledgeFile) => KnowledgeFile | Promise<KnowledgeFile>,
+  ): Promise<KnowledgeFile>;
+  remove(
+    projectId: string,
+    knowledgeFileId: string,
+    expectedUpdatedAt: string,
+  ): Promise<KnowledgeFile>;
 }
 
 export interface ConversationSnapshot {
@@ -429,6 +439,7 @@ export interface WorkspaceManager {
     attemptId: string;
     requestMarkdown: string;
     outputSchema: Record<string, unknown>;
+    inputFiles?: Array<{ path: string; content: Uint8Array }>;
   }): Promise<{ requestPath: string; schemaPath: string }>;
   ensureGit(projectId: string): Promise<void>;
   isClean(projectId: string): Promise<boolean>;

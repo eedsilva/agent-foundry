@@ -5,6 +5,7 @@ import {
   ProjectEventSchema,
   ExecutorHealthSchema,
 } from './project.js';
+import { KnowledgeFileSchema } from './knowledge-file.js';
 import {
   ModelDefinitionSchema,
   ModelOverrideRecordSchema,
@@ -165,6 +166,7 @@ export const ProjectDetailResponseSchema = z.object({
   artifacts: z.array(StoredArtifactSchema),
   events: z.array(ProjectEventSchema),
   workspacePath: z.string().min(1),
+  knowledgeFiles: z.array(KnowledgeFileSchema),
 });
 export type ProjectDetailResponse = z.infer<typeof ProjectDetailResponseSchema>;
 

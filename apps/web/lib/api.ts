@@ -36,7 +36,7 @@ import type {
   VisualEdit,
 } from '@agent-foundry/contracts';
 
-export type ProjectDetail = ProjectDetailResponse & { knowledgeFiles: KnowledgeFile[] };
+export type ProjectDetail = ProjectDetailResponse;
 
 export type KnowledgeFileUpload = {
   name: string;
@@ -99,11 +99,12 @@ export async function uploadKnowledgeFile(
 export async function replaceKnowledgeFile(
   projectId: string,
   id: string,
+  expectedUpdatedAt: string,
   input: KnowledgeFileUpload,
 ): Promise<KnowledgeFile> {
   const response = await api<{ knowledgeFile: KnowledgeFile }>(
     `/projects/${encodeURIComponent(projectId)}/knowledge-files`,
-    { method: 'PUT', body: JSON.stringify({ id, ...input }) },
+    { method: 'PUT', body: JSON.stringify({ id, expectedUpdatedAt, ...input }) },
   );
   return response.knowledgeFile;
 }
@@ -112,18 +113,23 @@ export async function setKnowledgeFilePinned(
   projectId: string,
   id: string,
   pinned: boolean,
+  expectedUpdatedAt: string,
 ): Promise<KnowledgeFile> {
   const response = await api<{ knowledgeFile: KnowledgeFile }>(
     `/projects/${encodeURIComponent(projectId)}/knowledge-files/${encodeURIComponent(id)}`,
-    { method: 'PATCH', body: JSON.stringify({ pinned }) },
+    { method: 'PATCH', body: JSON.stringify({ pinned, expectedUpdatedAt }) },
   );
   return response.knowledgeFile;
 }
 
-export async function removeKnowledgeFile(projectId: string, id: string): Promise<KnowledgeFile> {
+export async function removeKnowledgeFile(
+  projectId: string,
+  id: string,
+  expectedUpdatedAt: string,
+): Promise<KnowledgeFile> {
   const response = await api<{ knowledgeFile: KnowledgeFile }>(
     `/projects/${encodeURIComponent(projectId)}/knowledge-files/${encodeURIComponent(id)}`,
-    { method: 'DELETE' },
+    { method: 'DELETE', body: JSON.stringify({ expectedUpdatedAt }) },
   );
   return response.knowledgeFile;
 }

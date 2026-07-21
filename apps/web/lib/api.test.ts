@@ -89,22 +89,30 @@ describe('knowledge file API client', () => {
       contentBase64: 'djI=',
     };
 
-    await replaceKnowledgeFile('project-1', 'knowledge-1', replacement);
-    await setKnowledgeFilePinned('project-1', 'knowledge-1', false);
-    await removeKnowledgeFile('project-1', 'knowledge-1');
+    await replaceKnowledgeFile('project-1', 'knowledge-1', knowledgeFile.updatedAt, replacement);
+    await setKnowledgeFilePinned('project-1', 'knowledge-1', false, knowledgeFile.updatedAt);
+    await removeKnowledgeFile('project-1', 'knowledge-1', knowledgeFile.updatedAt);
 
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method, init?.body])).toEqual([
       [
         'http://localhost:4000/projects/project-1/knowledge-files',
         'PUT',
-        JSON.stringify({ id: 'knowledge-1', ...replacement }),
+        JSON.stringify({
+          id: 'knowledge-1',
+          expectedUpdatedAt: knowledgeFile.updatedAt,
+          ...replacement,
+        }),
       ],
       [
         'http://localhost:4000/projects/project-1/knowledge-files/knowledge-1',
         'PATCH',
-        JSON.stringify({ pinned: false }),
+        JSON.stringify({ pinned: false, expectedUpdatedAt: knowledgeFile.updatedAt }),
       ],
-      ['http://localhost:4000/projects/project-1/knowledge-files/knowledge-1', 'DELETE', undefined],
+      [
+        'http://localhost:4000/projects/project-1/knowledge-files/knowledge-1',
+        'DELETE',
+        JSON.stringify({ expectedUpdatedAt: knowledgeFile.updatedAt }),
+      ],
     ]);
     fetchMock.mockRestore();
   });

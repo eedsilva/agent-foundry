@@ -217,13 +217,45 @@ async function runConversationJob(): Promise<void> {
   expect(await runtime.worker.runOnce()).toBe(true);
 }
 
-function installGoldenFixtureExecutor(): void {
+function installGoldenFixtureExecutor(): Array<'plan' | 'build'> {
   const mock = new MockAgentExecutor();
   let buildSequence = 0;
+  const knowledgeReads: Array<'plan' | 'build'> = [];
   const executor: AgentExecutor = {
     provider: mock.provider,
     health: () => mock.health(),
     execute: async (request, signal) => {
+      const kind = request.stepId.includes('conversation-plan')
+        ? 'plan'
+        : request.stepId.includes('conversation-build')
+          ? 'build'
+          : null;
+      if (kind) {
+        const knowledgeRoot = join(
+          request.cwd,
+          '.orchestrator',
+          'runs',
+          request.runId,
+          'knowledge',
+        );
+        const [knowledgePath] = (await readdir(knowledgeRoot, { recursive: true }))
+          .filter((path) => path.endsWith('.png'))
+          .map((path) => join(knowledgeRoot, path));
+        if (!knowledgePath) throw new Error(`${kind} knowledge input was not materialized`);
+        const [actual, expected] = await Promise.all([
+          readFile(knowledgePath),
+          readFile(REFERENCE_IMAGE),
+        ]);
+        if (!actual.equals(expected)) throw new Error(`${kind} knowledge bytes do not match`);
+        if (
+          !request.inputArtifacts?.some(
+            (reference) => reference.name.startsWith('knowledge-') && reference.revision === 2,
+          )
+        ) {
+          throw new Error(`${kind} request is missing the current v2 artifact reference`);
+        }
+        knowledgeReads.push(kind);
+      }
       const result = await mock.execute(request, signal);
       if (request.stepId.includes('conversation-build')) {
         buildSequence += 1;
@@ -239,6 +271,7 @@ function installGoldenFixtureExecutor(): void {
     },
   };
   (runtime.executors as { get: () => AgentExecutor }).get = () => executor;
+  return knowledgeReads;
 }
 
 async function latestOperationRequest(projectId: string, kind: OperationKind): Promise<string> {
@@ -368,7 +401,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await expect(decideModalHeading).not.toBeVisible();
   expect(await runtime.worker.runOnce()).toBe(true);
   await expect.poll(() => getRun(projectId)).toMatchObject({ status: 'completed' });
-  installGoldenFixtureExecutor();
+  const knowledgeReads = installGoldenFixtureExecutor();
 
   await page.getByLabel('Adicionar knowledge file').setInputFiles(REFERENCE_IMAGE);
   let knowledge = page.locator('.knowledgeFileList article').filter({
@@ -419,6 +452,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await expect(latestOperationRequest(projectId, 'plan')).resolves.toContain(
     expectedKnowledgeContext,
   );
+  expect(knowledgeReads).toContain('plan');
 
   await regions.chat.getByLabel('Build (vai alterar código e consumir budget)').check();
   await chatInput.fill('Build the approved implementation');
@@ -438,8 +472,8 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   const buildRequest = await latestOperationRequest(projectId, 'build');
   expect(buildRequest).toContain('- Workflow: conversation-build');
   expect(buildRequest).toContain(expectedKnowledgeContext);
+  expect(knowledgeReads).toEqual(['plan', 'build']);
 
-  await page.reload();
   await expect(page.getByRole('region', { name: 'Preview' })).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Iniciar preview' }).click();
   const iframe = page.locator('.previewFrameWrap iframe');
@@ -480,7 +514,6 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     page.getByRole('button', { name: 'Parar preview' }).click(),
   ]);
 
-  await page.reload();
   const [visualVersion, baselineVersion] = await runtime.projectVersionService.list(projectId, 50);
   if (!visualVersion || !baselineVersion) throw new Error('golden versions were not recorded');
   const versionArticle = (commit: string, kind = 'run') =>
@@ -553,7 +586,6 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   expect(rebuiltGreeting).not.toContain("'#ddd'");
   await expect(readFile(buildSequencePath, 'utf8')).resolves.toBe('2\n');
 
-  await page.reload();
   await expect.poll(() => runtime.projectVersionService.list(projectId, 50)).toHaveLength(5);
   const [rebuiltVersion] = await runtime.projectVersionService.list(projectId, 50);
   await expect(versionArticle(rebuiltVersion!.commit)).toBeVisible({ timeout: 30_000 });

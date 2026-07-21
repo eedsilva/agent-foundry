@@ -80,7 +80,7 @@ export function KnowledgeFiles({
     setBusy(current.id);
     setError('');
     try {
-      const replaced = await replaceKnowledgeFile(projectId, current.id, {
+      const replaced = await replaceKnowledgeFile(projectId, current.id, current.updatedAt, {
         name: file.name,
         mediaType: file.type || 'application/octet-stream',
         purpose: current.purpose,
@@ -99,7 +99,12 @@ export function KnowledgeFiles({
     setBusy(file.id);
     setError('');
     try {
-      const updated = await setKnowledgeFilePinned(projectId, file.id, !file.pinned);
+      const updated = await setKnowledgeFilePinned(
+        projectId,
+        file.id,
+        !file.pinned,
+        file.updatedAt,
+      );
       await finish(knowledgeFiles.map((item) => (item.id === file.id ? updated : item)));
     } catch (cause) {
       setError(message(cause));
@@ -112,7 +117,7 @@ export function KnowledgeFiles({
     setBusy(file.id);
     setError('');
     try {
-      await removeKnowledgeFile(projectId, file.id);
+      await removeKnowledgeFile(projectId, file.id, file.updatedAt);
       await finish(knowledgeFiles.filter((item) => item.id !== file.id));
     } catch (cause) {
       setError(message(cause));

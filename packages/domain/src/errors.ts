@@ -16,6 +16,14 @@ export class IdempotencyConflictError extends Error {
   }
 }
 
+export class KnowledgeFileConflictError extends Error {
+  override readonly name = 'KnowledgeFileConflictError';
+
+  constructor(readonly knowledgeFileId: string) {
+    super(`Knowledge file ${knowledgeFileId} changed since it was read`);
+  }
+}
+
 export class QueueError extends Error {
   override readonly name = 'QueueError';
 }

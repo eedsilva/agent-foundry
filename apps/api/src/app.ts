@@ -37,6 +37,7 @@ import {
   ApprovalConflictError,
   IdempotencyConflictError,
   InvalidStateTransitionError,
+  KnowledgeFileConflictError,
   NotFoundError,
   PreviewAccessDeniedError,
   ResumeBlockedError,
@@ -108,6 +109,9 @@ export async function buildApp(
       return reply.status(400).send({ error: error.name, message: error.message });
     }
     if (error instanceof IdempotencyConflictError) {
+      return reply.status(409).send({ error: error.name, message: error.message });
+    }
+    if (error instanceof KnowledgeFileConflictError) {
       return reply.status(409).send({ error: error.name, message: error.message });
     }
     if (error instanceof PreviewAccessDeniedError) {
@@ -227,21 +231,24 @@ export async function buildApp(
       const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
       const input = UpdateKnowledgeFileRequestSchema.parse(request.body);
       await requireProject(runtime, projectId);
-      const existing = await runtime.knowledgeFiles.get(projectId, input.id);
-      if (!existing) {
-        throw new NotFoundError(`Knowledge file ${input.id} not found in project ${projectId}`);
-      }
-      const revision = await uploadKnowledgeRevision(runtime, projectId, existing.id, input);
-      const knowledgeFile = await runtime.knowledgeFiles.save({
-        ...existing,
-        name: input.name,
-        mediaType: input.mediaType,
-        purpose: input.purpose,
-        pinned: input.pinned,
-        currentVersion: revision.version,
-        revisions: [...existing.revisions, revision],
-        updatedAt: revision.createdAt,
-      });
+      const knowledgeFile = await runtime.knowledgeFiles.update(
+        projectId,
+        input.id,
+        input.expectedUpdatedAt,
+        async (existing) => {
+          const revision = await uploadKnowledgeRevision(runtime, projectId, existing.id, input);
+          return {
+            ...existing,
+            name: input.name,
+            mediaType: input.mediaType,
+            purpose: input.purpose,
+            pinned: input.pinned,
+            currentVersion: revision.version,
+            revisions: [...existing.revisions, revision],
+            updatedAt: revision.createdAt,
+          };
+        },
+      );
       return reply.send({ knowledgeFile });
     },
   );
@@ -250,19 +257,17 @@ export async function buildApp(
     const { projectId, knowledgeFileId } = z
       .object({ projectId: PathSegmentSchema, knowledgeFileId: PathSegmentSchema })
       .parse(request.params);
-    const { pinned } = z.object({ pinned: z.boolean() }).strict().parse(request.body);
+    const { pinned, expectedUpdatedAt } = z
+      .object({ pinned: z.boolean(), expectedUpdatedAt: z.string().datetime() })
+      .strict()
+      .parse(request.body);
     await requireProject(runtime, projectId);
-    const existing = await runtime.knowledgeFiles.get(projectId, knowledgeFileId);
-    if (!existing) {
-      throw new NotFoundError(
-        `Knowledge file ${knowledgeFileId} not found in project ${projectId}`,
-      );
-    }
-    const knowledgeFile = await runtime.knowledgeFiles.save({
-      ...existing,
-      pinned,
-      updatedAt: new Date().toISOString(),
-    });
+    const knowledgeFile = await runtime.knowledgeFiles.update(
+      projectId,
+      knowledgeFileId,
+      expectedUpdatedAt,
+      (existing) => ({ ...existing, pinned, updatedAt: new Date().toISOString() }),
+    );
     return reply.send({ knowledgeFile });
   });
 
@@ -270,14 +275,16 @@ export async function buildApp(
     const { projectId, knowledgeFileId } = z
       .object({ projectId: PathSegmentSchema, knowledgeFileId: PathSegmentSchema })
       .parse(request.params);
+    const { expectedUpdatedAt } = z
+      .object({ expectedUpdatedAt: z.string().datetime() })
+      .strict()
+      .parse(request.body);
     await requireProject(runtime, projectId);
-    const knowledgeFile = await runtime.knowledgeFiles.get(projectId, knowledgeFileId);
-    if (!knowledgeFile) {
-      throw new NotFoundError(
-        `Knowledge file ${knowledgeFileId} not found in project ${projectId}`,
-      );
-    }
-    await runtime.knowledgeFiles.remove(projectId, knowledgeFileId);
+    const knowledgeFile = await runtime.knowledgeFiles.remove(
+      projectId,
+      knowledgeFileId,
+      expectedUpdatedAt,
+    );
     return reply.send({ knowledgeFile });
   });
 

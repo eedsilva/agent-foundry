@@ -69,7 +69,7 @@ describe('sweepUnreferencedBlobs', () => {
       createdAt: metadata.createdAt,
       updatedAt: metadata.createdAt,
     });
-    await runtime.knowledgeFiles.remove(project.id, 'file-1');
+    await runtime.knowledgeFiles.remove(project.id, 'file-1', metadata.createdAt);
 
     const deleted = await sweepUnreferencedBlobs(
       runtime,

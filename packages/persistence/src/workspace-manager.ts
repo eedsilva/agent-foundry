@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import type { WorkspaceManager } from '@agent-foundry/domain';
 import { atomicWriteJson, atomicWriteText, ensureDir, exists, safeSegment } from './fs-utils.js';
@@ -73,6 +73,7 @@ export class FileWorkspaceManager implements WorkspaceManager {
     attemptId: string;
     requestMarkdown: string;
     outputSchema: Record<string, unknown>;
+    inputFiles?: Array<{ path: string; content: Uint8Array }>;
   }): Promise<{ requestPath: string; schemaPath: string }> {
     const workspace = this.workspacePath(input.projectId);
     const runDir = join(
@@ -91,6 +92,12 @@ export class FileWorkspaceManager implements WorkspaceManager {
     await Promise.all([
       atomicWriteText(requestPath, input.requestMarkdown),
       atomicWriteJson(schemaPath, input.outputSchema),
+      ...(input.inputFiles ?? []).map(async (file) => {
+        const segments = file.path.split('/').map(safeSegment);
+        const destination = join(workspace, ...segments);
+        await ensureDir(dirname(destination));
+        await writeFile(destination, file.content);
+      }),
     ]);
     return { requestPath, schemaPath };
   }

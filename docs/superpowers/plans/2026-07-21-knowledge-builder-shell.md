@@ -26,6 +26,7 @@
 ### Task 1: Persist knowledge-file metadata and upload revisions through existing artifacts
 
 **Files:**
+
 - Create: `packages/contracts/src/knowledge-file.ts`
 - Create: `packages/persistence/src/knowledge-file-repository.ts`
 - Create: `packages/persistence/src/knowledge-file-repository.test.ts`
@@ -40,6 +41,7 @@
 - Modify: `apps/api/src/blob-gc.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ArtifactStore.putBlob()`, `ArtifactStore.getRevision()`, `ArtifactReference`, `FileArtifactStore`, `atomicWriteJson`, `readJsonOrNull`, and the existing project directory layout.
 - Produces: `KnowledgeFile`, `KnowledgeFileRevision`, `CreateKnowledgeFileRequest`, `UpdateKnowledgeFileRequest`, and `KnowledgeFileRepository` (`list`, `get`, `save`, `remove`) plus project-scoped API routes.
 
@@ -74,19 +76,21 @@ Expected: FAIL because `knowledge-file-repository` and the knowledge-file contra
 - [ ] **Step 3: Add the additive contract and file-backed repository**
 
 ```ts
-export const KnowledgeFileSchema = z.object({
-  schemaVersion: z.literal('1'),
-  id: PathSegmentSchema,
-  projectId: PathSegmentSchema,
-  name: z.string().trim().min(1).max(255),
-  mediaType: BareMediaTypeSchema,
-  purpose: z.enum(['reference', 'design-reference', 'bug-evidence']),
-  pinned: z.boolean(),
-  currentVersion: z.number().int().positive(),
-  revisions: z.array(KnowledgeFileRevisionSchema).min(1),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-}).strict();
+export const KnowledgeFileSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    id: PathSegmentSchema,
+    projectId: PathSegmentSchema,
+    name: z.string().trim().min(1).max(255),
+    mediaType: BareMediaTypeSchema,
+    purpose: z.enum(['reference', 'design-reference', 'bug-evidence']),
+    pinned: z.boolean(),
+    currentVersion: z.number().int().positive(),
+    revisions: z.array(KnowledgeFileRevisionSchema).min(1),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
 
 export interface KnowledgeFileRepository {
   list(projectId: string): Promise<KnowledgeFile[]>;
@@ -108,7 +112,13 @@ if (bytes.length > MAX_KNOWLEDGE_FILE_BYTES || !isCanonicalBase64(request.conten
   throw new ValidationError('Knowledge file content is invalid or too large.');
 }
 const metadata = await runtime.artifacts.putBlob(
-  { projectId, name: artifactName, contentType: request.mediaType, createdBy: 'knowledge-upload', maxBytes: MAX_KNOWLEDGE_FILE_BYTES },
+  {
+    projectId,
+    name: artifactName,
+    contentType: request.mediaType,
+    createdBy: 'knowledge-upload',
+    maxBytes: MAX_KNOWLEDGE_FILE_BYTES,
+  },
   Readable.from(bytes),
 );
 ```
@@ -133,6 +143,7 @@ git commit -m "feat: persist versioned project knowledge files"
 ### Task 2: Feed active knowledge into Plan/Build and expose a safe local-editor link
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/conversation-operation-runner.ts`
 - Modify: `packages/orchestrator/src/conversation-operation-runner.test.ts`
 - Modify: `packages/orchestrator/src/project-service.ts`
@@ -142,6 +153,7 @@ git commit -m "feat: persist versioned project knowledge files"
 - Modify: `apps/api/src/conversation.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 1's `KnowledgeFileRepository`, `ArtifactStore`, `WorkspaceManager.workspacePath`, and the current operation compilation path.
 - Produces: deterministic `## Pinned knowledge files` context for Plan/Build, project-detail `workspacePath`, and no command-execution API.
 
@@ -178,7 +190,10 @@ function knowledgeContext(files: KnowledgeFile[]): string {
   const pinned = files.filter((file) => file.pinned);
   if (pinned.length === 0) return '';
   return `\n\n## Pinned knowledge files\n\n${pinned
-    .map((file) => `- ${file.name} v${file.currentVersion} · ${file.purpose} · artifact ${file.revisions.at(-1)!.artifact.name}@${file.currentVersion}`)
+    .map(
+      (file) =>
+        `- ${file.name} v${file.currentVersion} · ${file.purpose} · artifact ${file.revisions.at(-1)!.artifact.name}@${file.currentVersion}`,
+    )
     .join('\n')}`;
 }
 ```
@@ -201,6 +216,7 @@ git commit -m "feat: include pinned knowledge in builder context"
 ### Task 3: Compose the responsive Chat / Preview / Changes builder shell
 
 **Files:**
+
 - Create: `apps/web/app/project/[id]/knowledge-files.tsx`
 - Create: `apps/web/app/project/[id]/knowledge-files.test.tsx`
 - Create: `apps/web/app/project/[id]/changes-panel.tsx`
@@ -212,6 +228,7 @@ git commit -m "feat: include pinned knowledge in builder context"
 - Modify: `apps/web/app/globals.css`
 
 **Interfaces:**
+
 - Consumes: Task 1 knowledge APIs, Task 2 `workspacePath`, current Conversation UI, `PreviewPanel`, artifact blob URL helper, project versions/diff APIs, checks/approval UI.
 - Produces: accessible upload/pin/replace/remove controls, image preview, three labeled panels, a Changes surface showing diff/checks/version actions/approval, and mobile collapse without hidden features.
 
@@ -228,8 +245,11 @@ it('uploads a design reference, displays its current image revision, and removes
 
 it('keeps Chat, Preview, and Changes reachable in mobile document order', () => {
   render(<ProjectBuilderShell {...fixture} />);
-  expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-label')))
-    .toEqual(['Chat', 'Preview', 'Changes']);
+  expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-label'))).toEqual([
+    'Chat',
+    'Preview',
+    'Changes',
+  ]);
 });
 ```
 
@@ -242,9 +262,16 @@ Expected: FAIL because knowledge client helpers and the shell components do not 
 - [ ] **Step 3: Add narrow client helpers and present existing state in three panels**
 
 ```ts
-export async function uploadKnowledgeFile(projectId: string, input: {
-  name: string; mediaType: string; purpose: KnowledgeFilePurpose; pinned: boolean; contentBase64: string;
-}): Promise<KnowledgeFile> {
+export async function uploadKnowledgeFile(
+  projectId: string,
+  input: {
+    name: string;
+    mediaType: string;
+    purpose: KnowledgeFilePurpose;
+    pinned: boolean;
+    contentBase64: string;
+  },
+): Promise<KnowledgeFile> {
   const response = await api<{ knowledgeFile: KnowledgeFile }>(
     `/projects/${encodeURIComponent(projectId)}/knowledge-files`,
     { method: 'POST', body: JSON.stringify(input) },
@@ -258,8 +285,17 @@ Read file bytes with `FileReader`, reject only files over the server's documente
 Move existing Conversation markup into a `role="region" aria-label="Chat"` panel, keep `PreviewPanel` in `Preview`, and add `Changes` around the existing versions/diff, verification evidence, and approval controls. It must expose version list/protect/revert/branch actions already supported by `api.ts`, current diff, check results, and current approval state; it must not duplicate backend behavior. Render `workspacePath` in Changes with `Open in editor` as an ordinary link. Keep all existing project controls, selectors, and test-visible labels.
 
 ```css
-.builderGrid { display: grid; grid-template-columns: minmax(280px, .9fr) minmax(360px, 1.25fr) minmax(280px, .9fr); gap: 16px; align-items: start; }
-@media (max-width: 850px) { .builderGrid { grid-template-columns: 1fr; } }
+.builderGrid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.25fr) minmax(280px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 850px) {
+  .builderGrid {
+    grid-template-columns: 1fr;
+  }
+}
 ```
 
 - [ ] **Step 4: Run focused web tests to verify GREEN**
@@ -278,19 +314,23 @@ git commit -m "feat: add knowledge-aware three-panel builder shell"
 ### Task 4: Prove the knowledge golden flow and responsive UI end to end
 
 **Files:**
+
 - Modify: `apps/api/e2e/golden-flow.spec.ts`
 - Modify: `apps/api/e2e/visual-edit.spec.ts` (or the existing E2E that owns preview visual edits)
 - Modify: `docs/VALIDATION.md`
 - Modify: `docs/OPERATIONS.md`
 
 **Interfaces:**
+
 - Consumes: Tasks 1–3, existing golden-flow fixture/runtime/web startup, preview selection/edit flow, and project version APIs.
 - Produces: E2E proof of attachment → plan/build context → visual edit → revert → rebuild, responsive shell evidence, and current operator/security documentation.
 
 - [ ] **Step 1: Write the failing E2E assertions before implementation changes**
 
 ```ts
-test('golden flow: attach reference, plan, build, visual edit, revert, rebuild', async ({ page }) => {
+test('golden flow: attach reference, plan, build, visual edit, revert, rebuild', async ({
+  page,
+}) => {
   const projectId = await createProject();
   await page.goto(`${webBaseUrl}/project/${projectId}`);
   await page.getByLabel('Adicionar knowledge file').setInputFiles(referenceImage);

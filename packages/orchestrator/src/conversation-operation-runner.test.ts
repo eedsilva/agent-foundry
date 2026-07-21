@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { Readable } from 'node:stream';
 import type {
   ArtifactStore,
   Clock,
@@ -181,7 +182,9 @@ const emptyKnowledgeFiles: KnowledgeFileRepository = {
   list: () => Promise.resolve([]),
   get: () => Promise.resolve(null),
   save: (file) => Promise.resolve(file),
-  remove: () => Promise.resolve(),
+  update: (_projectId, _knowledgeFileId, _expectedUpdatedAt, mutation) =>
+    Promise.resolve(mutation(knowledge('empty'))),
+  remove: () => Promise.resolve(knowledge('empty')),
 };
 
 function setup(
@@ -218,11 +221,19 @@ function setup(
       else this.files[index] = file;
       return Promise.resolve(file);
     },
+    async update(projectId, knowledgeFileId, expectedUpdatedAt, mutation) {
+      const current = await this.get(projectId, knowledgeFileId);
+      if (!current || current.updatedAt !== expectedUpdatedAt) throw new Error('conflict');
+      return this.save(await mutation(current));
+    },
     remove(projectId, knowledgeFileId) {
+      const removed = this.files.find(
+        (file) => file.projectId === projectId && file.id === knowledgeFileId,
+      )!;
       this.files = this.files.filter(
         (file) => file.projectId !== projectId || file.id !== knowledgeFileId,
       );
-      return Promise.resolve();
+      return Promise.resolve(removed);
     },
   };
   const projectVersions = new MemoryProjectVersions();
@@ -1289,17 +1300,51 @@ describe('ConversationOperationRunner context compilation', () => {
   it.each(['plan', 'build'] as const)(
     'adds only active pinned knowledge revisions to a %s prompt',
     async (kind) => {
-      const { runs, workspaces, conversations, knowledgeFiles, runner } = setup();
+      const { runs, artifacts, workspaces, conversations, knowledgeFiles, runner } = setup();
+      const first = await artifacts.putBlob(
+        {
+          projectId: 'project-1',
+          name: 'knowledge-design',
+          contentType: 'image/png',
+          createdBy: 'test',
+          maxBytes: 1024,
+        },
+        Readable.from(Buffer.from('v1')),
+      );
+      const second = await artifacts.putBlob(
+        {
+          projectId: 'project-1',
+          name: 'knowledge-design',
+          contentType: 'image/png',
+          createdBy: 'test',
+          maxBytes: 1024,
+        },
+        Readable.from(Buffer.from('v2')),
+      );
       knowledgeFiles.files = [
         knowledge('design', {
           pinned: true,
           purpose: 'design-reference',
           currentVersion: 2,
+          revisions: [first, second].map((metadata) => ({
+            version: metadata.revision,
+            artifact: {
+              name: metadata.name,
+              revision: metadata.revision,
+              sha256: metadata.sha256,
+              sizeBytes: metadata.sizeBytes,
+            },
+            createdAt: metadata.createdAt,
+          })),
         }),
         knowledge('notes', { pinned: false }),
         knowledge('removed'),
       ];
-      await knowledgeFiles.remove('project-1', 'removed');
+      await knowledgeFiles.remove(
+        'project-1',
+        'removed',
+        knowledgeFiles.files.find((file) => file.id === 'removed')!.updatedAt,
+      );
       const { runId, operationId } = await seed(conversations, runs, kind);
 
       await runner.run('project-1', runId, operationId);
@@ -1310,6 +1355,73 @@ describe('ConversationOperationRunner context compilation', () => {
       );
       expect(workspaces.lastRequestMarkdown).not.toContain('notes.png v1');
       expect(workspaces.lastRequestMarkdown).not.toContain('removed.png v1');
+    },
+  );
+
+  it.each(['plan', 'build'] as const)(
+    'materializes verified pinned knowledge bytes and records their artifact input for %s',
+    async (kind) => {
+      const {
+        runs,
+        stepRuns,
+        stepAttempts,
+        artifacts,
+        workspaces,
+        conversations,
+        knowledgeFiles,
+        runner,
+      } = setup();
+      const bytes = Buffer.from('actual-png-bytes');
+      const metadata = await artifacts.putBlob(
+        {
+          projectId: 'project-1',
+          name: 'knowledge-design',
+          contentType: 'image/png',
+          createdBy: 'test',
+          maxBytes: 1024,
+        },
+        Readable.from(bytes),
+      );
+      knowledgeFiles.files = [
+        knowledge('design', {
+          purpose: 'design-reference',
+          revisions: [
+            {
+              version: 1,
+              artifact: {
+                name: metadata.name,
+                revision: metadata.revision,
+                sha256: metadata.sha256,
+                sizeBytes: metadata.sizeBytes,
+              },
+              createdAt: metadata.createdAt,
+            },
+          ],
+        }),
+      ];
+      const { runId, operationId } = await seed(conversations, runs, kind);
+
+      await runner.run('project-1', runId, operationId);
+
+      const [stepRun] = await stepRuns.list(runId);
+      const [attempt] = await stepAttempts.list(runId, stepRun!.id);
+      expect(attempt?.inputArtifacts).toEqual([
+        {
+          name: metadata.name,
+          revision: metadata.revision,
+          sha256: metadata.sha256,
+          sizeBytes: metadata.sizeBytes,
+        },
+      ]);
+      expect(workspaces.lastRequestMarkdown).toContain(
+        `.orchestrator/runs/${runId}/knowledge/design/v1.png`,
+      );
+      expect(workspaces.lastRunInputFiles).toEqual([
+        {
+          path: `.orchestrator/runs/${runId}/knowledge/design/v1.png`,
+          content: bytes,
+        },
+      ]);
     },
   );
 

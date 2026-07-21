@@ -84,7 +84,9 @@ const knowledgeFiles: KnowledgeFileRepository = {
   list: () => Promise.resolve([]),
   get: () => Promise.resolve(null),
   save: (file) => Promise.resolve(file),
-  remove: () => Promise.resolve(),
+  update: (_projectId, _knowledgeFileId, _expectedUpdatedAt, mutation) =>
+    Promise.reject(new Error(`unexpected mutation ${String(mutation)}`)),
+  remove: () => Promise.reject(new Error('unexpected removal')),
 };
 const router: ModelRouter = {
   route: (profile) =>

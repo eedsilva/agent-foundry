@@ -55,4 +55,17 @@ describe('latestBrowserVerificationReport', () => {
     };
     expect(latestBrowserVerificationReport([malformed], 'run-1')).toBeNull();
   });
+
+  it('selects the first relevant conversational run regardless of report artifact name', () => {
+    const original = reportArtifact('run-original', 4, { summary: 'original' });
+    const visual = reportArtifact('run-visual', 1, { summary: 'visual edit' });
+    visual.metadata.name = 'visual-edit-browser-report-operation-1';
+
+    expect(
+      latestBrowserVerificationReport(
+        [original, visual],
+        ['run-build-without-report', 'run-visual', 'run-original'],
+      )?.summary,
+    ).toBe('visual edit');
+  });
 });

@@ -423,6 +423,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         setActiveOperationRun(next);
         if (!isWorkflowRunStatusTerminal(next.run.status)) {
           timer = setTimeout(poll, 1_500);
+        } else {
+          const refreshed = await getProject(id);
+          if (!active) return;
+          setDetail(refreshed);
+          setEvents((current) => mergeEvents(current, refreshed.events));
         }
       } catch {
         // best-effort; the live-activity panel just won't update this tick
@@ -433,7 +438,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       active = false;
       if (timer) clearTimeout(timer);
     };
-  }, [latestOperation?.runId]);
+  }, [id, latestOperation?.runId]);
 
   const latestOperationRunTerminal =
     !latestOperation?.runId ||
@@ -834,9 +839,17 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   }
 
   const runIsTerminal = run?.status === 'completed' || run?.status === 'failed';
-  const changesReport = run
-    ? latestBrowserVerificationReport(detail?.artifacts ?? [], run.id)
-    : null;
+  const changesReportRunIds = [
+    ...(conversation?.operations
+      .slice()
+      .reverse()
+      .flatMap((operation) => (operation.runId ? [operation.runId] : [])) ?? []),
+    ...(run ? [run.id] : []),
+  ];
+  const changesReport = latestBrowserVerificationReport(
+    detail?.artifacts ?? [],
+    changesReportRunIds,
+  );
 
   if (!detail) {
     return <div className="shell loadingState">{error || 'Carregando execução…'}</div>;
@@ -1088,6 +1101,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           <ChangesPanel
             projectId={id}
             workspacePath={detail.workspacePath}
+            refreshKey={
+              activeOperationRun
+                ? `${activeOperationRun.run.id}:${activeOperationRun.run.status}`
+                : undefined
+            }
             checks={
               changesReport ? (
                 <VerificationReportView report={changesReport} projectId={detail.project.id} />
