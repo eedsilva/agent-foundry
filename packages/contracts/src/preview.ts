@@ -693,16 +693,30 @@ export const PreviewSelectionResultSchema = z
     status: z.enum(['resolved', 'ambiguous', 'unsupported']),
     domPath: z.string().min(1),
     file: z.string().min(1).optional(),
+    line: z.number().int().positive().optional(),
+    column: z.number().int().positive().optional(),
+    componentName: z.string().min(1).optional(),
     candidates: z.array(z.string().min(1)).optional(),
     screenshot: ArtifactReferenceSchema.optional(),
   })
   .strict()
   .superRefine((result, context) => {
-    if (result.status === 'resolved' && !result.file) {
-      context.addIssue({ code: 'custom', path: ['file'], message: 'resolved requires file' });
+    if (result.status === 'resolved' && (!result.file || !result.line || !result.column)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['file'],
+        message: 'resolved requires file, line, and column',
+      });
     }
-    if (result.status !== 'resolved' && result.file) {
-      context.addIssue({ code: 'custom', path: ['file'], message: 'Only resolved may set file' });
+    if (
+      result.status !== 'resolved' &&
+      (result.file || result.line || result.column || result.componentName)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['file'],
+        message: 'Only resolved may set source metadata',
+      });
     }
     if (result.status === 'ambiguous' && (!result.candidates || result.candidates.length < 2)) {
       context.addIssue({

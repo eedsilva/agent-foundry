@@ -1,4 +1,5 @@
 import { findReactFiber, walkFiberCandidates } from './preview-inspector-fiber-walk.js';
+import { VisualEditPropertySchema } from '@agent-foundry/contracts';
 
 /**
  * Builds the inline inspector script injected into preview HTML responses
@@ -15,10 +16,39 @@ export function buildInspectorScript(parentOrigin: string): string {
 ${findReactFiber.toString()}
 ${walkFiberCandidates.toString()}
 var PARENT_ORIGIN = ${JSON.stringify(parentOrigin)};
+var VISUAL_STYLE_PROPERTIES = ${JSON.stringify(VisualEditPropertySchema.options.filter((property) => property !== 'text'))};
 var selecting = false;
+var selectedElement = null;
+var originals = {};
+function clearVisualEdit() {
+  if (!selectedElement) return;
+  Object.keys(originals).forEach(function (property) {
+    if (property === 'text') selectedElement.textContent = originals[property];
+    else selectedElement.style[property] = originals[property];
+  });
+  originals = {};
+}
 window.addEventListener('message', function (event) {
   if (event.origin !== PARENT_ORIGIN) return;
-  if (event.data && event.data.type === 'af:selection:start') selecting = true;
+  if (!event.data) return;
+  if (event.data.type === 'af:selection:start') selecting = true;
+  if (event.data.type === 'af:visual-edit:clear') clearVisualEdit();
+  if (event.data.type === 'af:visual-edit:preview' && selectedElement) {
+    var edit = event.data.payload;
+    if (!edit || typeof edit.property !== 'string' || typeof edit.newValue !== 'string') return;
+    if (edit.property === 'text') {
+      if (!Object.prototype.hasOwnProperty.call(originals, 'text')) {
+        originals.text = selectedElement.textContent;
+      }
+      selectedElement.textContent = edit.newValue;
+      return;
+    }
+    if (VISUAL_STYLE_PROPERTIES.indexOf(edit.property) === -1) return;
+    if (!Object.prototype.hasOwnProperty.call(originals, edit.property)) {
+      originals[edit.property] = selectedElement.style[edit.property];
+    }
+    selectedElement.style[edit.property] = edit.newValue;
+  }
 });
 function buildDomPath(node) {
   var parts = [];
@@ -42,6 +72,8 @@ document.addEventListener(
     event.stopPropagation();
     selecting = false;
     var target = event.target;
+    clearVisualEdit();
+    selectedElement = target;
     var fiber = findReactFiber(target);
     var candidates = walkFiberCandidates(fiber);
     var rect = target.getBoundingClientRect();

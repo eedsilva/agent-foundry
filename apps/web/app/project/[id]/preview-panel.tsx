@@ -1,14 +1,21 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type {
-  ArtifactReference,
-  BrowserVerificationReport,
-  PreviewLogEntry,
-  PreviewSelectionResult,
-  PreviewSession,
-  StoredArtifact,
-  WorkflowRun,
+import {
+  VisualEditBreakpointSchema,
+  VisualEditPropertySchema,
+  VisualEditSchema,
+  type VisualEditBreakpoint,
+  type VisualEditClearMessage,
+  type VisualEditProperty,
+  type VisualEditPreviewMessage,
+  type ArtifactReference,
+  type BrowserVerificationReport,
+  type PreviewLogEntry,
+  type PreviewSelectionResult,
+  type PreviewSession,
+  type StoredArtifact,
+  type WorkflowRun,
 } from '@agent-foundry/contracts';
 import {
   getActivePreviewSession,
@@ -134,10 +141,12 @@ export function PreviewPanel({
   projectId,
   run,
   artifacts,
+  onConversationalFallback,
 }: {
   projectId: string;
   run: WorkflowRun | null;
   artifacts: StoredArtifact[];
+  onConversationalFallback: (prompt: string) => void;
 }) {
   const [session, setSession] = useState<PreviewSession | null>(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
@@ -149,6 +158,10 @@ export function PreviewPanel({
   const [selecting, setSelecting] = useState(false);
   const [selectionResult, setSelectionResult] = useState<PreviewSelectionResult | null>(null);
   const [selectionError, setSelectionError] = useState('');
+  const [property, setProperty] = useState<VisualEditProperty>('text');
+  const [oldValue, setOldValue] = useState('');
+  const [newValue, setNewValue] = useState('');
+  const [breakpoint, setBreakpoint] = useState<VisualEditBreakpoint | ''>('');
 
   useEffect(() => {
     let active = true;
@@ -202,7 +215,12 @@ export function PreviewPanel({
       setSelecting(false);
       const payload = event.data.payload;
       resolvePreviewSelection(projectId, sessionId, { previewUrl, ...payload })
-        .then(setSelectionResult)
+        .then((result) => {
+          setSelectionResult(result);
+          setOldValue('');
+          setNewValue('');
+          setBreakpoint('');
+        })
         .catch((cause) =>
           setSelectionError(cause instanceof Error ? cause.message : String(cause)),
         );
@@ -213,12 +231,52 @@ export function PreviewPanel({
 
   function toggleSelecting() {
     if (!session?.url || !iframeRef.current?.contentWindow) return;
+    clearVisualEdit();
     setSelectionResult(null);
     setSelecting(true);
     iframeRef.current.contentWindow.postMessage(
       { type: 'af:selection:start' },
       new URL(session.url).origin,
     );
+  }
+
+  function postInspectorMessage(message: VisualEditPreviewMessage | VisualEditClearMessage) {
+    if (!session?.url || !iframeRef.current?.contentWindow) return;
+    iframeRef.current.contentWindow.postMessage(message, new URL(session.url).origin);
+  }
+
+  function routeToConversation(reason: string) {
+    onConversationalFallback(reason);
+  }
+
+  function previewVisualEdit() {
+    if (selectionResult?.status !== 'resolved') return;
+    const parsed = VisualEditSchema.safeParse({
+      target: {
+        domPath: selectionResult.domPath,
+        file: selectionResult.file,
+        line: selectionResult.line,
+        column: selectionResult.column,
+        componentName: selectionResult.componentName,
+      },
+      property,
+      oldValue,
+      newValue,
+      ...(breakpoint ? { breakpoint } : {}),
+    });
+    if (!parsed.success) {
+      setSelectionError('Edição direta inválida; encaminhada para a conversa.');
+      routeToConversation(
+        `Quero uma edição visual de ${property} em ${selectionResult.file} (${selectionResult.domPath}) de ${JSON.stringify(oldValue)} para ${JSON.stringify(newValue)}${breakpoint ? ` no breakpoint ${breakpoint}` : ''}.`,
+      );
+      return;
+    }
+    setSelectionError('');
+    postInspectorMessage({ type: 'af:visual-edit:preview', payload: parsed.data });
+  }
+
+  function clearVisualEdit() {
+    postInspectorMessage({ type: 'af:visual-edit:clear' });
   }
 
   async function start() {
@@ -303,6 +361,55 @@ export function PreviewPanel({
               <p>
                 Elemento mapeado para: <strong>{selectionResult.file}</strong>
               </p>
+              <p className="hint">
+                Linha {selectionResult.line}, coluna {selectionResult.column}
+                {selectionResult.componentName ? ` · ${selectionResult.componentName}` : ''}
+              </p>
+              <div className="modelPinGrid">
+                <label>
+                  Propriedade
+                  <select
+                    value={property}
+                    onChange={(event) => setProperty(event.target.value as VisualEditProperty)}
+                  >
+                    {VisualEditPropertySchema.options.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Valor atual
+                  <input value={oldValue} onChange={(event) => setOldValue(event.target.value)} />
+                </label>
+                <label>
+                  Novo valor
+                  <input value={newValue} onChange={(event) => setNewValue(event.target.value)} />
+                </label>
+                <label>
+                  Breakpoint
+                  <select
+                    value={breakpoint}
+                    onChange={(event) =>
+                      setBreakpoint(event.target.value as VisualEditBreakpoint | '')
+                    }
+                  >
+                    <option value="">Base</option>
+                    {VisualEditBreakpointSchema.options.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <button className="secondaryButton" onClick={previewVisualEdit}>
+                Pré-visualizar alteração
+              </button>
+              <button className="secondaryButton" onClick={clearVisualEdit}>
+                Limpar alteração
+              </button>
             </div>
           ) : null}
           {selectionResult?.status === 'ambiguous' ? (
@@ -315,6 +422,16 @@ export function PreviewPanel({
               </ul>
               <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
                 Descartar
+              </button>
+              <button
+                className="secondaryButton"
+                onClick={() =>
+                  routeToConversation(
+                    `Quero uma edição visual no elemento ${selectionResult.domPath}, mas a origem é ambígua entre ${selectionResult.candidates?.join(', ')}.`,
+                  )
+                }
+              >
+                Continuar na conversa
               </button>
             </div>
           ) : null}
@@ -335,6 +452,16 @@ export function PreviewPanel({
               ) : null}
               <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
                 Fechar
+              </button>
+              <button
+                className="secondaryButton"
+                onClick={() =>
+                  routeToConversation(
+                    `Quero uma edição visual no elemento ${selectionResult.domPath}, que não pôde ser mapeado para uma origem segura.`,
+                  )
+                }
+              >
+                Continuar na conversa
               </button>
             </div>
           ) : null}

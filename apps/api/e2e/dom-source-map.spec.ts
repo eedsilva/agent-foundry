@@ -156,6 +156,45 @@ test('clicking a simple component resolves to its source file', async ({ page })
   await expect(page.getByText('src/Greeting.tsx')).toBeVisible({ timeout: 10_000 });
 });
 
+test('previews and clears a text edit without changing workspace source', async ({ page }) => {
+  const projectId = await createProject();
+  await seedDomSourceMapFixture(projectId);
+  const workspaceFile = join(runtime.workspaces.workspacePath(projectId), 'server.mjs');
+  const sourceBefore = await readFile(workspaceFile, 'utf8');
+  const frameBody = await startPreviewAndSelect(page, projectId);
+  const selected = frameBody.locator('#simple');
+  await selected.click();
+  await expect(page.getByText('src/Greeting.tsx')).toBeVisible({ timeout: 10_000 });
+
+  await expect(page.getByLabel('Valor atual')).toBeVisible({ timeout: 5_000 });
+  await page.getByLabel('Valor atual').fill('Simple');
+  await page.getByLabel('Novo valor').fill('Edited in preview');
+  await page.getByRole('button', { name: 'Pré-visualizar alteração' }).click();
+  await expect(selected).toHaveText('Edited in preview');
+
+  await page.getByRole('button', { name: 'Limpar alteração' }).click();
+  await expect(selected).toHaveText('Simple');
+  expect(await readFile(workspaceFile, 'utf8')).toBe(sourceBefore);
+});
+
+test('routes an unsafe direct edit through chat classification', async ({ page }) => {
+  const projectId = await createProject();
+  await seedDomSourceMapFixture(projectId);
+  const frameBody = await startPreviewAndSelect(page, projectId);
+  const selected = frameBody.locator('#simple');
+  await selected.click();
+  await expect(page.getByText('src/Greeting.tsx')).toBeVisible({ timeout: 10_000 });
+
+  await page.getByLabel('Propriedade').selectOption('backgroundColor');
+  await page.getByLabel('Valor atual').fill('#eee');
+  await page.getByLabel('Novo valor').fill('url(javascript:x)');
+  await page.getByRole('button', { name: 'Pré-visualizar alteração' }).click();
+
+  await expect(page.getByText('Edição direta inválida')).toBeVisible();
+  await expect(page.getByText('visual-edit', { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(selected).toHaveText('Simple');
+});
+
 test('clicking a wrapped component shows the ambiguous confirm panel', async ({ page }) => {
   const projectId = await createProject();
   await seedDomSourceMapFixture(projectId);

@@ -895,8 +895,16 @@ describe('PreviewSelectionResultSchema', () => {
       status: 'resolved',
       domPath: 'div[1]>span[1]',
       file: 'src/App.tsx',
+      line: 7,
+      column: 11,
+      componentName: 'App',
     });
-    expect(result.file).toBe('src/App.tsx');
+    expect(result).toMatchObject({
+      file: 'src/App.tsx',
+      line: 7,
+      column: 11,
+      componentName: 'App',
+    });
   });
 
   it('rejects a resolved result missing file', () => {
@@ -904,6 +912,18 @@ describe('PreviewSelectionResultSchema', () => {
       PreviewSelectionResultSchema.parse({
         status: 'resolved',
         domPath: 'div[1]',
+        line: 7,
+        column: 11,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects resolved results missing source coordinates', () => {
+    expect(() =>
+      PreviewSelectionResultSchema.parse({
+        status: 'resolved',
+        domPath: 'div[1]',
+        file: 'src/App.tsx',
       }),
     ).toThrow();
   });
