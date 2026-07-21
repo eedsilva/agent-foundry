@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { BrowserVerificationReport, StoredArtifact } from '@agent-foundry/contracts';
+import type {
+  BrowserVerificationReport,
+  StepAttempt,
+  StoredArtifact,
+} from '@agent-foundry/contracts';
 import { latestBrowserVerificationReport } from './browser-verification';
 
 function reportArtifact(
@@ -25,9 +29,43 @@ function reportArtifact(
       createdAt: '2026-07-18T00:00:00.000Z',
       createdBy: 'verifier:verify-browser',
       runId,
+      stepRunId: `step-${runId}`,
+      attemptId: `attempt-${runId}`,
       sha256: 'b'.repeat(64),
     },
     content: report,
+  };
+}
+
+function verifierAttempt(artifact: StoredArtifact): StepAttempt {
+  return {
+    id: artifact.metadata.attemptId!,
+    runId: artifact.metadata.runId!,
+    stepRunId: artifact.metadata.stepRunId!,
+    sequence: 1,
+    executorKind: 'verification',
+    provider: 'internal',
+    model: 'browser-verifier',
+    status: 'succeeded',
+    version: 2,
+    createdAt: '2026-07-18T00:00:00.000Z',
+    updatedAt: '2026-07-18T00:00:01.000Z',
+    startedAt: '2026-07-18T00:00:00.000Z',
+    completedAt: '2026-07-18T00:00:01.000Z',
+    context: {
+      projectId: artifact.metadata.projectId,
+      workflowId: 'web-app-v1',
+      nodeId: 'verify-browser',
+      stepId: 'verify-browser',
+    },
+    inputArtifacts: [],
+    outputArtifacts: [
+      {
+        name: artifact.metadata.name,
+        revision: artifact.metadata.revision,
+        sha256: artifact.metadata.sha256,
+      },
+    ],
   };
 }
 
@@ -44,7 +82,10 @@ describe('latestBrowserVerificationReport', () => {
   it('returns the highest-revision report for the run', () => {
     const older = reportArtifact('run-1', 1, { summary: 'first' });
     const newer = reportArtifact('run-1', 2, { summary: 'second' });
-    const result = latestBrowserVerificationReport([older, newer], 'run-1');
+    const result = latestBrowserVerificationReport([older, newer], 'run-1', [
+      verifierAttempt(older),
+      verifierAttempt(newer),
+    ]);
     expect(result?.summary).toBe('second');
   });
 
@@ -60,7 +101,17 @@ describe('latestBrowserVerificationReport', () => {
     const forged = reportArtifact('run-1', 1);
     forged.metadata.createdBy = 'developer:codex/test';
 
-    expect(latestBrowserVerificationReport([forged], 'run-1')).toBeNull();
+    expect(
+      latestBrowserVerificationReport([forged], 'run-1', [verifierAttempt(forged)]),
+    ).toBeNull();
+  });
+
+  it('rejects a forged verifier prefix without a canonical browser-verifier attempt', () => {
+    const forged = reportArtifact('run-1', 1);
+    forged.metadata.createdBy = 'verifier:forged-step';
+    const forgedAttempt = { ...verifierAttempt(forged), model: 'codex' };
+
+    expect(latestBrowserVerificationReport([forged], 'run-1', [forgedAttempt])).toBeNull();
   });
 
   it('selects the first relevant conversational run regardless of report artifact name', () => {
@@ -68,11 +119,18 @@ describe('latestBrowserVerificationReport', () => {
     const visual = reportArtifact('run-visual', 1, { summary: 'visual edit' });
     visual.metadata.name = 'visual-edit-browser-report-operation-1';
     visual.metadata.createdBy = 'browser-verifier:visual-edit';
+    const visualAttempt = {
+      ...verifierAttempt(visual),
+      executorKind: 'agent' as const,
+      provider: 'mock' as const,
+      model: 'codex',
+    };
 
     expect(
       latestBrowserVerificationReport(
         [original, visual],
         ['run-build-without-report', 'run-visual', 'run-original'],
+        [verifierAttempt(original), visualAttempt],
       )?.summary,
     ).toBe('visual edit');
   });

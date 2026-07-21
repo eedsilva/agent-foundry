@@ -39,6 +39,8 @@ import {
   InMemoryStepRuns,
   MemoryConversations,
   MODELS,
+  type StepBehavior,
+  timeoutError,
 } from './testing/harness.js';
 import { ConversationOperationRunner } from './conversation-operation-runner.js';
 import type { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
@@ -193,6 +195,7 @@ function setup(
     verifier: VerificationService;
     browserVerification: Pick<BrowserVerificationCoordinator, 'verify'>;
   },
+  executorBehaviors: Record<string, StepBehavior> = {},
 ) {
   const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
   const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
@@ -246,7 +249,7 @@ function setup(
     clock,
     ids,
   );
-  const executor = new ControllableExecutor({}, workspaces);
+  const executor = new ControllableExecutor(executorBehaviors, workspaces);
   const executors: ExecutorRegistry = {
     get: () => new AgentExecutorFromExecutionPlane(executor),
     health: () => Promise.resolve([]),
@@ -281,6 +284,7 @@ function setup(
     conversations,
     knowledgeFiles,
     projectVersions,
+    executor,
     runner,
   };
 }
@@ -1370,6 +1374,7 @@ describe('ConversationOperationRunner context compilation', () => {
         workspaces,
         conversations,
         knowledgeFiles,
+        executor,
         runner,
       } = setup();
       const bytes = Buffer.from('actual-png-bytes');
@@ -1414,18 +1419,173 @@ describe('ConversationOperationRunner context compilation', () => {
           sizeBytes: metadata.sizeBytes,
         },
       ]);
-      expect(workspaces.lastRequestMarkdown).toContain(
-        `.orchestrator/runs/${runId}/knowledge/design/v1.png`,
-      );
+      expect(workspaces.lastRequestMarkdown).toContain('request input knowledge/design/v1.png');
+      expect(workspaces.lastRequestMarkdown).not.toContain('/execution-inputs/');
       expect(workspaces.lastRunInputFiles).toEqual([
         {
-          path: `.orchestrator/runs/${runId}/knowledge/design/v1.png`,
+          path: 'knowledge/design/v1.png',
           content: bytes,
         },
       ]);
+      expect(workspaces.lastExecutionInputPaths).toHaveLength(1);
+      expect(workspaces.lastExecutionInputPaths[0]).not.toContain(
+        workspaces.workspacePath('project-1'),
+      );
+      expect(executor.requests.at(-1)?.prompt).toContain(workspaces.lastExecutionInputPaths[0]);
       expect(workspaces.activeRunInputFiles).toEqual([]);
     },
   );
+
+  it('does not expose a hung Plan private input to a concurrent nonknowledge operation', async () => {
+    const { runs, artifacts, workspaces, conversations, knowledgeFiles, executor, runner } = setup(
+      harnessRepo,
+      undefined,
+      { 'conversation-plan-operation-plan': 'gated' },
+    );
+    const bytes = Buffer.from('hung-plan-only-knowledge');
+    const metadata = await artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'knowledge-design',
+        contentType: 'image/png',
+        createdBy: 'test',
+        maxBytes: 1024,
+      },
+      Readable.from(bytes),
+    );
+    knowledgeFiles.files = [
+      knowledge('design', {
+        revisions: [
+          {
+            version: 1,
+            artifact: {
+              name: metadata.name,
+              revision: metadata.revision,
+              sha256: metadata.sha256,
+              sizeBytes: metadata.sizeBytes,
+            },
+            createdAt: metadata.createdAt,
+          },
+        ],
+      }),
+    ];
+    const plan = await seed(conversations, runs, 'plan', 'plan');
+    const pendingPlan = runner.run('project-1', plan.runId, plan.operationId);
+    await vi.waitFor(() => expect(executor.started('conversation-plan-operation-plan')).toBe(1));
+    const [privatePlanPath] = workspaces.activeExecutionInputPaths;
+    expect(privatePlanPath).toBeDefined();
+    expect(privatePlanPath).not.toContain(workspaces.workspacePath('project-1'));
+
+    const explain = await seed(conversations, runs, 'explain', 'explain');
+    await runner.run('project-1', explain.runId, explain.operationId);
+
+    const explainRequest = executor.requests.find(
+      (request) => request.stepId === 'conversation-plan-operation-explain',
+    );
+    expect(explainRequest?.prompt).not.toContain(privatePlanPath);
+    expect(workspaces.lastRunInputFiles).toEqual([]);
+
+    executor.release('conversation-plan-operation-plan');
+    await pendingPlan;
+    expect(workspaces.activeExecutionInputPaths).toEqual([]);
+  });
+
+  it('removes private Plan inputs when the execution is cancelled', async () => {
+    const {
+      runs,
+      stepRuns,
+      stepAttempts,
+      artifacts,
+      workspaces,
+      conversations,
+      knowledgeFiles,
+      executor,
+      runner,
+    } = setup(harnessRepo, undefined, { 'conversation-plan-operation-cancel': 'gated' });
+    const bytes = Buffer.from('cancelled-plan-knowledge');
+    const metadata = await artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'knowledge-design',
+        contentType: 'image/png',
+        createdBy: 'test',
+        maxBytes: 1024,
+      },
+      Readable.from(bytes),
+    );
+    knowledgeFiles.files = [
+      knowledge('design', {
+        revisions: [
+          {
+            version: 1,
+            artifact: {
+              name: metadata.name,
+              revision: metadata.revision,
+              sha256: metadata.sha256,
+              sizeBytes: metadata.sizeBytes,
+            },
+            createdAt: metadata.createdAt,
+          },
+        ],
+      }),
+    ];
+    const plan = await seed(conversations, runs, 'plan', 'cancel');
+    const pendingPlan = runner.run('project-1', plan.runId, plan.operationId);
+    await vi.waitFor(() => expect(executor.started('conversation-plan-operation-cancel')).toBe(1));
+    const [stepRun] = await stepRuns.list(plan.runId);
+    const [attempt] = await stepAttempts.list(plan.runId, stepRun!.id);
+
+    await executor.cancel(`${stepRun!.id}:${attempt!.id}`);
+    await pendingPlan;
+
+    expect(workspaces.activeExecutionInputPaths).toEqual([]);
+    await expect(runs.get(plan.runId)).resolves.toMatchObject({ status: 'failed' });
+  });
+
+  it('removes private Build inputs when the executor times out', async () => {
+    const { runs, artifacts, workspaces, conversations, knowledgeFiles, runner } = setup(
+      harnessRepo,
+      undefined,
+      {
+        'conversation-build-operation-timeout': {
+          kind: 'fail-always',
+          error: timeoutError,
+        },
+      },
+    );
+    const metadata = await artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'knowledge-design',
+        contentType: 'image/png',
+        createdBy: 'test',
+        maxBytes: 1024,
+      },
+      Readable.from(Buffer.from('timed-out-build-knowledge')),
+    );
+    knowledgeFiles.files = [
+      knowledge('design', {
+        revisions: [
+          {
+            version: 1,
+            artifact: {
+              name: metadata.name,
+              revision: metadata.revision,
+              sha256: metadata.sha256,
+              sizeBytes: metadata.sizeBytes,
+            },
+            createdAt: metadata.createdAt,
+          },
+        ],
+      }),
+    ];
+    const build = await seed(conversations, runs, 'build', 'timeout');
+
+    await runner.run('project-1', build.runId, build.operationId);
+
+    expect(workspaces.activeExecutionInputPaths).toEqual([]);
+    await expect(runs.get(build.runId)).resolves.toMatchObject({ status: 'failed' });
+  });
 
   it('removes Plan knowledge bytes before a later nonknowledge operation executes', async () => {
     const { runs, artifacts, workspaces, conversations, knowledgeFiles, runner } = setup();

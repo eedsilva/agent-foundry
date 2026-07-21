@@ -1,17 +1,22 @@
 import {
   BrowserVerificationReportSchema,
   type BrowserVerificationReport,
+  type StepAttempt,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
 
 export function latestBrowserVerificationReport(
   artifacts: StoredArtifact[],
   runIds: string | string[],
+  attempts: StepAttempt[] = [],
 ): BrowserVerificationReport | null {
   const orderedRunIds = typeof runIds === 'string' ? [runIds] : runIds;
   for (const runId of orderedRunIds) {
     const candidates = artifacts
-      .filter((artifact) => artifact.metadata.runId === runId && isCanonicalBrowserReport(artifact))
+      .filter(
+        (artifact) =>
+          artifact.metadata.runId === runId && isCanonicalBrowserReport(artifact, attempts),
+      )
       .map((artifact) => ({
         artifact,
         parsed: BrowserVerificationReportSchema.safeParse(artifact.content),
@@ -37,11 +42,39 @@ export function latestBrowserVerificationReport(
   return null;
 }
 
-function isCanonicalBrowserReport(artifact: StoredArtifact): boolean {
+function isCanonicalBrowserReport(artifact: StoredArtifact, attempts: StepAttempt[]): boolean {
+  const sourceAttempt = attempts.find(
+    (attempt) =>
+      attempt.id === artifact.metadata.attemptId &&
+      attempt.runId === artifact.metadata.runId &&
+      attempt.stepRunId === artifact.metadata.stepRunId &&
+      attempt.status === 'succeeded' &&
+      attempt.outputArtifacts.some(
+        (reference) =>
+          reference.name === artifact.metadata.name &&
+          reference.revision === artifact.metadata.revision &&
+          reference.sha256 === artifact.metadata.sha256,
+      ),
+  );
+  if (!sourceAttempt) return false;
+  if (
+    artifact.metadata.name.startsWith('visual-edit-browser-report-') &&
+    artifact.metadata.createdBy === 'browser-verifier:visual-edit'
+  ) {
+    return true;
+  }
+  if (
+    artifact.metadata.name !== 'browser-verification.report' ||
+    !artifact.metadata.runId ||
+    !artifact.metadata.stepRunId ||
+    !artifact.metadata.attemptId
+  ) {
+    return false;
+  }
   return (
-    (artifact.metadata.name === 'browser-verification.report' &&
-      /^verifier:[a-zA-Z0-9._-]+$/.test(artifact.metadata.createdBy)) ||
-    (artifact.metadata.name.startsWith('visual-edit-browser-report-') &&
-      artifact.metadata.createdBy === 'browser-verifier:visual-edit')
+    sourceAttempt.executorKind === 'verification' &&
+    sourceAttempt.provider === 'internal' &&
+    sourceAttempt.model === 'browser-verifier' &&
+    artifact.metadata.createdBy === `verifier:${sourceAttempt.context.stepId}`
   );
 }

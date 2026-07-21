@@ -14,6 +14,7 @@ import {
   type PreviewLogEntry,
   type PreviewSelectionResult,
   type PreviewSession,
+  type StepAttempt,
   type StoredArtifact,
   type WorkflowRun,
 } from '@agent-foundry/contracts';
@@ -142,11 +143,13 @@ export function PreviewPanel({
   projectId,
   run,
   artifacts,
+  attempts,
   onConversationalFallback,
 }: {
   projectId: string;
   run: WorkflowRun | null;
   artifacts: StoredArtifact[];
+  attempts: StepAttempt[];
   onConversationalFallback: (prompt: string) => void;
 }) {
   const [session, setSession] = useState<PreviewSession | null>(null);
@@ -317,8 +320,8 @@ export function PreviewPanel({
   }
 
   const report = useMemo(
-    () => (run ? latestBrowserVerificationReport(artifacts, run.id) : null),
-    [artifacts, run],
+    () => (run ? latestBrowserVerificationReport(artifacts, run.id, attempts) : null),
+    [artifacts, attempts, run],
   );
   const hasCompleteResolvedSource =
     selectionResult?.status === 'resolved' &&

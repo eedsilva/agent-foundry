@@ -849,6 +849,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const changesReport = latestBrowserVerificationReport(
     detail?.artifacts ?? [],
     changesReportRunIds,
+    [runDetail, activeOperationRun].flatMap(
+      (detail) => detail?.steps.flatMap(({ attempts }) => attempts) ?? [],
+    ),
   );
 
   if (!detail) {
@@ -1094,6 +1097,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             projectId={id}
             run={run ?? null}
             artifacts={detail.artifacts}
+            attempts={runDetail?.steps.flatMap(({ attempts }) => attempts) ?? []}
             onConversationalFallback={(prompt) => void classifyConversationPrompt(prompt)}
           />
         }
@@ -1101,11 +1105,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           <ChangesPanel
             projectId={id}
             workspacePath={detail.workspacePath}
-            refreshKey={
-              activeOperationRun
-                ? `${activeOperationRun.run.id}:${activeOperationRun.run.status}`
-                : undefined
-            }
+            {...(activeOperationRun
+              ? { refreshKey: `${activeOperationRun.run.id}:${activeOperationRun.run.status}` }
+              : {})}
             checks={
               changesReport ? (
                 <VerificationReportView report={changesReport} projectId={detail.project.id} />

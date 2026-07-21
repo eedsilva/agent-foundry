@@ -231,17 +231,13 @@ function installGoldenFixtureExecutor(): Array<'plan' | 'build'> {
           ? 'build'
           : null;
       if (kind) {
-        const knowledgeRoot = join(
-          request.cwd,
-          '.orchestrator',
-          'runs',
-          request.runId,
-          'knowledge',
-        );
-        const [knowledgePath] = (await readdir(knowledgeRoot, { recursive: true }))
-          .filter((path) => path.endsWith('.png'))
-          .map((path) => join(knowledgeRoot, path));
+        const knowledgePath = request.prompt.match(
+          /knowledge-[a-zA-Z0-9._-]+@2: ([^;]+?)(?:;|\. Do not inspect)/,
+        )?.[1];
         if (!knowledgePath) throw new Error(`${kind} knowledge input was not materialized`);
+        if (knowledgePath.startsWith(`${request.cwd}/`)) {
+          throw new Error(`${kind} knowledge input leaked into the shared workspace`);
+        }
         const [actual, expected] = await Promise.all([
           readFile(knowledgePath),
           readFile(REFERENCE_IMAGE),

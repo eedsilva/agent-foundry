@@ -114,7 +114,7 @@ export class ConversationOperationRunner {
       message,
       visualEdit: operation.visualEdit,
       planArtifact,
-      contextDigest: `${compiledContext.digest}${knowledgeContext(activeKnowledge, runId)}`,
+      contextDigest: `${compiledContext.digest}${knowledgeContext(activeKnowledge)}`,
     });
 
     let runState = await this.runs.update(
@@ -146,7 +146,7 @@ export class ConversationOperationRunner {
     let operationPromoted = false;
     let succeeded = false;
     try {
-      const knowledgeInputs = await this.loadKnowledgeInputs(projectId, activeKnowledge, runId);
+      const knowledgeInputs = await this.loadKnowledgeInputs(projectId, activeKnowledge);
       if (operation.visualEdit && !(await this.workspaces.isClean(projectId))) {
         throw new ValidationError('Direct visual edits require a clean workspace baseline');
       }
@@ -236,8 +236,9 @@ export class ConversationOperationRunner {
         inputArtifacts: inputReferences,
       };
       let result: AgentExecutionResult;
+      let executionInputRoot: string | undefined;
       try {
-        await this.workspaces.writeRunContext({
+        const context = await this.workspaces.writeRunContext({
           projectId,
           runId,
           stepRunId: stepRun.id,
@@ -246,6 +247,12 @@ export class ConversationOperationRunner {
           outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
           inputFiles: knowledgeInputs.map(({ path, content }) => ({ path, content })),
         });
+        executionInputRoot = context.executionInputs?.root;
+        const privatePaths = context.executionInputs?.paths ?? [];
+        if (privatePaths.length !== knowledgeInputs.length) {
+          throw new ValidationError('Knowledge execution inputs were not materialized completely');
+        }
+        request.prompt = executionPrompt(request.prompt, knowledgeInputs, privatePaths);
         result = await this.executors
           .get(route.selected.model.provider)
           .execute(request, undefined, (event) =>
@@ -260,10 +267,7 @@ export class ConversationOperationRunner {
             ),
           );
       } finally {
-        await this.workspaces.removeRunInputFiles(
-          projectId,
-          knowledgeInputs.map(({ path }) => path),
-        );
+        if (executionInputRoot) await this.workspaces.removeRunInputFiles(executionInputRoot);
       }
 
       const directEvidence = operation.visualEdit
@@ -554,7 +558,6 @@ export class ConversationOperationRunner {
   private async loadKnowledgeInputs(
     projectId: string,
     files: KnowledgeFile[],
-    runId: string,
   ): Promise<KnowledgeInput[]> {
     return Promise.all(
       files
@@ -608,7 +611,7 @@ export class ConversationOperationRunner {
             artifact,
             reference,
             content,
-            path: knowledgePath(runId, file),
+            path: knowledgePath(file),
           };
         }),
     );
@@ -622,20 +625,30 @@ interface KnowledgeInput {
   path: string;
 }
 
-function knowledgePath(runId: string, file: KnowledgeFile): string {
+function knowledgePath(file: KnowledgeFile): string {
   const extension = /^\.[a-zA-Z0-9]{1,10}$/.test(extname(file.name)) ? extname(file.name) : '';
-  return `.orchestrator/runs/${runId}/knowledge/${file.id}/v${file.currentVersion}${extension}`;
+  return `knowledge/${file.id}/v${file.currentVersion}${extension}`;
 }
 
-function knowledgeContext(files: KnowledgeFile[], runId: string): string {
+function knowledgeContext(files: KnowledgeFile[]): string {
   const pinned = files.filter((file) => file.pinned);
   if (pinned.length === 0) return '';
   return `\n\n## Pinned knowledge files\n\n${pinned
     .map(
       (file) =>
-        `- ${file.name} v${file.currentVersion} · ${file.purpose} · artifact ${file.revisions.at(-1)!.artifact.name}@${file.currentVersion} · local file ${knowledgePath(runId, file)}`,
+        `- ${file.name} v${file.currentVersion} · ${file.purpose} · artifact ${file.revisions.at(-1)!.artifact.name}@${file.currentVersion} · request input ${knowledgePath(file)}`,
     )
     .join('\n')}`;
+}
+
+function executionPrompt(prompt: string, inputs: KnowledgeInput[], privatePaths: string[]): string {
+  if (inputs.length === 0) return prompt;
+  const files = inputs
+    .map(
+      ({ reference }, index) => `${reference.name}@${reference.revision}: ${privatePaths[index]}`,
+    )
+    .join('; ');
+  return `${prompt} For this request only, read these execution-private knowledge inputs outside the workspace: ${files}. Do not inspect sibling input directories.`;
 }
 
 interface CompensationFailure {

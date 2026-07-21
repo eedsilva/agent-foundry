@@ -679,6 +679,11 @@ export class FakeWorkspaces implements WorkspaceManager {
   onAfterCommit?: (() => void) | undefined;
   onAfterPreserveDraft?: (() => void | Promise<void>) | undefined;
   private counter = 0;
+  private executionInputCounter = 0;
+  private readonly executionInputFiles = new Map<
+    string,
+    Array<{ logical: { path: string; content: Uint8Array }; privatePath: string }>
+  >();
   constructor(private readonly power: PowerSwitch) {}
   projectRoot(projectId: string): string {
     return `/fake/${projectId}`;
@@ -696,21 +701,52 @@ export class FakeWorkspaces implements WorkspaceManager {
   }
   lastRequestMarkdown: string | undefined;
   writeRunContext(input: {
+    attemptId: string;
     requestMarkdown: string;
     inputFiles?: Array<{ path: string; content: Uint8Array }>;
-  }): Promise<{ requestPath: string; schemaPath: string }> {
+  }): Promise<{
+    requestPath: string;
+    schemaPath: string;
+    executionInputs?: { root: string; paths: string[] };
+  }> {
     checkPower(this.power);
     this.lastRequestMarkdown = input.requestMarkdown;
     this.lastRunInputFiles = input.inputFiles ?? [];
-    this.activeRunInputFiles = input.inputFiles ?? [];
-    return Promise.resolve({ requestPath: 'request.md', schemaPath: 'schema.json' });
+    if (!input.inputFiles?.length) {
+      return Promise.resolve({ requestPath: 'request.md', schemaPath: 'schema.json' });
+    }
+    this.executionInputCounter += 1;
+    const root = `/fake/execution-inputs/${input.attemptId}-${this.executionInputCounter}`;
+    const files = input.inputFiles.map((logical) => ({
+      logical,
+      privatePath: `${root}/${logical.path}`,
+    }));
+    this.executionInputFiles.set(root, files);
+    this.lastExecutionInputPaths = files.map(({ privatePath }) => privatePath);
+    this.activeRunInputFiles = [...this.activeRunInputFiles, ...input.inputFiles];
+    this.activeExecutionInputPaths = [
+      ...this.activeExecutionInputPaths,
+      ...files.map(({ privatePath }) => privatePath),
+    ];
+    return Promise.resolve({
+      requestPath: 'request.md',
+      schemaPath: 'schema.json',
+      executionInputs: { root, paths: this.lastExecutionInputPaths },
+    });
   }
   lastRunInputFiles: Array<{ path: string; content: Uint8Array }> = [];
   activeRunInputFiles: Array<{ path: string; content: Uint8Array }> = [];
-  removeRunInputFiles(_projectId: string, paths: string[]): Promise<void> {
-    this.activeRunInputFiles = this.activeRunInputFiles.filter(
-      (file) => !paths.includes(file.path),
+  lastExecutionInputPaths: string[] = [];
+  activeExecutionInputPaths: string[] = [];
+  removeRunInputFiles(root: string): Promise<void> {
+    const files = this.executionInputFiles.get(root) ?? [];
+    const privatePaths = new Set(files.map(({ privatePath }) => privatePath));
+    const logicalFiles = new Set(files.map(({ logical }) => logical));
+    this.activeRunInputFiles = this.activeRunInputFiles.filter((file) => !logicalFiles.has(file));
+    this.activeExecutionInputPaths = this.activeExecutionInputPaths.filter(
+      (path) => !privatePaths.has(path),
     );
+    this.executionInputFiles.delete(root);
     return Promise.resolve();
   }
   ensureGit(): Promise<void> {
@@ -840,6 +876,7 @@ export function disconnectError(): Error {
 export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
   readonly provider = 'mock';
   readonly startCounts = new Map<string, number>();
+  readonly requests: AgentExecutionRequest[] = [];
   private readonly gates = new Map<string, () => void>();
   private readonly states = new Map<string, ExecutionStatus['state']>();
   private readonly cancellers = new Map<string, () => void>();
@@ -909,6 +946,7 @@ export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
     request: AgentExecutionRequest,
     signal?: AbortSignal,
   ): Promise<AgentExecutionResult> {
+    this.requests.push(request);
     const count = (this.startCounts.get(request.stepId) ?? 0) + 1;
     this.startCounts.set(request.stepId, count);
     const behavior = this.behaviors[request.stepId] ?? 'instant';

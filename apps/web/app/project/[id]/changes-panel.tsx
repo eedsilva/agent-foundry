@@ -54,7 +54,7 @@ export function ChangesPanel({
         projectId={projectId}
         initialVersions={initialVersions}
         embedded
-        refreshKey={refreshKey}
+        {...(refreshKey === undefined ? {} : { refreshKey })}
       />
 
       <section className="changesSection">
