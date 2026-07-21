@@ -546,10 +546,16 @@ describe('ConversationOperationRunner', () => {
         });
       }),
     };
-    const { runs, artifacts, workspaces, conversations, projectVersions, runner } = setup(
-      harnessRepo,
-      { verifier, browserVerification },
-    );
+    const {
+      runs,
+      stepRuns,
+      stepAttempts,
+      artifacts,
+      workspaces,
+      conversations,
+      projectVersions,
+      runner,
+    } = setup(harnessRepo, { verifier, browserVerification });
     workspaces.onBeforeCommit = () => order.push('commit');
     const { runId, operationId } = await seedVisualEdit(conversations, runs);
 
@@ -571,6 +577,36 @@ describe('ConversationOperationRunner', () => {
     expect(
       await artifacts.getLatest('project-1', `visual-edit-browser-report-${operationId}`),
     ).not.toBeNull();
+    const [stepRun] = await stepRuns.list(runId);
+    const attempts = await stepAttempts.list(runId, stepRun!.id);
+    const report = await artifacts.getLatest(
+      'project-1',
+      `visual-edit-browser-report-${operationId}`,
+    );
+    expect(attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          executorKind: 'verification',
+          provider: 'internal',
+          model: 'browser-verifier',
+          status: 'succeeded',
+          outputArtifacts: [
+            {
+              name: report!.metadata.name,
+              revision: report!.metadata.revision,
+              sha256: report!.metadata.sha256,
+            },
+          ],
+        }),
+      ]),
+    );
+    const browserAttempt = attempts.find((candidate) => candidate.model === 'browser-verifier');
+    expect(report?.metadata).toMatchObject({
+      runId,
+      stepRunId: stepRun!.id,
+      attemptId: browserAttempt!.id,
+      createdBy: 'verifier:visual-edit-browser',
+    });
   });
 
   it('rolls back and leaves the operation unpromoted when version recording fails', async () => {
@@ -1364,7 +1400,7 @@ describe('ConversationOperationRunner context compilation', () => {
   );
 
   it.each(['plan', 'build'] as const)(
-    'materializes verified pinned knowledge bytes and records their artifact input for %s',
+    'passes verified pinned knowledge bytes through a request-private attachment for %s',
     async (kind) => {
       const {
         runs,
@@ -1421,18 +1457,17 @@ describe('ConversationOperationRunner context compilation', () => {
       ]);
       expect(workspaces.lastRequestMarkdown).toContain('request input knowledge/design/v1.png');
       expect(workspaces.lastRequestMarkdown).not.toContain('/execution-inputs/');
-      expect(workspaces.lastRunInputFiles).toEqual([
+      expect(workspaces.lastRunInputFiles).toEqual([]);
+      expect(workspaces.lastExecutionInputPaths).toEqual([]);
+      expect(executor.requests.at(-1)?.attachments).toEqual([
         {
-          path: 'knowledge/design/v1.png',
-          content: bytes,
+          name: 'knowledge/design/v1.png',
+          mediaType: 'image/png',
+          sha256: metadata.sha256,
+          sizeBytes: bytes.byteLength,
+          contentBase64: bytes.toString('base64'),
         },
       ]);
-      expect(workspaces.lastExecutionInputPaths).toHaveLength(1);
-      expect(workspaces.lastExecutionInputPaths[0]).not.toContain(
-        workspaces.workspacePath('project-1'),
-      );
-      expect(executor.requests.at(-1)?.prompt).toContain(workspaces.lastExecutionInputPaths[0]);
-      expect(workspaces.activeRunInputFiles).toEqual([]);
     },
   );
 
@@ -1472,9 +1507,11 @@ describe('ConversationOperationRunner context compilation', () => {
     const plan = await seed(conversations, runs, 'plan', 'plan');
     const pendingPlan = runner.run('project-1', plan.runId, plan.operationId);
     await vi.waitFor(() => expect(executor.started('conversation-plan-operation-plan')).toBe(1));
-    const [privatePlanPath] = workspaces.activeExecutionInputPaths;
-    expect(privatePlanPath).toBeDefined();
-    expect(privatePlanPath).not.toContain(workspaces.workspacePath('project-1'));
+    const planRequest = executor.requests.find(
+      (request) => request.stepId === 'conversation-plan-operation-plan',
+    );
+    expect(planRequest?.attachments?.[0]?.contentBase64).toBe(bytes.toString('base64'));
+    expect(workspaces.activeExecutionInputPaths).toEqual([]);
 
     const explain = await seed(conversations, runs, 'explain', 'explain');
     await runner.run('project-1', explain.runId, explain.operationId);
@@ -1482,7 +1519,7 @@ describe('ConversationOperationRunner context compilation', () => {
     const explainRequest = executor.requests.find(
       (request) => request.stepId === 'conversation-plan-operation-explain',
     );
-    expect(explainRequest?.prompt).not.toContain(privatePlanPath);
+    expect(explainRequest?.attachments).toBeUndefined();
     expect(workspaces.lastRunInputFiles).toEqual([]);
 
     executor.release('conversation-plan-operation-plan');
@@ -1490,7 +1527,7 @@ describe('ConversationOperationRunner context compilation', () => {
     expect(workspaces.activeExecutionInputPaths).toEqual([]);
   });
 
-  it('removes private Plan inputs when the execution is cancelled', async () => {
+  it('settles a Plan run as cancelled when its execution is cancelled', async () => {
     const {
       runs,
       stepRuns,
@@ -1539,7 +1576,7 @@ describe('ConversationOperationRunner context compilation', () => {
     await pendingPlan;
 
     expect(workspaces.activeExecutionInputPaths).toEqual([]);
-    await expect(runs.get(plan.runId)).resolves.toMatchObject({ status: 'failed' });
+    await expect(runs.get(plan.runId)).resolves.toMatchObject({ status: 'cancelled' });
   });
 
   it('removes private Build inputs when the executor times out', async () => {

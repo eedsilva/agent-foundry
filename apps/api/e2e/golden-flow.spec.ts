@@ -6,7 +6,6 @@ import { join, resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
-import { MockAgentExecutor } from '@agent-foundry/executors';
 import type { AgentExecutor } from '@agent-foundry/domain';
 import type { OperationKind, TaskProfile } from '@agent-foundry/contracts';
 import { buildApp } from '../src/app.js';
@@ -218,7 +217,7 @@ async function runConversationJob(): Promise<void> {
 }
 
 function installGoldenFixtureExecutor(): Array<'plan' | 'build'> {
-  const mock = new MockAgentExecutor();
+  const mock = runtime.executors.get('mock');
   let buildSequence = 0;
   const knowledgeReads: Array<'plan' | 'build'> = [];
   const executor: AgentExecutor = {
@@ -231,15 +230,10 @@ function installGoldenFixtureExecutor(): Array<'plan' | 'build'> {
           ? 'build'
           : null;
       if (kind) {
-        const knowledgePath = request.prompt.match(
-          /knowledge-[a-zA-Z0-9._-]+@2: ([^;]+?)(?:;|\. Do not inspect)/,
-        )?.[1];
-        if (!knowledgePath) throw new Error(`${kind} knowledge input was not materialized`);
-        if (knowledgePath.startsWith(`${request.cwd}/`)) {
-          throw new Error(`${kind} knowledge input leaked into the shared workspace`);
-        }
+        const attachment = request.attachments?.find(({ name }) => name.startsWith('knowledge/'));
+        if (!attachment) throw new Error(`${kind} knowledge input was not attached`);
         const [actual, expected] = await Promise.all([
-          readFile(knowledgePath),
+          Promise.resolve(Buffer.from(attachment.contentBase64, 'base64')),
           readFile(REFERENCE_IMAGE),
         ]);
         if (!actual.equals(expected)) throw new Error(`${kind} knowledge bytes do not match`);

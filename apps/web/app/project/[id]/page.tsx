@@ -71,7 +71,10 @@ import { formatObservedUsage } from './format-usage.js';
 import { KnowledgeFiles } from './knowledge-files';
 import { ChangesPanel, ProjectBuilderShell } from './changes-panel';
 import { findDiffApprovalVersions } from '../../../lib/diff-approval';
-import { latestBrowserVerificationReport } from '../../../lib/browser-verification';
+import {
+  browserVerificationAttempts,
+  latestBrowserVerificationReport,
+} from '../../../lib/browser-verification';
 import {
   BrowserVerificationReportSchema,
   isWorkflowRunStatusTerminal,
@@ -235,6 +238,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [streamEvents, setStreamEvents] = useState<AgentStreamEvent[]>([]);
   const [streamEventsRunId, setStreamEventsRunId] = useState<string | undefined>(undefined);
   const [activeOperationRun, setActiveOperationRun] = useState<RunDetailResponse | null>(null);
+  const [operationRunDetails, setOperationRunDetails] = useState<Record<string, RunDetailResponse>>(
+    {},
+  );
   const [approvals, setApprovals] = useState<ApprovalListResponse['approvals']>([]);
   const [workflowDef, setWorkflowDef] = useState<WorkflowDefinition | null>(null);
   const [runtimeModels, setRuntimeModels] = useState<ModelDefinition[]>([]);
@@ -411,6 +417,25 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // its own run ever executes, so emptiness alone would wrongly call it
   // "done" from birth.
   const latestOperation = conversation?.operations.at(-1);
+  const operationRunIdsJson = JSON.stringify(
+    conversation?.operations.flatMap((operation) => (operation.runId ? [operation.runId] : [])) ??
+      [],
+  );
+
+  useEffect(() => {
+    const runIds = JSON.parse(operationRunIdsJson) as string[];
+    let active = true;
+    if (runIds.length === 0) return;
+    void Promise.all(runIds.map((runId) => getRunDetail(runId)))
+      .then((details) => {
+        if (active)
+          setOperationRunDetails(Object.fromEntries(details.map((item) => [item.run.id, item])));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [operationRunIdsJson]);
 
   useEffect(() => {
     if (!latestOperation?.runId) return;
@@ -421,6 +446,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         const next = await getRunDetail(latestOperation.runId!);
         if (!active) return;
         setActiveOperationRun(next);
+        setOperationRunDetails((current) => ({ ...current, [next.run.id]: next }));
         if (!isWorkflowRunStatusTerminal(next.run.status)) {
           timer = setTimeout(poll, 1_500);
         } else {
@@ -849,9 +875,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const changesReport = latestBrowserVerificationReport(
     detail?.artifacts ?? [],
     changesReportRunIds,
-    [runDetail, activeOperationRun].flatMap(
-      (detail) => detail?.steps.flatMap(({ attempts }) => attempts) ?? [],
-    ),
+    browserVerificationAttempts([runDetail, ...Object.values(operationRunDetails)]),
   );
 
   if (!detail) {

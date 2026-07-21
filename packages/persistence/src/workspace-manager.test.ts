@@ -1,40 +1,26 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 import { FileWorkspaceManager } from './workspace-manager.js';
 
-describe('FileWorkspaceManager run inputs', () => {
-  it('keeps execution-only input bytes outside the shared workspace and removes them', async () => {
+describe('FileWorkspaceManager run context', () => {
+  it('writes only non-secret request metadata into the shared workspace', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
     const manager = new FileWorkspaceManager(dataDir, {
       gitAuthorName: 'Test Agent',
       gitAuthorEmail: 'test@example.com',
     });
-    const inputPath = '.orchestrator/runs/run-1/knowledge/design/v1.png';
-    const { requestPath, executionInputs } = await manager.writeRunContext({
+    const { requestPath } = await manager.writeRunContext({
       projectId: 'project-1',
       runId: 'run-1',
       stepRunId: 'step-1',
       attemptId: 'attempt-1',
       requestMarkdown: 'Read the execution input.',
       outputSchema: {},
-      inputFiles: [{ path: inputPath, content: Buffer.from('private bytes') }],
     });
 
-    expect(executionInputs).toBeDefined();
-    expect(executionInputs?.paths).toHaveLength(1);
-    expect(isAbsolute(executionInputs!.paths[0]!)).toBe(true);
-    expect(executionInputs!.paths[0]!.startsWith(manager.workspacePath('project-1'))).toBe(false);
-    await expect(readFile(executionInputs!.paths[0]!)).resolves.toEqual(
-      Buffer.from('private bytes'),
-    );
-    await expect(readFile(join(manager.workspacePath('project-1'), inputPath))).rejects.toThrow();
-
-    await manager.removeRunInputFiles(executionInputs!.root);
-
-    await expect(readFile(executionInputs!.paths[0]!)).rejects.toThrow();
     await expect(readFile(requestPath, 'utf8')).resolves.toBe('Read the execution input.');
   });
 });

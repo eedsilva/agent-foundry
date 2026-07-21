@@ -679,11 +679,6 @@ export class FakeWorkspaces implements WorkspaceManager {
   onAfterCommit?: (() => void) | undefined;
   onAfterPreserveDraft?: (() => void | Promise<void>) | undefined;
   private counter = 0;
-  private executionInputCounter = 0;
-  private readonly executionInputFiles = new Map<
-    string,
-    Array<{ logical: { path: string; content: Uint8Array }; privatePath: string }>
-  >();
   constructor(private readonly power: PowerSwitch) {}
   projectRoot(projectId: string): string {
     return `/fake/${projectId}`;
@@ -701,54 +696,16 @@ export class FakeWorkspaces implements WorkspaceManager {
   }
   lastRequestMarkdown: string | undefined;
   writeRunContext(input: {
-    attemptId: string;
     requestMarkdown: string;
-    inputFiles?: Array<{ path: string; content: Uint8Array }>;
-  }): Promise<{
-    requestPath: string;
-    schemaPath: string;
-    executionInputs?: { root: string; paths: string[] };
-  }> {
+  }): Promise<{ requestPath: string; schemaPath: string }> {
     checkPower(this.power);
     this.lastRequestMarkdown = input.requestMarkdown;
-    this.lastRunInputFiles = input.inputFiles ?? [];
-    if (!input.inputFiles?.length) {
-      return Promise.resolve({ requestPath: 'request.md', schemaPath: 'schema.json' });
-    }
-    this.executionInputCounter += 1;
-    const root = `/fake/execution-inputs/${input.attemptId}-${this.executionInputCounter}`;
-    const files = input.inputFiles.map((logical) => ({
-      logical,
-      privatePath: `${root}/${logical.path}`,
-    }));
-    this.executionInputFiles.set(root, files);
-    this.lastExecutionInputPaths = files.map(({ privatePath }) => privatePath);
-    this.activeRunInputFiles = [...this.activeRunInputFiles, ...input.inputFiles];
-    this.activeExecutionInputPaths = [
-      ...this.activeExecutionInputPaths,
-      ...files.map(({ privatePath }) => privatePath),
-    ];
-    return Promise.resolve({
-      requestPath: 'request.md',
-      schemaPath: 'schema.json',
-      executionInputs: { root, paths: this.lastExecutionInputPaths },
-    });
+    return Promise.resolve({ requestPath: 'request.md', schemaPath: 'schema.json' });
   }
   lastRunInputFiles: Array<{ path: string; content: Uint8Array }> = [];
   activeRunInputFiles: Array<{ path: string; content: Uint8Array }> = [];
   lastExecutionInputPaths: string[] = [];
   activeExecutionInputPaths: string[] = [];
-  removeRunInputFiles(root: string): Promise<void> {
-    const files = this.executionInputFiles.get(root) ?? [];
-    const privatePaths = new Set(files.map(({ privatePath }) => privatePath));
-    const logicalFiles = new Set(files.map(({ logical }) => logical));
-    this.activeRunInputFiles = this.activeRunInputFiles.filter((file) => !logicalFiles.has(file));
-    this.activeExecutionInputPaths = this.activeExecutionInputPaths.filter(
-      (path) => !privatePaths.has(path),
-    );
-    this.executionInputFiles.delete(root);
-    return Promise.resolve();
-  }
   ensureGit(): Promise<void> {
     return Promise.resolve();
   }

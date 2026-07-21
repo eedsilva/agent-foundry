@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { open, readFile, rm } from 'node:fs/promises';
 import { execa } from 'execa';
 import type {
@@ -87,9 +88,119 @@ export abstract class BaseCliExecutor implements AgentExecutor {
   ): Promise<AgentExecutionResult> {
     if (signal?.aborted) throw new RunCancelledError(request.runId);
     const startedAt = Date.now();
-    const invocation = await this.invocation(request);
+    const capabilities = await createAttachmentCapabilities(request);
     try {
-      return await this.executeInvocation(request, invocation, startedAt, signal, onEvent);
+      const invocation = await this.invocation({
+        ...request,
+        prompt: promptWithAttachmentCapabilities(request.prompt, request, capabilities),
+      });
+      return await this.executeInvocation(
+        request,
+        invocation,
+        startedAt,
+        signal,
+        onEvent,
+        capabilities,
+      );
+    } finally {
+      capabilities.forEach(({ bytes }) => bytes.fill(0));
+    }
+  }
+
+  private async executeInvocation(
+    request: AgentExecutionRequest,
+    invocation: CliInvocation,
+    startedAt: number,
+    signal?: AbortSignal,
+    onEvent?: (event: ExecutorStreamEvent) => void,
+    capabilities: AttachmentCapability[] = [],
+  ): Promise<AgentExecutionResult> {
+    try {
+      let result: CliResult;
+      let onAbort: (() => void) | undefined;
+
+      try {
+        const subprocess = execa(invocation.command, invocation.args, {
+          cwd: request.cwd,
+          timeout: request.timeoutMs,
+          maxBuffer: this.maxOutputBytes,
+          reject: false,
+          all: false,
+          windowsHide: true,
+          encoding: 'utf8',
+          ...(capabilities.length > 0
+            ? {
+                stdio: ['pipe', 'pipe', 'pipe', ...capabilities.map(({ bytes }) => bytes)],
+              }
+            : {}),
+          // Own process group on POSIX so cancellation can terminate the whole CLI tree.
+          detached: process.platform !== 'win32',
+          ...(invocation.input !== undefined ? { input: invocation.input } : {}),
+          ...(invocation.environment ? { env: cleanEnvironment(invocation.environment) } : {}),
+        }) as unknown as CliSubprocess;
+        if (onEvent) attachStreamTap(subprocess, this.createStreamMapper(), onEvent);
+        if (signal) {
+          onAbort = () => {
+            void terminateProcessTree(subprocess, this.killGraceMs);
+          };
+          if (signal.aborted) onAbort();
+          else signal.addEventListener('abort', onAbort, { once: true });
+        }
+        result = await waitForCliResult(subprocess, request.timeoutMs + HARD_TIMEOUT_GRACE_MS);
+      } catch (error) {
+        if (signal?.aborted) throw new RunCancelledError(request.runId);
+        throw new ExecutionError(
+          `${this.provider} CLI could not be executed: ${errorMessage(error)}`,
+          {
+            provider: this.provider,
+            model: request.model,
+            cause: error,
+          },
+        );
+      } finally {
+        if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+      }
+
+      if (signal?.aborted) throw new RunCancelledError(request.runId);
+      const stdout = outputText(result.stdout);
+      const stderr = outputText(result.stderr);
+      const rateLimit = extractRateLimit(this.provider, stdout);
+      if (rateLimit) this.lastRateLimit = rateLimit;
+      if (result.exitCode !== 0) {
+        throw new ExecutionError(
+          `${this.provider} CLI exited with code ${String(result.exitCode)}`,
+          {
+            provider: this.provider,
+            model: request.model,
+            ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+            stdout: stdout.slice(0, 20_000),
+            stderr: stderr.slice(0, 20_000),
+          },
+        );
+      }
+
+      const response = await this.responseText(invocation, stdout);
+      const output = parseAgentArtifact(this.provider, response);
+      const usage = extractUsage(this.provider, stdout);
+      const metadata = invocation.metadataFile
+        ? await readBoundedFile(invocation.metadataFile, this.maxOutputBytes)
+        : '';
+      const executedModel = extractExecutedModel(this.provider, { stdout, stderr, metadata });
+
+      return {
+        runId: request.runId,
+        stepRunId: request.stepRunId,
+        attemptId: request.attemptId,
+        provider: this.provider,
+        model: request.model,
+        exitCode: result.exitCode ?? 0,
+        durationMs: Date.now() - startedAt,
+        stdout,
+        stderr,
+        output,
+        ...(executedModel ? { executedModel } : {}),
+        ...(usage ? { usage } : {}),
+      };
     } finally {
       const directories = new Set(
         [invocation.outputDirectory, invocation.metadataDirectory].filter((path): path is string =>
@@ -104,92 +215,6 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         await rm(invocation.metadataFile, { force: true });
       }
     }
-  }
-
-  private async executeInvocation(
-    request: AgentExecutionRequest,
-    invocation: CliInvocation,
-    startedAt: number,
-    signal?: AbortSignal,
-    onEvent?: (event: ExecutorStreamEvent) => void,
-  ): Promise<AgentExecutionResult> {
-    let result: CliResult;
-    let onAbort: (() => void) | undefined;
-
-    try {
-      const subprocess = execa(invocation.command, invocation.args, {
-        cwd: request.cwd,
-        timeout: request.timeoutMs,
-        maxBuffer: this.maxOutputBytes,
-        reject: false,
-        all: false,
-        windowsHide: true,
-        encoding: 'utf8',
-        // Own process group on POSIX so cancellation can terminate the whole CLI tree.
-        detached: process.platform !== 'win32',
-        ...(invocation.input !== undefined ? { input: invocation.input } : {}),
-        ...(invocation.environment ? { env: cleanEnvironment(invocation.environment) } : {}),
-      }) as unknown as CliSubprocess;
-      if (onEvent) attachStreamTap(subprocess, this.createStreamMapper(), onEvent);
-      if (signal) {
-        onAbort = () => {
-          void terminateProcessTree(subprocess, this.killGraceMs);
-        };
-        if (signal.aborted) onAbort();
-        else signal.addEventListener('abort', onAbort, { once: true });
-      }
-      result = await waitForCliResult(subprocess, request.timeoutMs + HARD_TIMEOUT_GRACE_MS);
-    } catch (error) {
-      if (signal?.aborted) throw new RunCancelledError(request.runId);
-      throw new ExecutionError(
-        `${this.provider} CLI could not be executed: ${errorMessage(error)}`,
-        {
-          provider: this.provider,
-          model: request.model,
-          cause: error,
-        },
-      );
-    } finally {
-      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
-    }
-
-    if (signal?.aborted) throw new RunCancelledError(request.runId);
-    const stdout = outputText(result.stdout);
-    const stderr = outputText(result.stderr);
-    const rateLimit = extractRateLimit(this.provider, stdout);
-    if (rateLimit) this.lastRateLimit = rateLimit;
-    if (result.exitCode !== 0) {
-      throw new ExecutionError(`${this.provider} CLI exited with code ${String(result.exitCode)}`, {
-        provider: this.provider,
-        model: request.model,
-        ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
-        stdout: stdout.slice(0, 20_000),
-        stderr: stderr.slice(0, 20_000),
-      });
-    }
-
-    const response = await this.responseText(invocation, stdout);
-    const output = parseAgentArtifact(this.provider, response);
-    const usage = extractUsage(this.provider, stdout);
-    const metadata = invocation.metadataFile
-      ? await readBoundedFile(invocation.metadataFile, this.maxOutputBytes)
-      : '';
-    const executedModel = extractExecutedModel(this.provider, { stdout, stderr, metadata });
-
-    return {
-      runId: request.runId,
-      stepRunId: request.stepRunId,
-      attemptId: request.attemptId,
-      provider: this.provider,
-      model: request.model,
-      exitCode: result.exitCode ?? 0,
-      durationMs: Date.now() - startedAt,
-      stdout,
-      stderr,
-      output,
-      ...(executedModel ? { executedModel } : {}),
-      ...(usage ? { usage } : {}),
-    };
   }
 
   async health(): Promise<ExecutorHealth> {
@@ -221,6 +246,42 @@ export abstract class BaseCliExecutor implements AgentExecutor {
       };
     }
   }
+}
+
+interface AttachmentCapability {
+  bytes: Buffer;
+  path: string;
+}
+
+function createAttachmentCapabilities(request: AgentExecutionRequest): AttachmentCapability[] {
+  if (!request.attachments?.length) return [];
+  if (process.platform === 'win32') {
+    throw new ExecutionError('Request-private attachments require POSIX file descriptors');
+  }
+  const capabilities: AttachmentCapability[] = [];
+  for (const [index, attachment] of request.attachments.entries()) {
+    const bytes = Buffer.from(attachment.contentBase64, 'base64');
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    if (bytes.byteLength !== attachment.sizeBytes || sha256 !== attachment.sha256) {
+      throw new ExecutionError(`Attachment integrity check failed for ${attachment.name}`);
+    }
+    capabilities.push({
+      bytes,
+      path: `${process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd'}/${3 + index}`,
+    });
+  }
+  return capabilities;
+}
+
+function promptWithAttachmentCapabilities(
+  prompt: string,
+  request: AgentExecutionRequest,
+  capabilities: AttachmentCapability[],
+): string {
+  if (!request.attachments?.length) return prompt;
+  return `${prompt} Request-private attachments: ${request.attachments
+    .map((attachment, index) => `${attachment.name}: capability ${capabilities[index]!.path}`)
+    .join('; ')}. These inherited capabilities are valid only for this execution.`;
 }
 
 async function readBoundedFile(path: string, maxBytes: number): Promise<string> {

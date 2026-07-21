@@ -1,9 +1,18 @@
 import {
   BrowserVerificationReportSchema,
   type BrowserVerificationReport,
+  type RunDetailResponse,
   type StepAttempt,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
+
+export function browserVerificationAttempts(
+  details: Array<RunDetailResponse | null | undefined>,
+): StepAttempt[] {
+  return details.flatMap((detail) =>
+    detail ? detail.steps.flatMap(({ attempts }) => attempts) : [],
+  );
+}
 
 export function latestBrowserVerificationReport(
   artifacts: StoredArtifact[],
@@ -49,6 +58,9 @@ function isCanonicalBrowserReport(artifact: StoredArtifact, attempts: StepAttemp
       attempt.runId === artifact.metadata.runId &&
       attempt.stepRunId === artifact.metadata.stepRunId &&
       attempt.status === 'succeeded' &&
+      attempt.executorKind === 'verification' &&
+      attempt.provider === 'internal' &&
+      attempt.model === 'browser-verifier' &&
       attempt.outputArtifacts.some(
         (reference) =>
           reference.name === artifact.metadata.name &&
@@ -57,14 +69,12 @@ function isCanonicalBrowserReport(artifact: StoredArtifact, attempts: StepAttemp
       ),
   );
   if (!sourceAttempt) return false;
-  if (
+  const isWorkflowReport = artifact.metadata.name === 'browser-verification.report';
+  const isDirectVisualReport =
     artifact.metadata.name.startsWith('visual-edit-browser-report-') &&
-    artifact.metadata.createdBy === 'browser-verifier:visual-edit'
-  ) {
-    return true;
-  }
+    artifact.metadata.createdBy === 'verifier:visual-edit-browser';
   if (
-    artifact.metadata.name !== 'browser-verification.report' ||
+    (!isWorkflowReport && !isDirectVisualReport) ||
     !artifact.metadata.runId ||
     !artifact.metadata.stepRunId ||
     !artifact.metadata.attemptId
@@ -72,9 +82,9 @@ function isCanonicalBrowserReport(artifact: StoredArtifact, attempts: StepAttemp
     return false;
   }
   return (
-    sourceAttempt.executorKind === 'verification' &&
-    sourceAttempt.provider === 'internal' &&
-    sourceAttempt.model === 'browser-verifier' &&
-    artifact.metadata.createdBy === `verifier:${sourceAttempt.context.stepId}`
+    artifact.metadata.createdBy ===
+    (isDirectVisualReport
+      ? 'verifier:visual-edit-browser'
+      : `verifier:${sourceAttempt.context.stepId}`)
   );
 }

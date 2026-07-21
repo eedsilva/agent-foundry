@@ -4,7 +4,10 @@ import type {
   StepAttempt,
   StoredArtifact,
 } from '@agent-foundry/contracts';
-import { latestBrowserVerificationReport } from './browser-verification';
+import {
+  browserVerificationAttempts,
+  latestBrowserVerificationReport,
+} from './browser-verification';
 
 function reportArtifact(
   runId: string,
@@ -118,13 +121,8 @@ describe('latestBrowserVerificationReport', () => {
     const original = reportArtifact('run-original', 4, { summary: 'original' });
     const visual = reportArtifact('run-visual', 1, { summary: 'visual edit' });
     visual.metadata.name = 'visual-edit-browser-report-operation-1';
-    visual.metadata.createdBy = 'browser-verifier:visual-edit';
-    const visualAttempt = {
-      ...verifierAttempt(visual),
-      executorKind: 'agent' as const,
-      provider: 'mock' as const,
-      model: 'codex',
-    };
+    visual.metadata.createdBy = 'verifier:visual-edit-browser';
+    const visualAttempt = verifierAttempt(visual);
 
     expect(
       latestBrowserVerificationReport(
@@ -133,5 +131,63 @@ describe('latestBrowserVerificationReport', () => {
         [verifierAttempt(original), visualAttempt],
       )?.summary,
     ).toBe('visual edit');
+  });
+
+  it('rejects a direct visual report attributed to an agent attempt', () => {
+    const visual = reportArtifact('run-visual', 1, { summary: 'forged visual edit' });
+    visual.metadata.name = 'visual-edit-browser-report-operation-1';
+    visual.metadata.createdBy = 'verifier:visual-edit-browser';
+    const agentAttempt = {
+      ...verifierAttempt(visual),
+      executorKind: 'agent' as const,
+      provider: 'mock' as const,
+      model: 'codex',
+    };
+
+    expect(latestBrowserVerificationReport([visual], 'run-visual', [agentAttempt])).toBeNull();
+  });
+
+  it('uses the canonical verifier when the producing agent also references the report', () => {
+    const visual = reportArtifact('run-visual', 1, { summary: 'verified visual edit' });
+    visual.metadata.name = 'visual-edit-browser-report-operation-1';
+    visual.metadata.createdBy = 'verifier:visual-edit-browser';
+    const verifier = verifierAttempt(visual);
+    const agent = {
+      ...verifier,
+      id: 'agent-attempt',
+      executorKind: 'agent' as const,
+      provider: 'mock' as const,
+      model: 'codex',
+    };
+
+    expect(
+      latestBrowserVerificationReport([visual], 'run-visual', [agent, verifier])?.summary,
+    ).toBe('verified visual edit');
+  });
+});
+
+describe('browserVerificationAttempts', () => {
+  it('includes verifier attempts from every historical operation run', () => {
+    const first = reportArtifact('run-first', 1);
+    const priorVisual = reportArtifact('run-prior-visual', 1);
+    const details = [first, priorVisual].map((artifact) => ({
+      run: {
+        id: artifact.metadata.runId!,
+        projectId: 'project-1',
+        workflowId: 'conversation',
+        status: 'completed' as const,
+        version: 1,
+        createdAt: artifact.metadata.createdAt,
+        updatedAt: artifact.metadata.createdAt,
+      },
+      steps: [
+        { step: { id: artifact.metadata.stepRunId! }, attempts: [verifierAttempt(artifact)] },
+      ],
+    }));
+
+    expect(browserVerificationAttempts(details).map(({ runId }) => runId)).toEqual([
+      'run-first',
+      'run-prior-visual',
+    ]);
   });
 });

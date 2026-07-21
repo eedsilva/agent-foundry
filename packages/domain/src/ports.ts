@@ -439,13 +439,7 @@ export interface WorkspaceManager {
     attemptId: string;
     requestMarkdown: string;
     outputSchema: Record<string, unknown>;
-    inputFiles?: Array<{ path: string; content: Uint8Array }>;
-  }): Promise<{
-    requestPath: string;
-    schemaPath: string;
-    executionInputs?: { root: string; paths: string[] };
-  }>;
-  removeRunInputFiles(root: string): Promise<void>;
+  }): Promise<{ requestPath: string; schemaPath: string }>;
   ensureGit(projectId: string): Promise<void>;
   isClean(projectId: string): Promise<boolean>;
   checkpoint(projectId: string, label: string): Promise<string>;
