@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0026 OpenTelemetry traces, metrics, and correlated logs](0026-opentelemetry-observability.md).
+Latest: [0027 OpenTelemetry traces, metrics, and correlated logs](0027-opentelemetry-observability.md).

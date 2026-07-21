@@ -1,4 +1,4 @@
-# ADR 0026: OpenTelemetry traces, metrics, and correlated logs
+# ADR 0027: OpenTelemetry traces, metrics, and correlated logs
 
 - Status: Accepted
 - Date: 2026-07-21
