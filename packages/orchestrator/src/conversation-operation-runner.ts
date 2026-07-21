@@ -2,6 +2,7 @@ import type {
   AgentExecutionRequest,
   Message,
   Operation,
+  ProjectVersion,
   StepAttempt,
   StepRun,
   WorkflowRun,
@@ -71,6 +72,12 @@ export class ConversationOperationRunner {
   async run(projectId: string, runId: string, operationId: string): Promise<void> {
     const initialRun = await this.requireRun(runId);
     const operation = await this.requireOperation(projectId, operationId);
+    if (initialRun.projectId !== projectId) {
+      throw new ValidationError(`Workflow run ${runId} does not belong to project ${projectId}`);
+    }
+    if (operation.runId !== runId) {
+      throw new ValidationError(`Operation ${operationId} is not bound to workflow run ${runId}`);
+    }
     const kind: 'plan' | 'build' | 'visual-edit' =
       operation.kind === 'build' || operation.kind === 'visual-edit' ? operation.kind : 'plan';
     const message = await this.requireMessage(projectId, operation.messageId);
@@ -121,6 +128,8 @@ export class ConversationOperationRunner {
 
     let checkpoint: string | null = null;
     let attempt: StepAttempt | undefined;
+    let recordedVersion: ProjectVersion | null = null;
+    let operationPromoted = false;
     let succeeded = false;
     try {
       if (operation.visualEdit && !(await this.workspaces.isClean(projectId))) {
@@ -247,6 +256,21 @@ export class ConversationOperationRunner {
         routeDecision: executionRoute,
       });
 
+      recordedVersion = commit
+        ? await this.projectVersions.recordFromStep({
+            projectId,
+            runId,
+            stepRunId: stepRun.id,
+            attemptId: attempt.id,
+            commit,
+          })
+        : null;
+      await this.conversations.updateOperation({
+        ...operation,
+        artifactReferences: [artifactReference(artifact), ...directEvidence],
+        ...(recordedVersion ? { projectVersionId: recordedVersion.id } : {}),
+      });
+      operationPromoted = true;
       attempt = await this.stepAttempts.update(
         transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
           durationMs: result.durationMs,
@@ -265,31 +289,6 @@ export class ConversationOperationRunner {
         runState.version,
       );
       succeeded = true;
-      // Recorded here (after succeeded = true, not right after `commit`)
-      // so a failure in recordFromStep hits the `if (succeeded) return`
-      // guard in the catch block below instead of orphaning a
-      // ProjectVersion for a commit that a later failure would roll back.
-      const projectVersion = commit
-        ? await this.projectVersions.recordFromStep({
-            projectId,
-            runId,
-            stepRunId: stepRun.id,
-            attemptId: attempt.id,
-            commit,
-          })
-        : null;
-      // Records the artifact this operation produced on the Operation itself
-      // (not just the StepAttempt) so the chat UI can link a completed
-      // Operation to its diff/artifacts without waiting on the separate
-      // plan-approval decision — build operations have no approval step at
-      // all, so this is their only completion signal. Runs after `succeeded
-      // = true` like metrics/events below: a failure here must not trigger
-      // the rollback path for a run that already durably completed.
-      await this.conversations.updateOperation({
-        ...operation,
-        artifactReferences: [artifactReference(artifact), ...directEvidence],
-        ...(projectVersion ? { projectVersionId: projectVersion.id } : {}),
-      });
       await this.metrics.record({
         modelId: route.selected.model.id,
         taskKind: step.taskKind,
@@ -313,6 +312,22 @@ export class ConversationOperationRunner {
         // already-committed workspace and do not re-attempt repository writes
         // against records that have moved past these local versions.
         return;
+      }
+      let operationRestored = !operationPromoted;
+      if (operationPromoted) {
+        try {
+          await this.conversations.updateOperation(operation);
+          operationRestored = true;
+        } catch {
+          // Keep the version while the operation still references it; deleting it would create a dangling reference.
+        }
+      }
+      if (recordedVersion && operationRestored) {
+        try {
+          await this.projectVersions.discardUnpromoted(recordedVersion);
+        } catch {
+          // Exact-match protection preserves a version that was promoted or changed concurrently.
+        }
       }
       if (checkpoint) {
         try {

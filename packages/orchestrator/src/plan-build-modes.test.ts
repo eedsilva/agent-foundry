@@ -126,6 +126,7 @@ async function runOperation(kind: 'plan' | 'build') {
   // underneath must be real enough for ProjectVersionService to work with.
   const projectVersionRepo: ProjectVersionRepository = {
     create: () => Promise.resolve(),
+    discardUnpromoted: () => Promise.resolve(),
     get: () => Promise.resolve(null),
     list: () => Promise.resolve([]),
     update: (version) => Promise.resolve(version),

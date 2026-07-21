@@ -1,4 +1,5 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, unlink } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 import { join } from 'node:path';
 import { ProjectVersionSchema, type ProjectVersion } from '@agent-foundry/contracts';
 import type { ProjectVersionRepository } from '@agent-foundry/domain';
@@ -20,6 +21,18 @@ export class FileProjectVersionRepository implements ProjectVersionRepository {
       ProjectVersionSchema,
       'project-version',
     );
+  }
+
+  async discardUnpromoted(version: ProjectVersion): Promise<void> {
+    const path = versionPath(this.dataDir, version.projectId, version.id);
+    const existing = await readVersioned(path, ProjectVersionSchema);
+    if (!existing) return;
+    if (existing.protected || !isDeepStrictEqual(existing, ProjectVersionSchema.parse(version))) {
+      throw new Error(
+        `Project version ${version.id} no longer matches the unpromoted version and cannot be discarded`,
+      );
+    }
+    await unlink(path);
   }
 
   async get(projectId: string, versionId: string): Promise<ProjectVersion | null> {

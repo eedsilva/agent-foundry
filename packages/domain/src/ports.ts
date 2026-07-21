@@ -452,9 +452,10 @@ export interface IdGenerator {
   next(): string;
 }
 
-/** Create-only, immutable ledger: revert/branch always append a new version, never mutate an existing one. */
+/** Append-only ledger once promoted; failed promotion may discard its exact, still-unpromoted write. */
 export interface ProjectVersionRepository {
   create(version: ProjectVersion): Promise<void>;
+  discardUnpromoted(version: ProjectVersion): Promise<void>;
   get(projectId: string, versionId: string): Promise<ProjectVersion | null>;
   list(projectId: string, limit?: number): Promise<ProjectVersion[]>;
   /** Only the `protected` flag is ever updated after creation. */

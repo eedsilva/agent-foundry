@@ -91,6 +91,28 @@ describe('FileProjectVersionRepository', () => {
     await expect(repository.create(makeVersion({ version: 2 }))).rejects.toThrow();
   });
 
+  it('discards the exact unpromoted version used for failed-promotion compensation', async () => {
+    const repository = new FileProjectVersionRepository(await makeDataDir());
+    const version = makeVersion();
+    await repository.create(version);
+
+    await repository.discardUnpromoted(version);
+
+    expect(await repository.get('project-1', 'version-1')).toBeNull();
+  });
+
+  it('refuses to discard a version that was updated after it was recorded', async () => {
+    const repository = new FileProjectVersionRepository(await makeDataDir());
+    const version = makeVersion();
+    await repository.create(version);
+    const promoted = await repository.update({ ...version, protected: true }, version.version);
+
+    await expect(repository.discardUnpromoted(version)).rejects.toThrow(
+      'no longer matches the unpromoted version',
+    );
+    expect(await repository.get('project-1', 'version-1')).toEqual(promoted);
+  });
+
   it('rejects one of two concurrent updates with a stale expectedVersion', async () => {
     const repository = new FileProjectVersionRepository(await makeDataDir());
     const version = makeVersion();
