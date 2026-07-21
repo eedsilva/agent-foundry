@@ -58,17 +58,28 @@ class SequentialIds implements IdGenerator {
 class MemoryProjectVersions implements ProjectVersionRepository {
   private readonly store: ProjectVersion[] = [];
   onBeforeCreate?: (version: ProjectVersion) => void;
+  onBeforeDiscard?: (version: ProjectVersion) => void | Promise<void>;
   create(version: ProjectVersion): Promise<void> {
     this.onBeforeCreate?.(version);
     this.store.push(version);
     return Promise.resolve();
   }
-  discardUnpromoted(version: ProjectVersion): Promise<void> {
+  async discardUnpromoted(version: ProjectVersion): Promise<void> {
+    await this.onBeforeDiscard?.(version);
     const index = this.store.findIndex(
       (entry) => entry.projectId === version.projectId && entry.id === version.id,
     );
-    if (index >= 0) this.store.splice(index, 1);
-    return Promise.resolve();
+    if (index < 0) return;
+    const existing = this.store[index]!;
+    if (existing.protected || JSON.stringify(existing) !== JSON.stringify(version)) {
+      throw Object.assign(
+        new Error(
+          `Project version ${version.id} no longer matches the unpromoted version and cannot be discarded`,
+        ),
+        { code: 'PROJECT_VERSION_DISCARD_REFUSED' },
+      );
+    }
+    this.store.splice(index, 1);
   }
   get(projectId: string, versionId: string): Promise<ProjectVersion | null> {
     return Promise.resolve(
@@ -525,6 +536,94 @@ describe('ConversationOperationRunner', () => {
     const operation = await conversations.getOperation('project-1', operationId);
     expect(operation?.artifactReferences).toEqual([]);
     expect(operation?.projectVersionId).toBeUndefined();
+  });
+
+  it('surfaces provisional-version discard infrastructure failure with the promotion error', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(
+      harnessRepo,
+      approvedDirectServices(),
+    );
+    projectVersions.onBeforeDiscard = () => {
+      throw new Error('version delete unavailable');
+    };
+    const updateOperation = conversations.updateOperation.bind(conversations);
+    conversations.updateOperation = vi.fn((operation) =>
+      operation.projectVersionId
+        ? Promise.reject(new Error('operation store unavailable'))
+        : updateOperation(operation),
+    );
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    const failure = await runner.run('project-1', runId, operationId).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain('operation store unavailable');
+    expect((failure as Error).message).toContain(
+      'provisional version discard failed: version delete unavailable',
+    );
+    expect((await runs.get(runId))?.error?.message).toBe((failure as Error).message);
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toHaveLength(1);
+  });
+
+  it('surfaces a protected-version discard refusal and preserves that version', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(
+      harnessRepo,
+      approvedDirectServices(),
+    );
+    projectVersions.onBeforeDiscard = async (version) => {
+      await projectVersions.update({ ...version, protected: true }, version.version);
+    };
+    const updateOperation = conversations.updateOperation.bind(conversations);
+    conversations.updateOperation = vi.fn((operation) =>
+      operation.projectVersionId
+        ? Promise.reject(new Error('operation store unavailable'))
+        : updateOperation(operation),
+    );
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    const failure = await runner.run('project-1', runId, operationId).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      'provisional version discard refused: Project version',
+    );
+    expect((await runs.get(runId))?.error?.message).toBe((failure as Error).message);
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toEqual([
+      expect.objectContaining({ protected: true }),
+    ]);
+  });
+
+  it('surfaces operation restoration failure after a later terminal write fails', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(
+      harnessRepo,
+      approvedDirectServices(),
+    );
+    (runs as InMemoryRuns).onBeforeUpdate = (run) => {
+      if (run.status === 'completed') throw new Error('run store unavailable');
+    };
+    const updateOperation = conversations.updateOperation.bind(conversations);
+    conversations.updateOperation = vi.fn((operation) =>
+      operation.projectVersionId
+        ? updateOperation(operation)
+        : Promise.reject(new Error('operation restore unavailable')),
+    );
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    const failure = await runner.run('project-1', runId, operationId).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain('run store unavailable');
+    expect((failure as Error).message).toContain(
+      'operation restore failed: operation restore unavailable',
+    );
+    expect((failure as Error).message).toContain(
+      'provisional version discard skipped: operation restore failed; version retained',
+    );
+    expect((await runs.get(runId))?.error?.message).toBe((failure as Error).message);
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toHaveLength(1);
   });
 
   it('rejects a dirty direct-edit baseline before checkpointing or creating a version', async () => {
@@ -1016,7 +1115,7 @@ describe('ConversationOperationRunner', () => {
     expect(stepRunList[0]?.status).toBe('completed');
   });
 
-  it('resolves run() and still marks stepRun/run failed when the checkpoint rollback throws', async () => {
+  it('surfaces rollback failure and records it with the original run error', async () => {
     const workspaces = new FakeWorkspaces({ on: true });
     workspaces.rollback = () => Promise.reject(new Error('rollback unavailable'));
     const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
@@ -1054,13 +1153,14 @@ describe('ConversationOperationRunner', () => {
     );
     const { runId, operationId } = await seed(conversations, runs, 'build');
 
-    // run() must resolve even though workspaces.rollback itself throws (e.g. a
-    // git I/O error), and the failed-state transitions below the rollback call
-    // must still execute so the run isn't stranded in 'running' forever.
-    await expect(runner.run('project-1', runId, operationId)).resolves.toBeUndefined();
+    const failure = await runner.run('project-1', runId, operationId).catch((error) => error);
 
     const run = (await runs.get(runId)) as WorkflowRun;
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain('boom');
+    expect((failure as Error).message).toContain('workspace rollback failed: rollback unavailable');
     expect(run.status).toBe('failed');
+    expect(run.error?.message).toBe((failure as Error).message);
     const stepRunList = await stepRuns.list(runId);
     expect(stepRunList[0]?.status).toBe('failed');
   });

@@ -14,6 +14,7 @@ import {
 } from '@agent-foundry/contracts';
 import {
   NotFoundError,
+  ProjectVersionDiscardRefusedError,
   ValidationError,
   errorMessage,
   transitionStepAttempt,
@@ -313,30 +314,46 @@ export class ConversationOperationRunner {
         // against records that have moved past these local versions.
         return;
       }
+      const compensationFailures: CompensationFailure[] = [];
       let operationRestored = !operationPromoted;
       if (operationPromoted) {
         try {
           await this.conversations.updateOperation(operation);
           operationRestored = true;
-        } catch {
-          // Keep the version while the operation still references it; deleting it would create a dangling reference.
+        } catch (restoreError) {
+          compensationFailures.push({ stage: 'operation restore', error: restoreError });
         }
       }
       if (recordedVersion && operationRestored) {
         try {
           await this.projectVersions.discardUnpromoted(recordedVersion);
-        } catch {
-          // Exact-match protection preserves a version that was promoted or changed concurrently.
+        } catch (discardError) {
+          compensationFailures.push({
+            stage: 'provisional version discard',
+            error: discardError,
+            refused: isProjectVersionDiscardRefusal(discardError),
+          });
         }
+      } else if (recordedVersion) {
+        compensationFailures.push({
+          stage: 'provisional version discard',
+          error:
+            'operation restore failed; version retained to avoid a dangling operation reference',
+          skipped: true,
+        });
       }
       if (checkpoint) {
         try {
           await this.workspaces.rollback(projectId, checkpoint);
-        } catch {
-          // best-effort; the failed-state transitions below are the durable record
+        } catch (rollbackError) {
+          compensationFailures.push({ stage: 'workspace rollback', error: rollbackError });
         }
       }
-      const runErr = runError(error);
+      const terminalError =
+        compensationFailures.length > 0
+          ? new PromotionCompensationError(error, compensationFailures)
+          : error;
+      const runErr = runError(terminalError);
       if (attempt && attempt.status === 'running') {
         await this.stepAttempts.update(
           transitionStepAttempt(attempt, 'failed', this.clock.now(), { error: runErr }),
@@ -372,13 +389,14 @@ export class ConversationOperationRunner {
           id: this.ids.next(),
           projectId,
           type: 'operation.failed',
-          message: errorMessage(error),
+          message: errorMessage(terminalError),
           createdAt: this.clock.now().toISOString(),
           data: { operationId, runId, kind },
         });
       } catch {
         // best-effort event; durable state (WorkflowRun/StepRun) is already recorded above
       }
+      if (terminalError instanceof PromotionCompensationError) throw terminalError;
     }
   }
 
@@ -502,6 +520,40 @@ export class ConversationOperationRunner {
     );
     return artifact ? { content: artifact.content } : undefined;
   }
+}
+
+interface CompensationFailure {
+  stage: 'operation restore' | 'provisional version discard' | 'workspace rollback';
+  error: unknown;
+  refused?: boolean;
+  skipped?: boolean;
+}
+
+class PromotionCompensationError extends Error {
+  override readonly name = 'PromotionCompensationError';
+  readonly code = 'PROMOTION_COMPENSATION_FAILED';
+
+  constructor(
+    readonly originalError: unknown,
+    readonly compensationFailures: readonly CompensationFailure[],
+  ) {
+    super(
+      [
+        `Promotion failed: ${errorMessage(originalError)}`,
+        ...compensationFailures.map(
+          ({ stage, error, refused, skipped }) =>
+            `${stage} ${skipped ? 'skipped' : refused ? 'refused' : 'failed'}: ${errorMessage(error)}`,
+        ),
+      ].join('; '),
+    );
+  }
+}
+
+function isProjectVersionDiscardRefusal(error: unknown): boolean {
+  return (
+    error instanceof ProjectVersionDiscardRefusedError ||
+    (error instanceof Error && 'code' in error && error.code === 'PROJECT_VERSION_DISCARD_REFUSED')
+  );
 }
 
 function directVisualEditBrowserPlan(

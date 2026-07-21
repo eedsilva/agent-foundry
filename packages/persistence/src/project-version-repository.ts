@@ -2,8 +2,11 @@ import { readdir, unlink } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { join } from 'node:path';
 import { ProjectVersionSchema, type ProjectVersion } from '@agent-foundry/contracts';
-import type { ProjectVersionRepository } from '@agent-foundry/domain';
-import { ensureDir, pathFor } from './fs-utils.js';
+import {
+  ProjectVersionDiscardRefusedError,
+  type ProjectVersionRepository,
+} from '@agent-foundry/domain';
+import { ensureDir, pathFor, withDirectoryLock } from './fs-utils.js';
 import { createVersioned, readVersioned, updateVersioned } from './run-repositories.js';
 
 const IMMUTABLE_KEYS = Object.keys(ProjectVersionSchema.shape).filter(
@@ -25,14 +28,14 @@ export class FileProjectVersionRepository implements ProjectVersionRepository {
 
   async discardUnpromoted(version: ProjectVersion): Promise<void> {
     const path = versionPath(this.dataDir, version.projectId, version.id);
-    const existing = await readVersioned(path, ProjectVersionSchema);
-    if (!existing) return;
-    if (existing.protected || !isDeepStrictEqual(existing, ProjectVersionSchema.parse(version))) {
-      throw new Error(
-        `Project version ${version.id} no longer matches the unpromoted version and cannot be discarded`,
-      );
-    }
-    await unlink(path);
+    await withDirectoryLock(`${path}.lock`, async () => {
+      const existing = await readVersioned(path, ProjectVersionSchema);
+      if (!existing) return;
+      if (existing.protected || !isDeepStrictEqual(existing, ProjectVersionSchema.parse(version))) {
+        throw new ProjectVersionDiscardRefusedError(version.id);
+      }
+      await unlink(path);
+    });
   }
 
   async get(projectId: string, versionId: string): Promise<ProjectVersion | null> {
