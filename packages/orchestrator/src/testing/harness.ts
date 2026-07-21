@@ -522,6 +522,9 @@ export class InMemoryArtifacts implements ArtifactStore {
     const items = name ? this.named(name) : this.artifacts;
     return Promise.resolve(items.map((artifact) => artifact.metadata));
   }
+  reapExpired(): Promise<number> {
+    return Promise.resolve(0);
+  }
   named(name: string): StoredArtifact[] {
     return this.artifacts.filter((artifact) => artifact.metadata.name === name);
   }

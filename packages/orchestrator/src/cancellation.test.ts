@@ -338,6 +338,9 @@ class InMemoryArtifacts implements ArtifactStore {
   listMetadata(): Promise<ArtifactMetadata[]> {
     return Promise.resolve(this.artifacts.map((artifact) => artifact.metadata));
   }
+  reapExpired(): Promise<number> {
+    return Promise.resolve(0);
+  }
   named(name: string): StoredArtifact[] {
     return this.artifacts.filter((artifact) => artifact.metadata.name === name);
   }

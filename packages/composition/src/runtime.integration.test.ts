@@ -19,6 +19,7 @@ import {
   FileQualityObservationRepository,
 } from '@agent-foundry/persistence';
 import { createRuntime, type Runtime } from './runtime.js';
+import { approveDiffGate } from './testing-helpers.js';
 
 const RESTART_APPROVAL_WORKFLOW = `
 schemaVersion: '1'
@@ -92,17 +93,6 @@ class FailFirstExecutor implements AgentExecutor {
   health(): Promise<ExecutorHealth> {
     return this.delegate.health();
   }
-}
-
-async function approveDiffGate(runtime: Runtime, runId: string): Promise<void> {
-  const [diffApproval] = (await runtime.projectService.listApprovals(runId)).filter(
-    (entry) => entry.request.nodeId === 'diff-approval',
-  );
-  if (!diffApproval) throw new Error('Expected a pending diff-approval request');
-  await runtime.projectService.decideApproval(runId, diffApproval.request.id, {
-    action: 'approve',
-    decidedBy: 'integration-test',
-  });
 }
 
 class AlwaysFailExecutor implements AgentExecutor {

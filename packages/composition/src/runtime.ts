@@ -37,6 +37,18 @@ import {
   S3BlobStore,
   YamlPolicyRepository,
   YamlWorkflowRepository,
+  assertSchemaCurrent,
+  createPostgresClient,
+  PostgresApprovalDecisionRepository,
+  PostgresApprovalRequestRepository,
+  PostgresArtifactStore,
+  PostgresConversationRepository,
+  PostgresEventStore,
+  PostgresProjectRepository,
+  PostgresStepAttemptRepository,
+  PostgresStepEventRepository,
+  PostgresStepRunRepository,
+  PostgresWorkflowRunRepository,
 } from '@agent-foundry/persistence';
 import {
   ConversationOperationRunner,
@@ -54,24 +66,37 @@ import {
   type BrowserEvidenceLimits,
 } from '@agent-foundry/orchestrator';
 import { SystemClock, UlidGenerator } from '@agent-foundry/domain';
-import type { BlobStore, BrowserVerifier } from '@agent-foundry/domain';
+import type {
+  ApprovalDecisionRepository,
+  ApprovalRequestRepository,
+  ArtifactStore,
+  BlobStore,
+  BrowserVerifier,
+  ConversationRepository,
+  EventStore,
+  ProjectRepository,
+  StepAttemptRepository,
+  StepEventRepository,
+  StepRunRepository,
+  WorkflowRunRepository,
+} from '@agent-foundry/domain';
 import { BrowserTestPlanArtifactSchema, type PreviewSession } from '@agent-foundry/contracts';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
 
 export interface Runtime {
   config: RuntimeConfig;
-  projects: FileProjectRepository;
-  runs: FileWorkflowRunRepository;
-  stepRuns: FileStepRunRepository;
-  stepAttempts: FileStepAttemptRepository;
-  approvalRequests: FileApprovalRequestRepository;
-  approvalDecisions: FileApprovalDecisionRepository;
-  artifacts: FileArtifactStore;
+  projects: ProjectRepository;
+  runs: WorkflowRunRepository;
+  stepRuns: StepRunRepository;
+  stepAttempts: StepAttemptRepository;
+  approvalRequests: ApprovalRequestRepository;
+  approvalDecisions: ApprovalDecisionRepository;
+  artifacts: ArtifactStore;
   blobStore: BlobStore;
-  conversations: FileConversationRepository;
+  conversations: ConversationRepository;
   knowledgeFiles: FileKnowledgeFileRepository;
-  events: FileEventStore;
-  stepEvents: FileStepEventRepository;
+  events: EventStore;
+  stepEvents: StepEventRepository;
   queue: FileJobQueue;
   metrics: FileMetricsRepository;
   qualityObservations: FileQualityObservationRepository;
@@ -109,12 +134,6 @@ export async function createRuntime(
 ): Promise<Runtime> {
   const clock = new SystemClock();
   const ids = new UlidGenerator();
-  const projects = new FileProjectRepository(config.dataDir);
-  const runs = new FileWorkflowRunRepository(config.dataDir);
-  const stepRuns = new FileStepRunRepository(config.dataDir);
-  const stepAttempts = new FileStepAttemptRepository(config.dataDir);
-  const approvalRequests = new FileApprovalRequestRepository(config.dataDir);
-  const approvalDecisions = new FileApprovalDecisionRepository(config.dataDir);
   const blobStore: BlobStore =
     config.blobStoreMode === 's3'
       ? new S3BlobStore({
@@ -131,11 +150,19 @@ export async function createRuntime(
           signingSecret: config.blobSigningSecret!,
           publicBaseUrl: `http://${config.apiHost}:${config.apiPort}`,
         });
-  const artifacts = new FileArtifactStore(config.dataDir, blobStore);
-  const conversations = new FileConversationRepository(config.dataDir);
+  const {
+    projects,
+    runs,
+    stepRuns,
+    stepAttempts,
+    approvalRequests,
+    approvalDecisions,
+    artifacts,
+    conversations,
+    events,
+    stepEvents,
+  } = await createMetadataStores(config, blobStore);
   const knowledgeFiles = new FileKnowledgeFileRepository(config.dataDir);
-  const events = new FileEventStore(config.dataDir);
-  const stepEvents = new FileStepEventRepository(config.dataDir);
   const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
   const metrics = new FileMetricsRepository(config.dataDir);
   const qualityObservations = new FileQualityObservationRepository(config.dataDir);
@@ -357,8 +384,61 @@ export async function createRuntime(
   };
 }
 
+/** Metadata stores swapped between file and Postgres backends by PERSISTENCE_MODE; everything
+ * else (queue, metrics, quality, previews, model overrides, project versions, workflows,
+ * policies, workspaces) stays file-based regardless of this setting. */
+async function createMetadataStores(
+  config: RuntimeConfig,
+  blobStore: BlobStore,
+): Promise<{
+  projects: ProjectRepository;
+  runs: WorkflowRunRepository;
+  stepRuns: StepRunRepository;
+  stepAttempts: StepAttemptRepository;
+  approvalRequests: ApprovalRequestRepository;
+  approvalDecisions: ApprovalDecisionRepository;
+  artifacts: ArtifactStore;
+  conversations: ConversationRepository;
+  events: EventStore;
+  stepEvents: StepEventRepository;
+}> {
+  if (config.persistenceMode === 'file') {
+    return {
+      projects: new FileProjectRepository(config.dataDir),
+      runs: new FileWorkflowRunRepository(config.dataDir),
+      stepRuns: new FileStepRunRepository(config.dataDir),
+      stepAttempts: new FileStepAttemptRepository(config.dataDir),
+      approvalRequests: new FileApprovalRequestRepository(config.dataDir),
+      approvalDecisions: new FileApprovalDecisionRepository(config.dataDir),
+      artifacts: new FileArtifactStore(config.dataDir, blobStore),
+      conversations: new FileConversationRepository(config.dataDir),
+      events: new FileEventStore(config.dataDir),
+      stepEvents: new FileStepEventRepository(config.dataDir),
+    };
+  }
+  // loadRuntimeConfig already enforces DATABASE_URL when PERSISTENCE_MODE=postgres; this guards
+  // a RuntimeConfig built by hand (e.g. directly in a test) bypassing that check.
+  if (!config.databaseUrl) {
+    throw new Error('PERSISTENCE_MODE=postgres requires DATABASE_URL');
+  }
+  const sql = createPostgresClient(config.databaseUrl);
+  await assertSchemaCurrent(sql);
+  return {
+    projects: new PostgresProjectRepository(sql),
+    runs: new PostgresWorkflowRunRepository(sql),
+    stepRuns: new PostgresStepRunRepository(sql),
+    stepAttempts: new PostgresStepAttemptRepository(sql),
+    approvalRequests: new PostgresApprovalRequestRepository(sql),
+    approvalDecisions: new PostgresApprovalDecisionRepository(sql),
+    artifacts: new PostgresArtifactStore(sql),
+    conversations: new PostgresConversationRepository(sql),
+    events: new PostgresEventStore(sql),
+    stepEvents: new PostgresStepEventRepository(sql),
+  };
+}
+
 function mockBrowserVerificationCoordinator(
-  artifacts: Pick<FileArtifactStore, 'putBlob'>,
+  artifacts: Pick<ArtifactStore, 'putBlob'>,
   limits: BrowserEvidenceLimits,
 ): BrowserVerificationCoordinator {
   let sequence = 0;
