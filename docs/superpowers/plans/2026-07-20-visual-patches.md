@@ -23,6 +23,7 @@
 ### Task 1: Visual-edit contract and safe preview protocol
 
 **Files:**
+
 - Create: `packages/contracts/src/visual-edit.ts`, `packages/contracts/src/visual-edit.test.ts`
 - Modify: contract barrel exports, conversation/API/preview contracts, `apps/api/src/preview-inspector-script.ts`, `apps/api/src/preview-inspector-script.test.ts`, `apps/web/app/project/[id]/preview-panel.tsx`
 - Test: focused Vitest contracts/script tests and Playwright preview interaction coverage.
@@ -38,6 +39,7 @@
 ### Task 2: Validated visual-edit operation and promotion gates
 
 **Files:**
+
 - Modify: `apps/api/src/app.ts`, `apps/api/src/app.test.ts`, `apps/web/lib/api.ts`, `packages/orchestrator/src/operation-service.ts`, `packages/orchestrator/src/conversation-step-config.ts`, `packages/orchestrator/src/conversation-operation-runner.ts`, `packages/composition/src/runtime.ts`
 - Test: operation-service, conversation-operation-runner, API, and composition tests.
 
@@ -54,6 +56,7 @@
 ### Task 3: End-to-end proof and delivery evidence
 
 **Files:**
+
 - Create: `apps/api/e2e/visual-patches.spec.ts`
 - Modify: only shared E2E fixtures if required by the new scenarios.
 
