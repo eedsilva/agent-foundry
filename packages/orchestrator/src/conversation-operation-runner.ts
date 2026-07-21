@@ -235,40 +235,32 @@ export class ConversationOperationRunner {
         outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
         inputArtifacts: inputReferences,
       };
-      let result: AgentExecutionResult;
-      let executionInputRoot: string | undefined;
-      try {
-        const context = await this.workspaces.writeRunContext({
-          projectId,
-          runId,
-          stepRunId: stepRun.id,
-          attemptId: attempt.id,
-          requestMarkdown,
-          outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
-          inputFiles: knowledgeInputs.map(({ path, content }) => ({ path, content })),
-        });
-        executionInputRoot = context.executionInputs?.root;
-        const privatePaths = context.executionInputs?.paths ?? [];
-        if (privatePaths.length !== knowledgeInputs.length) {
-          throw new ValidationError('Knowledge execution inputs were not materialized completely');
-        }
-        request.prompt = executionPrompt(request.prompt, knowledgeInputs, privatePaths);
-        result = await this.executors
-          .get(route.selected.model.provider)
-          .execute(request, undefined, (event) =>
-            persistStreamEvent(
-              this.stepEvents,
-              this.ids,
-              this.clock,
-              runId,
-              stepRun.id,
-              attempt!.id,
-              event,
-            ),
-          );
-      } finally {
-        if (executionInputRoot) await this.workspaces.removeRunInputFiles(executionInputRoot);
+      const context = await this.workspaces.writeRunContext({
+        projectId,
+        runId,
+        stepRunId: stepRun.id,
+        attemptId: attempt.id,
+        requestMarkdown,
+        outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+        inputFiles: knowledgeInputs.map(({ path, content }) => ({ path, content })),
+      });
+      if (context.inputPaths.length !== knowledgeInputs.length) {
+        throw new ValidationError('Knowledge execution inputs were not materialized completely');
       }
+      request.prompt = executionPrompt(request.prompt, knowledgeInputs, context.inputPaths);
+      const result: AgentExecutionResult = await this.executors
+        .get(route.selected.model.provider)
+        .execute(request, undefined, (event) =>
+          persistStreamEvent(
+            this.stepEvents,
+            this.ids,
+            this.clock,
+            runId,
+            stepRun.id,
+            attempt!.id,
+            event,
+          ),
+        );
 
       const directEvidence = operation.visualEdit
         ? await this.verifyDirectVisualEdit(projectId, runId, operation, attempt)
@@ -641,14 +633,12 @@ function knowledgeContext(files: KnowledgeFile[]): string {
     .join('\n')}`;
 }
 
-function executionPrompt(prompt: string, inputs: KnowledgeInput[], privatePaths: string[]): string {
+function executionPrompt(prompt: string, inputs: KnowledgeInput[], inputPaths: string[]): string {
   if (inputs.length === 0) return prompt;
   const files = inputs
-    .map(
-      ({ reference }, index) => `${reference.name}@${reference.revision}: ${privatePaths[index]}`,
-    )
+    .map(({ reference }, index) => `${reference.name}@${reference.revision}: ${inputPaths[index]}`)
     .join('; ');
-  return `${prompt} For this request only, read these execution-private knowledge inputs outside the workspace: ${files}. Do not inspect sibling input directories.`;
+  return `${prompt} Read these project knowledge inputs for this request: ${files}.`;
 }
 
 interface CompensationFailure {

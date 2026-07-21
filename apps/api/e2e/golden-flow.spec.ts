@@ -6,9 +6,13 @@ import { join, resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
-import { MockAgentExecutor } from '@agent-foundry/executors';
 import type { AgentExecutor } from '@agent-foundry/domain';
-import type { OperationKind, TaskProfile } from '@agent-foundry/contracts';
+import type {
+  AgentExecutionRequest,
+  AgentExecutionResult,
+  OperationKind,
+  TaskProfile,
+} from '@agent-foundry/contracts';
 import { buildApp } from '../src/app.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -148,7 +152,15 @@ async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
   await writeFile(join(workspacePath, 'server.mjs'), fixtureSource);
   await writeFile(
     join(workspacePath, 'package.json'),
-    JSON.stringify({ scripts: { dev: 'node server.mjs' } }),
+    JSON.stringify({
+      scripts: {
+        dev: 'node server.mjs',
+        typecheck: 'node --check server.mjs',
+        lint: 'node --check server.mjs',
+        test: 'node --test',
+        build: 'node --check server.mjs',
+      },
+    }),
   );
   // Reuses the 'prd' artifact name (see golden-flow-e2e-v1.yaml comment):
   // project creation already wrote revision 1 (the placeholder PRD text);
@@ -217,13 +229,44 @@ async function runConversationJob(): Promise<void> {
   expect(await runtime.worker.runOnce()).toBe(true);
 }
 
+async function readKnowledgeThroughCliChild(path: string): Promise<Buffer> {
+  const cli = spawn(
+    process.execPath,
+    [
+      '-e',
+      [
+        "const { spawnSync } = require('node:child_process');",
+        "const tool = spawnSync(process.execPath, ['-e', \"process.stdout.write(require('node:fs').readFileSync(process.argv[1]).toString('base64'))\", process.argv[1]], { encoding: 'utf8' });",
+        'if (tool.status !== 0) throw new Error(tool.stderr);',
+        'process.stdout.write(tool.stdout);',
+      ].join('\n'),
+      path,
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  cli.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+  cli.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+  const exitCode = await new Promise<number | null>((resolveExit, reject) => {
+    cli.once('error', reject);
+    cli.once('close', resolveExit);
+  });
+  if (exitCode !== 0) throw new Error(Buffer.concat(stderr).toString('utf8'));
+  return Buffer.from(Buffer.concat(stdout).toString('utf8'), 'base64');
+}
+
 function installGoldenFixtureExecutor(): Array<'plan' | 'build'> {
-  const mock = new MockAgentExecutor();
   let buildSequence = 0;
   const knowledgeReads: Array<'plan' | 'build'> = [];
   const executor: AgentExecutor = {
-    provider: mock.provider,
-    health: () => mock.health(),
+    provider: 'mock',
+    health: () =>
+      Promise.resolve({
+        provider: 'mock',
+        available: true,
+        message: 'Golden-flow fixture executor is enabled',
+      }),
     execute: async (request, signal) => {
       const kind = request.stepId.includes('conversation-plan')
         ? 'plan'
@@ -232,14 +275,19 @@ function installGoldenFixtureExecutor(): Array<'plan' | 'build'> {
           : null;
       if (kind) {
         const knowledgePath = request.prompt.match(
-          /knowledge-[a-zA-Z0-9._-]+@2: ([^;]+?)(?:;|\. Do not inspect)/,
+          /knowledge-[a-zA-Z0-9._-]+@2: ([^;]+?)(?:;|\.$)/,
         )?.[1];
         if (!knowledgePath) throw new Error(`${kind} knowledge input was not materialized`);
-        if (knowledgePath.startsWith(`${request.cwd}/`)) {
-          throw new Error(`${kind} knowledge input leaked into the shared workspace`);
+        if (!knowledgePath.startsWith(`${request.cwd}/.orchestrator/runs/`)) {
+          throw new Error(
+            `${kind} knowledge input is outside its run context: ${knowledgePath} (cwd ${request.cwd})`,
+          );
+        }
+        if (!knowledgePath.includes('/inputs/knowledge/') || !knowledgePath.endsWith('/v2.png')) {
+          throw new Error(`${kind} knowledge input is not the current v2 PNG path`);
         }
         const [actual, expected] = await Promise.all([
-          readFile(knowledgePath),
+          readKnowledgeThroughCliChild(knowledgePath),
           readFile(REFERENCE_IMAGE),
         ]);
         if (!actual.equals(expected)) throw new Error(`${kind} knowledge bytes do not match`);
@@ -251,8 +299,13 @@ function installGoldenFixtureExecutor(): Array<'plan' | 'build'> {
           throw new Error(`${kind} request is missing the current v2 artifact reference`);
         }
         knowledgeReads.push(kind);
+      } else if (
+        request.stepId.includes('conversation-visual-edit') &&
+        request.prompt.includes('knowledge-')
+      ) {
+        throw new Error('visual-edit request received a knowledge reference');
       }
-      const result = await mock.execute(request, signal);
+      if (signal?.aborted) throw signal.reason;
       if (request.stepId.includes('conversation-build')) {
         buildSequence += 1;
         await writeFile(join(request.cwd, 'build-sequence.txt'), `${buildSequence}\n`);
@@ -263,11 +316,36 @@ function installGoldenFixtureExecutor(): Array<'plan' | 'build'> {
         if (!source.includes("'#eee'")) throw new Error('visual-edit fixture source is stale');
         await writeFile(target, source.replace("'#eee'", "'#ddd'"));
       }
-      return result;
+      return goldenFixtureResult(request);
     },
   };
   (runtime.executors as { get: () => AgentExecutor }).get = () => executor;
   return knowledgeReads;
+}
+
+function goldenFixtureResult(request: AgentExecutionRequest): AgentExecutionResult {
+  const output = {
+    schemaVersion: '1' as const,
+    status: 'completed' as const,
+    summary: `Golden fixture completed ${request.stepId}`,
+    data: { stepId: request.stepId },
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    nextActions: [],
+  };
+  return {
+    runId: request.runId,
+    stepRunId: request.stepRunId,
+    attemptId: request.attemptId,
+    provider: 'mock',
+    model: 'golden-fixture',
+    exitCode: 0,
+    durationMs: 1,
+    stdout: JSON.stringify(output),
+    stderr: '',
+    output,
+  };
 }
 
 async function latestOperationRequest(projectId: string, kind: OperationKind): Promise<string> {

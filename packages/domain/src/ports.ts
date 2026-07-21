@@ -443,9 +443,8 @@ export interface WorkspaceManager {
   }): Promise<{
     requestPath: string;
     schemaPath: string;
-    executionInputs?: { root: string; paths: string[] };
+    inputPaths: string[];
   }>;
-  removeRunInputFiles(root: string): Promise<void>;
   ensureGit(projectId: string): Promise<void>;
   isClean(projectId: string): Promise<boolean>;
   checkpoint(projectId: string, label: string): Promise<string>;

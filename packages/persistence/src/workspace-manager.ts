@@ -1,5 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import type { WorkspaceManager } from '@agent-foundry/domain';
 import { atomicWriteJson, atomicWriteText, ensureDir, exists, safeSegment } from './fs-utils.js';
@@ -77,7 +77,7 @@ export class FileWorkspaceManager implements WorkspaceManager {
   }): Promise<{
     requestPath: string;
     schemaPath: string;
-    executionInputs?: { root: string; paths: string[] };
+    inputPaths: string[];
   }> {
     const workspace = this.workspacePath(input.projectId);
     const runDir = join(
@@ -94,44 +94,20 @@ export class FileWorkspaceManager implements WorkspaceManager {
     const requestPath = join(runDir, 'REQUEST.md');
     const schemaPath = join(runDir, 'output.schema.json');
     const files = input.inputFiles ?? [];
-    let executionInputs: { root: string; paths: string[] } | undefined;
-    try {
-      if (files.length > 0) {
-        const base = resolve(this.dataDir, 'execution-inputs');
-        await ensureDir(base);
-        const root = await mkdtemp(
-          join(base, `${safeSegment(input.projectId)}-${safeSegment(input.attemptId)}-`),
-        );
-        const paths = files.map((file) => {
-          if (isAbsolute(file.path)) throw new Error(`Unsafe execution input path: ${file.path}`);
-          return join(root, ...file.path.split('/').map(safeSegment));
-        });
-        executionInputs = { root, paths };
-      }
-      await Promise.all([
-        atomicWriteText(requestPath, input.requestMarkdown),
-        atomicWriteJson(schemaPath, input.outputSchema),
-        ...files.map(async (file, index) => {
-          const destination = executionInputs!.paths[index]!;
-          await ensureDir(dirname(destination));
-          await writeFile(destination, file.content);
-        }),
-      ]);
-      return { requestPath, schemaPath, ...(executionInputs ? { executionInputs } : {}) };
-    } catch (error) {
-      if (executionInputs) await rm(executionInputs.root, { recursive: true, force: true });
-      throw error;
-    }
-  }
-
-  async removeRunInputFiles(root: string): Promise<void> {
-    const base = resolve(this.dataDir, 'execution-inputs');
-    const target = resolve(root);
-    const child = relative(base, target);
-    if (!child || child.startsWith('..') || isAbsolute(child)) {
-      throw new Error(`Unsafe execution input root: ${root}`);
-    }
-    await rm(target, { recursive: true, force: true });
+    const inputPaths = files.map((file) => {
+      if (isAbsolute(file.path)) throw new Error(`Unsafe run input path: ${file.path}`);
+      return join(runDir, 'inputs', ...file.path.split('/').map(safeSegment));
+    });
+    await Promise.all([
+      atomicWriteText(requestPath, input.requestMarkdown),
+      atomicWriteJson(schemaPath, input.outputSchema),
+      ...files.map(async (file, index) => {
+        const destination = inputPaths[index]!;
+        await ensureDir(dirname(destination));
+        await writeFile(destination, file.content);
+      }),
+    ]);
+    return { requestPath, schemaPath, inputPaths };
   }
 
   async ensureGit(projectId: string): Promise<void> {
