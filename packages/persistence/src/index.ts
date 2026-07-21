@@ -14,6 +14,7 @@ export * from './approval-repositories.js';
 export * from './model-override-repository.js';
 export * from './preview-repositories.js';
 export * from './conversation-repository.js';
+export * from './knowledge-file-repository.js';
 export * from './project-version-repository.js';
 export * from './blob/fs-blob-store.js';
 export * from './blob/signing.js';

@@ -28,6 +28,61 @@ async function makeRuntime(): Promise<Runtime> {
 const GRACE_MS = 86_400_000;
 
 describe('sweepUnreferencedBlobs', () => {
+  it('keeps removed knowledge bytes because artifact metadata remains authoritative', async () => {
+    const runtime = await makeRuntime();
+    const project = await runtime.projectService.create({
+      name: 'GC removed knowledge',
+      prd: 'x'.repeat(60),
+      workflowId: 'web-app-v1',
+    });
+    const metadata = await runtime.artifacts.putBlob(
+      {
+        projectId: project.id,
+        name: 'knowledge-file-1',
+        contentType: 'image/png',
+        createdBy: 'knowledge-upload',
+        maxBytes: 1_000,
+      },
+      Readable.from(Buffer.from('retained knowledge bytes')),
+    );
+    await runtime.knowledgeFiles.save({
+      schemaVersion: '1',
+      id: 'file-1',
+      projectId: project.id,
+      name: 'reference.png',
+      mediaType: 'image/png',
+      purpose: 'design-reference',
+      pinned: true,
+      currentVersion: metadata.revision,
+      revisions: [
+        {
+          version: metadata.revision,
+          artifact: {
+            name: metadata.name,
+            revision: metadata.revision,
+            sha256: metadata.sha256,
+            sizeBytes: metadata.sizeBytes,
+          },
+          createdAt: metadata.createdAt,
+        },
+      ],
+      createdAt: metadata.createdAt,
+      updatedAt: metadata.createdAt,
+    });
+    await runtime.knowledgeFiles.remove(project.id, 'file-1');
+
+    const deleted = await sweepUnreferencedBlobs(
+      runtime,
+      GRACE_MS,
+      new Date(Date.now() + GRACE_MS * 10),
+    );
+
+    expect(deleted).toBe(0);
+    expect(
+      await runtime.blobStore.stat(blobKeyFor(project.id, metadata.name, metadata.revision)),
+    ).not.toBeNull();
+  });
+
   it('never deletes a blob current artifact metadata still references, however old', async () => {
     const runtime = await makeRuntime();
     const project = await runtime.projectService.create({

@@ -19,6 +19,7 @@ import {
   FileConversationRepository,
   FileEventStore,
   FileJobQueue,
+  FileKnowledgeFileRepository,
   FileMetricsRepository,
   FileModelOverrideRepository,
   FileQualityObservationRepository,
@@ -68,6 +69,7 @@ export interface Runtime {
   artifacts: FileArtifactStore;
   blobStore: BlobStore;
   conversations: FileConversationRepository;
+  knowledgeFiles: FileKnowledgeFileRepository;
   events: FileEventStore;
   stepEvents: FileStepEventRepository;
   queue: FileJobQueue;
@@ -131,6 +133,7 @@ export async function createRuntime(
         });
   const artifacts = new FileArtifactStore(config.dataDir, blobStore);
   const conversations = new FileConversationRepository(config.dataDir);
+  const knowledgeFiles = new FileKnowledgeFileRepository(config.dataDir);
   const events = new FileEventStore(config.dataDir);
   const stepEvents = new FileStepEventRepository(config.dataDir);
   const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
@@ -318,6 +321,7 @@ export async function createRuntime(
     artifacts,
     blobStore,
     conversations,
+    knowledgeFiles,
     events,
     stepEvents,
     queue,

@@ -15,6 +15,7 @@ import { MockAgentExecutor, PlaywrightBrowserVerifier } from '@agent-foundry/exe
 import { BrowserVerificationCoordinator, ConversationService } from '@agent-foundry/orchestrator';
 import {
   FileConversationRepository,
+  FileKnowledgeFileRepository,
   FileQualityObservationRepository,
 } from '@agent-foundry/persistence';
 import { createRuntime, type Runtime } from './runtime.js';
@@ -202,6 +203,9 @@ describe('mock runtime', () => {
     expect(
       (runtime as Runtime & { qualityObservations?: unknown }).qualityObservations,
     ).toBeInstanceOf(FileQualityObservationRepository);
+    expect((runtime as Runtime & { knowledgeFiles?: unknown }).knowledgeFiles).toBeInstanceOf(
+      FileKnowledgeFileRepository,
+    );
   });
 
   it('binds mock browser screenshot evidence to the same direct-edit run', async () => {

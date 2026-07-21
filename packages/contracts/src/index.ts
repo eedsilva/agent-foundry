@@ -18,3 +18,4 @@ export * from './execution-plane.js';
 export * from './sandbox.js';
 export * from './quality.js';
 export * from './visual-edit.js';
+export * from './knowledge-file.js';
