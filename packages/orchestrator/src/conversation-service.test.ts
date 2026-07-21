@@ -346,6 +346,10 @@ class MemoryArtifacts implements ArtifactStore {
   listMetadata(): Promise<StoredArtifact['metadata'][]> {
     return Promise.resolve([...this.values.values()].map((artifact) => artifact.metadata));
   }
+
+  reapExpired(): Promise<number> {
+    return Promise.resolve(0);
+  }
 }
 
 class MemoryConversations implements ConversationRepository {

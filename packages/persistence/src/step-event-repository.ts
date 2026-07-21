@@ -42,7 +42,9 @@ export class FileStepEventRepository implements StepEventRepository {
   }
 }
 
-function redactPayload(event: AgentStreamEventInput): AgentStreamEventInput {
+// Exported so the Postgres adapter's write-time redaction stays identical to this
+// file adapter's (see postgres/step-event-repository.ts).
+export function redactPayload(event: AgentStreamEventInput): AgentStreamEventInput {
   switch (event.type) {
     case 'assistant_delta':
       return { ...event, text: redactString(event.text) };

@@ -23,6 +23,8 @@ const ConfigSchema = z
     POLICIES_DIR: z.string().default('policies'),
     MODEL_CATALOG_PATH: z.string().default('models/catalog.yaml'),
     EXECUTOR_MODE: z.enum(['real', 'mock']).default('mock'),
+    PERSISTENCE_MODE: z.enum(['file', 'postgres']).default('file'),
+    DATABASE_URL: z.string().min(1).optional(),
     RUN_WORKER_INLINE: booleanFromEnv,
     AUTO_INSTALL_DEPENDENCIES: booleanFromEnv,
     ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: booleanFromEnv,
@@ -97,6 +99,8 @@ export interface RuntimeConfig {
   policiesDir: string;
   modelCatalogPath: string;
   executorMode: 'real' | 'mock';
+  persistenceMode: 'file' | 'postgres';
+  databaseUrl?: string;
   runWorkerInline: boolean;
   autoInstallDependencies: boolean;
   allowUnsafeRemoteRealExecution: boolean;
@@ -152,6 +156,9 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     S3_FORCE_PATH_STYLE: env.S3_FORCE_PATH_STYLE ?? (env.S3_ENDPOINT ? 'true' : undefined),
   };
   const parsed = ConfigSchema.parse(normalized);
+  if (parsed.PERSISTENCE_MODE === 'postgres' && !parsed.DATABASE_URL) {
+    throw new Error('PERSISTENCE_MODE=postgres requires DATABASE_URL');
+  }
   const rootDir = findRepoRoot(env.REPO_ROOT ?? env.INIT_CWD ?? process.cwd());
   if (
     parsed.EXECUTOR_MODE === 'real' &&
@@ -187,6 +194,8 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     policiesDir: resolve(rootDir, parsed.POLICIES_DIR),
     modelCatalogPath: resolve(rootDir, parsed.MODEL_CATALOG_PATH),
     executorMode: parsed.EXECUTOR_MODE,
+    persistenceMode: parsed.PERSISTENCE_MODE,
+    ...(parsed.DATABASE_URL ? { databaseUrl: parsed.DATABASE_URL } : {}),
     runWorkerInline: parsed.RUN_WORKER_INLINE,
     autoInstallDependencies: parsed.AUTO_INSTALL_DEPENDENCIES,
     allowUnsafeRemoteRealExecution: parsed.ALLOW_UNSAFE_REMOTE_REAL_EXECUTION,

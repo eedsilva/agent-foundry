@@ -150,6 +150,35 @@ export async function atomicWriteStream(
   return { sha256: hash.digest('hex'), sizeBytes };
 }
 
+/**
+ * Reads `source` fully into memory, hashing and size-capping as it goes. Shared by
+ * blob-accepting stores that buffer bytes rather than stream to a file (e.g.
+ * PostgresArtifactStore.putBlob, which writes the result to a `bytea` column).
+ * Throws `ArtifactTooLargeError` and destroys `source` on overflow or any upstream
+ * read error, mirroring `atomicWriteStream`'s cap/cleanup behavior.
+ */
+export async function accumulateStreamWithCap(
+  source: Readable,
+  maxBytes: number,
+): Promise<{ bytes: Buffer; sha256: string; sizeBytes: number }> {
+  const hash = createHash('sha256');
+  const chunks: Buffer[] = [];
+  let sizeBytes = 0;
+  try {
+    for await (const chunk of source) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      sizeBytes += buffer.byteLength;
+      if (sizeBytes > maxBytes) throw new ArtifactTooLargeError(maxBytes);
+      hash.update(buffer);
+      chunks.push(buffer);
+    }
+  } catch (error) {
+    source.destroy();
+    throw error;
+  }
+  return { bytes: Buffer.concat(chunks), sha256: hash.digest('hex'), sizeBytes };
+}
+
 export async function appendJsonLine(path: string, value: unknown): Promise<void> {
   await ensureDir(dirname(path));
   const handle = await open(path, 'a');
