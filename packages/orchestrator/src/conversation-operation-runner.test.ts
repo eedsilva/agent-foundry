@@ -1394,7 +1394,7 @@ describe('ConversationOperationRunner foundry.operation span', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
