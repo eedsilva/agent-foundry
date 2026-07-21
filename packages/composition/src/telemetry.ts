@@ -41,6 +41,12 @@ export interface TelemetryOptions {
 
 const METRIC_EXPORT_INTERVAL_MS = 15_000;
 
+/** True when the span's `foundry.run.duration_ms` attribute exceeds `thresholdMs`. */
+function isSlowSpan(span: ReadableSpan, thresholdMs: number): boolean {
+  const durationMs = span.attributes['foundry.run.duration_ms'];
+  return typeof durationMs === 'number' && durationMs > thresholdMs;
+}
+
 /**
  * Wraps a delegate span exporter to redact secret-shaped string values (via
  * domain's `redactString`) — span attributes, the status message, and every
@@ -78,8 +84,7 @@ export class RedactingSpanExporter implements SpanExporter {
         }
         event.name = redactString(event.name);
       }
-      const durationMs = span.attributes['foundry.run.duration_ms'];
-      if (typeof durationMs === 'number' && durationMs > this.slowRunThresholdMs) {
+      if (isSlowSpan(span, this.slowRunThresholdMs)) {
         span.attributes['foundry.slow'] = true;
       }
     }
@@ -193,8 +198,7 @@ export class TailSpanProcessor implements SpanProcessor {
   private shouldKeep(span: ReadableSpan): boolean {
     if (span.status.code === SpanStatusCode.ERROR) return true;
     if (span.attributes['foundry.force_sample'] === true) return true;
-    const durationMs = span.attributes['foundry.run.duration_ms'];
-    return typeof durationMs === 'number' && durationMs > this.slowRunThresholdMs;
+    return isSlowSpan(span, this.slowRunThresholdMs);
   }
 
   forceFlush(): Promise<void> {

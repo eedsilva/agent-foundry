@@ -45,6 +45,12 @@ export function serializeTraceContext(): Record<string, string> {
   return carrier;
 }
 
+/** Spreadable `{ traceContext }` for the active trace context; an empty object when there is nothing to propagate, so `exactOptionalPropertyTypes` callers can write `...traceContextField()` instead of a length check. */
+export function traceContextField(): { traceContext?: Record<string, string> } {
+  const traceContext = serializeTraceContext();
+  return Object.keys(traceContext).length > 0 ? { traceContext } : {};
+}
+
 /** Runs `fn` with the trace context extracted from `carrier` made active; a no-op wrapper when `carrier` is missing or empty. */
 export function withExtractedContext<T>(
   carrier: Record<string, string> | undefined,

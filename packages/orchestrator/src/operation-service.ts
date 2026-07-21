@@ -10,7 +10,7 @@ import type {
 import { ChangeRequestSchema, VisualEditSchema } from '@agent-foundry/contracts';
 import {
   NotFoundError,
-  serializeTraceContext,
+  traceContextField,
   ValidationError,
   resolveWorkspaceRelativePath,
   type ArtifactStore,
@@ -203,7 +203,6 @@ export class OperationService {
       createdAt: now,
     });
 
-    const traceContext = serializeTraceContext();
     await this.queue.enqueue({
       id: this.ids.next(),
       type: 'run-conversation-operation',
@@ -216,7 +215,7 @@ export class OperationService {
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
-      ...(Object.keys(traceContext).length > 0 ? { traceContext } : {}),
+      ...traceContextField(),
     });
 
     return operation;

@@ -57,7 +57,7 @@ import {
   VersionConflictError,
   normalizeApprovalDecision,
   redactString,
-  serializeTraceContext,
+  traceContextField,
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
 import { policyHash, workflowHash } from './idempotency.js';
@@ -156,7 +156,6 @@ export class ProjectService {
     });
     await this.appendEvent(project.id, 'project.created', 'Project and workspace created.');
 
-    const traceContext = serializeTraceContext();
     const job: QueueJob = {
       id: this.ids.next(),
       type: 'run-project',
@@ -168,7 +167,7 @@ export class ProjectService {
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
-      ...(Object.keys(traceContext).length > 0 ? { traceContext } : {}),
+      ...traceContextField(),
     };
     await this.queue.enqueue(job);
     await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.');
@@ -283,7 +282,6 @@ export class ProjectService {
     delete updated.currentNodeId;
     delete updated.error;
     const saved = await this.projects.update(updated, project.version);
-    const traceContext = serializeTraceContext();
     await this.queue.enqueue({
       id: this.ids.next(),
       type: 'run-project',
@@ -295,7 +293,7 @@ export class ProjectService {
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
-      ...(Object.keys(traceContext).length > 0 ? { traceContext } : {}),
+      ...traceContextField(),
     });
     await this.appendEvent(projectId, 'project.queued', 'Project manually re-queued.');
     return saved;
@@ -951,7 +949,6 @@ export class ProjectService {
       delete updated.error;
       await this.projects.update(updated, project.version);
     }
-    const traceContext = serializeTraceContext();
     await this.queue.enqueue({
       id: jobId ?? `run-project-${runId}`,
       type: 'run-project',
@@ -963,7 +960,7 @@ export class ProjectService {
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
-      ...(Object.keys(traceContext).length > 0 ? { traceContext } : {}),
+      ...traceContextField(),
     });
   }
 

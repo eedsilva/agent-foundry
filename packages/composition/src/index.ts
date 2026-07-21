@@ -7,7 +7,7 @@ export type { Risk, RiskProbability, RiskImpact } from './risk-register.js';
 export { INITIAL_RISKS, getRiskById, listRisks } from './risk-register.js';
 export { listDeploymentProfiles, getDeploymentProfile } from './deployment-profiles.js';
 export type { DeploymentProfile, DeploymentProfileSpec } from './deployment-profiles.js';
-export { startTelemetry, KeepErrorsSampler, RedactingSpanExporter } from './telemetry.js';
+export { startTelemetry } from './telemetry.js';
 export type { TelemetryHandle, TelemetryOptions } from './telemetry.js';
 // Re-exported so apps/worker (allowed only @agent-foundry/composition, per
 // scripts/check-architecture.mjs) can wire its pino `mixin` without reaching
