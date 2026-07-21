@@ -57,7 +57,7 @@ const server = createServer((req, res) => {
   }
   if (req.url === '/dom-source-map-fixture') {
     res.writeHead(200, { 'content-type': 'text/html' });
-    res.end(`<html><body>
+    res.end(`<html><body style="--fixture-accent: rgb(12, 34, 56)">
 <div id="simple" style="width:120px;height:24px;background:#eee">Simple</div>
 <div id="wrapper" style="width:120px;height:24px;background:#eee">Wrapper</div>
 <div id="generated" style="width:120px;height:24px;background:#eee">Generated</div>

@@ -124,6 +124,18 @@ export class VersionConflictError extends Error {
   }
 }
 
+/** The exact provisional version changed or became protected before compensation acquired its lock. */
+export class ProjectVersionDiscardRefusedError extends Error {
+  override readonly name = 'ProjectVersionDiscardRefusedError';
+  readonly code = 'PROJECT_VERSION_DISCARD_REFUSED';
+
+  constructor(readonly versionId: string) {
+    super(
+      `Project version ${versionId} no longer matches the unpromoted version and cannot be discarded`,
+    );
+  }
+}
+
 export class RunCancelledError extends Error {
   override readonly name = 'RunCancelledError';
 

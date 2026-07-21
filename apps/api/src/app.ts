@@ -24,6 +24,8 @@ import {
   RetryStepRequestSchema,
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
+  VisualEditSchema,
+  type PreviewSession,
 } from '@agent-foundry/contracts';
 import {
   ApprovalConflictError,
@@ -554,6 +556,21 @@ export async function buildApp(
     return reply.status(200).send(PreviewSelectionResultSchema.parse(result));
   });
 
+  app.post('/projects/:projectId/preview/:sessionId/visual-edits', async (request, reply) => {
+    const { projectId, sessionId } = z
+      .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
+      .parse(request.params);
+    const session = await requireProjectSession(runtime, projectId, sessionId);
+    if (session.status !== 'running') {
+      throw new ValidationError(`Preview session ${sessionId} is not live.`);
+    }
+    const result = await runtime.operationService.promoteVisualEdit(
+      projectId,
+      VisualEditSchema.parse(request.body),
+    );
+    return reply.status(202).send(result);
+  });
+
   registerPreviewProxy(app, runtime);
 
   return app;
@@ -649,9 +666,10 @@ async function requireProjectSession(
   runtime: Runtime,
   projectId: string,
   sessionId: string,
-): Promise<void> {
+): Promise<PreviewSession> {
   const record = await runtime.previewSessions.get(sessionId);
   if (!record || record.session.workspaceRef.projectId !== projectId) {
     throw new NotFoundError(`Preview session ${sessionId} not found for project ${projectId}.`);
   }
+  return record.session;
 }

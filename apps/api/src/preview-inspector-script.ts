@@ -1,4 +1,5 @@
 import { findReactFiber, walkFiberCandidates } from './preview-inspector-fiber-walk.js';
+import { VisualEditPropertySchema } from '@agent-foundry/contracts';
 
 /**
  * Builds the inline inspector script injected into preview HTML responses
@@ -15,11 +16,53 @@ export function buildInspectorScript(parentOrigin: string): string {
 ${findReactFiber.toString()}
 ${walkFiberCandidates.toString()}
 var PARENT_ORIGIN = ${JSON.stringify(parentOrigin)};
+var VISUAL_STYLE_PROPERTIES = ${JSON.stringify(VisualEditPropertySchema.options.filter((property) => property !== 'text'))};
+var BREAKPOINT_MIN_WIDTHS = { sm: 640, md: 768, lg: 1024, xl: 1280, '2xl': 1536 };
 var selecting = false;
+var selectedElement = null;
+var originals = {};
+var activeEdits = {};
+function setVisualEditValue(property, value) {
+  if (property === 'text') selectedElement.textContent = value;
+  else selectedElement.style[property] = value;
+}
+function updateVisualEdit(edit) {
+  var minWidth = edit.breakpoint && BREAKPOINT_MIN_WIDTHS[edit.breakpoint];
+  var matches = !edit.breakpoint || (typeof minWidth === 'number' && window.innerWidth >= minWidth);
+  setVisualEditValue(edit.property, matches ? edit.newValue : originals[edit.property]);
+}
+function updateVisualEdits() {
+  if (!selectedElement) return;
+  Object.keys(activeEdits).forEach(function (property) {
+    updateVisualEdit(activeEdits[property]);
+  });
+}
+function clearVisualEdit() {
+  if (!selectedElement) return;
+  Object.keys(originals).forEach(function (property) {
+    setVisualEditValue(property, originals[property]);
+  });
+  originals = {};
+  activeEdits = {};
+}
 window.addEventListener('message', function (event) {
   if (event.origin !== PARENT_ORIGIN) return;
-  if (event.data && event.data.type === 'af:selection:start') selecting = true;
+  if (!event.data) return;
+  if (event.data.type === 'af:selection:start') selecting = true;
+  if (event.data.type === 'af:visual-edit:clear') clearVisualEdit();
+  if (event.data.type === 'af:visual-edit:preview' && selectedElement) {
+    var edit = event.data.payload;
+    if (!edit || typeof edit.property !== 'string' || typeof edit.newValue !== 'string') return;
+    if (edit.property !== 'text' && VISUAL_STYLE_PROPERTIES.indexOf(edit.property) === -1) return;
+    if (!Object.prototype.hasOwnProperty.call(originals, edit.property)) {
+      originals[edit.property] =
+        edit.property === 'text' ? selectedElement.textContent : selectedElement.style[edit.property];
+    }
+    activeEdits[edit.property] = edit;
+    updateVisualEdit(edit);
+  }
 });
+window.addEventListener('resize', updateVisualEdits);
 function buildDomPath(node) {
   var parts = [];
   var el = node;
@@ -42,6 +85,8 @@ document.addEventListener(
     event.stopPropagation();
     selecting = false;
     var target = event.target;
+    clearVisualEdit();
+    selectedElement = target;
     var fiber = findReactFiber(target);
     var candidates = walkFiberCandidates(fiber);
     var rect = target.getBoundingClientRect();

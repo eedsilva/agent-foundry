@@ -376,6 +376,9 @@ class FakeWorkspaces implements WorkspaceManager {
   ensureGit(): Promise<void> {
     return Promise.resolve();
   }
+  isClean(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
   checkpoint(): Promise<string> {
     const ref = `checkpoint-${String(this.checkpoints.length + 1)}`;
     this.checkpoints.push(ref);

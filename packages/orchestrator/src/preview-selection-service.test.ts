@@ -44,7 +44,13 @@ describe('PreviewSelectionService.resolve', () => {
         ],
       }),
     });
-    expect(result).toMatchObject({ status: 'resolved', file: 'src/Greeting.tsx' });
+    expect(result).toMatchObject({
+      status: 'resolved',
+      file: 'src/Greeting.tsx',
+      line: 4,
+      column: 3,
+      componentName: 'Greeting',
+    });
   });
 
   it('reports ambiguous for 2+ distinct in-workspace candidates', async () => {

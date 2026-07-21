@@ -31,6 +31,7 @@ import type {
   StoredArtifact,
   WorkflowDefinition,
   WorkflowRun,
+  VisualEdit,
 } from '@agent-foundry/contracts';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
@@ -358,6 +359,17 @@ export function resolvePreviewSelection(
 ): Promise<PreviewSelectionResult> {
   return api<PreviewSelectionResult>(
     `/projects/${encodeURIComponent(projectId)}/preview/${encodeURIComponent(sessionId)}/selection`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+export function promotePreviewVisualEdit(
+  projectId: string,
+  sessionId: string,
+  input: VisualEdit,
+): Promise<{ message: Message; operation: Operation }> {
+  return api<{ message: Message; operation: Operation }>(
+    `/projects/${encodeURIComponent(projectId)}/preview/${encodeURIComponent(sessionId)}/visual-edits`,
     { method: 'POST', body: JSON.stringify(input) },
   );
 }

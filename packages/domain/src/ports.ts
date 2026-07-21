@@ -421,6 +421,7 @@ export interface WorkspaceManager {
     outputSchema: Record<string, unknown>;
   }): Promise<{ requestPath: string; schemaPath: string }>;
   ensureGit(projectId: string): Promise<void>;
+  isClean(projectId: string): Promise<boolean>;
   checkpoint(projectId: string, label: string): Promise<string>;
   rollback(projectId: string, ref: string): Promise<void>;
   preserveDraft(
@@ -451,9 +452,10 @@ export interface IdGenerator {
   next(): string;
 }
 
-/** Create-only, immutable ledger: revert/branch always append a new version, never mutate an existing one. */
+/** Append-only ledger once promoted; failed promotion may discard its exact, still-unpromoted write. */
 export interface ProjectVersionRepository {
   create(version: ProjectVersion): Promise<void>;
+  discardUnpromoted(version: ProjectVersion): Promise<void>;
   get(projectId: string, versionId: string): Promise<ProjectVersion | null>;
   list(projectId: string, limit?: number): Promise<ProjectVersion[]>;
   /** Only the `protected` flag is ever updated after creation. */

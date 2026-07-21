@@ -204,6 +204,65 @@ describe('mock runtime', () => {
     ).toBeInstanceOf(FileQualityObservationRepository);
   });
 
+  it('binds mock browser screenshot evidence to the same direct-edit run', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-visual-edit-browser-'));
+    temporaryDirectories.push(dataDir);
+    const runtime = await createRuntime({
+      ...process.env,
+      REPO_ROOT: resolve(import.meta.dirname, '../../..'),
+      DATA_DIR: dataDir,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+    });
+    const plan = await runtime.artifacts.put({
+      projectId: 'project-visual',
+      name: 'visual-edit-browser-plan-operation-1',
+      runId: 'run-visual',
+      createdBy: 'test',
+      content: {
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Bounded style smoke',
+        data: {
+          schemaVersion: '1',
+          id: 'visual-edit-operation-1',
+          title: 'Verify visual edit',
+          viewport: { width: 1280, height: 800 },
+          steps: [
+            {
+              id: 'verify-visual-edit',
+              title: 'Verify visual edit',
+              action: { kind: 'goto', path: '/' },
+              assertions: [],
+            },
+          ],
+        },
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        nextActions: [],
+      },
+    });
+
+    const report = await runtime.browserVerification.verify(
+      {
+        projectId: 'project-visual',
+        workspacePath: runtime.workspaces.workspacePath('project-visual'),
+        runId: 'run-visual',
+        plan,
+        allowedOrigins: [],
+        evidencePolicy: { captureTrace: false, captureVideo: false },
+      },
+      new AbortController().signal,
+    );
+
+    expect(report.previewSession.evidence.screenshots).toHaveLength(1);
+    const [screenshot] = report.previewSession.evidence.screenshots;
+    expect(
+      (await runtime.artifacts.listMetadata('project-visual', screenshot!.name))[0]?.runId,
+    ).toBe('run-visual');
+  });
+
   it('rejects project export when a canonical conversation is stored under another project', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-cross-paired-conversation-'));
     temporaryDirectories.push(dataDir);
