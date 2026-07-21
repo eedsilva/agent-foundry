@@ -286,6 +286,7 @@ export async function createRuntime(
     executors,
     workspaces,
     conversations,
+    knowledgeFiles,
     projectVersionService,
     clock,
     ids,

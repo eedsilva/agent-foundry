@@ -178,7 +178,7 @@ export class ProjectService {
       this.artifacts.listLatest(projectId),
       this.events.list(projectId),
     ]);
-    return { project, artifacts, events };
+    return { project, artifacts, events, workspacePath: this.workspaces.workspacePath(projectId) };
   }
 
   async list(limit = 50): Promise<Project[]> {

@@ -1,5 +1,6 @@
 import type {
   AgentExecutionRequest,
+  KnowledgeFile,
   Message,
   Operation,
   ProjectVersion,
@@ -27,6 +28,7 @@ import {
   type ExecutorRegistry,
   type HarnessRepository,
   type IdGenerator,
+  type KnowledgeFileRepository,
   type MetricsRepository,
   type ModelRouter,
   type StepAttemptRepository,
@@ -64,6 +66,7 @@ export class ConversationOperationRunner {
     private readonly executors: ExecutorRegistry,
     private readonly workspaces: WorkspaceManager,
     private readonly conversations: ConversationRepository,
+    private readonly knowledgeFiles: KnowledgeFileRepository,
     private readonly projectVersions: ProjectVersionService,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
@@ -95,13 +98,17 @@ export class ConversationOperationRunner {
       allChangeRequests,
       versions,
     });
+    const activeKnowledge =
+      operation.kind === 'plan' || operation.kind === 'build'
+        ? await this.knowledgeFiles.list(projectId)
+        : [];
     const step = buildConversationStep({
       operationId,
       kind,
       message,
       visualEdit: operation.visualEdit,
       planArtifact,
-      contextDigest: compiledContext.digest,
+      contextDigest: `${compiledContext.digest}${knowledgeContext(activeKnowledge)}`,
     });
 
     let runState = await this.runs.update(
@@ -520,6 +527,17 @@ export class ConversationOperationRunner {
     );
     return artifact ? { content: artifact.content } : undefined;
   }
+}
+
+function knowledgeContext(files: KnowledgeFile[]): string {
+  const pinned = files.filter((file) => file.pinned);
+  if (pinned.length === 0) return '';
+  return `\n\n## Pinned knowledge files\n\n${pinned
+    .map(
+      (file) =>
+        `- ${file.name} v${file.currentVersion} · ${file.purpose} · artifact ${file.revisions.at(-1)!.artifact.name}@${file.currentVersion}`,
+    )
+    .join('\n')}`;
 }
 
 interface CompensationFailure {

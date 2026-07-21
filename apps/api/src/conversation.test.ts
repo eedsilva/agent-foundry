@@ -232,6 +232,7 @@ describe('conversation API', () => {
     const detail = await fetch(`${baseUrl}/projects/${projectId}`);
     expect(await detail.json()).toMatchObject({
       project: { id: projectId },
+      workspacePath: runtime.workspaces.workspacePath(projectId),
       knowledgeFiles: [{ id: created.id, pinned: false, currentVersion: 2 }],
     });
 

@@ -6,6 +6,7 @@ import type {
   ExecutorRegistry,
   HarnessRepository,
   IdGenerator,
+  KnowledgeFileRepository,
   MetricsRepository,
   ModelRouter,
   ProjectVersionRepository,
@@ -19,6 +20,7 @@ import type {
   AgentExecutionRequest,
   BrowserVerificationReport,
   ExecutorStreamEvent,
+  KnowledgeFile,
   ProjectVersion,
   VisualEdit,
   VerificationReport,
@@ -149,6 +151,39 @@ const router: ModelRouter = {
   catalog: () => Promise.resolve(MODELS),
 };
 
+function knowledge(id: string, overrides: Partial<KnowledgeFile> = {}): KnowledgeFile {
+  const currentVersion = overrides.currentVersion ?? 1;
+  return {
+    schemaVersion: '1',
+    id,
+    projectId: 'project-1',
+    name: `${id}.png`,
+    mediaType: 'image/png',
+    purpose: 'reference',
+    pinned: true,
+    currentVersion,
+    revisions: Array.from({ length: currentVersion }, (_, index) => ({
+      version: index + 1,
+      artifact: {
+        name: `knowledge-${id}`,
+        revision: index + 1,
+        sha256: String(index + 1).repeat(64),
+      },
+      createdAt: '2026-07-18T12:00:00.000Z',
+    })),
+    createdAt: '2026-07-18T12:00:00.000Z',
+    updatedAt: '2026-07-18T12:00:00.000Z',
+    ...overrides,
+  };
+}
+
+const emptyKnowledgeFiles: KnowledgeFileRepository = {
+  list: () => Promise.resolve([]),
+  get: () => Promise.resolve(null),
+  save: (file) => Promise.resolve(file),
+  remove: () => Promise.resolve(),
+};
+
 function setup(
   harness: HarnessRepository = harnessRepo,
   direct?: {
@@ -164,6 +199,32 @@ function setup(
   const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces({ on: true });
   const conversations = new MemoryConversations();
+  const knowledgeFiles: KnowledgeFileRepository & { files: KnowledgeFile[] } = {
+    files: [],
+    list(projectId) {
+      return Promise.resolve(this.files.filter((file) => file.projectId === projectId));
+    },
+    get(projectId, knowledgeFileId) {
+      return Promise.resolve(
+        this.files.find((file) => file.projectId === projectId && file.id === knowledgeFileId) ??
+          null,
+      );
+    },
+    save(file) {
+      const index = this.files.findIndex(
+        (item) => item.projectId === file.projectId && item.id === file.id,
+      );
+      if (index === -1) this.files.push(file);
+      else this.files[index] = file;
+      return Promise.resolve(file);
+    },
+    remove(projectId, knowledgeFileId) {
+      this.files = this.files.filter(
+        (file) => file.projectId !== projectId || file.id !== knowledgeFileId,
+      );
+      return Promise.resolve();
+    },
+  };
   const projectVersions = new MemoryProjectVersions();
   const clock = new FixedClock();
   const ids = new SequentialIds();
@@ -192,6 +253,7 @@ function setup(
     executors,
     workspaces,
     conversations,
+    knowledgeFiles,
     projectVersionService,
     clock,
     ids,
@@ -206,6 +268,7 @@ function setup(
     stepEvents,
     workspaces,
     conversations,
+    knowledgeFiles,
     projectVersions,
     runner,
   };
@@ -871,6 +934,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       projectVersions,
       new FixedClock(),
       new SequentialIds(),
@@ -915,6 +979,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -961,6 +1026,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -1046,6 +1112,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -1097,6 +1164,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -1146,6 +1214,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -1198,6 +1267,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -1216,6 +1286,33 @@ describe('ConversationOperationRunner', () => {
 });
 
 describe('ConversationOperationRunner context compilation', () => {
+  it.each(['plan', 'build'] as const)(
+    'adds only active pinned knowledge revisions to a %s prompt',
+    async (kind) => {
+      const { runs, workspaces, conversations, knowledgeFiles, runner } = setup();
+      knowledgeFiles.files = [
+        knowledge('design', {
+          pinned: true,
+          purpose: 'design-reference',
+          currentVersion: 2,
+        }),
+        knowledge('notes', { pinned: false }),
+        knowledge('removed'),
+      ];
+      await knowledgeFiles.remove('project-1', 'removed');
+      const { runId, operationId } = await seed(conversations, runs, kind);
+
+      await runner.run('project-1', runId, operationId);
+
+      expect(workspaces.lastRequestMarkdown).toContain('## Pinned knowledge files');
+      expect(workspaces.lastRequestMarkdown).toContain(
+        '- design.png v2 · design-reference · artifact knowledge-design@2',
+      );
+      expect(workspaces.lastRequestMarkdown).not.toContain('notes.png v1');
+      expect(workspaces.lastRequestMarkdown).not.toContain('removed.png v1');
+    },
+  );
+
   it('embeds the compiled context digest in the compiled instructions and records sources on the change request', async () => {
     const fragmentHarness: HarnessRepository = {
       select: () =>
