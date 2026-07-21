@@ -186,7 +186,8 @@ export class PostgresConversationRepository implements ConversationRepository {
     return this.sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + parsed.projectId}))`;
       const result = await tx`
-        update conversation_operations set data = ${tx.json(parsed as any)} where id = ${parsed.id}`;
+        update conversation_operations set data = ${tx.json(parsed as any)}
+        where id = ${parsed.id} and project_id = ${parsed.projectId}`;
       if (result.count === 0) throw new NotFoundError(`Operation ${parsed.id} not found`);
       return parsed;
     });
@@ -233,7 +234,8 @@ export class PostgresConversationRepository implements ConversationRepository {
     return this.sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtext(${'conversation:' + parsed.projectId}))`;
       const result = await tx`
-        update conversation_change_requests set data = ${tx.json(parsed as any)} where id = ${parsed.id}`;
+        update conversation_change_requests set data = ${tx.json(parsed as any)}
+        where id = ${parsed.id} and project_id = ${parsed.projectId}`;
       if (result.count === 0) throw new NotFoundError(`Change request ${parsed.id} not found`);
       return parsed;
     });

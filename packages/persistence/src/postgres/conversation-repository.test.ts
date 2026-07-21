@@ -190,6 +190,23 @@ describePostgres('Postgres conversation repository', (ctx) => {
     );
   });
 
+  it('rejects updateOperation when projectId does not match the row and leaves it untouched', async () => {
+    const sql = ctx.db();
+    await new PostgresProjectRepository(sql).create(project());
+    const repo = new PostgresConversationRepository(sql);
+    await repo.createConversation(conversation());
+    const op = operation({ approval: { status: 'pending' } });
+    await repo.createOperation(op);
+
+    const crossProject = {
+      ...op,
+      projectId: 'project-2',
+      approval: { status: 'approved' as const, decidedAt: createdAt },
+    };
+    await expect(repo.updateOperation(crossProject)).rejects.toBeInstanceOf(NotFoundError);
+    expect(await repo.getOperation('project-1', op.id)).toEqual(op);
+  });
+
   it('creates, lists, and updates a change request scoped to its project', async () => {
     const sql = ctx.db();
     await new PostgresProjectRepository(sql).create(project());
