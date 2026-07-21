@@ -1,4 +1,3 @@
-
 import { Readable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
@@ -1745,6 +1744,7 @@ describe('ConversationOperationRunner foundry.operation span', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
