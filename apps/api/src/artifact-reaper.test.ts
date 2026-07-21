@@ -77,4 +77,27 @@ describe('artifact reaper schedule', () => {
     );
     await expect(schedule.stop()).resolves.toBeUndefined();
   });
+
+  it('runs the optional blob GC sweep after reapExpired, with the same timestamp', async () => {
+    const calls: string[] = [];
+    const reapExpired = vi.fn((_now: Date) => {
+      calls.push('reapExpired');
+      return Promise.resolve(2);
+    });
+    const gcSweep = vi.fn((_now: Date) => {
+      calls.push('gcSweep');
+      return Promise.resolve(3);
+    });
+    const logger = { error: vi.fn() };
+    const app = Fastify();
+    const schedule = startArtifactReaper({ reapExpired }, 10_000, logger, app, gcSweep);
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toEqual(['reapExpired', 'gcSweep']);
+    expect(reapExpired.mock.calls[0]![0]).toBe(gcSweep.mock.calls[0]![0]);
+
+    await schedule.stop();
+    await app.close();
+  });
 });

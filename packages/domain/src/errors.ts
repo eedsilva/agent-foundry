@@ -28,6 +28,18 @@ export class ArtifactTooLargeError extends Error {
   }
 }
 
+export class BlobIntegrityError extends Error {
+  override readonly name = 'BlobIntegrityError';
+
+  constructor(
+    readonly key: string,
+    readonly expectedSha256: string,
+    readonly actualSha256: string,
+  ) {
+    super(`Blob ${key} expected sha256 ${expectedSha256} but got ${actualSha256}`);
+  }
+}
+
 export class ExecutionError extends Error {
   override readonly name = 'ExecutionError';
 

@@ -4,6 +4,7 @@ import { createRuntime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 import { startPreviewReaper } from './preview-reaper.js';
 import { startArtifactReaper } from './artifact-reaper.js';
+import { sweepUnreferencedBlobs } from './blob-gc.js';
 
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
 
@@ -23,7 +24,9 @@ if (runtime.config.executorMode === 'real' && runtime.config.allowUnsafeRemoteRe
 
 const app = await buildApp(runtime);
 startPreviewReaper(runtime.previewService, runtime.config.previewReapIntervalMs, app.log, app);
-startArtifactReaper(runtime.artifacts, runtime.config.artifactReapIntervalMs, app.log, app);
+startArtifactReaper(runtime.artifacts, runtime.config.artifactReapIntervalMs, app.log, app, (now) =>
+  sweepUnreferencedBlobs(runtime, runtime.config.blobGcGraceMs, now),
+);
 
 const abortController = new AbortController();
 if (runtime.config.runWorkerInline) {

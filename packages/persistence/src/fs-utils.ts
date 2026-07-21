@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { linkSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import {
   link,
   mkdir,
@@ -76,6 +77,32 @@ export async function atomicCreateJson(path: string, value: unknown): Promise<bo
     throw error;
   } finally {
     await rm(temp, { force: true });
+  }
+}
+
+/**
+ * Sync, torn-write-safe counterpart to atomicCreateJson for plain text: writes
+ * a temp file then links it into place (so a partial write never lands at
+ * `path`), returning false and leaving the winner's content in place when
+ * another process created `path` first. Sync because its only caller,
+ * config loading, runs before the runtime's async machinery exists.
+ */
+export function createTextFileExclusiveSync(path: string, content: string, mode: number): boolean {
+  mkdirSync(dirname(path), { recursive: true });
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temp, content, { mode });
+  try {
+    linkSync(temp, path);
+    return true;
+  } catch (error) {
+    if (isAlreadyExists(error)) return false;
+    throw error;
+  } finally {
+    try {
+      unlinkSync(temp);
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+    }
   }
 }
 

@@ -1,9 +1,13 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
+import { ArtifactMetadataSchema, StoredArtifactSchema } from '@agent-foundry/contracts';
+import type { BlobStore } from '@agent-foundry/domain';
 import { FileArtifactStore } from './artifact-store.js';
+import { FsBlobStore } from './blob/fs-blob-store.js';
+import { atomicWriteJson, atomicWriteStream } from './fs-utils.js';
 
 const dirs: string[] = [];
 
@@ -11,12 +15,22 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+function makeStore(dataDir: string): FileArtifactStore {
+  return new FileArtifactStore(
+    dataDir,
+    new FsBlobStore(dataDir, {
+      signingSecret: 'test-secret',
+      publicBaseUrl: 'https://example.test',
+    }),
+  );
+}
+
 describe('FileArtifactStore feedback metadata', () => {
   it('persists typed feedback metadata and reconstructs the same hashed artifact', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-feedback-'));
     dirs.push(dataDir);
     const actor = { kind: 'user' as const, id: 'ed' };
-    const first = new FileArtifactStore(dataDir);
+    const first = makeStore(dataDir);
     const stored = await first.put({
       projectId: 'project-1',
       name: 'repair-notes',
@@ -35,15 +49,15 @@ describe('FileArtifactStore feedback metadata', () => {
       sourceDecisionId: 'decision-1',
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    await expect(
-      new FileArtifactStore(dataDir).getRevision('project-1', 'repair-notes', 1),
-    ).resolves.toEqual(stored);
+    await expect(makeStore(dataDir).getRevision('project-1', 'repair-notes', 1)).resolves.toEqual(
+      stored,
+    );
   });
 
   it('returns one revision for concurrent feedback writes from the same decision', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-feedback-race-'));
     dirs.push(dataDir);
-    const store = new FileArtifactStore(dataDir);
+    const store = makeStore(dataDir);
     const input = {
       projectId: 'project-1',
       name: 'repair-notes',
@@ -62,7 +76,7 @@ describe('FileArtifactStore feedback metadata', () => {
   it('returns one revision for concurrent writes with the same artifact idempotency key', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-artifact-idempotency-'));
     dirs.push(dataDir);
-    const store = new FileArtifactStore(dataDir);
+    const store = makeStore(dataDir);
     const input = {
       projectId: 'project-1',
       name: 'preview-failure-session-1',
@@ -82,7 +96,7 @@ describe('FileArtifactStore blob storage', () => {
   it('streams a blob to disk and reads it back byte-for-byte', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-blob-'));
     dirs.push(dataDir);
-    const store = new FileArtifactStore(dataDir);
+    const store = makeStore(dataDir);
     const content = Buffer.from('a screenshot, pretend');
 
     const metadata = await store.putBlob(
@@ -116,7 +130,7 @@ describe('FileArtifactStore blob storage', () => {
   it('rejects a blob over the size limit and leaves no orphaned index entry', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-blob-toolarge-'));
     dirs.push(dataDir);
-    const store = new FileArtifactStore(dataDir);
+    const store = makeStore(dataDir);
 
     await expect(
       store.putBlob(
@@ -137,7 +151,7 @@ describe('FileArtifactStore blob storage', () => {
   it('returns null for a blob that was never written', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-blob-missing-'));
     dirs.push(dataDir);
-    const store = new FileArtifactStore(dataDir);
+    const store = makeStore(dataDir);
 
     await expect(store.getBlobStream('project-1', 'nonexistent', 1)).resolves.toBeNull();
   });
@@ -145,7 +159,7 @@ describe('FileArtifactStore blob storage', () => {
   it('reaps expired blobs after their retention window without touching metadata', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-blob-reap-'));
     dirs.push(dataDir);
-    const store = new FileArtifactStore(dataDir);
+    const store = makeStore(dataDir);
     const content = Buffer.from('expires soon');
     const metadata = await store.putBlob(
       {
@@ -181,5 +195,114 @@ describe('FileArtifactStore blob storage', () => {
 
     const latest = await store.getLatest('project-1', 'browser-video-preview-1');
     expect(latest?.metadata).toMatchObject({ blobDeleted: true, sha256: metadata.sha256 });
+  });
+});
+
+describe('FileArtifactStore blob delegation to BlobStore', () => {
+  it('delegates put/getStream/delete to the injected BlobStore using the derived key', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-blob-delegate-'));
+    dirs.push(dataDir);
+    const real = new FsBlobStore(dataDir, {
+      signingSecret: 'test-secret',
+      publicBaseUrl: 'https://example.test',
+    });
+    const calls = { put: [] as string[], getStream: [] as string[], delete: [] as string[] };
+    const spy: BlobStore = {
+      put: (input, source) => {
+        calls.put.push(input.key);
+        return real.put(input, source);
+      },
+      getStream: (key) => {
+        calls.getStream.push(key);
+        return real.getStream(key);
+      },
+      stat: (key) => real.stat(key),
+      delete: (key) => {
+        calls.delete.push(key);
+        return real.delete(key);
+      },
+      list: (prefix) => real.list(prefix),
+      createSignedDownloadUrl: (key, expiresInSeconds) =>
+        real.createSignedDownloadUrl(key, expiresInSeconds),
+    };
+
+    const store = new FileArtifactStore(dataDir, spy);
+    const content = Buffer.from('delegated bytes');
+    const key = 'projects/project-1/artifacts/delegated-artifact/000001';
+
+    const metadata = await store.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'delegated-artifact',
+        contentType: 'text/plain',
+        createdBy: 'test',
+        maxBytes: 1_000,
+        retentionSeconds: 60,
+      },
+      Readable.from(content),
+    );
+    expect(calls.put).toEqual([key]);
+
+    // Delegation must land bytes at the legacy on-disk path (FsBlobStore's keymap),
+    // so existing DATA_DIRs keep serving old blobs with zero migration.
+    const legacyPath = join(
+      dataDir,
+      'projects',
+      'project-1',
+      'artifacts',
+      'delegated-artifact',
+      'blobs',
+      '000001.bin',
+    );
+    await expect(readFile(legacyPath)).resolves.toEqual(content);
+
+    const stream = await store.getBlobStream('project-1', 'delegated-artifact', 1);
+    expect(calls.getStream).toEqual([key]);
+    expect(stream).not.toBeNull();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream!) chunks.push(chunk as Buffer);
+    expect(Buffer.concat(chunks)).toEqual(content);
+
+    const afterExpiry = new Date(Date.parse(metadata.expiresAt!) + 1_000);
+    await expect(store.reapExpired(afterExpiry)).resolves.toBe(1);
+    expect(calls.delete).toEqual([key]);
+  });
+
+  it('reads a legacy blob pre-dating BlobStore (no .meta.json sidecar)', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-blob-legacy-'));
+    dirs.push(dataDir);
+    const content = Buffer.from('pre-existing legacy blob, written before BlobStore existed');
+    const root = join(dataDir, 'projects', 'project-1', 'artifacts');
+
+    // Mimic exactly what the pre-refactor FileArtifactStore.putBlob wrote directly
+    // to disk: raw bytes at the legacy blobs/<revision>.bin path, plus the metadata
+    // sidecar JSON. No .meta.json -- that's a BlobStore-only concept.
+    const { sha256: hash, sizeBytes } = await atomicWriteStream(
+      join(root, 'legacy-artifact', 'blobs', '000001.bin'),
+      Readable.from(content),
+      1_000,
+    );
+    const metadata = ArtifactMetadataSchema.parse({
+      projectId: 'project-1',
+      name: 'legacy-artifact',
+      revision: 1,
+      contentType: 'application/octet-stream',
+      createdAt: new Date().toISOString(),
+      createdBy: 'legacy-writer',
+      storage: 'blob',
+      sizeBytes,
+      sha256: hash,
+    });
+    await atomicWriteJson(
+      join(root, 'legacy-artifact', '000001.json'),
+      StoredArtifactSchema.parse({ metadata, content: null }),
+    );
+
+    const store = makeStore(dataDir);
+    const stream = await store.getBlobStream('project-1', 'legacy-artifact', 1);
+    expect(stream).not.toBeNull();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream!) chunks.push(chunk as Buffer);
+    expect(Buffer.concat(chunks)).toEqual(content);
   });
 });
