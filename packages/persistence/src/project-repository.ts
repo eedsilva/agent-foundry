@@ -48,6 +48,14 @@ export class FileProjectRepository implements ProjectRepository {
   }
 
   async list(limit = 50): Promise<Project[]> {
+    return (await this.readAll()).slice(0, limit);
+  }
+
+  async listAll(): Promise<Project[]> {
+    return this.readAll();
+  }
+
+  private async readAll(): Promise<Project[]> {
     const root = join(this.dataDir, 'projects');
     await ensureDir(root);
     const entries = await readdir(root, { withFileTypes: true });
@@ -57,8 +65,7 @@ export class FileProjectRepository implements ProjectRepository {
 
     return projects
       .filter((project): project is Project => project !== null)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-      .slice(0, limit);
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
   private pathFor(projectId: string): string {

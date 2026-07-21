@@ -619,10 +619,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   async function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft.trim()) return;
+    await classifyConversationPrompt(draft);
+  }
+
+  async function classifyConversationPrompt(prompt: string) {
     try {
       const message = await sendMessage(id, {
         role: 'user',
-        content: [{ type: 'text', text: draft }],
+        content: [{ type: 'text', text: prompt }],
       });
       setDraft('');
       setConversationError('');
@@ -1048,7 +1052,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       {detail.project.error ? <p className="errorBox">{detail.project.error}</p> : null}
       {error ? <p className="errorBox">{error}</p> : null}
 
-      <PreviewPanel projectId={id} run={run ?? null} artifacts={detail.artifacts} />
+      <PreviewPanel
+        projectId={id}
+        run={run ?? null}
+        artifacts={detail.artifacts}
+        onConversationalFallback={(prompt) => void classifyConversationPrompt(prompt)}
+      />
 
       {run?.status === 'paused' ? (
         <section className="panel">

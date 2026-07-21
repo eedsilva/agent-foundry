@@ -40,6 +40,11 @@ export class ProjectVersionService {
     return version;
   }
 
+  /** Compensates only the exact ledger write returned by a promotion that did not complete. */
+  discardUnpromoted(version: ProjectVersion): Promise<void> {
+    return this.versions.discardUnpromoted(version);
+  }
+
   list(projectId: string, limit?: number): Promise<ProjectVersion[]> {
     return this.versions.list(projectId, limit);
   }

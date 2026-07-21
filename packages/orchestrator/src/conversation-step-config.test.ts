@@ -74,6 +74,7 @@ describe('conversation-step-config', () => {
     expect(CONVERSATION_WORKFLOW_ID).toEqual({
       plan: 'conversation-plan',
       build: 'conversation-build',
+      'visual-edit': 'conversation-visual-edit',
     });
   });
 });

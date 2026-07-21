@@ -34,6 +34,10 @@ class FakeVersions implements ProjectVersionRepository {
     this.store.set(`${version.projectId}/${version.id}`, { ...version });
     return Promise.resolve();
   }
+  discardUnpromoted(version: ProjectVersion): Promise<void> {
+    this.store.delete(`${version.projectId}/${version.id}`);
+    return Promise.resolve();
+  }
   get(projectId: string, versionId: string): Promise<ProjectVersion | null> {
     return Promise.resolve(this.store.get(`${projectId}/${versionId}`) ?? null);
   }
@@ -87,6 +91,9 @@ class FakeWorkspaces implements WorkspaceManager {
   }
   ensureGit(): Promise<void> {
     return Promise.resolve();
+  }
+  isClean(): Promise<boolean> {
+    return Promise.resolve(true);
   }
   checkpoint(): Promise<string> {
     return Promise.resolve('checkpoint');

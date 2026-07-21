@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   ArtifactStore,
   Clock,
@@ -12,11 +12,16 @@ import type {
   StepAttemptRepository,
   StepRunRepository,
   WorkflowRunRepository,
+  WorkspaceManager,
+  VerificationService,
 } from '@agent-foundry/domain';
 import type {
   AgentExecutionRequest,
+  BrowserVerificationReport,
   ExecutorStreamEvent,
   ProjectVersion,
+  VisualEdit,
+  VerificationReport,
   WorkflowRun,
 } from '@agent-foundry/contracts';
 import {
@@ -33,6 +38,8 @@ import {
   MODELS,
 } from './testing/harness.js';
 import { ConversationOperationRunner } from './conversation-operation-runner.js';
+import type { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
+import { ProjectVersionService } from './project-version-service.js';
 
 class FixedClock implements Clock {
   now(): Date {
@@ -50,9 +57,29 @@ class SequentialIds implements IdGenerator {
 
 class MemoryProjectVersions implements ProjectVersionRepository {
   private readonly store: ProjectVersion[] = [];
+  onBeforeCreate?: (version: ProjectVersion) => void;
+  onBeforeDiscard?: (version: ProjectVersion) => void | Promise<void>;
   create(version: ProjectVersion): Promise<void> {
+    this.onBeforeCreate?.(version);
     this.store.push(version);
     return Promise.resolve();
+  }
+  async discardUnpromoted(version: ProjectVersion): Promise<void> {
+    await this.onBeforeDiscard?.(version);
+    const index = this.store.findIndex(
+      (entry) => entry.projectId === version.projectId && entry.id === version.id,
+    );
+    if (index < 0) return;
+    const existing = this.store[index]!;
+    if (existing.protected || JSON.stringify(existing) !== JSON.stringify(version)) {
+      throw Object.assign(
+        new Error(
+          `Project version ${version.id} no longer matches the unpromoted version and cannot be discarded`,
+        ),
+        { code: 'PROJECT_VERSION_DISCARD_REFUSED' },
+      );
+    }
+    this.store.splice(index, 1);
   }
   get(projectId: string, versionId: string): Promise<ProjectVersion | null> {
     return Promise.resolve(
@@ -72,6 +99,19 @@ class MemoryProjectVersions implements ProjectVersionRepository {
     this.store[index] = version;
     return Promise.resolve(version);
   }
+}
+
+function newProjectVersionService(
+  workspaces: WorkspaceManager,
+  artifacts: ArtifactStore,
+): ProjectVersionService {
+  return new ProjectVersionService(
+    new MemoryProjectVersions(),
+    workspaces,
+    artifacts,
+    new FixedClock(),
+    new SequentialIds(),
+  );
 }
 
 const harnessRepo: HarnessRepository = {
@@ -109,7 +149,13 @@ const router: ModelRouter = {
   catalog: () => Promise.resolve(MODELS),
 };
 
-function setup(harness: HarnessRepository = harnessRepo) {
+function setup(
+  harness: HarnessRepository = harnessRepo,
+  direct?: {
+    verifier: VerificationService;
+    browserVerification: Pick<BrowserVerificationCoordinator, 'verify'>;
+  },
+) {
   const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
   const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
   const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
@@ -119,6 +165,15 @@ function setup(harness: HarnessRepository = harnessRepo) {
   const workspaces = new FakeWorkspaces({ on: true });
   const conversations = new MemoryConversations();
   const projectVersions = new MemoryProjectVersions();
+  const clock = new FixedClock();
+  const ids = new SequentialIds();
+  const projectVersionService = new ProjectVersionService(
+    projectVersions,
+    workspaces,
+    artifacts,
+    clock,
+    ids,
+  );
   const executor = new ControllableExecutor({}, workspaces);
   const executors: ExecutorRegistry = {
     get: () => new AgentExecutorFromExecutionPlane(executor),
@@ -137,10 +192,10 @@ function setup(harness: HarnessRepository = harnessRepo) {
     executors,
     workspaces,
     conversations,
-    projectVersions,
-    new FixedClock(),
-    new SequentialIds(),
-    { agentTimeoutMs: 60_000 },
+    projectVersionService,
+    clock,
+    ids,
+    { agentTimeoutMs: 60_000, ...direct },
   );
   return {
     runs,
@@ -154,6 +209,95 @@ function setup(harness: HarnessRepository = harnessRepo) {
     projectVersions,
     runner,
   };
+}
+
+const directVisualEdit = {
+  target: { domPath: 'main > h1', file: 'src/App.tsx', line: 12, column: 5 },
+  property: 'text' as const,
+  oldValue: 'Old title',
+  newValue: 'New title',
+};
+
+function approvedDirectServices(): {
+  verifier: VerificationService;
+  browserVerification: Pick<BrowserVerificationCoordinator, 'verify'>;
+} {
+  return {
+    verifier: {
+      verify: () =>
+        Promise.resolve({
+          schemaVersion: '1',
+          approved: true,
+          packageManager: 'npm',
+          summary: 'approved',
+          commands: [],
+          createdAt: '2026-07-18T12:00:00.000Z',
+        }),
+    },
+    browserVerification: {
+      verify: (input) =>
+        Promise.resolve({
+          schemaVersion: '1',
+          approved: true,
+          summary: 'browser approved',
+          planArtifact: {
+            name: input.plan.metadata.name,
+            revision: input.plan.metadata.revision,
+            sha256: input.plan.metadata.sha256,
+          },
+          previewSession: {
+            sessionId: 'preview-visual',
+            status: 'running',
+            evidence: { screenshots: [] },
+          },
+          steps: [],
+        }),
+    },
+  };
+}
+
+async function seedVisualEdit(
+  conversations: MemoryConversations,
+  runs: WorkflowRunRepository,
+  visualEdit: VisualEdit | null = directVisualEdit,
+): Promise<{ runId: string; operationId: string }> {
+  await conversations.createConversation({
+    id: 'project-1',
+    projectId: 'project-1',
+    createdAt: '2026-07-18T12:00:00.000Z',
+  });
+  await conversations.appendMessage({
+    id: 'message-visual',
+    projectId: 'project-1',
+    conversationId: 'project-1',
+    role: 'user',
+    content: [{ type: 'text', text: 'Make the hero title clearer.' }],
+    createdAt: '2026-07-18T12:00:00.000Z',
+  });
+  const runId = 'run-visual';
+  const operationId = 'operation-visual';
+  await runs.create({
+    id: runId,
+    projectId: 'project-1',
+    workflowId: 'conversation-visual-edit',
+    status: 'queued',
+    version: 1,
+    createdAt: '2026-07-18T12:00:00.000Z',
+    updatedAt: '2026-07-18T12:00:00.000Z',
+  });
+  await conversations.createOperation({
+    id: operationId,
+    projectId: 'project-1',
+    conversationId: 'project-1',
+    messageId: 'message-visual',
+    kind: 'visual-edit',
+    idempotencyKey: 'e'.repeat(64),
+    runId,
+    artifactReferences: [],
+    ...(visualEdit ? { visualEdit } : {}),
+    createdAt: '2026-07-18T12:00:00.000Z',
+  });
+  return { runId, operationId };
 }
 
 async function seed(
@@ -203,8 +347,416 @@ async function seed(
 }
 
 describe('ConversationOperationRunner', () => {
-  it('completes a plan operation without touching the workspace', async () => {
-    const { runs, artifacts, workspaces, conversations, runner } = setup();
+  it('rejects a workflow run owned by another project before creating execution state', async () => {
+    const { runs, stepRuns, artifacts, workspaces, conversations, runner } = setup();
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+    const run = (await runs.get(runId))!;
+    await runs.update({ ...run, projectId: 'project-2' }, run.version);
+
+    await expect(runner.run('project-1', runId, operationId)).rejects.toThrow(
+      'does not belong to project project-1',
+    );
+
+    expect(await stepRuns.list(runId)).toEqual([]);
+    expect(await artifacts.listLatest('project-1')).toEqual([]);
+    expect(workspaces.checkpoints).toEqual([]);
+    expect(workspaces.dirty).toBe(false);
+  });
+
+  it('rejects an operation bound to another run before creating execution state', async () => {
+    const { runs, stepRuns, artifacts, workspaces, conversations, runner } = setup();
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+    const operation = (await conversations.getOperation('project-1', operationId))!;
+    await conversations.updateOperation({ ...operation, runId: 'run-other' });
+
+    await expect(runner.run('project-1', runId, operationId)).rejects.toThrow(
+      'is not bound to workflow run run-visual',
+    );
+
+    expect(await stepRuns.list(runId)).toEqual([]);
+    expect(await artifacts.listLatest('project-1')).toEqual([]);
+    expect(workspaces.checkpoints).toEqual([]);
+    expect(workspaces.dirty).toBe(false);
+  });
+
+  it('runs a free-form visual request as a non-mutating clarification step', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup();
+    const { runId, operationId } = await seedVisualEdit(conversations, runs, null);
+
+    await runner.run('project-1', runId, operationId);
+
+    const run = await runs.get(runId);
+    expect(run?.error).toBeUndefined();
+    expect(run?.status).toBe('completed');
+    expect(workspaces.lastRequestMarkdown).toContain('Clarify');
+    expect(workspaces.checkpoints).toEqual([]);
+    expect(workspaces.commits).toEqual([]);
+    expect(await projectVersions.list('project-1')).toEqual([]);
+  });
+
+  it('runs the exact direct patch through deterministic and browser gates before its only commit/version', async () => {
+    const order: string[] = [];
+    const verifier: VerificationService = {
+      verify: vi.fn((input): Promise<VerificationReport> => {
+        order.push('deterministic');
+        expect(input).toMatchObject({
+          scripts: ['typecheck', 'lint', 'test', 'build'],
+          includeGitDiffCheck: true,
+        });
+        return Promise.resolve({
+          schemaVersion: '1',
+          approved: true,
+          packageManager: 'npm',
+          summary: 'approved',
+          commands: [],
+          createdAt: '2026-07-18T12:00:00.000Z',
+        });
+      }),
+    };
+    const browserVerification: Pick<BrowserVerificationCoordinator, 'verify'> = {
+      verify: vi.fn((input): Promise<BrowserVerificationReport> => {
+        order.push('browser');
+        expect(input.runId).toBe('run-visual');
+        expect(input.plan.metadata.runId).toBe('run-visual');
+        expect((input.plan.content as { data: { steps: unknown[] } }).data.steps).toHaveLength(1);
+        expect(input.plan.content).toMatchObject({
+          data: {
+            steps: [
+              {
+                assertions: [
+                  expect.objectContaining({ kind: 'containsText', expected: 'New title' }),
+                ],
+              },
+            ],
+          },
+        });
+        return Promise.resolve({
+          schemaVersion: '1',
+          approved: true,
+          summary: 'browser approved',
+          planArtifact: {
+            name: input.plan.metadata.name,
+            revision: input.plan.metadata.revision,
+            sha256: input.plan.metadata.sha256,
+          },
+          previewSession: {
+            sessionId: 'preview-visual',
+            status: 'running',
+            evidence: {
+              screenshots: [
+                {
+                  name: 'browser-screenshot-preview-visual-verify-visual-edit',
+                  revision: 1,
+                  sha256: 'f'.repeat(64),
+                  stepId: 'verify-visual-edit',
+                  url: 'http://127.0.0.1/',
+                  viewport: { width: 1280, height: 800 },
+                },
+              ],
+            },
+          },
+          steps: [
+            {
+              stepId: 'verify-visual-edit',
+              title: 'Verify visual edit',
+              status: 'passed',
+              durationMs: 1,
+              observations: [],
+            },
+          ],
+        });
+      }),
+    };
+    const { runs, artifacts, workspaces, conversations, projectVersions, runner } = setup(
+      harnessRepo,
+      { verifier, browserVerification },
+    );
+    workspaces.onBeforeCommit = () => order.push('commit');
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    await runner.run('project-1', runId, operationId);
+
+    expect(workspaces.lastRequestMarkdown).toContain(JSON.stringify(directVisualEdit, null, 2));
+    expect(workspaces.lastRequestMarkdown).toContain('Tailwind');
+    expect(order).toEqual(['deterministic', 'browser', 'commit']);
+    expect(workspaces.commits).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toHaveLength(1);
+    const operation = await conversations.getOperation('project-1', operationId);
+    expect(operation?.artifactReferences.map((reference) => reference.name)).toEqual([
+      `operation-${operationId}`,
+      `visual-edit-verification-${operationId}`,
+      `visual-edit-browser-plan-${operationId}`,
+      `visual-edit-browser-report-${operationId}`,
+      'browser-screenshot-preview-visual-verify-visual-edit',
+    ]);
+    expect(
+      await artifacts.getLatest('project-1', `visual-edit-browser-report-${operationId}`),
+    ).not.toBeNull();
+  });
+
+  it('rolls back and leaves the operation unpromoted when version recording fails', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(
+      harnessRepo,
+      approvedDirectServices(),
+    );
+    projectVersions.onBeforeCreate = () => {
+      throw new Error('version store unavailable');
+    };
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    await runner.run('project-1', runId, operationId);
+
+    expect((await runs.get(runId))?.status).toBe('failed');
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toEqual([]);
+    const operation = await conversations.getOperation('project-1', operationId);
+    expect(operation?.artifactReferences).toEqual([]);
+    expect(operation?.projectVersionId).toBeUndefined();
+  });
+
+  it('discards the recorded version and rolls back when operation promotion fails', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(
+      harnessRepo,
+      approvedDirectServices(),
+    );
+    const updateOperation = conversations.updateOperation.bind(conversations);
+    conversations.updateOperation = vi.fn((operation) => {
+      if (operation.projectVersionId) {
+        return Promise.reject(new Error('operation store unavailable'));
+      }
+      return updateOperation(operation);
+    });
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    await runner.run('project-1', runId, operationId);
+
+    expect((await runs.get(runId))?.status).toBe('failed');
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toEqual([]);
+    const operation = await conversations.getOperation('project-1', operationId);
+    expect(operation?.artifactReferences).toEqual([]);
+    expect(operation?.projectVersionId).toBeUndefined();
+  });
+
+  it('surfaces provisional-version discard infrastructure failure with the promotion error', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(
+      harnessRepo,
+      approvedDirectServices(),
+    );
+    projectVersions.onBeforeDiscard = () => {
+      throw new Error('version delete unavailable');
+    };
+    const updateOperation = conversations.updateOperation.bind(conversations);
+    conversations.updateOperation = vi.fn((operation) =>
+      operation.projectVersionId
+        ? Promise.reject(new Error('operation store unavailable'))
+        : updateOperation(operation),
+    );
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    const failure = await runner.run('project-1', runId, operationId).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain('operation store unavailable');
+    expect((failure as Error).message).toContain(
+      'provisional version discard failed: version delete unavailable',
+    );
+    expect((await runs.get(runId))?.error?.message).toBe((failure as Error).message);
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toHaveLength(1);
+  });
+
+  it('surfaces a protected-version discard refusal and preserves that version', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(
+      harnessRepo,
+      approvedDirectServices(),
+    );
+    projectVersions.onBeforeDiscard = async (version) => {
+      await projectVersions.update({ ...version, protected: true }, version.version);
+    };
+    const updateOperation = conversations.updateOperation.bind(conversations);
+    conversations.updateOperation = vi.fn((operation) =>
+      operation.projectVersionId
+        ? Promise.reject(new Error('operation store unavailable'))
+        : updateOperation(operation),
+    );
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    const failure = await runner.run('project-1', runId, operationId).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      'provisional version discard refused: Project version',
+    );
+    expect((await runs.get(runId))?.error?.message).toBe((failure as Error).message);
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toEqual([
+      expect.objectContaining({ protected: true }),
+    ]);
+  });
+
+  it('surfaces operation restoration failure after a later terminal write fails', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(
+      harnessRepo,
+      approvedDirectServices(),
+    );
+    (runs as InMemoryRuns).onBeforeUpdate = (run) => {
+      if (run.status === 'completed') throw new Error('run store unavailable');
+    };
+    const updateOperation = conversations.updateOperation.bind(conversations);
+    conversations.updateOperation = vi.fn((operation) =>
+      operation.projectVersionId
+        ? updateOperation(operation)
+        : Promise.reject(new Error('operation restore unavailable')),
+    );
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    const failure = await runner.run('project-1', runId, operationId).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain('run store unavailable');
+    expect((failure as Error).message).toContain(
+      'operation restore failed: operation restore unavailable',
+    );
+    expect((failure as Error).message).toContain(
+      'provisional version discard skipped: operation restore failed; version retained',
+    );
+    expect((await runs.get(runId))?.error?.message).toBe((failure as Error).message);
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toHaveLength(1);
+  });
+
+  it('rejects a dirty direct-edit baseline before checkpointing or creating a version', async () => {
+    const { runs, workspaces, conversations, projectVersions, runner } = setup();
+    workspaces.dirty = true;
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    await runner.run('project-1', runId, operationId);
+
+    expect((await runs.get(runId))?.status).toBe('failed');
+    expect(workspaces.checkpoints).toEqual([]);
+    expect(workspaces.commits).toEqual([]);
+    expect(await projectVersions.list('project-1')).toEqual([]);
+  });
+
+  it('rejects an empty direct-edit source diff before running verification', async () => {
+    const verify = vi.fn(() => Promise.reject(new Error('verification must not run')));
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(harnessRepo, {
+      verifier: { verify },
+      browserVerification: { verify: () => Promise.reject(new Error('browser must not run')) },
+    });
+    workspaces.isClean = () => Promise.resolve(true);
+    const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+    await runner.run('project-1', runId, operationId);
+
+    expect((await runs.get(runId))?.status).toBe('failed');
+    expect(verify).not.toHaveBeenCalled();
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(workspaces.commits).toEqual([]);
+    expect(await projectVersions.list('project-1')).toEqual([]);
+  });
+
+  it('rejects a style edit whose browser gate returns no screenshot evidence', async () => {
+    const verifier: VerificationService = {
+      verify: () =>
+        Promise.resolve({
+          schemaVersion: '1',
+          approved: true,
+          packageManager: 'npm',
+          summary: 'approved',
+          commands: [],
+          createdAt: '2026-07-18T12:00:00.000Z',
+        }),
+    };
+    const browserVerification: Pick<BrowserVerificationCoordinator, 'verify'> = {
+      verify: (input) =>
+        Promise.resolve({
+          schemaVersion: '1',
+          approved: true,
+          summary: 'browser approved without screenshots',
+          planArtifact: {
+            name: input.plan.metadata.name,
+            revision: input.plan.metadata.revision,
+            sha256: input.plan.metadata.sha256,
+          },
+          previewSession: {
+            sessionId: 'preview-visual',
+            status: 'running',
+            evidence: { screenshots: [] },
+          },
+          steps: [],
+        }),
+    };
+    const { runs, workspaces, conversations, projectVersions, runner } = setup(harnessRepo, {
+      verifier,
+      browserVerification,
+    });
+    const { runId, operationId } = await seedVisualEdit(conversations, runs, {
+      ...directVisualEdit,
+      property: 'color',
+      oldValue: '#000000',
+      newValue: '#ffffff',
+    });
+
+    await runner.run('project-1', runId, operationId);
+
+    expect((await runs.get(runId))?.status).toBe('failed');
+    expect(workspaces.rollbacks).toHaveLength(1);
+    expect(workspaces.commits).toEqual([]);
+    expect(await projectVersions.list('project-1')).toEqual([]);
+  });
+
+  it.each(['deterministic', 'browser'] as const)(
+    'rolls back and creates no version when the %s gate rejects the direct edit',
+    async (failedGate) => {
+      const verifier: VerificationService = {
+        verify: () =>
+          Promise.resolve({
+            schemaVersion: '1',
+            approved: failedGate !== 'deterministic',
+            packageManager: 'npm',
+            summary: `${failedGate} result`,
+            commands: [],
+            createdAt: '2026-07-18T12:00:00.000Z',
+          }),
+      };
+      const browserVerification: Pick<BrowserVerificationCoordinator, 'verify'> = {
+        verify: (input) =>
+          Promise.resolve({
+            schemaVersion: '1',
+            approved: failedGate !== 'browser',
+            summary: `${failedGate} result`,
+            planArtifact: {
+              name: input.plan.metadata.name,
+              revision: input.plan.metadata.revision,
+              sha256: input.plan.metadata.sha256,
+            },
+            previewSession: {
+              sessionId: 'preview-visual',
+              status: 'running',
+              evidence: { screenshots: [] },
+            },
+            steps: [],
+          }),
+      };
+      const { runs, workspaces, conversations, projectVersions, runner } = setup(harnessRepo, {
+        verifier,
+        browserVerification,
+      });
+      const { runId, operationId } = await seedVisualEdit(conversations, runs);
+
+      await runner.run('project-1', runId, operationId);
+
+      expect((await runs.get(runId))?.status).toBe('failed');
+      expect(workspaces.rollbacks).toHaveLength(1);
+      expect(workspaces.commits).toEqual([]);
+      expect(await projectVersions.list('project-1')).toEqual([]);
+    },
+  );
+
+  it('completes a plan operation without touching the workspace or recording a version', async () => {
+    const { runs, artifacts, workspaces, conversations, projectVersions, runner } = setup();
     const { runId, operationId } = await seed(conversations, runs, 'plan');
 
     await runner.run('project-1', runId, operationId);
@@ -222,10 +774,12 @@ describe('ConversationOperationRunner', () => {
         sha256: artifact!.metadata.sha256,
       },
     ]);
+    expect(operation?.projectVersionId).toBeUndefined();
+    expect(await projectVersions.list('project-1')).toEqual([]);
   });
 
-  it('completes a build operation and commits the touched workspace', async () => {
-    const { runs, artifacts, workspaces, conversations, runner } = setup();
+  it('completes a build operation, commits the touched workspace, and records exactly one ProjectVersion', async () => {
+    const { runs, artifacts, workspaces, conversations, projectVersions, runner } = setup();
     const { runId, operationId } = await seed(conversations, runs, 'build');
 
     await runner.run('project-1', runId, operationId);
@@ -235,6 +789,17 @@ describe('ConversationOperationRunner', () => {
     expect(workspaces.commits).toHaveLength(1);
     const artifact = await artifacts.getLatest('project-1', `operation-${operationId}`);
     expect(artifact).not.toBeNull();
+
+    const versions = await projectVersions.list('project-1');
+    expect(versions).toHaveLength(1);
+    const [version] = versions;
+    expect(version).toMatchObject({
+      projectId: 'project-1',
+      runId,
+      kind: 'run',
+      commit: workspaces.commits[0],
+    });
+
     const operation = await conversations.getOperation('project-1', operationId);
     expect(operation?.artifactReferences).toEqual([
       {
@@ -243,6 +808,7 @@ describe('ConversationOperationRunner', () => {
         sha256: artifact!.metadata.sha256,
       },
     ]);
+    expect(operation?.projectVersionId).toBe(version!.id);
   });
 
   it('persists live executor stream events via StepEventRepository', async () => {
@@ -254,7 +820,7 @@ describe('ConversationOperationRunner', () => {
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
-    const projectVersions = new MemoryProjectVersions();
+    const projectVersions = newProjectVersionService(workspaces, artifacts);
     // ControllableExecutor/AgentExecutorFromExecutionPlane predate onEvent and
     // don't forward it, so this test uses a minimal streaming stub instead.
     const executors: ExecutorRegistry = {
@@ -349,7 +915,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -395,7 +961,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -480,7 +1046,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -531,7 +1097,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
@@ -549,7 +1115,7 @@ describe('ConversationOperationRunner', () => {
     expect(stepRunList[0]?.status).toBe('completed');
   });
 
-  it('resolves run() and still marks stepRun/run failed when the checkpoint rollback throws', async () => {
+  it('surfaces rollback failure and records it with the original run error', async () => {
     const workspaces = new FakeWorkspaces({ on: true });
     workspaces.rollback = () => Promise.reject(new Error('rollback unavailable'));
     const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
@@ -580,20 +1146,21 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },
     );
     const { runId, operationId } = await seed(conversations, runs, 'build');
 
-    // run() must resolve even though workspaces.rollback itself throws (e.g. a
-    // git I/O error), and the failed-state transitions below the rollback call
-    // must still execute so the run isn't stranded in 'running' forever.
-    await expect(runner.run('project-1', runId, operationId)).resolves.toBeUndefined();
+    const failure = await runner.run('project-1', runId, operationId).catch((error) => error);
 
     const run = (await runs.get(runId)) as WorkflowRun;
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain('boom');
+    expect((failure as Error).message).toContain('workspace rollback failed: rollback unavailable');
     expect(run.status).toBe('failed');
+    expect(run.error?.message).toBe((failure as Error).message);
     const stepRunList = await stepRuns.list(runId);
     expect(stepRunList[0]?.status).toBe('failed');
   });
@@ -631,7 +1198,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
-      new MemoryProjectVersions(),
+      newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
       { agentTimeoutMs: 60_000 },

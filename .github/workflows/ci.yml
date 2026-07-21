@@ -133,3 +133,27 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+
+  sandbox-sbom:
+    name: sandbox-sbom
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Pull the pinned sandbox base image
+        run: docker pull node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+      - name: Generate SBOM
+        # Pinned by commit, not the floating v0 tag: this is the one third-party
+        # (non actions/*) action in this workflow, and CodeQL flags floating tags
+        # on third-party actions as a supply-chain risk.
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+          format: spdx-json
+          output-file: sandbox-image.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-image-sbom
+          path: sandbox-image.spdx.json
+          retention-days: 90

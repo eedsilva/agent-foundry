@@ -16,9 +16,15 @@ export function startArtifactReaper(
   intervalMs: number,
   logger: ArtifactReaperLogger,
   app: FastifyInstance,
+  gcSweep?: (now: Date) => Promise<number>,
 ): ArtifactReaperSchedule {
   return startIntervalSweep(
-    () => service.reapExpired(new Date()),
+    async () => {
+      const now = new Date();
+      const reaped = await service.reapExpired(now);
+      const swept = gcSweep ? await gcSweep(now) : 0;
+      return reaped + swept;
+    },
     intervalMs,
     logger,
     app,

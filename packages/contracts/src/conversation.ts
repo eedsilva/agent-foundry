@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ActorRefSchema, JsonValueSchema, PathSegmentSchema } from './primitives.js';
 import { ArtifactReferenceSchema, IdempotencyKeySchema } from './run.js';
+import { VisualEditSchema } from './visual-edit.js';
 
 export const MessageRoleSchema = z.enum(['user', 'assistant', 'system', 'tool']);
 export type MessageRole = z.infer<typeof MessageRoleSchema>;
@@ -121,6 +122,7 @@ export const OperationObjectSchema = z
     approval: OperationApprovalSchema.optional(),
     planOperationId: PathSegmentSchema.optional(),
     directExecution: z.boolean().optional(),
+    visualEdit: VisualEditSchema.optional(),
     createdAt: z.string().datetime(),
   })
   .strict();

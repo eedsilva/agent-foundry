@@ -31,6 +31,7 @@ import {
 import { ConversationOperationRunner } from './conversation-operation-runner.js';
 import { ConversationService } from './conversation-service.js';
 import { OperationService } from './operation-service.js';
+import { ProjectVersionService } from './project-version-service.js';
 
 class FixedClock implements Clock {
   private tick = 0;
@@ -121,12 +122,22 @@ async function runOperation(kind: 'plan' | 'build') {
   const clock = new FixedClock();
   const ids = new SequentialIds();
   // This test doesn't exercise context compilation, just needs a valid port.
-  const projectVersions: ProjectVersionRepository = {
+  // The build path does commit and record a version, so the repository
+  // underneath must be real enough for ProjectVersionService to work with.
+  const projectVersionRepo: ProjectVersionRepository = {
     create: () => Promise.resolve(),
+    discardUnpromoted: () => Promise.resolve(),
     get: () => Promise.resolve(null),
     list: () => Promise.resolve([]),
     update: (version) => Promise.resolve(version),
   };
+  const projectVersions = new ProjectVersionService(
+    projectVersionRepo,
+    workspaces,
+    artifacts,
+    clock,
+    ids,
+  );
 
   await conversations.createConversation({
     id: 'project-1',
@@ -159,6 +170,7 @@ async function runOperation(kind: 'plan' | 'build') {
     clock,
     ids,
     conversationService,
+    workspaces,
   );
   const runner = new ConversationOperationRunner(
     runs,

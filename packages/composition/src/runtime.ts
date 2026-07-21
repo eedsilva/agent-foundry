@@ -32,6 +32,8 @@ import {
   FileStepRunRepository,
   FileWorkflowRunRepository,
   FileWorkspaceManager,
+  FsBlobStore,
+  S3BlobStore,
   YamlPolicyRepository,
   YamlWorkflowRepository,
   assertSchemaCurrent,
@@ -67,6 +69,7 @@ import type {
   ApprovalDecisionRepository,
   ApprovalRequestRepository,
   ArtifactStore,
+  BlobStore,
   BrowserVerifier,
   ConversationRepository,
   EventStore,
@@ -88,6 +91,7 @@ export interface Runtime {
   approvalRequests: ApprovalRequestRepository;
   approvalDecisions: ApprovalDecisionRepository;
   artifacts: ArtifactStore;
+  blobStore: BlobStore;
   conversations: ConversationRepository;
   events: EventStore;
   stepEvents: StepEventRepository;
@@ -128,6 +132,22 @@ export async function createRuntime(
 ): Promise<Runtime> {
   const clock = new SystemClock();
   const ids = new UlidGenerator();
+  const blobStore: BlobStore =
+    config.blobStoreMode === 's3'
+      ? new S3BlobStore({
+          // superRefine in config.ts guarantees these are set whenever mode is 's3'.
+          ...(config.s3Endpoint !== undefined ? { endpoint: config.s3Endpoint } : {}),
+          region: config.s3Region!,
+          bucket: config.s3Bucket!,
+          accessKeyId: config.s3AccessKeyId!,
+          secretAccessKey: config.s3SecretAccessKey!,
+          forcePathStyle: config.s3ForcePathStyle,
+        })
+      : new FsBlobStore(config.dataDir, {
+          // fs mode always derives or reads blobSigningSecret in config.ts.
+          signingSecret: config.blobSigningSecret!,
+          publicBaseUrl: `http://${config.apiHost}:${config.apiPort}`,
+        });
   const {
     projects,
     runs,
@@ -139,7 +159,7 @@ export async function createRuntime(
     conversations,
     events,
     stepEvents,
-  } = await createMetadataStores(config);
+  } = await createMetadataStores(config, blobStore);
   const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
   const metrics = new FileMetricsRepository(config.dataDir);
   const qualityObservations = new FileQualityObservationRepository(config.dataDir);
@@ -290,10 +310,10 @@ export async function createRuntime(
     executors,
     workspaces,
     conversations,
-    projectVersions,
+    projectVersionService,
     clock,
     ids,
-    { agentTimeoutMs: config.agentTimeoutMs },
+    { agentTimeoutMs: config.agentTimeoutMs, verifier, browserVerification },
   );
   const operationService = new OperationService(
     conversations,
@@ -303,6 +323,7 @@ export async function createRuntime(
     clock,
     ids,
     conversationService,
+    workspaces,
   );
   const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
     workerId: config.workerId,
@@ -322,6 +343,7 @@ export async function createRuntime(
     approvalRequests,
     approvalDecisions,
     artifacts,
+    blobStore,
     conversations,
     events,
     stepEvents,
@@ -360,7 +382,10 @@ export async function createRuntime(
 /** Metadata stores swapped between file and Postgres backends by PERSISTENCE_MODE; everything
  * else (queue, metrics, quality, previews, model overrides, project versions, workflows,
  * policies, workspaces) stays file-based regardless of this setting. */
-async function createMetadataStores(config: RuntimeConfig): Promise<{
+async function createMetadataStores(
+  config: RuntimeConfig,
+  blobStore: BlobStore,
+): Promise<{
   projects: ProjectRepository;
   runs: WorkflowRunRepository;
   stepRuns: StepRunRepository;
@@ -380,7 +405,7 @@ async function createMetadataStores(config: RuntimeConfig): Promise<{
       stepAttempts: new FileStepAttemptRepository(config.dataDir),
       approvalRequests: new FileApprovalRequestRepository(config.dataDir),
       approvalDecisions: new FileApprovalDecisionRepository(config.dataDir),
-      artifacts: new FileArtifactStore(config.dataDir),
+      artifacts: new FileArtifactStore(config.dataDir, blobStore),
       conversations: new FileConversationRepository(config.dataDir),
       events: new FileEventStore(config.dataDir),
       stepEvents: new FileStepEventRepository(config.dataDir),
@@ -469,7 +494,17 @@ function mockBrowserVerificationCoordinator(
             observations: [],
           })),
         },
-        evidence: { screenshots: [] },
+        evidence: {
+          screenshots: plan.steps.map((step) => ({
+            stepId: step.id,
+            url: input.session.url ?? 'http://127.0.0.1/',
+            viewport: plan.viewport,
+            buffer: Buffer.from(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEAQH/2p8lWQAAAABJRU5ErkJggg==',
+              'base64',
+            ),
+          })),
+        },
       });
     },
   };

@@ -49,6 +49,11 @@ describePostgres('PostgresProjectRepository', (ctx) => {
       'project-1',
     ]);
     expect((await repo.list(2)).map((project) => project.id)).toEqual(['project-3', 'project-2']);
+    expect((await repo.listAll()).map((project) => project.id)).toEqual([
+      'project-3',
+      'project-2',
+      'project-1',
+    ]);
   });
 
   it('rejects create with a non-1 version and rejects duplicate ids', async () => {

@@ -2,13 +2,20 @@ import type {
   AgentExecutionRequest,
   Message,
   Operation,
+  ProjectVersion,
   StepAttempt,
   StepRun,
   WorkflowRun,
 } from '@agent-foundry/contracts';
-import { AGENT_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
+import {
+  AGENT_ARTIFACT_JSON_SCHEMA,
+  BrowserTestPlanArtifactSchema,
+  DEFAULT_BROWSER_EVIDENCE_POLICY,
+} from '@agent-foundry/contracts';
 import {
   NotFoundError,
+  ProjectVersionDiscardRefusedError,
+  ValidationError,
   errorMessage,
   transitionStepAttempt,
   transitionStepRun,
@@ -22,21 +29,25 @@ import {
   type IdGenerator,
   type MetricsRepository,
   type ModelRouter,
-  type ProjectVersionRepository,
   type StepAttemptRepository,
   type StepEventRepository,
   type StepRunRepository,
   type WorkflowRunRepository,
   type WorkspaceManager,
+  type VerificationService,
 } from '@agent-foundry/domain';
 import { buildTaskProfile } from './task-profiler.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
 import { CONVERSATION_WORKFLOW_ID, buildConversationStep } from './conversation-step-config.js';
 import { compileContext } from './context-compiler.js';
 import { artifactReference, persistStreamEvent, runError } from './workflow-orchestrator.js';
+import { ProjectVersionService } from './project-version-service.js';
+import type { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
 
 export interface ConversationOperationRunnerOptions {
   agentTimeoutMs: number;
+  verifier?: VerificationService;
+  browserVerification?: Pick<BrowserVerificationCoordinator, 'verify'>;
 }
 
 export class ConversationOperationRunner {
@@ -53,7 +64,7 @@ export class ConversationOperationRunner {
     private readonly executors: ExecutorRegistry,
     private readonly workspaces: WorkspaceManager,
     private readonly conversations: ConversationRepository,
-    private readonly projectVersions: ProjectVersionRepository,
+    private readonly projectVersions: ProjectVersionService,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly options: ConversationOperationRunnerOptions,
@@ -62,7 +73,14 @@ export class ConversationOperationRunner {
   async run(projectId: string, runId: string, operationId: string): Promise<void> {
     const initialRun = await this.requireRun(runId);
     const operation = await this.requireOperation(projectId, operationId);
-    const kind: 'plan' | 'build' = operation.kind === 'build' ? 'build' : 'plan';
+    if (initialRun.projectId !== projectId) {
+      throw new ValidationError(`Workflow run ${runId} does not belong to project ${projectId}`);
+    }
+    if (operation.runId !== runId) {
+      throw new ValidationError(`Operation ${operationId} is not bound to workflow run ${runId}`);
+    }
+    const kind: 'plan' | 'build' | 'visual-edit' =
+      operation.kind === 'build' || operation.kind === 'visual-edit' ? operation.kind : 'plan';
     const message = await this.requireMessage(projectId, operation.messageId);
     const planArtifact = await this.loadPlanArtifact(projectId, operation);
     const changeRequest = operation.changeRequestId
@@ -81,6 +99,7 @@ export class ConversationOperationRunner {
       operationId,
       kind,
       message,
+      visualEdit: operation.visualEdit,
       planArtifact,
       contextDigest: compiledContext.digest,
     });
@@ -110,8 +129,13 @@ export class ConversationOperationRunner {
 
     let checkpoint: string | null = null;
     let attempt: StepAttempt | undefined;
+    let recordedVersion: ProjectVersion | null = null;
+    let operationPromoted = false;
     let succeeded = false;
     try {
+      if (operation.visualEdit && !(await this.workspaces.isClean(projectId))) {
+        throw new ValidationError('Direct visual edits require a clean workspace baseline');
+      }
       const harness = await this.harness.select({
         role: step.role,
         taskKind: step.taskKind,
@@ -212,9 +236,15 @@ export class ConversationOperationRunner {
           ),
         );
 
+      const directEvidence = operation.visualEdit
+        ? await this.verifyDirectVisualEdit(projectId, runId, operation, attempt)
+        : [];
       const commit = step.mutatesWorkspace
         ? await this.workspaces.commit(projectId, `conversation(${kind}): ${step.title}`)
         : null;
+      if (operation.visualEdit && !commit) {
+        throw new ValidationError('Direct visual edit produced no source diff');
+      }
       const executionRoute = { ...route, executed: route.selected };
       const artifact = await this.artifacts.put({
         projectId,
@@ -227,12 +257,27 @@ export class ConversationOperationRunner {
         routeDecision: executionRoute,
       });
 
+      recordedVersion = commit
+        ? await this.projectVersions.recordFromStep({
+            projectId,
+            runId,
+            stepRunId: stepRun.id,
+            attemptId: attempt.id,
+            commit,
+          })
+        : null;
+      await this.conversations.updateOperation({
+        ...operation,
+        artifactReferences: [artifactReference(artifact), ...directEvidence],
+        ...(recordedVersion ? { projectVersionId: recordedVersion.id } : {}),
+      });
+      operationPromoted = true;
       attempt = await this.stepAttempts.update(
         transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
           durationMs: result.durationMs,
           ...(commit ? { commit } : {}),
           routeDecision: executionRoute,
-          outputArtifacts: [artifactReference(artifact)],
+          outputArtifacts: [artifactReference(artifact), ...directEvidence],
         }),
         attempt.version,
       );
@@ -245,17 +290,6 @@ export class ConversationOperationRunner {
         runState.version,
       );
       succeeded = true;
-      // Records the artifact this operation produced on the Operation itself
-      // (not just the StepAttempt) so the chat UI can link a completed
-      // Operation to its diff/artifacts without waiting on the separate
-      // plan-approval decision — build operations have no approval step at
-      // all, so this is their only completion signal. Runs after `succeeded
-      // = true` like metrics/events below: a failure here must not trigger
-      // the rollback path for a run that already durably completed.
-      await this.conversations.updateOperation({
-        ...operation,
-        artifactReferences: [artifactReference(artifact)],
-      });
       await this.metrics.record({
         modelId: route.selected.model.id,
         taskKind: step.taskKind,
@@ -280,14 +314,46 @@ export class ConversationOperationRunner {
         // against records that have moved past these local versions.
         return;
       }
+      const compensationFailures: CompensationFailure[] = [];
+      let operationRestored = !operationPromoted;
+      if (operationPromoted) {
+        try {
+          await this.conversations.updateOperation(operation);
+          operationRestored = true;
+        } catch (restoreError) {
+          compensationFailures.push({ stage: 'operation restore', error: restoreError });
+        }
+      }
+      if (recordedVersion && operationRestored) {
+        try {
+          await this.projectVersions.discardUnpromoted(recordedVersion);
+        } catch (discardError) {
+          compensationFailures.push({
+            stage: 'provisional version discard',
+            error: discardError,
+            refused: isProjectVersionDiscardRefusal(discardError),
+          });
+        }
+      } else if (recordedVersion) {
+        compensationFailures.push({
+          stage: 'provisional version discard',
+          error:
+            'operation restore failed; version retained to avoid a dangling operation reference',
+          skipped: true,
+        });
+      }
       if (checkpoint) {
         try {
           await this.workspaces.rollback(projectId, checkpoint);
-        } catch {
-          // best-effort; the failed-state transitions below are the durable record
+        } catch (rollbackError) {
+          compensationFailures.push({ stage: 'workspace rollback', error: rollbackError });
         }
       }
-      const runErr = runError(error);
+      const terminalError =
+        compensationFailures.length > 0
+          ? new PromotionCompensationError(error, compensationFailures)
+          : error;
+      const runErr = runError(terminalError);
       if (attempt && attempt.status === 'running') {
         await this.stepAttempts.update(
           transitionStepAttempt(attempt, 'failed', this.clock.now(), { error: runErr }),
@@ -323,14 +389,97 @@ export class ConversationOperationRunner {
           id: this.ids.next(),
           projectId,
           type: 'operation.failed',
-          message: errorMessage(error),
+          message: errorMessage(terminalError),
           createdAt: this.clock.now().toISOString(),
           data: { operationId, runId, kind },
         });
       } catch {
         // best-effort event; durable state (WorkflowRun/StepRun) is already recorded above
       }
+      if (terminalError instanceof PromotionCompensationError) throw terminalError;
     }
+  }
+
+  private async verifyDirectVisualEdit(
+    projectId: string,
+    runId: string,
+    operation: Operation,
+    attempt: StepAttempt,
+  ): Promise<Operation['artifactReferences']> {
+    const visualEdit = operation.visualEdit;
+    if (!visualEdit) return [];
+    if (await this.workspaces.isClean(projectId)) {
+      throw new ValidationError('Direct visual edit produced no source diff');
+    }
+    if (!this.options.verifier || !this.options.browserVerification) {
+      throw new ValidationError('Direct visual-edit verification is not configured');
+    }
+
+    const verification = await this.options.verifier.verify({
+      workspacePath: this.workspaces.workspacePath(projectId),
+      scripts: ['typecheck', 'lint', 'test', 'build'],
+      includeGitDiffCheck: true,
+    });
+    const verificationArtifact = await this.artifacts.put({
+      projectId,
+      name: `visual-edit-verification-${operation.id}`,
+      content: verification,
+      createdBy: 'workspace-verifier:visual-edit',
+      runId,
+      stepRunId: attempt.stepRunId,
+      attemptId: attempt.id,
+    });
+    if (!verification.approved) throw new ValidationError(verification.summary);
+
+    const planArtifact = await this.artifacts.put({
+      projectId,
+      name: `visual-edit-browser-plan-${operation.id}`,
+      content: directVisualEditBrowserPlan(operation, visualEdit),
+      createdBy: 'conversation-runner:visual-edit',
+      runId,
+      stepRunId: attempt.stepRunId,
+      attemptId: attempt.id,
+    });
+    const browserReport = await this.options.browserVerification.verify(
+      {
+        projectId,
+        workspacePath: this.workspaces.workspacePath(projectId),
+        runId,
+        plan: planArtifact,
+        allowedOrigins: [],
+        evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
+      },
+      new AbortController().signal,
+    );
+    const browserArtifact = await this.artifacts.put({
+      projectId,
+      name: `visual-edit-browser-report-${operation.id}`,
+      content: browserReport,
+      createdBy: 'browser-verifier:visual-edit',
+      runId,
+      stepRunId: attempt.stepRunId,
+      attemptId: attempt.id,
+    });
+    if (!browserReport.approved) throw new ValidationError(browserReport.summary);
+    if (
+      visualEdit.property !== 'text' &&
+      browserReport.previewSession.evidence.screenshots.length === 0
+    ) {
+      throw new ValidationError('Style visual edits require screenshot evidence');
+    }
+    const evidence = browserReport.previewSession.evidence;
+    return [
+      ...[verificationArtifact, planArtifact, browserArtifact].map(artifactReference),
+      ...evidence.screenshots.map(({ name, revision, sha256, sizeBytes }) => ({
+        name,
+        revision,
+        sha256,
+        ...(sizeBytes === undefined ? {} : { sizeBytes }),
+      })),
+      ...[evidence.trace, evidence.video].filter(
+        (reference): reference is NonNullable<typeof reference> => reference !== undefined,
+      ),
+    ];
   }
 
   private async requireRun(runId: string): Promise<WorkflowRun> {
@@ -371,4 +520,76 @@ export class ConversationOperationRunner {
     );
     return artifact ? { content: artifact.content } : undefined;
   }
+}
+
+interface CompensationFailure {
+  stage: 'operation restore' | 'provisional version discard' | 'workspace rollback';
+  error: unknown;
+  refused?: boolean;
+  skipped?: boolean;
+}
+
+class PromotionCompensationError extends Error {
+  override readonly name = 'PromotionCompensationError';
+  readonly code = 'PROMOTION_COMPENSATION_FAILED';
+
+  constructor(
+    readonly originalError: unknown,
+    readonly compensationFailures: readonly CompensationFailure[],
+  ) {
+    super(
+      [
+        `Promotion failed: ${errorMessage(originalError)}`,
+        ...compensationFailures.map(
+          ({ stage, error, refused, skipped }) =>
+            `${stage} ${skipped ? 'skipped' : refused ? 'refused' : 'failed'}: ${errorMessage(error)}`,
+        ),
+      ].join('; '),
+    );
+  }
+}
+
+function isProjectVersionDiscardRefusal(error: unknown): boolean {
+  return (
+    error instanceof ProjectVersionDiscardRefusedError ||
+    (error instanceof Error && 'code' in error && error.code === 'PROJECT_VERSION_DISCARD_REFUSED')
+  );
+}
+
+function directVisualEditBrowserPlan(
+  operation: Operation,
+  edit: NonNullable<Operation['visualEdit']>,
+) {
+  return BrowserTestPlanArtifactSchema.parse({
+    schemaVersion: '1',
+    status: 'completed',
+    summary: `Bounded browser smoke for ${edit.target.file}`,
+    data: {
+      schemaVersion: '1',
+      id: `visual-edit-${operation.id}`,
+      title: 'Verify visual edit',
+      viewport: { width: 1280, height: 800 },
+      steps: [
+        {
+          id: 'verify-visual-edit',
+          title: 'Verify visual edit',
+          action: { kind: 'goto', path: '/' },
+          assertions:
+            edit.property === 'text'
+              ? [
+                  {
+                    kind: 'containsText',
+                    locator: { by: 'text', text: edit.newValue, exact: true },
+                    expected: edit.newValue,
+                  },
+                ]
+              : [],
+        },
+      ],
+    },
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    nextActions: [],
+  });
 }

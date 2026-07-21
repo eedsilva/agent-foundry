@@ -57,4 +57,12 @@ export class PostgresProjectRepository implements ProjectRepository {
     >`select data from projects order by created_at desc, id desc limit ${limit}`;
     return rows.map((row) => ProjectSchema.parse(row.data));
   }
+
+  /** Unpaged — for sweeps (e.g. blob GC) that must see the whole set. */
+  async listAll(): Promise<Project[]> {
+    const rows = await this.sql<
+      { data: unknown }[]
+    >`select data from projects order by created_at desc, id desc`;
+    return rows.map((row) => ProjectSchema.parse(row.data));
+  }
 }

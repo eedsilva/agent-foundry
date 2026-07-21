@@ -25,19 +25,33 @@ export class PreviewSelectionService {
     const { request } = input;
     const workspaceRoot = this.workspaces.workspacePath(input.projectId);
 
-    const resolvedFiles: string[] = [];
+    const resolvedCandidates: Array<PreviewSelectionRequest['candidates'][number]> = [];
     for (const candidate of request.candidates) {
       const relative = resolveWorkspaceRelativePath(workspaceRoot, candidate.fileName);
-      if (relative && !resolvedFiles.includes(relative)) resolvedFiles.push(relative);
+      if (relative && !resolvedCandidates.some(({ fileName }) => fileName === relative)) {
+        resolvedCandidates.push({ ...candidate, fileName: relative });
+      }
     }
 
     const domPath = request.domPath;
 
-    if (resolvedFiles.length === 1) {
-      return { domPath, status: 'resolved', file: resolvedFiles[0] };
+    if (resolvedCandidates.length === 1) {
+      const { fileName: file, line, column, componentName } = resolvedCandidates[0]!;
+      return {
+        domPath,
+        status: 'resolved',
+        file,
+        line,
+        column,
+        ...(componentName ? { componentName } : {}),
+      };
     }
-    if (resolvedFiles.length >= 2) {
-      return { domPath, status: 'ambiguous', candidates: resolvedFiles };
+    if (resolvedCandidates.length >= 2) {
+      return {
+        domPath,
+        status: 'ambiguous',
+        candidates: resolvedCandidates.map(({ fileName }) => fileName),
+      };
     }
 
     const screenshot = await this.captureFallbackScreenshot(input.sessionId, request);

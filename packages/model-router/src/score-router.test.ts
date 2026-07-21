@@ -432,6 +432,54 @@ describe('ScoreBasedModelRouter', () => {
     expect(decision.rejected.some((r) => r.reason.startsWith('rate-limited'))).toBe(true);
   });
 
+  it('excludes a model when its provider reports only a future rate-limit reset', async () => {
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const health = new Map([
+      [
+        'claude',
+        {
+          provider: 'claude' as const,
+          available: true,
+          message: 'ok',
+          rateLimit: { resetAt: '2999-01-01T00:00:00.000Z' },
+        },
+      ],
+    ]);
+
+    const decision = await router.route(profile, undefined, { providerHealth: health });
+
+    expect(decision.selected.model.provider).not.toBe('claude');
+    expect(decision.rejected).toContainEqual({
+      modelId: 'claude-metered',
+      reason: 'rate-limited until 2999-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('keeps a model routable when its provider reports positive remaining quota', async () => {
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const health = new Map([
+      [
+        'claude',
+        {
+          provider: 'claude' as const,
+          available: true,
+          message: 'ok',
+          rateLimit: { remaining: 1, resetAt: '2999-01-01T00:00:00.000Z' },
+        },
+      ],
+    ]);
+
+    const decision = await router.route(profile, undefined, { providerHealth: health });
+
+    expect(
+      [decision.selected, ...decision.fallbacks].map((candidate) => candidate.model.id),
+    ).toContain('claude-metered');
+    expect(decision.rejected).not.toContainEqual({
+      modelId: 'claude-metered',
+      reason: 'rate-limited until 2999-01-01T00:00:00.000Z',
+    });
+  });
+
   it('rejects a metered model that exceeds the cost budget', async () => {
     const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
     const decision = await router.route(profile, undefined, {
@@ -439,6 +487,52 @@ describe('ScoreBasedModelRouter', () => {
     });
     // every metered model estimates > $0 → rejected; a subscription/no-pricing model may remain
     expect(decision.rejected.some((r) => r.reason.startsWith('over-budget'))).toBe(true);
+  });
+
+  it('does not treat attempts without reported cost as zero-cost history', async () => {
+    const now = new Date().toISOString();
+    const metrics = new MemoryMetrics(
+      new Map([
+        [
+          'partially-priced:implementation:developer',
+          {
+            modelId: 'partially-priced',
+            taskKind: 'implementation',
+            role: 'developer',
+            taxonomyVersion: '2',
+            category: 'implementation/frontend',
+            attempts: 10,
+            successes: 10,
+            totalDurationMs: 1_000,
+            totalInputTokens: 0,
+            totalOutputTokens: 0,
+            totalEstimatedCostUsd: 2,
+            costKnownCount: 2,
+            consecutiveFailures: 0,
+            qualityEvaluations: 0,
+            qualityApprovals: 0,
+            updatedAt: now,
+          },
+        ],
+      ]),
+    );
+    const router = new ScoreBasedModelRouter(
+      [
+        model('partially-priced', {
+          billingMode: 'metered',
+          pricing: { inputUsdPerMillionTokens: 3, outputUsdPerMillionTokens: 15 },
+        }),
+        model('subscription-fallback', { provider: 'codex' }),
+      ],
+      metrics,
+    );
+
+    const decision = await router.route(profile, undefined, { budget: { maxCostUsd: 0.5 } });
+
+    expect(decision.rejected).toContainEqual({
+      modelId: 'partially-priced',
+      reason: 'over-budget: est $1.0000 > $0.5',
+    });
   });
 
   it('ignores absent constraints (unchanged behavior)', async () => {

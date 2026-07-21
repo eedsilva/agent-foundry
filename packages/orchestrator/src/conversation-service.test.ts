@@ -255,6 +255,10 @@ class MemoryProjects implements ProjectRepository {
   list(): Promise<Project[]> {
     return Promise.resolve([...this.values.values()]);
   }
+
+  listAll(): Promise<Project[]> {
+    return Promise.resolve([...this.values.values()]);
+  }
 }
 
 class MemoryRuns implements WorkflowRunRepository {

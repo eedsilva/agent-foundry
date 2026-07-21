@@ -35,10 +35,22 @@ class FixtureExecutor extends BaseCliExecutor {
     };
   }
 
-  protected override async responseText(): Promise<string> {
+  protected override async responseText(
+    _invocation: CliInvocation,
+    _stdout: string,
+  ): Promise<string> {
     return this.provider === 'codex'
       ? JSON.stringify(completedArtifact)
       : JSON.stringify({ type: 'result', output: completedArtifact });
+  }
+}
+
+class RawOutputFixtureExecutor extends FixtureExecutor {
+  protected override async responseText(
+    _invocation: CliInvocation,
+    stdout: string,
+  ): Promise<string> {
+    return stdout;
   }
 }
 
@@ -255,6 +267,43 @@ describe('BaseCliExecutor rate limit (issue #62)', () => {
       limit: 100,
       remaining: 0,
       resetAt: '2026-07-18T13:00:00.000Z',
+    });
+  });
+
+  it('keeps a rate limit reported with a non-zero exit in health()', async () => {
+    const executor = new FixtureExecutor(1_000_000, undefined, 'claude');
+    execaMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stderr: 'rate limited',
+      stdout: fixture('claude.rate-limited.stdout.json'),
+    });
+
+    await expect(executor.execute(request)).rejects.toThrow('CLI exited with code 1');
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stdout: 'claude-cli 1.0.0', stderr: '' });
+    await expect(executor.health()).resolves.toMatchObject({
+      rateLimit: { limit: 100, remaining: 0, resetAt: '2026-07-18T13:00:00.000Z' },
+    });
+  });
+
+  it('keeps a rate limit reported with an error artifact in health()', async () => {
+    const executor = new RawOutputFixtureExecutor(1_000_000, undefined, 'claude');
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        type: 'result',
+        subtype: 'error',
+        is_error: true,
+        rate_limit: { limit: 2, remaining: 0, reset_at: '2026-07-20T12:00:00.000Z' },
+      }),
+    });
+
+    await expect(executor.execute(request)).rejects.toThrow(
+      'Agent did not return a valid artifact',
+    );
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stdout: 'claude-cli 1.0.0', stderr: '' });
+    await expect(executor.health()).resolves.toMatchObject({
+      rateLimit: { limit: 2, remaining: 0, resetAt: '2026-07-20T12:00:00.000Z' },
     });
   });
 });

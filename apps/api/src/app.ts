@@ -2,7 +2,7 @@ import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
-import { listRisks, getRiskById } from '@agent-foundry/composition';
+import { blobKeyFor, listRisks, getRiskById, verifyBlobToken } from '@agent-foundry/composition';
 import {
   BranchVersionRequestSchema,
   ClassifyMessageResponseSchema,
@@ -24,6 +24,8 @@ import {
   RetryStepRequestSchema,
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
+  VisualEditSchema,
+  type PreviewSession,
 } from '@agent-foundry/contracts';
 import {
   ApprovalConflictError,
@@ -35,9 +37,13 @@ import {
   ValidationError,
 } from '@agent-foundry/domain';
 import { registerPreviewProxy } from './preview-proxy.js';
+import { createFixedWindowRateLimiter } from './rate-limit.js';
+import { wildcardParam } from './request-util.js';
 
 interface BuildAppOptions {
   loggerStream?: { write(message: string): void };
+  /** Test-only clock override for the blob route rate limiter. */
+  now?: () => number;
 }
 
 interface LoggableRequest {
@@ -56,6 +62,8 @@ const CanonicalDecimalSchema = z
   .transform(Number);
 
 const NonNegativeCursorSchema = CanonicalDecimalSchema.pipe(z.number().int().nonnegative());
+
+const BLOB_URL_TTL_SECONDS = 300;
 
 export async function buildApp(
   runtime: Runtime,
@@ -205,6 +213,73 @@ export async function buildApp(
     }
     return reply.send(result.stream);
   });
+
+  // Both routes below authorize access to blob storage (mint or verify a
+  // signed token), so they're the ones an attacker would hammer to brute
+  // force tokens or churn signed URLs. 60 req/min/IP is generous for normal
+  // use and cheap to raise later if it's ever too tight.
+  const blobRateLimiter = createFixedWindowRateLimiter(60, 60_000, options.now);
+  const blobRateLimit = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    if (!blobRateLimiter.allow(request.ip)) {
+      await reply
+        .status(429)
+        .send({ error: 'TooManyRequests', message: 'Rate limit exceeded. Try again shortly.' });
+    }
+  };
+
+  // "Downloads usam URL assinada curta e autorização do projeto": same
+  // project/artifact/blobDeleted checks as the /blob route above, but hands
+  // back a short-lived signed URL instead of streaming the bytes itself.
+  app.get(
+    '/projects/:projectId/artifacts/:name/blob-url',
+    { onRequest: blobRateLimit },
+    async (request, reply) => {
+      const { projectId, name } = z
+        .object({ projectId: PathSegmentSchema, name: PathSegmentSchema })
+        .parse(request.params);
+      const { revision } = z
+        .object({ revision: z.coerce.number().int().positive().optional() })
+        .parse(request.query);
+      const metadata = await runtime.projectService.getArtifactBlobMetadata(
+        projectId,
+        name,
+        revision,
+      );
+      if (metadata === 'gone') {
+        return reply.status(410).send({ error: 'Gone', message: `Artifact ${name} has expired.` });
+      }
+      const key = blobKeyFor(projectId, metadata.name, metadata.revision);
+      const url = await runtime.blobStore.createSignedDownloadUrl(key, BLOB_URL_TTL_SECONDS);
+      return reply.send({
+        url,
+        expiresAt: new Date(Date.now() + BLOB_URL_TTL_SECONDS * 1000).toISOString(),
+      });
+    },
+  );
+
+  // fs mode only: S3 mode's createSignedDownloadUrl already returns a direct
+  // presigned S3 URL, so there's nothing for this API to serve.
+  if (runtime.config.blobStoreMode === 'fs') {
+    app.get('/blobs/*', { onRequest: blobRateLimit }, async (request, reply) => {
+      const key = decodeURIComponent(wildcardParam(request));
+      const { token } = z.object({ token: z.string() }).parse(request.query);
+      if (!verifyBlobToken(runtime.config.blobSigningSecret!, key, token, Date.now())) {
+        return reply
+          .status(403)
+          .send({ error: 'Forbidden', message: 'Invalid or expired download token.' });
+      }
+      const [stat, stream] = await Promise.all([
+        runtime.blobStore.stat(key),
+        runtime.blobStore.getStream(key),
+      ]);
+      if (!stat || !stream) {
+        return reply.status(404).send({ error: 'NotFound', message: 'Blob not found.' });
+      }
+      reply.header('content-type', stat.contentType);
+      reply.header('content-length', String(stat.sizeBytes));
+      return reply.send(stream);
+    });
+  }
 
   app.get('/projects/:projectId/conversation', async (request) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
@@ -554,6 +629,21 @@ export async function buildApp(
     return reply.status(200).send(PreviewSelectionResultSchema.parse(result));
   });
 
+  app.post('/projects/:projectId/preview/:sessionId/visual-edits', async (request, reply) => {
+    const { projectId, sessionId } = z
+      .object({ projectId: PathSegmentSchema, sessionId: PathSegmentSchema })
+      .parse(request.params);
+    const session = await requireProjectSession(runtime, projectId, sessionId);
+    if (session.status !== 'running') {
+      throw new ValidationError(`Preview session ${sessionId} is not live.`);
+    }
+    const result = await runtime.operationService.promoteVisualEdit(
+      projectId,
+      VisualEditSchema.parse(request.body),
+    );
+    return reply.status(202).send(result);
+  });
+
   registerPreviewProxy(app, runtime);
 
   return app;
@@ -649,9 +739,10 @@ async function requireProjectSession(
   runtime: Runtime,
   projectId: string,
   sessionId: string,
-): Promise<void> {
+): Promise<PreviewSession> {
   const record = await runtime.previewSessions.get(sessionId);
   if (!record || record.session.workspaceRef.projectId !== projectId) {
     throw new NotFoundError(`Preview session ${sessionId} not found for project ${projectId}.`);
   }
+  return record.session;
 }

@@ -121,9 +121,70 @@ function setup(overrides: { artifacts?: ArtifactStore } = {}) {
     clock,
     ids,
     conversationService,
+    { workspacePath: (projectId) => `/fake/${projectId}/workspace` },
   );
   return { conversations, runs, queue, artifacts, projects, conversationService, service };
 }
+
+const visualEdit = {
+  target: { domPath: 'main > h1', file: 'src/App.tsx', line: 12, column: 5 },
+  property: 'text' as const,
+  oldValue: 'Old title',
+  newValue: 'New title',
+};
+
+describe('OperationService.promoteVisualEdit', () => {
+  it('creates one canonical message and queues the exact direct visual-edit patch', async () => {
+    const { service, projects, conversations, runs, queue } = setup();
+    await projects.create({
+      id: 'project-1',
+      name: 'Visual edit sample',
+      workflowId: 'web-app-v1',
+      policyId: 'default',
+      status: 'completed',
+      version: 1,
+      createdAt: '2026-07-18T12:00:00.000Z',
+      updatedAt: '2026-07-18T12:00:00.000Z',
+    });
+
+    const result = await service.promoteVisualEdit('project-1', visualEdit);
+
+    expect(result.message).toMatchObject({
+      role: 'user',
+      content: [{ type: 'text', text: expect.stringContaining('src/App.tsx') }],
+    });
+    expect(result.operation).toMatchObject({
+      kind: 'visual-edit',
+      messageId: result.message.id,
+      visualEdit,
+    });
+    expect(await runs.get(result.operation.runId!)).toMatchObject({
+      status: 'queued',
+      workflowId: 'conversation-visual-edit',
+    });
+    expect(queue.enqueued).toHaveLength(1);
+    expect(queue.enqueued[0]).toMatchObject({
+      type: 'run-conversation-operation',
+      operationId: result.operation.id,
+      runId: result.operation.runId,
+    });
+    expect(await conversations.listMessages('project-1')).toEqual([result.message]);
+  });
+
+  it('rejects a source outside the project workspace before creating conversation state', async () => {
+    const { service, conversations, queue } = setup();
+
+    await expect(
+      service.promoteVisualEdit('project-1', {
+        ...visualEdit,
+        target: { ...visualEdit.target, file: '../outside.tsx' },
+      } as never),
+    ).rejects.toThrow(ValidationError);
+
+    expect(await conversations.listMessages('project-1')).toEqual([]);
+    expect(queue.enqueued).toEqual([]);
+  });
+});
 
 describe('OperationService.start', () => {
   it('creates a queued plan operation, run, and job', async () => {
@@ -359,6 +420,40 @@ describe('OperationService.decideChangeRequest', () => {
       kind: 'plan',
     });
     expect(operation?.kind).toBe('plan');
+  });
+
+  it('queues free-form visual requests as non-direct clarification operations', async () => {
+    const { service, projects, conversations, runs, queue } = setup();
+    await projects.create({
+      id: 'project-1',
+      name: 'Visual clarification sample',
+      workflowId: 'web-app-v1',
+      policyId: 'default',
+      status: 'completed',
+      version: 1,
+      createdAt: '2026-07-18T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
+    });
+    const message = await conversations.appendMessage({
+      id: 'message-visual',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'Make the hero more colorful.' }],
+      createdAt: '2026-07-18T00:00:00.000Z',
+    });
+    const changeRequest = await service.classify('project-1', message.id);
+    expect(changeRequest.suggestedKind).toBe('visual-edit');
+
+    const { operation } = await service.decideChangeRequest('project-1', changeRequest.id, {
+      action: 'confirm',
+      kind: 'visual-edit',
+    });
+
+    expect(operation).toMatchObject({ kind: 'visual-edit' });
+    expect(operation?.visualEdit).toBeUndefined();
+    expect(await runs.get(operation!.runId!)).toMatchObject({ status: 'queued' });
+    expect(queue.enqueued).toHaveLength(1);
   });
 
   it('still requires exactly one of planOperationId/directExecution when confirming build', async () => {
