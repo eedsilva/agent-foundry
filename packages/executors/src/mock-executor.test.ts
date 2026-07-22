@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -34,8 +34,11 @@ const request: AgentExecutionRequest = {
 describe('MockAgentExecutor stream events', () => {
   it('never calls onEvent when it is not provided', async () => {
     const executor = new MockAgentExecutor();
-    const result = await executor.execute({ ...request, cwd });
+    const result = await executor.execute({ ...request, cwd, mutatesWorkspace: true });
     expect(result.provider).toBe('mock');
+    await expect(readFile(join(cwd, 'package.json'), 'utf8')).resolves.toContain(
+      '"packageManager": "npm@10"',
+    );
   });
 
   it('emits a deterministic status/delta/tool sequence when onEvent is provided', async () => {
