@@ -38,7 +38,7 @@ export async function detectPackageManager(workspacePath: string): Promise<Packa
 
 /** Shapes a package.json script invocation per package manager (yarn omits "run"). */
 export function scriptCommand(
-  packageManager: PackageManager,
+  packageManager: Exclude<PackageManager, 'unknown'>,
   script: string,
 ): { command: string; args: string[] } {
   switch (packageManager) {
@@ -49,7 +49,6 @@ export function scriptCommand(
     case 'bun':
       return { command: 'bun', args: ['run', script] };
     case 'npm':
-    case 'unknown':
       return { command: 'npm', args: ['run', script] };
   }
 }

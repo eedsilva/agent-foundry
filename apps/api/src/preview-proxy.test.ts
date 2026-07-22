@@ -54,6 +54,18 @@ async function startApi(): Promise<{ baseUrl: string; runtime: Runtime }> {
   return { baseUrl, runtime };
 }
 
+async function writeNpmManifest(workspacePath: string): Promise<void> {
+  const name = 'preview-proxy-fixture';
+  await writeFile(
+    join(workspacePath, 'package.json'),
+    JSON.stringify({ name, packageManager: 'npm@10', scripts: { dev: 'node server.mjs' } }),
+  );
+  await writeFile(
+    join(workspacePath, 'package-lock.json'),
+    JSON.stringify({ name, lockfileVersion: 3, requires: true, packages: { '': { name } } }),
+  );
+}
+
 async function startPreview(baseUrl: string, runtime: Runtime, id: string) {
   const projectResponse = await fetch(`${baseUrl}/projects`, {
     method: 'POST',
@@ -68,10 +80,7 @@ async function startPreview(baseUrl: string, runtime: Runtime, id: string) {
     'utf8',
   );
   await writeFile(join(workspacePath, 'server.mjs'), fixtureSource);
-  await writeFile(
-    join(workspacePath, 'package.json'),
-    JSON.stringify({ scripts: { dev: 'node server.mjs' } }),
-  );
+  await writeNpmManifest(workspacePath);
   const startResponse = await fetch(`${baseUrl}/projects/${project.id}/preview`, {
     method: 'POST',
   });
@@ -343,10 +352,7 @@ describe('inspector script injection', () => {
     await runtime.workspaces.ensure(project.id);
     const workspacePath = runtime.workspaces.workspacePath(project.id);
     await writeFile(join(workspacePath, 'server.mjs'), script);
-    await writeFile(
-      join(workspacePath, 'package.json'),
-      JSON.stringify({ scripts: { dev: 'node server.mjs' } }),
-    );
+    await writeNpmManifest(workspacePath);
     const startResponse = await fetch(`${baseUrl}/projects/${project.id}/preview`, {
       method: 'POST',
     });

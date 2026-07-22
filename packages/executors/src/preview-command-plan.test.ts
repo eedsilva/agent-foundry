@@ -127,6 +127,11 @@ describe('resolvePreviewCommandPlan', () => {
 
     expect(plan.packageManager).toBe('unknown');
     expect(plan.install.ok).toBe(false);
+    expect(plan.dev).toEqual({
+      ok: false,
+      reason:
+        'No supported lockfile or packageManager field found; cannot pick a reproducible install command.',
+    });
   });
 
   it('overrides the build script name from policy.previewCommands', async () => {

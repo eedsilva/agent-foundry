@@ -91,6 +91,7 @@ export class MockAgentExecutor implements AgentExecutor {
     packageJson.name = packageJson.name ?? 'generated-mock-app';
     packageJson.private = true;
     packageJson.type = 'module';
+    packageJson.packageManager = packageJson.packageManager ?? 'npm@10';
     packageJson.scripts = {
       typecheck: 'node --check src/index.js',
       lint: 'node --check src/index.js',

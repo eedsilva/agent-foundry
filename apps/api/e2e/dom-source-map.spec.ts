@@ -121,7 +121,11 @@ async function seedDomSourceMapFixture(projectId: string): Promise<string> {
   await writeFile(join(workspacePath, 'server.mjs'), fixtureSource);
   await writeFile(
     join(workspacePath, 'package.json'),
-    JSON.stringify({ scripts: { dev: 'node server.mjs' } }),
+    JSON.stringify({ packageManager: 'npm@10', scripts: { dev: 'node server.mjs' } }),
+  );
+  await writeFile(
+    join(workspacePath, 'package-lock.json'),
+    JSON.stringify({ name: 'dom-source-map-e2e-fixture', lockfileVersion: 3, packages: {} }),
   );
   await runtime.workspaces.checkpoint(projectId, 'DOM source map e2e baseline');
   return workspacePath;

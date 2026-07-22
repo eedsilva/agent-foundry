@@ -153,6 +153,7 @@ async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
   await writeFile(
     join(workspacePath, 'package.json'),
     JSON.stringify({
+      packageManager: 'npm@10',
       scripts: {
         dev: 'node server.mjs',
         typecheck: 'node --check server.mjs',
@@ -161,6 +162,10 @@ async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
         build: 'node --check server.mjs',
       },
     }),
+  );
+  await writeFile(
+    join(workspacePath, 'package-lock.json'),
+    JSON.stringify({ name: 'golden-flow-e2e-fixture', lockfileVersion: 3, packages: {} }),
   );
   // Reuses the 'prd' artifact name (see golden-flow-e2e-v1.yaml comment):
   // project creation already wrote revision 1 (the placeholder PRD text);
