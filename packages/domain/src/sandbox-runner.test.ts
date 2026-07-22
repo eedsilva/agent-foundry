@@ -106,7 +106,9 @@ describe('runSandboxLifecycle', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       await expect(
-        runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, ['src']),
+        runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, [
+          'src',
+        ]),
       ).resolves.toMatchObject({ result: { exitCode: 0 } });
       expect(consoleError).toHaveBeenCalledWith('Failed to destroy sandbox', expect.any(Error));
     } finally {
@@ -119,7 +121,9 @@ describe('runSandboxLifecycle', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       await expect(
-        runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, ['src']),
+        runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, [
+          'src',
+        ]),
       ).rejects.toThrow('exec failed');
       expect(consoleError).toHaveBeenCalledWith('Failed to destroy sandbox', expect.any(Error));
     } finally {

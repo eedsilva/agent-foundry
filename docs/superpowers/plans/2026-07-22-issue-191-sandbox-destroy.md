@@ -40,7 +40,9 @@ Extend `FakeSandboxRunner` with a `destroy` failure mode after recording the des
 await expect(runSandboxLifecycle(runner, spec, request, ['src'])).resolves.toMatchObject({
   result: { exitCode: 0 },
 });
-await expect(runSandboxLifecycle(failingRunner, spec, request, ['src'])).rejects.toThrow('exec failed');
+await expect(runSandboxLifecycle(failingRunner, spec, request, ['src'])).rejects.toThrow(
+  'exec failed',
+);
 ```
 
 - [ ] **Step 2: Run the focused test and verify RED**
