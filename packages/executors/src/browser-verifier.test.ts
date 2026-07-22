@@ -817,6 +817,33 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(performance.now() - startedAt).toBeLessThan(5_000);
   });
 
+  it('continues after the quiescence budget when a preview polls every 500 ms', async () => {
+    let laterSideEffects = 0;
+    const origin = await serve((request, response) => {
+      if (request.url?.endsWith('/later-side-effect')) {
+        laterSideEffects += 1;
+        response.end('ok');
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      response.end(`<button onclick="fetch('/preview/preview-1/later-side-effect')">Later</button><script>(function poll(){setTimeout(poll, 500)})()</script>`);
+    });
+    const report = await verify(
+      origin,
+      plan([
+        { id: 'open', title: 'Open', action: { kind: 'goto', path: '/' }, assertions: [] },
+        {
+          id: 'later',
+          title: 'Later',
+          action: { kind: 'click', locator: { by: 'text', text: 'Later' } },
+          assertions: [],
+        },
+      ]),
+    );
+    expect(report.approved).toBe(true);
+    expect(laterSideEffects).toBe(1);
+  });
+
   it('attributes a 700 ms console timer from goto before a later side effect', async () => {
     let laterSideEffects = 0;
     const origin = await serve((request, response) => {

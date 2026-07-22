@@ -390,25 +390,30 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
         0,
       );
     };
-    const waitForTrackedTimers = async (): Promise<void> => {
-      const deadline = Date.now() + ACTION_TIMEOUT_MS;
+    const waitForTrackedTimers = async (deadline: number): Promise<void> => {
       for (;;) {
         for (const target of context.pages()) {
           if (target.isClosed()) continue;
-          await retryDuringNavigation(
-            target,
-            deadline,
-            () =>
-              target.waitForFunction(
-                (key) =>
-                  ((
-                    globalThis as typeof globalThis & Record<string, TimerTrackerState | undefined>
-                  )[key]?.pending ?? 0) === 0,
-                TIMER_TRACKER_KEY,
-                { polling: 'raf', timeout: Math.max(1, deadline - Date.now()) },
-              ),
-            undefined,
-          );
+          try {
+            await retryDuringNavigation(
+              target,
+              deadline,
+              () =>
+                target.waitForFunction(
+                  (key) =>
+                    ((
+                      globalThis as typeof globalThis &
+                        Record<string, TimerTrackerState | undefined>
+                    )[key]?.pending ?? 0) === 0,
+                  TIMER_TRACKER_KEY,
+                  { polling: 'raf', timeout: Math.max(1, deadline - Date.now()) },
+                ),
+              undefined,
+            );
+          } catch (error) {
+            if (Date.now() >= deadline) return;
+            throw error;
+          }
         }
         const openPages = context.pages().filter((target) => !target.isClosed());
         await Promise.all(
@@ -430,11 +435,15 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
       }
     };
     const waitForQuiescence = async (): Promise<void> => {
+      const deadline = Date.now() + ACTION_TIMEOUT_MS;
       for (;;) {
         await waitForPendingRequests();
-        await waitForTrackedTimers();
-        const timerCounts = await Promise.all(context.pages().map(timerCount));
+        await waitForTrackedTimers(deadline);
+        const timerCounts = await Promise.all(
+          context.pages().map((target) => timerCount(target, deadline)),
+        );
         if (!hasPendingWork() && timerCounts.every((count) => count === 0)) return;
+        if (Date.now() >= deadline) return;
       }
     };
     const observePage = (target: Page): void => {
