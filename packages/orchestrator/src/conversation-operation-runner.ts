@@ -389,6 +389,30 @@ export class ConversationOperationRunner {
           skipped: true,
         });
       }
+      let failureArtifact: StoredArtifact | undefined;
+      if (attempt) {
+        try {
+          failureArtifact = await this.artifacts.put({
+            projectId,
+            name: `operation-${operationId}-failure`,
+            content: {
+              schemaVersion: '1',
+              operationId,
+              kind,
+              checkpoint,
+              error: errorMessage(error),
+              attemptId: attempt.id,
+              attempt: attempt.sequence,
+            },
+            createdBy: 'orchestrator',
+            runId,
+            stepRunId: stepRun.id,
+            attemptId: attempt.id,
+          });
+        } catch {
+          // best-effort; preserve the primary failure and normal terminalization
+        }
+      }
       if (checkpoint) {
         try {
           await this.workspaces.rollback(projectId, checkpoint);
@@ -419,17 +443,13 @@ export class ConversationOperationRunner {
           runState.version,
         );
       }
-      if (operation.artifactReferences.length > 0) {
-        // A build started from an approved plan inherits the plan's own
-        // artifactReferences at creation time (OperationService.start), before
-        // this run ever executes. If the run then fails, that inherited
-        // reference must not linger — otherwise the chat UI would show diff/
-        // artifact links for a failed operation as if it had produced them.
-        try {
-          await this.conversations.updateOperation({ ...operation, artifactReferences: [] });
-        } catch {
-          // best-effort; the failed-state transitions above are the durable record
-        }
+      try {
+        await this.conversations.updateOperation({
+          ...operation,
+          artifactReferences: failureArtifact ? [artifactReference(failureArtifact)] : [],
+        });
+      } catch {
+        // best-effort; the failed-state transitions above are the durable record
       }
       try {
         await this.events.append({
