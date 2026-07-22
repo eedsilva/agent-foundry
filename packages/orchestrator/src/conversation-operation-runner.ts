@@ -231,6 +231,7 @@ export class ConversationOperationRunner {
         harness,
         artifacts: inputArtifacts,
         workspacePath: this.workspaces.workspacePath(projectId),
+        toolPolicy: profile.toolPolicy,
       });
       const request: AgentExecutionRequest = {
         runId,

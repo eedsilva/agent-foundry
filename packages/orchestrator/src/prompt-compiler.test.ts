@@ -3,6 +3,36 @@ import type { AgentStep, StoredArtifact } from '@agent-foundry/contracts';
 import { compileRequestMarkdown } from './prompt-compiler.js';
 
 describe('compileRequestMarkdown feedback provenance', () => {
+  it('states the explicit tool policy', () => {
+    const step: AgentStep = {
+      id: 'plan',
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: 'Plan',
+      instructions: 'Plan.',
+      inputArtifacts: [],
+      outputArtifact: 'plan',
+      mutatesWorkspace: false,
+      maxAttempts: 1,
+      harnessTags: [],
+      profile: {},
+    };
+    const output = compileRequestMarkdown({
+      projectId: 'project-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      attemptId: 'attempt-1',
+      workflowId: 'workflow-1',
+      stack: 'node',
+      step,
+      harness: { version: '1', files: [], combined: '' },
+      artifacts: [],
+      workspacePath: '/tmp/workspace',
+    });
+    expect(output).toContain('Tool policy: read-only');
+  });
+
   it('renders the exact feedback artifact name, revision, and SHA-256', () => {
     const sha256 = 'a'.repeat(64);
     const artifact: StoredArtifact = {

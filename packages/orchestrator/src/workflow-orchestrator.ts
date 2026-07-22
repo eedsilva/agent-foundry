@@ -1926,6 +1926,7 @@ export class WorkflowOrchestrator {
         harness,
         artifacts: inputArtifacts,
         workspacePath: this.workspaces.workspacePath(project.id),
+        toolPolicy: profile.toolPolicy,
       });
       await this.workspaces.writeRunContext({
         projectId: project.id,

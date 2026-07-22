@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AgentArtifactSchema } from './agent.js';
 import {
   ProjectSchema,
   StoredArtifactSchema,
@@ -86,6 +87,21 @@ export type DecideOperationRequest = z.infer<typeof DecideOperationRequestSchema
 
 export const DecideOperationResponseSchema = z.object({ operation: OperationSchema }).strict();
 export type DecideOperationResponse = z.infer<typeof DecideOperationResponseSchema>;
+
+export const GetOperationProposalResponseSchema = z
+  .object({ artifact: StoredArtifactSchema })
+  .strict();
+export type GetOperationProposalResponse = z.infer<typeof GetOperationProposalResponseSchema>;
+
+export const UpdateOperationProposalRequestSchema = z
+  .object({ expectedRevision: z.number().int().positive(), content: AgentArtifactSchema })
+  .strict();
+export type UpdateOperationProposalRequest = z.infer<typeof UpdateOperationProposalRequestSchema>;
+
+export const UpdateOperationProposalResponseSchema = z
+  .object({ artifact: StoredArtifactSchema })
+  .strict();
+export type UpdateOperationProposalResponse = z.infer<typeof UpdateOperationProposalResponseSchema>;
 
 export const ClassifyMessageResponseSchema = z
   .object({ changeRequest: ChangeRequestSchema })

@@ -81,6 +81,7 @@ const profile: TaskProfile = {
   estimatedContextTokens: 20_000,
   estimatedOutputTokens: 8_000,
   mutatesWorkspace: true,
+  toolPolicy: 'workspace-write',
   priorities: { quality: 0.7, speed: 0.1, cost: 0.05, reliability: 0.15 },
   preferredTags: ['coding'],
 };

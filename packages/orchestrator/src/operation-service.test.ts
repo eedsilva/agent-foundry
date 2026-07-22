@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { WorkflowRun } from '@agent-foundry/contracts';
+import type { AgentArtifact, WorkflowRun } from '@agent-foundry/contracts';
 import {
   NotFoundError,
   ValidationError,
@@ -334,7 +334,59 @@ describe('OperationService.decide', () => {
 
     await expect(service.decide('project-1', build.id, 'approve')).rejects.toThrow(ValidationError);
   });
+
+  it('edits only a completed pending proposal, conflicts on a stale revision, and approves the saved revision', async () => {
+    const artifacts = new (await import('./testing/harness.js')).InMemoryArtifacts({ on: true });
+    const { service, conversations, runs } = setup({ artifacts });
+    const message = await seedMessage(conversations);
+    const plan = await service.start('project-1', message.id, { kind: 'plan' });
+    const run = (await runs.get(plan.runId!))!;
+    await runs.update({ ...run, status: 'completed' });
+    const original = await artifacts.put({
+      projectId: 'project-1',
+      name: `operation-${plan.id}`,
+      createdBy: 'planner:mock/mock',
+      content: proposal('original'),
+    });
+    await conversations.updateOperation({ ...plan, artifactReferences: [reference(original)] });
+
+    await expect(service.getProposal('project-1', plan.id)).resolves.toEqual(original);
+    const saved = await service.updateProposal('project-1', plan.id, {
+      expectedRevision: 1,
+      content: proposal('edited'),
+    });
+    await expect(
+      service.updateProposal('project-1', plan.id, {
+        expectedRevision: 1,
+        content: proposal('stale'),
+      }),
+    ).rejects.toThrow('Version conflict');
+    expect((await service.decide('project-1', plan.id, 'approve')).artifactReferences).toEqual([
+      reference(saved),
+    ]);
+  });
 });
+
+function proposal(summary: string): AgentArtifact {
+  return {
+    schemaVersion: '1',
+    status: 'completed',
+    summary,
+    data: {},
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    nextActions: [],
+  };
+}
+
+function reference(artifact: { metadata: { name: string; revision: number; sha256: string } }) {
+  return {
+    name: artifact.metadata.name,
+    revision: artifact.metadata.revision,
+    sha256: artifact.metadata.sha256,
+  };
+}
 
 describe('OperationService.classify', () => {
   it('creates a proposed change request from an unclassified message', async () => {

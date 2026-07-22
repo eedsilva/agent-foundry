@@ -28,6 +28,7 @@ import {
   RetryStepRequestSchema,
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
+  UpdateOperationProposalRequestSchema,
   VisualEditSchema,
   UpdateKnowledgeFileRequestSchema,
   type CreateKnowledgeFileRequest,
@@ -43,6 +44,7 @@ import {
   PreviewAccessDeniedError,
   ResumeBlockedError,
   ValidationError,
+  VersionConflictError,
 } from '@agent-foundry/domain';
 import { registerPreviewProxy } from './preview-proxy.js';
 import { createFixedWindowRateLimiter } from './rate-limit.js';
@@ -122,6 +124,9 @@ export async function buildApp(
       return reply.status(409).send({ error: error.name, message: error.message });
     }
     if (error instanceof KnowledgeFileConflictError) {
+      return reply.status(409).send({ error: error.name, message: error.message });
+    }
+    if (error instanceof VersionConflictError) {
       return reply.status(409).send({ error: error.name, message: error.message });
     }
     if (error instanceof PreviewAccessDeniedError) {
@@ -462,6 +467,29 @@ export async function buildApp(
       const { action } = DecideOperationRequestSchema.parse(request.body);
       const operation = await runtime.operationService.decide(projectId, operationId, action);
       return reply.status(200).send({ operation });
+    },
+  );
+
+  app.get(
+    '/projects/:projectId/conversation/operations/:operationId/proposal',
+    async (request, reply) => {
+      const { projectId, operationId } = z
+        .object({ projectId: PathSegmentSchema, operationId: PathSegmentSchema })
+        .parse(request.params);
+      const artifact = await runtime.operationService.getProposal(projectId, operationId);
+      return reply.status(200).send({ artifact });
+    },
+  );
+
+  app.put(
+    '/projects/:projectId/conversation/operations/:operationId/proposal',
+    async (request, reply) => {
+      const { projectId, operationId } = z
+        .object({ projectId: PathSegmentSchema, operationId: PathSegmentSchema })
+        .parse(request.params);
+      const input = UpdateOperationProposalRequestSchema.parse(request.body);
+      const artifact = await runtime.operationService.updateProposal(projectId, operationId, input);
+      return reply.status(200).send({ artifact });
     },
   );
 

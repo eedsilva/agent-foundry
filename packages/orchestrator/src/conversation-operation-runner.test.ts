@@ -857,6 +857,7 @@ describe('ConversationOperationRunner', () => {
     ]);
     expect(operation?.projectVersionId).toBeUndefined();
     expect(await projectVersions.list('project-1')).toEqual([]);
+    expect(workspaces.lastRequestMarkdown).toContain('Tool policy: read-only');
   });
 
   it('completes a build operation, commits the touched workspace, and records exactly one ProjectVersion', async () => {
@@ -890,6 +891,7 @@ describe('ConversationOperationRunner', () => {
       },
     ]);
     expect(operation?.projectVersionId).toBe(version!.id);
+    expect(workspaces.lastRequestMarkdown).toContain('Tool policy: workspace-write');
   });
 
   it('persists live executor stream events via StepEventRepository', async () => {

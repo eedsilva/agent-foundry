@@ -6,6 +6,7 @@ import {
   taskCategoryLevels,
   VerificationReportSchema,
   type AgentStreamEvent,
+  type AgentArtifact,
   type ApprovalAction,
   type ApprovalGateStep,
   type ApprovalListResponse,
@@ -39,6 +40,7 @@ import {
   discardDraft,
   eventStreamUrl,
   getArtifact,
+  getOperationProposal,
   getConversation,
   getArtifactBlobUrl,
   getDraft,
@@ -55,6 +57,7 @@ import {
   retryStep,
   runEventsStreamUrl,
   sendMessage,
+  updateOperationProposal,
 } from '../../../lib/api';
 import { mergeStreamEvents } from '../../../lib/agent-stream';
 import { mergeEvents } from '../../../lib/events';
@@ -264,6 +267,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [buildChoice, setBuildChoice] = useState<'plan' | 'direct'>('plan');
   const [conversationError, setConversationError] = useState('');
   const [pendingChangeRequest, setPendingChangeRequest] = useState<ChangeRequest | null>(null);
+  const [proposalEditor, setProposalEditor] = useState<{
+    operationId: string;
+    revision: number;
+    content: string;
+  } | null>(null);
 
   function openArtifact(artifact: StoredArtifact) {
     setSelected(artifact);
@@ -694,6 +702,38 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     }
   }
 
+  async function editProposal(operationId: string) {
+    try {
+      const artifact = await getOperationProposal(id, operationId);
+      setProposalEditor({
+        operationId,
+        revision: artifact.metadata.revision,
+        content: JSON.stringify(artifact.content, null, 2),
+      });
+      setConversationError('');
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function saveProposal() {
+    if (!proposalEditor) return;
+    try {
+      const content = JSON.parse(proposalEditor.content) as AgentArtifact;
+      await updateOperationProposal(
+        id,
+        proposalEditor.operationId,
+        proposalEditor.revision,
+        content,
+      );
+      setProposalEditor(null);
+      setConversation(await getConversation(id));
+      setConversationError('');
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   async function pause() {
     if (!run) return;
     try {
@@ -919,7 +959,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                         {operation.approval ? `, ${operation.approval.status}` : ''})
                         {operation.kind === 'plan' && operation.approval?.status === 'pending' ? (
                           <>
-                            {' '}
+                            {operation.artifactReferences.length > 0 ? (
+                              <button
+                                className="secondaryButton"
+                                onClick={() => void editProposal(operation.id)}
+                              >
+                                Editar proposta
+                              </button>
+                            ) : null}{' '}
                             <button
                               className="secondaryButton"
                               onClick={() => void decide(operation.id, 'approve')}
@@ -933,6 +980,30 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                               Rejeitar
                             </button>
                           </>
+                        ) : null}
+                        {proposalEditor?.operationId === operation.id ? (
+                          <div>
+                            <textarea
+                              aria-label="Proposta editável"
+                              value={proposalEditor.content}
+                              onChange={(event) =>
+                                setProposalEditor({
+                                  ...proposalEditor,
+                                  content: event.target.value,
+                                })
+                              }
+                              rows={14}
+                            />
+                            <button className="secondaryButton" onClick={() => void saveProposal()}>
+                              Salvar proposta
+                            </button>
+                            <button
+                              className="secondaryButton"
+                              onClick={() => setProposalEditor(null)}
+                            >
+                              Cancelar
+                            </button>
+                          </div>
                         ) : null}
                       </span>
                     ) : null}

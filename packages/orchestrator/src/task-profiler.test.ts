@@ -79,6 +79,15 @@ describe('buildTaskProfile taxonomy', () => {
     });
   });
 
+  it('sets an explicit tool policy from the workspace mode', () => {
+    expect(
+      buildTaskProfile({ step: { ...step, mutatesWorkspace: false }, harness, artifacts: [] }),
+    ).toMatchObject({ toolPolicy: 'read-only' });
+    expect(buildTaskProfile({ step, harness, artifacts: [] })).toMatchObject({
+      toolPolicy: 'workspace-write',
+    });
+  });
+
   it('extracts every matching feature from instructions, harness, artifacts, and tags', () => {
     expect(
       buildTaskProfile({

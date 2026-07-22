@@ -512,6 +512,28 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await expect(
     regions.chat.locator('.operationBadge').filter({ hasText: 'plan, pending' }),
   ).toBeVisible();
+  await regions.chat.getByRole('button', { name: 'Editar proposta' }).click();
+  await regions.chat.getByLabel('Proposta editável').fill(
+    JSON.stringify({
+      schemaVersion: '1',
+      status: 'completed',
+      summary: 'Edited proposal',
+      data: {},
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      nextActions: [],
+    }),
+  );
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'PUT' &&
+        /\/conversation\/operations\/[^/]+\/proposal$/.test(new URL(response.url()).pathname),
+    ),
+    regions.chat.getByRole('button', { name: 'Salvar proposta' }).click(),
+  ]);
+  await page.screenshot({ path: 'test-results/issue-206-editable-proposal.png', fullPage: true });
   await Promise.all([
     page.waitForResponse(
       (response) =>
