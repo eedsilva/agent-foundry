@@ -218,7 +218,11 @@ export class NodePreviewRunner implements PreviewRunner {
       (stream: PreviewLogEntry['stream']) =>
       (data: Buffer): void => {
         const text = data.toString('utf8');
-        detectedPort ??= detectPortFromOutput(text);
+        const port = detectPortFromOutput(text);
+        if (port !== undefined) {
+          detectedPort = port;
+          entry.port = port;
+        }
         const repository = this.logRepository;
         if (!repository) return;
         const timestamp = this.clock.now().toISOString();

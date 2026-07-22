@@ -6,8 +6,9 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 
-const port = Number(process.env.PORT ?? 0);
 const args = new Map(process.argv.slice(2).map((arg) => arg.split('=', 2)));
+const port = Number(args.get('--fixed-port') ?? process.env.PORT ?? 0);
+const readyDelayMs = Number(args.get('--ready-delay-ms') ?? 0);
 const server = createServer((req, res) => {
   if (req.url === '/never-ending') {
     const responseCloseFile = args.get('--response-close-file');
@@ -97,9 +98,17 @@ server.on('upgrade', (req, socket) => {
 });
 server.listen(port, '127.0.0.1', () => {
   const bound = server.address();
-  console.log(`  VITE fixture  ready\n\n  ➜  Local:   http://127.0.0.1:${bound.port}/\n`);
+  const reportReady = () => {
+    console.log(`  VITE fixture  ready\n\n  ➜  Local:   http://127.0.0.1:${bound.port}/\n`);
+    if (args.has('--exit-after-ready')) setTimeout(() => process.exit(1), 100);
+  };
+  if (readyDelayMs > 0) {
+    console.error('fixture stderr');
+    setTimeout(reportReady, readyDelayMs);
+    return;
+  }
+  reportReady();
   console.error('fixture stderr');
-  if (args.has('--exit-after-ready')) setTimeout(() => process.exit(1), 100);
 });
 const pidFile = args.get('--spawn-grandchild');
 const appendPidFile = args.get('--append-grandchild');
