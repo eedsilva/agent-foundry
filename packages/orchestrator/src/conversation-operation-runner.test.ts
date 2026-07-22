@@ -1031,17 +1031,13 @@ describe('ConversationOperationRunner', () => {
     });
     expect(
       (await conversations.getOperation('project-1', operationId))?.artifactReferences,
-    ).toEqual([
-      expect.objectContaining({ name: `operation-${operationId}-failure`, revision: 1 }),
-    ]);
+    ).toEqual([expect.objectContaining({ name: `operation-${operationId}-failure`, revision: 1 })]);
   });
 
   it('preserves the executor failure when persisting failure evidence fails', async () => {
-    const { artifacts, conversations, runs, workspaces, runner } = setup(
-      harnessRepo,
-      undefined,
-      { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
-    );
+    const { artifacts, conversations, runs, workspaces, runner } = setup(harnessRepo, undefined, {
+      'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') },
+    });
     const { runId, operationId } = await seed(conversations, runs, 'build');
     const artifactStore = artifacts as unknown as InMemoryArtifacts;
     const put = artifactStore.put.bind(artifactStore);
