@@ -40,7 +40,8 @@ In the existing no-lockfile test in `packages/executors/src/preview-command-plan
 ```ts
 expect(plan.dev).toEqual({
   ok: false,
-  reason: 'No supported lockfile or packageManager field found; cannot pick a reproducible install command.',
+  reason:
+    'No supported lockfile or packageManager field found; cannot pick a reproducible install command.',
 });
 ```
 
