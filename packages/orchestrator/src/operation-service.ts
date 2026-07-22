@@ -6,6 +6,7 @@ import type {
   StartOperationRequest,
   VisualEdit,
   WorkflowRun,
+  UpdateOperationProposalRequest,
 } from '@agent-foundry/contracts';
 import { ChangeRequestSchema, VisualEditSchema } from '@agent-foundry/contracts';
 import {
@@ -226,41 +227,112 @@ export class OperationService {
     operationId: string,
     action: 'approve' | 'reject',
   ): Promise<Operation> {
+    const operation = await this.completedPlan(projectId, operationId);
+    const expectedProposalRevision = operation.artifactReferences[0]?.revision;
+
+    if (action === 'reject') {
+      return this.conversations.updateOperation(
+        {
+          ...operation,
+          approval: { status: 'rejected', decidedAt: this.clock.now().toISOString() },
+        },
+        expectedProposalRevision,
+        true,
+      );
+    }
+
+    const reference = operation.artifactReferences[0];
+    const artifact = reference
+      ? await this.artifacts.getRevision(projectId, reference.name, reference.revision)
+      : await this.artifacts.getLatest(projectId, `operation-${operationId}`);
+    if (!artifact) throw new NotFoundError(`Plan artifact for operation ${operationId} not found`);
+    return this.conversations.updateOperation(
+      {
+        ...operation,
+        approval: { status: 'approved', decidedAt: this.clock.now().toISOString() },
+        artifactReferences: [
+          {
+            name: artifact.metadata.name,
+            revision: artifact.metadata.revision,
+            sha256: artifact.metadata.sha256,
+          },
+        ],
+      },
+      expectedProposalRevision,
+      true,
+    );
+  }
+
+  async getProposal(projectId: string, operationId: string) {
+    const operation = await this.completedPlan(projectId, operationId);
+    const reference = operation.artifactReferences[0];
+    if (!reference) throw new NotFoundError(`Plan artifact for operation ${operationId} not found`);
+    const artifact = await this.artifacts.getRevision(
+      projectId,
+      reference.name,
+      reference.revision,
+    );
+    if (!artifact) throw new NotFoundError(`Plan artifact for operation ${operationId} not found`);
+    return artifact;
+  }
+
+  async updateProposal(
+    projectId: string,
+    operationId: string,
+    input: UpdateOperationProposalRequest,
+  ) {
+    const operation = await this.completedPlan(projectId, operationId);
+    if (operation.approval?.status !== 'pending') {
+      throw new ValidationError(`Plan operation ${operationId} is no longer editable`);
+    }
+    const current = await this.getProposal(projectId, operationId);
+    const artifact = await this.artifacts.put({
+      projectId,
+      name: current.metadata.name,
+      content: input.content,
+      createdBy: 'user:proposal-editor',
+      expectedRevision: input.expectedRevision,
+      idempotencyKey: this.proposalIdempotencyKey(operationId, input),
+    });
+    await this.conversations.updateOperation(
+      {
+        ...operation,
+        artifactReferences: [
+          {
+            name: artifact.metadata.name,
+            revision: artifact.metadata.revision,
+            sha256: artifact.metadata.sha256,
+          },
+        ],
+      },
+      input.expectedRevision,
+      true,
+    );
+    return artifact;
+  }
+
+  private async completedPlan(projectId: string, operationId: string): Promise<Operation> {
     const operation = await this.conversations.getOperation(projectId, operationId);
     if (!operation) throw new NotFoundError(`Operation ${operationId} not found`);
-    if (operation.kind !== 'plan') {
+    if (operation.kind !== 'plan')
       throw new ValidationError(`Operation ${operationId} is not a plan operation`);
-    }
     if (!operation.runId) throw new ValidationError(`Operation ${operationId} has no run`);
     const run = await this.runs.get(operation.runId);
     if (!run || run.status !== 'completed') {
       throw new ValidationError(`Operation ${operationId}'s run has not completed`);
     }
-
-    if (action === 'reject') {
-      return this.conversations.updateOperation({
-        ...operation,
-        approval: { status: 'rejected', decidedAt: this.clock.now().toISOString() },
-      });
-    }
-
-    const artifact = await this.artifacts.getLatest(projectId, `operation-${operationId}`);
-    if (!artifact) throw new NotFoundError(`Plan artifact for operation ${operationId} not found`);
-    return this.conversations.updateOperation({
-      ...operation,
-      approval: { status: 'approved', decidedAt: this.clock.now().toISOString() },
-      artifactReferences: [
-        {
-          name: artifact.metadata.name,
-          revision: artifact.metadata.revision,
-          sha256: artifact.metadata.sha256,
-        },
-      ],
-    });
+    return operation;
   }
 
   protected idempotencyKey(operationId: string, runId: string): string {
     return sha256(`${operationId}:${runId}`);
+  }
+
+  private proposalIdempotencyKey(
+    operationId: string,
+    input: UpdateOperationProposalRequest,
+  ): string {
+    return sha256(`${operationId}:${input.expectedRevision}:${JSON.stringify(input.content)}`);
   }
 }
 

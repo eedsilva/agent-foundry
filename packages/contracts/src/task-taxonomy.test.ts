@@ -48,6 +48,7 @@ describe('task taxonomy', () => {
       taxonomyVersion: '1',
       category: 'implementation/general',
       features: [],
+      toolPolicy: 'workspace-write',
     });
   });
 

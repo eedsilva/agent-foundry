@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { WorkflowRun } from '@agent-foundry/contracts';
+import type { AgentArtifact, WorkflowRun } from '@agent-foundry/contracts';
 import {
   NotFoundError,
   ValidationError,
@@ -271,7 +271,7 @@ describe('OperationService.decide', () => {
     const run = (await runs.get(plan.runId!))!;
     await runs.update({ ...run, status: 'running' });
     await runs.update({ ...run, status: 'completed' });
-    return { service, plan };
+    return { service, conversations, plan };
   }
 
   it('rejects deciding a plan whose run has not completed', async () => {
@@ -324,6 +324,35 @@ describe('OperationService.decide', () => {
     expect(rejected.artifactReferences).toEqual([]);
   });
 
+  it('does not approve a rejected legacy plan without an artifact reference', async () => {
+    const artifacts: ArtifactStore = {
+      ...noArtifacts(),
+      getLatest: (projectId, name) =>
+        Promise.resolve({
+          metadata: {
+            projectId,
+            name,
+            revision: 1,
+            contentType: 'application/json',
+            createdAt: '2026-07-18T12:00:00.000Z',
+            createdBy: 'planner:mock/mock',
+            sha256: 'b'.repeat(64),
+          },
+          content: { schemaVersion: '1', summary: 'legacy plan' },
+        }),
+    };
+    const { service, conversations, plan } = await startAndCompletePlan(artifacts);
+
+    await service.decide('project-1', plan.id, 'reject');
+
+    await expect(service.decide('project-1', plan.id, 'approve')).rejects.toThrow(
+      'no longer editable',
+    );
+    expect((await conversations.getOperation('project-1', plan.id))?.approval?.status).toBe(
+      'rejected',
+    );
+  });
+
   it('rejects deciding a non-plan operation', async () => {
     const { service, conversations } = setup();
     const message = await seedMessage(conversations);
@@ -334,7 +363,236 @@ describe('OperationService.decide', () => {
 
     await expect(service.decide('project-1', build.id, 'approve')).rejects.toThrow(ValidationError);
   });
+
+  it('edits only a completed pending proposal, conflicts on a stale revision, and approves the saved revision', async () => {
+    const artifacts = new (await import('./testing/harness.js')).InMemoryArtifacts({ on: true });
+    const { service, conversations, runs } = setup({ artifacts });
+    const message = await seedMessage(conversations);
+    const plan = await service.start('project-1', message.id, { kind: 'plan' });
+    const run = (await runs.get(plan.runId!))!;
+    await runs.update({ ...run, status: 'completed' });
+    const original = await artifacts.put({
+      projectId: 'project-1',
+      name: `operation-${plan.id}`,
+      createdBy: 'planner:mock/mock',
+      content: proposal('original'),
+    });
+    await conversations.updateOperation({ ...plan, artifactReferences: [reference(original)] });
+
+    await expect(service.getProposal('project-1', plan.id)).resolves.toEqual(original);
+    const saved = await service.updateProposal('project-1', plan.id, {
+      expectedRevision: 1,
+      content: proposal('edited'),
+    });
+    await expect(
+      service.updateProposal('project-1', plan.id, {
+        expectedRevision: 1,
+        content: proposal('stale'),
+      }),
+    ).rejects.toThrow('Version conflict');
+    expect((await service.decide('project-1', plan.id, 'approve')).artifactReferences).toEqual([
+      reference(saved),
+    ]);
+  });
+
+  it('rejects proposal edits before completion and after approval or rejection', async () => {
+    const artifacts = new (await import('./testing/harness.js')).InMemoryArtifacts({ on: true });
+    const { service, conversations, runs } = setup({ artifacts });
+    const message = await seedMessage(conversations);
+    const plan = await service.start('project-1', message.id, { kind: 'plan' });
+    const original = await artifacts.put({
+      projectId: 'project-1',
+      name: `operation-${plan.id}`,
+      createdBy: 'planner:mock/mock',
+      content: proposal('original'),
+    });
+    await conversations.updateOperation({ ...plan, artifactReferences: [reference(original)] });
+    await expect(
+      service.updateProposal('project-1', plan.id, {
+        expectedRevision: 1,
+        content: proposal('early'),
+      }),
+    ).rejects.toThrow('has not completed');
+
+    const run = (await runs.get(plan.runId!))!;
+    await runs.update({ ...run, status: 'completed' });
+    await service.decide('project-1', plan.id, 'approve');
+    await expect(
+      service.updateProposal('project-1', plan.id, {
+        expectedRevision: 1,
+        content: proposal('late'),
+      }),
+    ).rejects.toThrow('no longer editable');
+
+    const rejected = await service.start('project-1', message.id, { kind: 'plan' });
+    await conversations.updateOperation({ ...rejected, artifactReferences: [reference(original)] });
+    const rejectedRun = (await runs.get(rejected.runId!))!;
+    await runs.update({ ...rejectedRun, status: 'completed' });
+    await service.decide('project-1', rejected.id, 'reject');
+    await expect(
+      service.updateProposal('project-1', rejected.id, {
+        expectedRevision: 1,
+        content: proposal('late'),
+      }),
+    ).rejects.toThrow('no longer editable');
+  });
+
+  it('allows only one concurrent edit from the same expected revision and never restores a raced approval', async () => {
+    const artifacts = new (await import('./testing/harness.js')).InMemoryArtifacts({ on: true });
+    const { service, conversations, runs } = setup({ artifacts });
+    const message = await seedMessage(conversations);
+    const plan = await service.start('project-1', message.id, { kind: 'plan' });
+    const run = (await runs.get(plan.runId!))!;
+    await runs.update({ ...run, status: 'completed' });
+    const original = await artifacts.put({
+      projectId: 'project-1',
+      name: `operation-${plan.id}`,
+      createdBy: 'planner:mock/mock',
+      content: proposal('original'),
+    });
+    await conversations.updateOperation({ ...plan, artifactReferences: [reference(original)] });
+
+    const concurrent = await Promise.allSettled([
+      service.updateProposal('project-1', plan.id, {
+        expectedRevision: 1,
+        content: proposal('first'),
+      }),
+      service.updateProposal('project-1', plan.id, {
+        expectedRevision: 1,
+        content: proposal('second'),
+      }),
+    ]);
+    expect(concurrent.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+
+    const current = (await conversations.getOperation('project-1', plan.id))!;
+    artifacts.onAfterPut = () => {
+      void conversations.updateOperation({
+        ...current,
+        approval: { status: 'approved', decidedAt: '2026-07-18T12:01:00.000Z' },
+      });
+    };
+    await expect(
+      service.updateProposal('project-1', plan.id, {
+        expectedRevision: 2,
+        content: proposal('raced'),
+      }),
+    ).rejects.toThrow('no longer editable');
+    await expect(
+      service.updateProposal('project-1', plan.id, {
+        expectedRevision: 2,
+        content: proposal('raced'),
+      }),
+    ).rejects.toThrow('no longer editable');
+    expect((await conversations.getOperation('project-1', plan.id))?.approval?.status).toBe(
+      'approved',
+    );
+    expect(artifacts.artifacts).toHaveLength(3);
+  });
+
+  it('retries an orphaned edit idempotently after its operation attachment fails', async () => {
+    const artifacts = new (await import('./testing/harness.js')).InMemoryArtifacts({ on: true });
+    const { service, conversations, runs } = setup({ artifacts });
+    const message = await seedMessage(conversations);
+    const plan = await service.start('project-1', message.id, { kind: 'plan' });
+    const run = (await runs.get(plan.runId!))!;
+    await runs.update({ ...run, status: 'completed' });
+    const original = await artifacts.put({
+      projectId: 'project-1',
+      name: `operation-${plan.id}`,
+      createdBy: 'planner:mock/mock',
+      content: proposal('original'),
+    });
+    await conversations.updateOperation({ ...plan, artifactReferences: [reference(original)] });
+
+    const updateOperation = conversations.updateOperation.bind(conversations);
+    let failAttachment = true;
+    conversations.updateOperation = async (operation, expectedProposalRevision) => {
+      if (expectedProposalRevision !== undefined && failAttachment) {
+        failAttachment = false;
+        throw new Error('temporary operation persistence failure');
+      }
+      return updateOperation(operation, expectedProposalRevision);
+    };
+    const input = { expectedRevision: 1, content: proposal('edited') };
+
+    await expect(service.updateProposal('project-1', plan.id, input)).rejects.toThrow(
+      'temporary operation persistence failure',
+    );
+    const saved = await service.updateProposal('project-1', plan.id, input);
+
+    expect(saved.metadata.revision).toBe(2);
+    expect((await conversations.getOperation('project-1', plan.id))?.artifactReferences).toEqual([
+      reference(saved),
+    ]);
+    expect(artifacts.artifacts).toHaveLength(2);
+  });
+
+  it('rejects a stale decision after an edit attaches a newer proposal revision', async () => {
+    const artifacts = new (await import('./testing/harness.js')).InMemoryArtifacts({ on: true });
+    const { service, conversations, runs } = setup({ artifacts });
+    const message = await seedMessage(conversations);
+    const plan = await service.start('project-1', message.id, { kind: 'plan' });
+    const run = (await runs.get(plan.runId!))!;
+    await runs.update({ ...run, status: 'completed' });
+    const original = await artifacts.put({
+      projectId: 'project-1',
+      name: `operation-${plan.id}`,
+      createdBy: 'planner:mock/mock',
+      content: proposal('original'),
+    });
+    await conversations.updateOperation({ ...plan, artifactReferences: [reference(original)] });
+
+    const getRevision = artifacts.getRevision.bind(artifacts);
+    let interleaveEdit = true;
+    artifacts.getRevision = async (projectId, name, revision) => {
+      const artifact = await getRevision(projectId, name, revision);
+      if (interleaveEdit) {
+        interleaveEdit = false;
+        await service.updateProposal('project-1', plan.id, {
+          expectedRevision: 1,
+          content: proposal('edited'),
+        });
+      }
+      return artifact;
+    };
+
+    await expect(service.decide('project-1', plan.id, 'approve')).rejects.toThrow(
+      'Version conflict',
+    );
+    expect((await conversations.getOperation('project-1', plan.id))?.approval?.status).toBe(
+      'pending',
+    );
+    expect(
+      (await conversations.getOperation('project-1', plan.id))?.artifactReferences[0]?.revision,
+    ).toBe(2);
+
+    await expect(service.decide('project-1', plan.id, 'approve')).resolves.toMatchObject({
+      approval: { status: 'approved' },
+      artifactReferences: [{ revision: 2 }],
+    });
+  });
 });
+
+function proposal(summary: string): AgentArtifact {
+  return {
+    schemaVersion: '1',
+    status: 'completed',
+    summary,
+    data: {},
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    nextActions: [],
+  };
+}
+
+function reference(artifact: { metadata: { name: string; revision: number; sha256: string } }) {
+  return {
+    name: artifact.metadata.name,
+    revision: artifact.metadata.revision,
+    sha256: artifact.metadata.sha256,
+  };
+}
 
 describe('OperationService.classify', () => {
   it('creates a proposed change request from an unclassified message', async () => {

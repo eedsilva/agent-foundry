@@ -15,6 +15,7 @@ import {
   IdempotencyConflictError,
   NotFoundError,
   ValidationError,
+  VersionConflictError,
   redactString,
   redactUnknown,
   type ConversationRepository,
@@ -173,12 +174,31 @@ export class FileConversationRepository implements ConversationRepository {
     );
   }
 
-  async updateOperation(operation: Operation): Promise<Operation> {
+  async updateOperation(
+    operation: Operation,
+    expectedProposalRevision?: number,
+    expectedPending?: boolean,
+  ): Promise<Operation> {
     const parsed = OperationSchema.parse(operation);
     return this.withLock(parsed.projectId, async () => {
       const operations = await this.readOperations(parsed.projectId);
       const index = operations.findIndex((item) => item.id === parsed.id);
       if (index === -1) throw new NotFoundError(`Operation ${parsed.id} not found`);
+      const existing = operations[index]!;
+      if (expectedPending && existing.approval?.status !== 'pending') {
+        throw new ValidationError(`Plan operation ${parsed.id} is no longer editable`);
+      }
+      if (
+        expectedProposalRevision !== undefined &&
+        existing.artifactReferences[0]?.revision !== expectedProposalRevision
+      ) {
+        throw new VersionConflictError(
+          'proposal',
+          parsed.id,
+          expectedProposalRevision,
+          existing.artifactReferences[0]?.revision ?? 0,
+        );
+      }
       operations[index] = parsed;
       await this.writeJsonLines(this.operationsPath(parsed.projectId), operations);
       return parsed;

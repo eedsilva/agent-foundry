@@ -857,6 +857,7 @@ describe('ConversationOperationRunner', () => {
     ]);
     expect(operation?.projectVersionId).toBeUndefined();
     expect(await projectVersions.list('project-1')).toEqual([]);
+    expect(workspaces.lastRequestMarkdown).toContain('Tool policy: read-only');
   });
 
   it('completes a build operation, commits the touched workspace, and records exactly one ProjectVersion', async () => {
@@ -890,6 +891,48 @@ describe('ConversationOperationRunner', () => {
       },
     ]);
     expect(operation?.projectVersionId).toBe(version!.id);
+    expect(workspaces.lastRequestMarkdown).toContain('Tool policy: workspace-write');
+  });
+
+  it('gives Build the saved edited plan artifact content', async () => {
+    const { runs, artifacts, workspaces, conversations, runner } = setup();
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+    const saved = await artifacts.put({
+      projectId: 'project-1',
+      name: 'operation-plan-1',
+      createdBy: 'user:proposal-editor',
+      content: {
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Saved edited proposal',
+        data: { marker: 'edited-plan-content' },
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        nextActions: [],
+      },
+    });
+    await conversations.createOperation({
+      id: 'plan-1',
+      projectId: 'project-1',
+      conversationId: 'project-1',
+      messageId: 'message-1',
+      kind: 'plan',
+      idempotencyKey: 'b'.repeat(64),
+      artifactReferences: [reference(saved)],
+      approval: { status: 'approved', decidedAt: '2026-07-18T12:00:00.000Z' },
+      createdAt: '2026-07-18T12:00:00.000Z',
+    });
+    const build = (await conversations.getOperation('project-1', operationId))!;
+    await conversations.updateOperation({
+      ...build,
+      planOperationId: 'plan-1',
+      artifactReferences: [reference(saved)],
+    });
+
+    await runner.run('project-1', runId, operationId);
+
+    expect(workspaces.lastRequestMarkdown).toContain('edited-plan-content');
   });
 
   it('persists live executor stream events via StepEventRepository', async () => {
@@ -1302,6 +1345,14 @@ describe('ConversationOperationRunner', () => {
     expect(run.status).toBe('failed');
   });
 });
+
+function reference(artifact: { metadata: { name: string; revision: number; sha256: string } }) {
+  return {
+    name: artifact.metadata.name,
+    revision: artifact.metadata.revision,
+    sha256: artifact.metadata.sha256,
+  };
+}
 
 describe('ConversationOperationRunner context compilation', () => {
   it.each(['plan', 'build'] as const)(

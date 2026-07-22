@@ -592,6 +592,115 @@ describe('conversation API', () => {
     expect(build.directExecution).toBe(true);
   });
 
+  it('edits a completed plan proposal with revision conflict protection before Build inherits it', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime);
+    const message = await createMessage(baseUrl, projectId, 'Add a dark mode toggle');
+    const opsPath = `/projects/${projectId}/conversation/messages/${message.id}/operations`;
+    const { operation: plan } = (await (await post(baseUrl, opsPath, { kind: 'plan' })).json()) as {
+      operation: { id: string; runId: string };
+    };
+    const run = (await runtime.runs.get(plan.runId))!;
+    await runtime.runs.update(
+      { ...run, status: 'completed', startedAt: run.createdAt, completedAt: run.createdAt },
+      run.version,
+    );
+    const original = await runtime.artifacts.put({
+      projectId,
+      name: `operation-${plan.id}`,
+      createdBy: 'planner:mock/mock',
+      content: {
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Original proposal',
+        data: {},
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        nextActions: [],
+      },
+    });
+    const operation = (await runtime.conversations.getOperation(projectId, plan.id))!;
+    await runtime.conversations.updateOperation({
+      ...operation,
+      artifactReferences: [
+        {
+          name: original.metadata.name,
+          revision: original.metadata.revision,
+          sha256: original.metadata.sha256,
+        },
+      ],
+    });
+    const proposalPath = `/projects/${projectId}/conversation/operations/${plan.id}/proposal`;
+    expect((await fetch(`${baseUrl}${proposalPath}`)).status).toBe(200);
+    const edited = {
+      schemaVersion: '1' as const,
+      status: 'completed' as const,
+      summary: 'Edited proposal',
+      data: {},
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      nextActions: [],
+    };
+    const updates = await Promise.all(
+      [edited, { ...edited, summary: 'Concurrent proposal' }].map((content) =>
+        fetch(`${baseUrl}${proposalPath}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ expectedRevision: 1, content }),
+        }),
+      ),
+    );
+    expect(updates.map((response) => response.status).sort()).toEqual([200, 409]);
+    const update = updates.find((response) => response.status === 200)!;
+    const saved = (await update.json()) as { artifact: { metadata: { revision: number } } };
+    expect(saved.artifact.metadata.revision).toBe(2);
+    const updateOperation = runtime.conversations.updateOperation.bind(runtime.conversations);
+    let interleavedEdit: { expectedRevision: number; content: typeof edited } | undefined = {
+      expectedRevision: 2,
+      content: { ...edited, summary: 'Stale approve race' },
+    };
+    runtime.conversations.updateOperation = async (next, expectedProposalRevision) => {
+      if (expectedProposalRevision !== undefined && interleavedEdit) {
+        const edit = interleavedEdit;
+        interleavedEdit = undefined;
+        await runtime.operationService.updateProposal(projectId, plan.id, edit);
+      }
+      return updateOperation(next, expectedProposalRevision);
+    };
+    const approveConflict = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/operations/${plan.id}/decide`,
+      { action: 'approve' },
+    );
+    expect(approveConflict.status).toBe(409);
+    interleavedEdit = {
+      expectedRevision: 3,
+      content: { ...edited, summary: 'Stale reject race' },
+    };
+    const rejectConflict = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/operations/${plan.id}/decide`,
+      { action: 'reject' },
+    );
+    expect(rejectConflict.status).toBe(409);
+    const approved = await post(
+      baseUrl,
+      `/projects/${projectId}/conversation/operations/${plan.id}/decide`,
+      {
+        action: 'approve',
+      },
+    );
+    expect(approved.status).toBe(200);
+    const build = await post(baseUrl, opsPath, { kind: 'build', planOperationId: plan.id });
+    expect(
+      (await build.json()) as { operation: { artifactReferences: Array<{ revision: number }> } },
+    ).toMatchObject({
+      operation: { artifactReferences: [{ revision: 4 }] },
+    });
+  });
+
   it('still routes non plan/build kinds through the original create-operation path', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(runtime);

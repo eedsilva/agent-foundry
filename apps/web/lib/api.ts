@@ -16,6 +16,7 @@ import type {
   KnowledgeFilePurpose,
   Message,
   Operation,
+  AgentArtifact,
   PreviewLogPage,
   PreviewSelectionRequest,
   PreviewSelectionResult,
@@ -365,6 +366,27 @@ export async function decideOperation(
     { method: 'POST', body: JSON.stringify({ action }) },
   );
   return response.operation;
+}
+
+export function getOperationProposal(
+  projectId: string,
+  operationId: string,
+): Promise<StoredArtifact> {
+  return api<{ artifact: StoredArtifact }>(
+    `/projects/${encodeURIComponent(projectId)}/conversation/operations/${encodeURIComponent(operationId)}/proposal`,
+  ).then(({ artifact }) => artifact);
+}
+
+export function updateOperationProposal(
+  projectId: string,
+  operationId: string,
+  expectedRevision: number,
+  content: AgentArtifact,
+): Promise<StoredArtifact> {
+  return api<{ artifact: StoredArtifact }>(
+    `/projects/${encodeURIComponent(projectId)}/conversation/operations/${encodeURIComponent(operationId)}/proposal`,
+    { method: 'PUT', body: JSON.stringify({ expectedRevision, content }) },
+  ).then(({ artifact }) => artifact);
 }
 
 export function classifyMessage(

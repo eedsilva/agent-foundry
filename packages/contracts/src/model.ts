@@ -79,6 +79,12 @@ export const TaskProfileSchema = z.preprocess(
           ? legacyTaskCategory(taskKind.data)
           : profile.category,
       features: profile.features === undefined ? [] : profile.features,
+      toolPolicy:
+        profile.toolPolicy === undefined
+          ? profile.mutatesWorkspace === true
+            ? 'workspace-write'
+            : 'read-only'
+          : profile.toolPolicy,
     };
   },
   z
@@ -93,6 +99,7 @@ export const TaskProfileSchema = z.preprocess(
       estimatedContextTokens: z.number().int().nonnegative(),
       estimatedOutputTokens: z.number().int().nonnegative(),
       mutatesWorkspace: z.boolean(),
+      toolPolicy: z.enum(['read-only', 'workspace-write']),
       priorities: RoutingPrioritiesSchema,
       allowedProviders: z.array(ProviderSchema.exclude(['mock'])).optional(),
       policy: z

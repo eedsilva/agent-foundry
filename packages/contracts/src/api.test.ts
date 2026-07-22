@@ -15,12 +15,15 @@ import {
   DecideChangeRequestRequestSchema,
   DecideOperationRequestSchema,
   DecideOperationResponseSchema,
+  GetOperationProposalResponseSchema,
   ProjectExportResponseSchema,
   ProjectDetailResponseSchema,
   RetryStepRequestSchema,
   RunAuditExportSchema,
   StartOperationRequestSchema,
   StartOperationResponseSchema,
+  UpdateOperationProposalRequestSchema,
+  UpdateOperationProposalResponseSchema,
 } from './api.js';
 
 const conversationCreatedAt = '2026-07-17T12:00:00.000Z';
@@ -168,6 +171,44 @@ describe('conversation HTTP contracts (#36)', () => {
       action: 'approve',
     });
     expect(DecideOperationResponseSchema.parse({ operation }).operation).toEqual(operation);
+  });
+
+  it('parses proposal reads and revision-checked edits', () => {
+    const artifact = {
+      metadata: {
+        projectId: 'project-1',
+        name: 'operation-1',
+        revision: 1,
+        contentType: 'application/json',
+        createdAt: conversationCreatedAt,
+        createdBy: 'planner:mock/mock',
+        sha256: 'a'.repeat(64),
+      },
+      content: {
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Plan',
+        data: {},
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        nextActions: [],
+      },
+    };
+    expect(GetOperationProposalResponseSchema.parse({ artifact }).artifact).toEqual(artifact);
+    expect(
+      UpdateOperationProposalRequestSchema.parse({
+        expectedRevision: 1,
+        content: artifact.content,
+      }),
+    ).toMatchObject({ expectedRevision: 1 });
+    expect(() =>
+      UpdateOperationProposalRequestSchema.parse({
+        expectedRevision: 0,
+        content: artifact.content,
+      }),
+    ).toThrow();
+    expect(UpdateOperationProposalResponseSchema.parse({ artifact }).artifact).toEqual(artifact);
   });
 });
 

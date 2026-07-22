@@ -101,6 +101,7 @@ export function buildTaskProfile(input: {
     estimatedContextTokens: estimateTokens(contextText) + 2_000,
     estimatedOutputTokens: estimatedOutputTokens(input.step.taskKind),
     mutatesWorkspace: input.step.mutatesWorkspace,
+    toolPolicy: input.step.mutatesWorkspace ? 'workspace-write' : 'read-only',
     priorities: {
       quality: customPriorities.quality ?? defaults.priorities.quality,
       speed: customPriorities.speed ?? defaults.priorities.speed,
