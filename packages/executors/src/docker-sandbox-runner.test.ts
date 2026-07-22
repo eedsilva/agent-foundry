@@ -6,6 +6,7 @@ import {
   buildPolicyNetworkCreateArgs,
   buildPolicySidecarCreateArgs,
   parseNetworkPolicyEvents,
+  POLICY_SIDECAR_READY_PATH,
   POLICY_PROXY_PORT,
   SANDBOX_TMP_SIZE_MIB,
   SANDBOX_WORKSPACE_PATH,
@@ -103,6 +104,8 @@ describe('buildCreateArgs', () => {
     );
     expect(args).toContain('AGENT_FOUNDRY_NETWORK_POLICY=encoded-policy');
     expect(args).toContain('AGENT_FOUNDRY_POLICY_TTL_MS=60000');
+    expect(POLICY_SIDECAR_READY_PATH).toMatch(/^\/run\//);
+    expect(args).toContain('--tmpfs=/run:rw,nosuid,nodev,noexec,size=64k,mode=1777');
     expect(args).toContain('--rm');
     expect(args).not.toContain('--privileged');
   });

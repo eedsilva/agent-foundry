@@ -27,7 +27,7 @@ import { terminateProcessTree } from './process-tree.js';
 export const SANDBOX_WORKSPACE_PATH = '/workspace';
 export const SANDBOX_TMP_SIZE_MIB = 64;
 export const POLICY_PROXY_PORT = 3128;
-export const POLICY_SIDECAR_READY_PATH = '/tmp/agent-foundry-network-policy-ready';
+export const POLICY_SIDECAR_READY_PATH = '/run/agent-foundry-network-policy-ready';
 export const DEFAULT_POLICY_PROXY_IMAGE =
   'node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3';
 
@@ -180,6 +180,7 @@ export function buildPolicySidecarCreateArgs(input: {
     '--cpus=0.250',
     '--network=bridge',
     '--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777',
+    '--tmpfs=/run:rw,nosuid,nodev,noexec,size=64k,mode=1777',
     '--env',
     `AGENT_FOUNDRY_NETWORK_POLICY=${input.encodedPolicy}`,
     '--env',

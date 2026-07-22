@@ -12,7 +12,7 @@ import type { NetworkPolicyResolver } from './network-policy.js';
 
 const POLICY_ENV = 'AGENT_FOUNDRY_NETWORK_POLICY';
 const POLICY_TTL_ENV = 'AGENT_FOUNDRY_POLICY_TTL_MS';
-export const POLICY_SIDECAR_READY_PATH = '/tmp/agent-foundry-network-policy-ready';
+export const POLICY_SIDECAR_READY_PATH = '/run/agent-foundry-network-policy-ready';
 
 function readPolicy(): ExecutionNetworkPolicy {
   const encoded = process.env[POLICY_ENV];

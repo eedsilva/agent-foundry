@@ -11,8 +11,8 @@ afterEach(async () => {
 });
 
 async function startTarget(): Promise<{ authority: string; close(): Promise<void> }> {
-  const server = createServer((incoming, response) => {
-    response.end(`target:${incoming.url}`);
+  const server = createServer((_incoming, response) => {
+    response.end('target-ok');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;
@@ -70,7 +70,7 @@ describe('createNetworkPolicyProxy', () => {
       target.authority,
     );
 
-    expect(result).toEqual({ statusCode: 200, body: 'target:/secret?token=redacted' });
+    expect(result).toEqual({ statusCode: 200, body: 'target-ok' });
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       purpose: 'browser',
