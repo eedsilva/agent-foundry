@@ -8,3 +8,4 @@ apps/web/next-env.d.ts
 planning/ROADMAP.md
 *.tsbuildinfo
 .superpowers
+graphify-out/

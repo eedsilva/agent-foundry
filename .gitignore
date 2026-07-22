@@ -12,3 +12,4 @@ data/
 *.tsbuildinfo
 .turbo/
 test-results/
+graphify-out/
