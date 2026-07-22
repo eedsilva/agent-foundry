@@ -111,27 +111,38 @@ export class OperationService {
       return { changeRequest: rejected };
     }
 
-    const operation =
-      input.kind === 'plan' || input.kind === 'build' || input.kind === 'visual-edit'
-        ? await this.start(projectId, changeRequest.messageId, {
-            kind: input.kind,
-            ...(input.kind === 'build'
-              ? {
-                  planOperationId: input.planOperationId,
-                  directExecution: input.directExecution,
-                }
-              : {}),
-            changeRequestId: changeRequest.id,
-          })
-        : await this.conversationService.createOperation(projectId, changeRequest.messageId, {
-            kind: input.kind,
-            // IdempotencyKeySchema requires 64 lowercase hex chars — changeRequest.id itself
-            // (a PathSegmentSchema id) does not match, so hash it the same way start() hashes
-            // operationId/runId into idempotencyKey() below.
-            idempotencyKey: sha256(changeRequest.id),
-            changeRequestId: changeRequest.id,
-            artifactReferences: [],
-          });
+    if (input.kind === 'plan' || input.kind === 'build' || input.kind === 'visual-edit') {
+      const queued = await this.createQueuedOperation(projectId, changeRequest.messageId, {
+        kind: input.kind,
+        ...(input.kind === 'build'
+          ? { planOperationId: input.planOperationId, directExecution: input.directExecution }
+          : {}),
+        changeRequestId: changeRequest.id,
+      });
+      const confirmed = await this.conversations.updateChangeRequest({
+        ...changeRequest,
+        status: 'confirmed',
+        confirmedKind: input.kind,
+        operationId: queued.operation.id,
+        decidedAt: this.clock.now().toISOString(),
+      });
+      await this.enqueueOperation(queued);
+      return { changeRequest: confirmed, operation: queued.operation };
+    }
+
+    const operation = await this.conversationService.createOperation(
+      projectId,
+      changeRequest.messageId,
+      {
+        kind: input.kind,
+        // IdempotencyKeySchema requires 64 lowercase hex chars — changeRequest.id itself
+        // (a PathSegmentSchema id) does not match, so hash it the same way start() hashes
+        // operationId/runId into idempotencyKey() below.
+        idempotencyKey: sha256(changeRequest.id),
+        changeRequestId: changeRequest.id,
+        artifactReferences: [],
+      },
+    );
 
     const confirmed = await this.conversations.updateChangeRequest({
       ...changeRequest,
@@ -150,6 +161,18 @@ export class OperationService {
       | StartOperationRequest
       | { kind: 'visual-edit'; visualEdit?: VisualEdit; changeRequestId?: string },
   ): Promise<Operation> {
+    const queued = await this.createQueuedOperation(projectId, messageId, input);
+    await this.enqueueOperation(queued);
+    return queued.operation;
+  }
+
+  private async createQueuedOperation(
+    projectId: string,
+    messageId: string,
+    input:
+      | StartOperationRequest
+      | { kind: 'visual-edit'; visualEdit?: VisualEdit; changeRequestId?: string },
+  ): Promise<{ operation: Operation; run: WorkflowRun; now: string }> {
     const message = (await this.conversations.listMessages(projectId)).find(
       (item) => item.id === messageId,
     );
@@ -203,13 +226,25 @@ export class OperationService {
       createdAt: now,
     });
 
-    await this.queue.enqueue({
+    return { operation, run, now };
+  }
+
+  private enqueueOperation({
+    operation,
+    run,
+    now,
+  }: {
+    operation: Operation;
+    run: WorkflowRun;
+    now: string;
+  }): Promise<void> {
+    return this.queue.enqueue({
       id: this.ids.next(),
       type: 'run-conversation-operation',
-      projectId,
+      projectId: operation.projectId,
       workflowId: run.workflowId,
-      runId,
-      operationId,
+      runId: run.id,
+      operationId: operation.id,
       attempts: 0,
       maxAttempts: 1,
       createdAt: now,
@@ -217,8 +252,6 @@ export class OperationService {
       leaseEpoch: 0,
       ...traceContextField(),
     });
-
-    return operation;
   }
 
   async decide(

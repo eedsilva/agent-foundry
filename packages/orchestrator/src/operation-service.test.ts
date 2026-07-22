@@ -47,9 +47,10 @@ class MemoryRuns implements WorkflowRunRepository {
 
 class MemoryQueue implements JobQueue {
   readonly enqueued: Array<Parameters<JobQueue['enqueue']>[0]> = [];
+  onEnqueue?: () => Promise<void>;
   enqueue(job: Parameters<JobQueue['enqueue']>[0]): Promise<void> {
     this.enqueued.push(job);
-    return Promise.resolve();
+    return this.onEnqueue?.() ?? Promise.resolve();
   }
   claim(): Promise<null> {
     return Promise.resolve(null);
@@ -378,6 +379,24 @@ describe('OperationService.classify', () => {
 });
 
 describe('OperationService.decideChangeRequest', () => {
+  it('persists a confirmed change request before its job is visible to a worker', async () => {
+    const { service, conversations, queue } = setup();
+    const message = await seedMessage(conversations);
+    const changeRequest = await service.classify('project-1', message.id);
+    queue.onEnqueue = async () => {
+      expect(await conversations.getChangeRequest('project-1', changeRequest.id)).toMatchObject({
+        status: 'confirmed',
+        confirmedKind: 'plan',
+        operationId: expect.any(String),
+      });
+    };
+
+    await service.decideChangeRequest('project-1', changeRequest.id, {
+      action: 'confirm',
+      kind: 'plan',
+    });
+  });
+
   it('confirming a plan classification starts an Operation with changeRequestId set', async () => {
     const { service, conversations } = setup();
     const message = await conversations.appendMessage({
