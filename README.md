@@ -72,6 +72,33 @@ Abra `http://localhost:3000`.
 
 O modo mock cria um projeto mínimo no workspace, atravessa todos os quality gates e executa os checks configurados. Ele serve para validar a mecânica do sistema. Não mede a qualidade real dos modelos.
 
+## Contexto do código com Graphify
+
+Use [Graphify](https://github.com/Graphify-Labs/graphify) para criar um mapa local do código antes de explorar uma tarefa. Ele extrai a estrutura por AST, sem enviar código nem consumir tokens de modelo.
+
+Instale uma vez com `uv` (o pacote oficial é `graphifyy`, com dois `y`):
+
+```bash
+uv tool install graphifyy
+```
+
+No início de cada tarefa — inclusive para subagentes — ative Caveman ultra, atualize o grafo e leia o relatório antes de fazer buscas amplas:
+
+```bash
+/caveman ultra
+npm run graphify:refresh
+```
+
+Depois, consulte somente o recorte necessário:
+
+```bash
+graphify query "Como WorkflowOrchestrator se relaciona com persistence?" --budget 500
+graphify path "WorkflowOrchestrator" "ArtifactStore"
+graphify explain "WorkflowOrchestrator"
+```
+
+Rode `npm run graphify:refresh` novamente após alterar código. Para mudanças em documentação, imagens ou outros insumos semânticos, use `/graphify . --update`. Os detalhes operacionais obrigatórios para Codex e Claude Code estão em [`AGENTS.md`](AGENTS.md) e [`CLAUDE.md`](CLAUDE.md). `graphify-out/` é estado local gerado e não é versionado, para evitar diffs grandes e instáveis entre execuções.
+
 ### Processos separados
 
 ```bash
