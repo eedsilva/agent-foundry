@@ -819,9 +819,12 @@ describe('PlaywrightBrowserVerifier', () => {
 
   it('continues after the quiescence budget when a preview polls every 500 ms', async () => {
     let laterSideEffects = 0;
+    let laterSideEffectAt: number | undefined;
+    const startedAt = performance.now();
     const origin = await serve((request, response) => {
       if (request.url?.endsWith('/later-side-effect')) {
         laterSideEffects += 1;
+        laterSideEffectAt = performance.now();
         response.end('ok');
         return;
       }
@@ -842,6 +845,8 @@ describe('PlaywrightBrowserVerifier', () => {
     );
     expect(report.approved).toBe(true);
     expect(laterSideEffects).toBe(1);
+    expect(report.steps[0]?.durationMs).toBeLessThan(12_000);
+    expect(laterSideEffectAt).toBeLessThan(startedAt + 12_000);
   });
 
   it('attributes a 700 ms console timer from goto before a later side effect', async () => {
