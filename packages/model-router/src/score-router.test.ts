@@ -100,6 +100,36 @@ function twoProviderCatalog(): ModelDefinition[] {
   ];
 }
 
+function quotaMetric({
+  attempts = 1,
+  quotaUnitsTotal,
+  quotaUnitsKnownCount,
+}: {
+  attempts?: number;
+  quotaUnitsTotal: number;
+  quotaUnitsKnownCount: number;
+}): ModelMetric {
+  return {
+    modelId: 'quota-heavy',
+    taskKind: 'implementation',
+    role: 'developer',
+    taxonomyVersion: '2',
+    category: 'implementation/frontend',
+    attempts,
+    successes: attempts,
+    totalDurationMs: 1_000,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalEstimatedCostUsd: 0,
+    quotaUnitsTotal,
+    quotaUnitsKnownCount,
+    consecutiveFailures: 0,
+    qualityEvaluations: 0,
+    qualityApprovals: 0,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 const override: RouteOverrideProvenance = {
   source: 'run',
   overrideId: 'override-1',
@@ -491,25 +521,11 @@ describe('ScoreBasedModelRouter', () => {
   });
 
   it('rejects a subscription model whose observed quota use exceeds the remaining budget', async () => {
-    const metric: ModelMetric = {
-      modelId: 'quota-heavy',
-      taskKind: 'implementation',
-      role: 'developer',
-      taxonomyVersion: '2',
-      category: 'implementation/frontend',
+    const metric = quotaMetric({
       attempts: 2,
-      successes: 2,
-      totalDurationMs: 1_000,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalEstimatedCostUsd: 0,
       quotaUnitsTotal: 4,
       quotaUnitsKnownCount: 2,
-      consecutiveFailures: 0,
-      qualityEvaluations: 0,
-      qualityApprovals: 0,
-      updatedAt: new Date().toISOString(),
-    };
+    });
     const router = new ScoreBasedModelRouter(
       [model('quota-heavy', {}), model('metered-fallback', { billingMode: 'metered' })],
       new MemoryMetrics(new Map([['quota-heavy:implementation:developer', metric]])),
@@ -524,25 +540,10 @@ describe('ScoreBasedModelRouter', () => {
   });
 
   it('uses provider-reported remaining units as the subscription quota budget', async () => {
-    const metric: ModelMetric = {
-      modelId: 'quota-heavy',
-      taskKind: 'implementation',
-      role: 'developer',
-      taxonomyVersion: '2',
-      category: 'implementation/frontend',
-      attempts: 1,
-      successes: 1,
-      totalDurationMs: 1_000,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalEstimatedCostUsd: 0,
+    const metric = quotaMetric({
       quotaUnitsTotal: 2,
       quotaUnitsKnownCount: 1,
-      consecutiveFailures: 0,
-      qualityEvaluations: 0,
-      qualityApprovals: 0,
-      updatedAt: new Date().toISOString(),
-    };
+    });
     const router = new ScoreBasedModelRouter(
       [model('quota-heavy', {}), model('metered-fallback', { billingMode: 'metered' })],
       new MemoryMetrics(new Map([['quota-heavy:implementation:developer', metric]])),
@@ -568,25 +569,10 @@ describe('ScoreBasedModelRouter', () => {
   });
 
   it('ignores provider-reported remaining units after the rate-limit reset', async () => {
-    const metric: ModelMetric = {
-      modelId: 'quota-heavy',
-      taskKind: 'implementation',
-      role: 'developer',
-      taxonomyVersion: '2',
-      category: 'implementation/frontend',
-      attempts: 1,
-      successes: 1,
-      totalDurationMs: 1_000,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalEstimatedCostUsd: 0,
+    const metric = quotaMetric({
       quotaUnitsTotal: 2,
       quotaUnitsKnownCount: 1,
-      consecutiveFailures: 0,
-      qualityEvaluations: 0,
-      qualityApprovals: 0,
-      updatedAt: new Date().toISOString(),
-    };
+    });
     const router = new ScoreBasedModelRouter(
       [model('quota-heavy', {}), model('metered-fallback', { billingMode: 'metered' })],
       new MemoryMetrics(new Map([['quota-heavy:implementation:developer', metric]])),

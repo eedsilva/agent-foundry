@@ -137,23 +137,21 @@ export class ScoreBasedModelRouter implements ModelRouter {
     if (!constraints) return null;
     const health = constraints.providerHealth?.get(model.provider);
     const rl = health?.rateLimit;
-    const rateLimitActive = !rl?.resetAt || new Date(rl.resetAt).getTime() > Date.now();
-    if (rl?.resetAt && (rl.remaining === 0 || rl.remaining === undefined) && rateLimitActive) {
+    const rateLimitApplies = !rl?.resetAt || new Date(rl.resetAt).getTime() > Date.now();
+    if (rl?.resetAt && (rl.remaining === 0 || rl.remaining === undefined) && rateLimitApplies) {
       return `rate-limited until ${rl.resetAt}`;
     }
     const budget = constraints.budget;
-    if (budget) {
-      if (budget.maxCostUsd !== undefined && model.billingMode === 'metered') {
-        const estimate = estimateCostUsd(model, profile, metric);
-        if (estimate !== null && estimate > budget.maxCostUsd) {
-          return `over-budget: est $${estimate.toFixed(4)} > $${budget.maxCostUsd}`;
-        }
+    if (budget?.maxCostUsd !== undefined && model.billingMode === 'metered') {
+      const estimate = estimateCostUsd(model, profile, metric);
+      if (estimate !== null && estimate > budget.maxCostUsd) {
+        return `over-budget: est $${estimate.toFixed(4)} > $${budget.maxCostUsd}`;
       }
     }
     if (model.billingMode === 'subscription') {
       const availableQuotaUnits = [
         budget?.maxQuotaUnits,
-        rateLimitActive ? rl?.remaining : undefined,
+        rateLimitApplies ? rl?.remaining : undefined,
       ].filter((value): value is number => value !== undefined);
       const maxQuotaUnits =
         availableQuotaUnits.length > 0 ? Math.min(...availableQuotaUnits) : undefined;
