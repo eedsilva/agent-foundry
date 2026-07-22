@@ -647,11 +647,15 @@ export class MemoryConversations implements ConversationRepository {
       this.operations.find((o) => o.projectId === projectId && o.id === operationId) ?? null,
     );
   }
-  updateOperation(operation: Operation, expectedProposalRevision?: number): Promise<Operation> {
+  updateOperation(
+    operation: Operation,
+    expectedProposalRevision?: number,
+    expectedPending?: boolean,
+  ): Promise<Operation> {
     const index = this.operations.findIndex((o) => o.id === operation.id);
     if (index === -1) throw new Error(`operation ${operation.id} missing`);
     const existing = this.operations[index]!;
-    if (expectedProposalRevision !== undefined && existing.approval?.status !== 'pending') {
+    if (expectedPending && existing.approval?.status !== 'pending') {
       throw new ValidationError(`Plan operation ${operation.id} is no longer editable`);
     }
     if (

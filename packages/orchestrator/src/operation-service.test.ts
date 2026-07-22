@@ -271,7 +271,7 @@ describe('OperationService.decide', () => {
     const run = (await runs.get(plan.runId!))!;
     await runs.update({ ...run, status: 'running' });
     await runs.update({ ...run, status: 'completed' });
-    return { service, plan };
+    return { service, conversations, plan };
   }
 
   it('rejects deciding a plan whose run has not completed', async () => {
@@ -322,6 +322,35 @@ describe('OperationService.decide', () => {
 
     expect(rejected.approval).toMatchObject({ status: 'rejected' });
     expect(rejected.artifactReferences).toEqual([]);
+  });
+
+  it('does not approve a rejected legacy plan without an artifact reference', async () => {
+    const artifacts: ArtifactStore = {
+      ...noArtifacts(),
+      getLatest: (projectId, name) =>
+        Promise.resolve({
+          metadata: {
+            projectId,
+            name,
+            revision: 1,
+            contentType: 'application/json',
+            createdAt: '2026-07-18T12:00:00.000Z',
+            createdBy: 'planner:mock/mock',
+            sha256: 'b'.repeat(64),
+          },
+          content: { schemaVersion: '1', summary: 'legacy plan' },
+        }),
+    };
+    const { service, conversations, plan } = await startAndCompletePlan(artifacts);
+
+    await service.decide('project-1', plan.id, 'reject');
+
+    await expect(service.decide('project-1', plan.id, 'approve')).rejects.toThrow(
+      'no longer editable',
+    );
+    expect((await conversations.getOperation('project-1', plan.id))?.approval?.status).toBe(
+      'rejected',
+    );
   });
 
   it('rejects deciding a non-plan operation', async () => {

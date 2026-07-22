@@ -177,6 +177,7 @@ export class FileConversationRepository implements ConversationRepository {
   async updateOperation(
     operation: Operation,
     expectedProposalRevision?: number,
+    expectedPending?: boolean,
   ): Promise<Operation> {
     const parsed = OperationSchema.parse(operation);
     return this.withLock(parsed.projectId, async () => {
@@ -184,7 +185,7 @@ export class FileConversationRepository implements ConversationRepository {
       const index = operations.findIndex((item) => item.id === parsed.id);
       if (index === -1) throw new NotFoundError(`Operation ${parsed.id} not found`);
       const existing = operations[index]!;
-      if (expectedProposalRevision !== undefined && existing.approval?.status !== 'pending') {
+      if (expectedPending && existing.approval?.status !== 'pending') {
         throw new ValidationError(`Plan operation ${parsed.id} is no longer editable`);
       }
       if (

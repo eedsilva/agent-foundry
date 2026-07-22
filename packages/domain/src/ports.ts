@@ -74,7 +74,11 @@ export interface ConversationRepository {
   listAttachments(projectId: string): Promise<Attachment[]>;
   createOperation(operation: Operation): Promise<Operation>;
   getOperation(projectId: string, operationId: string): Promise<Operation | null>;
-  updateOperation(operation: Operation, expectedProposalRevision?: number): Promise<Operation>;
+  updateOperation(
+    operation: Operation,
+    expectedProposalRevision?: number,
+    expectedPending?: boolean,
+  ): Promise<Operation>;
   listOperations(projectId: string): Promise<Operation[]>;
   createChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest>;
   getChangeRequest(projectId: string, changeRequestId: string): Promise<ChangeRequest | null>;

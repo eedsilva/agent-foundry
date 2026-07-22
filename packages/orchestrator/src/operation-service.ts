@@ -237,6 +237,7 @@ export class OperationService {
           approval: { status: 'rejected', decidedAt: this.clock.now().toISOString() },
         },
         expectedProposalRevision,
+        true,
       );
     }
 
@@ -258,6 +259,7 @@ export class OperationService {
         ],
       },
       expectedProposalRevision,
+      true,
     );
   }
 
@@ -304,6 +306,7 @@ export class OperationService {
         ],
       },
       input.expectedRevision,
+      true,
     );
     return artifact;
   }

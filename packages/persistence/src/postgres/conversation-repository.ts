@@ -191,19 +191,23 @@ export class PostgresConversationRepository implements ConversationRepository {
   async updateOperation(
     operation: Operation,
     expectedProposalRevision?: number,
+    expectedPending?: boolean,
   ): Promise<Operation> {
     const parsed = OperationSchema.parse(operation);
     return this.sql.begin(async (tx) => {
       await acquireScopeLock(tx, 'conversation:' + parsed.projectId);
-      if (expectedProposalRevision !== undefined) {
+      if (expectedProposalRevision !== undefined || expectedPending) {
         const rows = await tx<{ data: unknown }[]>`
           select data from conversation_operations where id = ${parsed.id} and project_id = ${parsed.projectId}`;
         const existing = rows[0] ? OperationSchema.parse(rows[0].data) : null;
         if (!existing) throw new NotFoundError(`Operation ${parsed.id} not found`);
-        if (existing.approval?.status !== 'pending') {
+        if (expectedPending && existing.approval?.status !== 'pending') {
           throw new ValidationError(`Plan operation ${parsed.id} is no longer editable`);
         }
-        if (existing.artifactReferences[0]?.revision !== expectedProposalRevision) {
+        if (
+          expectedProposalRevision !== undefined &&
+          existing.artifactReferences[0]?.revision !== expectedProposalRevision
+        ) {
           throw new VersionConflictError(
             'proposal',
             parsed.id,
