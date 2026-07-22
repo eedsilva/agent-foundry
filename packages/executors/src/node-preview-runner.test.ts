@@ -281,7 +281,8 @@ describe('NodePreviewRunner', () => {
 
   it('uses a port detected after startup when checking health', async () => {
     const reservedPort = await reservePreviewPort();
-    const fixedPort = await reservePreviewPort();
+    let fixedPort = reservedPort;
+    while (fixedPort === reservedPort) fixedPort = await reservePreviewPort();
     const runner = new NodePreviewRunner({
       startupTimeoutMs: 25,
       reservePort: async () => reservedPort,
