@@ -228,12 +228,16 @@ export class OperationService {
     action: 'approve' | 'reject',
   ): Promise<Operation> {
     const operation = await this.completedPlan(projectId, operationId);
+    const expectedProposalRevision = operation.artifactReferences[0]?.revision;
 
     if (action === 'reject') {
-      return this.conversations.updateOperation({
-        ...operation,
-        approval: { status: 'rejected', decidedAt: this.clock.now().toISOString() },
-      });
+      return this.conversations.updateOperation(
+        {
+          ...operation,
+          approval: { status: 'rejected', decidedAt: this.clock.now().toISOString() },
+        },
+        expectedProposalRevision,
+      );
     }
 
     const reference = operation.artifactReferences[0];
@@ -241,17 +245,20 @@ export class OperationService {
       ? await this.artifacts.getRevision(projectId, reference.name, reference.revision)
       : await this.artifacts.getLatest(projectId, `operation-${operationId}`);
     if (!artifact) throw new NotFoundError(`Plan artifact for operation ${operationId} not found`);
-    return this.conversations.updateOperation({
-      ...operation,
-      approval: { status: 'approved', decidedAt: this.clock.now().toISOString() },
-      artifactReferences: [
-        {
-          name: artifact.metadata.name,
-          revision: artifact.metadata.revision,
-          sha256: artifact.metadata.sha256,
-        },
-      ],
-    });
+    return this.conversations.updateOperation(
+      {
+        ...operation,
+        approval: { status: 'approved', decidedAt: this.clock.now().toISOString() },
+        artifactReferences: [
+          {
+            name: artifact.metadata.name,
+            revision: artifact.metadata.revision,
+            sha256: artifact.metadata.sha256,
+          },
+        ],
+      },
+      expectedProposalRevision,
+    );
   }
 
   async getProposal(projectId: string, operationId: string) {

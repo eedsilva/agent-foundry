@@ -497,6 +497,51 @@ describe('OperationService.decide', () => {
     ]);
     expect(artifacts.artifacts).toHaveLength(2);
   });
+
+  it('rejects a stale decision after an edit attaches a newer proposal revision', async () => {
+    const artifacts = new (await import('./testing/harness.js')).InMemoryArtifacts({ on: true });
+    const { service, conversations, runs } = setup({ artifacts });
+    const message = await seedMessage(conversations);
+    const plan = await service.start('project-1', message.id, { kind: 'plan' });
+    const run = (await runs.get(plan.runId!))!;
+    await runs.update({ ...run, status: 'completed' });
+    const original = await artifacts.put({
+      projectId: 'project-1',
+      name: `operation-${plan.id}`,
+      createdBy: 'planner:mock/mock',
+      content: proposal('original'),
+    });
+    await conversations.updateOperation({ ...plan, artifactReferences: [reference(original)] });
+
+    const getRevision = artifacts.getRevision.bind(artifacts);
+    let interleaveEdit = true;
+    artifacts.getRevision = async (projectId, name, revision) => {
+      const artifact = await getRevision(projectId, name, revision);
+      if (interleaveEdit) {
+        interleaveEdit = false;
+        await service.updateProposal('project-1', plan.id, {
+          expectedRevision: 1,
+          content: proposal('edited'),
+        });
+      }
+      return artifact;
+    };
+
+    await expect(service.decide('project-1', plan.id, 'approve')).rejects.toThrow(
+      'no longer editable',
+    );
+    expect((await conversations.getOperation('project-1', plan.id))?.approval?.status).toBe(
+      'pending',
+    );
+    expect(
+      (await conversations.getOperation('project-1', plan.id))?.artifactReferences[0]?.revision,
+    ).toBe(2);
+
+    await expect(service.decide('project-1', plan.id, 'approve')).resolves.toMatchObject({
+      approval: { status: 'approved' },
+      artifactReferences: [{ revision: 2 }],
+    });
+  });
 });
 
 function proposal(summary: string): AgentArtifact {
