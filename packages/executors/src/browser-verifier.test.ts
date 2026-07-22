@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   ArtifactReference,
   BrowserEvidencePolicy,
@@ -11,6 +11,7 @@ import type {
 } from '@agent-foundry/contracts';
 import { DEFAULT_BROWSER_EVIDENCE_POLICY } from '@agent-foundry/contracts';
 import { PlaywrightBrowserVerifier } from './browser-verifier.js';
+import { createNetworkPolicyProxy } from './network-policy-proxy.js';
 
 const TOKEN = 'preview-token-that-must-never-leak';
 // Verification caps at 60 seconds; allow fixture servers 30 seconds to close long-poll connections.
@@ -21,6 +22,16 @@ const PLAN_ARTIFACT: ArtifactReference = {
   sha256: 'a'.repeat(64),
 };
 const servers: Server[] = [];
+const routePolicyTestVerifier = new PlaywrightBrowserVerifier({
+  createProxy: (options) =>
+    createNetworkPolicyProxy({
+      ...options,
+      privateExceptions: new Set([
+        ...(options.privateExceptions ?? []),
+        ...(options.allowedAuthorities ?? []),
+      ]),
+    }),
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -88,7 +99,7 @@ async function verify(
     evidencePolicy?: BrowserEvidencePolicy;
   } = {},
 ): Promise<BrowserVerificationReport> {
-  const { report } = await new PlaywrightBrowserVerifier().verify(
+  const { report } = await routePolicyTestVerifier.verify(
     {
       planArtifact: PLAN_ARTIFACT,
       planContent: artifact(browserPlan),
@@ -108,6 +119,178 @@ function expectRedacted(value: unknown): void {
 // Keep a suite timeout without creating a body-wide indentation-only diff.
 // prettier-ignore
 describe('PlaywrightBrowserVerifier', () => {
+  it('does not start the proxy when video temp-dir creation fails', async () => {
+    const createProxy = vi.fn(async () => {
+      throw new Error('proxy must not start');
+    });
+    const verifier = new PlaywrightBrowserVerifier({
+      createProxy,
+      createTempDir: vi.fn(async () => {
+        throw new Error('temp dir failed');
+      }),
+    });
+
+    await expect(
+      verifier.verify(
+        {
+          planArtifact: PLAN_ARTIFACT,
+          planContent: artifact(
+            plan([
+              {
+                id: 'open',
+                title: 'Open preview',
+                action: { kind: 'goto', path: '/' },
+                assertions: [],
+              },
+            ]),
+          ),
+          session: session('http://127.0.0.1:4100'),
+          allowedOrigins: [],
+          evidencePolicy: { ...DEFAULT_BROWSER_EVIDENCE_POLICY, captureVideo: true },
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow('temp dir failed');
+    expect(createProxy).not.toHaveBeenCalled();
+  });
+
+  it('bounds browser network evidence during a noisy verification', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>Bounded evidence</h1>');
+    });
+    const verifier = new PlaywrightBrowserVerifier({
+      createProxy: async (options) => {
+        for (let index = 0; index < 1_005; index += 1) {
+          options.onEvent({
+            timestamp: '2026-07-22T12:00:00.000Z',
+            purpose: 'browser',
+            protocol: 'dns',
+            decision: 'deny',
+            hostname: 'blocked.example',
+            port: 53,
+            addresses: [],
+            reason: 'not allowlisted',
+          });
+        }
+        return createNetworkPolicyProxy(options);
+      },
+    });
+
+    const result = await verifier.verify(
+      {
+        planArtifact: PLAN_ARTIFACT,
+        planContent: artifact(
+          plan([
+            {
+              id: 'bounded',
+              title: 'Bounded evidence',
+              action: { kind: 'goto', path: '/' },
+              assertions: [
+                {
+                  kind: 'visible',
+                  locator: { by: 'role', role: 'heading', name: 'Bounded evidence' },
+                },
+              ],
+            },
+          ]),
+        ),
+        session: session(origin),
+        allowedOrigins: [],
+        evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
+      },
+      new AbortController().signal,
+    );
+
+    expect(result.report.approved).toBe(true);
+    expect(result.evidence.networkEvents).toHaveLength(1_000);
+  });
+
+  it('routes the exact loopback preview through the policy proxy', async () => {
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>Policy preview</h1>');
+    });
+
+    const result = await new PlaywrightBrowserVerifier().verify(
+      {
+        planArtifact: PLAN_ARTIFACT,
+        planContent: artifact(
+          plan([
+            {
+              id: 'preview-policy',
+              title: 'Preview policy',
+              action: { kind: 'goto', path: '/' },
+              assertions: [
+                {
+                  kind: 'visible',
+                  locator: { by: 'role', role: 'heading', name: 'Policy preview' },
+                },
+              ],
+            },
+          ]),
+        ),
+        session: session(origin),
+        allowedOrigins: [],
+        evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
+      },
+      new AbortController().signal,
+    );
+
+    expect(result.report.approved).toBe(true);
+    expect(result.evidence.networkEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          purpose: 'browser',
+          decision: 'allow',
+          hostname: '127.0.0.1',
+        }),
+      ]),
+    );
+  });
+
+  it('blocks an allowed-origin hostname that resolves to a different private service', async () => {
+    let privateRequests = 0;
+    const privateOrigin = await serve((_request, response) => {
+      privateRequests += 1;
+      response.end('private');
+    });
+    const previewOrigin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<h1>Preview only</h1><img src="${privateOrigin}/secret">`);
+    });
+
+    const result = await new PlaywrightBrowserVerifier().verify(
+      {
+        planArtifact: PLAN_ARTIFACT,
+        planContent: artifact(
+          plan([
+            {
+              id: 'private-origin',
+              title: 'Private origin',
+              action: { kind: 'goto', path: '/' },
+              assertions: [],
+            },
+          ]),
+        ),
+        session: session(previewOrigin),
+        allowedOrigins: [privateOrigin],
+        evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
+      },
+      new AbortController().signal,
+    );
+
+    expect(privateRequests).toBe(0);
+    expect(result.evidence.networkEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          purpose: 'browser',
+          decision: 'deny',
+          hostname: '127.0.0.1',
+        }),
+      ]),
+    );
+  });
   it('executes a declarative create/update/delete plan in real Chromium', async () => {
     const requests: string[] = [];
     const origin = await serve((request, response) => {
@@ -1861,6 +2044,27 @@ describe('PlaywrightBrowserVerifier', () => {
 }, BROWSER_TEST_TIMEOUT_MS);
 
 describe('captureSelectionScreenshot', () => {
+  it('uses a schema-valid none policy for the private preview exception', async () => {
+    const createProxy = vi.fn(async () => {
+      throw new Error('stop after policy capture');
+    });
+    const verifier = new PlaywrightBrowserVerifier({ createProxy });
+
+    await expect(
+      verifier.captureSelectionScreenshot({
+        url: 'http://127.0.0.1:4100/preview/session/',
+        clip: { x: 0, y: 0, width: 10, height: 10 },
+        viewport: { width: 100, height: 100 },
+      }),
+    ).resolves.toBeNull();
+
+    expect(createProxy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        policy: { mode: 'none', purpose: 'browser', allowedHosts: [] },
+      }),
+    );
+  });
+
   it('returns a PNG buffer clipped to the given region', async () => {
     const origin = await serve((_request, response) => {
       response.setHeader('content-type', 'text/html');

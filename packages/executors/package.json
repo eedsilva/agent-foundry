@@ -10,7 +10,7 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --clean --sourcemap",
+    "build": "tsup src/index.ts src/docker-network-policy-sidecar.ts --format esm --clean --sourcemap --splitting false",
     "typecheck": "tsc --noEmit"
   },
   "main": "./dist/index.js",

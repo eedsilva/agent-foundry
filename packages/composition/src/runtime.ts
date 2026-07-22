@@ -9,6 +9,9 @@ import {
   PlaywrightBrowserVerifier,
   NodePreviewRunner,
   LocalExecutionPlane,
+  DockerSandboxRunner,
+  DockerPreviewInstaller,
+  type PreviewInstaller,
 } from '@agent-foundry/executors';
 import { VersionedHarnessRepository } from '@agent-foundry/harness';
 import { ScoreBasedModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
@@ -129,11 +132,22 @@ export interface Runtime {
   projectVersionService: ProjectVersionService;
 }
 
+export interface RuntimeOverrides {
+  /**
+   * Replaces the production preview dependency installer for controlled tests.
+   * `null` deliberately selects NodePreviewRunner's local installer; real-mode
+   * production callers omit this override and always receive the Docker-backed
+   * deny-by-default installer.
+   */
+  previewInstaller?: PreviewInstaller | null;
+}
+
 export async function createRuntime(
   env: NodeJS.ProcessEnv = process.env,
   config: RuntimeConfig = loadRuntimeConfig(env),
   /** Per-job child logger for the worker loop (e.g. a pino instance); apps/worker wires this in. Omit for a silent worker (composition stays free of a pino dependency). */
   workerLogger?: JobLogger,
+  overrides: RuntimeOverrides = {},
 ): Promise<Runtime> {
   const clock = new SystemClock();
   const ids = new UlidGenerator();
@@ -202,6 +216,13 @@ export async function createRuntime(
     maxOutputBytes: config.maxCliOutputBytes,
     healthPath: config.previewHealthPath,
     logRepository: previewLogs,
+    ...(config.executorMode === 'real' && overrides.previewInstaller !== null
+      ? {
+          installer:
+            overrides.previewInstaller ??
+            new DockerPreviewInstaller({ runner: new DockerSandboxRunner() }),
+        }
+      : {}),
   });
   const previewService = new PreviewService(
     previewRunner,

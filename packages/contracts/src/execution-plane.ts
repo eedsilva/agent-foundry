@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import { AgentExecutionRequestSchema, AgentExecutionResultSchema } from './agent.js';
+import { ExecutionNetworkPolicySchema } from './network-policy.js';
+
+export * from './network-policy.js';
 
 export const EXECUTION_PROTOCOL_VERSION = '1' as const;
 
@@ -17,14 +20,6 @@ export const ExecutionLimitsSchema = z
   })
   .strict();
 export type ExecutionLimits = z.infer<typeof ExecutionLimitsSchema>;
-
-export const ExecutionNetworkPolicySchema = z
-  .object({
-    mode: z.enum(['none', 'allowlist']),
-    allowedHosts: z.array(z.string()).default([]),
-  })
-  .strict();
-export type ExecutionNetworkPolicy = z.infer<typeof ExecutionNetworkPolicySchema>;
 
 export const ExecutionSecretRefSchema = z
   .object({

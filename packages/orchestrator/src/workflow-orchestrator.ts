@@ -2196,7 +2196,7 @@ export class WorkflowOrchestrator {
         // v07-sandbox-runner/v07-network-policy/v07-secret-broker enforce them.
         tools: [],
         limits: { timeoutMs: this.options.agentTimeoutMs },
-        networkPolicy: { mode: 'none', allowedHosts: [] },
+        networkPolicy: { mode: 'none', allowedHosts: [], purpose: 'execution' },
         secrets: [],
       },
       signal,

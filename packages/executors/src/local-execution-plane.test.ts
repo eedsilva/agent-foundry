@@ -47,7 +47,7 @@ function request(): ExecutionRequest {
     workspace: { projectId: 'project-1', ref: 'deadbeef' },
     tools: [],
     limits: { timeoutMs: 60_000 },
-    networkPolicy: { mode: 'none', allowedHosts: [] },
+    networkPolicy: { mode: 'none', allowedHosts: [], purpose: 'execution' },
     secrets: [],
   };
 }

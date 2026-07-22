@@ -580,6 +580,16 @@ npm run doctor
 git diff --check
 ```
 
+## Deny-by-default network policy — 2026-07-22
+
+Issue #48 is covered at four boundaries: fail-closed hostname/purpose contracts; pure public-address,
+mixed-answer, and rebinding tests; real HTTP/CONNECT/DNS proxy tests; and Chromium/Docker integration.
+The real-Docker suite runs on GitHub's Ubuntu runner and is locally skip-gated when no daemon is
+available. It proves the sandbox is never attached to `bridge`, raw public TCP is denied, allowed DNS
+and HTTP pass, forbidden DNS and metadata fail, and decisions remain observable. The complete
+acceptance-to-test matrix and rollback notes are in
+`docs/evidence/issue-48-network-policy.md`.
+
 ## Knowledge builder golden flow — 2026-07-21
 
 `apps/api/e2e/golden-flow.spec.ts` now proves the user-visible issue #43 journey through the existing
