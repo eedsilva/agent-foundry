@@ -528,7 +528,7 @@ describe('OperationService.decide', () => {
     };
 
     await expect(service.decide('project-1', plan.id, 'approve')).rejects.toThrow(
-      'no longer editable',
+      'Version conflict',
     );
     expect((await conversations.getOperation('project-1', plan.id))?.approval?.status).toBe(
       'pending',
