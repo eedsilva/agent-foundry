@@ -94,7 +94,7 @@ export class ConversationOperationRunner {
     span: Span,
   ): Promise<void> {
     const initialRun = await this.requireRun(runId);
-    const operation = await this.requireOperation(projectId, operationId);
+    let operation = await this.requireOperation(projectId, operationId);
     if (initialRun.projectId !== projectId) {
       throw new ValidationError(`Workflow run ${runId} does not belong to project ${projectId}`);
     }
@@ -170,13 +170,15 @@ export class ConversationOperationRunner {
         stack: 'conversation',
         tags: step.harnessTags,
       });
+      const contextSources = [
+        ...compiledContext.sources,
+        ...harness.files.map((file) => ({ type: 'harness-fragment' as const, id: file.path })),
+      ];
+      operation = await this.conversations.updateOperation({ ...operation, contextSources });
       if (changeRequest) {
         await this.conversations.updateChangeRequest({
           ...changeRequest,
-          contextSources: [
-            ...compiledContext.sources,
-            ...harness.files.map((file) => ({ type: 'harness-fragment' as const, id: file.path })),
-          ],
+          contextSources,
         });
       }
       const inputArtifacts = knowledgeInputs.map(({ artifact }) => artifact);

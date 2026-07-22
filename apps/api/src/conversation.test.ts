@@ -570,9 +570,10 @@ describe('conversation API', () => {
     const planResponse = await post(baseUrl, opsPath, { kind: 'plan' });
     expect(planResponse.status).toBe(201);
     const { operation: plan } = (await planResponse.json()) as {
-      operation: { id: string; runId: string };
+      operation: { id: string; runId: string; contextSources: unknown[] };
     };
     expect(plan.runId).toBeDefined();
+    expect(plan.contextSources).toEqual([]);
 
     const ungatedBuild = await post(baseUrl, opsPath, { kind: 'build' });
     expect(ungatedBuild.status).toBe(400);
@@ -587,9 +588,10 @@ describe('conversation API', () => {
     const directBuild = await post(baseUrl, opsPath, { kind: 'build', directExecution: true });
     expect(directBuild.status).toBe(201);
     const { operation: build } = (await directBuild.json()) as {
-      operation: { directExecution: boolean };
+      operation: { directExecution: boolean; contextSources: unknown[] };
     };
     expect(build.directExecution).toBe(true);
+    expect(build.contextSources).toEqual([]);
   });
 
   it('still routes non plan/build kinds through the original create-operation path', async () => {

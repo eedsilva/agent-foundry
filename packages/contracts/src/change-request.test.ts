@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ChangeRequestSchema, ContextSourceSchema } from './change-request.js';
+import { ChangeRequestSchema } from './change-request.js';
+import { ContextSourceSchema } from './conversation.js';
 
 const BASE = {
   id: 'cr-1',

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AttachmentSchema,
   ConversationSchema,
+  ContextSourceSchema,
   MessageContentBlockSchema,
   MessageRoleSchema,
   MessageSchema,
@@ -121,6 +122,7 @@ describe('conversation aggregate contracts (#36)', () => {
       changeRequestId: 'change-1',
       projectVersionId: 'version-1',
       artifactReferences: [{ name: 'result', revision: 1, sha256: 'c'.repeat(64) }],
+      contextSources: [],
       directExecution: true,
       createdAt,
     };
@@ -133,6 +135,13 @@ describe('conversation aggregate contracts (#36)', () => {
     expect(
       OperationSchema.parse({ ...operation, artifactReferences: undefined }).artifactReferences,
     ).toEqual([]);
+    expect(
+      OperationSchema.parse({ ...operation, contextSources: undefined }).contextSources,
+    ).toEqual([]);
+    expect(ContextSourceSchema.parse({ type: 'harness-fragment', id: 'CLAUDE.md' })).toEqual({
+      type: 'harness-fragment',
+      id: 'CLAUDE.md',
+    });
   });
 
   it('records plan approval and build gating on an operation', () => {
@@ -144,6 +153,7 @@ describe('conversation aggregate contracts (#36)', () => {
       kind: 'plan' as const,
       idempotencyKey: 'a'.repeat(64),
       artifactReferences: [],
+      contextSources: [],
       approval: { status: 'pending' as const },
       createdAt,
     };
@@ -167,6 +177,7 @@ describe('conversation aggregate contracts (#36)', () => {
       kind: 'build' as const,
       idempotencyKey: 'b'.repeat(64),
       artifactReferences: [],
+      contextSources: [],
       planOperationId: plan.id,
       createdAt,
     };
