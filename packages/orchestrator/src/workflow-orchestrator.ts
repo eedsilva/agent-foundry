@@ -41,6 +41,7 @@ import type {
   Clock,
   EventStore,
   ExecutionPlane,
+  ExecutorRegistry,
   ExplicitModelRoute,
   HarnessRepository,
   HarnessSelection,
@@ -135,6 +136,7 @@ export class WorkflowOrchestrator {
     private readonly versions?: ProjectVersionService,
     private readonly browserVerification?: BrowserVerificationCoordinator,
     private readonly qualityObservations?: QualityObservationService,
+    private readonly executors?: Pick<ExecutorRegistry, 'health'>,
   ) {}
 
   async runProject(projectId: string, workflowId?: string, requestedRunId?: string): Promise<void> {
@@ -1758,10 +1760,14 @@ export class WorkflowOrchestrator {
       override,
       overrideCreatedAt,
     );
-    // ponytail: the router accepts RouteConstraints (provider rate limits + budget) but we do
-    // not pass them yet — health() spawns a --version probe per provider, so a route-time
-    // ProviderHealth snapshot needs a non-probing source first (v0.9 follow-up, issue #62).
-    const route = await this.router.route(profile, explicit);
+    const providerHealth = this.executors
+      ? new Map((await this.executors.health()).map((health) => [health.provider, health]))
+      : undefined;
+    const route = await this.router.route(
+      profile,
+      explicit,
+      providerHealth ? { providerHealth } : undefined,
+    );
     await this.emit(
       project.id,
       'agent.routed',

@@ -189,7 +189,10 @@ export class ConversationOperationRunner {
         artifacts: inputArtifacts,
         policy: undefined,
       });
-      const route = await this.router.route(profile);
+      const providerHealth = new Map(
+        (await this.executors.health()).map((health) => [health.provider, health]),
+      );
+      const route = await this.router.route(profile, undefined, { providerHealth });
       checkpoint = step.mutatesWorkspace
         ? await this.workspaces.checkpoint(projectId, `${step.id}-${runId}`)
         : null;

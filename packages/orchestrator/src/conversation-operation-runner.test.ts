@@ -23,6 +23,7 @@ import type {
 import type {
   AgentExecutionRequest,
   BrowserVerificationReport,
+  ExecutorHealth,
   ExecutorStreamEvent,
   KnowledgeFile,
   ProjectVersion,
@@ -198,6 +199,7 @@ function setup(
     browserVerification: Pick<BrowserVerificationCoordinator, 'verify'>;
   },
   executorBehaviors: Record<string, StepBehavior> = {},
+  routing: { router?: ModelRouter; health?: ExecutorHealth[] } = {},
 ) {
   const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
   const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
@@ -254,7 +256,7 @@ function setup(
   const executor = new ControllableExecutor(executorBehaviors, workspaces);
   const executors: ExecutorRegistry = {
     get: () => new AgentExecutorFromExecutionPlane(executor),
-    health: () => Promise.resolve([]),
+    health: () => Promise.resolve(routing.health ?? []),
   };
   const runner = new ConversationOperationRunner(
     runs,
@@ -264,7 +266,7 @@ function setup(
     events,
     stepEvents,
     harness,
-    router,
+    routing.router ?? router,
     metrics,
     executors,
     workspaces,
@@ -428,6 +430,32 @@ async function seed(
 }
 
 describe('ConversationOperationRunner', () => {
+  it('passes live provider health to conversation routing', async () => {
+    const health: ExecutorHealth = {
+      provider: 'codex',
+      available: true,
+      message: 'ok',
+      rateLimit: { remaining: 1 },
+    };
+    const route = vi.fn<ModelRouter['route']>(router.route);
+    const { conversations, runs, runner } = setup(
+      harnessRepo,
+      undefined,
+      {},
+      {
+        router: { route, catalog: router.catalog },
+        health: [health],
+      },
+    );
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+
+    await runner.run('project-1', runId, operationId);
+
+    expect(route).toHaveBeenCalledWith(expect.anything(), undefined, {
+      providerHealth: new Map([['codex', health]]),
+    });
+  });
+
   it('rejects a workflow run owned by another project before creating execution state', async () => {
     const { runs, stepRuns, artifacts, workspaces, conversations, runner } = setup();
     const { runId, operationId } = await seedVisualEdit(conversations, runs);

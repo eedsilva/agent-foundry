@@ -274,6 +274,7 @@ export async function createRuntime(
     projectVersionService,
     browserVerification,
     qualityObservationService,
+    executors,
   );
   const projectService = new ProjectService(
     projects,

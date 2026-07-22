@@ -33,8 +33,9 @@ Mandatory tests: partial-usage fixtures for Codex, Claude, and AGY.
 
 ## Non-goals
 
-- No cumulative per-run budget ledger persisted across steps (deferred; this
-  track only needs the router to _apply_ a budget it is handed).
+- No cumulative run ledger is added; route-time provider health supplies
+  available subscription units and explicit callers may still pass cost/quota
+  budgets.
 - No new provider integrations; only richer parsing of existing CLI output.
 - No pricing-catalog changes beyond what already feeds cost estimation.
 
@@ -106,6 +107,10 @@ undefined`, defensively parsed from provider output (reusing the existing
   when its estimated cost (or quota) would exceed the remaining budget; reason
   `over-budget`.
 
+The subscription quota estimate is `quotaUnitsTotal / quotaUnitsKnownCount`
+only for known samples and compares against the smaller of explicit
+`maxQuotaUnits` and provider `rateLimit.remaining`.
+
 Both are optional; absent inputs preserve current behavior exactly.
 
 ### 4. Persistence (`packages/persistence`)
@@ -141,6 +146,7 @@ provider CLI stdout
   → extractRateLimit → cached on executor → health() → ExecutorHealth.rateLimit
 step attempt.usage → metrics-repository → ModelMetric (totals + known counts)
 ExecutorHealth.rateLimit + budget → score-router → RouteDecision.rejected[]
+ExecutorRegistry.health() → RouteConstraints.providerHealth → WorkflowOrchestrator / ConversationOperationRunner → score-router
 step attempt.usage → apps/web route panel (observed vs estimated)
 ```
 
@@ -152,14 +158,14 @@ step attempt.usage → apps/web route panel (observed vs estimated)
 
 ## Migration & rollback
 
-- Purely additive schema changes with defaults → no data migration; old
-  persisted `ModelMetric`/usage records validate under Zod defaults on read.
-- Rollback = revert the PR; no persisted shape becomes unreadable.
+- Migration adds no schema or persisted shape; rollback is a straight code
+  revert.
 
 ## Security
 
-- Only defensive parsing of already-trusted CLI output; no new external inputs,
-  secrets, or network calls. Numeric fields are bounded by existing guards.
+- Security uses existing bounded `--version` probes and sanitized
+  `ExecutorHealth`; no provider stdout, credential, or new network input is
+  persisted.
 
 ## Definition of Done
 

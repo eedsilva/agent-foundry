@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   RouteDecisionSchema,
   WorkflowDefinitionSchema,
+  type ExecutorHealth,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
   SystemClock,
+  type ExecutorRegistry,
   type HarnessRepository,
   type MetricsRepository,
   type ModelRouter,
@@ -64,7 +66,7 @@ const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   ],
 });
 
-function makeOrchestrator(versions?: ProjectVersionService) {
+function makeOrchestrator(versions?: ProjectVersionService, executorHealth?: ExecutorHealth[]) {
   const power = { on: true };
   const clock = new SystemClock();
   const ids = new SequentialIds();
@@ -88,31 +90,33 @@ function makeOrchestrator(versions?: ProjectVersionService) {
     select: () => Promise.resolve({ version: '1', files: [], combined: '' }),
     version: () => Promise.resolve('1'),
   };
-  const router: ModelRouter = {
-    route: (profile) =>
-      Promise.resolve(
-        RouteDecisionSchema.parse({
-          routeId: 'route-1',
-          createdAt: new Date().toISOString(),
-          profile,
-          selected: {
-            model: MODELS[0],
-            score: {
-              capability: 0.5,
-              context: 0.5,
-              speed: 0.5,
-              cost: 0.5,
-              reliability: 0.5,
-              historical: 0.5,
-              tagAffinity: 0,
-              estimatedCostUsd: null,
-              total: 3,
-            },
+  const route = vi.fn<ModelRouter['route']>((profile) =>
+    Promise.resolve(
+      RouteDecisionSchema.parse({
+        routeId: 'route-1',
+        createdAt: new Date().toISOString(),
+        profile,
+        selected: {
+          model: MODELS[0],
+          score: {
+            capability: 0.5,
+            context: 0.5,
+            speed: 0.5,
+            cost: 0.5,
+            reliability: 0.5,
+            historical: 0.5,
+            tagAffinity: 0,
+            estimatedCostUsd: null,
+            total: 3,
           },
-          fallbacks: [],
-          rejected: [],
-        }),
-      ),
+        },
+        fallbacks: [],
+        rejected: [],
+      }),
+    ),
+  );
+  const router: ModelRouter = {
+    route,
     catalog: () => Promise.resolve(MODELS),
   };
   const metrics: MetricsRepository = {
@@ -123,6 +127,9 @@ function makeOrchestrator(versions?: ProjectVersionService) {
   const verifier: VerificationService = {
     verify: () => Promise.reject(new Error('verify is not used by this fixture')),
   };
+  const executors: Pick<ExecutorRegistry, 'health'> | undefined = executorHealth
+    ? { health: () => Promise.resolve(executorHealth) }
+    : undefined;
 
   const orchestrator = new WorkflowOrchestrator(
     projects,
@@ -147,9 +154,12 @@ function makeOrchestrator(versions?: ProjectVersionService) {
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
     undefined,
     versions,
+    undefined,
+    undefined,
+    executors,
   );
 
-  return { projects, runs, stepRuns, artifacts, events, workspaces, clock, orchestrator };
+  return { projects, runs, stepRuns, artifacts, events, workspaces, clock, orchestrator, route };
 }
 
 async function seedRun(stores: ReturnType<typeof makeOrchestrator>): Promise<void> {
@@ -177,6 +187,23 @@ async function seedRun(stores: ReturnType<typeof makeOrchestrator>): Promise<voi
 }
 
 describe('ProjectVersion recording hook (#40)', () => {
+  it('passes live provider health to every workflow route decision', async () => {
+    const health: ExecutorHealth = {
+      provider: 'codex',
+      available: true,
+      message: 'ok',
+      rateLimit: { remaining: 1 },
+    };
+    const stores = makeOrchestrator(undefined, [health]);
+    await seedRun(stores);
+
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect(stores.route).toHaveBeenCalledWith(expect.anything(), undefined, {
+      providerHealth: new Map([['codex', health]]),
+    });
+  });
+
   it('records exactly one ProjectVersion after the mutating step commits, and none for the non-mutating step', async () => {
     const recordFromStep = vi.fn(
       async (_input: Parameters<ProjectVersionService['recordFromStep']>[0]) =>
