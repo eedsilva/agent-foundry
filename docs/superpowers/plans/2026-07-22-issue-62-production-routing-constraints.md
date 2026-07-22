@@ -17,7 +17,7 @@
 - Use `ModelMetric.quotaUnitsTotal / quotaUnitsKnownCount` only when `quotaUnitsKnownCount > 0`; do not add catalog fields, a cumulative run ledger, a dependency, or an abstraction layer.
 - Apply provider health to both production callers of `ModelRouter.route`: `WorkflowOrchestrator` and `ConversationOperationRunner`.
 - Preserve model-pin validation, fallback ordering, error propagation, async ordering, persisted route decisions, metrics, events, and UI behavior.
-- Run `graphify update .` after code changes.
+- Run `npm run graphify:refresh` after code changes; keep generated `graphify-out/` state local and uncommitted.
 - Completion requires `npm run check`, `npm run e2e --workspace @agent-foundry/api`, `npm run doctor`, `git diff --check`, and live GitHub CI verification.
 
 ---
@@ -349,7 +349,7 @@ Edit `docs/superpowers/specs/2026-07-18-usage-telemetry-normalization-design.md`
 ```bash
 npx vitest run packages/model-router/src/score-router.test.ts packages/orchestrator/src/workflow-orchestrator.test.ts packages/orchestrator/src/conversation-operation-runner.test.ts packages/composition/src/runtime.integration.test.ts
 npx prettier --check packages/model-router/src/score-router.ts packages/model-router/src/score-router.test.ts packages/orchestrator/src/workflow-orchestrator.ts packages/orchestrator/src/workflow-orchestrator.test.ts packages/orchestrator/src/conversation-operation-runner.ts packages/orchestrator/src/conversation-operation-runner.test.ts packages/composition/src/runtime.ts docs/superpowers/specs/2026-07-18-usage-telemetry-normalization-design.md
-graphify update .
+npm run graphify:refresh
 ```
 
 Expected: focused tests PASS, formatting PASS, and graph update completes.
@@ -357,7 +357,7 @@ Expected: focused tests PASS, formatting PASS, and graph update completes.
 - [ ] **Step 10: Commit Task 2**
 
 ```bash
-git add packages/orchestrator/src/workflow-orchestrator.ts packages/orchestrator/src/workflow-orchestrator.test.ts packages/orchestrator/src/conversation-operation-runner.ts packages/orchestrator/src/conversation-operation-runner.test.ts packages/composition/src/runtime.ts docs/superpowers/specs/2026-07-18-usage-telemetry-normalization-design.md graphify-out
+git add packages/orchestrator/src/workflow-orchestrator.ts packages/orchestrator/src/workflow-orchestrator.test.ts packages/orchestrator/src/conversation-operation-runner.ts packages/orchestrator/src/conversation-operation-runner.test.ts packages/composition/src/runtime.ts docs/superpowers/specs/2026-07-18-usage-telemetry-normalization-design.md
 git commit -m "fix(orchestrator): apply provider constraints in production routes (#62)"
 ```
 

@@ -137,11 +137,8 @@ export class ScoreBasedModelRouter implements ModelRouter {
     if (!constraints) return null;
     const health = constraints.providerHealth?.get(model.provider);
     const rl = health?.rateLimit;
-    if (
-      rl?.resetAt &&
-      (rl.remaining === 0 || rl.remaining === undefined) &&
-      new Date(rl.resetAt).getTime() > Date.now()
-    ) {
+    const rateLimitActive = !rl?.resetAt || new Date(rl.resetAt).getTime() > Date.now();
+    if (rl?.resetAt && (rl.remaining === 0 || rl.remaining === undefined) && rateLimitActive) {
       return `rate-limited until ${rl.resetAt}`;
     }
     const budget = constraints.budget;
@@ -154,9 +151,10 @@ export class ScoreBasedModelRouter implements ModelRouter {
       }
     }
     if (model.billingMode === 'subscription') {
-      const availableQuotaUnits = [budget?.maxQuotaUnits, rl?.remaining].filter(
-        (value): value is number => value !== undefined,
-      );
+      const availableQuotaUnits = [
+        budget?.maxQuotaUnits,
+        rateLimitActive ? rl?.remaining : undefined,
+      ].filter((value): value is number => value !== undefined);
       const maxQuotaUnits =
         availableQuotaUnits.length > 0 ? Math.min(...availableQuotaUnits) : undefined;
       if (maxQuotaUnits !== undefined) {

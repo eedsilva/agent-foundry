@@ -567,6 +567,50 @@ describe('ScoreBasedModelRouter', () => {
     });
   });
 
+  it('ignores provider-reported remaining units after the rate-limit reset', async () => {
+    const metric: ModelMetric = {
+      modelId: 'quota-heavy',
+      taskKind: 'implementation',
+      role: 'developer',
+      taxonomyVersion: '2',
+      category: 'implementation/frontend',
+      attempts: 1,
+      successes: 1,
+      totalDurationMs: 1_000,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalEstimatedCostUsd: 0,
+      quotaUnitsTotal: 2,
+      quotaUnitsKnownCount: 1,
+      consecutiveFailures: 0,
+      qualityEvaluations: 0,
+      qualityApprovals: 0,
+      updatedAt: new Date().toISOString(),
+    };
+    const router = new ScoreBasedModelRouter(
+      [model('quota-heavy', {}), model('metered-fallback', { billingMode: 'metered' })],
+      new MemoryMetrics(new Map([['quota-heavy:implementation:developer', metric]])),
+    );
+    const providerHealth = new Map([
+      [
+        'claude',
+        {
+          provider: 'claude' as const,
+          available: true,
+          message: 'ok',
+          rateLimit: { remaining: 1, resetAt: '2000-01-01T00:00:00.000Z' },
+        },
+      ],
+    ]);
+
+    const decision = await router.route(profile, undefined, { providerHealth });
+
+    expect(decision.rejected).not.toContainEqual({
+      modelId: 'quota-heavy',
+      reason: 'over-budget: est 2 quota units > 1',
+    });
+  });
+
   it('does not treat attempts without reported cost as zero-cost history', async () => {
     const now = new Date().toISOString();
     const metrics = new MemoryMetrics(
