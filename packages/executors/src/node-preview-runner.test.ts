@@ -12,6 +12,7 @@ import {
 } from '@agent-foundry/contracts';
 import type { PreviewLogRepository } from '@agent-foundry/domain';
 import { NodePreviewRunner } from './node-preview-runner.js';
+import { reservePreviewPort } from './preview-port.js';
 
 const FIXTURE_DIR = resolve(import.meta.dirname, 'fixtures');
 const FIXTURE_SCRIPT = resolve(FIXTURE_DIR, 'preview-dev-server.mjs');
@@ -276,6 +277,38 @@ describe('NodePreviewRunner', () => {
     expect(await canConnect(session.process!.port!)).toBe(true);
     await expect(runner.health(session)).resolves.toMatchObject({ state: 'unhealthy' });
     await runner.stop(session);
+  }, 10_000);
+
+  it('uses a port detected after startup when checking health', async () => {
+    const reservedPort = await reservePreviewPort();
+    let fixedPort = reservedPort;
+    for (let attempt = 0; attempt < 10 && fixedPort === reservedPort; attempt += 1) {
+      fixedPort = await reservePreviewPort();
+    }
+    expect(fixedPort).not.toBe(reservedPort);
+    const runner = new NodePreviewRunner({
+      startupTimeoutMs: 25,
+      reservePort: async () => reservedPort,
+    });
+    let session = await newSession('sess-late-port');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: {
+          ok: true,
+          command: 'node',
+          args: [FIXTURE_SCRIPT, `--fixed-port=${fixedPort}`, '--ready-delay-ms=150'],
+        },
+      },
+    };
+    session = await startTracked(runner, session);
+    expect(session.process?.port).toBe(reservedPort);
+
+    await vi.waitFor(async () => {
+      await expect(runner.health(session)).resolves.toMatchObject({ state: 'healthy' });
+    });
   }, 10_000);
 
   it('persists stdout and stderr as distinct structured log streams', async () => {
