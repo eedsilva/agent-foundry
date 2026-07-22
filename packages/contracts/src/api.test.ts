@@ -57,6 +57,7 @@ const operation = {
   kind: 'build' as const,
   idempotencyKey: 'b'.repeat(64),
   artifactReferences: [],
+  contextSources: [],
   directExecution: true,
   createdAt: conversationCreatedAt,
 };

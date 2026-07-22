@@ -54,6 +54,7 @@ function operation(overrides: Partial<Operation> = {}): Operation {
     kind: 'build',
     idempotencyKey: 'b'.repeat(64),
     artifactReferences: [],
+    contextSources: [],
     directExecution: true,
     createdAt,
     ...overrides,

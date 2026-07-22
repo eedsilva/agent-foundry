@@ -215,6 +215,7 @@ describe('FileConversationRepository', () => {
       kind: 'plan' as const,
       idempotencyKey: 'a'.repeat(64),
       artifactReferences: [],
+      contextSources: [],
       createdAt,
     };
     await repo.createOperation(operation);
@@ -235,6 +236,7 @@ describe('FileConversationRepository', () => {
       kind: 'plan' as const,
       idempotencyKey: 'a'.repeat(64),
       artifactReferences: [],
+      contextSources: [],
       approval: { status: 'pending' as const },
       createdAt,
     };
