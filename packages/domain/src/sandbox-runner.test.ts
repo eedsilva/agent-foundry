@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { SandboxSpec } from '@agent-foundry/contracts';
 import { runSandboxLifecycle, type SandboxRunner } from './sandbox-runner.js';
 
@@ -19,6 +19,7 @@ class FakeSandboxRunner implements SandboxRunner {
   constructor(
     private readonly failAt?: 'create' | 'exec' | 'snapshot',
     private readonly mutateSnapshotAllowlist = false,
+    private readonly destroyFails = false,
   ) {}
   async create(_spec: SandboxSpec) {
     this.createCalls += 1;
@@ -51,6 +52,7 @@ class FakeSandboxRunner implements SandboxRunner {
     if (this.destroyed.has(sandbox.id)) return;
     this.destroyed.add(sandbox.id);
     this.destroyCalls += 1;
+    if (this.destroyFails) throw new Error('destroy failed');
   }
 }
 
@@ -97,6 +99,32 @@ describe('runSandboxLifecycle', () => {
       runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, ['src']),
     ).rejects.toThrow(message);
     expect(runner.destroyed).toEqual(new Set(['sandbox-1']));
+  });
+
+  it('keeps a successful lifecycle result when destroy fails', async () => {
+    const runner = new FakeSandboxRunner(undefined, false, true);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await expect(
+        runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, ['src']),
+      ).resolves.toMatchObject({ result: { exitCode: 0 } });
+      expect(consoleError).toHaveBeenCalledWith('Failed to destroy sandbox', expect.any(Error));
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('keeps the exec error when both exec and destroy fail', async () => {
+    const runner = new FakeSandboxRunner('exec', false, true);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await expect(
+        runSandboxLifecycle(runner, spec, { command: 'agent', args: [], timeoutMs: 1_000 }, ['src']),
+      ).rejects.toThrow('exec failed');
+      expect(consoleError).toHaveBeenCalledWith('Failed to destroy sandbox', expect.any(Error));
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it('does not attempt destroy when create fails before yielding a handle', async () => {

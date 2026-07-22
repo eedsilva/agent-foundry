@@ -58,7 +58,11 @@ export async function runSandboxLifecycle(
       },
     };
   } finally {
-    await runner.destroy(sandbox);
+    try {
+      await runner.destroy(sandbox);
+    } catch (error) {
+      console.error('Failed to destroy sandbox', error);
+    }
   }
 }
 
