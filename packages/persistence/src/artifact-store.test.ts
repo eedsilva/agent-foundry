@@ -90,6 +90,36 @@ describe('FileArtifactStore feedback metadata', () => {
     expect(left).toEqual(right);
     await expect(store.listMetadata('project-1', input.name)).resolves.toHaveLength(1);
   });
+
+  it('returns an idempotent revision before rejecting a stale expected revision', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-artifact-idempotent-retry-'));
+    dirs.push(dataDir);
+    const store = makeStore(dataDir);
+    const base = {
+      projectId: 'project-1',
+      name: 'operation-plan-1',
+      createdBy: 'planner:mock/mock',
+    };
+    await store.put({ ...base, content: { schemaVersion: '1', summary: 'original' } });
+    const retry = {
+      ...base,
+      content: { schemaVersion: '1', summary: 'edited' },
+      expectedRevision: 1,
+      idempotencyKey: 'b'.repeat(64),
+    };
+
+    const saved = await store.put(retry);
+
+    await expect(store.put(retry)).resolves.toEqual(saved);
+    await expect(
+      store.put({
+        ...base,
+        content: { schemaVersion: '1', summary: 'different stale edit' },
+        expectedRevision: 1,
+        idempotencyKey: 'c'.repeat(64),
+      }),
+    ).rejects.toThrow('Version conflict');
+  });
 });
 
 describe('FileArtifactStore blob storage', () => {

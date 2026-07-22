@@ -448,9 +448,54 @@ describe('OperationService.decide', () => {
         content: proposal('raced'),
       }),
     ).rejects.toThrow('no longer editable');
+    await expect(
+      service.updateProposal('project-1', plan.id, {
+        expectedRevision: 2,
+        content: proposal('raced'),
+      }),
+    ).rejects.toThrow('no longer editable');
     expect((await conversations.getOperation('project-1', plan.id))?.approval?.status).toBe(
       'approved',
     );
+    expect(artifacts.artifacts).toHaveLength(3);
+  });
+
+  it('retries an orphaned edit idempotently after its operation attachment fails', async () => {
+    const artifacts = new (await import('./testing/harness.js')).InMemoryArtifacts({ on: true });
+    const { service, conversations, runs } = setup({ artifacts });
+    const message = await seedMessage(conversations);
+    const plan = await service.start('project-1', message.id, { kind: 'plan' });
+    const run = (await runs.get(plan.runId!))!;
+    await runs.update({ ...run, status: 'completed' });
+    const original = await artifacts.put({
+      projectId: 'project-1',
+      name: `operation-${plan.id}`,
+      createdBy: 'planner:mock/mock',
+      content: proposal('original'),
+    });
+    await conversations.updateOperation({ ...plan, artifactReferences: [reference(original)] });
+
+    const updateOperation = conversations.updateOperation.bind(conversations);
+    let failAttachment = true;
+    conversations.updateOperation = async (operation, expectedProposalRevision) => {
+      if (expectedProposalRevision !== undefined && failAttachment) {
+        failAttachment = false;
+        throw new Error('temporary operation persistence failure');
+      }
+      return updateOperation(operation, expectedProposalRevision);
+    };
+    const input = { expectedRevision: 1, content: proposal('edited') };
+
+    await expect(service.updateProposal('project-1', plan.id, input)).rejects.toThrow(
+      'temporary operation persistence failure',
+    );
+    const saved = await service.updateProposal('project-1', plan.id, input);
+
+    expect(saved.metadata.revision).toBe(2);
+    expect((await conversations.getOperation('project-1', plan.id))?.artifactReferences).toEqual([
+      reference(saved),
+    ]);
+    expect(artifacts.artifacts).toHaveLength(2);
   });
 });
 

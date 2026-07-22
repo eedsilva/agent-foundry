@@ -283,6 +283,7 @@ export class OperationService {
       content: input.content,
       createdBy: 'user:proposal-editor',
       expectedRevision: input.expectedRevision,
+      idempotencyKey: this.proposalIdempotencyKey(operationId, input),
     });
     await this.conversations.updateOperation(
       {
@@ -315,6 +316,13 @@ export class OperationService {
 
   protected idempotencyKey(operationId: string, runId: string): string {
     return sha256(`${operationId}:${runId}`);
+  }
+
+  private proposalIdempotencyKey(
+    operationId: string,
+    input: UpdateOperationProposalRequest,
+  ): string {
+    return sha256(`${operationId}:${input.expectedRevision}:${JSON.stringify(input.content)}`);
   }
 }
 

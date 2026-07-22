@@ -71,10 +71,6 @@ export class FileArtifactStore implements ArtifactStore {
       const indexPath = join(root, 'index.json');
       const index = (await readJsonOrNull<ArtifactIndex>(indexPath)) ?? { artifacts: {} };
       const revisions = index.artifacts[name] ?? [];
-      const currentRevision = revisions.at(-1)?.revision ?? 0;
-      if (input.expectedRevision !== undefined && currentRevision !== input.expectedRevision) {
-        throw new VersionConflictError('artifact', name, input.expectedRevision, currentRevision);
-      }
       let existing: ArtifactMetadata | undefined;
       if (input.idempotencyKey) {
         existing = revisions.find((item) => item.idempotencyKey === input.idempotencyKey);
@@ -84,6 +80,10 @@ export class FileArtifactStore implements ArtifactStore {
       if (existing) {
         const stored = await this.getRevision(projectId, name, existing.revision);
         if (stored) return stored;
+      }
+      const currentRevision = revisions.at(-1)?.revision ?? 0;
+      if (input.expectedRevision !== undefined && currentRevision !== input.expectedRevision) {
+        throw new VersionConflictError('artifact', name, input.expectedRevision, currentRevision);
       }
       const revision = revisions.length + 1;
       const serialized = JSON.stringify(input.content);
