@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import type { WorkspaceManager } from '@agent-foundry/domain';
 import { atomicWriteJson, atomicWriteText, ensureDir, exists, safeSegment } from './fs-utils.js';
@@ -73,7 +73,12 @@ export class FileWorkspaceManager implements WorkspaceManager {
     attemptId: string;
     requestMarkdown: string;
     outputSchema: Record<string, unknown>;
-  }): Promise<{ requestPath: string; schemaPath: string }> {
+    inputFiles?: Array<{ path: string; content: Uint8Array }>;
+  }): Promise<{
+    requestPath: string;
+    schemaPath: string;
+    inputPaths: string[];
+  }> {
     const workspace = this.workspacePath(input.projectId);
     const runDir = join(
       workspace,
@@ -88,11 +93,21 @@ export class FileWorkspaceManager implements WorkspaceManager {
     await ensureDir(runDir);
     const requestPath = join(runDir, 'REQUEST.md');
     const schemaPath = join(runDir, 'output.schema.json');
+    const files = input.inputFiles ?? [];
+    const inputPaths = files.map((file) => {
+      if (isAbsolute(file.path)) throw new Error(`Unsafe run input path: ${file.path}`);
+      return join(runDir, 'inputs', ...file.path.split('/').map(safeSegment));
+    });
     await Promise.all([
       atomicWriteText(requestPath, input.requestMarkdown),
       atomicWriteJson(schemaPath, input.outputSchema),
+      ...files.map(async (file, index) => {
+        const destination = inputPaths[index]!;
+        await ensureDir(dirname(destination));
+        await writeFile(destination, file.content);
+      }),
     ]);
-    return { requestPath, schemaPath };
+    return { requestPath, schemaPath, inputPaths };
   }
 
   async ensureGit(projectId: string): Promise<void> {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type { Message } from '@agent-foundry/contracts';
+import type { KnowledgeFile, Message } from '@agent-foundry/contracts';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 
@@ -142,6 +142,182 @@ afterEach(async () => {
 });
 
 describe('conversation API', () => {
+  it('accepts an image as an ordinary reference', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime, 'Image reference');
+
+    const response = await post(baseUrl, `/projects/${projectId}/knowledge-files`, {
+      name: 'reference.png',
+      mediaType: 'image/png',
+      purpose: 'reference',
+      pinned: true,
+      contentBase64: Buffer.from('image').toString('base64'),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      knowledgeFile: { mediaType: 'image/png', purpose: 'reference' },
+    });
+  });
+
+  it('persists project-scoped knowledge uploads as immutable artifact revisions', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime, 'Knowledge API');
+    const otherProjectId = await createProject(runtime, 'Other knowledge API');
+    const input = {
+      name: 'reference.png',
+      mediaType: 'image/png',
+      purpose: 'design-reference',
+      pinned: true,
+      contentBase64: Buffer.from('first image').toString('base64'),
+    };
+
+    const createdResponse = await post(baseUrl, `/projects/${projectId}/knowledge-files`, input);
+    expect(createdResponse.status).toBe(201);
+    const created = ((await createdResponse.json()) as { knowledgeFile: KnowledgeFile })
+      .knowledgeFile;
+    expect(created).toMatchObject({ currentVersion: 1, revisions: [{ version: 1 }] });
+    expect(
+      await runtime.artifacts.getRevision(projectId, `knowledge-${created.id}`, 1),
+    ).toMatchObject({
+      metadata: {
+        storage: 'blob',
+        sha256: created.revisions[0]!.artifact.sha256,
+        sizeBytes: Buffer.byteLength('first image'),
+      },
+    });
+
+    const replacedResponse = await fetch(`${baseUrl}/projects/${projectId}/knowledge-files`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...input,
+        id: created.id,
+        expectedUpdatedAt: created.updatedAt,
+        contentBase64: Buffer.from('replacement image').toString('base64'),
+      }),
+    });
+    expect(replacedResponse.status).toBe(200);
+    const replaced = ((await replacedResponse.json()) as { knowledgeFile: KnowledgeFile })
+      .knowledgeFile;
+    expect(replaced.revisions.map((revision) => revision.version)).toEqual([1, 2]);
+    expect(replaced.currentVersion).toBe(2);
+    expect(replaced.revisions[1]!.artifact.sha256).not.toBe(replaced.revisions[0]!.artifact.sha256);
+
+    const crossProject = await fetch(`${baseUrl}/projects/${otherProjectId}/knowledge-files`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...input, id: created.id, expectedUpdatedAt: created.updatedAt }),
+    });
+    expect(crossProject.status).toBe(404);
+    await expect(runtime.knowledgeFiles.list(otherProjectId)).resolves.toEqual([]);
+
+    const patchedResponse = await fetch(
+      `${baseUrl}/projects/${projectId}/knowledge-files/${created.id}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pinned: false, expectedUpdatedAt: replaced.updatedAt }),
+      },
+    );
+    expect(patchedResponse.status).toBe(200);
+    const patched = ((await patchedResponse.json()) as { knowledgeFile: KnowledgeFile })
+      .knowledgeFile;
+    expect(patched).toMatchObject({ id: created.id, pinned: false, currentVersion: 2 });
+    const stalePatch = await fetch(
+      `${baseUrl}/projects/${projectId}/knowledge-files/${created.id}`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pinned: true, expectedUpdatedAt: replaced.updatedAt }),
+      },
+    );
+    expect(stalePatch.status).toBe(409);
+
+    const listed = await fetch(`${baseUrl}/projects/${projectId}/knowledge-files`);
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({
+      knowledgeFiles: [{ id: created.id, pinned: false, currentVersion: 2 }],
+    });
+    const detail = await fetch(`${baseUrl}/projects/${projectId}`);
+    expect(await detail.json()).toMatchObject({
+      project: { id: projectId },
+      workspacePath: runtime.workspaces.workspacePath(projectId),
+      knowledgeFiles: [{ id: created.id, pinned: false, currentVersion: 2 }],
+    });
+
+    const removed = await fetch(`${baseUrl}/projects/${projectId}/knowledge-files/${created.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedUpdatedAt: patched.updatedAt }),
+    });
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toMatchObject({ knowledgeFile: { id: created.id } });
+    await expect(runtime.knowledgeFiles.list(projectId)).resolves.toEqual([]);
+    await expect(
+      runtime.artifacts.getRevision(projectId, `knowledge-${created.id}`, 1),
+    ).resolves.not.toBeNull();
+    await expect(
+      runtime.artifacts.getRevision(projectId, `knowledge-${created.id}`, 2),
+    ).resolves.not.toBeNull();
+  });
+
+  it('rejects invalid knowledge bytes and image-purpose mismatches before persistence', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime, 'Knowledge validation');
+    const path = `/projects/${projectId}/knowledge-files`;
+    const base = {
+      name: 'reference.png',
+      mediaType: 'image/png',
+      purpose: 'bug-evidence',
+      pinned: true,
+    };
+
+    expect((await post(baseUrl, path, { ...base, contentBase64: 'not base64' })).status).toBe(400);
+    expect(
+      (
+        await post(baseUrl, path, {
+          ...base,
+          mediaType: 'text/plain',
+          contentBase64: Buffer.from('text').toString('base64'),
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await post(baseUrl, path, {
+          ...base,
+          contentBase64: Buffer.alloc(4 * 1024 * 1024 + 1).toString('base64'),
+        })
+      ).status,
+    ).toBe(400);
+    await expect(runtime.knowledgeFiles.list(projectId)).resolves.toEqual([]);
+    expect(
+      (await runtime.artifacts.listMetadata(projectId)).filter((item) =>
+        item.name.startsWith('knowledge-'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('does not persist knowledge metadata when blob upload fails', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(runtime, 'Knowledge rollback');
+    Object.defineProperty(runtime.artifacts, 'putBlob', {
+      value: () => Promise.reject(new Error('synthetic blob failure')),
+    });
+
+    const response = await post(baseUrl, `/projects/${projectId}/knowledge-files`, {
+      name: 'reference.png',
+      mediaType: 'image/png',
+      purpose: 'design-reference',
+      pinned: true,
+      contentBase64: Buffer.from('image').toString('base64'),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(runtime.knowledgeFiles.list(projectId)).resolves.toEqual([]);
+  });
+
   it('creates attachments and messages and rejects invalid input', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(runtime);

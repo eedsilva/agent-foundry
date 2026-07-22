@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
   DiscardDraftRequest,
+  KnowledgeFile,
   PreviewLogPage,
   PreviewSession,
   ProjectVersion,
@@ -22,6 +23,10 @@ import {
   setVersionProtected,
   startPreview,
   stopPreview,
+  removeKnowledgeFile,
+  replaceKnowledgeFile,
+  setKnowledgeFilePinned,
+  uploadKnowledgeFile,
 } from './api';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -30,6 +35,88 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+const knowledgeFile: KnowledgeFile = {
+  schemaVersion: '1',
+  id: 'knowledge-1',
+  projectId: 'project-1',
+  name: 'logo.png',
+  mediaType: 'image/png',
+  purpose: 'design-reference',
+  pinned: true,
+  currentVersion: 1,
+  revisions: [
+    {
+      version: 1,
+      artifact: { name: 'knowledge-knowledge-1', revision: 1, sha256: 'a'.repeat(64) },
+      createdAt: '2026-07-21T12:00:00.000Z',
+    },
+  ],
+  createdAt: '2026-07-21T12:00:00.000Z',
+  updatedAt: '2026-07-21T12:00:00.000Z',
+};
+
+describe('knowledge file API client', () => {
+  it('uploads a knowledge file with its exact request body', async () => {
+    const input = {
+      name: 'logo.png',
+      mediaType: 'image/png',
+      purpose: 'design-reference' as const,
+      pinned: true,
+      contentBase64: 'aGVsbG8=',
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => Promise.resolve(jsonResponse({ knowledgeFile })));
+
+    await expect(uploadKnowledgeFile('project-1', input)).resolves.toEqual(knowledgeFile);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/projects/project-1/knowledge-files',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(input) }),
+    );
+    fetchMock.mockRestore();
+  });
+
+  it('replaces, pins, and removes through the existing project-scoped routes', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => Promise.resolve(jsonResponse({ knowledgeFile })));
+    const replacement = {
+      name: 'logo-v2.png',
+      mediaType: 'image/png',
+      purpose: 'design-reference' as const,
+      pinned: true,
+      contentBase64: 'djI=',
+    };
+
+    await replaceKnowledgeFile('project-1', 'knowledge-1', knowledgeFile.updatedAt, replacement);
+    await setKnowledgeFilePinned('project-1', 'knowledge-1', false, knowledgeFile.updatedAt);
+    await removeKnowledgeFile('project-1', 'knowledge-1', knowledgeFile.updatedAt);
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method, init?.body])).toEqual([
+      [
+        'http://localhost:4000/projects/project-1/knowledge-files',
+        'PUT',
+        JSON.stringify({
+          id: 'knowledge-1',
+          expectedUpdatedAt: knowledgeFile.updatedAt,
+          ...replacement,
+        }),
+      ],
+      [
+        'http://localhost:4000/projects/project-1/knowledge-files/knowledge-1',
+        'PATCH',
+        JSON.stringify({ pinned: false, expectedUpdatedAt: knowledgeFile.updatedAt }),
+      ],
+      [
+        'http://localhost:4000/projects/project-1/knowledge-files/knowledge-1',
+        'DELETE',
+        JSON.stringify({ expectedUpdatedAt: knowledgeFile.updatedAt }),
+      ],
+    ]);
+    fetchMock.mockRestore();
+  });
+});
 
 const version: ProjectVersion = {
   schemaVersion: '1',

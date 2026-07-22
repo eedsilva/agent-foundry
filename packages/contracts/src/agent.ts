@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AgentRoleSchema, JsonValueSchema, ProviderSchema, TaskKindSchema } from './primitives.js';
 import { ExecutionUsageSchema } from './run.js';
+import { ArtifactReferenceSchema } from './run.js';
 
 export const DecisionSchema = z.object({
   title: z.string().min(1),
@@ -79,6 +80,7 @@ export const AgentExecutionRequestSchema = z.object({
   mutatesWorkspace: z.boolean(),
   timeoutMs: z.number().int().positive(),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
+  inputArtifacts: z.array(ArtifactReferenceSchema).optional(),
 });
 export type AgentExecutionRequest = z.infer<typeof AgentExecutionRequestSchema>;
 

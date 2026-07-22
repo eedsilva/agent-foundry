@@ -503,7 +503,16 @@ export class InMemoryArtifacts implements ArtifactStore {
           artifact.metadata.projectId === projectId &&
           artifact.metadata.name === name &&
           artifact.metadata.revision === revision,
-      ) ?? null,
+      ) ??
+        (() => {
+          const blob = this.blobs.find(
+            (entry) =>
+              entry.metadata.projectId === projectId &&
+              entry.metadata.name === name &&
+              entry.metadata.revision === revision,
+          );
+          return blob ? { metadata: blob.metadata, content: null } : null;
+        })(),
     );
   }
   listLatest(): Promise<StoredArtifact[]> {
@@ -690,12 +699,32 @@ export class FakeWorkspaces implements WorkspaceManager {
   }
   lastRequestMarkdown: string | undefined;
   writeRunContext(input: {
+    projectId: string;
+    runId: string;
+    stepRunId: string;
+    attemptId: string;
     requestMarkdown: string;
-  }): Promise<{ requestPath: string; schemaPath: string }> {
+    inputFiles?: Array<{ path: string; content: Uint8Array }>;
+  }): Promise<{
+    requestPath: string;
+    schemaPath: string;
+    inputPaths: string[];
+  }> {
     checkPower(this.power);
     this.lastRequestMarkdown = input.requestMarkdown;
-    return Promise.resolve({ requestPath: 'request.md', schemaPath: 'schema.json' });
+    this.lastRunInputFiles = input.inputFiles ?? [];
+    this.lastInputPaths = (input.inputFiles ?? []).map(
+      ({ path }) =>
+        `${this.workspacePath(input.projectId)}/.orchestrator/runs/${input.runId}/steps/${input.stepRunId}/attempts/${input.attemptId}/inputs/${path}`,
+    );
+    return Promise.resolve({
+      requestPath: 'request.md',
+      schemaPath: 'schema.json',
+      inputPaths: this.lastInputPaths,
+    });
   }
+  lastRunInputFiles: Array<{ path: string; content: Uint8Array }> = [];
+  lastInputPaths: string[] = [];
   ensureGit(): Promise<void> {
     return Promise.resolve();
   }
@@ -823,6 +852,7 @@ export function disconnectError(): Error {
 export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
   readonly provider = 'mock';
   readonly startCounts = new Map<string, number>();
+  readonly requests: AgentExecutionRequest[] = [];
   private readonly gates = new Map<string, () => void>();
   private readonly states = new Map<string, ExecutionStatus['state']>();
   private readonly cancellers = new Map<string, () => void>();
@@ -892,6 +922,7 @@ export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
     request: AgentExecutionRequest,
     signal?: AbortSignal,
   ): Promise<AgentExecutionResult> {
+    this.requests.push(request);
     const count = (this.startCounts.get(request.stepId) ?? 0) + 1;
     this.startCounts.set(request.stepId, count);
     const behavior = this.behaviors[request.stepId] ?? 'instant';

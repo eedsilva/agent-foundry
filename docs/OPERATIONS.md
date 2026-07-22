@@ -685,6 +685,38 @@ Os dois adapters falham seguro em `stat()`: `FsBlobStore` retorna `null` quando 
 
 Reverter para `BLOB_STORE_MODE=fs` é seguro a qualquer momento: blobs já gravados em modo `fs` continuam funcionando via o keymap legado acima, sem necessidade de migração. A única perda é para blobs que foram gravados **enquanto** o modo `s3` estava ativo — esses bytes ficam no bucket S3/MinIO (não são apagados automaticamente), mas o adapter `fs` não os enxerga, então artifacts criados nessa janela ficam inacessíveis até uma migração manual dos objetos de volta para `DATA_DIR` ou até reativar o modo `s3`. Dados escritos antes ou depois da janela em modo `s3` não são afetados.
 
+## Knowledge files do builder
+
+O upload aceita no máximo **4 MiB de bytes decodificados** por revisão; o cliente valida o tamanho do
+arquivo antes de codificá-lo e a API valida novamente o base64 canônico e o tamanho após decodificar.
+Os labels suportados são `reference`, `design-reference` e `bug-evidence`. `reference` aceita qualquer
+media type; `design-reference` e `bug-evidence` exigem `image/*`.
+
+Cada substituição mantém o mesmo knowledge file e acrescenta uma revisão imutável no artifact
+`knowledge-<id>`. Fixar/desafixar altera somente o metadata ativo: em operações `plan` e `build`, apenas
+arquivos fixados entram no request como nome, revisão, label e referência de artifact. Remover tira o
+item do índice ativo e, portanto, dos próximos prompts, mas não apaga suas revisões ou bytes. O metadata
+de artifact continua sendo a fonte autoritativa para retenção e auditoria, inclusive para o blob GC.
+
+Imagens são exibidas como preview dos bytes armazenados. O builder não gera nem edita raster; o fluxo
+de visual edit promove patches de código-fonte e os submete às verificações normais.
+
+`Open in editor` é uma conveniência exclusivamente local: o href é
+`vscode://file/<workspace-path-absoluto-percent-encoded>` e depende de um handler do VS Code registrado
+na máquina do operador. Ele não autentica, transfere arquivos nem abre um editor remoto; copie o path
+manualmente se o handler não estiver disponível.
+
+Evidência E2E focada:
+
+```bash
+npm run e2e --workspace @agent-foundry/api -- --grep "attach reference"
+```
+
+O teste reutiliza o runtime/harness golden-flow, um PNG de 1x1 versionado e um executor de conversa
+determinístico; preview, browser verification, APIs e UI continuam reais. A captura desktop é gravada
+localmente em `test-results/issue-43-knowledge-builder-desktop.png` e anexada ao resultado Playwright;
+ela não é baseline versionado.
+
 ## Backup
 
 Em uso local, faça snapshot de todo `DATA_DIR`, incluindo `runs/`. Para restore, preserve permissões e `.git` dos workspaces. O arquivo `artifacts/index.json` pode ser reconstruído a partir das revisões, mas o MVP não inclui ferramenta automática para isso.

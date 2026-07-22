@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
@@ -9,6 +10,7 @@ import type {
   ExecutorRegistry,
   HarnessRepository,
   IdGenerator,
+  KnowledgeFileRepository,
   MetricsRepository,
   ModelRouter,
   ProjectVersionRepository,
@@ -22,6 +24,7 @@ import type {
   AgentExecutionRequest,
   BrowserVerificationReport,
   ExecutorStreamEvent,
+  KnowledgeFile,
   ProjectVersion,
   VisualEdit,
   VerificationReport,
@@ -39,6 +42,7 @@ import {
   InMemoryStepRuns,
   MemoryConversations,
   MODELS,
+  type StepBehavior,
 } from './testing/harness.js';
 import { ConversationOperationRunner } from './conversation-operation-runner.js';
 import type { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
@@ -152,12 +156,48 @@ const router: ModelRouter = {
   catalog: () => Promise.resolve(MODELS),
 };
 
+function knowledge(id: string, overrides: Partial<KnowledgeFile> = {}): KnowledgeFile {
+  const currentVersion = overrides.currentVersion ?? 1;
+  return {
+    schemaVersion: '1',
+    id,
+    projectId: 'project-1',
+    name: `${id}.png`,
+    mediaType: 'image/png',
+    purpose: 'reference',
+    pinned: true,
+    currentVersion,
+    revisions: Array.from({ length: currentVersion }, (_, index) => ({
+      version: index + 1,
+      artifact: {
+        name: `knowledge-${id}`,
+        revision: index + 1,
+        sha256: String(index + 1).repeat(64),
+      },
+      createdAt: '2026-07-18T12:00:00.000Z',
+    })),
+    createdAt: '2026-07-18T12:00:00.000Z',
+    updatedAt: '2026-07-18T12:00:00.000Z',
+    ...overrides,
+  };
+}
+
+const emptyKnowledgeFiles: KnowledgeFileRepository = {
+  list: () => Promise.resolve([]),
+  get: () => Promise.resolve(null),
+  save: (file) => Promise.resolve(file),
+  update: (_projectId, _knowledgeFileId, _expectedUpdatedAt, mutation) =>
+    Promise.resolve(mutation(knowledge('empty'))),
+  remove: () => Promise.resolve(knowledge('empty')),
+};
+
 function setup(
   harness: HarnessRepository = harnessRepo,
   direct?: {
     verifier: VerificationService;
     browserVerification: Pick<BrowserVerificationCoordinator, 'verify'>;
   },
+  executorBehaviors: Record<string, StepBehavior> = {},
 ) {
   const runs = new InMemoryRuns({ on: true }) as unknown as WorkflowRunRepository;
   const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
@@ -167,6 +207,40 @@ function setup(
   const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces({ on: true });
   const conversations = new MemoryConversations();
+  const knowledgeFiles: KnowledgeFileRepository & { files: KnowledgeFile[] } = {
+    files: [],
+    list(projectId) {
+      return Promise.resolve(this.files.filter((file) => file.projectId === projectId));
+    },
+    get(projectId, knowledgeFileId) {
+      return Promise.resolve(
+        this.files.find((file) => file.projectId === projectId && file.id === knowledgeFileId) ??
+          null,
+      );
+    },
+    save(file) {
+      const index = this.files.findIndex(
+        (item) => item.projectId === file.projectId && item.id === file.id,
+      );
+      if (index === -1) this.files.push(file);
+      else this.files[index] = file;
+      return Promise.resolve(file);
+    },
+    async update(projectId, knowledgeFileId, expectedUpdatedAt, mutation) {
+      const current = await this.get(projectId, knowledgeFileId);
+      if (!current || current.updatedAt !== expectedUpdatedAt) throw new Error('conflict');
+      return this.save(await mutation(current));
+    },
+    remove(projectId, knowledgeFileId) {
+      const removed = this.files.find(
+        (file) => file.projectId === projectId && file.id === knowledgeFileId,
+      )!;
+      this.files = this.files.filter(
+        (file) => file.projectId !== projectId || file.id !== knowledgeFileId,
+      );
+      return Promise.resolve(removed);
+    },
+  };
   const projectVersions = new MemoryProjectVersions();
   const clock = new FixedClock();
   const ids = new SequentialIds();
@@ -177,7 +251,7 @@ function setup(
     clock,
     ids,
   );
-  const executor = new ControllableExecutor({}, workspaces);
+  const executor = new ControllableExecutor(executorBehaviors, workspaces);
   const executors: ExecutorRegistry = {
     get: () => new AgentExecutorFromExecutionPlane(executor),
     health: () => Promise.resolve([]),
@@ -195,6 +269,7 @@ function setup(
     executors,
     workspaces,
     conversations,
+    knowledgeFiles,
     projectVersionService,
     clock,
     ids,
@@ -209,7 +284,9 @@ function setup(
     stepEvents,
     workspaces,
     conversations,
+    knowledgeFiles,
     projectVersions,
+    executor,
     runner,
   };
 }
@@ -306,7 +383,8 @@ async function seedVisualEdit(
 async function seed(
   conversations: MemoryConversations,
   runs: WorkflowRunRepository,
-  kind: 'plan' | 'build',
+  kind: 'plan' | 'build' | 'explain' | 'repair',
+  suffix = '1',
 ): Promise<{ runId: string; operationId: string }> {
   await conversations.createConversation({
     id: 'project-1',
@@ -314,15 +392,15 @@ async function seed(
     createdAt: '2026-07-18T12:00:00.000Z',
   });
   await conversations.appendMessage({
-    id: 'message-1',
+    id: `message-${suffix}`,
     projectId: 'project-1',
     conversationId: 'project-1',
     role: 'user',
     content: [{ type: 'text', text: 'Add a dark mode toggle' }],
     createdAt: '2026-07-18T12:00:00.000Z',
   });
-  const runId = 'run-1';
-  const operationId = 'operation-1';
+  const runId = `run-${suffix}`;
+  const operationId = `operation-${suffix}`;
   await runs.create({
     id: runId,
     projectId: 'project-1',
@@ -336,7 +414,7 @@ async function seed(
     id: operationId,
     projectId: 'project-1',
     conversationId: 'project-1',
-    messageId: 'message-1',
+    messageId: `message-${suffix}`,
     kind,
     idempotencyKey: 'a'.repeat(64),
     runId,
@@ -874,6 +952,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       projectVersions,
       new FixedClock(),
       new SequentialIds(),
@@ -918,6 +997,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -964,6 +1044,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -1049,6 +1130,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -1100,6 +1182,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -1149,6 +1232,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -1201,6 +1285,7 @@ describe('ConversationOperationRunner', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),
@@ -1219,6 +1304,271 @@ describe('ConversationOperationRunner', () => {
 });
 
 describe('ConversationOperationRunner context compilation', () => {
+  it.each(['plan', 'build'] as const)(
+    'adds only active pinned knowledge revisions to a %s prompt',
+    async (kind) => {
+      const { runs, artifacts, workspaces, conversations, knowledgeFiles, runner } = setup();
+      const first = await artifacts.putBlob(
+        {
+          projectId: 'project-1',
+          name: 'knowledge-design',
+          contentType: 'image/png',
+          createdBy: 'test',
+          maxBytes: 1024,
+        },
+        Readable.from(Buffer.from('v1')),
+      );
+      const second = await artifacts.putBlob(
+        {
+          projectId: 'project-1',
+          name: 'knowledge-design',
+          contentType: 'image/png',
+          createdBy: 'test',
+          maxBytes: 1024,
+        },
+        Readable.from(Buffer.from('v2')),
+      );
+      knowledgeFiles.files = [
+        knowledge('design', {
+          pinned: true,
+          purpose: 'design-reference',
+          currentVersion: 2,
+          revisions: [first, second].map((metadata) => ({
+            version: metadata.revision,
+            artifact: {
+              name: metadata.name,
+              revision: metadata.revision,
+              sha256: metadata.sha256,
+              sizeBytes: metadata.sizeBytes,
+            },
+            createdAt: metadata.createdAt,
+          })),
+        }),
+        knowledge('notes', { pinned: false }),
+        knowledge('removed'),
+      ];
+      await knowledgeFiles.remove(
+        'project-1',
+        'removed',
+        knowledgeFiles.files.find((file) => file.id === 'removed')!.updatedAt,
+      );
+      const { runId, operationId } = await seed(conversations, runs, kind);
+
+      await runner.run('project-1', runId, operationId);
+
+      expect(workspaces.lastRequestMarkdown).toContain('## Pinned knowledge files');
+      expect(workspaces.lastRequestMarkdown).toContain(
+        '- design.png v2 · design-reference · artifact knowledge-design@2',
+      );
+      expect(workspaces.lastRequestMarkdown).not.toContain('notes.png v1');
+      expect(workspaces.lastRequestMarkdown).not.toContain('removed.png v1');
+    },
+  );
+
+  it.each(['plan', 'build'] as const)(
+    'materializes verified pinned knowledge bytes and records their artifact input for %s',
+    async (kind) => {
+      const {
+        runs,
+        stepRuns,
+        stepAttempts,
+        artifacts,
+        workspaces,
+        conversations,
+        knowledgeFiles,
+        executor,
+        runner,
+      } = setup();
+      const bytes = Buffer.from('actual-png-bytes');
+      const metadata = await artifacts.putBlob(
+        {
+          projectId: 'project-1',
+          name: 'knowledge-design',
+          contentType: 'image/png',
+          createdBy: 'test',
+          maxBytes: 1024,
+        },
+        Readable.from(bytes),
+      );
+      knowledgeFiles.files = [
+        knowledge('design', {
+          purpose: 'design-reference',
+          revisions: [
+            {
+              version: 1,
+              artifact: {
+                name: metadata.name,
+                revision: metadata.revision,
+                sha256: metadata.sha256,
+                sizeBytes: metadata.sizeBytes,
+              },
+              createdAt: metadata.createdAt,
+            },
+          ],
+        }),
+      ];
+      const { runId, operationId } = await seed(conversations, runs, kind);
+
+      await runner.run('project-1', runId, operationId);
+
+      const [stepRun] = await stepRuns.list(runId);
+      const [attempt] = await stepAttempts.list(runId, stepRun!.id);
+      expect(attempt?.inputArtifacts).toEqual([
+        {
+          name: metadata.name,
+          revision: metadata.revision,
+          sha256: metadata.sha256,
+          sizeBytes: metadata.sizeBytes,
+        },
+      ]);
+      expect(workspaces.lastRequestMarkdown).toContain('request input knowledge/design/v1.png');
+      expect(workspaces.lastRequestMarkdown).not.toContain('/execution-inputs/');
+      expect(workspaces.lastRunInputFiles).toEqual([
+        {
+          path: 'knowledge/design/v1.png',
+          content: bytes,
+        },
+      ]);
+      expect(workspaces.lastInputPaths).toHaveLength(1);
+      expect(workspaces.lastInputPaths[0]).toContain(
+        `${workspaces.workspacePath('project-1')}/.orchestrator/runs/${runId}/`,
+      );
+      expect(workspaces.lastInputPaths[0]).toContain('/inputs/knowledge/design/v1.png');
+      expect(executor.requests.at(-1)?.prompt).toContain(workspaces.lastInputPaths[0]);
+    },
+  );
+
+  it.each(['explain', 'repair'] as const)(
+    'omits knowledge references and files from a %s operation',
+    async (kind) => {
+      const { runs, artifacts, workspaces, conversations, knowledgeFiles, executor, runner } =
+        setup();
+      const bytes = Buffer.from('plan-build-only-knowledge');
+      const metadata = await artifacts.putBlob(
+        {
+          projectId: 'project-1',
+          name: 'knowledge-design',
+          contentType: 'image/png',
+          createdBy: 'test',
+          maxBytes: 1024,
+        },
+        Readable.from(bytes),
+      );
+      knowledgeFiles.files = [
+        knowledge('design', {
+          revisions: [
+            {
+              version: 1,
+              artifact: {
+                name: metadata.name,
+                revision: metadata.revision,
+                sha256: metadata.sha256,
+                sizeBytes: metadata.sizeBytes,
+              },
+              createdAt: metadata.createdAt,
+            },
+          ],
+        }),
+      ];
+      const operation = await seed(conversations, runs, kind, kind);
+
+      await runner.run('project-1', operation.runId, operation.operationId);
+
+      const request = executor.requests.at(-1);
+      expect(request?.inputArtifacts).toEqual([]);
+      expect(request?.prompt).not.toContain('knowledge-design');
+      expect(workspaces.lastRunInputFiles).toEqual([]);
+      expect(workspaces.lastInputPaths).toEqual([]);
+    },
+  );
+
+  it('omits knowledge references and files from a visual-edit operation', async () => {
+    const { runs, artifacts, workspaces, conversations, knowledgeFiles, executor, runner } = setup(
+      harnessRepo,
+      approvedDirectServices(),
+    );
+    const bytes = Buffer.from('plan-build-only-knowledge');
+    const metadata = await artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'knowledge-design',
+        contentType: 'image/png',
+        createdBy: 'test',
+        maxBytes: 1024,
+      },
+      Readable.from(bytes),
+    );
+    knowledgeFiles.files = [
+      knowledge('design', {
+        revisions: [
+          {
+            version: 1,
+            artifact: {
+              name: metadata.name,
+              revision: metadata.revision,
+              sha256: metadata.sha256,
+              sizeBytes: metadata.sizeBytes,
+            },
+            createdAt: metadata.createdAt,
+          },
+        ],
+      }),
+    ];
+    const operation = await seedVisualEdit(conversations, runs);
+
+    await runner.run('project-1', operation.runId, operation.operationId);
+
+    const request = executor.requests.at(-1);
+    expect(request?.inputArtifacts).toEqual([]);
+    expect(request?.prompt).not.toContain('knowledge-design');
+    expect(workspaces.lastRunInputFiles).toEqual([]);
+    expect(workspaces.lastInputPaths).toEqual([]);
+  });
+
+  it('terminalizes the run when pinned knowledge blob integrity validation fails', async () => {
+    const { runs, stepRuns, artifacts, conversations, knowledgeFiles, runner } = setup();
+    const metadata = await artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'knowledge-design',
+        contentType: 'image/png',
+        createdBy: 'test',
+        maxBytes: 1024,
+      },
+      Readable.from(Buffer.from('actual')),
+    );
+    knowledgeFiles.files = [
+      knowledge('design', {
+        revisions: [
+          {
+            version: 1,
+            artifact: {
+              name: metadata.name,
+              revision: metadata.revision,
+              sha256: 'f'.repeat(64),
+              sizeBytes: metadata.sizeBytes,
+            },
+            createdAt: metadata.createdAt,
+          },
+        ],
+      }),
+    ];
+    const { runId, operationId } = await seed(conversations, runs, 'plan');
+
+    await expect(runner.run('project-1', runId, operationId)).resolves.toBeUndefined();
+
+    await expect(runs.get(runId)).resolves.toMatchObject({
+      status: 'failed',
+      error: {
+        name: 'BlobIntegrityError',
+        message: expect.stringContaining('expected sha256'),
+      },
+    });
+    await expect(stepRuns.list(runId)).resolves.toEqual([
+      expect.objectContaining({ status: 'failed' }),
+    ]);
+  });
+
   it('embeds the compiled context digest in the compiled instructions and records sources on the change request', async () => {
     const fragmentHarness: HarnessRepository = {
       select: () =>
@@ -1394,6 +1744,7 @@ describe('ConversationOperationRunner foundry.operation span', () => {
       executors,
       workspaces,
       conversations,
+      emptyKnowledgeFiles,
       newProjectVersionService(workspaces, artifacts),
       new FixedClock(),
       new SequentialIds(),

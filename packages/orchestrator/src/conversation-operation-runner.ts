@@ -1,10 +1,16 @@
+import { createHash } from 'node:crypto';
+import { extname } from 'node:path';
 import type {
   AgentExecutionRequest,
+  AgentExecutionResult,
+  ArtifactReference,
+  KnowledgeFile,
   Message,
   Operation,
   ProjectVersion,
   StepAttempt,
   StepRun,
+  StoredArtifact,
   WorkflowRun,
 } from '@agent-foundry/contracts';
 import {
@@ -14,6 +20,7 @@ import {
 } from '@agent-foundry/contracts';
 import { SpanStatusCode, type Span } from '@opentelemetry/api';
 import {
+  BlobIntegrityError,
   NotFoundError,
   ProjectVersionDiscardRefusedError,
   ValidationError,
@@ -29,6 +36,7 @@ import {
   type ExecutorRegistry,
   type HarnessRepository,
   type IdGenerator,
+  type KnowledgeFileRepository,
   type MetricsRepository,
   type ModelRouter,
   type StepAttemptRepository,
@@ -66,6 +74,7 @@ export class ConversationOperationRunner {
     private readonly executors: ExecutorRegistry,
     private readonly workspaces: WorkspaceManager,
     private readonly conversations: ConversationRepository,
+    private readonly knowledgeFiles: KnowledgeFileRepository,
     private readonly projectVersions: ProjectVersionService,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
@@ -109,13 +118,17 @@ export class ConversationOperationRunner {
       allChangeRequests,
       versions,
     });
+    const activeKnowledge =
+      operation.kind === 'plan' || operation.kind === 'build'
+        ? await this.knowledgeFiles.list(projectId)
+        : [];
     const step = buildConversationStep({
       operationId,
       kind,
       message,
       visualEdit: operation.visualEdit,
       planArtifact,
-      contextDigest: compiledContext.digest,
+      contextDigest: `${compiledContext.digest}${knowledgeContext(activeKnowledge)}`,
     });
 
     let runState = await this.runs.update(
@@ -147,6 +160,7 @@ export class ConversationOperationRunner {
     let operationPromoted = false;
     let succeeded = false;
     try {
+      const knowledgeInputs = await this.loadKnowledgeInputs(projectId, activeKnowledge);
       if (operation.visualEdit && !(await this.workspaces.isClean(projectId))) {
         throw new ValidationError('Direct visual edits require a clean workspace baseline');
       }
@@ -165,7 +179,14 @@ export class ConversationOperationRunner {
           ],
         });
       }
-      const profile = buildTaskProfile({ step, harness, artifacts: [], policy: undefined });
+      const inputArtifacts = knowledgeInputs.map(({ artifact }) => artifact);
+      const inputReferences = knowledgeInputs.map(({ reference }) => reference);
+      const profile = buildTaskProfile({
+        step,
+        harness,
+        artifacts: inputArtifacts,
+        policy: undefined,
+      });
       const route = await this.router.route(profile);
       checkpoint = step.mutatesWorkspace
         ? await this.workspaces.checkpoint(projectId, `${step.id}-${runId}`)
@@ -194,7 +215,7 @@ export class ConversationOperationRunner {
           nodeId: step.id,
           stepId: step.id,
         },
-        inputArtifacts: [],
+        inputArtifacts: inputReferences,
         outputArtifacts: [],
       };
       await this.stepAttempts.create(attempt);
@@ -208,18 +229,9 @@ export class ConversationOperationRunner {
         stack: 'conversation',
         step,
         harness,
-        artifacts: [],
+        artifacts: inputArtifacts,
         workspacePath: this.workspaces.workspacePath(projectId),
       });
-      await this.workspaces.writeRunContext({
-        projectId,
-        runId,
-        stepRunId: stepRun.id,
-        attemptId: attempt.id,
-        requestMarkdown,
-        outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
-      });
-
       const request: AgentExecutionRequest = {
         runId,
         stepRunId: stepRun.id,
@@ -235,8 +247,22 @@ export class ConversationOperationRunner {
         mutatesWorkspace: step.mutatesWorkspace,
         timeoutMs: this.options.agentTimeoutMs,
         outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+        inputArtifacts: inputReferences,
       };
-      const result = await this.executors
+      const context = await this.workspaces.writeRunContext({
+        projectId,
+        runId,
+        stepRunId: stepRun.id,
+        attemptId: attempt.id,
+        requestMarkdown,
+        outputSchema: AGENT_ARTIFACT_JSON_SCHEMA,
+        inputFiles: knowledgeInputs.map(({ path, content }) => ({ path, content })),
+      });
+      if (context.inputPaths.length !== knowledgeInputs.length) {
+        throw new ValidationError('Knowledge execution inputs were not materialized completely');
+      }
+      request.prompt = executionPrompt(request.prompt, knowledgeInputs, context.inputPaths);
+      const result: AgentExecutionResult = await this.executors
         .get(route.selected.model.provider)
         .execute(request, undefined, (event) =>
           persistStreamEvent(
@@ -541,6 +567,99 @@ export class ConversationOperationRunner {
     );
     return artifact ? { content: artifact.content } : undefined;
   }
+
+  private async loadKnowledgeInputs(
+    projectId: string,
+    files: KnowledgeFile[],
+  ): Promise<KnowledgeInput[]> {
+    return Promise.all(
+      files
+        .filter((file) => file.pinned)
+        .map(async (file) => {
+          const reference = file.revisions.at(-1)!.artifact;
+          const artifact = await this.artifacts.getRevision(
+            projectId,
+            reference.name,
+            reference.revision,
+          );
+          if (
+            !artifact ||
+            artifact.metadata.projectId !== projectId ||
+            artifact.metadata.sha256 !== reference.sha256 ||
+            artifact.metadata.storage !== 'blob' ||
+            artifact.metadata.blobDeleted
+          ) {
+            throw new BlobIntegrityError(
+              `${projectId}/${reference.name}/${reference.revision}`,
+              reference.sha256,
+              artifact?.metadata.sha256 ?? 'missing',
+            );
+          }
+          const stream = await this.artifacts.getBlobStream(
+            projectId,
+            reference.name,
+            reference.revision,
+          );
+          if (!stream) {
+            throw new BlobIntegrityError(
+              `${projectId}/${reference.name}/${reference.revision}`,
+              reference.sha256,
+              'missing',
+            );
+          }
+          const chunks: Buffer[] = [];
+          for await (const chunk of stream) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+          }
+          const content = Buffer.concat(chunks);
+          const actualSha256 = createHash('sha256').update(content).digest('hex');
+          if (actualSha256 !== reference.sha256) {
+            throw new BlobIntegrityError(
+              `${projectId}/${reference.name}/${reference.revision}`,
+              reference.sha256,
+              actualSha256,
+            );
+          }
+          return {
+            artifact,
+            reference,
+            content,
+            path: knowledgePath(file),
+          };
+        }),
+    );
+  }
+}
+
+interface KnowledgeInput {
+  artifact: StoredArtifact;
+  reference: ArtifactReference;
+  content: Uint8Array;
+  path: string;
+}
+
+function knowledgePath(file: KnowledgeFile): string {
+  const extension = /^\.[a-zA-Z0-9]{1,10}$/.test(extname(file.name)) ? extname(file.name) : '';
+  return `knowledge/${file.id}/v${file.currentVersion}${extension}`;
+}
+
+function knowledgeContext(files: KnowledgeFile[]): string {
+  const pinned = files.filter((file) => file.pinned);
+  if (pinned.length === 0) return '';
+  return `\n\n## Pinned knowledge files\n\n${pinned
+    .map(
+      (file) =>
+        `- ${file.name} v${file.currentVersion} · ${file.purpose} · artifact ${file.revisions.at(-1)!.artifact.name}@${file.currentVersion} · request input ${knowledgePath(file)}`,
+    )
+    .join('\n')}`;
+}
+
+function executionPrompt(prompt: string, inputs: KnowledgeInput[], inputPaths: string[]): string {
+  if (inputs.length === 0) return prompt;
+  const files = inputs
+    .map(({ reference }, index) => `${reference.name}@${reference.revision}: ${inputPaths[index]}`)
+    .join('; ');
+  return `${prompt} Read these project knowledge inputs for this request: ${files}.`;
 }
 
 interface CompensationFailure {

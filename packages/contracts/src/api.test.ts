@@ -16,6 +16,7 @@ import {
   DecideOperationRequestSchema,
   DecideOperationResponseSchema,
   ProjectExportResponseSchema,
+  ProjectDetailResponseSchema,
   RetryStepRequestSchema,
   RunAuditExportSchema,
   StartOperationRequestSchema,
@@ -167,6 +168,55 @@ describe('conversation HTTP contracts (#36)', () => {
       action: 'approve',
     });
     expect(DecideOperationResponseSchema.parse({ operation }).operation).toEqual(operation);
+  });
+});
+
+describe('project detail HTTP contract', () => {
+  it('requires and parses knowledge files', () => {
+    const detail = {
+      project: {
+        id: 'project-1',
+        name: 'Builder',
+        workflowId: 'web-app-v1',
+        status: 'completed' as const,
+        version: 1,
+        createdAt: conversationCreatedAt,
+        updatedAt: conversationCreatedAt,
+      },
+      artifacts: [],
+      events: [],
+      workspacePath: '/workspace/project-1',
+      knowledgeFiles: [
+        {
+          schemaVersion: '1' as const,
+          id: 'reference-1',
+          projectId: 'project-1',
+          name: 'reference.png',
+          mediaType: 'image/png',
+          purpose: 'design-reference' as const,
+          pinned: true,
+          currentVersion: 1,
+          revisions: [
+            {
+              version: 1,
+              artifact: {
+                name: 'knowledge-reference-1',
+                revision: 1,
+                sha256: 'a'.repeat(64),
+              },
+              createdAt: conversationCreatedAt,
+            },
+          ],
+          createdAt: conversationCreatedAt,
+          updatedAt: conversationCreatedAt,
+        },
+      ],
+    };
+
+    expect(ProjectDetailResponseSchema.parse(detail).knowledgeFiles[0]?.name).toBe('reference.png');
+    expect(() =>
+      ProjectDetailResponseSchema.parse({ ...detail, knowledgeFiles: undefined }),
+    ).toThrow();
   });
 });
 

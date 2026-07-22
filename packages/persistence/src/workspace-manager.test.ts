@@ -1,9 +1,49 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 import { FileWorkspaceManager } from './workspace-manager.js';
+
+describe('FileWorkspaceManager run inputs', () => {
+  it('materializes a project knowledge input in the attempt context for a CLI child tool', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const inputPath = 'knowledge/design/v2.png';
+    const bytes = Buffer.from('exact-v2-png-bytes');
+    const { requestPath, inputPaths } = await manager.writeRunContext({
+      projectId: 'project-1',
+      runId: 'run-1',
+      stepRunId: 'step-1',
+      attemptId: 'attempt-1',
+      requestMarkdown: 'Read the execution input.',
+      outputSchema: {},
+      inputFiles: [{ path: inputPath, content: bytes }],
+    });
+
+    const expectedPath = join(dirname(requestPath), 'inputs', inputPath);
+    expect(inputPaths).toEqual([expectedPath]);
+    expect(isAbsolute(expectedPath)).toBe(true);
+    expect(expectedPath.startsWith(manager.workspacePath('project-1'))).toBe(true);
+    await expect(readFile(expectedPath)).resolves.toEqual(bytes);
+
+    const cli = await execa(process.execPath, [
+      '-e',
+      [
+        "const { spawnSync } = require('node:child_process');",
+        "const tool = spawnSync(process.execPath, ['-e', \"process.stdout.write(require('node:fs').readFileSync(process.argv[1]).toString('hex'))\", process.argv[1]], { encoding: 'utf8' });",
+        'if (tool.status !== 0) throw new Error(tool.stderr);',
+        'process.stdout.write(tool.stdout);',
+      ].join('\n'),
+      expectedPath,
+    ]);
+    expect(cli.stdout).toBe(bytes.toString('hex'));
+    await expect(readFile(requestPath, 'utf8')).resolves.toBe('Read the execution input.');
+  });
+});
 
 describe('FileWorkspaceManager.isClean', () => {
   it('detects tracked and untracked baseline changes without mutating them', async () => {

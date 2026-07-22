@@ -5,7 +5,7 @@ const root = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
   test: {
-    include: ['packages/**/*.test.ts', 'apps/**/*.test.ts'],
+    include: ['packages/**/*.test.ts', 'apps/**/*.test.{ts,tsx}'],
     environment: 'node',
     testTimeout: 30_000,
     coverage: {

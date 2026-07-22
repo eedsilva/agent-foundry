@@ -48,6 +48,7 @@ import type {
   VerificationReport,
   WorkflowDefinition,
   WorkflowRun,
+  KnowledgeFile,
 } from '@agent-foundry/contracts';
 
 export interface ProjectRepository {
@@ -79,6 +80,23 @@ export interface ConversationRepository {
   getChangeRequest(projectId: string, changeRequestId: string): Promise<ChangeRequest | null>;
   updateChangeRequest(changeRequest: ChangeRequest): Promise<ChangeRequest>;
   listChangeRequests(projectId: string): Promise<ChangeRequest[]>;
+}
+
+export interface KnowledgeFileRepository {
+  list(projectId: string): Promise<KnowledgeFile[]>;
+  get(projectId: string, knowledgeFileId: string): Promise<KnowledgeFile | null>;
+  save(file: KnowledgeFile): Promise<KnowledgeFile>;
+  update(
+    projectId: string,
+    knowledgeFileId: string,
+    expectedUpdatedAt: string,
+    mutation: (current: KnowledgeFile) => KnowledgeFile | Promise<KnowledgeFile>,
+  ): Promise<KnowledgeFile>;
+  remove(
+    projectId: string,
+    knowledgeFileId: string,
+    expectedUpdatedAt: string,
+  ): Promise<KnowledgeFile>;
 }
 
 export interface ConversationSnapshot {
@@ -423,7 +441,12 @@ export interface WorkspaceManager {
     attemptId: string;
     requestMarkdown: string;
     outputSchema: Record<string, unknown>;
-  }): Promise<{ requestPath: string; schemaPath: string }>;
+    inputFiles?: Array<{ path: string; content: Uint8Array }>;
+  }): Promise<{
+    requestPath: string;
+    schemaPath: string;
+    inputPaths: string[];
+  }>;
   ensureGit(projectId: string): Promise<void>;
   isClean(projectId: string): Promise<boolean>;
   checkpoint(projectId: string, label: string): Promise<string>;

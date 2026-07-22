@@ -7,6 +7,7 @@ import {
   type HarnessRepository,
   type IdGenerator,
   type JobQueue,
+  type KnowledgeFileRepository,
   type MetricsRepository,
   type ModelRouter,
   type ProjectVersionRepository,
@@ -78,6 +79,14 @@ const metrics: MetricsRepository = {
   get: () => Promise.resolve(null),
   record: () => Promise.resolve(),
   recordQuality: () => Promise.resolve(),
+};
+const knowledgeFiles: KnowledgeFileRepository = {
+  list: () => Promise.resolve([]),
+  get: () => Promise.resolve(null),
+  save: (file) => Promise.resolve(file),
+  update: (_projectId, _knowledgeFileId, _expectedUpdatedAt, mutation) =>
+    Promise.reject(new Error(`unexpected mutation ${String(mutation)}`)),
+  remove: () => Promise.reject(new Error('unexpected removal')),
 };
 const router: ModelRouter = {
   route: (profile) =>
@@ -185,6 +194,7 @@ async function runOperation(kind: 'plan' | 'build') {
     executors,
     workspaces,
     conversations,
+    knowledgeFiles,
     projectVersions,
     clock,
     ids,

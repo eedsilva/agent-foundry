@@ -1,4 +1,6 @@
 import cors from '@fastify/cors';
+import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
@@ -12,6 +14,7 @@ import {
   CreateModelOverrideRequestSchema,
   CreateAttachmentRequestSchema,
   CreateMessageRequestSchema,
+  CreateKnowledgeFileRequestSchema,
   CreateOperationRequestSchema,
   DecideApprovalRequestSchema,
   DecideChangeRequestRequestSchema,
@@ -26,12 +29,16 @@ import {
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
   VisualEditSchema,
+  UpdateKnowledgeFileRequestSchema,
+  type CreateKnowledgeFileRequest,
+  type KnowledgeFileRevision,
   type PreviewSession,
 } from '@agent-foundry/contracts';
 import {
   ApprovalConflictError,
   IdempotencyConflictError,
   InvalidStateTransitionError,
+  KnowledgeFileConflictError,
   NotFoundError,
   PreviewAccessDeniedError,
   ResumeBlockedError,
@@ -66,6 +73,8 @@ const CanonicalDecimalSchema = z
 const NonNegativeCursorSchema = CanonicalDecimalSchema.pipe(z.number().int().nonnegative());
 
 const BLOB_URL_TTL_SECONDS = 300;
+const MAX_KNOWLEDGE_FILE_BYTES = 4 * 1024 * 1024;
+const KNOWLEDGE_FILE_BODY_LIMIT = Math.ceil(((MAX_KNOWLEDGE_FILE_BYTES + 1) * 4) / 3) + 4_096;
 
 export async function buildApp(
   runtime: Runtime,
@@ -85,7 +94,7 @@ export async function buildApp(
 
   await app.register(cors, {
     origin: allowedOrigins,
-    methods: ['GET', 'POST', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
   // Telemetry off (no OTLP endpoint) => these hooks are never registered =>
@@ -110,6 +119,9 @@ export async function buildApp(
       return reply.status(400).send({ error: error.name, message: error.message });
     }
     if (error instanceof IdempotencyConflictError) {
+      return reply.status(409).send({ error: error.name, message: error.message });
+    }
+    if (error instanceof KnowledgeFileConflictError) {
       return reply.status(409).send({ error: error.name, message: error.message });
     }
     if (error instanceof PreviewAccessDeniedError) {
@@ -183,7 +195,107 @@ export async function buildApp(
 
   app.get('/projects/:projectId', async (request) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
-    return runtime.projectService.get(projectId);
+    const [detail, knowledgeFiles] = await Promise.all([
+      runtime.projectService.get(projectId),
+      runtime.knowledgeFiles.list(projectId),
+    ]);
+    return { ...detail, knowledgeFiles };
+  });
+
+  app.get('/projects/:projectId/knowledge-files', async (request) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    await requireProject(runtime, projectId);
+    return { knowledgeFiles: await runtime.knowledgeFiles.list(projectId) };
+  });
+
+  app.post(
+    '/projects/:projectId/knowledge-files',
+    { bodyLimit: KNOWLEDGE_FILE_BODY_LIMIT },
+    async (request, reply) => {
+      const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+      const input = CreateKnowledgeFileRequestSchema.parse(request.body);
+      await requireProject(runtime, projectId);
+      const id = randomUUID();
+      const revision = await uploadKnowledgeRevision(runtime, projectId, id, input);
+      const knowledgeFile = await runtime.knowledgeFiles.save({
+        schemaVersion: '1',
+        id,
+        projectId,
+        name: input.name,
+        mediaType: input.mediaType,
+        purpose: input.purpose,
+        pinned: input.pinned,
+        currentVersion: revision.version,
+        revisions: [revision],
+        createdAt: revision.createdAt,
+        updatedAt: revision.createdAt,
+      });
+      return reply.status(201).send({ knowledgeFile });
+    },
+  );
+
+  app.put(
+    '/projects/:projectId/knowledge-files',
+    { bodyLimit: KNOWLEDGE_FILE_BODY_LIMIT },
+    async (request, reply) => {
+      const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+      const input = UpdateKnowledgeFileRequestSchema.parse(request.body);
+      await requireProject(runtime, projectId);
+      const knowledgeFile = await runtime.knowledgeFiles.update(
+        projectId,
+        input.id,
+        input.expectedUpdatedAt,
+        async (existing) => {
+          const revision = await uploadKnowledgeRevision(runtime, projectId, existing.id, input);
+          return {
+            ...existing,
+            name: input.name,
+            mediaType: input.mediaType,
+            purpose: input.purpose,
+            pinned: input.pinned,
+            currentVersion: revision.version,
+            revisions: [...existing.revisions, revision],
+            updatedAt: revision.createdAt,
+          };
+        },
+      );
+      return reply.send({ knowledgeFile });
+    },
+  );
+
+  app.patch('/projects/:projectId/knowledge-files/:knowledgeFileId', async (request, reply) => {
+    const { projectId, knowledgeFileId } = z
+      .object({ projectId: PathSegmentSchema, knowledgeFileId: PathSegmentSchema })
+      .parse(request.params);
+    const { pinned, expectedUpdatedAt } = z
+      .object({ pinned: z.boolean(), expectedUpdatedAt: z.string().datetime() })
+      .strict()
+      .parse(request.body);
+    await requireProject(runtime, projectId);
+    const knowledgeFile = await runtime.knowledgeFiles.update(
+      projectId,
+      knowledgeFileId,
+      expectedUpdatedAt,
+      (existing) => ({ ...existing, pinned, updatedAt: new Date().toISOString() }),
+    );
+    return reply.send({ knowledgeFile });
+  });
+
+  app.delete('/projects/:projectId/knowledge-files/:knowledgeFileId', async (request, reply) => {
+    const { projectId, knowledgeFileId } = z
+      .object({ projectId: PathSegmentSchema, knowledgeFileId: PathSegmentSchema })
+      .parse(request.params);
+    const { expectedUpdatedAt } = z
+      .object({ expectedUpdatedAt: z.string().datetime() })
+      .strict()
+      .parse(request.body);
+    await requireProject(runtime, projectId);
+    const knowledgeFile = await runtime.knowledgeFiles.remove(
+      projectId,
+      knowledgeFileId,
+      expectedUpdatedAt,
+    );
+    return reply.send({ knowledgeFile });
   });
 
   app.get('/projects/:projectId/artifacts/:name', async (request) => {
@@ -755,4 +867,66 @@ async function requireProjectSession(
     throw new NotFoundError(`Preview session ${sessionId} not found for project ${projectId}.`);
   }
   return record.session;
+}
+
+async function requireProject(runtime: Runtime, projectId: string): Promise<void> {
+  if (!(await runtime.projects.get(projectId))) {
+    throw new NotFoundError(`Project ${projectId} not found`);
+  }
+}
+
+async function uploadKnowledgeRevision(
+  runtime: Runtime,
+  projectId: string,
+  knowledgeFileId: string,
+  input: CreateKnowledgeFileRequest,
+): Promise<KnowledgeFileRevision> {
+  const isImage = input.mediaType.startsWith('image/');
+  if (input.purpose !== 'reference' && !isImage) {
+    throw new ValidationError('Knowledge file purpose does not match its media type.');
+  }
+  const bytes = Buffer.from(input.contentBase64, 'base64');
+  if (
+    bytes.length > MAX_KNOWLEDGE_FILE_BYTES ||
+    bytes.length === 0 ||
+    bytes.toString('base64') !== input.contentBase64
+  ) {
+    throw new ValidationError('Knowledge file content is invalid or too large.');
+  }
+
+  const artifactName = `knowledge-${knowledgeFileId}`;
+  const metadata = await runtime.artifacts.putBlob(
+    {
+      projectId,
+      name: artifactName,
+      contentType: input.mediaType,
+      createdBy: 'knowledge-upload',
+      maxBytes: MAX_KNOWLEDGE_FILE_BYTES,
+    },
+    Readable.from(bytes),
+  );
+  const stored = await runtime.artifacts.getRevision(projectId, artifactName, metadata.revision);
+  const actual = stored?.metadata;
+  if (
+    !actual ||
+    actual.storage !== 'blob' ||
+    actual.projectId !== projectId ||
+    actual.name !== artifactName ||
+    actual.revision !== metadata.revision ||
+    actual.contentType !== input.mediaType ||
+    actual.sha256 !== metadata.sha256 ||
+    actual.sizeBytes !== bytes.length
+  ) {
+    throw new ValidationError('Knowledge file upload metadata is invalid.');
+  }
+  return {
+    version: actual.revision,
+    artifact: {
+      name: actual.name,
+      revision: actual.revision,
+      sha256: actual.sha256,
+      sizeBytes: actual.sizeBytes,
+    },
+    createdAt: actual.createdAt,
+  };
 }

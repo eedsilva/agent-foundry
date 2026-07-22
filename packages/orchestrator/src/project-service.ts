@@ -174,13 +174,13 @@ export class ProjectService {
     return project;
   }
 
-  async get(projectId: string): Promise<ProjectDetailResponse> {
+  async get(projectId: string): Promise<Omit<ProjectDetailResponse, 'knowledgeFiles'>> {
     const project = await this.requireProject(projectId);
     const [artifacts, events] = await Promise.all([
       this.artifacts.listLatest(projectId),
       this.events.list(projectId),
     ]);
-    return { project, artifacts, events };
+    return { project, artifacts, events, workspacePath: this.workspaces.workspacePath(projectId) };
   }
 
   async list(limit = 50): Promise<Project[]> {

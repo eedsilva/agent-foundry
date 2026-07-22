@@ -7,6 +7,8 @@ import { blobKeyFor } from '@agent-foundry/composition';
  * in-flight write (revision allocated, bytes uploaded, metadata write still
  * pending or crashed) safe: it stays invisible to readers but isn't swept
  * until it's had time to either finish or be recognized as abandoned.
+ * Knowledge indexes deliberately do not participate: their upload revisions
+ * remain ordinary artifact metadata even after an active entry is removed.
  *
  * ponytail: lists every project and every artifact revision each sweep
  * (O(projects x artifacts)). Fine at this project's scale; an index keyed by
