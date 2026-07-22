@@ -1030,10 +1030,33 @@ describe('ConversationOperationRunner', () => {
       attempt: 1,
     });
     expect(
-      (await conversations.getOperation('project-1', operationId))?.artifactReferences.map(
-        (reference) => reference.name,
-      ),
-    ).toEqual([`operation-${operationId}-failure`]);
+      (await conversations.getOperation('project-1', operationId))?.artifactReferences,
+    ).toEqual([
+      expect.objectContaining({ name: `operation-${operationId}-failure`, revision: 1 }),
+    ]);
+  });
+
+  it('preserves the executor failure when persisting failure evidence fails', async () => {
+    const { artifacts, conversations, runs, workspaces, runner } = setup(
+      harnessRepo,
+      undefined,
+      { 'conversation-build-operation-1': { kind: 'fail-always', error: () => new Error('boom') } },
+    );
+    const { runId, operationId } = await seed(conversations, runs, 'build');
+    const artifactStore = artifacts as unknown as InMemoryArtifacts;
+    const put = artifactStore.put.bind(artifactStore);
+    artifactStore.put = vi.fn((input: Parameters<ArtifactStore['put']>[0]) =>
+      input.name === `operation-${operationId}-failure`
+        ? Promise.reject(new Error('artifact store unavailable'))
+        : put(input),
+    );
+
+    await expect(runner.run('project-1', runId, operationId)).resolves.toBeUndefined();
+
+    const run = (await runs.get(runId)) as WorkflowRun;
+    expect(run.status).toBe('failed');
+    expect(run.error?.message).toContain('boom');
+    expect(workspaces.rollbacks).toHaveLength(1);
   });
 
   it('replaces artifactReferences inherited from the plan with failure evidence when a build-from-plan run fails', async () => {
