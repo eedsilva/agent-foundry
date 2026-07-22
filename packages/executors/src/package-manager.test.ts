@@ -93,6 +93,5 @@ describe('scriptCommand', () => {
     expect(scriptCommand('pnpm', 'build')).toEqual({ command: 'pnpm', args: ['run', 'build'] });
     expect(scriptCommand('yarn', 'build')).toEqual({ command: 'yarn', args: ['build'] });
     expect(scriptCommand('bun', 'build')).toEqual({ command: 'bun', args: ['run', 'build'] });
-    expect(scriptCommand('unknown', 'build')).toEqual({ command: 'npm', args: ['run', 'build'] });
   });
 });

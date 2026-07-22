@@ -139,8 +139,13 @@ export class WorkspaceVerifier implements VerificationService {
       case 'bun':
         return this.run('install', 'bun', ['install'], cwd, signal);
       case 'npm':
-      case 'unknown':
         return this.run('install', 'npm', ['install'], cwd, signal);
+      case 'unknown':
+        return syntheticResult(
+          'install',
+          packageManager,
+          'No supported lockfile or packageManager field found; cannot pick a reproducible install command.',
+        );
     }
   }
 
@@ -150,6 +155,13 @@ export class WorkspaceVerifier implements VerificationService {
     cwd: string,
     signal?: AbortSignal,
   ): Promise<VerificationCommandResult> {
+    if (packageManager === 'unknown') {
+      return syntheticResult(
+        script,
+        packageManager,
+        'No supported lockfile or packageManager field found; cannot pick a reproducible install command.',
+      );
+    }
     const { command, args } = scriptCommand(packageManager, script);
     return this.run(script, command, args, cwd, signal);
   }

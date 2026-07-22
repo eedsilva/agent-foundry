@@ -78,6 +78,13 @@ function resolveScript(
   scripts: Record<string, unknown>,
   policy?: ProjectPolicy,
 ): PreviewCommandResult {
+  if (packageManager === 'unknown') {
+    return {
+      ok: false,
+      reason:
+        'No supported lockfile or packageManager field found; cannot pick a reproducible install command.',
+    };
+  }
   if (policy?.allowedCommands && !policy.allowedCommands.includes(scriptName)) {
     return {
       ok: false,

@@ -49,6 +49,32 @@ describe('WorkspaceVerifier', () => {
     });
   });
 
+  it('does not choose npm when the package manager is unknown', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        scripts: { test: "node -e \"require('fs').writeFileSync('script-ran', '')\"" },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: true,
+      timeoutMs: 10_000,
+      maxOutputBytes: 1_000_000,
+    }).verify({ workspacePath: cwd, scripts: ['test'], includeGitDiffCheck: false });
+
+    expect(report.approved).toBe(false);
+    expect(report.commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'install', command: 'unknown', args: [] }),
+        expect.objectContaining({ name: 'test', command: 'unknown', args: [] }),
+      ]),
+    );
+    expect(existsSync(join(cwd, 'script-ran'))).toBe(false);
+  });
+
   it('checks committed files for whitespace errors', async () => {
     const cwd = await workspace();
     await writeFile(
