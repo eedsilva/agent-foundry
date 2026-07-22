@@ -137,30 +137,32 @@ export class ScoreBasedModelRouter implements ModelRouter {
     if (!constraints) return null;
     const health = constraints.providerHealth?.get(model.provider);
     const rl = health?.rateLimit;
-    if (
-      rl?.resetAt &&
-      (rl.remaining === 0 || rl.remaining === undefined) &&
-      new Date(rl.resetAt).getTime() > Date.now()
-    ) {
+    const rateLimitApplies = !rl?.resetAt || new Date(rl.resetAt).getTime() > Date.now();
+    if (rl?.resetAt && (rl.remaining === 0 || rl.remaining === undefined) && rateLimitApplies) {
       return `rate-limited until ${rl.resetAt}`;
     }
     const budget = constraints.budget;
-    if (budget) {
-      if (budget.maxCostUsd !== undefined && model.billingMode === 'metered') {
-        const estimate = estimateCostUsd(model, profile, metric);
-        if (estimate !== null && estimate > budget.maxCostUsd) {
-          return `over-budget: est $${estimate.toFixed(4)} > $${budget.maxCostUsd}`;
-        }
+    if (budget?.maxCostUsd !== undefined && model.billingMode === 'metered') {
+      const estimate = estimateCostUsd(model, profile, metric);
+      if (estimate !== null && estimate > budget.maxCostUsd) {
+        return `over-budget: est $${estimate.toFixed(4)} > $${budget.maxCostUsd}`;
       }
-      // ponytail: subscription budget is a coarse gate (maxQuotaUnits<=0 blocks all subscription
-      // use) because there is no per-model pre-run quota estimate; upgrade to a per-model quota
-      // estimator when catalog carries quota costs.
-      if (
-        budget.maxQuotaUnits !== undefined &&
-        budget.maxQuotaUnits <= 0 &&
-        model.billingMode === 'subscription'
-      ) {
-        return 'over-budget: no quota units remaining';
+    }
+    if (model.billingMode === 'subscription') {
+      const availableQuotaUnits = [
+        budget?.maxQuotaUnits,
+        rateLimitApplies ? rl?.remaining : undefined,
+      ].filter((value): value is number => value !== undefined);
+      const maxQuotaUnits =
+        availableQuotaUnits.length > 0 ? Math.min(...availableQuotaUnits) : undefined;
+      if (maxQuotaUnits !== undefined) {
+        const estimate = estimateQuotaUnits(metric);
+        if (estimate !== null && estimate > maxQuotaUnits) {
+          return `over-budget: est ${estimate} quota units > ${maxQuotaUnits}`;
+        }
+        if (estimate === null && maxQuotaUnits <= 0) {
+          return 'over-budget: no quota units remaining';
+        }
       }
     }
     return null;
@@ -322,6 +324,13 @@ function estimateCostUsd(
     (profile.estimatedContextTokens / 1_000_000) * model.pricing.inputUsdPerMillionTokens +
     (profile.estimatedOutputTokens / 1_000_000) * model.pricing.outputUsdPerMillionTokens
   );
+}
+
+function estimateQuotaUnits(metric: ModelMetric | null): number | null {
+  const knownCount = metric?.quotaUnitsKnownCount ?? 0;
+  return metric?.quotaUnitsTotal !== undefined && knownCount > 0
+    ? metric.quotaUnitsTotal / knownCount
+    : null;
 }
 
 function normalizePriorities(priorities: TaskProfile['priorities']): TaskProfile['priorities'] {

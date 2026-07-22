@@ -100,6 +100,36 @@ function twoProviderCatalog(): ModelDefinition[] {
   ];
 }
 
+function quotaMetric({
+  attempts = 1,
+  quotaUnitsTotal,
+  quotaUnitsKnownCount,
+}: {
+  attempts?: number;
+  quotaUnitsTotal: number;
+  quotaUnitsKnownCount: number;
+}): ModelMetric {
+  return {
+    modelId: 'quota-heavy',
+    taskKind: 'implementation',
+    role: 'developer',
+    taxonomyVersion: '2',
+    category: 'implementation/frontend',
+    attempts,
+    successes: attempts,
+    totalDurationMs: 1_000,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalEstimatedCostUsd: 0,
+    quotaUnitsTotal,
+    quotaUnitsKnownCount,
+    consecutiveFailures: 0,
+    qualityEvaluations: 0,
+    qualityApprovals: 0,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 const override: RouteOverrideProvenance = {
   source: 'run',
   overrideId: 'override-1',
@@ -488,6 +518,83 @@ describe('ScoreBasedModelRouter', () => {
     });
     // every metered model estimates > $0 → rejected; a subscription/no-pricing model may remain
     expect(decision.rejected.some((r) => r.reason.startsWith('over-budget'))).toBe(true);
+  });
+
+  it('rejects a subscription model whose observed quota use exceeds the remaining budget', async () => {
+    const metric = quotaMetric({
+      attempts: 2,
+      quotaUnitsTotal: 4,
+      quotaUnitsKnownCount: 2,
+    });
+    const router = new ScoreBasedModelRouter(
+      [model('quota-heavy', {}), model('metered-fallback', { billingMode: 'metered' })],
+      new MemoryMetrics(new Map([['quota-heavy:implementation:developer', metric]])),
+    );
+
+    const decision = await router.route(profile, undefined, { budget: { maxQuotaUnits: 1 } });
+
+    expect(decision.rejected).toContainEqual({
+      modelId: 'quota-heavy',
+      reason: 'over-budget: est 2 quota units > 1',
+    });
+  });
+
+  it('uses provider-reported remaining units as the subscription quota budget', async () => {
+    const metric = quotaMetric({
+      quotaUnitsTotal: 2,
+      quotaUnitsKnownCount: 1,
+    });
+    const router = new ScoreBasedModelRouter(
+      [model('quota-heavy', {}), model('metered-fallback', { billingMode: 'metered' })],
+      new MemoryMetrics(new Map([['quota-heavy:implementation:developer', metric]])),
+    );
+    const providerHealth = new Map([
+      [
+        'claude',
+        {
+          provider: 'claude' as const,
+          available: true,
+          message: 'ok',
+          rateLimit: { remaining: 1 },
+        },
+      ],
+    ]);
+
+    const decision = await router.route(profile, undefined, { providerHealth });
+
+    expect(decision.rejected).toContainEqual({
+      modelId: 'quota-heavy',
+      reason: 'over-budget: est 2 quota units > 1',
+    });
+  });
+
+  it('ignores provider-reported remaining units after the rate-limit reset', async () => {
+    const metric = quotaMetric({
+      quotaUnitsTotal: 2,
+      quotaUnitsKnownCount: 1,
+    });
+    const router = new ScoreBasedModelRouter(
+      [model('quota-heavy', {}), model('metered-fallback', { billingMode: 'metered' })],
+      new MemoryMetrics(new Map([['quota-heavy:implementation:developer', metric]])),
+    );
+    const providerHealth = new Map([
+      [
+        'claude',
+        {
+          provider: 'claude' as const,
+          available: true,
+          message: 'ok',
+          rateLimit: { remaining: 1, resetAt: '2000-01-01T00:00:00.000Z' },
+        },
+      ],
+    ]);
+
+    const decision = await router.route(profile, undefined, { providerHealth });
+
+    expect(decision.rejected).not.toContainEqual({
+      modelId: 'quota-heavy',
+      reason: 'over-budget: est 2 quota units > 1',
+    });
   });
 
   it('does not treat attempts without reported cost as zero-cost history', async () => {
