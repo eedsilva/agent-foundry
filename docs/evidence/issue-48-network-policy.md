@@ -32,6 +32,7 @@ Date: 2026-07-22
 - Events exclude URL path/query, headers, cookies, credentials, and bodies.
 - Every policy evidence path is capped at 1,000 events, including sidecar logs, browser events, schemas, and persisted command-plan evidence.
 - Policy sidecars and allowlisted sandboxes use Docker auto-removal plus a bounded TTL. Labeled expired networks are swept on later creates; networks with active endpoints are deferred without blocking new work.
+- The non-root sidecar drops all capabilities and adds back only `NET_BIND_SERVICE`, which is required to provide DNS on port 53 inside the sandbox network.
 - User-configured IP-literal/localhost browser origins now fail contract validation.
 - Real preview installation now fails closed when Docker/policy initialization is unavailable. Controlled e2e fixtures opt into an injected local installer; production has no runtime fallback.
 - Independent full-security review findings were addressed with regression tests for partial sidecar startup, cleanup retryability, orphan recovery, IPv6 special-use ranges, dependency-install evidence failure, and browser proxy leaks.

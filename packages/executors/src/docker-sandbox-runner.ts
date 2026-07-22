@@ -173,6 +173,7 @@ export function buildPolicySidecarCreateArgs(input: {
     '--user=65534:65534',
     '--read-only',
     '--cap-drop=ALL',
+    '--cap-add=NET_BIND_SERVICE',
     '--security-opt=no-new-privileges',
     '--pids-limit=64',
     '--memory=128m',

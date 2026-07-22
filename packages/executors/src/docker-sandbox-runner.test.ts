@@ -98,6 +98,7 @@ describe('buildCreateArgs', () => {
     expect(args).toContain('--network=bridge');
     expect(args).toContain('--read-only');
     expect(args).toContain('--cap-drop=ALL');
+    expect(args).toContain('--cap-add=NET_BIND_SERVICE');
     expect(args).toContain('--security-opt=no-new-privileges');
     expect(args).toContain(
       '/repo/dist/docker-network-policy-sidecar.js:/opt/agent-foundry/network-policy.js:ro',

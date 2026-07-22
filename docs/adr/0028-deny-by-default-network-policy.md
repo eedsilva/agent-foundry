@@ -31,6 +31,10 @@ sidecar joins both the internal network and Docker's ordinary bridge and is the 
 sandbox -> internal Docker network -> DNS + HTTP/CONNECT policy sidecar -> bridge -> public host
 ```
 
+The sidecar drops all Linux capabilities, then adds only `NET_BIND_SERVICE` so its unprivileged UID
+can bind the sandbox DNS port 53. It remains read-only, non-root, PID/memory/CPU limited, and protected
+by `no-new-privileges`.
+
 The sandbox receives the sidecar's inspected internal IP as its DNS server and HTTP(S) proxy. This is
 convenience, not the security boundary: the internal network prevents raw public, metadata, host, or
 private traffic even if a process clears those variables. Partial creation and repeated destruction
