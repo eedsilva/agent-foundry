@@ -69,6 +69,14 @@ export type Attachment = z.infer<typeof AttachmentSchema>;
 export const OperationKindSchema = z.enum(['plan', 'build', 'explain', 'repair', 'visual-edit']);
 export type OperationKind = z.infer<typeof OperationKindSchema>;
 
+export const ContextSourceSchema = z
+  .object({
+    type: z.enum(['message', 'change-request', 'project-version', 'harness-fragment']),
+    id: z.string().min(1),
+  })
+  .strict();
+export type ContextSource = z.infer<typeof ContextSourceSchema>;
+
 export const OperationApprovalSchema = z
   .object({
     status: z.enum(['pending', 'approved', 'rejected']),
@@ -119,6 +127,7 @@ export const OperationObjectSchema = z
     changeRequestId: PathSegmentSchema.optional(),
     projectVersionId: PathSegmentSchema.optional(),
     artifactReferences: z.array(ArtifactReferenceSchema).default([]),
+    contextSources: z.array(ContextSourceSchema).default([]),
     approval: OperationApprovalSchema.optional(),
     planOperationId: PathSegmentSchema.optional(),
     directExecution: z.boolean().optional(),
@@ -128,4 +137,6 @@ export const OperationObjectSchema = z
   .strict();
 
 export const OperationSchema = OperationObjectSchema.superRefine(requireExactlyOnePlanSource);
-export type Operation = z.infer<typeof OperationSchema>;
+export type Operation = Omit<z.infer<typeof OperationSchema>, 'contextSources'> & {
+  contextSources?: ContextSource[];
+};

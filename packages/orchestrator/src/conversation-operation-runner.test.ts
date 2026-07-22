@@ -685,11 +685,13 @@ describe('ConversationOperationRunner', () => {
       if (run.status === 'completed') throw new Error('run store unavailable');
     };
     const updateOperation = conversations.updateOperation.bind(conversations);
-    conversations.updateOperation = vi.fn((operation) =>
-      operation.projectVersionId
+    let operationWriteCount = 0;
+    conversations.updateOperation = vi.fn((operation) => {
+      operationWriteCount += 1;
+      return operationWriteCount === 1 || operation.projectVersionId
         ? updateOperation(operation)
-        : Promise.reject(new Error('operation restore unavailable')),
-    );
+        : Promise.reject(new Error('operation restore unavailable'));
+    });
     const { runId, operationId } = await seedVisualEdit(conversations, runs);
 
     const failure = await runner.run('project-1', runId, operationId).catch((error) => error);
@@ -1717,15 +1719,99 @@ describe('ConversationOperationRunner context compilation', () => {
     const sourceIds = updatedChangeRequest?.contextSources.map((s) => s.id) ?? [];
     expect(sourceIds).toContain(confirmedDecision.id);
     expect(sourceIds).toContain('CLAUDE.md');
+    expect(await conversations.getOperation('project-1', operationId)).toMatchObject({
+      contextSources: updatedChangeRequest?.contextSources,
+    });
   });
 
-  it('runs unaffected when the operation has no changeRequestId (existing manual-toggle path)', async () => {
-    const { runs, conversations, runner } = setup();
-    const { runId, operationId } = await seed(conversations, runs, 'build');
+  it.each(['plan', 'build'] as const)(
+    'persists compiled and harness sources on a direct %s operation',
+    async (kind) => {
+      const fragmentHarness: HarnessRepository = {
+        select: () =>
+          Promise.resolve({
+            version: 'v1',
+            files: [{ path: 'CLAUDE.md', content: 'Be terse.', priority: 1 }],
+            combined: 'Be terse.',
+          }),
+        version: () => Promise.resolve('v1'),
+      };
+      const { runs, conversations, projectVersions, runner } = setup(fragmentHarness);
+      const { runId, operationId } = await seed(conversations, runs, kind, kind);
+      await conversations.createChangeRequest({
+        id: `decision-${kind}`,
+        projectId: 'project-1',
+        conversationId: 'project-1',
+        messageId: `message-${kind}`,
+        suggestedKind: 'build',
+        confirmedKind: 'build',
+        summary: 'Keep the existing authentication flow.',
+        rationale: 'Established project decision.',
+        referencedDecisionIds: [],
+        contextSources: [],
+        status: 'confirmed',
+        createdAt: '2026-07-18T11:00:00.000Z',
+        decidedAt: '2026-07-18T11:00:01.000Z',
+      });
+      await projectVersions.create({
+        schemaVersion: '1',
+        id: `version-${kind}`,
+        projectId: 'project-1',
+        sequence: 1,
+        kind: 'run',
+        runId: `previous-run-${kind}`,
+        commit: 'abc123',
+        artifacts: [],
+        protected: false,
+        version: 1,
+        createdAt: '2026-07-18T11:00:00.000Z',
+      });
+
+      await runner.run('project-1', runId, operationId);
+
+      const operation = await conversations.getOperation('project-1', operationId);
+      expect(operation?.changeRequestId).toBeUndefined();
+      expect(operation).toMatchObject({
+        contextSources: [
+          { type: 'message', id: `message-${kind}` },
+          { type: 'change-request', id: `decision-${kind}` },
+          { type: 'project-version', id: `version-${kind}` },
+          { type: 'harness-fragment', id: 'CLAUDE.md' },
+        ],
+      });
+      expect((await runs.get(runId))?.status).toBe('completed');
+    },
+  );
+
+  it('preserves direct-operation sources when execution fails', async () => {
+    const fragmentHarness: HarnessRepository = {
+      select: () =>
+        Promise.resolve({
+          version: 'v1',
+          files: [{ path: 'CLAUDE.md', content: 'Be terse.', priority: 1 }],
+          combined: 'Be terse.',
+        }),
+      version: () => Promise.resolve('v1'),
+    };
+    const { runs, conversations, runner } = setup(fragmentHarness, undefined, {
+      'conversation-build-operation-failed': {
+        kind: 'fail-always',
+        error: () => new Error('boom'),
+      },
+    });
+    const { runId, operationId } = await seed(conversations, runs, 'build', 'failed');
 
     await runner.run('project-1', runId, operationId);
 
-    expect((await runs.get(runId))?.status).toBe('completed');
+    expect((await runs.get(runId))?.status).toBe('failed');
+    const operation = await conversations.getOperation('project-1', operationId);
+    expect(operation?.changeRequestId).toBeUndefined();
+    expect(operation).toMatchObject({
+      contextSources: [
+        { type: 'message', id: 'message-failed' },
+        { type: 'harness-fragment', id: 'CLAUDE.md' },
+      ],
+    });
   });
 });
 

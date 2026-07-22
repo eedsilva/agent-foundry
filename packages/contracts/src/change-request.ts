@@ -1,17 +1,9 @@
 import { z } from 'zod';
 import { PathSegmentSchema } from './primitives.js';
-import { OperationKindSchema } from './conversation.js';
+import { ContextSourceSchema, OperationKindSchema } from './conversation.js';
 
 export const ChangeRequestStatusSchema = z.enum(['proposed', 'confirmed', 'rejected']);
 export type ChangeRequestStatus = z.infer<typeof ChangeRequestStatusSchema>;
-
-export const ContextSourceSchema = z
-  .object({
-    type: z.enum(['message', 'change-request', 'project-version', 'harness-fragment']),
-    id: z.string().min(1),
-  })
-  .strict();
-export type ContextSource = z.infer<typeof ContextSourceSchema>;
 
 export const ChangeRequestSchema = z
   .object({
