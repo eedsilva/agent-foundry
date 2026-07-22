@@ -7,7 +7,11 @@ import {
   type RouteDecision,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
-import { type ArtifactBlobPutInput, type ArtifactStore } from '@agent-foundry/domain';
+import {
+  VersionConflictError,
+  type ArtifactBlobPutInput,
+  type ArtifactStore,
+} from '@agent-foundry/domain';
 import { accumulateStreamWithCap, sha256 } from '../fs-utils.js';
 import type { PostgresDb } from './client.js';
 import { acquireScopeLock, toJsonb } from './versioned.js';
@@ -38,6 +42,7 @@ export class PostgresArtifactStore implements ArtifactStore {
     sourceDecisionId?: string;
     routeDecision?: RouteDecision;
     idempotencyKey?: string;
+    expectedRevision?: number;
   }): Promise<StoredArtifact> {
     return this.sql.begin(async (tx) => {
       await acquireScopeLock(tx, 'artifacts:' + input.projectId);
@@ -62,6 +67,14 @@ export class PostgresArtifactStore implements ArtifactStore {
         select coalesce(max(revision), 0) + 1 as revision
         from artifacts where project_id = ${input.projectId} and name = ${input.name}`;
       const revision = next?.revision ?? 1;
+      if (input.expectedRevision !== undefined && revision - 1 !== input.expectedRevision) {
+        throw new VersionConflictError(
+          'artifact',
+          input.name,
+          input.expectedRevision,
+          revision - 1,
+        );
+      }
 
       const metadata = ArtifactMetadataSchema.parse({
         projectId: input.projectId,

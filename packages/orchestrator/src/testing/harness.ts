@@ -42,6 +42,7 @@ import {
   NotFoundError,
   RunCancelledError,
   SystemClock,
+  ValidationError,
   VersionConflictError,
   toExecutionResult,
   type AgentExecutor,
@@ -434,7 +435,16 @@ export class InMemoryArtifacts implements ArtifactStore {
           )
         : undefined;
     if (existing) return Promise.resolve(existing);
-    const revision = this.named(input.name).length + 1;
+    const currentRevision = this.named(input.name).at(-1)?.metadata.revision ?? 0;
+    if (input.expectedRevision !== undefined && currentRevision !== input.expectedRevision) {
+      throw new VersionConflictError(
+        'artifact',
+        input.name,
+        input.expectedRevision,
+        currentRevision,
+      );
+    }
+    const revision = currentRevision + 1;
     const metadata: ArtifactMetadata = {
       projectId: input.projectId,
       name: input.name,
@@ -637,9 +647,17 @@ export class MemoryConversations implements ConversationRepository {
       this.operations.find((o) => o.projectId === projectId && o.id === operationId) ?? null,
     );
   }
-  updateOperation(operation: Operation): Promise<Operation> {
+  updateOperation(operation: Operation, expectedProposalRevision?: number): Promise<Operation> {
     const index = this.operations.findIndex((o) => o.id === operation.id);
     if (index === -1) throw new Error(`operation ${operation.id} missing`);
+    const existing = this.operations[index]!;
+    if (
+      expectedProposalRevision !== undefined &&
+      (existing.approval?.status !== 'pending' ||
+        existing.artifactReferences[0]?.revision !== expectedProposalRevision)
+    ) {
+      throw new ValidationError(`Plan operation ${operation.id} is no longer editable`);
+    }
     this.operations[index] = operation;
     return Promise.resolve(operation);
   }

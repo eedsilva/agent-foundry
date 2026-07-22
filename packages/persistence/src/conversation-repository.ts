@@ -173,12 +173,23 @@ export class FileConversationRepository implements ConversationRepository {
     );
   }
 
-  async updateOperation(operation: Operation): Promise<Operation> {
+  async updateOperation(
+    operation: Operation,
+    expectedProposalRevision?: number,
+  ): Promise<Operation> {
     const parsed = OperationSchema.parse(operation);
     return this.withLock(parsed.projectId, async () => {
       const operations = await this.readOperations(parsed.projectId);
       const index = operations.findIndex((item) => item.id === parsed.id);
       if (index === -1) throw new NotFoundError(`Operation ${parsed.id} not found`);
+      const existing = operations[index]!;
+      if (
+        expectedProposalRevision !== undefined &&
+        (existing.approval?.status !== 'pending' ||
+          existing.artifactReferences[0]?.revision !== expectedProposalRevision)
+      ) {
+        throw new ValidationError(`Plan operation ${parsed.id} is no longer editable`);
+      }
       operations[index] = parsed;
       await this.writeJsonLines(this.operationsPath(parsed.projectId), operations);
       return parsed;

@@ -643,20 +643,19 @@ describe('conversation API', () => {
       risks: [],
       nextActions: [],
     };
-    const update = await fetch(`${baseUrl}${proposalPath}`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ expectedRevision: 1, content: edited }),
-    });
-    expect(update.status).toBe(200);
+    const updates = await Promise.all(
+      [edited, { ...edited, summary: 'Concurrent proposal' }].map((content) =>
+        fetch(`${baseUrl}${proposalPath}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ expectedRevision: 1, content }),
+        }),
+      ),
+    );
+    expect(updates.map((response) => response.status).sort()).toEqual([200, 409]);
+    const update = updates.find((response) => response.status === 200)!;
     const saved = (await update.json()) as { artifact: { metadata: { revision: number } } };
     expect(saved.artifact.metadata.revision).toBe(2);
-    const stale = await fetch(`${baseUrl}${proposalPath}`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ expectedRevision: 1, content: edited }),
-    });
-    expect(stale.status).toBe(409);
     await post(baseUrl, `/projects/${projectId}/conversation/operations/${plan.id}/decide`, {
       action: 'approve',
     });

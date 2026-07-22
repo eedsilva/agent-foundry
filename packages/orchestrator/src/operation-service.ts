@@ -21,7 +21,6 @@ import {
   type JobQueue,
   type WorkspaceManager,
   type WorkflowRunRepository,
-  VersionConflictError,
 } from '@agent-foundry/domain';
 import { CONVERSATION_WORKFLOW_ID } from './conversation-step-config.js';
 import { classifyMessage } from './message-classifier.js';
@@ -278,30 +277,26 @@ export class OperationService {
       throw new ValidationError(`Plan operation ${operationId} is no longer editable`);
     }
     const current = await this.getProposal(projectId, operationId);
-    if (current.metadata.revision !== input.expectedRevision) {
-      throw new VersionConflictError(
-        'proposal',
-        operationId,
-        input.expectedRevision,
-        current.metadata.revision,
-      );
-    }
     const artifact = await this.artifacts.put({
       projectId,
       name: current.metadata.name,
       content: input.content,
       createdBy: 'user:proposal-editor',
+      expectedRevision: input.expectedRevision,
     });
-    await this.conversations.updateOperation({
-      ...operation,
-      artifactReferences: [
-        {
-          name: artifact.metadata.name,
-          revision: artifact.metadata.revision,
-          sha256: artifact.metadata.sha256,
-        },
-      ],
-    });
+    await this.conversations.updateOperation(
+      {
+        ...operation,
+        artifactReferences: [
+          {
+            name: artifact.metadata.name,
+            revision: artifact.metadata.revision,
+            sha256: artifact.metadata.sha256,
+          },
+        ],
+      },
+      input.expectedRevision,
+    );
     return artifact;
   }
 
