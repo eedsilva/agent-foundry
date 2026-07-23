@@ -6,7 +6,7 @@ import {
   type QualityObservationQuery,
 } from '@agent-foundry/contracts';
 import type { QualityObservationRepository } from '@agent-foundry/domain';
-import { atomicWriteJson, readJsonOrNull, withDirectoryLock } from './fs-utils.js';
+import { atomicWriteJson, readJsonOrNull, withRecoverableDirectoryLock } from './fs-utils.js';
 
 const QualityObservationFileSchema = z
   .object({ observations: z.array(QualityObservationSchema) })
@@ -18,12 +18,16 @@ export class FileQualityObservationRepository implements QualityObservationRepos
 
   async record(observation: QualityObservation): Promise<void> {
     const path = this.path();
-    await withDirectoryLock(`${path}.lock`, async () => {
-      const file = await this.read();
-      if (file.observations.some((item) => item.id === observation.id)) return;
-      file.observations.push(QualityObservationSchema.parse(observation));
-      await atomicWriteJson(path, file);
-    });
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['quality', 'observations.json.lock'],
+      async () => {
+        const file = await this.read();
+        if (file.observations.some((item) => item.id === observation.id)) return;
+        file.observations.push(QualityObservationSchema.parse(observation));
+        await atomicWriteJson(path, file);
+      },
+    );
   }
 
   async list(query: QualityObservationQuery): Promise<QualityObservation[]> {

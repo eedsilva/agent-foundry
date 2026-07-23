@@ -1,7 +1,12 @@
 import { join } from 'node:path';
 import { ProjectEventSchema, type ProjectEvent } from '@agent-foundry/contracts';
 import { redactEvent, type EventStore } from '@agent-foundry/domain';
-import { appendJsonLine, readJsonLines, safeSegment, withDirectoryLock } from './fs-utils.js';
+import {
+  appendJsonLine,
+  readJsonLines,
+  safeSegment,
+  withRecoverableDirectoryLock,
+} from './fs-utils.js';
 
 export class FileEventStore implements EventStore {
   constructor(private readonly dataDir: string) {}
@@ -17,11 +22,15 @@ export class FileEventStore implements EventStore {
     // no-op, so crash-redelivered runs never duplicate their event trail.
     // ponytail: full-file scan per keyed append; index the keys if event
     // volume ever makes this hot.
-    await withDirectoryLock(`${path}.lock`, async () => {
-      const existing = await readJsonLines<{ dedupeKey?: string }>(path);
-      if (existing.some((line) => line.dedupeKey === parsed.dedupeKey)) return;
-      await appendJsonLine(path, parsed);
-    });
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['projects', safeSegment(parsed.projectId), 'events.jsonl.lock'],
+      async () => {
+        const existing = await readJsonLines<{ dedupeKey?: string }>(path);
+        if (existing.some((line) => line.dedupeKey === parsed.dedupeKey)) return;
+        await appendJsonLine(path, parsed);
+      },
+    );
   }
 
   async list(projectId: string, limit = 500, afterId?: string): Promise<ProjectEvent[]> {

@@ -4,22 +4,32 @@ import {
   type AgentStreamEventInput,
 } from '@agent-foundry/contracts';
 import { redactString, type StepEventRepository } from '@agent-foundry/domain';
-import { appendJsonLine, pathFor, readJsonLines, withDirectoryLock } from './fs-utils.js';
+import {
+  appendJsonLine,
+  pathFor,
+  readJsonLines,
+  safeSegment,
+  withRecoverableDirectoryLock,
+} from './fs-utils.js';
 
 export class FileStepEventRepository implements StepEventRepository {
   constructor(private readonly dataDir: string) {}
 
   async append(event: AgentStreamEventInput): Promise<AgentStreamEvent> {
     const path = this.filePath(event.runId);
-    return withDirectoryLock(`${path}.lock`, async () => {
-      const existing = await this.readEvents(event.runId);
-      const parsed = AgentStreamEventSchema.parse({
-        ...redactPayload(event),
-        sequence: (existing.at(-1)?.sequence ?? 0) + 1,
-      });
-      await appendJsonLine(path, parsed);
-      return parsed;
-    });
+    return withRecoverableDirectoryLock(
+      this.dataDir,
+      ['runs', safeSegment(event.runId), 'stream-events.jsonl.lock'],
+      async () => {
+        const existing = await this.readEvents(event.runId);
+        const parsed = AgentStreamEventSchema.parse({
+          ...redactPayload(event),
+          sequence: (existing.at(-1)?.sequence ?? 0) + 1,
+        });
+        await appendJsonLine(path, parsed);
+        return parsed;
+      },
+    );
   }
 
   async list(
