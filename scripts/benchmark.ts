@@ -1,5 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import {
   BenchmarkRunRecordSchema,
   type BenchmarkRunRecord,
@@ -11,7 +10,11 @@ import {
   loadBenchmarkCases,
   runBenchmarkCase,
 } from '../packages/composition/src/benchmark-runner.js';
-import { loadDoctorProbes } from '../packages/composition/src/provider-canary.js';
+import {
+  argValue as sharedArgValue,
+  assertRealModeReady,
+  loadJsonRecords,
+} from './lib/cli-shared.js';
 
 const rootDir = resolve(import.meta.dirname, '..');
 const casesDir = resolve(rootDir, 'benchmarks/cases');
@@ -20,22 +23,11 @@ const catalogPath = resolve(rootDir, 'models/catalog.yaml');
 const args = process.argv.slice(2);
 
 function argValue(flag: string): string | undefined {
-  const index = args.indexOf(flag);
-  return index >= 0 ? args[index + 1] : undefined;
+  return sharedArgValue(args, flag);
 }
 
 async function loadRecords(): Promise<BenchmarkRunRecord[]> {
-  let entries: string[];
-  try {
-    entries = (await readdir(benchmarkDir)).filter((name) => name.endsWith('.json'));
-  } catch {
-    return [];
-  }
-  return Promise.all(
-    entries.map(async (name) =>
-      BenchmarkRunRecordSchema.parse(JSON.parse(await readFile(join(benchmarkDir, name), 'utf8'))),
-    ),
-  );
+  return loadJsonRecords(benchmarkDir, BenchmarkRunRecordSchema);
 }
 
 async function resolveModels(): Promise<ModelDefinition[]> {
@@ -45,22 +37,6 @@ async function resolveModels(): Promise<ModelDefinition[]> {
   return catalog.filter(
     (model) => model.model.trim().length > 0 && (!selected || selected.has(model.id)),
   );
-}
-
-async function assertRealModeReady(): Promise<void> {
-  if (process.env.RUN_REAL_BENCHMARK !== 'true') {
-    console.error('Real benchmark runs require RUN_REAL_BENCHMARK=true.');
-    process.exit(1);
-  }
-  const probes = await loadDoctorProbes(rootDir, process.env);
-  for (const probe of probes) {
-    if (probe.status !== 'ready')
-      console.error(`skip: ${probe.provider} probe reported ${probe.status}.`);
-  }
-  if (!probes.some((probe) => probe.status === 'ready')) {
-    console.error('No provider CLI is ready; refusing to run real benchmark cases.');
-    process.exit(1);
-  }
 }
 
 const executorMode = argValue('--executor-mode') === 'mock' ? ('mock' as const) : ('real' as const);
@@ -81,7 +57,8 @@ try {
     });
     console.log(`Frozen ${records.length} record(s) into docs/baselines.`);
   } else if (args.includes('--all') || argValue('--case')) {
-    if (executorMode === 'real') await assertRealModeReady();
+    if (executorMode === 'real')
+      await assertRealModeReady({ envVarName: 'RUN_REAL_BENCHMARK', rootDir });
     const cases = await loadBenchmarkCases(casesDir);
     const caseId = argValue('--case');
     const selectedCases = caseId
