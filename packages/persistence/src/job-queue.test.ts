@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -366,5 +366,33 @@ describe('FileJobQueue lease semantics', () => {
     await queue.enqueue(baseJob());
 
     expect((await queue.claim('worker-a'))?.traceContext).toBeUndefined();
+  });
+
+  it('dead-letters malformed pending jobs while preserving raw bytes', async () => {
+    const dataDir = await temporaryDataDir();
+    const queue = new FileJobQueue(dataDir);
+    const raw = '{"id":"job-1"}';
+    await mkdir(join(dataDir, 'queue', 'pending'), { recursive: true });
+    await writeFile(join(dataDir, 'queue', 'pending', 'job-1.json'), raw);
+
+    await expect(queue.claim('worker-a')).rejects.toThrow();
+
+    await expect(
+      readFile(join(dataDir, 'queue', 'failed', 'job-1.worker-a.json'), 'utf8'),
+    ).resolves.toBe(raw);
+  });
+
+  it('dead-letters malformed processing jobs while preserving raw bytes', async () => {
+    const dataDir = await temporaryDataDir();
+    const queue = new FileJobQueue(dataDir);
+    const raw = '{"id":"job-1"}';
+    await mkdir(join(dataDir, 'queue', 'processing'), { recursive: true });
+    await writeFile(join(dataDir, 'queue', 'processing', 'job-1.worker-a.json'), raw);
+
+    await expect(queue.reapExpired()).resolves.toEqual([]);
+
+    await expect(
+      readFile(join(dataDir, 'queue', 'failed', 'job-1.worker-a.json'), 'utf8'),
+    ).resolves.toBe(raw);
   });
 });

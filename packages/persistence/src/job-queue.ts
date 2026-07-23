@@ -1,5 +1,5 @@
 import { readdir, rename, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { QueueJobSchema, type QueueJob } from '@agent-foundry/contracts';
 import { LeaseLostError, type Clock, type JobQueue } from '@agent-foundry/domain';
 import {
@@ -71,7 +71,8 @@ export class FileJobQueue implements JobQueue {
         await atomicWriteJson(to, leased);
         return leased;
       } catch (error) {
-        await rm(to, { force: true });
+        await ensureDir(this.dir('failed'));
+        await rename(to, join(this.dir('failed'), basename(to)));
         throw error;
       }
     }
@@ -153,7 +154,8 @@ export class FileJobQueue implements JobQueue {
       try {
         job = QueueJobSchema.parse(await readJson<unknown>(from));
       } catch {
-        await rm(from, { force: true });
+        await ensureDir(this.dir('failed'));
+        await rename(from, join(this.dir('failed'), basename(from)));
         continue;
       }
 
