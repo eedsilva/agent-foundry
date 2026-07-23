@@ -1,5 +1,6 @@
-import { readFile } from 'node:fs/promises';
-import { resolve, sep } from 'node:path';
+import { readFile, readdir } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import type { HarnessRepository, HarnessSelection } from '@agent-foundry/domain';
 
@@ -69,6 +70,30 @@ export class VersionedHarnessRepository implements HarnessRepository {
         .map((file) => `\n<!-- harness:${file.path} -->\n${file.content.trim()}\n`)
         .join('\n'),
     };
+  }
+
+  async scaffoldFiles(stack: string): Promise<Array<{ path: string; content: string }>> {
+    const scaffoldRoot = this.safeResolve(join('scaffolds', stack));
+    let entries: Dirent[];
+    try {
+      entries = await readdir(scaffoldRoot, { recursive: true, withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+    const files = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => {
+        const fullPath = join(entry.parentPath, entry.name);
+        return { fullPath, path: relative(scaffoldRoot, fullPath).split(sep).join('/') };
+      })
+      .sort((left, right) => left.path.localeCompare(right.path));
+    return Promise.all(
+      files.map(async ({ fullPath, path }) => ({
+        path,
+        content: await readFile(fullPath, 'utf8'),
+      })),
+    );
   }
 
   private safeResolve(relativePath: string): string {

@@ -120,7 +120,7 @@ export class ProjectService {
   }
 
   async create(input: CreateProjectRequest): Promise<Project> {
-    await this.workflows.get(input.workflowId);
+    const workflow = await this.workflows.get(input.workflowId);
     const policyId = input.policyId ?? 'default';
     await this.policies.get(policyId);
     const now = this.clock.now().toISOString();
@@ -150,6 +150,10 @@ export class ProjectService {
     await this.workspaces.ensure(project.id);
     await this.generatedProjectRuntime?.initialize({ projectId: project.id });
     await this.workspaces.writePrd(project.id, input.prd);
+    const scaffoldFiles = await this.harness.scaffoldFiles(workflow.stack);
+    if (scaffoldFiles.length > 0) {
+      await this.workspaces.applyScaffold(project.id, scaffoldFiles);
+    }
     await this.projects.create(project);
     await this.runs.create(run);
     await this.artifacts.put({
@@ -159,7 +163,23 @@ export class ProjectService {
       contentType: 'text/markdown',
       createdBy: 'user',
     });
+    if (scaffoldFiles.length > 0) {
+      await this.artifacts.put({
+        projectId: project.id,
+        name: 'scaffold-manifest',
+        content: scaffoldFiles.map((file) => file.path),
+        contentType: 'application/json',
+        createdBy: `scaffold:${workflow.stack}`,
+      });
+    }
     await this.appendEvent(project.id, 'project.created', 'Project and workspace created.');
+    if (scaffoldFiles.length > 0) {
+      await this.appendEvent(
+        project.id,
+        'scaffold.applied',
+        `Applied ${scaffoldFiles.length} scaffold file(s) for stack '${workflow.stack}'.`,
+      );
+    }
 
     const job: QueueJob = {
       id: this.ids.next(),

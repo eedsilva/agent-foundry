@@ -73,6 +73,7 @@ class MemoryQueue implements JobQueue {
 
 const harnessRepo: HarnessRepository = {
   select: () => Promise.resolve({ version: 'v1', files: [], combined: '' }),
+  scaffoldFiles: () => Promise.resolve([]),
   version: () => Promise.resolve('v1'),
 };
 const metrics: MetricsRepository = {

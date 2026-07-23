@@ -2,7 +2,14 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import type { WorkspaceManager } from '@agent-foundry/domain';
-import { atomicWriteJson, atomicWriteText, ensureDir, exists, safeSegment } from './fs-utils.js';
+import {
+  atomicWriteJson,
+  atomicWriteText,
+  ensureDir,
+  exists,
+  pathFor,
+  safeSegment,
+} from './fs-utils.js';
 
 export interface FileWorkspaceManagerOptions {
   gitAuthorName: string;
@@ -64,6 +71,19 @@ export class FileWorkspaceManager implements WorkspaceManager {
   async writePrd(projectId: string, prd: string): Promise<void> {
     await this.ensure(projectId);
     await atomicWriteText(join(this.workspacePath(projectId), 'PRD.md'), `${prd.trim()}\n`);
+  }
+
+  async applyScaffold(
+    projectId: string,
+    files: Array<{ path: string; content: string }>,
+  ): Promise<void> {
+    await this.ensure(projectId);
+    const workspace = this.workspacePath(projectId);
+    for (const file of files) {
+      if (isAbsolute(file.path)) throw new Error(`Unsafe scaffold path: ${file.path}`);
+      const destination = pathFor(workspace, ...file.path.split('/'));
+      await atomicWriteText(destination, file.content);
+    }
   }
 
   async writeRunContext(input: {
