@@ -1,6 +1,7 @@
 export * from './primitives.js';
 export * from './network-policy.js';
 export * from './agent.js';
+export * from './benchmark.js';
 export * from './model.js';
 export * from './task-taxonomy.js';
 export * from './policy.js';
