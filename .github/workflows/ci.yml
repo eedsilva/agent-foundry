@@ -35,6 +35,23 @@ jobs:
             exit 1
           fi
 
+  storage-e2e:
+    name: storage-e2e
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
+        with:
+          version: 2.62.5
+      - run: RUN_SUPABASE_STORAGE_E2E=true npx vitest run packages/platform/src/supabase-storage.e2e.test.ts --pool=threads --maxWorkers=1
+
   format:
     name: format
     needs: preflight

@@ -24,3 +24,10 @@ Standing choices for generated apps. The PRD or approved architecture may overri
 - Deployment target: Docker Compose on the owner's existing VPS behind Caddy, per ADR 0008. Include a multi-stage `Dockerfile` using Next.js standalone output and a `docker-compose.yml`.
 - Dependencies: well-known, actively maintained libraries are fine when they save real time; pin versions.
 - Language: code, comments, and docs in English; user-facing copy follows the PRD's language.
+
+## Generated-project uploads
+
+- Use only the private `uploads` bucket. Do not use `getPublicUrl`, S3 credentials, or a service-role key in browser code.
+- First call `prepare_storage_upload` for `<user.id>/<opaque-name>`, then use the authenticated Supabase client to create and use its signed upload URL. Signed URLs are short-lived bearer credentials: never log or persist them.
+- Render or download only after `scan_status = clean`; `quarantine` and `rejected` are unavailable. Only the service-role scanner may read `storage_scan_queue` and call `complete_storage_scan`; no browser may set scan state.
+- Export bytes before `confirm_storage_export`. Cleanup calls `storage_cleanup_candidates`, deletes bytes through the Storage API, then calls `confirm_storage_cleanup`.
