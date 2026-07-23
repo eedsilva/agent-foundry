@@ -285,6 +285,7 @@ export class WorkflowOrchestrator {
       recordRunDuration(durationMs, { status: 'failed' });
       await this.emit(projectId, 'project.failed', errorMessage(error), {
         runId: run.id,
+        dedupeKey: `${run.id}:project.failed`,
       });
       throw error;
     } finally {
@@ -1602,6 +1603,7 @@ export class WorkflowOrchestrator {
       await this.emit(project.id, 'verification.completed', report.summary, {
         nodeId: step.id,
         runId,
+        dedupeKey: `${runId}:attempt:${attempt.id}:verification.completed`,
         data: { approved: report.approved, attemptId: attempt.id },
       });
       await this.emitArtifactCreated(project.id, artifact, step.id, runId);
@@ -1789,6 +1791,7 @@ export class WorkflowOrchestrator {
       await this.emit(project.id, 'verification.completed', persistedReport.summary, {
         nodeId: step.id,
         runId,
+        dedupeKey: `${runId}:attempt:${attempt.id}:verification.completed`,
         data: { approved: persistedReport.approved, attemptId: attempt.id },
       });
       await this.emitArtifactCreated(project.id, artifact, step.id, runId);
@@ -1873,6 +1876,7 @@ export class WorkflowOrchestrator {
       {
         nodeId: step.id,
         runId,
+        dedupeKey: `${runId}:step:${stepRun.id}:routed`,
         data: {
           selected: route.selected.model.id,
           provider: route.selected.model.provider,
@@ -2114,6 +2118,7 @@ export class WorkflowOrchestrator {
       await this.emit(project.id, 'agent.completed', result.output.summary, {
         nodeId: step.id,
         runId,
+        dedupeKey: `${runId}:attempt:${attempt.id}:completed`,
         data: {
           modelId: candidate.model.id,
           provider: candidate.model.provider,
@@ -2287,6 +2292,7 @@ export class WorkflowOrchestrator {
     await this.emit(project.id, 'agent.started', `${step.id} started on ${candidate.model.id}.`, {
       nodeId: step.id,
       runId,
+      dedupeKey: `${runId}:attempt:${attemptId}:started`,
       data: { modelId: candidate.model.id, provider: candidate.model.provider, attemptId },
     });
     const executionResult = await this.executionPlane.submit(

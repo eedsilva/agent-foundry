@@ -747,6 +747,9 @@ describe('browser verification orchestration (#32)', () => {
         message: firstApproved ? 'Persisted browser approval.' : 'Persisted browser rejection.',
         data: { approved: firstApproved },
       });
+      expect(verificationEvents[0]?.dedupeKey).toBe(
+        `run-1:attempt:${verificationEvents[0]?.data.attemptId}:verification.completed`,
+      );
       if (failure === 'checkpoint') {
         expect(reports).toHaveLength(1);
         expect(browser.started).toBe(1);

@@ -114,6 +114,40 @@ describe('FakeWorkspaces checkpoint/commit hooks', () => {
 });
 
 describe('Group A: executor failure modes with fallback recovery', () => {
+  it('keys replay-adjacent agent and verification events by their persisted run records', async () => {
+    const harness = makeHarness();
+    await seedRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    for (const stepId of ['plan', 'implement', 'review']) {
+      const stepRun = liveStepRun(harness, stepId);
+      const [attempt] = await harness.stepAttempts.list('run-1', stepRun.id);
+      const routed = harness.events.events.find(
+        (event) => event.type === 'agent.routed' && event.nodeId === stepId,
+      );
+      const started = harness.events.events.find(
+        (event) => event.type === 'agent.started' && event.data.attemptId === attempt?.id,
+      );
+      const completed = harness.events.events.find(
+        (event) => event.type === 'agent.completed' && event.data.attemptId === attempt?.id,
+      );
+
+      expect(routed?.dedupeKey).toBe(`run-1:step:${stepRun.id}:routed`);
+      expect(started?.dedupeKey).toBe(`run-1:attempt:${attempt?.id}:started`);
+      expect(completed?.dedupeKey).toBe(`run-1:attempt:${attempt?.id}:completed`);
+    }
+
+    const verification = liveStepRun(harness, 'verify');
+    const [verificationAttempt] = await harness.stepAttempts.list('run-1', verification.id);
+    const completedVerification = harness.events.events.find(
+      (event) => event.type === 'verification.completed',
+    );
+    expect(completedVerification?.dedupeKey).toBe(
+      `run-1:attempt:${verificationAttempt?.id}:verification.completed`,
+    );
+  });
+
   it.each([
     ['timeout', timeoutError],
     ['rate limit', rateLimitError],
@@ -166,6 +200,9 @@ describe('Group A: executor failure modes with fallback recovery', () => {
     expect(attempts.every((attempt) => attempt.status === 'failed')).toBe(true);
     expect(harness.workspaces.rollbacks.length).toBeGreaterThan(0);
     expect((await harness.projects.get('project-1'))?.status).toBe('failed');
+    expect(harness.events.events.find((event) => event.type === 'project.failed')?.dedupeKey).toBe(
+      'run-1:project.failed',
+    );
 
     // Terminal-run guard: redelivering the failed run changes nothing.
     const before = snapshotCounts(harness);
