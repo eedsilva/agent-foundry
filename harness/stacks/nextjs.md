@@ -15,9 +15,9 @@ Unless the approved architecture says otherwise:
 
 Standing choices for generated apps. The PRD or approved architecture may override them; record any override as a decision.
 
-- Package manager: pnpm.
-- Backend: the project's own isolated local Supabase Docker stack (`@supabase/supabase-js` + `@supabase/ssr`), per ADR 0007. Never point a generated app at Supabase Cloud or another project's stack. Enable Row Level Security on every table holding user data.
-- Every app ships with Supabase auth wired end to end: sign-in flow, protected routes, and session handling. Email/password only — no OAuth, magic links, or SMTP; password reset is an administrator operation.
+- Package manager: pnpm 9 or newer.
+- Framework versions: Next.js 15+ on the App Router only (no Pages Router); Tailwind CSS v4 (CSS-first `@theme` config, no `tailwind.config.js` unless the app needs JS-driven theming); shadcn/ui components added via its CLI, kept at whatever version the CLI installs.
+- Backend: the project's own isolated local Supabase Docker stack, per ADR 0007 — see `stacks/supabase.md` for migrations, RLS, auth, storage, and environment-variable conventions.
 - Secrets and credentials live in local `.env` files: git-ignored and never echoed into source, prompts, artifacts, screenshots, or logs.
 - UI: Tailwind CSS + shadcn/ui components.
 - Structure: minimal feature folders — `app/` for routes, `features/<name>/` for feature logic and components, `lib/` for shared domain code. No extra layering until the app demonstrably needs it.

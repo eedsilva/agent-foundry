@@ -377,6 +377,9 @@ class FakeWorkspaces implements WorkspaceManager {
   writePrd(): Promise<void> {
     return Promise.resolve();
   }
+  applyScaffold(): Promise<void> {
+    return Promise.resolve();
+  }
   writeRunContext(): Promise<{ requestPath: string; schemaPath: string; inputPaths: string[] }> {
     return Promise.resolve({
       requestPath: 'request.md',
@@ -551,6 +554,7 @@ function makeHarness(
   };
   const harness: HarnessRepository = {
     select: () => Promise.resolve({ version: '1', files: [], combined: '' }),
+    scaffoldFiles: () => Promise.resolve([]),
     version: () => Promise.resolve('1'),
   };
   const router: ModelRouter = {

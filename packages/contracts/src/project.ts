@@ -74,6 +74,7 @@ export const ProjectEventSchema = z.object({
   projectId: PathSegmentSchema,
   type: z.enum([
     'project.created',
+    'scaffold.applied',
     'project.queued',
     'project.started',
     'project.completed',
