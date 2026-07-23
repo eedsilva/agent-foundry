@@ -780,13 +780,20 @@ export class ProjectService {
         ...(feedbackArtifact ? { feedbackArtifact } : {}),
       }));
     } else {
-      updatedRun = await this.runs.update(
-        // Clears any stale retry directive left by an earlier request-changes
-        // cycle on this same run — otherwise a later replay could mistake an
-        // already-superseded step for the current retry target.
-        transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: undefined }),
-        run.version,
-      );
+      try {
+        updatedRun = await this.runs.update(
+          // Clears any stale retry directive left by an earlier request-changes
+          // cycle on this same run — otherwise a later replay could mistake an
+          // already-superseded step for the current retry target.
+          transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: undefined }),
+          run.version,
+        );
+      } catch (error) {
+        if (!(error instanceof VersionConflictError)) throw error;
+        const current = await this.requireRun(runId);
+        if (current.status === 'awaiting_approval') throw error;
+        return { run: current, decision };
+      }
       await this.requeueProject(run.projectId, runId, this.approvalJobId(runId, decision.id));
     }
 
