@@ -191,6 +191,7 @@ describe('NodePreviewRunner', () => {
       exitCode: 0,
       stdout: 'installed',
       stderr: '',
+      versions: { node: 'v22.0.0', packageManager: '10.0.0' },
       networkEvents: [
         {
           timestamp: '2026-07-22T12:00:00.000Z',
@@ -215,6 +216,7 @@ describe('NodePreviewRunner', () => {
     const prepared = await runner.prepare(session);
 
     expect(install).toHaveBeenCalledOnce();
+    expect(prepared.commandPlan?.versions).toEqual({ node: 'v22.0.0', packageManager: '10.0.0' });
     expect(prepared.commandPlan?.installNetworkEvents).toHaveLength(1);
     expect(prepared.commandPlan?.installNetworkEvents?.[0]).not.toHaveProperty('url');
   });
