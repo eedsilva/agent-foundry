@@ -116,7 +116,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     await mkdir(workdir, { recursive: true });
     await this.#execute('initialize', 'init', '--workdir', workdir);
     await this.#configure(workdir, composeProjectName);
-    const result = await this.#execute(
+    await this.#execute(
       'start',
       'start',
       '--workdir',
@@ -129,6 +129,14 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     );
     try {
       await this.#execute('initialize', 'seed', 'buckets', '--workdir', workdir);
+      const result = await this.#execute(
+        'initialize',
+        'status',
+        '--workdir',
+        workdir,
+        '--output',
+        'json',
+      );
       const timestamp = this.#now().toISOString();
       const environment = environmentFromStatus(
         {
@@ -146,7 +154,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
         result.stdout,
         'healthy',
         timestamp,
-        'start',
+        'initialize',
       );
       await persist(environment);
       return environment;
@@ -170,7 +178,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   async start(projectId: string): Promise<AppEnvironment> {
     const environment = await this.#require(projectId);
     if (environment.health.state === 'healthy') return environment;
-    const result = await this.#execute(
+    await this.#execute(
       'start',
       'start',
       '--workdir',
@@ -180,6 +188,14 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       '--yes',
       '--network-id',
       environment.network,
+    );
+    const result = await this.#execute(
+      'start',
+      'status',
+      '--workdir',
+      environment.workdir,
+      '--output',
+      'json',
     );
     const timestamp = this.#now().toISOString();
     const started = environmentFromStatus(

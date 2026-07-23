@@ -89,6 +89,16 @@ async function statusCommand(
     const db = configPort(config, 'db', 'port');
     const studio = configPort(config, 'studio', 'port');
     const inbucket = configPort(config, 'inbucket', 'port');
+    if (args[0] === 'start') {
+      return {
+        stdout: `Started supabase local development setup.
+API URL: http://127.0.0.1:${api}
+GraphQL URL: http://127.0.0.1:${api}/graphql/v1
+Studio URL: http://127.0.0.1:${studio}`,
+        stderr: '',
+        exitCode: 0,
+      };
+    }
     return {
       stdout: JSON.stringify({
         API_URL: `http://127.0.0.1:${api}`,
@@ -212,13 +222,24 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
       first.network,
     ]);
     expect(command.mock.calls).toContainEqual(['seed', 'buckets', '--workdir', first.workdir]);
+    expect(command.mock.calls).toContainEqual([
+      'status',
+      '--workdir',
+      first.workdir,
+      '--output',
+      'json',
+    ]);
     const firstStart = command.mock.calls.findIndex(
       ([name, , value]) => name === 'start' && value === first.workdir,
     );
     const firstSeed = command.mock.calls.findIndex(
       ([name, , , value]) => name === 'seed' && value === first.workdir,
     );
+    const firstStatus = command.mock.calls.findIndex(
+      ([name, , value]) => name === 'status' && value === first.workdir,
+    );
     expect(firstStart).toBeLessThan(firstSeed);
+    expect(firstSeed).toBeLessThan(firstStatus);
     expect(first).toMatchObject({
       projectId: 'project-a',
       endpoints: {
@@ -388,6 +409,48 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
     await expect(readFile(configPath, 'utf8')).resolves.toBe(INITIAL_CONFIG);
   });
 
+  it('rolls back and redacts an authoritative status failure after bucket seed', async () => {
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'status') {
+        throw Object.assign(
+          new Error(`PASSWORD=status-secret authoritative-status-failure ${'x'.repeat(10_000)}`),
+          {
+            exitCode: 43,
+            stderr: 'JWT_SECRET=status-json-secret',
+          },
+        );
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+
+    const rejection = await runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
+
+    expect(rejection).toMatchObject({ operation: 'initialize', exitCode: 43 });
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(rejection.diagnostic).toContain('authoritative-status-failure');
+    expect(rejection.diagnostic).not.toMatch(/status-secret|status-json-secret/);
+    expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
+    expect(command.mock.calls.slice(-4)).toEqual([
+      [
+        'start',
+        '--workdir',
+        workdir,
+        '--output',
+        'json',
+        '--yes',
+        '--network-id',
+        'supabase_project-a_network',
+      ],
+      ['seed', 'buckets', '--workdir', workdir],
+      ['status', '--workdir', workdir, '--output', 'json'],
+      ['stop', '--workdir', workdir, '--no-backup', '--yes'],
+    ]);
+    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(runtime.inspect('project-a')).resolves.toBeNull();
+  });
+
   it('deduplicates overlapping project initialization without blocking another project', async () => {
     const projectAWorkdir = join(dataDir, 'projects', 'project-a', 'environment');
     let releaseProjectA = () => {};
@@ -441,6 +504,7 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
 
     const stopped = await runtime.stop('project-a');
     await runtime.stop('project-a');
+    const restartCallIndex = command.mock.calls.length;
     const restarted = await runtime.start('project-a');
     await runtime.start('project-a');
 
@@ -450,6 +514,19 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
       ['stop', '--workdir', initialized.workdir],
     ]);
     expect(command.mock.calls.filter(([name]) => name === 'start')).toHaveLength(2);
+    expect(command.mock.calls.slice(restartCallIndex)).toEqual([
+      [
+        'start',
+        '--workdir',
+        initialized.workdir,
+        '--output',
+        'json',
+        '--yes',
+        '--network-id',
+        initialized.network,
+      ],
+      ['status', '--workdir', initialized.workdir, '--output', 'json'],
+    ]);
     expect(command.mock.calls).not.toContainEqual(expect.arrayContaining(['migration', 'down']));
   });
 
