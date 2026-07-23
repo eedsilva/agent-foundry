@@ -13,6 +13,7 @@ import {
   type DogfoodRunRecord,
   type DogfoodTask,
   type ExecutionUsage,
+  type Provider,
   type RouteDecision,
   type StepAttempt,
   type StepRun,
@@ -35,6 +36,13 @@ export interface RunDogfoodTaskOptions {
   repoRoot: string;
   dataDir?: string;
   executorMode?: 'real' | 'mock';
+  modelOverride?: {
+    modelId: string;
+    provider: Provider;
+    model: string;
+    reason: string;
+    estimatedImpact: string;
+  };
 }
 
 export async function runDogfoodTask(
@@ -85,6 +93,18 @@ export async function runDogfoodTask(
     const workspacePath = runtime.workspaces.workspacePath(project.id);
 
     const baseline = await seedWorkspace(workspacePath, task, options.repoRoot);
+
+    if (options.modelOverride) {
+      await runtime.projectService.createModelOverride(runId, {
+        scope: { kind: 'run' },
+        modelId: options.modelOverride.modelId,
+        provider: options.modelOverride.provider,
+        model: options.modelOverride.model,
+        actor: { kind: 'system', id: 'benchmark-runner' },
+        reason: options.modelOverride.reason,
+        estimatedImpact: options.modelOverride.estimatedImpact,
+      });
+    }
 
     await runtime.worker.runOnce();
 

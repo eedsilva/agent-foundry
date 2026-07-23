@@ -184,6 +184,48 @@ describe('runDogfoodTask (mock mode)', () => {
     );
   }, 60_000);
 
+  it('honors a run-scoped modelOverride and records the pinned model as executed', async () => {
+    const fixture = await sharedMiniFixture();
+    const dataDir = await tempDir('dogfood-data-');
+    const task = miniTask({
+      id: 'mini-override',
+      baselineRef: fixture.sha,
+      verifyScript: 'node -e "process.exit(0)"',
+    });
+
+    // ProjectService.createModelOverride validates the override tuple against
+    // the *interpolated* models/catalog.yaml entry (packages/orchestrator/src/
+    // project-service.ts resolveCatalogModel: it throws unless
+    // catalog.model === override.model exactly). The catalog's codex-default
+    // entry reads `model: '${CODEX_DEFAULT_MODEL:-}'`, which resolves to an
+    // empty string unless that env var is set — so the test must set it to
+    // the exact value it overrides with, then restore it.
+    const previousCodexModel = process.env.CODEX_DEFAULT_MODEL;
+    process.env.CODEX_DEFAULT_MODEL = 'benchmark-test-model';
+    try {
+      const record = await runDogfoodTask(task, {
+        executorMode: 'mock',
+        repoRoot: fixture.path,
+        dataDir,
+        modelOverride: {
+          modelId: 'codex-default',
+          provider: 'codex',
+          model: 'benchmark-test-model',
+          reason: 'dogfood.test.ts modelOverride coverage',
+          estimatedImpact: 'Test only — pins a fixed model for a deterministic assertion',
+        },
+      });
+
+      expect(record.status).toBe('passed');
+      expect(record.route?.executed?.model?.provider).toBe('codex');
+      expect(record.route?.executed?.model?.model).toBe('benchmark-test-model');
+      expect(record.executedModel).toBe('mock:codex/benchmark-test-model');
+    } finally {
+      if (previousCodexModel === undefined) delete process.env.CODEX_DEFAULT_MODEL;
+      else process.env.CODEX_DEFAULT_MODEL = previousCodexModel;
+    }
+  }, 60_000);
+
   it('is not failed by baseline .patch files whose diff content carries trailing whitespace', async () => {
     const fixture = await createFixtureRepo({
       'package.json': MINI_PACKAGE,
