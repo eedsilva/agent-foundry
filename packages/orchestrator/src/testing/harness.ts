@@ -862,7 +862,6 @@ export type StepBehavior =
   | { kind: 'fail-always'; error: () => Error }
   | { kind: 'hang-until-abort' };
 
-/** Mirrors execa's own timeout message, wrapped the way base-cli-executor reports a hard deadline. */
 export class FakeSecretStore implements SecretStore {
   constructor(private readonly declared: Record<string, string> = {}) {}
   names(): Promise<string[]> {
@@ -873,6 +872,7 @@ export class FakeSecretStore implements SecretStore {
   }
 }
 
+/** Mirrors execa's own timeout message, wrapped the way base-cli-executor reports a hard deadline. */
 export function timeoutError(): ExecutionError {
   return new ExecutionError('Command timed out after 300000 milliseconds: codex ...', {
     provider: 'mock',
