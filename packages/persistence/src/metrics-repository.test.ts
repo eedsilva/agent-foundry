@@ -141,3 +141,53 @@ describe('FileMetricsRepository usage aggregation', () => {
     expect(metric?.quotaUnitsKnownCount).toBe(1);
   });
 });
+
+describe('FileMetricsRepository list', () => {
+  let dataDir: string;
+
+  beforeEach(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-metrics-'));
+  });
+
+  afterEach(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  it('returns an empty array when nothing has been recorded', async () => {
+    const repo = new FileMetricsRepository(dataDir);
+    await expect(repo.list()).resolves.toEqual([]);
+  });
+
+  it('returns all recorded metrics across different model/taskKind/role keys', async () => {
+    const repo = new FileMetricsRepository(dataDir);
+    await repo.record({
+      modelId: 'model-a',
+      taskKind: 'implementation',
+      role: 'developer',
+      success: true,
+      durationMs: 10,
+    });
+    await repo.record({
+      modelId: 'model-b',
+      taskKind: 'planning',
+      role: 'planner',
+      success: false,
+      durationMs: 20,
+    });
+    await repo.recordQuality({
+      modelId: 'model-c',
+      taskKind: 'implementation',
+      role: 'developer',
+      approved: true,
+    });
+
+    const metrics = await repo.list();
+    const keys = metrics.map((m) => `${m.modelId}::${m.taskKind}::${m.role}`).sort();
+    expect(keys).toEqual([
+      'model-a::implementation::developer',
+      'model-b::planning::planner',
+      'model-c::implementation::developer',
+    ]);
+    expect(metrics).toHaveLength(3);
+  });
+});

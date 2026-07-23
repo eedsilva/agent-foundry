@@ -202,6 +202,11 @@ export class FileMetricsRepository implements MetricsRepository {
     });
   }
 
+  async list(): Promise<ModelMetric[]> {
+    const file = await this.read();
+    return Object.values(file.metrics);
+  }
+
   private async read(): Promise<MetricsFile> {
     const file = await readJsonOrNull<unknown>(this.path());
     return file ? MetricsFileSchema.parse(file) : { metrics: {} };
