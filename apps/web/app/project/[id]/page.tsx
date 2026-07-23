@@ -3,6 +3,7 @@
 import { use, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { diffLines } from 'diff';
 import {
+  EMPTY_TREE_HASH,
   taskCategoryLevels,
   VerificationReportSchema,
   type AgentStreamEvent,
@@ -494,11 +495,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       .then((versions) => {
         if (!active) return;
         const { from, to } = findDiffApprovalVersions(versions, runId);
-        if (!from || !to) {
+        if (!to) {
           setDecideDiff(NO_PREDECESSOR_VERSION_MESSAGE);
           return undefined;
         }
-        return compareVersions(id, from.id, to.id).then((result) => {
+        return compareVersions(id, from?.id ?? EMPTY_TREE_HASH, to.id).then((result) => {
           if (active) setDecideDiff(result.diff);
         });
       })

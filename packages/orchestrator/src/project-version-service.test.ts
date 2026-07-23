@@ -242,6 +242,24 @@ describe('ProjectVersionService', () => {
   });
 
   describe('compare', () => {
+    it('compares a first-run version from the empty tree', async () => {
+      const { service, workspaces } = makeService();
+      const first = await service.recordFromStep({
+        projectId: 'project-1',
+        runId: 'run-1',
+        stepRunId: 'step-1',
+        attemptId: 'attempt-1',
+        commit: 'commit-a',
+      });
+
+      await expect(
+        service.compare('project-1', '4b825dc642cb6eb9a060e54bf8d69288fbee4904', first.id),
+      ).resolves.toEqual({ diff: 'diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904..commit-a' });
+      expect(workspaces.diffCalls).toEqual([
+        ['4b825dc642cb6eb9a060e54bf8d69288fbee4904', 'commit-a'],
+      ]);
+    });
+
     it('returns the diff between the two versions', async () => {
       const { service, workspaces } = makeService();
       const from = await service.recordFromStep({

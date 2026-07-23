@@ -22,6 +22,10 @@ const BUILDER_SCREENSHOT = resolve(
   REPO_ROOT,
   'test-results/issue-43-knowledge-builder-desktop.png',
 );
+const FIRST_BUILD_DIFF_SCREENSHOT = resolve(
+  REPO_ROOT,
+  'test-results/issue-173-first-build-diff.png',
+);
 const BROWSER_TEST_PLAN = {
   schemaVersion: '1' as const,
   status: 'completed' as const,
@@ -452,6 +456,9 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   const decideModalHeading = page.getByRole('heading', { name: /Human diff approval/ });
   await page.getByRole('button', { name: 'approve' }).first().click();
   await expect(decideModalHeading).toBeVisible();
+  await expect(page.locator('.diffView')).toBeVisible();
+  await expect(page.getByText('Nenhuma versão anterior para comparar.')).not.toBeVisible();
+  await page.locator('.artifactModal').screenshot({ path: FIRST_BUILD_DIFF_SCREENSHOT });
   await page.getByLabel('Decidido por').fill('e2e-reviewer');
   await page.getByRole('button', { name: /Confirmar approve/ }).click();
   await expect(decideModalHeading).not.toBeVisible();
