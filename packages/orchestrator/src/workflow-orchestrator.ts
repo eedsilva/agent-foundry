@@ -1282,7 +1282,7 @@ export class WorkflowOrchestrator {
         if (last) {
           const commit =
             step.type === 'agent' && step.mutatesWorkspace
-              ? await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`)
+              ? await this.commitAgentWorkspace(project.id, step, last.checkpoint)
               : null;
           const succeeded = transitionStepAttempt(last, 'succeeded', this.clock.now(), {
             ...(commit ? { commit } : {}),
@@ -1324,6 +1324,26 @@ export class WorkflowOrchestrator {
       }
     }
     return adopted;
+  }
+
+  private async commitAgentWorkspace(
+    projectId: string,
+    step: AgentStep,
+    checkpoint?: string | null,
+  ): Promise<string | null> {
+    let commitError: unknown;
+    let commitFailed = false;
+    try {
+      const commit = await this.workspaces.commit(projectId, `agent(${step.role}): ${step.title}`);
+      if (commit) return commit;
+    } catch (error) {
+      commitError = error;
+      commitFailed = true;
+    }
+    const head = await this.workspaces.head(projectId);
+    if (checkpoint && head && head !== checkpoint) return head;
+    if (commitFailed) throw commitError;
+    return null;
   }
 
   private async failInterrupted(attempt: StepAttempt): Promise<void> {
@@ -1984,9 +2004,22 @@ export class WorkflowOrchestrator {
         routeDecision: executionRoute,
         idempotencyKey,
       });
-      const commit = step.mutatesWorkspace
-        ? await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`)
-        : null;
+      let commit: string | null = null;
+      if (step.mutatesWorkspace) {
+        try {
+          commit = await this.commitAgentWorkspace(project.id, step, checkpoint);
+        } catch (error) {
+          attempt = await this.stepAttempts.update(
+            transitionStepAttempt(attempt, 'failed', this.clock.now(), {
+              durationMs: Date.now() - attemptStartedAt,
+              error: runError(error),
+              outputArtifacts: [artifactReference(artifact)],
+            }),
+            attempt.version,
+          );
+          throw error;
+        }
+      }
       const auditArtifact = await this.persistRunRecord(
         project.id,
         step,
