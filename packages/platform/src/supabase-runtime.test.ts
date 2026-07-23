@@ -797,6 +797,51 @@ describe('function deployment', () => {
     expect(live).toContain('new Response("v1")');
   });
 
+  it('points the active-version pointer at the rolled-back version, not the most recently deployed one', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: statusCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'fn-project-6' });
+    const functionDir = join(environment.workdir, 'supabase', 'functions', 'hello');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(join(functionDir, 'index.ts'), 'export default () => new Response("hi");\n');
+    const first = await runtime.deployFunction({
+      projectId: 'fn-project-6',
+      functionPath: 'supabase/functions/hello',
+      artifact: FunctionArtifactSchema.parse({ ...FUNCTION_ARTIFACT, timeoutMs: 5_000 }),
+    });
+    const second = await runtime.deployFunction({
+      projectId: 'fn-project-6',
+      functionPath: 'supabase/functions/hello',
+      artifact: FunctionArtifactSchema.parse({ ...FUNCTION_ARTIFACT, timeoutMs: 10_000 }),
+    });
+
+    await runtime.rollbackFunction({
+      projectId: 'fn-project-6',
+      functionName: 'hello',
+      versionId: first.versionId,
+    });
+
+    const versions = await runtime.listFunctionVersions({
+      projectId: 'fn-project-6',
+      functionName: 'hello',
+    });
+    expect(versions.map((version) => version.versionId)).toEqual([
+      first.versionId,
+      second.versionId,
+    ]);
+
+    const pointer = JSON.parse(
+      await readFile(
+        join(dataDir, 'projects', 'fn-project-6', 'functions', 'hello', 'current.json'),
+        'utf8',
+      ),
+    );
+    expect(pointer).toEqual({ versionId: first.versionId });
+  });
+
   it('rejects rollback to an unknown version id', async () => {
     const runtime = new SupabaseGeneratedProjectRuntime({
       dataDir,

@@ -428,13 +428,22 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     headers?: Record<string, string>;
   }): Promise<FunctionInvocationResult> {
     const environment = await this.#require(input.projectId);
-    const versions = await readFunctionVersions(
-      this.#dataDir,
-      environment.projectId,
-      input.functionName,
-    );
-    const current = versions.at(-1);
-    if (!current) {
+    let current: FunctionVersion;
+    try {
+      const pointer = JSON.parse(
+        await readFile(
+          currentFunctionVersionPath(this.#dataDir, environment.projectId, input.functionName),
+          'utf8',
+        ),
+      ) as { versionId: string };
+      const manifestPath = functionVersionManifestPath(
+        this.#dataDir,
+        environment.projectId,
+        input.functionName,
+        pointer.versionId,
+      );
+      current = FunctionVersionSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
+    } catch {
       throw new ValidationError(`Function "${input.functionName}" has no deployed version.`);
     }
     const apiUrl = environment.endpoints.api;
@@ -791,6 +800,14 @@ function functionVersionFilesDir(
   return join(functionVersionsDir(dataDir, projectId, functionName), versionId);
 }
 
+function currentFunctionVersionPath(
+  dataDir: string,
+  projectId: string,
+  functionName: string,
+): string {
+  return join(dataDir, 'projects', projectId, 'functions', functionName, 'current.json');
+}
+
 async function storeFunctionVersion(
   dataDir: string,
   projectId: string,
@@ -878,6 +895,10 @@ async function activateFunctionVersion(
     }),
   );
   await writeFunctionConfigSection(workdir, version.functionName, version.artifact.verifyJwt);
+  await atomicWrite(
+    currentFunctionVersionPath(dataDir, projectId, version.functionName),
+    `${JSON.stringify({ versionId: version.versionId }, null, 2)}\n`,
+  );
 }
 
 async function writeFunctionConfigSection(
