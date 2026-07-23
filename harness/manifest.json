@@ -8,7 +8,11 @@
     { "path": "roles/planner.md", "priority": 100, "roles": ["planner"] },
     { "path": "roles/plan-reviewer.md", "priority": 100, "roles": ["plan-reviewer"] },
     { "path": "roles/architect.md", "priority": 100, "roles": ["architect"] },
-    { "path": "roles/architecture-reviewer.md", "priority": 100, "roles": ["architecture-reviewer"] },
+    {
+      "path": "roles/architecture-reviewer.md",
+      "priority": 100,
+      "roles": ["architecture-reviewer"]
+    },
     { "path": "roles/developer.md", "priority": 100, "roles": ["developer"] },
     { "path": "roles/code-reviewer.md", "priority": 100, "roles": ["code-reviewer"] },
     { "path": "roles/fixer.md", "priority": 100, "roles": ["fixer"] },

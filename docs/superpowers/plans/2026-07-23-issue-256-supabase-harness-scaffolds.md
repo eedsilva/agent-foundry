@@ -20,7 +20,7 @@
 
 ## Task Sequencing
 
-`Task 3` and `Task 4` both edit `packages/orchestrator/src/testing/harness.ts` — Task 3 touches the `Stores` interface, `makeStores`, and the inline `HarnessRepository` literal; Task 4 touches the `FakeWorkspaces` class in the same file. Running them as concurrent subagents risks a merge conflict on that file even though neither depends on the other's *output*. Sequence them:
+`Task 3` and `Task 4` both edit `packages/orchestrator/src/testing/harness.ts` — Task 3 touches the `Stores` interface, `makeStores`, and the inline `HarnessRepository` literal; Task 4 touches the `FakeWorkspaces` class in the same file. Running them as concurrent subagents risks a merge conflict on that file even though neither depends on the other's _output_. Sequence them:
 
 1. **Parallel batch 1:** Task 1, Task 2, Task 4 (no shared files, no output dependency between them).
 2. **Then Task 3** (needs Task 2's scaffold files for its test fixture; must land after Task 4 to avoid the `testing/harness.ts` conflict).
@@ -32,12 +32,14 @@
 ### Task 1: Add `harness/stacks/supabase.md`, pin `harness/stacks/nextjs.md`, wire the manifest
 
 **Files:**
+
 - Create: `harness/stacks/supabase.md`
 - Modify: `harness/stacks/nextjs.md`
 - Modify: `harness/manifest.json`
 - Create: `packages/harness/src/versioned-harness.test.ts`
 
 **Interfaces:**
+
 - Consumes: `VersionedHarnessRepository` (`packages/harness/src/versioned-harness.ts`, already exists, no changes in this task).
 - Produces: nothing new for later tasks to import — later tasks add methods to the same class but do not depend on this task's content.
 
@@ -148,7 +150,11 @@ Add a `stacks/supabase.md` fragment entry between the existing `stacks/nextjs.md
     { "path": "roles/planner.md", "priority": 100, "roles": ["planner"] },
     { "path": "roles/plan-reviewer.md", "priority": 100, "roles": ["plan-reviewer"] },
     { "path": "roles/architect.md", "priority": 100, "roles": ["architect"] },
-    { "path": "roles/architecture-reviewer.md", "priority": 100, "roles": ["architecture-reviewer"] },
+    {
+      "path": "roles/architecture-reviewer.md",
+      "priority": 100,
+      "roles": ["architecture-reviewer"]
+    },
     { "path": "roles/developer.md", "priority": 100, "roles": ["developer"] },
     { "path": "roles/code-reviewer.md", "priority": 100, "roles": ["code-reviewer"] },
     { "path": "roles/fixer.md", "priority": 100, "roles": ["fixer"] },
@@ -212,6 +218,7 @@ git commit -m "feat(harness): add Supabase stack conventions and pin nextjs.md v
 ### Task 2: Add Next.js+Supabase scaffold template files
 
 **Files:**
+
 - Create: `harness/scaffolds/nextjs/lib/supabase/client.ts`
 - Create: `harness/scaffolds/nextjs/lib/supabase/server.ts`
 - Create: `harness/scaffolds/nextjs/middleware.ts`
@@ -219,6 +226,7 @@ git commit -m "feat(harness): add Supabase stack conventions and pin nextjs.md v
 - Create: `harness/scaffolds/nextjs/app/sign-up/page.tsx`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: this exact file set is asserted verbatim by Task 3's `scaffoldFiles('nextjs')` test — do not rename or add files without updating that test's expected path list: `['app/sign-in/page.tsx', 'app/sign-up/page.tsx', 'lib/supabase/client.ts', 'lib/supabase/server.ts', 'middleware.ts']`.
 
@@ -465,12 +473,14 @@ git commit -m "feat(harness): add Next.js+Supabase scaffold templates"
 **Depends on:** Task 2 (test fixtures against the real scaffold file set) and Task 4 (must land after it — see Task Sequencing above; both edit `packages/orchestrator/src/testing/harness.ts`).
 
 **Files:**
+
 - Modify: `packages/domain/src/ports.ts`
 - Modify: `packages/harness/src/versioned-harness.ts`
 - Modify: `packages/orchestrator/src/testing/harness.ts` (inline `HarnessRepository` test literal)
 - Modify: `packages/harness/src/versioned-harness.test.ts` (append tests)
 
 **Interfaces:**
+
 - Produces: `HarnessRepository.scaffoldFiles(stack: string): Promise<Array<{ path: string; content: string }>>` — Task 5 calls this as `this.harness.scaffoldFiles(workflow.stack)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -565,12 +575,11 @@ Add this method to the `VersionedHarnessRepository` class, after `select(...)` a
 In `packages/orchestrator/src/testing/harness.ts`, find the `harness: HarnessRepository = {` object literal (around line 1177) and add the new method:
 
 ```typescript
-  const harness: HarnessRepository = {
-    select: () =>
-      Promise.resolve({ version: stores.harnessVersion.value, files: [], combined: '' }),
-    scaffoldFiles: () => Promise.resolve(stores.scaffoldFiles.value),
-    version: () => Promise.resolve(stores.harnessVersion.value),
-  };
+const harness: HarnessRepository = {
+  select: () => Promise.resolve({ version: stores.harnessVersion.value, files: [], combined: '' }),
+  scaffoldFiles: () => Promise.resolve(stores.scaffoldFiles.value),
+  version: () => Promise.resolve(stores.harnessVersion.value),
+};
 ```
 
 This references `stores.scaffoldFiles`, which does not exist yet — add it now. In the same file, find the `Stores` interface (around line 1066) and add:
@@ -639,15 +648,17 @@ git commit -m "feat(harness): add HarnessRepository.scaffoldFiles port method"
 
 ### Task 4: Add `WorkspaceManager.applyScaffold(projectId, files)`
 
-**Depends on:** nothing — can run in parallel with Task 1 and Task 2. Must land *before* Task 3 starts (see Task Sequencing above): both edit `packages/orchestrator/src/testing/harness.ts` in different spots, so they cannot run as concurrent subagents even though there is no output dependency between them.
+**Depends on:** nothing — can run in parallel with Task 1 and Task 2. Must land _before_ Task 3 starts (see Task Sequencing above): both edit `packages/orchestrator/src/testing/harness.ts` in different spots, so they cannot run as concurrent subagents even though there is no output dependency between them.
 
 **Files:**
+
 - Modify: `packages/domain/src/ports.ts`
 - Modify: `packages/persistence/src/workspace-manager.ts`
 - Modify: `packages/orchestrator/src/testing/harness.ts` (`FakeWorkspaces` class)
 - Modify: `packages/persistence/src/workspace-manager.test.ts`
 
 **Interfaces:**
+
 - Produces: `WorkspaceManager.applyScaffold(projectId: string, files: Array<{ path: string; content: string }>): Promise<{ written: string[] }>` — Task 5 calls this as `this.workspaces.applyScaffold(project.id, scaffoldFiles)`.
 
 - [ ] **Step 1: Write the failing test**
@@ -781,11 +792,13 @@ git commit -m "feat(persistence): add WorkspaceManager.applyScaffold port method
 **Depends on:** Task 3 (`HarnessRepository.scaffoldFiles`) and Task 4 (`WorkspaceManager.applyScaffold`).
 
 **Files:**
+
 - Modify: `packages/contracts/src/project.ts` (add `'scaffold.applied'` to `ProjectEventSchema`'s `type` enum)
 - Modify: `packages/orchestrator/src/project-service.ts`
 - Modify: `packages/orchestrator/src/project-service.test.ts`
 
 **Interfaces:**
+
 - Consumes: `this.harness.scaffoldFiles(workflow.stack)` (Task 3), `this.workspaces.applyScaffold(project.id, scaffoldFiles)` (Task 4).
 - Produces: an `ArtifactStore` artifact named `scaffold-manifest` with `createdBy: 'scaffold:<stack>'` and `content` equal to the applied file paths, plus a `scaffold.applied` `ProjectEvent`, for every project whose workflow stack has scaffold files. Later verification (Task 6) treats this artifact + event pair as the "template-sourced, not LLM-generated" evidence the issue's acceptance criteria require.
 
@@ -876,55 +889,55 @@ to:
 Then change this block (around line 148-160):
 
 ```typescript
-    await this.workspaces.ensure(project.id);
-    await this.generatedProjectRuntime?.initialize({ projectId: project.id });
-    await this.workspaces.writePrd(project.id, input.prd);
-    await this.projects.create(project);
-    await this.runs.create(run);
-    await this.artifacts.put({
-      projectId: project.id,
-      name: 'prd',
-      content: input.prd,
-      contentType: 'text/markdown',
-      createdBy: 'user',
-    });
-    await this.appendEvent(project.id, 'project.created', 'Project and workspace created.');
+await this.workspaces.ensure(project.id);
+await this.generatedProjectRuntime?.initialize({ projectId: project.id });
+await this.workspaces.writePrd(project.id, input.prd);
+await this.projects.create(project);
+await this.runs.create(run);
+await this.artifacts.put({
+  projectId: project.id,
+  name: 'prd',
+  content: input.prd,
+  contentType: 'text/markdown',
+  createdBy: 'user',
+});
+await this.appendEvent(project.id, 'project.created', 'Project and workspace created.');
 ```
 
 to:
 
 ```typescript
-    await this.workspaces.ensure(project.id);
-    await this.generatedProjectRuntime?.initialize({ projectId: project.id });
-    await this.workspaces.writePrd(project.id, input.prd);
-    const scaffoldFiles = await this.harness.scaffoldFiles(workflow.stack);
-    if (scaffoldFiles.length > 0) {
-      await this.workspaces.applyScaffold(project.id, scaffoldFiles);
-      await this.artifacts.put({
-        projectId: project.id,
-        name: 'scaffold-manifest',
-        content: scaffoldFiles.map((file) => file.path),
-        contentType: 'application/json',
-        createdBy: `scaffold:${workflow.stack}`,
-      });
-    }
-    await this.projects.create(project);
-    await this.runs.create(run);
-    await this.artifacts.put({
-      projectId: project.id,
-      name: 'prd',
-      content: input.prd,
-      contentType: 'text/markdown',
-      createdBy: 'user',
-    });
-    await this.appendEvent(project.id, 'project.created', 'Project and workspace created.');
-    if (scaffoldFiles.length > 0) {
-      await this.appendEvent(
-        project.id,
-        'scaffold.applied',
-        `Applied ${scaffoldFiles.length} scaffold file(s) for stack '${workflow.stack}'.`,
-      );
-    }
+await this.workspaces.ensure(project.id);
+await this.generatedProjectRuntime?.initialize({ projectId: project.id });
+await this.workspaces.writePrd(project.id, input.prd);
+const scaffoldFiles = await this.harness.scaffoldFiles(workflow.stack);
+if (scaffoldFiles.length > 0) {
+  await this.workspaces.applyScaffold(project.id, scaffoldFiles);
+  await this.artifacts.put({
+    projectId: project.id,
+    name: 'scaffold-manifest',
+    content: scaffoldFiles.map((file) => file.path),
+    contentType: 'application/json',
+    createdBy: `scaffold:${workflow.stack}`,
+  });
+}
+await this.projects.create(project);
+await this.runs.create(run);
+await this.artifacts.put({
+  projectId: project.id,
+  name: 'prd',
+  content: input.prd,
+  contentType: 'text/markdown',
+  createdBy: 'user',
+});
+await this.appendEvent(project.id, 'project.created', 'Project and workspace created.');
+if (scaffoldFiles.length > 0) {
+  await this.appendEvent(
+    project.id,
+    'scaffold.applied',
+    `Applied ${scaffoldFiles.length} scaffold file(s) for stack '${workflow.stack}'.`,
+  );
+}
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
@@ -963,6 +976,7 @@ Expected: shows total test file/test counts and `0 failed`. Save this output —
 - [ ] **Step 3: Manually verify fragment selection end-to-end**
 
 Run:
+
 ```bash
 node -e "
 const { VersionedHarnessRepository } = require('./packages/harness/dist/versioned-harness.js');
@@ -975,6 +989,7 @@ const { VersionedHarnessRepository } = require('./packages/harness/dist/versione
 })();
 "
 ```
+
 If `packages/harness/dist` does not exist yet, run `npm run build` first (already covered by Step 1's `npm run check`, which includes `npm run build`).
 Expected: first line's array includes `stacks/nextjs.md` and `stacks/supabase.md` in that order; second line lists the 5 scaffold file paths. Save this output — it is the "visible in role prompts/artifacts" evidence for acceptance criterion 1.
 
