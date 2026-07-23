@@ -1,8 +1,18 @@
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { execa } from 'execa';
-import type { SandboxSnapshot, SandboxSnapshotFile, SandboxSpec } from '@agent-foundry/contracts';
+import {
+  MAX_NETWORK_POLICY_EVENTS,
+  NetworkPolicyEventSchema,
+  type NetworkPolicyEvent,
+  type SandboxSnapshot,
+  type SandboxSnapshotFile,
+  type SandboxSpec,
+} from '@agent-foundry/contracts';
 import type { SandboxHandle, SandboxRunner } from '@agent-foundry/domain';
 import {
   ExecutionError,
@@ -16,6 +26,33 @@ import { terminateProcessTree } from './process-tree.js';
 
 export const SANDBOX_WORKSPACE_PATH = '/workspace';
 export const SANDBOX_TMP_SIZE_MIB = 64;
+export const POLICY_PROXY_PORT = 3128;
+export const POLICY_SIDECAR_READY_PATH = '/run/agent-foundry-network-policy-ready';
+export const DEFAULT_POLICY_PROXY_IMAGE =
+  'node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3';
+
+export interface PolicyNetworkAttachment {
+  networkName: string;
+  proxyIp: string;
+}
+
+interface PolicyResources {
+  networkName: string;
+  sidecarId?: string;
+  sandboxId?: string;
+  expiryTimer?: NodeJS.Timeout;
+}
+
+interface DockerResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface DockerSandboxRunnerOptions {
+  policyProxyImage?: string;
+  sidecarScriptPath?: string;
+}
 
 const RESERVED_MOUNT_TARGETS = new Set([SANDBOX_WORKSPACE_PATH, '/tmp']);
 
@@ -60,9 +97,18 @@ function dockerFailure(
 }
 
 /** Pure: computes the `docker create` argv for a spec. No side effects, no I/O. */
-export function buildCreateArgs(spec: SandboxSpec): string[] {
+export function buildCreateArgs(
+  spec: SandboxSpec,
+  policyAttachment?: PolicyNetworkAttachment,
+): string[] {
   assertDigestPinned(spec);
   assertMountsAreSafe(spec);
+
+  if (spec.network.mode === 'allowlist' && !policyAttachment) {
+    throw new ValidationError('Allowlist mode requires a policy network attachment.');
+  }
+
+  const networkName = spec.network.mode === 'none' ? 'none' : policyAttachment!.networkName;
 
   const args = [
     'create',
@@ -75,10 +121,33 @@ export function buildCreateArgs(spec: SandboxSpec): string[] {
     `--memory=${spec.resources.memoryMiB}m`,
     `--memory-swap=${spec.resources.memoryMiB}m`,
     `--cpus=${(spec.resources.cpuMillis / 1000).toFixed(3)}`,
-    `--network=${spec.network.mode === 'none' ? 'none' : 'bridge'}`,
+    `--network=${networkName}`,
     `--tmpfs=${SANDBOX_WORKSPACE_PATH}:rw,nosuid,nodev,size=${spec.resources.diskMiB}m,mode=1777`,
     `--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=${SANDBOX_TMP_SIZE_MIB}m,mode=1777`,
   ];
+  if (policyAttachment) {
+    args.push('--rm');
+    const proxyUrl = `http://${policyAttachment.proxyIp}:${POLICY_PROXY_PORT}`;
+    args.push(
+      `--dns=${policyAttachment.proxyIp}`,
+      '--env',
+      `HTTP_PROXY=${proxyUrl}`,
+      '--env',
+      `HTTPS_PROXY=${proxyUrl}`,
+      '--env',
+      `http_proxy=${proxyUrl}`,
+      '--env',
+      `https_proxy=${proxyUrl}`,
+      '--env',
+      'NO_PROXY=',
+      '--env',
+      'no_proxy=',
+      '--env',
+      'ALL_PROXY=',
+      '--env',
+      'all_proxy=',
+    );
+  }
   for (const mount of spec.mounts) {
     args.push('-v', `${mount.source}:${mount.target}${mount.readOnly ? ':ro' : ''}`);
   }
@@ -89,8 +158,88 @@ export function buildCreateArgs(spec: SandboxSpec): string[] {
   return args;
 }
 
+export function buildPolicySidecarCreateArgs(input: {
+  image: string;
+  scriptPath: string;
+  encodedPolicy: string;
+  ttlMs: number;
+}): string[] {
+  if (!input.image.includes('@sha256:')) {
+    throw new ValidationError('Policy proxy image must be pinned by digest.');
+  }
+  return [
+    'create',
+    '--rm',
+    '--user=65534:65534',
+    '--read-only',
+    '--cap-drop=ALL',
+    '--cap-add=NET_BIND_SERVICE',
+    '--security-opt=no-new-privileges',
+    '--pids-limit=64',
+    '--memory=128m',
+    '--memory-swap=128m',
+    '--cpus=0.250',
+    '--network=bridge',
+    '--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777',
+    '--tmpfs=/run:rw,nosuid,nodev,noexec,size=64k,mode=1777',
+    '--env',
+    `AGENT_FOUNDRY_NETWORK_POLICY=${input.encodedPolicy}`,
+    '--env',
+    `AGENT_FOUNDRY_POLICY_TTL_MS=${input.ttlMs}`,
+    '-v',
+    `${input.scriptPath}:/opt/agent-foundry/network-policy.js:ro`,
+    input.image,
+    'node',
+    '/opt/agent-foundry/network-policy.js',
+  ];
+}
+
+export function buildPolicyNetworkCreateArgs(input: {
+  networkName: string;
+  expiresAt: number;
+}): string[] {
+  return [
+    'network',
+    'create',
+    '--internal',
+    '--label',
+    'agent-foundry.policy=true',
+    '--label',
+    `agent-foundry.expires-at=${input.expiresAt}`,
+    input.networkName,
+  ];
+}
+
+export function buildNetworkEvidenceArgs(sidecarId: string): string[] {
+  return ['logs', '--tail', String(MAX_NETWORK_POLICY_EVENTS), sidecarId];
+}
+
+export function parseNetworkPolicyEvents(output: string): NetworkPolicyEvent[] {
+  return output
+    .split('\n')
+    .filter(Boolean)
+    .slice(-MAX_NETWORK_POLICY_EVENTS)
+    .map((line) => {
+      try {
+        return NetworkPolicyEventSchema.parse(JSON.parse(line));
+      } catch {
+        throw new ExecutionError('Policy sidecar emitted a malformed audit event.');
+      }
+    });
+}
+
 export class DockerSandboxRunner implements SandboxRunner {
+  private readonly policyProxyImage: string;
+  private readonly sidecarScriptPath: string;
+  private readonly policyResources = new Map<string, PolicyResources>();
+
+  constructor(options: DockerSandboxRunnerOptions = {}) {
+    this.policyProxyImage = options.policyProxyImage ?? DEFAULT_POLICY_PROXY_IMAGE;
+    this.sidecarScriptPath = options.sidecarScriptPath ?? defaultSidecarScriptPath();
+  }
+
   async create(spec: SandboxSpec): Promise<SandboxHandle> {
+    if (spec.network.mode === 'allowlist') return this.createWithPolicy(spec);
     const args = buildCreateArgs(spec);
     const created = await execa('docker', args, { reject: false });
     if (created.exitCode !== 0) {
@@ -105,6 +254,82 @@ export class DockerSandboxRunner implements SandboxRunner {
     return { id };
   }
 
+  private async createWithPolicy(spec: SandboxSpec): Promise<SandboxHandle> {
+    if (!existsSync(this.sidecarScriptPath)) {
+      throw new ExecutionError(
+        `Compiled network-policy sidecar not found at ${this.sidecarScriptPath}; build @agent-foundry/executors before creating an allowlisted sandbox.`,
+      );
+    }
+    const resources: PolicyResources = {
+      networkName: `agent-foundry-policy-${randomUUID()}`,
+    };
+    try {
+      await sweepExpiredPolicyNetworks();
+      const expiresAt = Date.now() + spec.ttlMs;
+      await runDocker(
+        buildPolicyNetworkCreateArgs({ networkName: resources.networkName, expiresAt }),
+        'docker network create',
+      );
+      const encodedPolicy = Buffer.from(JSON.stringify(spec.network)).toString('base64url');
+      const sidecar = await runDocker(
+        buildPolicySidecarCreateArgs({
+          image: this.policyProxyImage,
+          scriptPath: this.sidecarScriptPath,
+          encodedPolicy,
+          ttlMs: spec.ttlMs,
+        }),
+        'docker create policy sidecar',
+      );
+      resources.sidecarId = sidecar.stdout.trim();
+      await runDocker(
+        ['network', 'connect', resources.networkName, resources.sidecarId],
+        'docker network connect policy sidecar',
+      );
+      await runDocker(['start', resources.sidecarId], 'docker start policy sidecar');
+      await waitForPolicySidecar(resources.sidecarId);
+      const inspected = await runDocker(
+        [
+          'inspect',
+          resources.sidecarId,
+          '--format',
+          `{{(index .NetworkSettings.Networks "${resources.networkName}").IPAddress}}`,
+        ],
+        'docker inspect policy sidecar',
+      );
+      const proxyIp = inspected.stdout.trim();
+      if (!proxyIp) throw new ExecutionError('Policy sidecar has no internal-network address.');
+      const sandbox = await runDocker(
+        buildCreateArgs(spec, { networkName: resources.networkName, proxyIp }),
+        'docker create',
+      );
+      resources.sandboxId = sandbox.stdout.trim();
+      await runDocker(['start', resources.sandboxId], 'docker start');
+      this.policyResources.set(resources.sandboxId, resources);
+      resources.expiryTimer = setTimeout(() => {
+        if (this.policyResources.get(resources.sandboxId!) !== resources) return;
+        void cleanupPolicyResources(resources, true)
+          .then(() => this.policyResources.delete(resources.sandboxId!))
+          .catch(() => undefined);
+      }, spec.ttlMs);
+      resources.expiryTimer.unref();
+      return { id: resources.sandboxId };
+    } catch (error) {
+      await cleanupPolicyResources(resources);
+      throw error;
+    }
+  }
+
+  async networkEvidence(sandbox: SandboxHandle): Promise<{ events: NetworkPolicyEvent[] }> {
+    const resources = this.policyResources.get(sandbox.id);
+    if (!resources?.sidecarId) return { events: [] };
+    const logs = await runDocker(
+      buildNetworkEvidenceArgs(resources.sidecarId),
+      'docker logs policy sidecar',
+      { maxBuffer: 2_000_000 },
+    );
+    return { events: parseNetworkPolicyEvents(logs.stdout) };
+  }
+
   async exec(
     sandbox: SandboxHandle,
     request: SandboxExecRequest,
@@ -114,7 +339,14 @@ export class DockerSandboxRunner implements SandboxRunner {
 
     const subprocess = execa(
       'docker',
-      ['exec', '-w', SANDBOX_WORKSPACE_PATH, sandbox.id, request.command, ...request.args],
+      [
+        'exec',
+        '-w',
+        request.cwd ?? SANDBOX_WORKSPACE_PATH,
+        sandbox.id,
+        request.command,
+        ...request.args,
+      ],
       {
         timeout: request.timeoutMs,
         reject: false,
@@ -195,9 +427,118 @@ export class DockerSandboxRunner implements SandboxRunner {
   }
 
   async destroy(sandbox: SandboxHandle): Promise<void> {
+    const resources = this.policyResources.get(sandbox.id);
+    if (resources) {
+      await cleanupPolicyResources(resources, true);
+      this.policyResources.delete(sandbox.id);
+      return;
+    }
     const result = await execa('docker', ['rm', '-f', sandbox.id], { reject: false });
     if (result.exitCode !== 0 && !/No such container/.test(result.stderr ?? '')) {
       throw dockerFailure('docker rm', result);
+    }
+  }
+}
+
+function defaultSidecarScriptPath(): string {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  return moduleDir.endsWith(`${sep}src`)
+    ? join(moduleDir, '..', 'dist', 'docker-network-policy-sidecar.js')
+    : join(moduleDir, 'docker-network-policy-sidecar.js');
+}
+
+function normalizeDockerResult(result: {
+  exitCode?: number;
+  stdout?: unknown;
+  stderr?: unknown;
+}): DockerResult {
+  return {
+    exitCode: result.exitCode ?? -1,
+    stdout: typeof result.stdout === 'string' ? result.stdout : '',
+    stderr: typeof result.stderr === 'string' ? result.stderr : '',
+  };
+}
+
+async function runDocker(
+  args: string[],
+  action: string,
+  options: { maxBuffer?: number } = {},
+): Promise<DockerResult> {
+  const result = normalizeDockerResult(await execa('docker', args, { reject: false, ...options }));
+  if (result.exitCode !== 0) throw dockerFailure(action, result);
+  return result;
+}
+
+async function waitForPolicySidecar(sidecarId: string): Promise<void> {
+  let lastResult: DockerResult | undefined;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    lastResult = normalizeDockerResult(
+      await execa('docker', ['exec', sidecarId, 'test', '-f', POLICY_SIDECAR_READY_PATH], {
+        reject: false,
+      }),
+    );
+    if (lastResult.exitCode === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const logs = normalizeDockerResult(
+    await execa('docker', ['logs', '--tail', '20', sidecarId], {
+      reject: false,
+      maxBuffer: 64 * 1024,
+    }),
+  );
+  const diagnostics = logs.stdout || logs.stderr;
+  throw dockerFailure('policy sidecar readiness check', {
+    ...(lastResult ?? {}),
+    ...(diagnostics
+      ? {
+          stderr: [lastResult?.stderr, `Policy sidecar startup log:\n${diagnostics}`]
+            .filter(Boolean)
+            .join('\n'),
+        }
+      : {}),
+  });
+}
+
+async function cleanupPolicyResources(
+  resources: PolicyResources,
+  failOnError = false,
+): Promise<void> {
+  if (resources.expiryTimer) clearTimeout(resources.expiryTimer);
+  const failures: Array<{ action: string; result: DockerResult }> = [];
+  const remove = async (action: string, args: string[]): Promise<void> => {
+    const result = normalizeDockerResult(await execa('docker', args, { reject: false }));
+    if (result.exitCode !== 0 && !/No such (container|network)/i.test(result.stderr ?? '')) {
+      failures.push({ action, result });
+    }
+  };
+  if (resources.sandboxId) await remove('docker rm sandbox', ['rm', '-f', resources.sandboxId]);
+  if (resources.sidecarId)
+    await remove('docker rm policy sidecar', ['rm', '-f', resources.sidecarId]);
+  await remove('docker network rm', ['network', 'rm', resources.networkName]);
+  if (failOnError && failures[0]) throw dockerFailure(failures[0].action, failures[0].result);
+}
+
+async function sweepExpiredPolicyNetworks(now = Date.now()): Promise<void> {
+  const listed = await runDocker(
+    [
+      'network',
+      'ls',
+      '--filter',
+      'label=agent-foundry.policy=true',
+      '--format',
+      '{{.ID}} {{.Label "agent-foundry.expires-at"}}',
+    ],
+    'docker network list policy networks',
+  );
+  for (const line of listed.stdout.split('\n').filter(Boolean)) {
+    const [networkId, expiresAtValue] = line.trim().split(/\s+/, 2);
+    const expiresAt = Number(expiresAtValue);
+    if (!networkId || !Number.isSafeInteger(expiresAt) || expiresAt > now) continue;
+    const removed = normalizeDockerResult(
+      await execa('docker', ['network', 'rm', networkId], { reject: false }),
+    );
+    if (removed.exitCode !== 0 && !/No such network|active endpoints/i.test(removed.stderr)) {
+      throw dockerFailure('docker network cleanup expired policy network', removed);
     }
   }
 }

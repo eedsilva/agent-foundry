@@ -17,7 +17,11 @@ import {
   type PreviewLogRepository,
   type PreviewRunner,
 } from '@agent-foundry/domain';
-import { resolvePreviewCommandPlan, runReproducibleInstall } from './preview-command-plan.js';
+import {
+  resolvePreviewCommandPlan,
+  runReproducibleInstall,
+  type PreviewInstaller,
+} from './preview-command-plan.js';
 import { detectPortFromOutput, reservePreviewPort } from './preview-port.js';
 import {
   killProcessTree,
@@ -32,6 +36,7 @@ export interface NodePreviewRunnerOptions {
   clock?: Clock;
   healthPath?: string;
   logRepository?: PreviewLogRepository;
+  installer?: PreviewInstaller;
 }
 
 // execa's ResultPromise<Options> return type varies per call site's options
@@ -72,6 +77,7 @@ export class NodePreviewRunner implements PreviewRunner {
   private readonly clock: Clock;
   private readonly healthPath: string;
   private readonly logRepository: PreviewLogRepository | undefined;
+  private readonly installer: PreviewInstaller | undefined;
   private readonly processes = new Map<string, ProcessEntry>();
 
   constructor(options: NodePreviewRunnerOptions = {}) {
@@ -81,18 +87,33 @@ export class NodePreviewRunner implements PreviewRunner {
     this.clock = options.clock ?? new SystemClock();
     this.healthPath = options.healthPath ?? '/';
     this.logRepository = options.logRepository;
+    this.installer = options.installer;
   }
 
   async prepare(session: PreviewSession): Promise<PreviewSession> {
     const plan = await resolvePreviewCommandPlan(session.workspaceRef.workspacePath);
     const withPlan = recordPreviewCommandPlan(session, plan, this.clock.now());
     if (!plan.install.ok) return withPlan; // no install needed/possible; start() will fail fast on a bad dev command
-    const outcome = await runReproducibleInstall(plan, session.workspaceRef.workspacePath, {
-      timeoutMs: DEFAULT_INSTALL_TIMEOUT_MS,
-      maxOutputBytes: this.maxOutputBytes,
-    });
-    if (outcome.ok) return withPlan;
-    return transitionPreviewSession(withPlan, 'failed', this.clock.now(), {
+    const outcome = this.installer
+      ? await this.installer.install({
+          plan,
+          workspacePath: session.workspaceRef.workspacePath,
+        })
+      : await runReproducibleInstall(plan, session.workspaceRef.workspacePath, {
+          timeoutMs: DEFAULT_INSTALL_TIMEOUT_MS,
+          maxOutputBytes: this.maxOutputBytes,
+        });
+    const withEvidence = recordPreviewCommandPlan(
+      session,
+      {
+        ...plan,
+        ...(outcome.versions ? { versions: outcome.versions } : {}),
+        ...(outcome.networkEvents ? { installNetworkEvents: outcome.networkEvents } : {}),
+      },
+      this.clock.now(),
+    );
+    if (outcome.ok) return withEvidence;
+    return transitionPreviewSession(withEvidence, 'failed', this.clock.now(), {
       error: {
         name: 'PreviewInstallError',
         code: 'PREVIEW_INSTALL_FAILED',

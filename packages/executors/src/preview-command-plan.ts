@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import {
   PreviewCommandPlanSchema,
+  type NetworkPolicyEvent,
   type PackageManager,
   type PreviewCommandPlan,
   type PreviewCommandResult,
@@ -106,6 +107,15 @@ export interface PreviewInstallOutcome {
   stdout: string;
   stderr: string;
   versions?: PreviewToolVersions;
+  networkEvents?: NetworkPolicyEvent[];
+}
+
+export interface PreviewInstaller {
+  install(input: {
+    plan: PreviewCommandPlan;
+    workspacePath: string;
+    signal?: AbortSignal;
+  }): Promise<PreviewInstallOutcome>;
 }
 
 /** Executes the plan's reproducible install command; never falls back to a different command. */

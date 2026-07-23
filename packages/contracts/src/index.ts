@@ -1,4 +1,5 @@
 export * from './primitives.js';
+export * from './network-policy.js';
 export * from './agent.js';
 export * from './model.js';
 export * from './task-taxonomy.js';

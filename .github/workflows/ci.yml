@@ -118,6 +118,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      - name: Build the standalone network-policy sidecar
+        run: npm run build --workspace @agent-foundry/executors
       - run: npm test
 
   build:

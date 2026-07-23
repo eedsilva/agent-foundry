@@ -71,17 +71,24 @@ test.beforeAll(async () => {
   // effects — so app fetches (and this test) would hang forever waiting for
   // UI that never appears, with no error surfaced anywhere.
   webBaseUrl = `http://localhost:${webPort}`;
-  runtime = await createRuntime({
-    ...process.env,
-    REPO_ROOT,
-    DATA_DIR: dataDir,
-    WORKFLOWS_DIR: workflowsDir,
-    EXECUTOR_MODE: 'real',
-    API_HOST: '127.0.0.1',
-    API_PORT: String(apiPort),
-    WORKER_ID: 'dom-source-map-e2e-worker',
-    WEB_ORIGIN: webBaseUrl,
-  });
+  runtime = await createRuntime(
+    {
+      ...process.env,
+      REPO_ROOT,
+      DATA_DIR: dataDir,
+      WORKFLOWS_DIR: workflowsDir,
+      EXECUTOR_MODE: 'real',
+      API_HOST: '127.0.0.1',
+      API_PORT: String(apiPort),
+      WORKER_ID: 'dom-source-map-e2e-worker',
+      WEB_ORIGIN: webBaseUrl,
+    },
+    undefined,
+    undefined,
+    // This suite uses fake provider CLIs and a controlled local fixture. The
+    // Docker-backed real-mode default is covered by executor integration tests.
+    { previewInstaller: null },
+  );
   const app = await buildApp(runtime);
   apiBaseUrl = await app.listen({ host: '127.0.0.1', port: apiPort });
   apiClose = () => app.close();

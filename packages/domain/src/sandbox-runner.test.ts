@@ -5,7 +5,7 @@ import { runSandboxLifecycle, type SandboxRunner } from './sandbox-runner.js';
 const spec: SandboxSpec = {
   image: 'sandbox:1',
   resources: { cpuMillis: 500, memoryMiB: 512, diskMiB: 1024, pids: 64 },
-  network: { mode: 'none', allowedHosts: [] },
+  network: { mode: 'none', allowedHosts: [], purpose: 'execution' },
   mounts: [],
   ttlMs: 60_000,
   user: '1000:1000',

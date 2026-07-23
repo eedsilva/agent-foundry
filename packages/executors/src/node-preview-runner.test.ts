@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { connect, createServer } from 'node:net';
@@ -12,6 +12,7 @@ import {
 } from '@agent-foundry/contracts';
 import type { PreviewLogRepository } from '@agent-foundry/domain';
 import { NodePreviewRunner } from './node-preview-runner.js';
+import type { PreviewInstaller } from './preview-command-plan.js';
 import { reservePreviewPort } from './preview-port.js';
 
 const FIXTURE_DIR = resolve(import.meta.dirname, 'fixtures');
@@ -184,6 +185,39 @@ async function canConnect(port: number): Promise<boolean> {
 }
 
 describe('NodePreviewRunner', () => {
+  it('delegates reproducible installs and records bounded network evidence', async () => {
+    const install = vi.fn<PreviewInstaller['install']>(async () => ({
+      ok: true,
+      exitCode: 0,
+      stdout: 'installed',
+      stderr: '',
+      networkEvents: [
+        {
+          timestamp: '2026-07-22T12:00:00.000Z',
+          purpose: 'dependency-install',
+          protocol: 'connect',
+          decision: 'allow',
+          hostname: 'registry.npmjs.org',
+          port: 443,
+          addresses: ['104.16.0.35'],
+          reason: 'allowlisted public destination',
+        },
+      ],
+    }));
+    const runner = new NodePreviewRunner({ installer: { install } });
+    const session = await newSession('sess-policy-install');
+    await writeFile(join(session.workspaceRef.workspacePath, 'package.json'), '{"scripts":{}}');
+    await writeFile(
+      join(session.workspaceRef.workspacePath, 'package-lock.json'),
+      '{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{}}',
+    );
+
+    const prepared = await runner.prepare(session);
+
+    expect(install).toHaveBeenCalledOnce();
+    expect(prepared.commandPlan?.installNetworkEvents).toHaveLength(1);
+    expect(prepared.commandPlan?.installNetworkEvents?.[0]).not.toHaveProperty('url');
+  });
   it('common cleanup stops a fixture when the test omits runner.stop', async () => {
     const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
     let session = await newSession('sess-after-each-cleanup');

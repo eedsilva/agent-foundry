@@ -36,11 +36,11 @@ Esses controles reduzem risco. Eles não formam uma barreira forte de isolamento
 
 ### Isolamento de processo
 
-O worker real roda com as permissões do usuário do host. Um comando permitido pela CLI pode alcançar tudo que esse usuário alcança. O sandbox do fornecedor ajuda, mas não substitui uma fronteira operacional independente. A ADR 0023 introduz a port `ExecutionPlane`, a ADR 0024 define o contrato de ciclo de vida `SandboxRunner`, e a ADR 0025 entrega `DockerSandboxRunner` — um backend rootless real (usuário não-root, sem privileged, capabilities zeradas, rootfs read-only, limites de CPU/memória/pids/disco aplicados). Nenhum caminho de execução hoje constrói um `SandboxSpec`; `LocalExecutionPlane` continua sendo o caminho ativo até a política de rede (`v07-network-policy`) e o secret broker (`v07-secret-broker`) permitirem trocar o padrão com segurança.
+O worker real roda com as permissões do usuário do host. Um comando permitido pela CLI pode alcançar tudo que esse usuário alcança. O sandbox do fornecedor ajuda, mas não substitui uma fronteira operacional independente. A ADR 0023 introduz a port `ExecutionPlane`, a ADR 0024 define o contrato de ciclo de vida `SandboxRunner`, a ADR 0025 entrega `DockerSandboxRunner`, e a ADR 0028 adiciona egress deny-by-default ao backend. Instalação de dependências no modo real já usa esse sandbox, mas `LocalExecutionPlane` continua sendo o caminho ativo para a CLI do agente até o secret broker (`v07-secret-broker`) permitir trocar o padrão sem montar credenciais persistentes do host.
 
 ### Rede
 
-Não há egress policy. Código executado pode tentar acessar a internet ou serviços internos.
+`DockerSandboxRunner` usa uma rede interna por sandbox e um sidecar de DNS + HTTP/CONNECT como único caminho de egress. A policy aceita apenas hostnames DNS exatos, bloqueia ranges privados/metadata/loopback e fixa a conexão no IP validado para resistir a DNS rebinding. Instalação de dependências real e Chromium usam a mesma policy e registram decisões limitadas. A CLI do agente ainda roda pelo `LocalExecutionPlane`; portanto esse controle não deve ser interpretado como isolamento completo da execução real antes do secret broker e da troca do execution plane.
 
 ### Segredos
 

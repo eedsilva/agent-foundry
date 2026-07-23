@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_NETWORK_POLICY_EVENTS, NetworkPolicyEventSchema } from './network-policy.js';
 import { AgentArtifactSchema } from './agent.js';
 import { PackageManagerSchema, PathSegmentSchema } from './primitives.js';
 import { ArtifactReferenceSchema, EntityVersionSchema, RunErrorSchema } from './run.js';
@@ -97,6 +98,10 @@ export const PreviewCommandPlanSchema = z
     build: PreviewCommandResultSchema,
     dev: PreviewCommandResultSchema,
     versions: PreviewToolVersionsSchema.optional(),
+    installNetworkEvents: z
+      .array(NetworkPolicyEventSchema)
+      .max(MAX_NETWORK_POLICY_EVENTS)
+      .optional(),
     detectedAt: z.string().datetime(),
   })
   .strict();
@@ -297,6 +302,7 @@ export const PreviewEvidenceSchema = z
     screenshots: z.array(BrowserScreenshotEvidenceSchema).default([]),
     trace: ArtifactReferenceSchema.optional(),
     video: ArtifactReferenceSchema.optional(),
+    networkPolicy: ArtifactReferenceSchema.optional(),
   })
   .strict();
 export type PreviewEvidence = z.infer<typeof PreviewEvidenceSchema>;

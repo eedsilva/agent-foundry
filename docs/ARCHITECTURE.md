@@ -87,18 +87,19 @@ Coordena tudo. O motor:
 - avança o estado do projeto.
 
 `BrowserVerificationCoordinator` inicia uma sessão de preview, passa o plano e as origens permitidas
-ao port, e sempre para a sessão. O orquestrador persiste o report como artifact normal e associa o
-attempt ao `previewSessionId`; não conhece Playwright.
+ao port, e sempre para a sessão. O orquestrador persiste o report, screenshots/trace/video e o log
+limitado de decisões de rede como artifacts, e associa o attempt ao `previewSessionId`; não conhece
+Playwright.
 
 Desde a ADR 0023, o orquestrador submete trabalho de agente pela port `ExecutionPlane`
 (`submit`/`cancel`/`status`) em vez de chamar `ExecutorRegistry` diretamente. `LocalExecutionPlane`
-(em `packages/executors`) é a única implementação hoje: roda as CLIs no mesmo processo do control
-plane, in-process, confiável apenas para desenvolvimento local — sem mudança de comportamento ou de
-fronteira de confiança em relação ao `ExecutorRegistry` direto de antes. `SandboxRunner` é o contrato
-do próximo runner; `DockerSandboxRunner` (ADR-0025, `packages/executors`) é sua primeira
-implementação real, mas nenhum caminho de execução a conecta ainda — isso chega com a política de
-rede e o secret broker. No diagrama de sequência abaixo, o participante `E` (Executor) agora é
-alcançado através dessa port.
+(em `packages/executors`) roda as CLIs no mesmo processo do control plane e continua ativo até o
+secret broker remover a dependência de credenciais persistentes do host. `SandboxRunner` possui a
+implementação real `DockerSandboxRunner` (ADRs 0025 e 0028): rootless, com recursos limitados e egress
+deny-by-default por rede interna + sidecar. O runtime real usa esse backend para instalação de
+dependências de preview; Chromium usa o mesmo núcleo de resolve/validate/pin em um proxy local. No
+diagrama de sequência abaixo, o participante `E` (Executor) é alcançado através da port
+`ExecutionPlane`.
 
 ### `packages/composition`
 

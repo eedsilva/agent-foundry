@@ -37,6 +37,19 @@ export const SandboxExecSchema = z
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
     timeoutMs: z.number().int().positive(),
+    cwd: z
+      .string()
+      .startsWith('/')
+      .refine(
+        (cwd) =>
+          cwd === '/' ||
+          cwd
+            .split('/')
+            .slice(1)
+            .every((segment) => segment !== '' && segment !== '.' && segment !== '..'),
+        'Sandbox cwd must be an absolute normalized path',
+      )
+      .optional(),
   })
   .strict();
 export type SandboxExec = z.infer<typeof SandboxExecSchema>;
