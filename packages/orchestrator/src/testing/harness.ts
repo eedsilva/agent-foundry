@@ -65,6 +65,7 @@ import {
   type ModelRouter,
   type PolicyRepository,
   type ProjectRepository,
+  type SecretStore,
   type StepAttemptRepository,
   type StepEventRepository,
   type StepRunRepository,
@@ -862,6 +863,16 @@ export type StepBehavior =
   | { kind: 'hang-until-abort' };
 
 /** Mirrors execa's own timeout message, wrapped the way base-cli-executor reports a hard deadline. */
+export class FakeSecretStore implements SecretStore {
+  constructor(private readonly declared: Record<string, string> = {}) {}
+  names(): Promise<string[]> {
+    return Promise.resolve(Object.keys(this.declared));
+  }
+  resolveAll(): Promise<Record<string, string>> {
+    return Promise.resolve({ ...this.declared });
+  }
+}
+
 export function timeoutError(): ExecutionError {
   return new ExecutionError('Command timed out after 300000 milliseconds: codex ...', {
     provider: 'mock',
@@ -893,6 +904,7 @@ export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
   readonly provider = 'mock';
   readonly startCounts = new Map<string, number>();
   readonly requests: AgentExecutionRequest[] = [];
+  readonly submittedExecutionRequests: ExecutionRequest[] = [];
   private readonly gates = new Map<string, () => void>();
   private readonly states = new Map<string, ExecutionStatus['state']>();
   private readonly cancellers = new Map<string, () => void>();
@@ -905,6 +917,7 @@ export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
   ) {}
 
   async submit(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult> {
+    this.submittedExecutionRequests.push(request);
     this.states.set(request.executionId, 'running');
     const cancelled = new Promise<never>((_resolve, reject) => {
       this.cancellers.set(request.executionId, () =>

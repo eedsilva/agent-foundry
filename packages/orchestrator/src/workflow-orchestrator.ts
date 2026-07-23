@@ -53,6 +53,7 @@ import type {
   ModelOverrideRepository,
   PolicyRepository,
   ProjectRepository,
+  SecretStore,
   StepAttemptRepository,
   StepEventRepository,
   StepRunRepository,
@@ -151,6 +152,7 @@ export class WorkflowOrchestrator {
     private readonly browserVerification?: BrowserVerificationCoordinator,
     private readonly qualityObservations?: QualityObservationService,
     private readonly executors?: Pick<ExecutorRegistry, 'health'>,
+    private readonly secretStore?: SecretStore,
   ) {}
 
   async runProject(
@@ -2372,7 +2374,9 @@ export class WorkflowOrchestrator {
         tools: [],
         limits: { timeoutMs: this.options.agentTimeoutMs },
         networkPolicy: { mode: 'none', allowedHosts: [], purpose: 'execution' },
-        secrets: [],
+        secrets: this.secretStore
+          ? (await this.secretStore.names(project.id)).map((name) => ({ name, ref: name }))
+          : [],
       },
       signal,
       (event) =>
