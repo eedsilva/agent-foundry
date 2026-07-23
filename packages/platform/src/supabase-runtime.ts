@@ -377,7 +377,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     functionName: string;
   }): Promise<FunctionVersion[]> {
     const environment = await this.#require(input.projectId);
-    const functionName = safeFunctionName(input.functionName);
+    const functionName = parsePathSegment('function name', input.functionName);
     return readFunctionVersions(this.#dataDir, environment.projectId, functionName);
   }
 
@@ -387,8 +387,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     versionId: string;
   }): Promise<FunctionVersion> {
     const environment = await this.#require(input.projectId);
-    const functionName = safeFunctionName(input.functionName);
-    const versionId = safeVersionId(input.versionId);
+    const functionName = parsePathSegment('function name', input.functionName);
+    const versionId = parsePathSegment('version ID', input.versionId);
     const manifestPath = functionVersionManifestPath(
       this.#dataDir,
       environment.projectId,
@@ -427,7 +427,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     headers?: Record<string, string>;
   }): Promise<FunctionInvocationResult> {
     const environment = await this.#require(input.projectId);
-    const functionName = safeFunctionName(input.functionName);
+    const functionName = parsePathSegment('function name', input.functionName);
     let current: FunctionVersion;
     try {
       const pointer = JSON.parse(
@@ -565,15 +565,9 @@ function safeProjectId(projectId: string): string {
   return result.data;
 }
 
-function safeFunctionName(functionName: string): string {
-  const result = PathSegmentSchema.safeParse(functionName);
-  if (!result.success) throw new ValidationError(`Invalid function name: ${result.error.message}`);
-  return result.data;
-}
-
-function safeVersionId(versionId: string): string {
-  const result = PathSegmentSchema.safeParse(versionId);
-  if (!result.success) throw new ValidationError(`Invalid version ID: ${result.error.message}`);
+function parsePathSegment(label: string, value: string): string {
+  const result = PathSegmentSchema.safeParse(value);
+  if (!result.success) throw new ValidationError(`Invalid ${label}: ${result.error.message}`);
   return result.data;
 }
 
