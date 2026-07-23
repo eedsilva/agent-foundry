@@ -1,4 +1,4 @@
-import type { ApprovalDecision } from '@agent-foundry/contracts';
+import type { ApprovalDecision, EnvironmentLifecycleOperation } from '@agent-foundry/contracts';
 
 export class NotFoundError extends Error {
   override readonly name = 'NotFoundError';
@@ -63,6 +63,18 @@ export class ExecutionError extends Error {
     } = {},
   ) {
     super(message);
+  }
+}
+
+export class EnvironmentOperationError extends Error {
+  override readonly name = 'EnvironmentOperationError';
+
+  constructor(
+    readonly operation: EnvironmentLifecycleOperation,
+    readonly exitCode: number | undefined,
+    readonly diagnostic: string,
+  ) {
+    super(`Environment ${operation} failed: ${diagnostic}`);
   }
 }
 

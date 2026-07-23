@@ -8,6 +8,7 @@ export const ALLOWED_INTERNAL_DEPENDENCIES = new Map([
   ['@agent-foundry/harness', new Set(['@agent-foundry/domain'])],
   ['@agent-foundry/model-router', new Set(['@agent-foundry/contracts', '@agent-foundry/domain'])],
   ['@agent-foundry/executors', new Set(['@agent-foundry/contracts', '@agent-foundry/domain'])],
+  ['@agent-foundry/platform', new Set(['@agent-foundry/contracts', '@agent-foundry/domain'])],
   ['@agent-foundry/orchestrator', new Set(['@agent-foundry/contracts', '@agent-foundry/domain'])],
   [
     '@agent-foundry/composition',

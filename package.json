@@ -18,7 +18,7 @@
     "clean": "find apps packages -type d \\( -name dist -o -name .next \\) -prune -exec rm -rf {} + && find apps packages -name '*.tsbuildinfo' -delete",
     "models:list:agy": "agy models",
     "smoke:mock": "EXECUTOR_MODE=mock RUN_WORKER_INLINE=true npm run dev --workspace @agent-foundry/api",
-    "build:packages": "npm run build --workspace @agent-foundry/contracts && npm run build --workspace @agent-foundry/domain && npm run build --workspace @agent-foundry/persistence && npm run build --workspace @agent-foundry/harness && npm run build --workspace @agent-foundry/model-router && npm run build --workspace @agent-foundry/executors && npm run build --workspace @agent-foundry/orchestrator && npm run build --workspace @agent-foundry/composition",
+    "build:packages": "npm run build --workspace @agent-foundry/contracts && npm run build --workspace @agent-foundry/domain && npm run build --workspace @agent-foundry/persistence && npm run build --workspace @agent-foundry/harness && npm run build --workspace @agent-foundry/model-router && npm run build --workspace @agent-foundry/executors && npm run build --workspace @agent-foundry/platform && npm run build --workspace @agent-foundry/orchestrator && npm run build --workspace @agent-foundry/composition",
     "build:apps": "npm run build --workspace @agent-foundry/api && npm run build --workspace @agent-foundry/worker && npm run build --workspace @agent-foundry/web",
     "doctor": "node scripts/doctor.mjs",
     "graphify:refresh": "graphify update . && node scripts/graphify-labels.mjs",

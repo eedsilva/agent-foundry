@@ -24,6 +24,7 @@
       "@agent-foundry/harness": ["packages/harness/src/index.ts"],
       "@agent-foundry/model-router": ["packages/model-router/src/index.ts"],
       "@agent-foundry/executors": ["packages/executors/src/index.ts"],
+      "@agent-foundry/platform": ["packages/platform/src/index.ts"],
       "@agent-foundry/orchestrator": ["packages/orchestrator/src/index.ts"],
       "@agent-foundry/composition": ["packages/composition/src/index.ts"]
     }
