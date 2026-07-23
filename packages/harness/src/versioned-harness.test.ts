@@ -35,3 +35,27 @@ describe('VersionedHarnessRepository.select', () => {
     expect(selection.files.map((file) => file.path)).not.toContain('stacks/supabase.md');
   });
 });
+
+describe('VersionedHarnessRepository.scaffoldFiles', () => {
+  it('returns the nextjs scaffold files sourced from harness/scaffolds/nextjs', async () => {
+    const repo = new VersionedHarnessRepository(harnessDir);
+
+    const files = await repo.scaffoldFiles('nextjs');
+
+    expect(files.map((file) => file.path).sort()).toEqual([
+      'app/sign-in/page.tsx',
+      'app/sign-up/page.tsx',
+      'lib/supabase/client.ts',
+      'lib/supabase/server.ts',
+      'middleware.ts',
+    ]);
+    const clientFile = files.find((file) => file.path === 'lib/supabase/client.ts');
+    expect(clientFile?.content).toContain('createBrowserClient');
+  });
+
+  it('returns an empty array for a stack with no scaffold directory', async () => {
+    const repo = new VersionedHarnessRepository(harnessDir);
+
+    await expect(repo.scaffoldFiles('no-such-stack')).resolves.toEqual([]);
+  });
+});

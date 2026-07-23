@@ -1087,6 +1087,7 @@ export interface Stores {
   stepEvents: InMemoryStepEvents;
   workspaces: FakeWorkspaces;
   harnessVersion: { value: string };
+  scaffoldFiles: { value: Array<{ path: string; content: string }> };
 }
 
 export function makeStores(clock: Clock = new SystemClock()): Stores {
@@ -1106,6 +1107,7 @@ export function makeStores(clock: Clock = new SystemClock()): Stores {
     stepEvents: new InMemoryStepEvents(),
     workspaces: new FakeWorkspaces(power),
     harnessVersion: { value: 'harness-1' },
+    scaffoldFiles: { value: [] },
   };
 }
 
@@ -1187,6 +1189,7 @@ export function makeHarness(
   const harness: HarnessRepository = {
     select: () =>
       Promise.resolve({ version: stores.harnessVersion.value, files: [], combined: '' }),
+    scaffoldFiles: () => Promise.resolve(stores.scaffoldFiles.value),
     version: () => Promise.resolve(stores.harnessVersion.value),
   };
   const router: ModelRouter = {

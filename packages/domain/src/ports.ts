@@ -246,6 +246,7 @@ export interface HarnessRepository {
     stack: string;
     tags: string[];
   }): Promise<HarnessSelection>;
+  scaffoldFiles(stack: string): Promise<Array<{ path: string; content: string }>>;
   version(): Promise<string>;
 }
 

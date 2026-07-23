@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { resolve, sep } from 'node:path';
+import { readFile, readdir, stat } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import type { HarnessRepository, HarnessSelection } from '@agent-foundry/domain';
 
@@ -69,6 +69,28 @@ export class VersionedHarnessRepository implements HarnessRepository {
         .map((file) => `\n<!-- harness:${file.path} -->\n${file.content.trim()}\n`)
         .join('\n'),
     };
+  }
+
+  async scaffoldFiles(stack: string): Promise<Array<{ path: string; content: string }>> {
+    const scaffoldRoot = this.safeResolve(join('scaffolds', stack));
+    let entries: string[];
+    try {
+      entries = await readdir(scaffoldRoot, { recursive: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+    const files: Array<{ path: string; content: string }> = [];
+    for (const entry of entries.sort()) {
+      const fullPath = resolve(scaffoldRoot, entry);
+      if ((await stat(fullPath)).isFile()) {
+        files.push({
+          path: entry.split(sep).join('/'),
+          content: await readFile(fullPath, 'utf8'),
+        });
+      }
+    }
+    return files;
   }
 
   private safeResolve(relativePath: string): string {
