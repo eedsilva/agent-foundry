@@ -66,6 +66,7 @@ import {
   ApprovalRequiredError,
   EmergencyCeilingError,
   ExecutionError,
+  LeaseLostError,
   NotFoundError,
   PolicyViolationError,
   RunCancelledError,
@@ -152,9 +153,14 @@ export class WorkflowOrchestrator {
     private readonly executors?: Pick<ExecutorRegistry, 'health'>,
   ) {}
 
-  async runProject(projectId: string, workflowId?: string, requestedRunId?: string): Promise<void> {
+  async runProject(
+    projectId: string,
+    workflowId?: string,
+    requestedRunId?: string,
+    externalSignal?: AbortSignal,
+  ): Promise<void> {
     return withSpan('foundry.run', { 'foundry.project.id': projectId }, (span) =>
-      this.runProjectTraced(projectId, span, workflowId, requestedRunId),
+      this.runProjectTraced(projectId, span, workflowId, requestedRunId, externalSignal),
     );
   }
 
@@ -163,6 +169,7 @@ export class WorkflowOrchestrator {
     span: Span,
     workflowId?: string,
     requestedRunId?: string,
+    externalSignal?: AbortSignal,
   ): Promise<void> {
     const startedAt = Date.now();
     const project = await this.projects.get(projectId);
@@ -193,8 +200,12 @@ export class WorkflowOrchestrator {
       return;
     }
     const cancellation = new AbortController();
+    const signal = externalSignal
+      ? AbortSignal.any([cancellation.signal, externalSignal])
+      : cancellation.signal;
     const stopWatching = this.watchForCancellation(run.id, cancellation);
     try {
+      throwIfCancelled(signal, run.id);
       await this.workspaces.ensureGit(projectId);
       run = await this.ensureInitialVerifiedCheckpoint(run.id, projectId);
       if (run.execution?.ceiling) {
@@ -207,7 +218,7 @@ export class WorkflowOrchestrator {
         );
       }
       run = await this.startActiveExecution(run.id);
-      await this.assertExecutionMayContinue(run.id, cancellation.signal);
+      await this.assertExecutionMayContinue(run.id, signal);
       await this.syncProjectSummary(run);
       await this.emit(projectId, 'project.started', `Workflow ${workflow.id} started.`, {
         runId: run.id,
@@ -215,21 +226,21 @@ export class WorkflowOrchestrator {
       });
       run = await this.enforceRunPolicy(run, project, workflow);
       for (const node of workflow.nodes) {
-        throwIfCancelled(cancellation.signal, run.id);
-        await this.assertExecutionMayContinue(run.id, cancellation.signal);
+        throwIfCancelled(signal, run.id);
+        await this.assertExecutionMayContinue(run.id, signal);
         await this.emit(projectId, 'node.started', node.title, {
           nodeId: node.id,
           runId: run.id,
           dedupeKey: `${run.id}:node:${node.id}:started`,
         });
-        await this.executeNode(project, workflow, node, run.id, cancellation.signal);
+        await this.executeNode(project, workflow, node, run.id, signal);
         await this.emit(projectId, 'node.completed', node.title, {
           nodeId: node.id,
           runId: run.id,
           dedupeKey: `${run.id}:node:${node.id}:completed`,
         });
       }
-      await this.assertExecutionMayContinue(run.id, cancellation.signal);
+      await this.assertExecutionMayContinue(run.id, signal);
       run = await this.completeRun(run.id);
       await this.syncProjectSummary(run);
       const durationMs = Date.now() - startedAt;
@@ -241,6 +252,7 @@ export class WorkflowOrchestrator {
         runId: run.id,
       });
     } catch (error) {
+      if (error instanceof LeaseLostError) throw error;
       if (error instanceof ApprovalTimeoutScheduleError) {
         await this.finalizeApproval(run.id, projectId, error.nodeId);
         throw error;
@@ -257,7 +269,7 @@ export class WorkflowOrchestrator {
         await this.finalizeRejection(run.id, projectId, error.nodeId, error.decidedBy);
         return;
       }
-      if (isCancellation(error, cancellation.signal)) {
+      if (isCancellation(error, signal)) {
         await this.finalizeCancellation(run.id, projectId);
         return;
       }
@@ -1268,6 +1280,7 @@ export class WorkflowOrchestrator {
       await this.clearCurrentStep(runId);
       return artifact;
     } catch (error) {
+      if (error instanceof LeaseLostError) throw error;
       if (stepRun.status === 'running') {
         const cancelled = isCancellation(error, signal);
         await this.stepRuns.update(
@@ -2740,13 +2753,16 @@ function isReviewerRole(role: AgentStep['role']): boolean {
 function throwIfCancelled(signal: AbortSignal, runId: string): void {
   if (!signal.aborted) return;
   if (signal.reason instanceof EmergencyCeilingError) throw signal.reason;
+  if (signal.reason instanceof LeaseLostError) throw signal.reason;
   throw new RunCancelledError(runId);
 }
 
 function isCancellation(error: unknown, signal: AbortSignal): boolean {
   return (
     error instanceof RunCancelledError ||
-    (signal.aborted && !(signal.reason instanceof EmergencyCeilingError))
+    (signal.aborted &&
+      !(signal.reason instanceof EmergencyCeilingError) &&
+      !(signal.reason instanceof LeaseLostError))
   );
 }
 

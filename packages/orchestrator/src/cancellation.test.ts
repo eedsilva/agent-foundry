@@ -24,6 +24,7 @@ import {
 } from '@agent-foundry/contracts';
 import {
   InvalidStateTransitionError,
+  LeaseLostError,
   RunCancelledError,
   SystemClock,
   VersionConflictError,
@@ -681,6 +682,31 @@ async function statusByStepId(
 }
 
 describe('cancellation during a workflow run', () => {
+  it('rethrows an external lease loss without recording a terminal lifecycle state', async () => {
+    const harness = makeHarness({ plan: 'reject-on-abort' });
+    await seedRun(harness);
+    const lease = new AbortController();
+
+    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1', lease.signal);
+    await vi.waitFor(() => {
+      expect(harness.executor.started.has('plan')).toBe(true);
+    });
+
+    lease.abort(new LeaseLostError('job-1', 'worker-a'));
+    const outcome = await Promise.race([
+      running.then(
+        () => undefined,
+        (error: unknown) => error,
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('pending'), 20)),
+    ]);
+
+    expect(outcome).toBeInstanceOf(LeaseLostError);
+    expect((await harness.runs.get('run-1'))?.status).toBe('running');
+    expect(await statusByStepId(harness)).toEqual({ plan: 'running' });
+    expect(harness.events.types()).not.toContain('project.failed');
+  });
+
   it('cancels during the planner step and finalizes run, step and attempt as cancelled', async () => {
     const harness = makeHarness({ plan: 'reject-on-abort' });
     await seedRun(harness);
