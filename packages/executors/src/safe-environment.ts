@@ -1,6 +1,6 @@
 // Deny-by-default: only the OS/tooling variables a spawned child needs to
 // start and find its own config. Never includes an application secret —
-// see docs/adr/0032-app-secret-capabilities.md.
+// see docs/adr/0033-app-secret-capabilities.md.
 const SAFE_ENV_ALLOWLIST = new Set([
   'PATH',
   'HOME',

@@ -1,4 +1,4 @@
-# ADR 0032: App secret capabilities via a per-project `.env` file
+# ADR 0033: App secret capabilities via a per-project `.env` file
 
 - Status: Accepted
 - Date: 2026-07-23
