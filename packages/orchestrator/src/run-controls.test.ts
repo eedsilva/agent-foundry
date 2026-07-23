@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ResumeBlockedError } from '@agent-foundry/domain';
+import type { ProjectVersionService } from './project-version-service.js';
 import { completeRun, liveStepRun, makeHarness, makeStores, seedRun } from './testing/harness.js';
 
 describe('pause and resume at step boundaries (#7)', () => {
@@ -255,7 +256,7 @@ describe('step retry with controlled invalidation (#8)', () => {
 });
 
 describe('idempotency across attempts, artifacts, events and commits (#9)', () => {
-  it('crash after artifact put: replay adopts the artifact without re-executing or re-committing', async () => {
+  it('crash after artifact put replays one commit without rerunning the step', async () => {
     const harness = makeHarness();
     await seedRun(harness);
     harness.artifacts.onAfterPut = (name) => {
@@ -267,27 +268,27 @@ describe('idempotency across attempts, artifacts, events and commits (#9)', () =
     );
     harness.artifacts.onAfterPut = undefined;
     expect(harness.artifacts.named('implementation')).toHaveLength(1);
-    expect(harness.workspaces.commits).toHaveLength(1);
+    expect(harness.workspaces.commits).toHaveLength(0);
 
     harness.power.on = true;
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
-    // The step did not run again; its interrupted records were finalized.
     expect(harness.executor.started('implement')).toBe(1);
     expect(harness.artifacts.named('implementation')).toHaveLength(1);
     expect(harness.workspaces.commits).toHaveLength(1);
     const implement = liveStepRun(harness, 'implement');
     expect(implement.status).toBe('completed');
-    const attempts = await harness.stepAttempts.list('run-1', implement.id);
-    expect(attempts).toHaveLength(1);
-    expect(attempts[0]?.status).toBe('succeeded');
-    expect(attempts[0]?.outputArtifacts[0]?.name).toBe('implementation');
+    expect((await harness.stepAttempts.list('run-1', implement.id))[0]).toMatchObject({
+      status: 'succeeded',
+      commit: harness.workspaces.commits[0],
+    });
     expect((await harness.runs.get('run-1'))?.status).toBe('completed');
-    expect(harness.events.types()).toContain('step.reused');
   });
 
-  it('crash after commit but before artifact put: replay re-executes without duplicating the artifact', async () => {
-    const harness = makeHarness();
+  it('crash after commit recovers its head on the same attempt and records its version', async () => {
+    const recordFromStep = vi.fn(async () => undefined);
+    const versions = { recordFromStep } as unknown as ProjectVersionService;
+    const harness = makeHarness({}, undefined, { versions });
     await seedRun(harness);
     harness.workspaces.onAfterCommit = () => {
       harness.power.on = false;
@@ -297,21 +298,47 @@ describe('idempotency across attempts, artifacts, events and commits (#9)', () =
       /simulated power loss/,
     );
     harness.workspaces.onAfterCommit = undefined;
-    expect(harness.artifacts.named('implementation')).toHaveLength(0);
+    expect(harness.workspaces.commits).toHaveLength(1);
+    expect(recordFromStep).not.toHaveBeenCalled();
 
     harness.power.on = true;
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
-    expect(harness.artifacts.named('implementation')).toHaveLength(1);
-    const stepRuns = harness.stepRuns.byStepId('run-1', 'implement');
-    expect(stepRuns).toHaveLength(2);
-    expect(stepRuns[0]?.status).toBe('failed');
-    expect(stepRuns[0]?.error?.message).toMatch(/Interrupted/);
-    expect(stepRuns[1]?.status).toBe('completed');
-    // The interrupted attempt is preserved as failed history, never rewritten.
-    const staleAttempts = await harness.stepAttempts.list('run-1', stepRuns[0]!.id);
-    expect(staleAttempts[0]?.status).toBe('failed');
-    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(harness.executor.started('implement')).toBe(1);
+    expect(harness.workspaces.commits).toHaveLength(1);
+    const implement = liveStepRun(harness, 'implement');
+    const attempt = (await harness.stepAttempts.list('run-1', implement.id))[0]!;
+    expect(attempt).toMatchObject({
+      status: 'succeeded',
+      commit: harness.workspaces.commits[0],
+    });
+    expect(recordFromStep).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      runId: 'run-1',
+      stepRunId: implement.id,
+      attemptId: attempt.id,
+      commit: harness.workspaces.commits[0],
+    });
+  });
+
+  it('commit failure after artifact put does not run a fallback candidate', async () => {
+    const harness = makeHarness({}, undefined, { fallback: true });
+    await seedRun(harness);
+    harness.workspaces.onBeforeCommit = () => {
+      throw new Error('commit failed');
+    };
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /commit failed/,
+    );
+
+    expect(harness.executor.started('implement')).toBe(1);
+    const implementation = harness.artifacts.named('implementation')[0]!;
+    const implement = harness.stepRuns.byStepId('run-1', 'implement')[0]!;
+    const attempts = await harness.stepAttempts.list('run-1', implement.id);
+    expect(attempts).toHaveLength(1);
+    expect(implementation.metadata.attemptId).toBe(attempts[0]?.id);
+    expect(harness.workspaces.commits).toHaveLength(0);
   });
 
   it('crash before queue ack: redelivery of a completed run is a no-op', async () => {
