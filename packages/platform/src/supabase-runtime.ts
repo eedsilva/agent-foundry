@@ -332,7 +332,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     await rm(environment.workdir, { recursive: true, force: true });
   }
 
-  async deployFunction(input: {
+  async deployFunction(_input: {
     projectId: string;
     functionPath: string;
     artifact: FunctionArtifact;
@@ -340,14 +340,14 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     throw new Error('deployFunction not yet implemented');
   }
 
-  async listFunctionVersions(input: {
+  async listFunctionVersions(_input: {
     projectId: string;
     functionName: string;
   }): Promise<FunctionVersion[]> {
     throw new Error('listFunctionVersions not yet implemented');
   }
 
-  async rollbackFunction(input: {
+  async rollbackFunction(_input: {
     projectId: string;
     functionName: string;
     versionId: string;
@@ -355,7 +355,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     throw new Error('rollbackFunction not yet implemented');
   }
 
-  async invokeFunction(input: {
+  async invokeFunction(_input: {
     projectId: string;
     functionName: string;
     body?: string;
