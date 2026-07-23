@@ -485,6 +485,18 @@ export interface WorkspaceManager {
   createBranch(projectId: string, ref: string, name: string): Promise<string>;
 }
 
+/**
+ * Local-.env-backed secret capabilities for a project (v1: files, not a
+ * broker). `names()` is safe to expose to the coding agent's context —
+ * it never returns a value. `resolveAll()` must only be called from the
+ * process that runs the generated app (preview/deploy), never from
+ * anything that builds the agent's prompt, logs, or artifacts.
+ */
+export interface SecretStore {
+  names(projectId: string): Promise<string[]>;
+  resolveAll(projectId: string): Promise<Record<string, string>>;
+}
+
 export interface Clock {
   now(): Date;
 }
