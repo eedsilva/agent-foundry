@@ -98,6 +98,21 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       this.#dataDir,
       projectId,
     );
+    let retainedWorkdir = true;
+    try {
+      await realpath(workdir);
+    } catch (error) {
+      if (!isNotFound(error)) throw operationError('initialize', error);
+      retainedWorkdir = false;
+    }
+    if (retainedWorkdir) {
+      await this.#execute('initialize', 'stop', '--workdir', workdir, '--no-backup', '--yes');
+      try {
+        await rm(workdir, { recursive: true, force: true });
+      } catch (error) {
+        throw operationError('initialize', error);
+      }
+    }
     await mkdir(workdir, { recursive: true });
     await this.#execute('initialize', 'init', '--workdir', workdir);
     await this.#configure(workdir, composeProjectName);
@@ -136,10 +151,18 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       await persist(environment);
       return environment;
     } catch (error) {
-      await this.#execute('initialize', 'stop', '--workdir', workdir, '--no-backup', '--yes').catch(
-        () => undefined,
+      const stopped = await this.#execute(
+        'initialize',
+        'stop',
+        '--workdir',
+        workdir,
+        '--no-backup',
+        '--yes',
+      ).then(
+        () => true,
+        () => false,
       );
-      await rm(workdir, { recursive: true, force: true }).catch(() => undefined);
+      if (stopped) await rm(workdir, { recursive: true, force: true }).catch(() => undefined);
       throw error;
     }
   }

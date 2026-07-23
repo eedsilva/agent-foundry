@@ -280,22 +280,33 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
     ]);
   });
 
-  it('rolls back a failed bucket seed and allows a fresh retry after stop cleanup fails', async () => {
+  it('retains a failed seed workdir and recovers it across runtime instances', async () => {
     let failSeed = true;
+    let stopAttempts = 0;
+    let freshAtRetryInit = false;
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    const partialMarker = join(workdir, 'partial-marker');
     const command = vi.fn<SupabaseCommand>(async (...args) => {
       if (args[0] === 'seed' && args[1] === 'buckets' && failSeed) {
         failSeed = false;
+        await writeFile(partialMarker, 'partial');
         throw Object.assign(new Error('PASSWORD=seed-secret original-seed-failure'), {
           exitCode: 41,
         });
       }
       if (args[0] === 'stop') {
-        throw new Error('PASSWORD=cleanup-secret cleanup-stop-failure');
+        stopAttempts += 1;
+        if (stopAttempts === 1) {
+          throw new Error('PASSWORD=cleanup-secret cleanup-stop-failure');
+        }
+      }
+      if (args[0] === 'init' && stopAttempts === 2) {
+        await expect(stat(partialMarker)).rejects.toMatchObject({ code: 'ENOENT' });
+        freshAtRetryInit = true;
       }
       return statusCommand(...args);
     });
     const { runtime } = fixture(command);
-    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
     const protectedPath = join(dataDir, 'projects', 'project-b', 'environment', 'keep');
     await mkdir(join(dataDir, 'projects', 'project-b', 'environment'), { recursive: true });
     await writeFile(protectedPath, 'keep');
@@ -320,13 +331,28 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
       '--no-backup',
       '--yes',
     ]);
-    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workdir, 'supabase', 'config.toml'), 'utf8')).resolves.toContain(
+      'project_id = "supabase_project-a"',
+    );
+    await expect(readFile(partialMarker, 'utf8')).resolves.toBe('partial');
     await expect(readFile(protectedPath, 'utf8')).resolves.toBe('keep');
     await expect(runtime.inspect('project-a')).resolves.toBeNull();
 
-    const retried = await runtime.initialize({ projectId: 'project-a' });
+    const retryCallIndex = command.mock.calls.length;
+    const retryRuntime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command,
+      now: () => new Date(NOW),
+    });
+    const retried = await retryRuntime.initialize({ projectId: 'project-a' });
 
     expect(retried.workdir).toBe(workdir);
+    expect(freshAtRetryInit).toBe(true);
+    expect(stopAttempts).toBe(2);
+    expect(command.mock.calls.slice(retryCallIndex, retryCallIndex + 2)).toEqual([
+      ['stop', '--workdir', workdir, '--no-backup', '--yes'],
+      ['init', '--workdir', workdir],
+    ]);
     expect(command.mock.calls.filter(([name]) => name === 'init')).toHaveLength(2);
     expect(command.mock.calls.filter(([name]) => name === 'start')).toHaveLength(2);
     expect(
@@ -334,6 +360,32 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
         return name === 'seed' && subcommand === 'buckets';
       }),
     ).toHaveLength(2);
+  });
+
+  it('blocks initialization while retained-workdir teardown still fails', async () => {
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    const configPath = join(workdir, 'supabase', 'config.toml');
+    await mkdir(join(workdir, 'supabase'), { recursive: true });
+    await writeFile(configPath, INITIAL_CONFIG);
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'stop') {
+        throw Object.assign(new Error('PASSWORD=recovery-secret retained-recovery-stop-failure'), {
+          exitCode: 42,
+        });
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+
+    const rejection = await runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
+
+    expect(rejection).toMatchObject({ operation: 'initialize', exitCode: 42 });
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(rejection.diagnostic).toContain('retained-recovery-stop-failure');
+    expect(rejection.diagnostic).not.toContain('recovery-secret');
+    expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
+    expect(command.mock.calls).toEqual([['stop', '--workdir', workdir, '--no-backup', '--yes']]);
+    await expect(readFile(configPath, 'utf8')).resolves.toBe(INITIAL_CONFIG);
   });
 
   it('deduplicates overlapping project initialization without blocking another project', async () => {
