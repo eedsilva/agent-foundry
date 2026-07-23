@@ -157,6 +157,93 @@ describe('WorkerLoop heartbeat renewal', () => {
     expect(queue.nack).not.toHaveBeenCalled();
   });
 
+  it('skips ack and nack when an in-flight heartbeat loses the lease after the run resolves', async () => {
+    const initialJob = job();
+    const renewal = deferred<QueueJob>();
+    const heartbeat = vi.fn().mockReturnValue(renewal.promise);
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(initialJob), heartbeat });
+    const run = deferred<void>();
+    const orchestrator = {
+      runProject: vi.fn().mockReturnValue(run.promise),
+    } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+      heartbeatIntervalMs: 100,
+    });
+
+    const runOncePromise = worker.runOnce();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(heartbeat).toHaveBeenCalledTimes(1);
+
+    run.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    renewal.reject(new LeaseLostError('job-1', 'worker-a'));
+    await runOncePromise;
+
+    expect(queue.ack).not.toHaveBeenCalled();
+    expect(queue.nack).not.toHaveBeenCalled();
+  });
+
+  it('aborts an in-flight project run when the queue lease is lost', async () => {
+    const initialJob = job();
+    const heartbeat = vi.fn().mockRejectedValue(new LeaseLostError('job-1', 'worker-a'));
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(initialJob), heartbeat });
+
+    let signal: AbortSignal | undefined;
+    const runProject = vi.fn(
+      (_projectId: string, _workflowId: string, _runId: string, runSignal?: AbortSignal) =>
+        new Promise<void>((_resolve, reject) => {
+          signal = runSignal;
+          runSignal?.addEventListener('abort', () => reject(runSignal.reason), { once: true });
+        }),
+    );
+    const orchestrator = { runProject } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+      heartbeatIntervalMs: 100,
+    });
+
+    const runOncePromise = worker.runOnce();
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(signal).toBeDefined();
+    expect(signal?.aborted).toBe(true);
+    await runOncePromise;
+    expect(queue.ack).not.toHaveBeenCalled();
+    expect(queue.nack).not.toHaveBeenCalled();
+  });
+
+  it('retries a transient heartbeat failure and acks with the renewed lease', async () => {
+    const initialJob = job();
+    const renewedJob = job({
+      lease: { ...initialJob.lease!, heartbeatAt: '2026-07-14T12:00:00.200Z' },
+    });
+    const heartbeat = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('transient fs error'))
+      .mockResolvedValueOnce(renewedJob);
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(initialJob), heartbeat });
+    const run = deferred<void>();
+    const orchestrator = {
+      runProject: vi.fn().mockReturnValue(run.promise),
+    } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+      heartbeatIntervalMs: 100,
+    });
+
+    const runOncePromise = worker.runOnce();
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(heartbeat).toHaveBeenCalledTimes(2);
+    run.resolve();
+    await runOncePromise;
+    expect(queue.ack).toHaveBeenCalledWith(renewedJob, 'worker-a');
+  });
+
   it('nacks with the run error and the latest heartbeat-renewed job when the run fails', async () => {
     const initialJob = job();
     const renewedJob = job({
