@@ -6,15 +6,48 @@ import { EnvironmentOperationError } from '@agent-foundry/domain';
 import { SupabaseGeneratedProjectRuntime, type SupabaseCommand } from './supabase-runtime.js';
 
 const NOW = new Date('2026-07-22T12:00:00.000Z');
-const STATUS = JSON.stringify({
-  API_URL: 'http://127.0.0.1:54321',
-  GRAPHQL_URL: 'http://127.0.0.1:54321/graphql/v1',
-  STUDIO_URL: 'http://127.0.0.1:54323',
-  INBUCKET_URL: 'http://127.0.0.1:54324',
-  DB_URL: 'postgresql://postgres:db-secret@127.0.0.1:54322/postgres',
-  JWT_SECRET: 'jwt-secret',
-  ANON_KEY: 'anon-secret',
-});
+const INITIAL_CONFIG = `project_id = "environment"
+
+[api]
+enabled = true
+port = 54321
+
+[db]
+port = 54322
+shadow_port = 54320
+
+[db.pooler]
+enabled = false
+port = 54329
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+# smtp_port = 54325
+# pop3_port = 54326
+
+[edge_runtime]
+enabled = true
+inspector_port = 8083
+
+[analytics]
+enabled = true
+port = 54327
+`;
+
+const HOST_PORT_FIELDS = [
+  ['api', 'port'],
+  ['db', 'port'],
+  ['db', 'shadow_port'],
+  ['studio', 'port'],
+  ['inbucket', 'port'],
+  ['edge_runtime', 'inspector_port'],
+  ['analytics', 'port'],
+] as const;
 
 let dataDir: string;
 let projectIdsAtStart: string[];
@@ -35,13 +68,45 @@ async function statusCommand(
   const workdir = workdirIndex === -1 ? undefined : args[workdirIndex + 1];
   if (args[0] === 'init' && workdir) {
     await mkdir(join(workdir, 'supabase'), { recursive: true });
-    await writeFile(join(workdir, 'supabase', 'config.toml'), 'project_id = "environment"\n');
+    await writeFile(join(workdir, 'supabase', 'config.toml'), INITIAL_CONFIG);
   }
-  if (args[0] === 'start' && workdir) {
+  if ((args[0] === 'start' || args[0] === 'status') && workdir) {
     const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
-    projectIdsAtStart.push(config.match(/^project_id\s*=\s*"([^"]+)"/m)?.[1] ?? 'missing');
+    if (args[0] === 'start') {
+      projectIdsAtStart.push(config.match(/^project_id\s*=\s*"([^"]+)"/m)?.[1] ?? 'missing');
+    }
+    const api = configPort(config, 'api', 'port');
+    const db = configPort(config, 'db', 'port');
+    const studio = configPort(config, 'studio', 'port');
+    const inbucket = configPort(config, 'inbucket', 'port');
+    return {
+      stdout: JSON.stringify({
+        API_URL: `http://127.0.0.1:${api}`,
+        GRAPHQL_URL: `http://127.0.0.1:${api}/graphql/v1`,
+        STUDIO_URL: `http://127.0.0.1:${studio}`,
+        INBUCKET_URL: `http://127.0.0.1:${inbucket}`,
+        DB_URL: `postgresql://postgres:db-secret@127.0.0.1:${db}/postgres`,
+        JWT_SECRET: 'jwt-secret',
+        ANON_KEY: 'anon-secret',
+      }),
+      stderr: '',
+      exitCode: 0,
+    };
   }
-  return Promise.resolve({ stdout: STATUS, stderr: '', exitCode: 0 });
+  return { stdout: '', stderr: '', exitCode: 0 };
+}
+
+function configPort(config: string, section: string, key: string): number {
+  let currentSection = '';
+  for (const line of config.split('\n')) {
+    currentSection = line.match(/^\[([^\]]+)\]$/)?.[1] ?? currentSection;
+    const value =
+      currentSection === section
+        ? line.match(new RegExp(`^${key}\\s*=\\s*(\\d+)$`))?.[1]
+        : undefined;
+    if (value) return Number(value);
+  }
+  throw new Error(`Missing ${section}.${key}`);
 }
 
 function fixture(command = vi.fn<SupabaseCommand>(statusCommand)) {
@@ -72,10 +137,26 @@ describe('SupabaseGeneratedProjectRuntime', () => {
     const secondProjectId = (
       await readFile(join(second.workdir, 'supabase', 'config.toml'), 'utf8')
     ).match(/^project_id\s*=\s*"([^"]+)"/m)?.[1];
+    const firstConfig = await readFile(join(first.workdir, 'supabase', 'config.toml'), 'utf8');
+    const secondConfig = await readFile(join(second.workdir, 'supabase', 'config.toml'), 'utf8');
+    const firstHostPorts = HOST_PORT_FIELDS.map(([section, key]) =>
+      configPort(firstConfig, section, key),
+    );
+    const secondHostPorts = HOST_PORT_FIELDS.map(([section, key]) =>
+      configPort(secondConfig, section, key),
+    );
     expect(firstProjectId).toBe(first.composeProjectName);
     expect(secondProjectId).toBe(second.composeProjectName);
     expect(firstProjectId).not.toBe(secondProjectId);
     expect(projectIdsAtStart).toEqual(expect.arrayContaining([firstProjectId, secondProjectId]));
+    expect(new Set([...firstHostPorts, ...secondHostPorts]).size).toBe(14);
+    expect(firstHostPorts.every((port) => port > 0 && port <= 65_535)).toBe(true);
+    expect(secondHostPorts.every((port) => port > 0 && port <= 65_535)).toBe(true);
+    expect(first.ports.api).toBe(firstHostPorts[0]);
+    expect(second.ports.api).toBe(secondHostPorts[0]);
+    expect(first.ports.api).not.toBe(second.ports.api);
+    expect(first.ports.studio).not.toBe(second.ports.studio);
+    expect(first.ports.mail).not.toBe(second.ports.mail);
     expect(command.mock.calls).toContainEqual(['init', '--workdir', first.workdir]);
     expect(command.mock.calls).toContainEqual([
       'start',
@@ -90,12 +171,17 @@ describe('SupabaseGeneratedProjectRuntime', () => {
     expect(first).toMatchObject({
       projectId: 'project-a',
       endpoints: {
-        api: 'http://127.0.0.1:54321',
-        graphql: 'http://127.0.0.1:54321/graphql/v1',
-        studio: 'http://127.0.0.1:54323',
-        mail: 'http://127.0.0.1:54324',
+        api: `http://127.0.0.1:${firstHostPorts[0]}`,
+        graphql: `http://127.0.0.1:${firstHostPorts[0]}/graphql/v1`,
+        studio: `http://127.0.0.1:${firstHostPorts[3]}`,
+        mail: `http://127.0.0.1:${firstHostPorts[4]}`,
       },
-      ports: { api: 54321, graphql: 54321, studio: 54323, mail: 54324 },
+      ports: {
+        api: firstHostPorts[0],
+        graphql: firstHostPorts[0],
+        studio: firstHostPorts[3],
+        mail: firstHostPorts[4],
+      },
       health: { state: 'healthy', checkedAt: NOW.toISOString() },
     });
     const metadata = await readFile(join(first.workdir, 'environment.json'), 'utf8');

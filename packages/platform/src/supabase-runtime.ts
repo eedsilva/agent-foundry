@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
@@ -18,6 +18,19 @@ import {
 
 const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
+const PORT_BASE = 20_000;
+const PORT_BLOCK_SIZE = 8;
+const HOST_PORT_FIELDS = [
+  ['api', 'port'],
+  ['db', 'port'],
+  ['db', 'shadow_port'],
+  ['studio', 'port'],
+  ['inbucket', 'port'],
+  ['edge_runtime', 'inspector_port'],
+  ['analytics', 'port'],
+] as const;
+const PORT_SLOT_COUNT =
+  Math.floor((65_535 - PORT_BASE - (HOST_PORT_FIELDS.length - 1)) / PORT_BLOCK_SIZE) + 1;
 
 export interface SupabaseCommandResult {
   stdout: string;
@@ -46,6 +59,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   readonly #dataDir: string;
   readonly #command: SupabaseCommand;
   readonly #now: () => Date;
+  #configurationQueue = Promise.resolve();
 
   constructor(options: SupabaseGeneratedProjectRuntimeOptions) {
     this.#dataDir = options.dataDir;
@@ -64,7 +78,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     );
     await mkdir(workdir, { recursive: true });
     await this.#execute('initialize', 'init', '--workdir', workdir);
-    await configureProjectId(workdir, composeProjectName);
+    await this.#configure(workdir, composeProjectName);
     const result = await this.#execute(
       'start',
       'start',
@@ -273,6 +287,20 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       throw operationError(operation, error);
     }
   }
+
+  async #configure(workdir: string, projectId: string): Promise<void> {
+    const previous = this.#configurationQueue;
+    let release = () => {};
+    this.#configurationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      await configureProject(this.#dataDir, workdir, projectId);
+    } finally {
+      release();
+    }
+  }
 }
 
 function safeProjectId(projectId: string): string {
@@ -407,17 +435,103 @@ async function persist(environment: AppEnvironment): Promise<void> {
   await atomicWrite(path, `${JSON.stringify(AppEnvironmentSchema.parse(environment), null, 2)}\n`);
 }
 
-async function configureProjectId(workdir: string, projectId: string): Promise<void> {
+async function configureProject(
+  dataDir: string,
+  workdir: string,
+  projectId: string,
+): Promise<void> {
   const path = join(workdir, 'supabase', 'config.toml');
   try {
     const config = await readFile(path, 'utf8');
-    if (!/^project_id\s*=.*$/m.test(config)) {
-      throw new Error('Generated Supabase config is missing project_id.');
+    const ports = await allocatePorts(dataDir, workdir, projectId);
+    let section = '';
+    let foundProjectId = false;
+    const foundPorts = new Set<string>();
+    const configured = config
+      .split('\n')
+      .map((line) => {
+        const sectionMatch = line.match(/^\[([^\]]+)\]$/);
+        if (sectionMatch) {
+          section = sectionMatch[1]!;
+          return line;
+        }
+        if (!section && /^project_id\s*=/.test(line)) {
+          foundProjectId = true;
+          return `project_id = "${projectId}"`;
+        }
+        const fieldIndex = HOST_PORT_FIELDS.findIndex(
+          ([fieldSection, key]) =>
+            fieldSection === section && new RegExp(`^${key}\\s*=`).test(line),
+        );
+        if (fieldIndex === -1) return line;
+        const [fieldSection, key] = HOST_PORT_FIELDS[fieldIndex]!;
+        foundPorts.add(`${fieldSection}.${key}`);
+        return `${key} = ${ports[fieldIndex]}`;
+      })
+      .join('\n');
+    if (!foundProjectId || foundPorts.size !== HOST_PORT_FIELDS.length) {
+      throw new Error('Generated Supabase config is missing required project or port fields.');
     }
-    await atomicWrite(path, config.replace(/^project_id\s*=.*$/m, `project_id = "${projectId}"`));
+    await atomicWrite(path, configured);
   } catch (error) {
     throw operationError('initialize', error);
   }
+}
+
+async function allocatePorts(
+  dataDir: string,
+  workdir: string,
+  projectId: string,
+): Promise<number[]> {
+  const used = await usedPorts(dataDir, workdir);
+  const preferredSlot =
+    createHash('sha256').update(projectId).digest().readUInt32BE(0) % PORT_SLOT_COUNT;
+  for (let attempt = 0; attempt < PORT_SLOT_COUNT; attempt += 1) {
+    const base = PORT_BASE + ((preferredSlot + attempt) % PORT_SLOT_COUNT) * PORT_BLOCK_SIZE;
+    const ports = HOST_PORT_FIELDS.map((_, offset) => base + offset);
+    if (ports.every((port) => !used.has(port))) return ports;
+  }
+  throw new Error('No isolated Supabase host port block is available.');
+}
+
+async function usedPorts(dataDir: string, excludingWorkdir: string): Promise<Set<number>> {
+  const used = new Set<number>();
+  let projects;
+  try {
+    projects = await readdir(join(dataDir, 'projects'), { withFileTypes: true });
+  } catch (error) {
+    if (isNotFound(error)) return used;
+    throw error;
+  }
+  await Promise.all(
+    projects
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => {
+        const workdir = environmentDir(dataDir, entry.name);
+        if (workdir === excludingWorkdir) return;
+        try {
+          const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
+          for (const port of configuredHostPorts(config)) used.add(port);
+        } catch (error) {
+          if (!isNotFound(error)) throw error;
+        }
+      }),
+  );
+  return used;
+}
+
+function configuredHostPorts(config: string): number[] {
+  const ports: number[] = [];
+  let section = '';
+  for (const line of config.split('\n')) {
+    section = line.match(/^\[([^\]]+)\]$/)?.[1] ?? section;
+    for (const [fieldSection, key] of HOST_PORT_FIELDS) {
+      if (fieldSection !== section) continue;
+      const value = line.match(new RegExp(`^${key}\\s*=\\s*(\\d+)$`))?.[1];
+      if (value) ports.push(Number(value));
+    }
+  }
+  return ports;
 }
 
 async function atomicWrite(path: string, value: string): Promise<void> {
