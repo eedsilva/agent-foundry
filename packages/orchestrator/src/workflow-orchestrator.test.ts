@@ -123,6 +123,7 @@ function makeOrchestrator(versions?: ProjectVersionService, executorHealth?: Exe
   };
   const metrics: MetricsRepository = {
     get: () => Promise.resolve(null),
+    list: () => Promise.resolve([]),
     record: () => Promise.resolve(),
     recordQuality: () => Promise.resolve(),
   };

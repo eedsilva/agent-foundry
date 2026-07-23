@@ -132,12 +132,49 @@ export const RouteScoreBreakdownSchema = z.object({
 });
 export type RouteScoreBreakdown = z.infer<typeof RouteScoreBreakdownSchema>;
 
+export const RouteConfidenceSchema = z
+  .object({
+    value: z.number().min(0).max(1),
+    sampleSize: z.number().int().nonnegative(),
+    interval: z
+      .object({
+        lower: z.number().min(0).max(1),
+        upper: z.number().min(0).max(1),
+      })
+      .strict(),
+    coldStart: z.boolean(),
+    rationale: z.string().trim().min(1),
+  })
+  .strict();
+export type RouteConfidence = z.infer<typeof RouteConfidenceSchema>;
+
 export const RankedModelSchema = z.object({
   model: ModelDefinitionSchema,
   score: RouteScoreBreakdownSchema,
   quality: QualitySignalSummarySchema.optional(),
+  confidence: RouteConfidenceSchema.optional(),
 });
 export type RankedModel = z.infer<typeof RankedModelSchema>;
+
+export const CalibrationBucketSchema = z
+  .object({
+    lower: z.number().min(0).max(1),
+    upper: z.number().min(0).max(1),
+    predictedMean: z.number().min(0).max(1),
+    observedApprovalRate: z.number().min(0).max(1),
+    sampleSize: z.number().int().nonnegative(),
+  })
+  .strict();
+export type CalibrationBucket = z.infer<typeof CalibrationBucketSchema>;
+
+export const CalibrationReportSchema = z
+  .object({
+    buckets: z.array(CalibrationBucketSchema),
+    expectedCalibrationError: z.number().min(0).max(1),
+    sampleSize: z.number().int().nonnegative(),
+  })
+  .strict();
+export type CalibrationReport = z.infer<typeof CalibrationReportSchema>;
 
 export const ModelOverrideScopeSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('run') }).strict(),
