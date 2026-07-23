@@ -1,6 +1,7 @@
 import type { QueueJob } from '@agent-foundry/contracts';
 import type { JobQueue } from '@agent-foundry/domain';
 import {
+  LeaseLostError,
   errorMessage,
   recordQueueWait,
   withExtractedContext,
@@ -43,7 +44,8 @@ export class WorkerLoop {
     if (!job) return false;
 
     const state: HeartbeatState = { job, leaseLost: false };
-    const stopHeartbeat = this.startHeartbeat(state);
+    const leaseAbort = new AbortController();
+    const stopHeartbeat = this.startHeartbeat(state, leaseAbort);
     const queueWaitMs = Date.now() - Date.parse(job.availableAt);
     recordQueueWait(queueWaitMs);
     const log = this.options.logger?.child({
@@ -64,7 +66,12 @@ export class WorkerLoop {
           },
           async () => {
             if (job.type === 'run-project') {
-              await this.orchestrator.runProject(job.projectId, job.workflowId, job.runId);
+              await this.orchestrator.runProject(
+                job.projectId,
+                job.workflowId,
+                job.runId,
+                leaseAbort.signal,
+              );
             } else {
               if (!job.runId || !job.operationId) {
                 throw new Error(
@@ -76,11 +83,11 @@ export class WorkerLoop {
           },
         ),
       );
-      stopHeartbeat();
+      await stopHeartbeat();
       if (!state.leaseLost) await this.queue.ack(state.job, this.options.workerId);
       log?.info('job completed');
     } catch (error) {
-      stopHeartbeat();
+      await stopHeartbeat();
       if (!state.leaseLost) {
         await this.queue.nack(
           state.job,
@@ -107,35 +114,40 @@ export class WorkerLoop {
 
   /**
    * Renews the lease while runProject executes, self-rescheduling only after
-   * each heartbeat settles so calls never overlap. Any heartbeat failure —
-   * lease lost to a reaper or another worker, or a transient I/O error —
-   * marks the run lease-lost and stops renewing; runOnce then skips ack/nack
-   * so a dead worker never writes a queue outcome it no longer owns.
+   * each heartbeat settles so calls never overlap. Lease loss stops the run;
+   * transient failures retry on the next interval.
    */
-  private startHeartbeat(state: HeartbeatState): () => void {
+  private startHeartbeat(state: HeartbeatState, leaseAbort: AbortController): () => Promise<void> {
     const intervalMs = this.options.heartbeatIntervalMs ?? 15_000;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let active = Promise.resolve();
 
     const tick = (): void => {
       if (stopped) return;
       timer = setTimeout(() => {
-        void this.queue
+        active = this.queue
           .heartbeat(state.job, this.options.workerId)
           .then((renewed) => {
             state.job = renewed;
             tick();
           })
-          .catch(() => {
-            state.leaseLost = true;
+          .catch((error: unknown) => {
+            if (error instanceof LeaseLostError) {
+              state.leaseLost = true;
+              leaseAbort.abort(error);
+              return;
+            }
+            tick();
           });
       }, intervalMs);
     };
     tick();
 
-    return () => {
+    return async () => {
       stopped = true;
       if (timer) clearTimeout(timer);
+      await active;
     };
   }
 }
