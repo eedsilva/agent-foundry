@@ -8,7 +8,7 @@ import {
   ensureDir,
   readJsonOrNull,
   safeSegment,
-  withDirectoryLock,
+  withRecoverableDirectoryLock,
 } from './fs-utils.js';
 
 export class FileProjectRepository implements ProjectRepository {
@@ -18,11 +18,15 @@ export class FileProjectRepository implements ProjectRepository {
     const parsed = ProjectSchema.parse(project);
     const path = this.pathFor(parsed.id);
     if (parsed.version !== 1) throw new Error(`New project ${parsed.id} must start at version 1`);
-    await withDirectoryLock(`${path}.lock`, async () => {
-      const existing = await readJsonOrNull<unknown>(path);
-      if (existing) throw new Error(`Project ${parsed.id} already exists`);
-      await atomicWriteJson(path, parsed);
-    });
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['projects', safeSegment(parsed.id), 'project.json.lock'],
+      async () => {
+        const existing = await readJsonOrNull<unknown>(path);
+        if (existing) throw new Error(`Project ${parsed.id} already exists`);
+        await atomicWriteJson(path, parsed);
+      },
+    );
   }
 
   async get(projectId: string): Promise<Project | null> {
@@ -35,16 +39,20 @@ export class FileProjectRepository implements ProjectRepository {
       throw new VersionConflictError('project', project.id, expectedVersion, project.version);
     }
     const path = this.pathFor(project.id);
-    return withDirectoryLock(`${path}.lock`, async () => {
-      const existing = await this.get(project.id);
-      if (!existing) throw new Error(`Project ${project.id} does not exist`);
-      if (existing.version !== expectedVersion) {
-        throw new VersionConflictError('project', project.id, expectedVersion, existing.version);
-      }
-      const updated = ProjectSchema.parse({ ...project, version: expectedVersion + 1 });
-      await atomicWriteJson(path, updated);
-      return updated;
-    });
+    return withRecoverableDirectoryLock(
+      this.dataDir,
+      ['projects', safeSegment(project.id), 'project.json.lock'],
+      async () => {
+        const existing = await this.get(project.id);
+        if (!existing) throw new Error(`Project ${project.id} does not exist`);
+        if (existing.version !== expectedVersion) {
+          throw new VersionConflictError('project', project.id, expectedVersion, existing.version);
+        }
+        const updated = ProjectSchema.parse({ ...project, version: expectedVersion + 1 });
+        await atomicWriteJson(path, updated);
+        return updated;
+      },
+    );
   }
 
   async list(limit = 50): Promise<Project[]> {

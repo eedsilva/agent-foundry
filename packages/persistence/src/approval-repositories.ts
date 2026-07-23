@@ -12,7 +12,8 @@ import {
   ensureDir,
   pathFor,
   readJsonOrNull,
-  withDirectoryLock,
+  safeSegment,
+  withRecoverableDirectoryLock,
 } from './fs-utils.js';
 
 /**
@@ -26,12 +27,16 @@ export class FileApprovalRequestRepository implements ApprovalRequestRepository 
   async create(request: ApprovalRequest): Promise<void> {
     const parsed = ApprovalRequestSchema.parse(request);
     const path = this.pathFor(parsed.runId, parsed.id);
-    await withDirectoryLock(`${path}.lock`, async () => {
-      const existing = await readJsonOrNull<unknown>(path);
-      if (existing !== null) throw new Error(`Approval request ${parsed.id} already exists`);
-      await ensureDir(dirname(path));
-      await atomicWriteJson(path, parsed);
-    });
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['runs', safeSegment(parsed.runId), 'approvals', safeSegment(parsed.id), 'request.json.lock'],
+      async () => {
+        const existing = await readJsonOrNull<unknown>(path);
+        if (existing !== null) throw new Error(`Approval request ${parsed.id} already exists`);
+        await ensureDir(dirname(path));
+        await atomicWriteJson(path, parsed);
+      },
+    );
   }
 
   async get(runId: string, requestId: string): Promise<ApprovalRequest | null> {
@@ -67,14 +72,24 @@ export class FileApprovalDecisionRepository implements ApprovalDecisionRepositor
   async create(decision: ApprovalDecision): Promise<void> {
     const parsed = ApprovalDecisionSchema.parse(decision);
     const path = this.pathFor(parsed.runId, parsed.requestId);
-    await withDirectoryLock(`${path}.lock`, async () => {
-      const existing = await readJsonOrNull<unknown>(path);
-      if (existing !== null) {
-        throw new Error(`Approval request ${parsed.requestId} already has a decision`);
-      }
-      await ensureDir(dirname(path));
-      await atomicWriteJson(path, parsed);
-    });
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      [
+        'runs',
+        safeSegment(parsed.runId),
+        'approvals',
+        safeSegment(parsed.requestId),
+        'decision.json.lock',
+      ],
+      async () => {
+        const existing = await readJsonOrNull<unknown>(path);
+        if (existing !== null) {
+          throw new Error(`Approval request ${parsed.requestId} already has a decision`);
+        }
+        await ensureDir(dirname(path));
+        await atomicWriteJson(path, parsed);
+      },
+    );
   }
 
   async get(runId: string, requestId: string): Promise<ApprovalDecision | null> {

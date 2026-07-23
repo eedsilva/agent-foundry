@@ -17,7 +17,7 @@ import {
   readJsonOrNull,
   safeSegment,
   sha256,
-  withDirectoryLock,
+  withRecoverableDirectoryLock,
 } from './fs-utils.js';
 
 interface ArtifactIndex {
@@ -65,9 +65,9 @@ export class FileArtifactStore implements ArtifactStore {
     const projectId = safeSegment(input.projectId);
     const name = safeSegment(input.name);
     const root = join(this.dataDir, 'projects', projectId, 'artifacts');
-    const lock = join(root, '.index.lock');
+    const lockSegments = ['projects', projectId, 'artifacts', '.index.lock'];
 
-    return withDirectoryLock(lock, async () => {
+    return withRecoverableDirectoryLock(this.dataDir, lockSegments, async () => {
       const indexPath = join(root, 'index.json');
       const index = (await readJsonOrNull<ArtifactIndex>(indexPath)) ?? { artifacts: {} };
       const revisions = index.artifacts[name] ?? [];
@@ -119,9 +119,9 @@ export class FileArtifactStore implements ArtifactStore {
     const projectId = safeSegment(input.projectId);
     const name = safeSegment(input.name);
     const root = join(this.dataDir, 'projects', projectId, 'artifacts');
-    const lock = join(root, '.index.lock');
+    const lockSegments = ['projects', projectId, 'artifacts', '.index.lock'];
 
-    return withDirectoryLock(lock, async () => {
+    return withRecoverableDirectoryLock(this.dataDir, lockSegments, async () => {
       const indexPath = join(root, 'index.json');
       const index = (await readJsonOrNull<ArtifactIndex>(indexPath)) ?? { artifacts: {} };
       const revisions = index.artifacts[name] ?? [];
@@ -176,9 +176,10 @@ export class FileArtifactStore implements ArtifactStore {
     const nowIso = now.toISOString();
     const counts = await Promise.all(
       projectIds.map((projectId) => {
-        const artifactsRoot = join(projectsRoot, projectId, 'artifacts');
-        const lock = join(artifactsRoot, '.index.lock');
-        return withDirectoryLock(lock, async () => {
+        const safeProjectId = safeSegment(projectId);
+        const artifactsRoot = join(projectsRoot, safeProjectId, 'artifacts');
+        const lockSegments = ['projects', safeProjectId, 'artifacts', '.index.lock'];
+        return withRecoverableDirectoryLock(this.dataDir, lockSegments, async () => {
           const indexPath = join(artifactsRoot, 'index.json');
           const index = await readJsonOrNull<ArtifactIndex>(indexPath);
           if (!index) return 0;
@@ -192,7 +193,7 @@ export class FileArtifactStore implements ArtifactStore {
                 metadata.expiresAt <= nowIso
               ) {
                 await this.blobStore.delete(
-                  blobKeyFor(projectId, safeSegment(name), metadata.revision),
+                  blobKeyFor(safeProjectId, safeSegment(name), metadata.revision),
                 );
                 metadata.blobDeleted = true;
                 const stored = StoredArtifactSchema.parse({ metadata, content: null });
