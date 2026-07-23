@@ -1,4 +1,3 @@
-import { readdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { atomicWriteJson, ensureDir } from '@agent-foundry/persistence';
 import {
@@ -13,16 +12,17 @@ import {
   type ProviderCanaryProvider,
 } from '@agent-foundry/contracts';
 import { markdownCell, publishBaselinePair } from './baseline-publish.js';
-import { runDogfoodTask, type RunDogfoodTaskOptions } from './dogfood.js';
+import {
+  attemptTag,
+  loadJsonDirectory,
+  runDogfoodTask,
+  type RunDogfoodTaskOptions,
+} from './dogfood.js';
 
 const BASELINE_STEM = 'v0.9-benchmark';
 const FOUNDRY_ROOT = resolve(import.meta.dirname, '../../..');
 
-export interface RunBenchmarkCaseOptions {
-  repoRoot: string;
-  dataDir?: string;
-  executorMode?: 'real' | 'mock';
-}
+export type RunBenchmarkCaseOptions = Omit<RunDogfoodTaskOptions, 'modelOverride'>;
 
 // Deliberately narrower than the full ModelDefinition catalog entry — running
 // a case only needs these three fields. A ModelDefinition satisfies this
@@ -34,13 +34,7 @@ export interface BenchmarkModelTarget {
 }
 
 export async function loadBenchmarkCases(dir: string): Promise<BenchmarkCase[]> {
-  const entries = (await readdir(dir)).filter((name) => name.endsWith('.json'));
-  const cases = await Promise.all(
-    entries.map(async (name) =>
-      BenchmarkCaseSchema.parse(JSON.parse(await readFile(join(dir, name), 'utf8'))),
-    ),
-  );
-  return cases.sort((a, b) => a.id.localeCompare(b.id));
+  return loadJsonDirectory(dir, BenchmarkCaseSchema);
 }
 
 export async function runBenchmarkCase(
@@ -55,9 +49,7 @@ export async function runBenchmarkCase(
   }
 
   const dogfoodOptions: RunDogfoodTaskOptions = {
-    repoRoot: options.repoRoot,
-    ...(options.dataDir ? { dataDir: options.dataDir } : {}),
-    ...(options.executorMode ? { executorMode: options.executorMode } : {}),
+    ...options,
     modelOverride: {
       modelId: model.id,
       provider: model.provider,
@@ -91,7 +83,7 @@ export async function runBenchmarkCase(
 
   const recordsDir = options.dataDir ?? join(FOUNDRY_ROOT, '.data', 'benchmark');
   await ensureDir(recordsDir);
-  const tag = String(benchmarkRecord.attempt).padStart(2, '0');
+  const tag = attemptTag(benchmarkRecord.attempt);
   await atomicWriteJson(
     join(recordsDir, `${benchmarkCase.id}--${model.id}-attempt${tag}.json`),
     benchmarkRecord,
