@@ -447,6 +447,11 @@ describe('BaseCliExecutor environment isolation', () => {
       expect(options.env).toBeDefined();
       expect(options.env).not.toHaveProperty('DATABASE_URL');
       expect(Object.keys(options.env).length).toBeGreaterThan(0);
+      // execa defaults extendEnv:true, which re-merges the full process.env
+      // underneath `env` above and would silently undo the assertions above
+      // in a real (non-mocked) execa run — this mock can't exercise that
+      // merge itself, so assert the guard against it is actually passed.
+      expect(options.extendEnv).toBe(false);
     } finally {
       if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = originalDatabaseUrl;

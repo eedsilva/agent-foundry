@@ -135,6 +135,11 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         detached: process.platform !== 'win32',
         ...(invocation.input !== undefined ? { input: invocation.input } : {}),
         env: cleanEnvironment({ ...pickSafeEnvironment(), ...invocation.environment }),
+        // execa defaults extendEnv:true, which re-merges the full process.env
+        // underneath the env option above, undoing pickSafeEnvironment's
+        // filtering for any key the scoped env object doesn't already set.
+        // Must be false so the scoped object above is what the child actually gets.
+        extendEnv: false,
       }) as unknown as CliSubprocess;
       if (onEvent) attachStreamTap(subprocess, this.createStreamMapper(), onEvent);
       if (signal) {
