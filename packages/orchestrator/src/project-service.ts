@@ -632,6 +632,7 @@ export class ProjectService {
       decidedBy?: string | undefined;
       note?: string | undefined;
     },
+    retry = 0,
   ): Promise<{ run: WorkflowRun; decision: ApprovalDecision }> {
     if (Boolean(input.actor) === Boolean(input.decidedBy)) {
       throw new ValidationError('exactly one identity form is required: actor or decidedBy');
@@ -780,13 +781,21 @@ export class ProjectService {
         ...(feedbackArtifact ? { feedbackArtifact } : {}),
       }));
     } else {
-      updatedRun = await this.runs.update(
-        // Clears any stale retry directive left by an earlier request-changes
-        // cycle on this same run — otherwise a later replay could mistake an
-        // already-superseded step for the current retry target.
-        transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: undefined }),
-        run.version,
-      );
+      try {
+        updatedRun = await this.runs.update(
+          // Clears any stale retry directive left by an earlier request-changes
+          // cycle on this same run — otherwise a later replay could mistake an
+          // already-superseded step for the current retry target.
+          transitionWorkflowRun(run, 'queued', this.clock.now(), { retry: undefined }),
+          run.version,
+        );
+      } catch (error) {
+        if (!(error instanceof VersionConflictError) || retry >= 2) throw error;
+        const current = await this.requireRun(runId);
+        if (current.status === 'queued') return { run: current, decision };
+        if (current.status !== 'awaiting_approval') throw error;
+        return this.decideApproval(runId, requestId, input, retry + 1);
+      }
       await this.requeueProject(run.projectId, runId, this.approvalJobId(runId, decision.id));
     }
 
