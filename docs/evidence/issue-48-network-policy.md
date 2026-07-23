@@ -19,10 +19,12 @@ Date: 2026-07-22
 
 - Network-policy contracts: 50 tests passed.
 - Policy core/DNS/proxy/coordinator: 51 tests passed.
-- Docker runner/sidecar/lifecycle unit: 27 tests passed; 18 real-Docker tests are present and skipped only when the daemon is unavailable.
+- Docker runner/sidecar/lifecycle unit: 34 tests passed, including a regression that builds and inspects the standalone sidecar artifact.
 - Chromium verifier: 65 tests passed, including the preview exception, private-origin denial, bounded evidence, and proxy-startup cleanup.
 - Root TypeScript project-reference typecheck passed.
-- Root `npm run check`: formatting, lint, architecture/governance checks, typecheck, 1,396 unit tests, 56 script tests, and all package/app production builds passed.
+- Root `npm run check`: formatting, lint, architecture/governance checks, typecheck, unit/script tests, the standalone sidecar build, and all package/app production builds passed locally on the final implementation.
+- GitHub Actions `ci/test`: 146 test files and 1,478 tests passed, including all 18 real-Docker integration tests. The Docker policy test proved allowlisted DNS/HTTP while denying raw, forbidden, and metadata egress.
+- GitHub Actions: 13/13 required and security checks passed for the reviewed implementation, including CodeQL and dependency review.
 - API Playwright e2e: 12/12 tests passed in 45.8 seconds.
 - `npm run doctor`: environment ready in mock mode; Node, Git, harness, workflows, catalog, Codex, and Claude checks passed.
 
