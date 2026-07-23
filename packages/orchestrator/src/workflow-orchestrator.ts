@@ -270,6 +270,7 @@ export class WorkflowOrchestrator {
         return;
       }
       if (error instanceof ApprovalRequiredError) {
+        throwIfCancelled(signal, run.id);
         await this.finalizeApproval(run.id, projectId, error.nodeId);
         return;
       }
@@ -789,7 +790,8 @@ export class WorkflowOrchestrator {
   ): Promise<StoredArtifact> {
     if (node.type === 'quality-loop')
       return this.executeQualityLoop(project, workflow, node, runId, signal);
-    if (node.type === 'approval-gate') return this.executeApprovalGate(project, node, runId);
+    if (node.type === 'approval-gate')
+      return this.executeApprovalGate(project, node, runId, signal);
     return this.executeStep(project, workflow, node, runId, node.id, signal);
   }
 
@@ -805,6 +807,7 @@ export class WorkflowOrchestrator {
     project: Project,
     node: ApprovalGateStep,
     runId: string,
+    signal: AbortSignal,
   ): Promise<StoredArtifact> {
     return withSpan(
       'foundry.step',
@@ -813,7 +816,7 @@ export class WorkflowOrchestrator {
         'foundry.step.id': node.id,
         'foundry.step.type': 'approval-gate',
       },
-      () => this.executeApprovalGateTraced(project, node, runId),
+      () => this.executeApprovalGateTraced(project, node, runId, signal),
     );
   }
 
@@ -821,8 +824,11 @@ export class WorkflowOrchestrator {
     project: Project,
     node: ApprovalGateStep,
     runId: string,
+    signal: AbortSignal,
   ): Promise<StoredArtifact> {
+    throwIfCancelled(signal, runId);
     const reviewed = await this.artifacts.getLatest(project.id, node.artifact);
+    throwIfCancelled(signal, runId);
     if (!reviewed) throw new NotFoundError(`Missing input artifact(s): ${node.artifact}`);
     const idempotencyKey = approvalGateIdempotencyKey({
       runId,
@@ -831,12 +837,14 @@ export class WorkflowOrchestrator {
     });
 
     const reused = await this.findArtifactByKey(project.id, node.outputArtifact, idempotencyKey);
+    throwIfCancelled(signal, runId);
     if (reused) return reused;
 
     let stepRun = (await this.stepRuns.list(runId)).find(
       (candidate) =>
         candidate.nodeId === node.id && candidate.stepId === node.id && !candidate.invalidatedAt,
     );
+    throwIfCancelled(signal, runId);
 
     if (!stepRun) {
       const timestamp = this.clock.now().toISOString();
@@ -853,11 +861,13 @@ export class WorkflowOrchestrator {
         updatedAt: timestamp,
       };
       await this.stepRuns.create(stepRun);
+      throwIfCancelled(signal, runId);
       stepRun = await this.stepRuns.update(
         transitionStepRun(stepRun, 'running', this.clock.now()),
         stepRun.version,
       );
-      await this.setCurrentStep(runId, stepRun, node.id);
+      throwIfCancelled(signal, runId);
+      await this.setCurrentStep(runId, stepRun, node.id, signal);
 
       const requestTimestamp = this.clock.now();
       const timeout =
@@ -868,6 +878,7 @@ export class WorkflowOrchestrator {
             }
           : {};
       const approvalRequestId = this.ids.next();
+      throwIfCancelled(signal, runId);
       const approvalRequest: ApprovalRequest = {
         id: approvalRequestId,
         runId,
@@ -879,7 +890,9 @@ export class WorkflowOrchestrator {
         createdAt: requestTimestamp.toISOString(),
       };
       await this.approvalRequests.create(approvalRequest);
+      throwIfCancelled(signal, runId);
       await this.enqueueApprovalTimeout(project, node.id, approvalRequest);
+      throwIfCancelled(signal, runId);
       await this.stepEvents
         .append({
           id: this.ids.next(),
@@ -890,19 +903,23 @@ export class WorkflowOrchestrator {
           approvalRequestId,
         })
         .catch(() => undefined);
+      throwIfCancelled(signal, runId);
       throw new ApprovalRequiredError(runId, node.id);
     }
 
     const request = await this.approvalRequests.getForStepRun(runId, stepRun.id);
+    throwIfCancelled(signal, runId);
     if (!request) {
       throw new ExecutionError(
         `Approval gate ${node.id} has a pending StepRun but no ApprovalRequest`,
       );
     }
     let decision = normalizeApprovalDecision(await this.approvalDecisions.get(runId, request.id));
+    throwIfCancelled(signal, runId);
     const timeoutPolicy = request.timeout?.policy;
     if (!decision && request.timeoutAt && new Date(request.timeoutAt) > this.clock.now()) {
       await this.enqueueApprovalTimeout(project, node.id, request);
+      throwIfCancelled(signal, runId);
     }
     if (
       !decision &&
@@ -921,7 +938,9 @@ export class WorkflowOrchestrator {
         decidedBy: 'system:approval-timeout',
         decidedAt,
       };
+      throwIfCancelled(signal, runId);
       await this.approvalDecisions.create(decision);
+      throwIfCancelled(signal, runId);
     }
     if (!decision) throw new ApprovalRequiredError(runId, node.id);
 
@@ -943,16 +962,20 @@ export class WorkflowOrchestrator {
       stepRunId: stepRun.id,
       idempotencyKey,
     });
+    throwIfCancelled(signal, runId);
     await this.stepRuns.update(
       transitionStepRun(stepRun, 'completed', this.clock.now()),
       stepRun.version,
     );
-    await this.clearCurrentStep(runId);
+    throwIfCancelled(signal, runId);
+    await this.clearCurrentStep(runId, signal);
+    throwIfCancelled(signal, runId);
     await this.emit(project.id, 'run.approval_decided', `${node.title} approved.`, {
       nodeId: node.id,
       runId,
       data: { action: decision.action, decidedBy: decision.decidedBy },
     });
+    throwIfCancelled(signal, runId);
     await this.emitArtifactCreated(project.id, artifact, node.id, runId);
     return artifact;
   }
@@ -2648,8 +2671,15 @@ export class WorkflowOrchestrator {
     return run;
   }
 
-  private async setCurrentStep(runId: string, step: StepRun, nodeId: string): Promise<void> {
+  private async setCurrentStep(
+    runId: string,
+    step: StepRun,
+    nodeId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (signal) throwIfCancelled(signal, runId);
     const run = await this.requireRun(runId);
+    if (signal) throwIfCancelled(signal, runId);
     const updated = await this.runs.update(
       {
         ...run,
@@ -2658,14 +2688,18 @@ export class WorkflowOrchestrator {
       },
       run.version,
     );
+    if (signal) throwIfCancelled(signal, runId);
     await this.syncProjectSummary(updated, nodeId);
   }
 
-  private async clearCurrentStep(runId: string): Promise<void> {
+  private async clearCurrentStep(runId: string, signal?: AbortSignal): Promise<void> {
+    if (signal) throwIfCancelled(signal, runId);
     const run = await this.requireRun(runId);
+    if (signal) throwIfCancelled(signal, runId);
     const updated: WorkflowRun = { ...run, updatedAt: this.clock.now().toISOString() };
     delete updated.currentStepRunId;
     const saved = await this.runs.update(updated, run.version);
+    if (signal) throwIfCancelled(signal, runId);
     await this.syncProjectSummary(saved);
   }
 

@@ -1,9 +1,31 @@
 import { ApprovalDecisionSchema } from '@agent-foundry/contracts';
+import { LeaseLostError } from '@agent-foundry/domain';
 import { describe, expect, it } from 'vitest';
 import { makeHarness, makeStores, seedRun } from './testing/harness.js';
 import { WorkerLoop } from './worker-loop.js';
 
 describe('approval gates halt the run for a human decision (#13)', () => {
+  it('does not persist an approval gate when the worker lease is lost at its boundary', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    const lease = new AbortController();
+    const getLatest = harness.artifacts.getLatest.bind(harness.artifacts);
+    harness.artifacts.getLatest = async (projectId, name) => {
+      const artifact = await getLatest(projectId, name);
+      if (name === 'review') lease.abort(new LeaseLostError('job-1', 'worker-a'));
+      return artifact;
+    };
+
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1', lease.signal),
+    ).rejects.toBeInstanceOf(LeaseLostError);
+
+    expect(harness.stepRuns.byStepId('run-1', 'gate')).toHaveLength(0);
+    expect(harness.approvalRequests.store.size).toBe(0);
+    expect((await harness.runs.get('run-1'))?.status).toBe('running');
+    expect(harness.events.types()).not.toContain('run.approval_requested');
+  });
+
   it('approves and advances to completion', async () => {
     const harness = makeHarness({}, undefined, { gate: {} });
     await seedRun(harness);
