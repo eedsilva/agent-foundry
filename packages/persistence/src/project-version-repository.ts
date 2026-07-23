@@ -6,7 +6,7 @@ import {
   ProjectVersionDiscardRefusedError,
   type ProjectVersionRepository,
 } from '@agent-foundry/domain';
-import { ensureDir, pathFor, withDirectoryLock } from './fs-utils.js';
+import { ensureDir, pathFor, safeSegment, withRecoverableDirectoryLock } from './fs-utils.js';
 import { createVersioned, readVersioned, updateVersioned } from './run-repositories.js';
 
 const IMMUTABLE_KEYS = Object.keys(ProjectVersionSchema.shape).filter(
@@ -19,6 +19,13 @@ export class FileProjectVersionRepository implements ProjectVersionRepository {
   async create(version: ProjectVersion): Promise<void> {
     const parsed = ProjectVersionSchema.parse(version);
     await createVersioned(
+      this.dataDir,
+      [
+        'projects',
+        safeSegment(parsed.projectId),
+        'versions',
+        `${safeSegment(parsed.id)}.json.lock`,
+      ],
       versionPath(this.dataDir, parsed.projectId, parsed.id),
       parsed,
       ProjectVersionSchema,
@@ -28,14 +35,26 @@ export class FileProjectVersionRepository implements ProjectVersionRepository {
 
   async discardUnpromoted(version: ProjectVersion): Promise<void> {
     const path = versionPath(this.dataDir, version.projectId, version.id);
-    await withDirectoryLock(`${path}.lock`, async () => {
-      const existing = await readVersioned(path, ProjectVersionSchema);
-      if (!existing) return;
-      if (existing.protected || !isDeepStrictEqual(existing, ProjectVersionSchema.parse(version))) {
-        throw new ProjectVersionDiscardRefusedError(version.id);
-      }
-      await unlink(path);
-    });
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      [
+        'projects',
+        safeSegment(version.projectId),
+        'versions',
+        `${safeSegment(version.id)}.json.lock`,
+      ],
+      async () => {
+        const existing = await readVersioned(path, ProjectVersionSchema);
+        if (!existing) return;
+        if (
+          existing.protected ||
+          !isDeepStrictEqual(existing, ProjectVersionSchema.parse(version))
+        ) {
+          throw new ProjectVersionDiscardRefusedError(version.id);
+        }
+        await unlink(path);
+      },
+    );
   }
 
   async get(projectId: string, versionId: string): Promise<ProjectVersion | null> {
@@ -44,6 +63,13 @@ export class FileProjectVersionRepository implements ProjectVersionRepository {
 
   async update(version: ProjectVersion, expectedVersion: number): Promise<ProjectVersion> {
     return updateVersioned(
+      this.dataDir,
+      [
+        'projects',
+        safeSegment(version.projectId),
+        'versions',
+        `${safeSegment(version.id)}.json.lock`,
+      ],
       versionPath(this.dataDir, version.projectId, version.id),
       version,
       expectedVersion,

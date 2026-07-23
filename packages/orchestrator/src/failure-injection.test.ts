@@ -295,7 +295,7 @@ describe('Group C: phase crash matrix + replay', () => {
     expect(stores.workspaces.commits).toHaveLength(1);
   });
 
-  it('C4: crash after execution but before commit leaves no orphan commit', async () => {
+  it('C4: crash after execution but before commit adopts the artifact and creates one commit', async () => {
     const stores = makeStores();
     const first = makeHarness({ implement: 'gated' }, stores);
     await seedRun(first);
@@ -318,7 +318,7 @@ describe('Group C: phase crash matrix + replay', () => {
     await second.orchestrator.runProject('project-1', undefined, 'run-1');
 
     expect((await stores.runs.get('run-1'))?.status).toBe('completed');
-    expect(second.executor.started('implement')).toBe(1); // re-executed
+    expect(second.executor.started('implement')).toBe(0); // orphan artifact adopted
     expect(stores.artifacts.named('implementation')).toHaveLength(1);
     expect(stores.workspaces.commits).toHaveLength(1); // exactly one commit
   });

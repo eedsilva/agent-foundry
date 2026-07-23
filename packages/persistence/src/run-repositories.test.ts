@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -121,6 +121,24 @@ describe('filesystem run repositories', () => {
     expect((await attempts.list('run-1', 'step-run-1')).map((item) => item.id)).toEqual([
       'attempt-1',
     ]);
+  });
+
+  it('recovers an abandoned workflow-run lock', async () => {
+    const dataDir = await temporaryDataDir();
+    const lockPath = join(dataDir, 'runs', 'run-1', 'run.json.lock');
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(
+      join(lockPath, 'owner.json'),
+      JSON.stringify({
+        token: '11111111-1111-4111-8111-111111111111',
+        pid: 2147483647,
+        acquiredAt: new Date().toISOString(),
+      }),
+    );
+    const runs = new persistence.FileWorkflowRunRepository(dataDir);
+
+    await expect(runs.create(workflowRun())).resolves.toBeUndefined();
+    await expect(stat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('allows exactly one concurrent update for an expected version', async () => {

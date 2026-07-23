@@ -243,26 +243,6 @@ export function safeSegment(value: string): string {
   return segment;
 }
 
-export async function withDirectoryLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
-  await ensureDir(dirname(lockPath));
-  const deadline = Date.now() + 10_000;
-  while (true) {
-    try {
-      await mkdir(lockPath);
-      break;
-    } catch (error) {
-      if (!isAlreadyExists(error)) throw error;
-      if (Date.now() > deadline) throw new Error(`Timed out acquiring lock ${lockPath}`);
-      await sleep(25 + Math.floor(Math.random() * 50));
-    }
-  }
-  try {
-    return await fn();
-  } finally {
-    await rm(lockPath, { recursive: true, force: true });
-  }
-}
-
 interface DirectoryLockOwner {
   token: string;
   pid: number;

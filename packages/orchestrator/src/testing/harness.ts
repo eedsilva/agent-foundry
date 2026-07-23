@@ -75,6 +75,7 @@ import {
 } from '@agent-foundry/domain';
 import { ProjectService } from '../project-service.js';
 import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
+import type { ProjectVersionService } from '../project-version-service.js';
 import type { QualityObservationService } from '../quality-observation-service.js';
 import { WorkflowOrchestrator } from '../workflow-orchestrator.js';
 
@@ -1119,6 +1120,7 @@ export function makeHarness(
     browserVerification?: BrowserVerificationCoordinator;
     qualityObservationService?: QualityObservationService;
     generatedProjectRuntime?: GeneratedProjectRuntime;
+    versions?: ProjectVersionService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
   } = {},
 ) {
@@ -1281,7 +1283,7 @@ export function makeHarness(
     ids,
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
     stores.modelOverrides,
-    undefined,
+    opts.versions,
     opts.browserVerification,
     opts.qualityObservationService,
   );

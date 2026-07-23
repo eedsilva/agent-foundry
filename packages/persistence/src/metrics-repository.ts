@@ -10,7 +10,12 @@ import {
   type TaskTaxonomyVersion,
 } from '@agent-foundry/contracts';
 import type { MetricsRepository } from '@agent-foundry/domain';
-import { atomicWriteJson, readJsonOrNull, safeSegment, withDirectoryLock } from './fs-utils.js';
+import {
+  atomicWriteJson,
+  readJsonOrNull,
+  safeSegment,
+  withRecoverableDirectoryLock,
+} from './fs-utils.js';
 
 const MetricsFileSchema = z.object({ metrics: z.record(z.string(), ModelMetricSchema) });
 type MetricsFile = z.infer<typeof MetricsFileSchema>;
@@ -183,7 +188,7 @@ export class FileMetricsRepository implements MetricsRepository {
     ) => ModelMetric,
   ): Promise<void> {
     const path = this.path();
-    await withDirectoryLock(`${path}.lock`, async () => {
+    await withRecoverableDirectoryLock(this.dataDir, ['metrics', 'models.json.lock'], async () => {
       const file = await this.read();
       const isV2 = taxonomyVersion === '2' && category !== undefined;
       const taxonomy = isV2

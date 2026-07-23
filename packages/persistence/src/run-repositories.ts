@@ -20,7 +20,7 @@ import {
   ensureDir,
   readJsonOrNull,
   safeSegment,
-  withDirectoryLock,
+  withRecoverableDirectoryLock,
 } from './fs-utils.js';
 
 export class FileWorkflowRunRepository implements WorkflowRunRepository {
@@ -28,7 +28,14 @@ export class FileWorkflowRunRepository implements WorkflowRunRepository {
 
   async create(run: WorkflowRun): Promise<void> {
     const parsed = WorkflowRunSchema.parse(run);
-    await createVersioned(this.pathFor(parsed.id), parsed, WorkflowRunSchema, 'workflow-run');
+    await createVersioned(
+      this.dataDir,
+      ['runs', safeSegment(parsed.id), 'run.json.lock'],
+      this.pathFor(parsed.id),
+      parsed,
+      WorkflowRunSchema,
+      'workflow-run',
+    );
   }
 
   async get(runId: string): Promise<WorkflowRun | null> {
@@ -50,6 +57,8 @@ export class FileWorkflowRunRepository implements WorkflowRunRepository {
 
   async update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
     return updateVersioned(
+      this.dataDir,
+      ['runs', safeSegment(run.id), 'run.json.lock'],
       this.pathFor(run.id),
       run,
       expectedVersion,
@@ -68,7 +77,14 @@ export class FileStepRunRepository implements StepRunRepository {
 
   async create(step: StepRun): Promise<void> {
     const parsed = StepRunSchema.parse(step);
-    await createVersioned(this.pathFor(parsed.runId, parsed.id), parsed, StepRunSchema, 'step-run');
+    await createVersioned(
+      this.dataDir,
+      ['runs', safeSegment(parsed.runId), 'steps', safeSegment(parsed.id), 'step.json.lock'],
+      this.pathFor(parsed.runId, parsed.id),
+      parsed,
+      StepRunSchema,
+      'step-run',
+    );
   }
 
   async get(runId: string, stepRunId: string): Promise<StepRun | null> {
@@ -89,6 +105,8 @@ export class FileStepRunRepository implements StepRunRepository {
 
   async update(step: StepRun, expectedVersion: number): Promise<StepRun> {
     return updateVersioned(
+      this.dataDir,
+      ['runs', safeSegment(step.runId), 'steps', safeSegment(step.id), 'step.json.lock'],
       this.pathFor(step.runId, step.id),
       step,
       expectedVersion,
@@ -115,6 +133,15 @@ export class FileStepAttemptRepository implements StepAttemptRepository {
   async create(attempt: StepAttempt): Promise<void> {
     const parsed = StepAttemptSchema.parse(attempt);
     await createVersioned(
+      this.dataDir,
+      [
+        'runs',
+        safeSegment(parsed.runId),
+        'steps',
+        safeSegment(parsed.stepRunId),
+        'attempts',
+        `${safeSegment(parsed.id)}.json.lock`,
+      ],
       this.pathFor(parsed.runId, parsed.stepRunId, parsed.id),
       parsed,
       StepAttemptSchema,
@@ -147,6 +174,15 @@ export class FileStepAttemptRepository implements StepAttemptRepository {
 
   async update(attempt: StepAttempt, expectedVersion: number): Promise<StepAttempt> {
     return updateVersioned(
+      this.dataDir,
+      [
+        'runs',
+        safeSegment(attempt.runId),
+        'steps',
+        safeSegment(attempt.stepRunId),
+        'attempts',
+        `${safeSegment(attempt.id)}.json.lock`,
+      ],
       this.pathFor(attempt.runId, attempt.stepRunId, attempt.id),
       attempt,
       expectedVersion,
@@ -169,13 +205,15 @@ export class FileStepAttemptRepository implements StepAttemptRepository {
 }
 
 export async function createVersioned<T extends { id: string; version: number }>(
+  trustedRoot: string,
+  lockSegments: readonly string[],
   path: string,
   value: T,
   schema: ZodType<T>,
   entity: string,
 ): Promise<void> {
   if (value.version !== 1) throw new Error(`New ${entity} ${value.id} must start at version 1`);
-  await withDirectoryLock(`${path}.lock`, async () => {
+  await withRecoverableDirectoryLock(trustedRoot, lockSegments, async () => {
     const existing = await readJsonOrNull<unknown>(path);
     if (existing !== null) throw new Error(`${entity} ${value.id} already exists`);
     await ensureDir(dirname(path));
@@ -189,6 +227,8 @@ export async function readVersioned<T>(path: string, schema: ZodType<T>): Promis
 }
 
 export async function updateVersioned<T extends { id: string; version: number }>(
+  trustedRoot: string,
+  lockSegments: readonly string[],
   path: string,
   value: T,
   expectedVersion: number,
@@ -200,7 +240,7 @@ export async function updateVersioned<T extends { id: string; version: number }>
   if (value.version !== expectedVersion) {
     throw new VersionConflictError(entity, value.id, expectedVersion, value.version);
   }
-  return withDirectoryLock(`${path}.lock`, async () => {
+  return withRecoverableDirectoryLock(trustedRoot, lockSegments, async () => {
     const existing = await readVersioned(path, schema);
     if (!existing) throw new Error(`${entity} ${value.id} does not exist`);
     if (existing.version !== expectedVersion) {

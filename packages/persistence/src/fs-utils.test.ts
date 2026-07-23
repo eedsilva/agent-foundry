@@ -133,6 +133,32 @@ describe('withRecoverableDirectoryLock', () => {
     expect(acquired).toBe(true);
   });
 
+  it('reclaims a lock whose valid owner PID is dead', async () => {
+    const root = await temporaryDirectory();
+    const lockPath = join(root, 'resource.lock');
+    await mkdir(lockPath);
+    await writeFile(
+      join(lockPath, 'owner.json'),
+      JSON.stringify({
+        token: '11111111-1111-4111-8111-111111111111',
+        pid: 2147483647,
+        acquiredAt: new Date().toISOString(),
+      }),
+    );
+    let acquired = false;
+
+    await withRecoverableDirectoryLock(
+      root,
+      ['resource.lock'],
+      async () => {
+        acquired = true;
+      },
+      { acquisitionTimeoutMs: 250, pollIntervalMs: 2 },
+    );
+
+    expect(acquired).toBe(true);
+  });
+
   it('emits valid owner metadata while holding the lock', async () => {
     const root = await temporaryDirectory();
     const lockPath = join(root, 'resource.lock');
