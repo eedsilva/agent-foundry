@@ -120,6 +120,13 @@ function fixture(command = vi.fn<SupabaseCommand>(statusCommand)) {
   };
 }
 
+async function writeMigration(workdir: string, name: string, sql: string): Promise<string> {
+  const migrationPath = `supabase/migrations/${name}`;
+  await mkdir(join(workdir, 'supabase', 'migrations'), { recursive: true });
+  await writeFile(join(workdir, migrationPath), sql);
+  return migrationPath;
+}
+
 describe('SupabaseGeneratedProjectRuntime', () => {
   it('initializes projects with isolated CLI workdirs, networks, and secret-free metadata', async () => {
     const { command, runtime } = fixture();
@@ -221,6 +228,7 @@ describe('SupabaseGeneratedProjectRuntime', () => {
       ['stop', '--workdir', initialized.workdir],
     ]);
     expect(command.mock.calls.filter(([name]) => name === 'start')).toHaveLength(2);
+    expect(command.mock.calls).not.toContainEqual(expect.arrayContaining(['migration', 'down']));
   });
 
   it('uses status for inspect and health while ignoring credential-bearing status fields', async () => {
@@ -241,27 +249,180 @@ describe('SupabaseGeneratedProjectRuntime', () => {
     await expect(runtime.inspect('missing')).resolves.toBeNull();
   });
 
-  it('runs local migration and seed commands only for paths contained by the project workdir', async () => {
+  it('previews and applies contained create and alter migration artifacts', async () => {
     const { command, runtime } = fixture();
     const environment = await runtime.initialize({ projectId: 'project-a' });
-    await writeFile(join(environment.workdir, 'migration.sql'), 'select 1;');
-    await writeFile(join(environment.workdir, 'seed.sql'), 'select 1;');
+    const createPath = await writeMigration(
+      environment.workdir,
+      '20260723120000_create_tasks.sql',
+      'CREATE TABLE tasks (id bigint PRIMARY KEY);',
+    );
+    const alterPath = await writeMigration(
+      environment.workdir,
+      '20260723120100_add_task_title.sql',
+      'ALTER TABLE tasks ADD COLUMN title text;',
+    );
     command.mockClear();
 
-    await runtime.migrate({ projectId: 'project-a', migrationPath: 'migration.sql' });
-    await runtime.seed({ projectId: 'project-a', seedPath: 'seed.sql' });
+    await expect(
+      runtime.previewMigration({ projectId: 'project-a', migrationPath: createPath }),
+    ).resolves.toMatchObject({ migrationPath: createPath, destructiveStatements: [] });
+    await expect(
+      runtime.previewMigration({ projectId: 'project-a', migrationPath: alterPath }),
+    ).resolves.toMatchObject({ migrationPath: alterPath, destructiveStatements: [] });
+    await runtime.migrate({ projectId: 'project-a', migrationPath: createPath });
+    await runtime.migrate({ projectId: 'project-a', migrationPath: alterPath });
 
     expect(command.mock.calls).toEqual([
       ['migration', 'up', '--workdir', environment.workdir, '--yes'],
-      ['seed', '--workdir', environment.workdir, '--yes'],
+      ['migration', 'up', '--workdir', environment.workdir, '--yes'],
     ]);
     await expect(
-      runtime.migrate({ projectId: 'project-a', migrationPath: '../outside.sql' }),
-    ).rejects.toThrow(/inside the project environment/);
+      runtime.previewMigration({
+        projectId: 'project-a',
+        migrationPath: 'supabase/config.toml',
+      }),
+    ).rejects.toThrow(/supabase\/migrations/);
+  });
+
+  it('finds required destructive statements after removing SQL comments', async () => {
+    const { runtime } = fixture();
+    const environment = await runtime.initialize({ projectId: 'project-a' });
+    const migrationPath = await writeMigration(
+      environment.workdir,
+      '20260723120200_destructive.sql',
+      `-- DROP TABLE ignored_line_comment;
+/* TRUNCATE TABLE ignored_block_comment; */
+DROP TABLE obsolete;
+TRUNCATE TABLE events;
+DELETE FROM sessions WHERE expired;
+ALTER TABLE tasks DROP COLUMN legacy;`,
+    );
+
+    const preview = await runtime.previewMigration({
+      projectId: 'project-a',
+      migrationPath,
+    });
+
+    expect(preview.destructiveStatements).toEqual([
+      'DROP TABLE obsolete',
+      'TRUNCATE TABLE events',
+      'DELETE FROM sessions WHERE expired',
+      'ALTER TABLE tasks DROP COLUMN legacy',
+    ]);
+  });
+
+  it('requires matching approval and a current untampered backup for destructive migration', async () => {
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'db' && args[1] === 'dump') {
+        const backupPath = args[args.indexOf('--file') + 1];
+        if (!backupPath) throw new Error('Missing dump file path.');
+        await writeFile(
+          backupPath,
+          args.includes('--data-only') ? 'data backup;' : 'schema backup;',
+        );
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+    const environment = await runtime.initialize({ projectId: 'project-a' });
+    const sql = 'DROP TABLE tasks;';
+    const migrationPath = await writeMigration(
+      environment.workdir,
+      '20260723120300_drop_tasks.sql',
+      sql,
+    );
+    await mkdir(join(environment.workdir, 'supabase', 'backups'), { recursive: true });
+    command.mockClear();
+
+    const preview = await runtime.previewMigration({ projectId: 'project-a', migrationPath });
+    await expect(runtime.migrate({ projectId: 'project-a', migrationPath })).rejects.toThrow(
+      /approval and verified backup/,
+    );
+
+    const backup = await runtime.backupMigration({
+      projectId: 'project-a',
+      backupPath: 'supabase/backups/20260723.sql',
+    });
+    const dumpCalls = command.mock.calls.filter(([name, subcommand]) => {
+      return name === 'db' && subcommand === 'dump';
+    });
+    expect(dumpCalls).toHaveLength(2);
+    expect(dumpCalls[0]).toEqual([
+      'db',
+      'dump',
+      '--workdir',
+      environment.workdir,
+      '--local',
+      '--file',
+      expect.stringMatching(/\.schema\.sql$/),
+    ]);
+    expect(dumpCalls[1]).toEqual([
+      'db',
+      'dump',
+      '--workdir',
+      environment.workdir,
+      '--local',
+      '--data-only',
+      '--file',
+      expect.stringMatching(/\.data\.sql$/),
+    ]);
+    expect(backup).toMatchObject({
+      path: 'supabase/backups/20260723.sql',
+      createdAt: NOW.toISOString(),
+    });
+    await expect(readFile(join(environment.workdir, backup.path), 'utf8')).resolves.toBe(
+      'schema backup;\ndata backup;',
+    );
+
+    const approval = { migrationChecksum: preview.checksum, backup };
+    await writeFile(join(environment.workdir, migrationPath), 'DROP TABLE changed_tasks;');
+    await expect(
+      runtime.migrate({ projectId: 'project-a', migrationPath, approval }),
+    ).rejects.toThrow(/migration.*changed/i);
+
+    await writeFile(join(environment.workdir, migrationPath), sql);
+    await writeFile(join(environment.workdir, backup.path), 'tampered backup');
+    await expect(
+      runtime.migrate({ projectId: 'project-a', migrationPath, approval }),
+    ).rejects.toThrow(/backup.*changed/i);
+
+    await writeFile(join(environment.workdir, backup.path), 'schema backup;\ndata backup;');
+    await expect(
+      runtime.migrate({
+        projectId: 'project-a',
+        migrationPath,
+        approval: {
+          ...approval,
+          backup: { ...backup, createdAt: '2026-07-21T11:59:59.999Z' },
+        },
+      }),
+    ).rejects.toThrow(/last 24 hours/);
+
+    await runtime.migrate({ projectId: 'project-a', migrationPath, approval });
+    expect(command.mock.calls.at(-1)).toEqual([
+      'migration',
+      'up',
+      '--workdir',
+      environment.workdir,
+      '--yes',
+    ]);
+    expect(command.mock.calls).not.toContainEqual(expect.arrayContaining(['migration', 'down']));
+  });
+
+  it('runs seed only for a path contained by the project workdir', async () => {
+    const { command, runtime } = fixture();
+    const environment = await runtime.initialize({ projectId: 'project-a' });
+    await writeFile(join(environment.workdir, 'seed.sql'), 'select 1;');
+    command.mockClear();
+
+    await runtime.seed({ projectId: 'project-a', seedPath: 'seed.sql' });
+
+    expect(command.mock.calls).toEqual([['seed', '--workdir', environment.workdir, '--yes']]);
     await expect(
       runtime.seed({ projectId: 'project-a', seedPath: join(dataDir, 'outside.sql') }),
     ).rejects.toThrow(/relative path/);
-    expect(command).toHaveBeenCalledTimes(2);
+    expect(command).toHaveBeenCalledTimes(1);
   });
 
   it('gates reset on explicit confirmation and a backup from the last 24 hours', async () => {
