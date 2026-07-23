@@ -117,8 +117,8 @@ test.beforeAll(async () => {
     undefined,
     undefined,
     // This suite uses fake provider CLIs and a controlled local fixture. The
-    // Docker-backed real-mode default is covered by executor integration tests.
-    { previewInstaller: null },
+    // This fixture deliberately avoids Docker-backed real-mode dependencies.
+    { previewInstaller: null, generatedProjectRuntime: null },
   );
   const app = await buildApp(runtime);
   apiBaseUrl = await app.listen({ host: '127.0.0.1', port: apiPort });

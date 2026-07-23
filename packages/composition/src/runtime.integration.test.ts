@@ -199,6 +199,26 @@ describe('mock runtime', () => {
     expect(runtime.generatedProjectRuntime).toBeUndefined();
   });
 
+  it('allows controlled real-mode tests to omit the generated project runtime', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-real-runtime-'));
+    temporaryDirectories.push(dataDir);
+
+    const runtime = await createRuntime(
+      {
+        ...process.env,
+        REPO_ROOT: resolve(import.meta.dirname, '../../..'),
+        DATA_DIR: dataDir,
+        EXECUTOR_MODE: 'real',
+        AUTO_INSTALL_DEPENDENCIES: 'false',
+      },
+      undefined,
+      undefined,
+      { generatedProjectRuntime: null },
+    );
+
+    expect(runtime.generatedProjectRuntime).toBeUndefined();
+  });
+
   it('binds mock browser screenshot evidence to the same direct-edit run', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-visual-edit-browser-'));
     temporaryDirectories.push(dataDir);

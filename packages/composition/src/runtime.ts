@@ -143,6 +143,8 @@ export interface RuntimeOverrides {
    * deny-by-default installer.
    */
   previewInstaller?: PreviewInstaller | null;
+  /** Test-only escape hatch for real-mode suites that use controlled local fixtures. */
+  generatedProjectRuntime?: GeneratedProjectRuntime | null;
 }
 
 export async function createRuntime(
@@ -197,7 +199,10 @@ export async function createRuntime(
   });
   const generatedProjectRuntime =
     config.executorMode === 'real'
-      ? new SupabaseGeneratedProjectRuntime({ dataDir: config.dataDir })
+      ? overrides.generatedProjectRuntime === null
+        ? undefined
+        : (overrides.generatedProjectRuntime ??
+          new SupabaseGeneratedProjectRuntime({ dataDir: config.dataDir }))
       : undefined;
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
   const router = new ScoreBasedModelRouter(catalog, metrics, qualityObservations);
