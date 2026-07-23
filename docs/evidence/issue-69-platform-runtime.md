@@ -20,9 +20,9 @@ Date: 2026-07-22
 - `npm run architecture:check` — passed (including its three architecture tests).
 - `npm run roadmap:check` — passed.
 - `npm run typecheck` — passed.
-- `npm test` — 139 Vitest files passed, 9 skipped; 1,416 tests passed, 76 skipped. The script suite also passed 57/57 tests.
+- `npm test` — 139 Vitest files passed, 9 skipped; 1,419 tests passed, 76 skipped. The script suite also passed 57/57 tests.
 - `npm run build` — passed for all packages and apps, including `@agent-foundry/platform` and the Next.js web build.
-- `npx playwright test --config apps/api/e2e/playwright.config.ts` — 12 passed in 45.4 seconds.
+- `npx playwright test --config apps/api/e2e/playwright.config.ts` — 12 passed in 43.5 seconds.
 - `npm run doctor` — mock-mode environment ready. The optional AGY CLI was unavailable, so no real-provider check was claimed.
 - `git diff --check main...HEAD` — passed before publication; rerun after the final commit.
 
