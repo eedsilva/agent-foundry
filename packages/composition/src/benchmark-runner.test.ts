@@ -1,4 +1,4 @@
-import { readdir, readFile, rm, mkdtemp } from 'node:fs/promises';
+import { readdir, rm, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';

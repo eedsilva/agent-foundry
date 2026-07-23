@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DogfoodRunRecordSchema, DogfoodTaskSchema } from './dogfood.js';
+import { DogfoodTaskSchema } from './dogfood.js';
 import { ExecutionUsageSchema } from './run.js';
 import { RouteDecisionSchema } from './model.js';
 
