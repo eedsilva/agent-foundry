@@ -23,30 +23,32 @@
 
 ## File Structure
 
-| File | Responsibility |
-|---|---|
-| `packages/contracts/src/benchmark.ts` (new) | `BenchmarkCaseKindSchema`, `BenchmarkCaseSchema`, `BenchmarkRunRecordSchema`, `BenchmarkReportSchema` |
-| `packages/contracts/src/benchmark.test.ts` (new) | Schema round-trip tests |
-| `packages/contracts/src/index.ts` (modify) | Export the new module |
-| `packages/composition/src/dogfood.ts` (modify) | Add optional `modelOverride` to `RunDogfoodTaskOptions`; apply it via `createModelOverride` before the worker runs |
-| `packages/composition/src/dogfood.test.ts` (modify) | Cover the new override option |
-| `benchmarks/cases/*.json` (new, ×6) | The versioned corpus: one fixture per `BenchmarkCaseKind` |
-| `packages/composition/src/benchmark-runner.ts` (new) | `loadBenchmarkCases`, `runBenchmarkCase`, `freezeBenchmarkReport`, `renderBenchmarkMarkdown` |
-| `packages/composition/src/benchmark-runner.test.ts` (new) | Real-corpus schema validation + synthetic mock-mode override/rerun-comparability test |
-| `packages/composition/src/index.ts` (modify) | Export the new module |
-| `scripts/benchmark.ts` (new) | CLI: `--case <id> --model <modelId> | --all [--models a,b] | --freeze` |
-| `package.json` (modify) | Add `benchmark:run` / `benchmark:freeze` scripts |
-| `docs/adr/0029-benchmark-corpus-and-runner.md` (new) | Durable design record, including why no GH Actions cron job was added |
+| File                                                      | Responsibility                                                                                                     |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `packages/contracts/src/benchmark.ts` (new)               | `BenchmarkCaseKindSchema`, `BenchmarkCaseSchema`, `BenchmarkRunRecordSchema`, `BenchmarkReportSchema`              |
+| `packages/contracts/src/benchmark.test.ts` (new)          | Schema round-trip tests                                                                                            |
+| `packages/contracts/src/index.ts` (modify)                | Export the new module                                                                                              |
+| `packages/composition/src/dogfood.ts` (modify)            | Add optional `modelOverride` to `RunDogfoodTaskOptions`; apply it via `createModelOverride` before the worker runs |
+| `packages/composition/src/dogfood.test.ts` (modify)       | Cover the new override option                                                                                      |
+| `benchmarks/cases/*.json` (new, ×6)                       | The versioned corpus: one fixture per `BenchmarkCaseKind`                                                          |
+| `packages/composition/src/benchmark-runner.ts` (new)      | `loadBenchmarkCases`, `runBenchmarkCase`, `freezeBenchmarkReport`, `renderBenchmarkMarkdown`                       |
+| `packages/composition/src/benchmark-runner.test.ts` (new) | Real-corpus schema validation + synthetic mock-mode override/rerun-comparability test                              |
+| `packages/composition/src/index.ts` (modify)              | Export the new module                                                                                              |
+| `scripts/benchmark.ts` (new)                              | CLI: `--case <id> --model <modelId>                                                                                | --all [--models a,b] | --freeze` |
+| `package.json` (modify)                                   | Add `benchmark:run` / `benchmark:freeze` scripts                                                                   |
+| `docs/adr/0029-benchmark-corpus-and-runner.md` (new)      | Durable design record, including why no GH Actions cron job was added                                              |
 
 ---
 
 ### Task 1: Model override support in `runDogfoodTask`
 
 **Files:**
+
 - Modify: `packages/composition/src/dogfood.ts:34-40` (the `RunDogfoodTaskOptions` interface and the start of `runDogfoodTask`)
 - Test: `packages/composition/src/dogfood.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ProjectService.createModelOverride(runId, CreateModelOverrideRequest): Promise<ModelOverrideRecord>` (already exists, `packages/orchestrator/src/project-service.ts:88`). `ModelOverrideScopeSchema` discriminated union with `{kind:'run'}` (already exists, `packages/contracts/src/model.ts:142`).
 - Produces: `RunDogfoodTaskOptions.modelOverride?: { modelId: string; provider: Provider; model: string; reason: string; estimatedImpact: string }` — Task 4's `runBenchmarkCase` passes this to pin a catalog model per run.
 
@@ -55,47 +57,47 @@
 Open `packages/composition/src/dogfood.test.ts`. Find the `describe('runDogfoodTask (mock mode)', ...)` block (it already contains a `sharedMiniFixture()` + `miniTask()` pattern used by the existing passing-mock-task test). Add a new test right after the first `it('runs a mock mini-task and writes an append-only record with copied files and a patch', ...)` test:
 
 ```typescript
-  it('honors a run-scoped modelOverride and records the pinned model as executed', async () => {
-    const fixture = await sharedMiniFixture();
-    const dataDir = await tempDir('dogfood-data-');
-    const task = miniTask({
-      id: 'mini-override',
-      baselineRef: fixture.sha,
-      verifyScript: 'node -e "process.exit(0)"',
+it('honors a run-scoped modelOverride and records the pinned model as executed', async () => {
+  const fixture = await sharedMiniFixture();
+  const dataDir = await tempDir('dogfood-data-');
+  const task = miniTask({
+    id: 'mini-override',
+    baselineRef: fixture.sha,
+    verifyScript: 'node -e "process.exit(0)"',
+  });
+
+  // ProjectService.createModelOverride validates the override tuple against
+  // the *interpolated* models/catalog.yaml entry (packages/orchestrator/src/
+  // project-service.ts resolveCatalogModel: it throws unless
+  // catalog.model === override.model exactly). The catalog's codex-default
+  // entry reads `model: '${CODEX_DEFAULT_MODEL:-}'`, which resolves to an
+  // empty string unless that env var is set — so the test must set it to
+  // the exact value it overrides with, then restore it.
+  const previousCodexModel = process.env.CODEX_DEFAULT_MODEL;
+  process.env.CODEX_DEFAULT_MODEL = 'benchmark-test-model';
+  try {
+    const record = await runDogfoodTask(task, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+      modelOverride: {
+        modelId: 'codex-default',
+        provider: 'codex',
+        model: 'benchmark-test-model',
+        reason: 'dogfood.test.ts modelOverride coverage',
+        estimatedImpact: 'Test only — pins a fixed model for a deterministic assertion',
+      },
     });
 
-    // ProjectService.createModelOverride validates the override tuple against
-    // the *interpolated* models/catalog.yaml entry (packages/orchestrator/src/
-    // project-service.ts resolveCatalogModel: it throws unless
-    // catalog.model === override.model exactly). The catalog's codex-default
-    // entry reads `model: '${CODEX_DEFAULT_MODEL:-}'`, which resolves to an
-    // empty string unless that env var is set — so the test must set it to
-    // the exact value it overrides with, then restore it.
-    const previousCodexModel = process.env.CODEX_DEFAULT_MODEL;
-    process.env.CODEX_DEFAULT_MODEL = 'benchmark-test-model';
-    try {
-      const record = await runDogfoodTask(task, {
-        executorMode: 'mock',
-        repoRoot: fixture.path,
-        dataDir,
-        modelOverride: {
-          modelId: 'codex-default',
-          provider: 'codex',
-          model: 'benchmark-test-model',
-          reason: 'dogfood.test.ts modelOverride coverage',
-          estimatedImpact: 'Test only — pins a fixed model for a deterministic assertion',
-        },
-      });
-
-      expect(record.status).toBe('passed');
-      expect(record.route?.executed?.model?.provider).toBe('codex');
-      expect(record.route?.executed?.model?.model).toBe('benchmark-test-model');
-      expect(record.executedModel).toBe('mock:codex/benchmark-test-model');
-    } finally {
-      if (previousCodexModel === undefined) delete process.env.CODEX_DEFAULT_MODEL;
-      else process.env.CODEX_DEFAULT_MODEL = previousCodexModel;
-    }
-  }, 60_000);
+    expect(record.status).toBe('passed');
+    expect(record.route?.executed?.model?.provider).toBe('codex');
+    expect(record.route?.executed?.model?.model).toBe('benchmark-test-model');
+    expect(record.executedModel).toBe('mock:codex/benchmark-test-model');
+  } finally {
+    if (previousCodexModel === undefined) delete process.env.CODEX_DEFAULT_MODEL;
+    else process.env.CODEX_DEFAULT_MODEL = previousCodexModel;
+  }
+}, 60_000);
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -146,29 +148,29 @@ export interface RunDogfoodTaskOptions {
 Inside `runDogfoodTask`, find this block (right after `projectId = project.id;` / `runId = project.currentRunId ?? '';` / `const workspacePath = ...` and the `seedWorkspace(...)` call, and right before `await runtime.worker.runOnce();`):
 
 ```typescript
-    const baseline = await seedWorkspace(workspacePath, task, options.repoRoot);
+const baseline = await seedWorkspace(workspacePath, task, options.repoRoot);
 
-    await runtime.worker.runOnce();
+await runtime.worker.runOnce();
 ```
 
 Insert the override application between the two:
 
 ```typescript
-    const baseline = await seedWorkspace(workspacePath, task, options.repoRoot);
+const baseline = await seedWorkspace(workspacePath, task, options.repoRoot);
 
-    if (options.modelOverride) {
-      await runtime.projectService.createModelOverride(runId, {
-        scope: { kind: 'run' },
-        modelId: options.modelOverride.modelId,
-        provider: options.modelOverride.provider,
-        model: options.modelOverride.model,
-        actor: { kind: 'system', id: 'benchmark-runner' },
-        reason: options.modelOverride.reason,
-        estimatedImpact: options.modelOverride.estimatedImpact,
-      });
-    }
+if (options.modelOverride) {
+  await runtime.projectService.createModelOverride(runId, {
+    scope: { kind: 'run' },
+    modelId: options.modelOverride.modelId,
+    provider: options.modelOverride.provider,
+    model: options.modelOverride.model,
+    actor: { kind: 'system', id: 'benchmark-runner' },
+    reason: options.modelOverride.reason,
+    estimatedImpact: options.modelOverride.estimatedImpact,
+  });
+}
 
-    await runtime.worker.runOnce();
+await runtime.worker.runOnce();
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -193,11 +195,13 @@ git commit -m "feat(dogfood): support a run-scoped model override in runDogfoodT
 ### Task 2: Benchmark contracts
 
 **Files:**
+
 - Create: `packages/contracts/src/benchmark.ts`
 - Test: `packages/contracts/src/benchmark.test.ts`
 - Modify: `packages/contracts/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `DogfoodTaskSchema`, `DogfoodRunRecordSchema` from `./dogfood.js` (same package, already defined).
 - Produces: `BenchmarkCaseKindSchema` (6-member enum), `BenchmarkCase` type (`id`, `title`, `workflowId`, `prompt`, `baselineRef`, `allowedFiles`, `seedFiles`, `verifyScript?`, `kind`, `expectedSignals`), `BenchmarkRunRecord` type (`caseId`, `caseKind`, `modelId`, plus the run-outcome fields from `DogfoodRunRecord` minus `taskId`/`issueRef`/`humanEdit`), `BenchmarkReport` type. Task 3's fixtures validate against `BenchmarkCaseSchema`; Task 4's runner produces `BenchmarkRunRecordSchema`-shaped records and `BenchmarkReportSchema`-shaped frozen reports.
 
@@ -406,6 +410,7 @@ git commit -m "feat(contracts): add BenchmarkCase, BenchmarkRunRecord, Benchmark
 ### Task 3: Benchmark corpus fixtures
 
 **Files:**
+
 - Create: `benchmarks/cases/greenfield-clamp-util.json`
 - Create: `benchmarks/cases/existing-repo-truncate.json`
 - Create: `benchmarks/cases/bug-version-compare.json`
@@ -414,6 +419,7 @@ git commit -m "feat(contracts): add BenchmarkCase, BenchmarkRunRecord, Benchmark
 - Create: `benchmarks/cases/security-redaction-google-api-key.json`
 
 **Interfaces:**
+
 - Consumes: `BenchmarkCaseSchema` shape from Task 2 (`id`, `title`, `workflowId`, `prompt`, `baselineRef`, `allowedFiles`, `seedFiles`, `verifyScript?`, `kind`, `expectedSignals`).
 - Produces: the corpus directory `benchmarks/cases/` that Task 4's `loadBenchmarkCases('benchmarks/cases')` reads and validates.
 
@@ -603,11 +609,13 @@ git commit -m "feat(benchmarks): add the six-kind v0.9 benchmark corpus"
 ### Task 4: Benchmark runner
 
 **Files:**
+
 - Create: `packages/composition/src/benchmark-runner.ts`
 - Test: `packages/composition/src/benchmark-runner.test.ts`
 - Modify: `packages/composition/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `runDogfoodTask` + `RunDogfoodTaskOptions.modelOverride` (Task 1), `BenchmarkCaseSchema` / `BenchmarkRunRecordSchema` / `BenchmarkReportSchema` / `BENCHMARK_CASE_KINDS` (Task 2), `publishBaselinePair` + `markdownCell` (`./baseline-publish.js`, existing), the corpus directory `benchmarks/cases/` (Task 3), `Provider` (`@agent-foundry/contracts`, existing).
 - Produces: `loadBenchmarkCases(dir: string): Promise<BenchmarkCase[]>`, `BenchmarkModelTarget` (`{ id: string; provider: Provider; model: string }` — deliberately narrower than the full `ModelDefinition` catalog entry, since that is all a run needs; a `ModelDefinition` satisfies it structurally, so Task 5's CLI can pass catalog entries straight through), `runBenchmarkCase(benchmarkCase: BenchmarkCase, model: BenchmarkModelTarget, options: RunBenchmarkCaseOptions): Promise<BenchmarkRunRecord>`, `freezeBenchmarkReport(records: BenchmarkRunRecord[], options: { baselinesDir: string; baselineRef: string }): Promise<void>`, `renderBenchmarkMarkdown(report: BenchmarkReport): string`. Task 5's CLI calls `loadBenchmarkCases`, `runBenchmarkCase`, and `freezeBenchmarkReport` directly.
 
@@ -986,10 +994,12 @@ git commit -m "feat(composition): add the benchmark runner (load/run/freeze)"
 ### Task 5: CLI and npm scripts
 
 **Files:**
+
 - Create: `scripts/benchmark.ts`
 - Modify: `package.json`
 
 **Interfaces:**
+
 - Consumes: `loadBenchmarkCases`, `runBenchmarkCase`, `freezeBenchmarkReport` (Task 4, `packages/composition/src/benchmark-runner.js`), `loadModelCatalog` (`@agent-foundry/model-router`, existing), `loadDoctorProbes` (`packages/composition/src/provider-canary.js`, existing — same readiness check `scripts/dogfood.ts` already uses).
 - Produces: `npm run benchmark:run -- --case <id> --model <modelId>`, `npm run benchmark:run -- --all [--models <id,id,...>]`, `npm run benchmark:run -- --freeze`.
 
@@ -1059,7 +1069,8 @@ async function assertRealModeReady(): Promise<void> {
   }
   const probes = await loadDoctorProbes(rootDir, process.env);
   for (const probe of probes) {
-    if (probe.status !== 'ready') console.error(`skip: ${probe.provider} probe reported ${probe.status}.`);
+    if (probe.status !== 'ready')
+      console.error(`skip: ${probe.provider} probe reported ${probe.status}.`);
   }
   if (!probes.some((probe) => probe.status === 'ready')) {
     console.error('No provider CLI is ready; refusing to run real benchmark cases.');
@@ -1088,7 +1099,9 @@ try {
     if (executorMode === 'real') await assertRealModeReady();
     const cases = await loadBenchmarkCases(casesDir);
     const caseId = argValue('--case');
-    const selectedCases = caseId ? cases.filter((benchmarkCase) => benchmarkCase.id === caseId) : cases;
+    const selectedCases = caseId
+      ? cases.filter((benchmarkCase) => benchmarkCase.id === caseId)
+      : cases;
     if (selectedCases.length === 0) {
       console.error(caseId ? `Unknown case: ${caseId}` : 'No benchmark cases found.');
       process.exit(1);
@@ -1159,9 +1172,11 @@ git commit -m "feat(scripts): add the benchmark CLI (run/freeze)"
 ### Task 6: ADR
 
 **Files:**
+
 - Create: `docs/adr/0029-benchmark-corpus-and-runner.md`
 
 **Interfaces:**
+
 - Consumes: nothing (documentation only).
 - Produces: the durable record `docs/DEFINITION_OF_DONE.md` requires ("An ADR exists for a durable architectural decision"), referenced from the PR description as evidence.
 
@@ -1178,7 +1193,7 @@ Create `docs/adr/0029-benchmark-corpus-and-runner.md`:
 
 ## Context
 
-ADR 0009 proved the three provider CLIs run and report a model (`canary:providers`). ADR 0013 proved the real `project -> run -> step -> attempt` pipeline turns a prompt into an accepted change on a handful of issue-driven tasks (`dogfood:run`), retaining failures as data. Neither answers the question issue #63 asks: given a representative, versioned corpus of task *kinds*, which model performs best on which kind, comparably across Agent Foundry commits? `v09-task-taxonomy` (ADR 0023) and `v09-usage-telemetry` landed the prerequisites — a hierarchical `TaskCategory` and normalized per-provider usage — but neither defines a benchmark corpus or a way to pin an exact model for a run.
+ADR 0009 proved the three provider CLIs run and report a model (`canary:providers`). ADR 0013 proved the real `project -> run -> step -> attempt` pipeline turns a prompt into an accepted change on a handful of issue-driven tasks (`dogfood:run`), retaining failures as data. Neither answers the question issue #63 asks: given a representative, versioned corpus of task _kinds_, which model performs best on which kind, comparably across Agent Foundry commits? `v09-task-taxonomy` (ADR 0023) and `v09-usage-telemetry` landed the prerequisites — a hierarchical `TaskCategory` and normalized per-provider usage — but neither defines a benchmark corpus or a way to pin an exact model for a run.
 
 ## Decision
 
@@ -1196,7 +1211,7 @@ A new GitHub Actions workflow with `schedule:` + `workflow_dispatch:` (mirroring
 
 Building a brand-new execution pipeline instead of extending `runDogfoodTask` was rejected: the project-creation, workspace-seeding, verification, diff-capture, and append-only-record machinery is identical to dogfood's, and duplicating ~150 lines of it would drift from dogfood's own bug fixes over time. The one behavioral difference — which model actually executes — is exactly what the existing run-scoped model-override mechanism already exists to express.
 
-Automatically grading a run's output against its case's `expectedSignals` was rejected as unrequested scope: issue #63's acceptance criteria ask the corpus to *fix* expected signals per case (documentation a reviewer reads against the frozen report), not for the runner to algorithmically score prose or diffs against them — that is a `v09-confidence-routing`/`v09-quality-signals`-shaped follow-up, not this one.
+Automatically grading a run's output against its case's `expectedSignals` was rejected as unrequested scope: issue #63's acceptance criteria ask the corpus to _fix_ expected signals per case (documentation a reviewer reads against the frozen report), not for the runner to algorithmically score prose or diffs against them — that is a `v09-confidence-routing`/`v09-quality-signals`-shaped follow-up, not this one.
 
 ## Consequences
 
@@ -1235,7 +1250,9 @@ Expected: only the files from Tasks 1–6 are staged/modified; no `.data/benchma
 - [ ] **Step 3: Collect evidence for the PR**
 
 Run and capture output for the PR description:
+
 ```bash
 npm run benchmark:run -- --case bug-version-compare --models codex-default --executor-mode mock
 ```
+
 This demonstrates the CLI end-to-end (schema load → override application → record write) without requiring a real, authenticated provider CLI. Paste the console output and the resulting `.data/benchmark/*.json` record (then `rm -rf .data/benchmark` again) into the PR body as evidence, alongside the `npm test` summary line.

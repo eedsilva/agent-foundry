@@ -55,7 +55,8 @@ async function assertRealModeReady(): Promise<void> {
   }
   const probes = await loadDoctorProbes(rootDir, process.env);
   for (const probe of probes) {
-    if (probe.status !== 'ready') console.error(`skip: ${probe.provider} probe reported ${probe.status}.`);
+    if (probe.status !== 'ready')
+      console.error(`skip: ${probe.provider} probe reported ${probe.status}.`);
   }
   if (!probes.some((probe) => probe.status === 'ready')) {
     console.error('No provider CLI is ready; refusing to run real benchmark cases.');
@@ -84,7 +85,9 @@ try {
     if (executorMode === 'real') await assertRealModeReady();
     const cases = await loadBenchmarkCases(casesDir);
     const caseId = argValue('--case');
-    const selectedCases = caseId ? cases.filter((benchmarkCase) => benchmarkCase.id === caseId) : cases;
+    const selectedCases = caseId
+      ? cases.filter((benchmarkCase) => benchmarkCase.id === caseId)
+      : cases;
     if (selectedCases.length === 0) {
       console.error(caseId ? `Unknown case: ${caseId}` : 'No benchmark cases found.');
       process.exit(1);

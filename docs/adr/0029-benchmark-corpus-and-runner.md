@@ -6,7 +6,7 @@
 
 ## Context
 
-ADR 0009 proved the three provider CLIs run and report a model (`canary:providers`). ADR 0013 proved the real `project -> run -> step -> attempt` pipeline turns a prompt into an accepted change on a handful of issue-driven tasks (`dogfood:run`), retaining failures as data. Neither answers the question issue #63 asks: given a representative, versioned corpus of task *kinds*, which model performs best on which kind, comparably across Agent Foundry commits? `v09-task-taxonomy` (ADR 0023) and `v09-usage-telemetry` landed the prerequisites — a hierarchical `TaskCategory` and normalized per-provider usage — but neither defines a benchmark corpus or a way to pin an exact model for a run.
+ADR 0009 proved the three provider CLIs run and report a model (`canary:providers`). ADR 0013 proved the real `project -> run -> step -> attempt` pipeline turns a prompt into an accepted change on a handful of issue-driven tasks (`dogfood:run`), retaining failures as data. Neither answers the question issue #63 asks: given a representative, versioned corpus of task _kinds_, which model performs best on which kind, comparably across Agent Foundry commits? `v09-task-taxonomy` (ADR 0023) and `v09-usage-telemetry` landed the prerequisites — a hierarchical `TaskCategory` and normalized per-provider usage — but neither defines a benchmark corpus or a way to pin an exact model for a run.
 
 ## Decision
 
@@ -24,7 +24,7 @@ A new GitHub Actions workflow with `schedule:` + `workflow_dispatch:` (mirroring
 
 Building a brand-new execution pipeline instead of extending `runDogfoodTask` was rejected: the project-creation, workspace-seeding, verification, diff-capture, and append-only-record machinery is identical to dogfood's, and duplicating ~150 lines of it would drift from dogfood's own bug fixes over time. The one behavioral difference — which model actually executes — is exactly what the existing run-scoped model-override mechanism already exists to express.
 
-Automatically grading a run's output against its case's `expectedSignals` was rejected as unrequested scope: issue #63's acceptance criteria ask the corpus to *fix* expected signals per case (documentation a reviewer reads against the frozen report), not for the runner to algorithmically score prose or diffs against them — that is a `v09-confidence-routing`/`v09-quality-signals`-shaped follow-up, not this one.
+Automatically grading a run's output against its case's `expectedSignals` was rejected as unrequested scope: issue #63's acceptance criteria ask the corpus to _fix_ expected signals per case (documentation a reviewer reads against the frozen report), not for the runner to algorithmically score prose or diffs against them — that is a `v09-confidence-routing`/`v09-quality-signals`-shaped follow-up, not this one.
 
 During corpus review, a non-discriminating fixture was caught and corrected: the original `security-redaction-aws-key.json` (targeting AWS `AKIA...` keys) was a no-op against the pinned baseline, since `packages/domain/src/redaction.ts` already redacted that exact pattern. Had it passed review, an agent could have claimed correct behavior while exercising only the baseline's existing redaction logic. It was replaced with `security-redaction-google-api-key.json` (Google Cloud `AIza...` keys, confirmed genuinely absent from baseline redaction). This reinforces why corpus review—not just schema validation—matters.
 
