@@ -160,6 +160,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Build the standalone network-policy sidecar
         run: npm run build --workspace @agent-foundry/executors
+      - name: Build the domain package so secret-scan tests can import it
+        run: npm run build --workspace @agent-foundry/contracts && npm run build --workspace @agent-foundry/domain
       - run: npm test
 
   build:
