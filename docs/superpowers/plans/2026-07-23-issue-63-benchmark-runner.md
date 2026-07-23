@@ -1025,15 +1025,20 @@ function argValue(flag: string): string | undefined {
 }
 
 async function loadRecords(): Promise<BenchmarkRunRecord[]> {
+  // runDogfoodTask always appends a 'dogfood' subfolder onto whatever dataDir
+  // it's given (see packages/composition/src/dogfood.ts), so records written
+  // with dataDir: benchmarkDir land in benchmarkDir/dogfood, not benchmarkDir
+  // itself.
+  const recordsDir = join(benchmarkDir, 'dogfood');
   let entries: string[];
   try {
-    entries = (await readdir(benchmarkDir)).filter((name) => name.endsWith('.json'));
+    entries = (await readdir(recordsDir)).filter((name) => name.endsWith('.json'));
   } catch {
     return [];
   }
   return Promise.all(
     entries.map(async (name) =>
-      BenchmarkRunRecordSchema.parse(JSON.parse(await readFile(join(benchmarkDir, name), 'utf8'))),
+      BenchmarkRunRecordSchema.parse(JSON.parse(await readFile(join(recordsDir, name), 'utf8'))),
     ),
   );
 }
@@ -1098,6 +1103,7 @@ try {
       for (const model of models) {
         const record = await runBenchmarkCase(benchmarkCase, model, {
           repoRoot: rootDir,
+          dataDir: benchmarkDir,
           executorMode,
         });
         console.log(
