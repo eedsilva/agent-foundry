@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { PathSegmentSchema } from './primitives.js';
 import { ArtifactReferenceSchema, EntityVersionSchema } from './run.js';
 
+export const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
 export const ProjectVersionKindSchema = z.enum(['run', 'revert', 'branch']);
 export type ProjectVersionKind = z.infer<typeof ProjectVersionKindSchema>;
 

@@ -1,6 +1,6 @@
 # Validation record
 
-Latest validation date: 2026-07-15.
+Latest validation date: 2026-07-23.
 
 This repository was validated from a clean dependency installation using the public npm registry.
 
@@ -26,6 +26,27 @@ Real-provider coverage is a one-run canary matrix, not a reliability or quality 
 The final attempt to query npm's remote audit endpoint failed because DNS resolution for the registry was temporarily unavailable. Run `npm audit` in your own environment before a production deployment.
 
 Docker Compose configuration is included, but Docker was not installed in the validation environment, so the image itself was not built here.
+
+## Secure generated-project storage — 2026-07-23
+
+Focused storage/runtime validation passed 2 files / 30 tests:
+
+```bash
+npx vitest run packages/platform/src/supabase-storage.test.ts packages/platform/src/supabase-runtime.test.ts --pool=threads --maxWorkers=1
+```
+
+The authoritative storage E2E passed at head `060f82eb00220bae81db75039e4887cc9c2fa5c4`:
+[storage-e2e job](https://github.com/eedsilva/agent-foundry/actions/runs/30036468027/job/89305663316).
+The mocked CLI runtime test proves two-project workdir, network, and port isolation. The real Docker
+E2E initializes one project and proves native bucket limits, owner RLS, clean-only signed reads,
+service-role scan completion, export confirmation, and byte-before-metadata cleanup. The full
+authoritative CI run, including its broad `test` job, completed successfully; no broad-suite count is
+claimed here. The later initialization-recovery hardening is covered by the focused runtime suite;
+run final-head CI after that change.
+
+The preceding run `30031557014` exposed a Supabase `start` output incompatibility. Commit `25184c8`
+obtains authoritative JSON from `supabase status` after start; that engineering finding is not an
+acceptance failure for the passing storage E2E.
 
 ## Declarative browser verification — 2026-07-17
 

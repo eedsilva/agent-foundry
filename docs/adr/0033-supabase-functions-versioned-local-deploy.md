@@ -1,4 +1,4 @@
-# ADR 0032: Versioned local Supabase Functions deploy and rollback
+# ADR 0033: Versioned local Supabase Functions deploy and rollback
 
 - Status: Accepted
 - Date: 2026-07-23

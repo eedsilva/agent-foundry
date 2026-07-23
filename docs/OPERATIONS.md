@@ -565,6 +565,45 @@ Cada projeto gerado tem um runtime Supabase/Postgres isolado. Revise o preview e
 
 O apply exige aprovação dos checksums de todas as migrations destrutivas do batch e o backup/manifest verificado, intacto e com no máximo 24 horas. Então ele executa somente `supabase migration up`; não há down migration nem restore automático. Se houver incompatibilidade, faça roll-forward da aplicação antes de um restore explícito do backup selecionado, com o projeto parado. O detector bloqueia `DROP`, `TRUNCATE`, `DELETE FROM` e `ALTER TABLE ... DROP COLUMN` após remover comentários; ele é um gate, não um parser SQL completo.
 
+### Secure generated-project storage
+
+Each isolated generated Supabase stack owns its private `uploads` bucket. Its native limits are 10 MiB
+and `image/png`, `image/jpeg`, or `application/pdf`; do not weaken them in generated app configuration.
+The browser must never use `getPublicUrl`, a service-role key, or S3 credentials. Signed URLs are
+short-lived bearer credentials and must not enter logs, database records, telemetry, or exported
+artifacts.
+
+Upload and scan sequence:
+
+1. The authenticated owner selects an opaque object name under `<user.id>/<opaque-name>` and calls
+   `prepare_storage_upload` with the object name, MIME type, byte count, and retention.
+2. The authenticated Supabase client creates and uses a signed upload URL for that same name. It does
+   not write `storage_uploads` directly.
+3. The object remains `quarantine`. A service-role scanner reads `storage_scan_queue`, scans bytes, and
+   calls `complete_storage_scan` with `clean` or `rejected`. This is a scanner hook, not an AV engine;
+   browser code cannot complete a scan.
+4. Only an owner may create a signed download URL, and only when `scan_status = clean`. Never render or
+   download `quarantine` or `rejected` content.
+
+Export and cleanup sequence:
+
+1. As the authenticated owner, call `storage_export_manifest`; copy and verify each clean object's bytes
+   through a fresh signed download URL.
+2. Call `confirm_storage_export` only for object names whose copies completed. Do not mark an incomplete
+   copy as exported.
+3. The service-role cleanup worker calls `storage_cleanup_candidates`. A candidate is an expired
+   `rejected` object or an expired `clean` object with `exported_at` set.
+4. Delete each candidate's bytes through the Storage API. Never delete `storage.objects` with SQL.
+5. Confirm the byte read is absent, then call `confirm_storage_cleanup` for that name. The RPC removes
+   metadata only after it observes no corresponding Storage object.
+
+Recovery is bounded and forward-only. If the byte delete fails, leave metadata unchanged and retry that
+candidate later. If bytes are gone but confirmation fails, rerun `confirm_storage_cleanup`; do not repair
+metadata with direct SQL. If an export copy is incomplete, keep the object clean and unconfirmed, recopy
+it, and then confirm export. To roll back generation, stop creating storage for new projects only;
+existing applied schema stays in place and must be rolled forward or explicitly removed after preserved
+exported bytes make recovery possible.
+
 ### Rollback
 
 Pare API e worker, volte `PERSISTENCE_MODE` para `file` (ou remova a variável) e reinicie. Dados gravados em modo postgres não são sincronizados de volta para `DATA_DIR`: o rollback restaura o comportamento em disco a partir do estado que já existia lá, não migra o conteúdo do Postgres. Para voltar a operar sobre os dados gravados em Postgres, mantenha `PERSISTENCE_MODE=postgres` e trate o banco como a fonte de verdade — não alterne os dois modos como se fossem réplicas do mesmo estado.

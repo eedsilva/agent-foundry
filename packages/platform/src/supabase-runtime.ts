@@ -29,6 +29,11 @@ import {
   withSpan,
   type GeneratedProjectRuntime,
 } from '@agent-foundry/domain';
+import {
+  GENERATED_STORAGE_MIGRATION,
+  configureGeneratedStorage,
+  generatedStorageMigration,
+} from './supabase-storage.js';
 
 const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
@@ -74,6 +79,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   readonly #dataDir: string;
   readonly #command: SupabaseCommand;
   readonly #now: () => Date;
+  readonly #initializations = new Map<string, Promise<AppEnvironment>>();
   #configurationQueue = Promise.resolve();
 
   constructor(options: SupabaseGeneratedProjectRuntimeOptions) {
@@ -83,55 +89,108 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   async initialize(input: { projectId: string }): Promise<AppEnvironment> {
-    const existing = await this.#read(input.projectId);
+    const projectId = parsePathSegment('project ID', input.projectId);
+    const inFlight = this.#initializations.get(projectId);
+    if (inFlight) return inFlight;
+    const initialization = this.#initialize(projectId).finally(() => {
+      this.#initializations.delete(projectId);
+    });
+    this.#initializations.set(projectId, initialization);
+    return initialization;
+  }
+
+  async #initialize(projectId: string): Promise<AppEnvironment> {
+    const existing = await this.#read(projectId);
     if (existing) return existing;
 
-    const projectId = parsePathSegment('project ID', input.projectId);
     const { workdir, composeProjectName, network, volumes } = projectResources(
       this.#dataDir,
       projectId,
     );
-    await mkdir(workdir, { recursive: true });
-    await this.#execute('initialize', 'init', '--workdir', workdir);
-    await this.#configure(workdir, composeProjectName);
-    const result = await this.#execute(
-      'start',
-      'start',
-      '--workdir',
-      workdir,
-      '--output',
-      'json',
-      '--yes',
-      '--network-id',
-      network,
-    );
-    const timestamp = this.#now().toISOString();
-    const environment = environmentFromStatus(
-      {
-        projectId,
-        composeProjectName,
+    let retainedWorkdir = true;
+    try {
+      await realpath(workdir);
+    } catch (error) {
+      if (!isNotFound(error)) throw operationError('initialize', error);
+      retainedWorkdir = false;
+    }
+    if (retainedWorkdir) {
+      await this.#execute('initialize', 'stop', '--workdir', workdir, '--no-backup', '--yes');
+      try {
+        await rm(workdir, { recursive: true, force: true });
+      } catch (error) {
+        throw operationError('initialize', error);
+      }
+    }
+    let startAttempted = false;
+    try {
+      await mkdir(workdir, { recursive: true });
+      await this.#execute('initialize', 'init', '--workdir', workdir);
+      await this.#configure(workdir, composeProjectName);
+      startAttempted = true;
+      await this.#execute(
+        'start',
+        'start',
+        '--workdir',
         workdir,
+        '--output',
+        'json',
+        '--yes',
+        '--network-id',
         network,
-        volumes,
-        ports: {},
-        endpoints: {},
-        health: { state: 'healthy', checkedAt: timestamp },
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      },
-      result.stdout,
-      'healthy',
-      timestamp,
-      'start',
-    );
-    await persist(environment);
-    return environment;
+      );
+      await this.#execute('initialize', 'seed', 'buckets', '--workdir', workdir);
+      const result = await this.#execute(
+        'initialize',
+        'status',
+        '--workdir',
+        workdir,
+        '--output',
+        'json',
+      );
+      const timestamp = this.#now().toISOString();
+      const environment = environmentFromStatus(
+        {
+          projectId,
+          composeProjectName,
+          workdir,
+          network,
+          volumes,
+          ports: {},
+          endpoints: {},
+          health: { state: 'healthy', checkedAt: timestamp },
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        result.stdout,
+        'healthy',
+        timestamp,
+        'initialize',
+      );
+      await persist(environment);
+      return environment;
+    } catch (error) {
+      const original = asOperationError('initialize', error);
+      if (startAttempted) {
+        try {
+          await this.#execute('initialize', 'stop', '--workdir', workdir, '--no-backup', '--yes');
+        } catch (cleanupError) {
+          throw recoveryError(original, cleanupError);
+        }
+      }
+      try {
+        await rm(workdir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        throw recoveryError(original, cleanupError);
+      }
+      throw original;
+    }
   }
 
   async start(projectId: string): Promise<AppEnvironment> {
     const environment = await this.#require(projectId);
     if (environment.health.state === 'healthy') return environment;
-    const result = await this.#execute(
+    await this.#execute(
       'start',
       'start',
       '--workdir',
@@ -141,6 +200,14 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       '--yes',
       '--network-id',
       environment.network,
+    );
+    const result = await this.#execute(
+      'start',
+      'status',
+      '--workdir',
+      environment.workdir,
+      '--output',
+      'json',
     );
     const timestamp = this.#now().toISOString();
     const started = environmentFromStatus(
@@ -1088,7 +1155,13 @@ async function configureProject(
     if (!foundProjectId || foundPorts.size !== HOST_PORT_FIELDS.length) {
       throw new Error('Generated Supabase config is missing required project or port fields.');
     }
-    await atomicWrite(path, configured);
+    const migrationsDir = join(workdir, 'supabase', 'migrations');
+    await mkdir(migrationsDir, { recursive: true });
+    await atomicWrite(path, configureGeneratedStorage(configured));
+    await atomicWrite(
+      join(migrationsDir, GENERATED_STORAGE_MIGRATION),
+      generatedStorageMigration(),
+    );
   } catch (error) {
     throw operationError('initialize', error);
   }
@@ -1175,6 +1248,30 @@ function operationError(
     operation,
     typeof record.exitCode === 'number' ? record.exitCode : undefined,
     capUtf8(diagnostic, MAX_DIAGNOSTIC_BYTES),
+  );
+}
+
+function asOperationError(
+  operation: EnvironmentLifecycleOperation,
+  error: unknown,
+): EnvironmentOperationError {
+  return error instanceof EnvironmentOperationError ? error : operationError(operation, error);
+}
+
+function recoveryError(
+  original: EnvironmentOperationError,
+  cleanupError: unknown,
+): EnvironmentOperationError {
+  const cleanup = asOperationError('initialize', cleanupError);
+  const separator = '\nRecovery cleanup failed: ';
+  const diagnosticBudget = Math.floor((MAX_DIAGNOSTIC_BYTES - Buffer.byteLength(separator)) / 2);
+  return new EnvironmentOperationError(
+    original.operation,
+    original.exitCode,
+    `${capUtf8(original.diagnostic, diagnosticBudget)}${separator}${capUtf8(
+      cleanup.diagnostic,
+      diagnosticBudget,
+    )}`,
   );
 }
 

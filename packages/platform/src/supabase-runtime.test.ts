@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvironmentOperationError } from '@agent-foundry/domain';
 import { SupabaseGeneratedProjectRuntime, type SupabaseCommand } from './supabase-runtime.js';
 import { FunctionArtifactSchema, type FunctionArtifact } from '@agent-foundry/contracts';
+import { GENERATED_STORAGE_MIGRATION, generatedStorageMigration } from './supabase-storage.js';
 
 const NOW = new Date('2026-07-22T12:00:00.000Z');
 const INITIAL_CONFIG = `project_id = "environment"
@@ -70,18 +71,33 @@ async function statusCommand(
   const workdirIndex = args.indexOf('--workdir');
   const workdir = workdirIndex === -1 ? undefined : args[workdirIndex + 1];
   if (args[0] === 'init' && workdir) {
-    await mkdir(join(workdir, 'supabase'), { recursive: true });
+    await mkdir(join(workdir, 'supabase', 'migrations'), { recursive: true });
     await writeFile(join(workdir, 'supabase', 'config.toml'), INITIAL_CONFIG);
   }
   if ((args[0] === 'start' || args[0] === 'status') && workdir) {
     const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
     if (args[0] === 'start') {
+      const migration = await readFile(
+        join(workdir, 'supabase', 'migrations', GENERATED_STORAGE_MIGRATION),
+        'utf8',
+      );
+      expect(migration).toBe(generatedStorageMigration());
       projectIdsAtStart.push(config.match(/^project_id\s*=\s*"([^"]+)"/m)?.[1] ?? 'missing');
     }
     const api = configPort(config, 'api', 'port');
     const db = configPort(config, 'db', 'port');
     const studio = configPort(config, 'studio', 'port');
     const inbucket = configPort(config, 'inbucket', 'port');
+    if (args[0] === 'start') {
+      return {
+        stdout: `Started supabase local development setup.
+API URL: http://127.0.0.1:${api}
+GraphQL URL: http://127.0.0.1:${api}/graphql/v1
+Studio URL: http://127.0.0.1:${studio}`,
+        stderr: '',
+        exitCode: 0,
+      };
+    }
     return {
       stdout: JSON.stringify({
         API_URL: `http://127.0.0.1:${api}`,
@@ -190,6 +206,10 @@ describe('SupabaseGeneratedProjectRuntime', () => {
     ).match(/^project_id\s*=\s*"([^"]+)"/m)?.[1];
     const firstConfig = await readFile(join(first.workdir, 'supabase', 'config.toml'), 'utf8');
     const secondConfig = await readFile(join(second.workdir, 'supabase', 'config.toml'), 'utf8');
+    const firstMigration = await readFile(
+      join(first.workdir, 'supabase', 'migrations', GENERATED_STORAGE_MIGRATION),
+      'utf8',
+    );
     const firstHostPorts = HOST_PORT_FIELDS.map(([section, key]) =>
       configPort(firstConfig, section, key),
     );
@@ -200,6 +220,13 @@ describe('SupabaseGeneratedProjectRuntime', () => {
     expect(secondProjectId).toBe(second.composeProjectName);
     expect(firstProjectId).not.toBe(secondProjectId);
     expect(projectIdsAtStart).toEqual(expect.arrayContaining([firstProjectId, secondProjectId]));
+    expect(firstConfig).toContain(`[storage.buckets.uploads]
+public = false
+file_size_limit = "10MiB"
+allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
+    expect(firstMigration).toBe(generatedStorageMigration());
+    expect(firstMigration).toContain('create policy storage_upload_insert');
+    expect(firstMigration).toContain('create policy storage_clean_owner_select');
     expect(new Set([...firstHostPorts, ...secondHostPorts]).size).toBe(14);
     expect(firstHostPorts.every((port) => port > 0 && port <= 65_535)).toBe(true);
     expect(secondHostPorts.every((port) => port > 0 && port <= 65_535)).toBe(true);
@@ -219,6 +246,25 @@ describe('SupabaseGeneratedProjectRuntime', () => {
       '--network-id',
       first.network,
     ]);
+    expect(command.mock.calls).toContainEqual(['seed', 'buckets', '--workdir', first.workdir]);
+    expect(command.mock.calls).toContainEqual([
+      'status',
+      '--workdir',
+      first.workdir,
+      '--output',
+      'json',
+    ]);
+    const firstStart = command.mock.calls.findIndex(
+      ([name, , value]) => name === 'start' && value === first.workdir,
+    );
+    const firstSeed = command.mock.calls.findIndex(
+      ([name, , , value]) => name === 'seed' && value === first.workdir,
+    );
+    const firstStatus = command.mock.calls.findIndex(
+      ([name, , value]) => name === 'status' && value === first.workdir,
+    );
+    expect(firstStart).toBeLessThan(firstSeed);
+    expect(firstSeed).toBeLessThan(firstStatus);
     expect(first).toMatchObject({
       projectId: 'project-a',
       endpoints: {
@@ -239,6 +285,47 @@ describe('SupabaseGeneratedProjectRuntime', () => {
     expect(metadata).not.toMatch(/db-secret|jwt-secret|anon-secret|DB_URL|JWT_SECRET|ANON_KEY/);
   });
 
+  it('tears down the exact workdir after a partial start failure', async () => {
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    const partialMarker = join(workdir, 'partial-start');
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'start') {
+        await writeFile(partialMarker, 'partial');
+        throw Object.assign(
+          new Error(`PASSWORD=start-secret partial-start-failure ${'x'.repeat(10_000)}`),
+          {
+            exitCode: 44,
+            stderr: 'ACCESS_TOKEN=start-token',
+          },
+        );
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+
+    const rejection = await runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
+
+    expect(rejection).toMatchObject({ operation: 'start', exitCode: 44 });
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(rejection.diagnostic).toContain('partial-start-failure');
+    expect(rejection.diagnostic).not.toMatch(/start-secret|start-token/);
+    expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
+    expect(command.mock.calls.slice(-2)).toEqual([
+      [
+        'start',
+        '--workdir',
+        workdir,
+        '--output',
+        'json',
+        '--yes',
+        '--network-id',
+        'supabase_project-a_network',
+      ],
+      ['stop', '--workdir', workdir, '--no-backup', '--yes'],
+    ]);
+    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('does not initialize or start Supabase twice for the same project', async () => {
     const { command, runtime } = fixture();
     const environment = await runtime.initialize({ projectId: 'project-a' });
@@ -257,12 +344,228 @@ describe('SupabaseGeneratedProjectRuntime', () => {
     ]);
   });
 
+  it('retains a failed seed workdir and recovers it across runtime instances', async () => {
+    let failSeed = true;
+    let stopAttempts = 0;
+    let freshAtRetryInit = false;
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    const partialMarker = join(workdir, 'partial-marker');
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'seed' && args[1] === 'buckets' && failSeed) {
+        failSeed = false;
+        await writeFile(partialMarker, 'partial');
+        throw Object.assign(
+          new Error(`PASSWORD=seed-secret original-seed-failure ${'x'.repeat(10_000)}`),
+          {
+            exitCode: 41,
+          },
+        );
+      }
+      if (args[0] === 'stop') {
+        stopAttempts += 1;
+        if (stopAttempts === 1) {
+          throw new Error(`PASSWORD=cleanup-secret cleanup-stop-failure ${'y'.repeat(10_000)}`);
+        }
+      }
+      if (args[0] === 'init' && stopAttempts === 2) {
+        await expect(stat(partialMarker)).rejects.toMatchObject({ code: 'ENOENT' });
+        freshAtRetryInit = true;
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+    const protectedPath = join(dataDir, 'projects', 'project-b', 'environment', 'keep');
+    await mkdir(join(dataDir, 'projects', 'project-b', 'environment'), { recursive: true });
+    await writeFile(protectedPath, 'keep');
+
+    const firstInitialization = runtime.initialize({ projectId: 'project-a' });
+    const secondInitialization = runtime.initialize({ projectId: 'project-a' });
+    const [rejection, sameRejection] = await Promise.all([
+      firstInitialization.catch((error) => error),
+      secondInitialization.catch((error) => error),
+    ]);
+
+    expect(rejection).toMatchObject({ operation: 'initialize', exitCode: 41 });
+    expect(sameRejection).toBe(rejection);
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(rejection.diagnostic).toContain('original-seed-failure');
+    expect(rejection.diagnostic).toContain('cleanup-stop-failure');
+    expect(rejection.diagnostic).not.toMatch(/seed-secret|cleanup-secret/);
+    expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
+    expect(command.mock.calls).toContainEqual([
+      'stop',
+      '--workdir',
+      workdir,
+      '--no-backup',
+      '--yes',
+    ]);
+    await expect(readFile(join(workdir, 'supabase', 'config.toml'), 'utf8')).resolves.toContain(
+      'project_id = "supabase_project-a"',
+    );
+    await expect(readFile(partialMarker, 'utf8')).resolves.toBe('partial');
+    await expect(readFile(protectedPath, 'utf8')).resolves.toBe('keep');
+    await expect(runtime.inspect('project-a')).resolves.toBeNull();
+
+    const retryCallIndex = command.mock.calls.length;
+    const retryRuntime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command,
+      now: () => new Date(NOW),
+    });
+    const retried = await retryRuntime.initialize({ projectId: 'project-a' });
+
+    expect(retried.workdir).toBe(workdir);
+    expect(freshAtRetryInit).toBe(true);
+    expect(stopAttempts).toBe(2);
+    expect(command.mock.calls.slice(retryCallIndex, retryCallIndex + 2)).toEqual([
+      ['stop', '--workdir', workdir, '--no-backup', '--yes'],
+      ['init', '--workdir', workdir],
+    ]);
+    expect(command.mock.calls.filter(([name]) => name === 'init')).toHaveLength(2);
+    expect(command.mock.calls.filter(([name]) => name === 'start')).toHaveLength(2);
+    expect(
+      command.mock.calls.filter(([name, subcommand]) => {
+        return name === 'seed' && subcommand === 'buckets';
+      }),
+    ).toHaveLength(2);
+  });
+
+  it('removes a failed pre-start workdir so the same runtime can retry initialization', async () => {
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    const partialMarker = join(workdir, 'partial-init');
+    let failInit = true;
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'init' && failInit) {
+        failInit = false;
+        await writeFile(partialMarker, 'partial');
+        throw Object.assign(new Error('PASSWORD=init-secret partial-init-failure'), {
+          exitCode: 45,
+        });
+      }
+      if (args[0] === 'init') {
+        await expect(stat(partialMarker)).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+
+    const rejection = await runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
+
+    expect(rejection).toMatchObject({ operation: 'initialize', exitCode: 45 });
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(rejection.diagnostic).toContain('partial-init-failure');
+    expect(rejection.diagnostic).not.toContain('init-secret');
+    expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
+    expect(command.mock.calls).toEqual([['init', '--workdir', workdir]]);
+    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(runtime.inspect('project-a')).resolves.toBeNull();
+
+    await expect(runtime.initialize({ projectId: 'project-a' })).resolves.toMatchObject({
+      projectId: 'project-a',
+      workdir,
+      health: { state: 'healthy' },
+    });
+    expect(command.mock.calls.filter(([name]) => name === 'stop')).toHaveLength(0);
+    expect(command.mock.calls.filter(([name]) => name === 'init')).toHaveLength(2);
+    expect(command.mock.calls.filter(([name]) => name === 'start')).toHaveLength(1);
+  });
+
+  it('rolls back and redacts an authoritative status failure after bucket seed', async () => {
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'status') {
+        throw Object.assign(
+          new Error(`PASSWORD=status-secret authoritative-status-failure ${'x'.repeat(10_000)}`),
+          {
+            exitCode: 43,
+            stderr: 'JWT_SECRET=status-json-secret',
+          },
+        );
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+
+    const rejection = await runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
+
+    expect(rejection).toMatchObject({ operation: 'initialize', exitCode: 43 });
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(rejection.diagnostic).toContain('authoritative-status-failure');
+    expect(rejection.diagnostic).not.toMatch(/status-secret|status-json-secret/);
+    expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
+    expect(command.mock.calls.slice(-4)).toEqual([
+      [
+        'start',
+        '--workdir',
+        workdir,
+        '--output',
+        'json',
+        '--yes',
+        '--network-id',
+        'supabase_project-a_network',
+      ],
+      ['seed', 'buckets', '--workdir', workdir],
+      ['status', '--workdir', workdir, '--output', 'json'],
+      ['stop', '--workdir', workdir, '--no-backup', '--yes'],
+    ]);
+    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(runtime.inspect('project-a')).resolves.toBeNull();
+  });
+
+  it('deduplicates overlapping project initialization without blocking another project', async () => {
+    const projectAWorkdir = join(dataDir, 'projects', 'project-a', 'environment');
+    let releaseProjectA = () => {};
+    const projectAGate = new Promise<void>((resolve) => {
+      releaseProjectA = resolve;
+    });
+    let markProjectAStarted = () => {};
+    const projectAStarted = new Promise<void>((resolve) => {
+      markProjectAStarted = resolve;
+    });
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      const workdir = args[args.indexOf('--workdir') + 1];
+      if (args[0] === 'init' && workdir === projectAWorkdir) {
+        markProjectAStarted();
+        await projectAGate;
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+
+    const firstProjectA = runtime.initialize({ projectId: 'project-a' });
+    await projectAStarted;
+    const secondProjectA = runtime.initialize({ projectId: 'project-a' });
+    const projectB = await runtime.initialize({ projectId: 'project-b' });
+    releaseProjectA();
+    const [first, second] = await Promise.all([firstProjectA, secondProjectA]);
+
+    expect(first).toEqual(second);
+    expect(projectB.projectId).toBe('project-b');
+    expect(
+      command.mock.calls.filter(
+        ([name, , workdir]) => name === 'init' && workdir === projectAWorkdir,
+      ),
+    ).toHaveLength(1);
+    expect(
+      command.mock.calls.filter(
+        ([name, , workdir]) => name === 'start' && workdir === projectAWorkdir,
+      ),
+    ).toHaveLength(1);
+    expect(
+      command.mock.calls.filter(
+        ([name, subcommand, , workdir]) =>
+          name === 'seed' && subcommand === 'buckets' && workdir === projectAWorkdir,
+      ),
+    ).toHaveLength(1);
+  });
+
   it('makes stop and restart idempotent while preserving exact lifecycle commands', async () => {
     const { command, runtime } = fixture();
     const initialized = await runtime.initialize({ projectId: 'project-a' });
 
     const stopped = await runtime.stop('project-a');
     await runtime.stop('project-a');
+    const restartCallIndex = command.mock.calls.length;
     const restarted = await runtime.start('project-a');
     await runtime.start('project-a');
 
@@ -272,6 +575,19 @@ describe('SupabaseGeneratedProjectRuntime', () => {
       ['stop', '--workdir', initialized.workdir],
     ]);
     expect(command.mock.calls.filter(([name]) => name === 'start')).toHaveLength(2);
+    expect(command.mock.calls.slice(restartCallIndex)).toEqual([
+      [
+        'start',
+        '--workdir',
+        initialized.workdir,
+        '--output',
+        'json',
+        '--yes',
+        '--network-id',
+        initialized.network,
+      ],
+      ['status', '--workdir', initialized.workdir, '--output', 'json'],
+    ]);
     expect(command.mock.calls).not.toContainEqual(expect.arrayContaining(['migration', 'down']));
   });
 
@@ -907,7 +1223,7 @@ describe('function invocation', () => {
 
   function invokeCommand(...args: string[]) {
     return statusCommand(...args).then((result) => {
-      if (args[0] !== 'start') return result;
+      if (args[0] !== 'status') return result;
       const status = JSON.parse(result.stdout) as Record<string, string>;
       status.API_URL = `http://127.0.0.1:${apiPort}`;
       return { ...result, stdout: JSON.stringify(status) };
