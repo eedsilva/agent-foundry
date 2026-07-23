@@ -599,6 +599,7 @@ function makeHarness(
     stepAttempts,
     approvalRequests,
     approvalDecisions,
+    queue,
     artifacts,
     events,
     stepEvents,

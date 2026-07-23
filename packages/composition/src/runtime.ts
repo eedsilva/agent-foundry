@@ -288,6 +288,7 @@ export async function createRuntime(
     stepAttempts,
     approvalRequests,
     approvalDecisions,
+    queue,
     artifacts,
     events,
     stepEvents,
