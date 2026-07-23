@@ -12,6 +12,7 @@ import type { NetworkPolicyResolver } from './network-policy.js';
 
 const POLICY_ENV = 'AGENT_FOUNDRY_NETWORK_POLICY';
 const POLICY_TTL_ENV = 'AGENT_FOUNDRY_POLICY_TTL_MS';
+const STARTUP_FAILURE_GRACE_MS = 5_000;
 export const POLICY_SIDECAR_READY_PATH = '/run/agent-foundry-network-policy-ready';
 
 function readPolicy(): ExecutionNetworkPolicy {
@@ -116,8 +117,9 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  void main().catch((error: unknown) => {
+  void main().catch(async (error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
+    await new Promise((resolve) => setTimeout(resolve, STARTUP_FAILURE_GRACE_MS));
     process.exit(1);
   });
 }

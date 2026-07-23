@@ -480,7 +480,23 @@ async function waitForPolicySidecar(sidecarId: string): Promise<void> {
     if (lastResult.exitCode === 0) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw dockerFailure('policy sidecar readiness check', lastResult ?? {});
+  const logs = normalizeDockerResult(
+    await execa('docker', ['logs', '--tail', '20', sidecarId], {
+      reject: false,
+      maxBuffer: 64 * 1024,
+    }),
+  );
+  const diagnostics = logs.stdout || logs.stderr;
+  throw dockerFailure('policy sidecar readiness check', {
+    ...(lastResult ?? {}),
+    ...(diagnostics
+      ? {
+          stderr: [lastResult?.stderr, `Policy sidecar startup log:\n${diagnostics}`]
+            .filter(Boolean)
+            .join('\n'),
+        }
+      : {}),
+  });
 }
 
 async function cleanupPolicyResources(
