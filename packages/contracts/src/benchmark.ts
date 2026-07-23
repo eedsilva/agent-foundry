@@ -1,7 +1,9 @@
 import { z } from 'zod';
-import { DogfoodTaskSchema } from './dogfood.js';
-import { ExecutionUsageSchema } from './run.js';
-import { RouteDecisionSchema } from './model.js';
+import {
+  DogfoodRunRecordBaseSchema,
+  DogfoodTaskSchema,
+  dogfoodStatusFailureRefinement,
+} from './dogfood.js';
 
 export const BenchmarkCaseKindSchema = z.enum([
   'greenfield',
@@ -28,74 +30,18 @@ export type BenchmarkCase = z.infer<typeof BenchmarkCaseSchema>;
 
 // BenchmarkRunRecord is built from DogfoodRunRecord but omitting taskId,
 // issueRef, and humanEdit, and adding caseId, caseKind, modelId.
-// We reconstruct manually because DogfoodRunRecordSchema has refinements
-// and Zod v4 doesn't allow .omit() on refined schemas.
-export const BenchmarkRunRecordSchema = z
-  .object({
-    schemaVersion: z.literal('1'),
+export const BenchmarkRunRecordSchema = DogfoodRunRecordBaseSchema.omit({
+  taskId: true,
+  issueRef: true,
+  humanEdit: true,
+})
+  .extend({
     caseId: z.string().min(1),
     caseKind: BenchmarkCaseKindSchema,
     modelId: z.string().min(1),
-    attempt: z.number().int().positive(),
-    baselineRef: z.string(),
-    projectId: z.string(),
-    runId: z.string(),
-    startedAt: z.string().datetime(),
-    status: z.enum(['passed', 'failed']),
-    durationMs: z.number().nonnegative(),
-    route: RouteDecisionSchema.optional(),
-    executedModel: z.string().optional(),
-    usage: ExecutionUsageSchema.optional(),
-    promptArtifact: z.string().optional(),
-    diff: z
-      .object({
-        checkpoint: z.string().optional(),
-        commit: z.string().optional(),
-        stat: z.string(),
-        filesChanged: z.array(z.string()),
-      })
-      .strict()
-      .optional(),
-    checks: z
-      .array(
-        z
-          .object({
-            name: z.string(),
-            exitCode: z.number().nullable(),
-            durationMs: z.number().nonnegative(),
-            skipped: z.boolean(),
-          })
-          .strict(),
-      )
-      .default([]),
-    repairs: z
-      .object({
-        iterations: z.number().int().nonnegative(),
-        repairEvents: z.number().int().nonnegative(),
-      })
-      .strict(),
-    failure: z
-      .object({ kind: z.string(), code: z.string().optional(), message: z.string() })
-      .strict()
-      .optional(),
   })
   .strict()
-  .superRefine((record, ctx) => {
-    if (record.status === 'failed' && !record.failure) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "status: 'failed' requires failure to be present",
-        path: ['failure'],
-      });
-    }
-    if (record.status === 'passed' && record.failure) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "status: 'passed' requires failure to be absent",
-        path: ['failure'],
-      });
-    }
-  });
+  .superRefine(dogfoodStatusFailureRefinement);
 export type BenchmarkRunRecord = z.infer<typeof BenchmarkRunRecordSchema>;
 
 export const BenchmarkReportSchema = z

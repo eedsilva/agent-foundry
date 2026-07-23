@@ -38,7 +38,7 @@ export const DogfoodHumanEditSchema = z
   .strict();
 export type DogfoodHumanEdit = z.infer<typeof DogfoodHumanEditSchema>;
 
-export const DogfoodRunRecordSchema = z
+export const DogfoodRunRecordBaseSchema = z
   .object({
     schemaVersion: z.literal('1'),
     taskId: z.string(),
@@ -87,23 +87,34 @@ export const DogfoodRunRecordSchema = z
       .optional(),
     humanEdit: DogfoodHumanEditSchema,
   })
-  .strict()
-  .superRefine((record, ctx) => {
-    if (record.status === 'failed' && !record.failure) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "status: 'failed' requires failure to be present",
-        path: ['failure'],
-      });
-    }
-    if (record.status === 'passed' && record.failure) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "status: 'passed' requires failure to be absent",
-        path: ['failure'],
-      });
-    }
-  });
+  .strict();
+
+export function dogfoodStatusFailureRefinement(
+  record: {
+    status: 'passed' | 'failed';
+    failure?: { kind: string; code?: string | undefined; message: string } | undefined;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (record.status === 'failed' && !record.failure) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "status: 'failed' requires failure to be present",
+      path: ['failure'],
+    });
+  }
+  if (record.status === 'passed' && record.failure) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "status: 'passed' requires failure to be absent",
+      path: ['failure'],
+    });
+  }
+}
+
+export const DogfoodRunRecordSchema = DogfoodRunRecordBaseSchema.superRefine(
+  dogfoodStatusFailureRefinement,
+);
 export type DogfoodRunRecord = z.infer<typeof DogfoodRunRecordSchema>;
 
 export const DogfoodReportSchema = z
