@@ -1,0 +1,15 @@
+{
+  "id": "review-score-router",
+  "title": "Revisão de código: packages/model-router/src/score-router.ts",
+  "kind": "review",
+  "workflowId": "dogfood-plan-v1",
+  "baselineRef": "56568a3",
+  "allowedFiles": [],
+  "seedFiles": [],
+  "prompt": "# Tarefa: revisão de código (issue de benchmark #63)\n\nEste é o monorepo agent-foundry. O arquivo packages/model-router/src/score-router.ts implementa o roteador de modelos baseado em score (seleção de candidato do catálogo por tarefa).\n\n## Entregável\n\nEsta é uma tarefa de **revisão de código, sem alteração de código**. Leia packages/model-router/src/score-router.ts (o arquivo real, não suponha o conteúdo) e produza um artefato de revisão estruturado contendo:\n\n1. Pelo menos um risco de correção ou edge case que o código atual não trata claramente (cite a função e o trecho relevante).\n2. Pelo menos uma sugestão concreta de simplificação ou remoção de complexidade desnecessária.\n3. Uma nota geral de aprovação: 'aprovar', 'aprovar com ressalvas' ou 'solicitar mudanças', com uma frase justificando a nota.\n\n## Arquivos permitidos (allowlist)\n\nNenhum arquivo do workspace pode ser criado ou modificado (allowedFiles vazio nesta tarefa) — apenas o artefato de revisão do workflow deve ser produzido. Qualquer diff no repositório reprova a tarefa.\n\n## Verificação\n\nEsta tarefa não tem dogfood:verify; a aprovação vem do gate de qualidade do plano (dogfood-plan-v1: planner -> plan-reviewer -> repair-plan).\n",
+  "expectedSignals": [
+    "identifica corretamente que o arquivo revisado é score-router.ts",
+    "aponta pelo menos um risco de correção ou edge case concreto",
+    "não produz nenhum diff de código no repositório"
+  ]
+}

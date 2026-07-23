@@ -1,0 +1,21 @@
+{
+  "id": "existing-repo-truncate",
+  "title": "truncateWithEllipsis em packages/domain/src/utils.ts",
+  "kind": "existing-repo",
+  "workflowId": "dogfood-task-v1",
+  "baselineRef": "56568a3",
+  "allowedFiles": ["packages/domain/src/utils.ts"],
+  "seedFiles": [
+    {
+      "path": "packages/domain/src/utils-truncate.test.ts",
+      "content": "import { describe, expect, it } from 'vitest';\nimport { truncateWithEllipsis } from './utils.js';\n\ndescribe('truncateWithEllipsis', () => {\n  it('returns the original string unchanged when it already fits', () => {\n    expect(truncateWithEllipsis('hello', 10)).toBe('hello');\n  });\n\n  it('returns exactly maxLength characters, ending in an ellipsis, when longer than maxLength', () => {\n    const result = truncateWithEllipsis('hello world', 8);\n    expect(result).toHaveLength(8);\n    expect(result.endsWith('\\u2026')).toBe(true);\n    expect(result.startsWith('hello')).toBe(true);\n  });\n\n  it('treats a string exactly at maxLength as fitting (no truncation)', () => {\n    expect(truncateWithEllipsis('exact', 5)).toBe('exact');\n  });\n\n  it('throws when maxLength is less than 1', () => {\n    expect(() => truncateWithEllipsis('x', 0)).toThrow();\n  });\n});\n"
+    }
+  ],
+  "verifyScript": "vitest run packages/domain/src/utils-truncate.test.ts --pool=threads --maxWorkers=1",
+  "prompt": "# Tarefa: truncateWithEllipsis em packages/domain/src/utils.ts\n\nEste é o monorepo agent-foundry. O arquivo packages/domain/src/utils.ts já existe e exporta várias funções puras (getValueAtPath, estimateTokens, errorMessage, toExecutionResult, stableJson). Leia o arquivo real antes de editar.\n\n## Entregável\n\nAdicione UMA nova função exportada a packages/domain/src/utils.ts, sem remover ou alterar o comportamento das funções existentes:\n\n- truncateWithEllipsis(text: string, maxLength: number): string — se text.length for menor ou igual a maxLength, retorna text sem alterações. Caso contrário, retorna os primeiros (maxLength - 1) caracteres de text seguidos do caractere de reticências '\\u2026' (um único caractere Unicode, não três pontos), de modo que o resultado tenha exatamente maxLength caracteres. Se maxLength for menor que 1, lance um Error.\n\nUm arquivo de teste já foi semeado no workspace em packages/domain/src/utils-truncate.test.ts — NÃO o modifique. Ele define o contrato exato esperado.\n\n## Arquivos permitidos (allowlist)\n\nSó é permitido criar ou modificar:\n- packages/domain/src/utils.ts\n\nQualquer alteração fora dessa lista reprova a tarefa, mesmo que os testes passem.\n\n## Verificação\n\nO comando npm run dogfood:verify deve passar antes de finalizar. Ele executa vitest run packages/domain/src/utils-truncate.test.ts --pool=threads --maxWorkers=1 sobre o teste semeado.\n",
+  "expectedSignals": [
+    "estende utils.ts existente sem remover ou quebrar as funções já exportadas",
+    "trata o caso de borda maxLength < 1",
+    "não cria arquivos novos nem toca em utils.test.ts"
+  ]
+}
