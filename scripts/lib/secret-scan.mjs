@@ -28,27 +28,33 @@ async function loadDomain() {
 // baseline file if false positives outside these paths become a problem.
 const EXCLUDED_TRACKED_PATH = /(?:^(docs|examples)\/|\.(test|spec)\.(ts|tsx|js|mjs)$)/;
 
+// Reads and scans each file concurrently (independent I/O per file), keeping
+// scanTrackedFiles/scanDirectoryFiles down to "how do I list the files."
+async function scanFileList(files, knownSecrets) {
+  const { scanForSecrets } = await loadDomain();
+  const perFile = await Promise.all(
+    files.map(async ({ path, label }) => {
+      let content;
+      try {
+        content = await readFile(path, 'utf8');
+      } catch {
+        return []; // binary or unreadable — skip rather than crash the scan
+      }
+      return scanForSecrets(content, knownSecrets).map((match) => ({ file: label, ...match }));
+    }),
+  );
+  return perFile.flat();
+}
+
 /** Every git-tracked file, scanned for known secret shapes (no known-value list — CI doesn't have one). */
 export async function scanTrackedFiles(root, knownSecrets = []) {
-  const { scanForSecrets } = await loadDomain();
   const { stdout } = await run('git', ['ls-files'], { cwd: root });
   const files = stdout
     .split('\n')
     .filter(Boolean)
-    .filter((file) => !EXCLUDED_TRACKED_PATH.test(file));
-  const findings = [];
-  for (const file of files) {
-    let content;
-    try {
-      content = await readFile(`${root}/${file}`, 'utf8');
-    } catch {
-      continue; // binary or unreadable — skip rather than crash the scan
-    }
-    for (const match of scanForSecrets(content, knownSecrets)) {
-      findings.push({ file, ...match });
-    }
-  }
-  return findings;
+    .filter((file) => !EXCLUDED_TRACKED_PATH.test(file))
+    .map((file) => ({ path: `${root}/${file}`, label: file }));
+  return scanFileList(files, knownSecrets);
 }
 
 /**
@@ -59,8 +65,6 @@ export async function scanTrackedFiles(root, knownSecrets = []) {
  * if the directory doesn't exist yet (build hasn't run).
  */
 export async function scanDirectoryFiles(dir, knownSecrets = []) {
-  const { scanForSecrets } = await loadDomain();
-  const findings = [];
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true, recursive: true });
@@ -68,20 +72,13 @@ export async function scanDirectoryFiles(dir, knownSecrets = []) {
     if (error.code === 'ENOENT') return [];
     throw error;
   }
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    const path = join(entry.parentPath ?? entry.path, entry.name);
-    let content;
-    try {
-      content = await readFile(path, 'utf8');
-    } catch {
-      continue; // binary or unreadable — skip rather than crash the scan
-    }
-    for (const match of scanForSecrets(content, knownSecrets)) {
-      findings.push({ file: path, ...match });
-    }
-  }
-  return findings;
+  const files = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const path = join(entry.parentPath ?? entry.path, entry.name);
+      return { path, label: path };
+    });
+  return scanFileList(files, knownSecrets);
 }
 
 /** Fails if any real .env file (anything but .env.example) is git-tracked. */

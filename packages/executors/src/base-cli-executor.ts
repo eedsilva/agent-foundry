@@ -17,7 +17,7 @@ import {
   parseAgentArtifact,
 } from './json-output.js';
 import { killProcessTree, terminateProcessTree } from './process-tree.js';
-import { pickSafeEnvironment } from './safe-environment.js';
+import { safeSpawnEnv } from './safe-environment.js';
 
 export interface CliInvocation {
   command: string;
@@ -134,12 +134,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         // Own process group on POSIX so cancellation can terminate the whole CLI tree.
         detached: process.platform !== 'win32',
         ...(invocation.input !== undefined ? { input: invocation.input } : {}),
-        env: cleanEnvironment({ ...pickSafeEnvironment(), ...invocation.environment }),
-        // execa defaults extendEnv:true, which re-merges the full process.env
-        // underneath the env option above, undoing pickSafeEnvironment's
-        // filtering for any key the scoped env object doesn't already set.
-        // Must be false so the scoped object above is what the child actually gets.
-        extendEnv: false,
+        ...safeSpawnEnv(process.env, invocation.environment),
       }) as unknown as CliSubprocess;
       if (onEvent) attachStreamTap(subprocess, this.createStreamMapper(), onEvent);
       if (signal) {
@@ -298,12 +293,4 @@ function outputText(value: unknown): string {
   if (value instanceof Uint8Array) return Buffer.from(value).toString('utf8');
   if (Array.isArray(value)) return value.map(outputText).join('\n');
   return value == null ? '' : String(value);
-}
-
-function cleanEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(environment).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
-  );
 }

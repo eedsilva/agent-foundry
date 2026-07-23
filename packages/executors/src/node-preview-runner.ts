@@ -29,7 +29,7 @@ import {
   terminatePersistedProcessTree,
   terminateProcessTree,
 } from './process-tree.js';
-import { pickSafeEnvironment } from './safe-environment.js';
+import { safeSpawnEnv } from './safe-environment.js';
 
 export interface NodePreviewRunnerOptions {
   reservePort?: () => Promise<number>;
@@ -227,17 +227,7 @@ export class NodePreviewRunner implements PreviewRunner {
       : {};
     const child = execa(dev.command, dev.args, {
       cwd: session.workspaceRef.workspacePath,
-      env: {
-        ...pickSafeEnvironment(),
-        ...secrets,
-        PORT: String(reservedPort),
-        HOST: '127.0.0.1',
-      },
-      // execa defaults extendEnv:true, which re-merges the full process.env
-      // underneath the env option above, undoing pickSafeEnvironment's
-      // filtering. Must be false so the scoped env object above is what the
-      // child actually gets.
-      extendEnv: false,
+      ...safeSpawnEnv(process.env, { ...secrets, PORT: String(reservedPort), HOST: '127.0.0.1' }),
       reject: false,
       detached: process.platform !== 'win32',
     }) as unknown as DevServerProcess;

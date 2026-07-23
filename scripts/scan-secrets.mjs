@@ -9,10 +9,11 @@ import {
 const root = resolve(import.meta.dirname, '..');
 
 await assertNoRealEnvFilesTracked(root);
-const findings = [
-  ...(await scanTrackedFiles(root)),
-  ...(await scanDirectoryFiles(join(root, 'apps/web/.next'))),
-];
+const [trackedFindings, bundleFindings] = await Promise.all([
+  scanTrackedFiles(root),
+  scanDirectoryFiles(join(root, 'apps/web/.next')),
+]);
+const findings = [...trackedFindings, ...bundleFindings];
 if (findings.length > 0) {
   console.error('Possible secret(s) found:');
   for (const finding of findings) {
