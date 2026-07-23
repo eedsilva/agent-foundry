@@ -70,6 +70,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   readonly #dataDir: string;
   readonly #command: SupabaseCommand;
   readonly #now: () => Date;
+  readonly #initializations = new Map<string, Promise<AppEnvironment>>();
   #configurationQueue = Promise.resolve();
 
   constructor(options: SupabaseGeneratedProjectRuntimeOptions) {
@@ -79,10 +80,20 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   async initialize(input: { projectId: string }): Promise<AppEnvironment> {
-    const existing = await this.#read(input.projectId);
+    const projectId = safeProjectId(input.projectId);
+    const inFlight = this.#initializations.get(projectId);
+    if (inFlight) return inFlight;
+    const initialization = this.#initialize(projectId).finally(() => {
+      this.#initializations.delete(projectId);
+    });
+    this.#initializations.set(projectId, initialization);
+    return initialization;
+  }
+
+  async #initialize(projectId: string): Promise<AppEnvironment> {
+    const existing = await this.#read(projectId);
     if (existing) return existing;
 
-    const projectId = safeProjectId(input.projectId);
     const { workdir, composeProjectName, network, volumes } = projectResources(
       this.#dataDir,
       projectId,
@@ -101,28 +112,36 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       '--network-id',
       network,
     );
-    await this.#execute('initialize', 'seed', 'buckets', '--workdir', workdir);
-    const timestamp = this.#now().toISOString();
-    const environment = environmentFromStatus(
-      {
-        projectId,
-        composeProjectName,
-        workdir,
-        network,
-        volumes,
-        ports: {},
-        endpoints: {},
-        health: { state: 'healthy', checkedAt: timestamp },
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      },
-      result.stdout,
-      'healthy',
-      timestamp,
-      'start',
-    );
-    await persist(environment);
-    return environment;
+    try {
+      await this.#execute('initialize', 'seed', 'buckets', '--workdir', workdir);
+      const timestamp = this.#now().toISOString();
+      const environment = environmentFromStatus(
+        {
+          projectId,
+          composeProjectName,
+          workdir,
+          network,
+          volumes,
+          ports: {},
+          endpoints: {},
+          health: { state: 'healthy', checkedAt: timestamp },
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        result.stdout,
+        'healthy',
+        timestamp,
+        'start',
+      );
+      await persist(environment);
+      return environment;
+    } catch (error) {
+      await this.#execute('initialize', 'stop', '--workdir', workdir, '--no-backup', '--yes').catch(
+        () => undefined,
+      );
+      await rm(workdir, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   async start(projectId: string): Promise<AppEnvironment> {

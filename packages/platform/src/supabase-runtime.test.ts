@@ -53,10 +53,12 @@ const HOST_PORT_FIELDS = [
 
 let dataDir: string;
 let projectIdsAtStart: string[];
+let migrationsAtStart: string[];
 
 beforeEach(async () => {
   dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-platform-'));
   projectIdsAtStart = [];
+  migrationsAtStart = [];
 });
 
 afterEach(async () => {
@@ -75,7 +77,12 @@ async function statusCommand(
   if ((args[0] === 'start' || args[0] === 'status') && workdir) {
     const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
     if (args[0] === 'start') {
-      await readFile(join(workdir, 'supabase', 'migrations', GENERATED_STORAGE_MIGRATION), 'utf8');
+      const migration = await readFile(
+        join(workdir, 'supabase', 'migrations', GENERATED_STORAGE_MIGRATION),
+        'utf8',
+      );
+      migrationsAtStart.push(migration);
+      expect(migration).toBe(generatedStorageMigration());
       projectIdsAtStart.push(config.match(/^project_id\s*=\s*"([^"]+)"/m)?.[1] ?? 'missing');
     }
     const api = configPort(config, 'api', 'port');
@@ -232,6 +239,29 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
     expect(metadata).not.toMatch(/db-secret|jwt-secret|anon-secret|DB_URL|JWT_SECRET|ANON_KEY/);
   });
 
+  it('rejects wrong migration bytes observed before start even if they are repaired later', async () => {
+    let repaired = false;
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      const workdir = args[args.indexOf('--workdir') + 1];
+      if (args[0] !== 'start' || !workdir) return statusCommand(...args);
+      const migration = join(workdir, 'supabase', 'migrations', GENERATED_STORAGE_MIGRATION);
+      await writeFile(migration, 'wrong pre-start bytes');
+      try {
+        return await statusCommand(...args);
+      } finally {
+        await writeFile(migration, generatedStorageMigration());
+        repaired = true;
+      }
+    });
+    const { runtime } = fixture(command);
+
+    await expect(runtime.initialize({ projectId: 'project-a' })).rejects.toThrow(
+      /Environment start failed/,
+    );
+    expect(migrationsAtStart).toEqual(['wrong pre-start bytes']);
+    expect(repaired).toBe(true);
+  });
+
   it('does not initialize or start Supabase twice for the same project', async () => {
     const { command, runtime } = fixture();
     const environment = await runtime.initialize({ projectId: 'project-a' });
@@ -248,6 +278,109 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
       '--output',
       'json',
     ]);
+  });
+
+  it('rolls back a failed bucket seed and allows a fresh retry after stop cleanup fails', async () => {
+    let failSeed = true;
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'seed' && args[1] === 'buckets' && failSeed) {
+        failSeed = false;
+        throw Object.assign(new Error('PASSWORD=seed-secret original-seed-failure'), {
+          exitCode: 41,
+        });
+      }
+      if (args[0] === 'stop') {
+        throw new Error('PASSWORD=cleanup-secret cleanup-stop-failure');
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    const protectedPath = join(dataDir, 'projects', 'project-b', 'environment', 'keep');
+    await mkdir(join(dataDir, 'projects', 'project-b', 'environment'), { recursive: true });
+    await writeFile(protectedPath, 'keep');
+
+    const firstInitialization = runtime.initialize({ projectId: 'project-a' });
+    const secondInitialization = runtime.initialize({ projectId: 'project-a' });
+    const [rejection, sameRejection] = await Promise.all([
+      firstInitialization.catch((error) => error),
+      secondInitialization.catch((error) => error),
+    ]);
+
+    expect(rejection).toMatchObject({ operation: 'initialize', exitCode: 41 });
+    expect(sameRejection).toBe(rejection);
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(rejection.diagnostic).toContain('original-seed-failure');
+    expect(rejection.diagnostic).not.toMatch(/seed-secret|cleanup-secret|cleanup-stop-failure/);
+    expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
+    expect(command.mock.calls).toContainEqual([
+      'stop',
+      '--workdir',
+      workdir,
+      '--no-backup',
+      '--yes',
+    ]);
+    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(protectedPath, 'utf8')).resolves.toBe('keep');
+    await expect(runtime.inspect('project-a')).resolves.toBeNull();
+
+    const retried = await runtime.initialize({ projectId: 'project-a' });
+
+    expect(retried.workdir).toBe(workdir);
+    expect(command.mock.calls.filter(([name]) => name === 'init')).toHaveLength(2);
+    expect(command.mock.calls.filter(([name]) => name === 'start')).toHaveLength(2);
+    expect(
+      command.mock.calls.filter(([name, subcommand]) => {
+        return name === 'seed' && subcommand === 'buckets';
+      }),
+    ).toHaveLength(2);
+  });
+
+  it('deduplicates overlapping project initialization without blocking another project', async () => {
+    const projectAWorkdir = join(dataDir, 'projects', 'project-a', 'environment');
+    let releaseProjectA = () => {};
+    const projectAGate = new Promise<void>((resolve) => {
+      releaseProjectA = resolve;
+    });
+    let markProjectAStarted = () => {};
+    const projectAStarted = new Promise<void>((resolve) => {
+      markProjectAStarted = resolve;
+    });
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      const workdir = args[args.indexOf('--workdir') + 1];
+      if (args[0] === 'init' && workdir === projectAWorkdir) {
+        markProjectAStarted();
+        await projectAGate;
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+
+    const firstProjectA = runtime.initialize({ projectId: 'project-a' });
+    await projectAStarted;
+    const secondProjectA = runtime.initialize({ projectId: 'project-a' });
+    const projectB = await runtime.initialize({ projectId: 'project-b' });
+    releaseProjectA();
+    const [first, second] = await Promise.all([firstProjectA, secondProjectA]);
+
+    expect(first).toEqual(second);
+    expect(projectB.projectId).toBe('project-b');
+    expect(
+      command.mock.calls.filter(
+        ([name, , workdir]) => name === 'init' && workdir === projectAWorkdir,
+      ),
+    ).toHaveLength(1);
+    expect(
+      command.mock.calls.filter(
+        ([name, , workdir]) => name === 'start' && workdir === projectAWorkdir,
+      ),
+    ).toHaveLength(1);
+    expect(
+      command.mock.calls.filter(
+        ([name, subcommand, , workdir]) =>
+          name === 'seed' && subcommand === 'buckets' && workdir === projectAWorkdir,
+      ),
+    ).toHaveLength(1);
   });
 
   it('makes stop and restart idempotent while preserving exact lifecycle commands', async () => {
