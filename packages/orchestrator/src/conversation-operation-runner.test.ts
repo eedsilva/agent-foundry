@@ -124,6 +124,7 @@ function newProjectVersionService(
 
 const harnessRepo: HarnessRepository = {
   select: () => Promise.resolve({ version: 'v1', files: [], combined: '' }),
+  scaffoldFiles: () => Promise.resolve([]),
   version: () => Promise.resolve('v1'),
 };
 const metrics: MetricsRepository = {
@@ -1701,6 +1702,7 @@ describe('ConversationOperationRunner context compilation', () => {
           files: [{ path: 'CLAUDE.md', content: 'Be terse.', priority: 1 }],
           combined: 'Be terse.',
         }),
+      scaffoldFiles: () => Promise.resolve([]),
       version: () => Promise.resolve('v1'),
     };
     const { runs, workspaces, conversations, runner } = setup(fragmentHarness);
@@ -1805,6 +1807,7 @@ describe('ConversationOperationRunner context compilation', () => {
             files: [{ path: 'CLAUDE.md', content: 'Be terse.', priority: 1 }],
             combined: 'Be terse.',
           }),
+        scaffoldFiles: () => Promise.resolve([]),
         version: () => Promise.resolve('v1'),
       };
       const { runs, conversations, projectVersions, runner } = setup(fragmentHarness);
@@ -1862,6 +1865,7 @@ describe('ConversationOperationRunner context compilation', () => {
           files: [{ path: 'CLAUDE.md', content: 'Be terse.', priority: 1 }],
           combined: 'Be terse.',
         }),
+      scaffoldFiles: () => Promise.resolve([]),
       version: () => Promise.resolve('v1'),
     };
     const { runs, conversations, runner } = setup(fragmentHarness, undefined, {

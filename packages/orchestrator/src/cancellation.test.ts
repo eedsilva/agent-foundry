@@ -554,6 +554,7 @@ function makeHarness(
   };
   const harness: HarnessRepository = {
     select: () => Promise.resolve({ version: '1', files: [], combined: '' }),
+    scaffoldFiles: () => Promise.resolve([]),
     version: () => Promise.resolve('1'),
   };
   const router: ModelRouter = {
