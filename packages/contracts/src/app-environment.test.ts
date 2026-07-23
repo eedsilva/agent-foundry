@@ -82,20 +82,45 @@ describe('migration review schemas', () => {
     );
   });
 
-  it('rejects malformed migration review inputs', () => {
-    expect(() => MigrationApprovalSchema.parse({ migrationChecksum: 'bad' })).toThrow();
+  it('rejects invalid SHA-256 checksums with otherwise-valid inputs', () => {
+    const preview = {
+      migrationPath: 'supabase/migrations/20260723000000_create_widgets.sql',
+      checksum: 'a'.repeat(64),
+      destructiveStatements: ['DROP TABLE widgets'],
+    };
+    const backup = {
+      path: 'supabase/backups/20260723.sql',
+      checksum: 'b'.repeat(64),
+      createdAt: '2026-07-23T12:00:00.000Z',
+    };
+    const approval = { migrationChecksum: 'c'.repeat(64), backup };
+
+    expect(() => MigrationPreviewSchema.parse({ ...preview, checksum: 'g'.repeat(64) })).toThrow();
+    expect(() => MigrationBackupSchema.parse({ ...backup, checksum: 'g'.repeat(64) })).toThrow();
     expect(() =>
-      MigrationPreviewSchema.parse({
-        migrationPath: '',
-        checksum: 'not-a-checksum',
-        destructiveStatements: [''],
-      }),
+      MigrationApprovalSchema.parse({ ...approval, migrationChecksum: 'g'.repeat(64) }),
     ).toThrow();
+  });
+
+  it('rejects extra keys on every migration review schema', () => {
+    const preview = {
+      migrationPath: 'supabase/migrations/20260723000000_create_widgets.sql',
+      checksum: 'a'.repeat(64),
+      destructiveStatements: ['DROP TABLE widgets'],
+    };
+    const backup = {
+      path: 'supabase/backups/20260723.sql',
+      checksum: 'b'.repeat(64),
+      createdAt: '2026-07-23T12:00:00.000Z',
+    };
+
+    expect(() => MigrationPreviewSchema.parse({ ...preview, extra: true })).toThrow();
+    expect(() => MigrationBackupSchema.parse({ ...backup, extra: true })).toThrow();
     expect(() =>
-      MigrationBackupSchema.parse({
-        path: '',
-        checksum: 'not-a-checksum',
-        createdAt: 'not-a-timestamp',
+      MigrationApprovalSchema.parse({
+        migrationChecksum: 'c'.repeat(64),
+        backup,
+        extra: true,
       }),
     ).toThrow();
   });
