@@ -1280,12 +1280,24 @@ export class WorkflowOrchestrator {
       if (orphan) {
         const last = running.at(-1);
         if (last) {
-          await this.stepAttempts.update(
-            transitionStepAttempt(last, 'succeeded', this.clock.now(), {
-              outputArtifacts: [artifactReference(orphan)],
-            }),
-            last.version,
-          );
+          const commit =
+            step.type === 'agent' && step.mutatesWorkspace
+              ? await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`)
+              : null;
+          const succeeded = transitionStepAttempt(last, 'succeeded', this.clock.now(), {
+            ...(commit ? { commit } : {}),
+            outputArtifacts: [artifactReference(orphan)],
+          });
+          const completedAttempt = await this.stepAttempts.update(succeeded, last.version);
+          if (commit && this.versions) {
+            await this.versions.recordFromStep({
+              projectId: project.id,
+              runId,
+              stepRunId: stale.id,
+              attemptId: completedAttempt.id,
+              commit,
+            });
+          }
         }
         for (const attempt of running.slice(0, -1)) {
           await this.failInterrupted(attempt);
@@ -1956,9 +1968,6 @@ export class WorkflowOrchestrator {
         workspaceRef,
       );
       await this.assertExecutionMayContinue(runId, signal);
-      const commit = step.mutatesWorkspace
-        ? await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`)
-        : null;
       const executionRoute: RouteDecision = {
         ...route,
         executed: candidate,
@@ -1975,6 +1984,9 @@ export class WorkflowOrchestrator {
         routeDecision: executionRoute,
         idempotencyKey,
       });
+      const commit = step.mutatesWorkspace
+        ? await this.workspaces.commit(project.id, `agent(${step.role}): ${step.title}`)
+        : null;
       const auditArtifact = await this.persistRunRecord(
         project.id,
         step,

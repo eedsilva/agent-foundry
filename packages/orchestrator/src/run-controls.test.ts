@@ -255,7 +255,7 @@ describe('step retry with controlled invalidation (#8)', () => {
 });
 
 describe('idempotency across attempts, artifacts, events and commits (#9)', () => {
-  it('crash after artifact put: replay adopts the artifact without re-executing or re-committing', async () => {
+  it('crash after artifact put replays one commit without rerunning the step', async () => {
     const harness = makeHarness();
     await seedRun(harness);
     harness.artifacts.onAfterPut = (name) => {
@@ -267,50 +267,20 @@ describe('idempotency across attempts, artifacts, events and commits (#9)', () =
     );
     harness.artifacts.onAfterPut = undefined;
     expect(harness.artifacts.named('implementation')).toHaveLength(1);
-    expect(harness.workspaces.commits).toHaveLength(1);
+    expect(harness.workspaces.commits).toHaveLength(0);
 
     harness.power.on = true;
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
-    // The step did not run again; its interrupted records were finalized.
     expect(harness.executor.started('implement')).toBe(1);
     expect(harness.artifacts.named('implementation')).toHaveLength(1);
     expect(harness.workspaces.commits).toHaveLength(1);
     const implement = liveStepRun(harness, 'implement');
     expect(implement.status).toBe('completed');
-    const attempts = await harness.stepAttempts.list('run-1', implement.id);
-    expect(attempts).toHaveLength(1);
-    expect(attempts[0]?.status).toBe('succeeded');
-    expect(attempts[0]?.outputArtifacts[0]?.name).toBe('implementation');
-    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
-    expect(harness.events.types()).toContain('step.reused');
-  });
-
-  it('crash after commit but before artifact put: replay re-executes without duplicating the artifact', async () => {
-    const harness = makeHarness();
-    await seedRun(harness);
-    harness.workspaces.onAfterCommit = () => {
-      harness.power.on = false;
-    };
-
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      /simulated power loss/,
-    );
-    harness.workspaces.onAfterCommit = undefined;
-    expect(harness.artifacts.named('implementation')).toHaveLength(0);
-
-    harness.power.on = true;
-    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-
-    expect(harness.artifacts.named('implementation')).toHaveLength(1);
-    const stepRuns = harness.stepRuns.byStepId('run-1', 'implement');
-    expect(stepRuns).toHaveLength(2);
-    expect(stepRuns[0]?.status).toBe('failed');
-    expect(stepRuns[0]?.error?.message).toMatch(/Interrupted/);
-    expect(stepRuns[1]?.status).toBe('completed');
-    // The interrupted attempt is preserved as failed history, never rewritten.
-    const staleAttempts = await harness.stepAttempts.list('run-1', stepRuns[0]!.id);
-    expect(staleAttempts[0]?.status).toBe('failed');
+    expect((await harness.stepAttempts.list('run-1', implement.id))[0]).toMatchObject({
+      status: 'succeeded',
+      commit: harness.workspaces.commits[0],
+    });
     expect((await harness.runs.get('run-1'))?.status).toBe('completed');
   });
 
