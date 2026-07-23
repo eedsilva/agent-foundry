@@ -31,6 +31,21 @@ test('scanTrackedFiles flags a pattern-shaped secret in a git-tracked file', asy
   assert.equal(findings[0].file, 'config.ts');
 });
 
+test('scanTrackedFiles excludes test/doc/example paths (deliberate fake-secret fixtures) but still flags real source', async () => {
+  const root = await initGitRepo();
+  await writeFile(join(root, 'config.ts'), 'const key = "sk-abcdefghijklmnopqrstuvwx";');
+  await mkdir(join(root, 'docs'), { recursive: true });
+  await writeFile(join(root, 'docs/example.md'), 'sk-abcdefghijklmnopqrstuvwx');
+  await mkdir(join(root, 'examples'), { recursive: true });
+  await writeFile(join(root, 'examples/fixture.json'), '"sk-abcdefghijklmnopqrstuvwx"');
+  await writeFile(join(root, 'config.test.ts'), 'const key = "sk-abcdefghijklmnopqrstuvwx";');
+  await run('git', ['add', '-A'], { cwd: root });
+
+  const findings = await scanTrackedFiles(root);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, 'config.ts');
+});
+
 test('scanTrackedFiles ignores untracked files', async () => {
   const root = await initGitRepo();
   await writeFile(join(root, 'config.ts'), 'const key = "sk-abcdefghijklmnopqrstuvwx";');

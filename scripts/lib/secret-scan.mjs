@@ -17,11 +17,25 @@ async function loadDomain() {
   return domain;
 }
 
+// ponytail: pattern-only scanning (no known-value list at CI time) is
+// inherently prone to false positives on the fake secret-shaped fixtures
+// this repo's own tests use deliberately (e.g. redaction.test.ts, this
+// task's own secret-scan.test.mjs). A per-string allowlist would avoid
+// excluding whole files, but needs a maintained baseline — out of scope
+// for personal v1. Skip test/doc/example paths instead: source that could
+// actually ship (app code, build output scanned separately by
+// scanDirectoryFiles) is still fully covered. Upgrade path: gitleaks-style
+// baseline file if false positives outside these paths become a problem.
+const EXCLUDED_TRACKED_PATH = /(^|\/)(docs|examples)\/|\.(test|spec)\.(ts|tsx|js|mjs)$/;
+
 /** Every git-tracked file, scanned for known secret shapes (no known-value list — CI doesn't have one). */
 export async function scanTrackedFiles(root, knownSecrets = []) {
   const { scanForSecrets } = await loadDomain();
   const { stdout } = await run('git', ['ls-files'], { cwd: root });
-  const files = stdout.split('\n').filter(Boolean);
+  const files = stdout
+    .split('\n')
+    .filter(Boolean)
+    .filter((file) => !EXCLUDED_TRACKED_PATH.test(file));
   const findings = [];
   for (const file of files) {
     let content;
