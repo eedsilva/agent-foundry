@@ -12,6 +12,12 @@ const execFileAsync = promisify(execFile);
 const PROJECT_ID = 'project-a';
 const FETCH_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 60_000;
+const PNG_1X1 = Uint8Array.from(
+  Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  ),
+);
 
 interface Credentials {
   apiUrl: string;
@@ -47,7 +53,7 @@ describe.runIf(process.env.RUN_SUPABASE_STORAGE_E2E === 'true')(
           credentials = await readCredentials(workdir);
           const userA = await createUser(credentials);
           const userB = await createUser(credentials);
-          const allowedBytes = new TextEncoder().encode(`allowed-${randomUUID()}`);
+          const allowedBytes = PNG_1X1;
           const objectName = `${userA.id}/allowed.png`;
           objectNames.add(objectName);
 
@@ -91,10 +97,13 @@ describe.runIf(process.env.RUN_SUPABASE_STORAGE_E2E === 'true')(
             await requestSignedUploadUrl(credentials, userB.accessToken, objectName),
             'cross-owner signed upload URL',
           );
-          await requireOk(
-            await uploadToSignedUrl(credentials, userA.accessToken, signedUpload, allowedBytes),
-            'upload allowed object through signed URL',
-          ).arrayBuffer();
+          const signedUploadResult = await json(
+            requireOk(
+              await uploadToSignedUrl(credentials, userA.accessToken, signedUpload, allowedBytes),
+              'upload allowed object through signed URL',
+            ),
+          );
+          requireStoredKey(signedUploadResult, `${GENERATED_STORAGE_BUCKET}/${objectName}`);
 
           await expectClientError(
             await signObject(credentials, userA.accessToken, objectName),
@@ -145,7 +154,7 @@ describe.runIf(process.env.RUN_SUPABASE_STORAGE_E2E === 'true')(
           const oversizedObject = `${userA.id}/native-oversized.png`;
           const wrongTypeObject = `${userA.id}/native-wrong-type.txt`;
           const nativeControlObject = `${userA.id}/native-allowed.png`;
-          const nativeControlBytes = new TextEncoder().encode(`native-${randomUUID()}`);
+          const nativeControlBytes = PNG_1X1;
           objectNames.add(nativeControlObject);
           objectNames.add(oversizedObject);
           objectNames.add(wrongTypeObject);
@@ -652,6 +661,12 @@ async function json(response: Response): Promise<unknown> {
     return await response.json();
   } catch {
     throw new Error('Local Supabase returned invalid JSON.');
+  }
+}
+
+function requireStoredKey(value: unknown, expectedKey: string): void {
+  if (!isRecord(value) || typeof value.Key !== 'string' || value.Key !== expectedKey) {
+    throw new Error('Signed Storage upload returned an invalid stored key.');
   }
 }
 
