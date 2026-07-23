@@ -9,9 +9,10 @@
 Generated apps often need a real secret to run — a Stripe key, a third-party API token — but the
 coding agent that writes the app's code runs as an untrusted local CLI subprocess (`BaseCliExecutor`,
 ADR 0001) with no sandboxing yet: `LocalExecutionPlane` (ADR 0023) remains the only agent execution
-plane, and ADR 0028's migration note is explicit that it "does not claim host credential isolation for
+plane, and `DockerSandboxRunner` (ADR 0025) — the eventual isolated replacement — is not yet wired
+into that plane. ADR 0028's migration note is explicit that it "does not claim host credential isolation for
 the still-local agent CLI." Before this change, both the coding agent's subprocess and the generated
-app's dev-server subprocess (`NodePreviewRunner`, ADR 0030) inherited the control plane's full
+app's dev-server subprocess (`NodePreviewRunner`, ADR 0018) inherited the control plane's full
 `process.env` by default — any environment variable the API/worker process itself had (including its
 own credentials — `DATABASE_URL`, `BLOB_SIGNING_SECRET`, provider API keys) was visible to whatever the
 agent's CLI or the generated app's dev server chose to read, log, or exfiltrate. Issue #74 asks for a
