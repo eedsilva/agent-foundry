@@ -958,7 +958,9 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(results.every((result) => result.status === 'fulfilled')).toBe(true);
     expect((await harness.runs.get('run-1'))?.status).toBe('queued');
     expect(harness.enqueued).toHaveLength(1);
-    expect(harness.events.types().filter((type) => type === 'run.approval_decided')).toHaveLength(1);
+    expect(harness.events.types().filter((type) => type === 'run.approval_decided')).toHaveLength(
+      1,
+    );
   });
 
   it('retries an identical decision after an unrelated parked-run version update (#198)', async () => {
@@ -975,7 +977,10 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     };
 
     await expect(
-      harness.service.decideApproval('run-1', entry!.request.id, { action: 'approve', decidedBy: 'ed' }),
+      harness.service.decideApproval('run-1', entry!.request.id, {
+        action: 'approve',
+        decidedBy: 'ed',
+      }),
     ).resolves.toMatchObject({ run: { status: 'queued' }, decision: { action: 'approve' } });
   });
 
@@ -992,7 +997,10 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     };
 
     await expect(
-      harness.service.decideApproval('run-1', entry!.request.id, { action: 'approve', decidedBy: 'ed' }),
+      harness.service.decideApproval('run-1', entry!.request.id, {
+        action: 'approve',
+        decidedBy: 'ed',
+      }),
     ).rejects.toThrow('Version conflict');
   });
 
