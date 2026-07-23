@@ -1,0 +1,26 @@
+{
+  "id": "refactor-formatters",
+  "title": "Remover duplicação em packages/domain/src/formatters.ts",
+  "kind": "refactor",
+  "workflowId": "dogfood-task-v1",
+  "baselineRef": "56568a3",
+  "allowedFiles": ["packages/domain/src/formatters.ts"],
+  "seedFiles": [
+    {
+      "path": "packages/domain/src/formatters.ts",
+      "content": "export function formatBytes(bytes: number): string {\n  const rounded = Math.round(bytes * 100) / 100;\n  return `${rounded} B`;\n}\n\nexport function formatDuration(ms: number): string {\n  const seconds = ms / 1000;\n  const rounded = Math.round(seconds * 100) / 100;\n  return `${rounded} s`;\n}\n"
+    },
+    {
+      "path": "packages/domain/src/formatters.test.ts",
+      "content": "import { describe, expect, it } from 'vitest';\nimport { formatBytes, formatDuration } from './formatters.js';\n\ndescribe('formatBytes', () => {\n  it('rounds to two decimal places and appends the unit', () => {\n    expect(formatBytes(1024.4567)).toBe('1024.46 B');\n  });\n\n  it('formats a whole number without unnecessary decimals', () => {\n    expect(formatBytes(2048)).toBe('2048 B');\n  });\n});\n\ndescribe('formatDuration', () => {\n  it('converts milliseconds to seconds, rounded to two decimal places', () => {\n    expect(formatDuration(1234)).toBe('1.23 s');\n  });\n\n  it('formats a whole number of seconds without unnecessary decimals', () => {\n    expect(formatDuration(5000)).toBe('5 s');\n  });\n});\n"
+    }
+  ],
+  "verifyScript": "vitest run packages/domain/src/formatters.test.ts --pool=threads --maxWorkers=1",
+  "prompt": "# Tarefa: remover duplicação em packages/domain/src/formatters.ts\n\nEste é o monorepo agent-foundry. O arquivo packages/domain/src/formatters.ts já existe no workspace e exporta formatBytes e formatDuration. Ambas as funções repetem a mesma lógica de arredondamento (Math.round(valor * 100) / 100).\n\n## Entregável\n\nRefatore packages/domain/src/formatters.ts extraindo essa lógica duplicada para uma função auxiliar não exportada roundToPrecision(value: number, precision: number): number (arredonda value para precision casas decimais: Math.round(value * 10**precision) / 10**precision). formatBytes e formatDuration devem passar a usar essa função auxiliar, mantendo exatamente o mesmo comportamento observável (as mesmas strings de saída para as mesmas entradas) e a mesma assinatura pública.\n\nUm arquivo de teste já foi semeado no workspace em packages/domain/src/formatters.test.ts — NÃO o modifique. Ele cobre o comportamento público de formatBytes e formatDuration e deve continuar passando sem alterações após a refatoração.\n\n## Arquivos permitidos (allowlist)\n\nSó é permitido criar ou modificar:\n- packages/domain/src/formatters.ts\n\nQualquer alteração fora dessa lista reprova a tarefa, mesmo que os testes passem.\n\n## Verificação\n\nO comando npm run dogfood:verify deve passar antes de finalizar. Ele executa vitest run packages/domain/src/formatters.test.ts --pool=threads --maxWorkers=1 sobre o teste semeado.\n",
+  "expectedSignals": [
+    "extrai a lógica de arredondamento duplicada para um único helper",
+    "preserva o comportamento observável (os testes semeados continuam passando sem alteração)",
+    "não altera a assinatura pública de formatBytes/formatDuration",
+    "passar em verifyScript sozinho não confirma o refactor — um agente que não altera nada também passa; expectedSignals é o sinal humano para este kind"
+  ]
+}

@@ -13,6 +13,7 @@ import {
   type DogfoodRunRecord,
   type DogfoodTask,
   type ExecutionUsage,
+  type ProviderCanaryProvider,
   type RouteDecision,
   type StepAttempt,
   type StepRun,
@@ -35,6 +36,13 @@ export interface RunDogfoodTaskOptions {
   repoRoot: string;
   dataDir?: string;
   executorMode?: 'real' | 'mock';
+  modelOverride?: {
+    modelId: string;
+    provider: ProviderCanaryProvider;
+    model: string;
+    reason: string;
+    estimatedImpact: string;
+  };
 }
 
 export async function runDogfoodTask(
@@ -85,6 +93,18 @@ export async function runDogfoodTask(
     const workspacePath = runtime.workspaces.workspacePath(project.id);
 
     const baseline = await seedWorkspace(workspacePath, task, options.repoRoot);
+
+    if (options.modelOverride) {
+      await runtime.projectService.createModelOverride(runId, {
+        scope: { kind: 'run' },
+        modelId: options.modelOverride.modelId,
+        provider: options.modelOverride.provider,
+        model: options.modelOverride.model,
+        actor: { kind: 'system', id: 'benchmark-runner' },
+        reason: options.modelOverride.reason,
+        estimatedImpact: options.modelOverride.estimatedImpact,
+      });
+    }
 
     await runtime.worker.runOnce();
 
@@ -220,14 +240,22 @@ export async function runDogfoodTask(
   return record;
 }
 
-export async function loadDogfoodTasks(dir: string): Promise<DogfoodTask[]> {
+// Shared by loadDogfoodTasks and benchmark-runner.ts's loadBenchmarkCases: both
+// read a directory of *.json fixtures, parse+validate each against their own
+// schema, and sort by id.
+export async function loadJsonDirectory<T extends { id: string }>(
+  dir: string,
+  schema: { parse(input: unknown): T },
+): Promise<T[]> {
   const entries = (await readdir(dir)).filter((name) => name.endsWith('.json'));
-  const tasks = await Promise.all(
-    entries.map(async (name) =>
-      DogfoodTaskSchema.parse(JSON.parse(await readFile(join(dir, name), 'utf8'))),
-    ),
+  const items = await Promise.all(
+    entries.map(async (name) => schema.parse(JSON.parse(await readFile(join(dir, name), 'utf8')))),
   );
-  return tasks.sort((a, b) => a.id.localeCompare(b.id));
+  return items.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export async function loadDogfoodTasks(dir: string): Promise<DogfoodTask[]> {
+  return loadJsonDirectory(dir, DogfoodTaskSchema);
 }
 
 export function renderDogfoodMarkdown(report: DogfoodReport): string {
@@ -548,7 +576,7 @@ function splitLines(value: string): string[] {
     .filter(Boolean);
 }
 
-function attemptTag(attempt: number): string {
+export function attemptTag(attempt: number): string {
   return String(attempt).padStart(2, '0');
 }
 
