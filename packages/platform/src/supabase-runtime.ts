@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
   AppEnvironmentSchema,
+  FunctionArtifactSchema,
+  FunctionVersionSchema,
   MigrationApprovalSchema,
   MigrationBackupSchema,
   MigrationPreviewSchema,
@@ -332,27 +334,89 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     await rm(environment.workdir, { recursive: true, force: true });
   }
 
-  async deployFunction(_input: {
+  async deployFunction(input: {
     projectId: string;
     functionPath: string;
     artifact: FunctionArtifact;
   }): Promise<FunctionVersion> {
-    throw new Error('deployFunction not yet implemented');
+    const environment = await this.#require(input.projectId);
+    const artifact = FunctionArtifactSchema.parse(input.artifact);
+    if (input.functionPath !== `supabase/functions/${artifact.name}`) {
+      throw new ValidationError('Function source path must match supabase/functions/<name>.');
+    }
+    const sourceDir = await requireContainedDirectory(environment.workdir, input.functionPath);
+    const files = await collectFunctionFiles(sourceDir);
+    if (!files.some((file) => file.relativePath === artifact.entrypoint)) {
+      throw new ValidationError(
+        `Function entrypoint "${artifact.entrypoint}" was not found in source.`,
+      );
+    }
+    const version = FunctionVersionSchema.parse({
+      functionName: artifact.name,
+      versionId: randomUUID(),
+      checksum: functionChecksum(files),
+      artifact,
+      createdAt: this.#now().toISOString(),
+    });
+    await storeFunctionVersion(this.#dataDir, environment.projectId, version, files);
+    await activateFunctionVersion(
+      this.#dataDir,
+      environment.workdir,
+      environment.projectId,
+      version,
+    );
+    await this.#touch(environment);
+    return version;
   }
 
-  async listFunctionVersions(_input: {
+  async listFunctionVersions(input: {
     projectId: string;
     functionName: string;
   }): Promise<FunctionVersion[]> {
-    throw new Error('listFunctionVersions not yet implemented');
+    const environment = await this.#require(input.projectId);
+    return readFunctionVersions(this.#dataDir, environment.projectId, input.functionName);
   }
 
-  async rollbackFunction(_input: {
+  async rollbackFunction(input: {
     projectId: string;
     functionName: string;
     versionId: string;
   }): Promise<FunctionVersion> {
-    throw new Error('rollbackFunction not yet implemented');
+    const environment = await this.#require(input.projectId);
+    const manifestPath = functionVersionManifestPath(
+      this.#dataDir,
+      environment.projectId,
+      input.functionName,
+      input.versionId,
+    );
+    let version: FunctionVersion;
+    try {
+      version = FunctionVersionSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
+    } catch (error) {
+      if (isNotFound(error)) {
+        throw new ValidationError(`Function version "${input.versionId}" was not found.`);
+      }
+      throw error;
+    }
+    const files = await collectFunctionFiles(
+      functionVersionFilesDir(
+        this.#dataDir,
+        environment.projectId,
+        input.functionName,
+        input.versionId,
+      ),
+    );
+    if (functionChecksum(files) !== version.checksum) {
+      throw new ValidationError('Stored function version failed checksum verification.');
+    }
+    await activateFunctionVersion(
+      this.#dataDir,
+      environment.workdir,
+      environment.projectId,
+      version,
+    );
+    await this.#touch(environment);
+    return version;
   }
 
   async invokeFunction(_input: {
@@ -596,6 +660,194 @@ async function containedOutputFile(workdir: string, inputPath: string): Promise<
     if (!isNotFound(error)) throw error;
   }
   return candidate;
+}
+
+async function requireContainedDirectory(workdir: string, inputPath: string): Promise<string> {
+  if (isAbsolute(inputPath)) {
+    throw new ValidationError('Function source must be a relative path.');
+  }
+  const candidate = resolve(workdir, inputPath);
+  if (!isContained(workdir, candidate)) {
+    throw new ValidationError('Function source must remain inside the project environment.');
+  }
+  const [resolvedWorkdir, resolvedCandidate] = await Promise.all([
+    realpath(workdir),
+    realpath(candidate),
+  ]);
+  if (!isContained(resolvedWorkdir, resolvedCandidate)) {
+    throw new ValidationError('Function source must remain inside the project environment.');
+  }
+  return candidate;
+}
+
+interface FunctionFile {
+  relativePath: string;
+  content: Buffer;
+}
+
+async function collectFunctionFiles(root: string): Promise<FunctionFile[]> {
+  const files: FunctionFile[] = [];
+  async function walk(dir: string): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const absolute = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolute);
+      } else if (entry.isFile()) {
+        files.push({ relativePath: relative(root, absolute), content: await readFile(absolute) });
+      }
+    }
+  }
+  await walk(root);
+  if (!files.length) throw new ValidationError('Function source directory contains no files.');
+  return files;
+}
+
+function functionChecksum(files: FunctionFile[]): string {
+  const hash = createHash('sha256');
+  for (const file of [...files].sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
+    hash.update(file.relativePath);
+    hash.update('\0');
+    hash.update(file.content);
+  }
+  return hash.digest('hex');
+}
+
+function functionVersionsDir(dataDir: string, projectId: string, functionName: string): string {
+  return join(dataDir, 'projects', projectId, 'functions', functionName, 'versions');
+}
+
+function functionVersionManifestPath(
+  dataDir: string,
+  projectId: string,
+  functionName: string,
+  versionId: string,
+): string {
+  return join(functionVersionsDir(dataDir, projectId, functionName), `${versionId}.json`);
+}
+
+function functionVersionFilesDir(
+  dataDir: string,
+  projectId: string,
+  functionName: string,
+  versionId: string,
+): string {
+  return join(functionVersionsDir(dataDir, projectId, functionName), versionId);
+}
+
+async function storeFunctionVersion(
+  dataDir: string,
+  projectId: string,
+  version: FunctionVersion,
+  files: FunctionFile[],
+): Promise<void> {
+  const versionDir = functionVersionFilesDir(
+    dataDir,
+    projectId,
+    version.functionName,
+    version.versionId,
+  );
+  await mkdir(versionDir, { recursive: true });
+  await Promise.all(
+    files.map(async (file) => {
+      const target = join(versionDir, file.relativePath);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, file.content);
+    }),
+  );
+  await atomicWrite(
+    functionVersionManifestPath(dataDir, projectId, version.functionName, version.versionId),
+    `${JSON.stringify(version, null, 2)}\n`,
+  );
+}
+
+async function readFunctionVersions(
+  dataDir: string,
+  projectId: string,
+  functionName: string,
+): Promise<FunctionVersion[]> {
+  const dir = functionVersionsDir(dataDir, projectId, functionName);
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (isNotFound(error)) return [];
+    throw error;
+  }
+  const manifests = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+    .map((entry) => join(dir, entry.name));
+  const versions = await Promise.all(
+    manifests.map(async (path) => {
+      const [version, stats] = await Promise.all([
+        readFile(path, 'utf8').then((raw) => FunctionVersionSchema.parse(JSON.parse(raw))),
+        stat(path),
+      ]);
+      return { version, mtimeMs: stats.mtimeMs };
+    }),
+  );
+  // ponytail: createdAt has ms resolution and a frozen clock can tie; mtimeMs
+  // breaks the tie deterministically. Add a write-sequence counter if two
+  // real deploys can land in the same millisecond in production.
+  return versions
+    .sort((a, b) => a.version.createdAt.localeCompare(b.version.createdAt) || a.mtimeMs - b.mtimeMs)
+    .map((entry) => entry.version);
+}
+
+function liveFunctionDir(workdir: string, functionName: string): string {
+  return join(workdir, 'supabase', 'functions', functionName);
+}
+
+async function activateFunctionVersion(
+  dataDir: string,
+  workdir: string,
+  projectId: string,
+  version: FunctionVersion,
+): Promise<void> {
+  const versionDir = functionVersionFilesDir(
+    dataDir,
+    projectId,
+    version.functionName,
+    version.versionId,
+  );
+  const liveDir = liveFunctionDir(workdir, version.functionName);
+  await rm(liveDir, { recursive: true, force: true });
+  await mkdir(liveDir, { recursive: true });
+  const files = await collectFunctionFiles(versionDir);
+  await Promise.all(
+    files.map(async (file) => {
+      const target = join(liveDir, file.relativePath);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, file.content);
+    }),
+  );
+  await writeFunctionConfigSection(workdir, version.functionName, version.artifact.verifyJwt);
+}
+
+async function writeFunctionConfigSection(
+  workdir: string,
+  functionName: string,
+  verifyJwt: boolean,
+): Promise<void> {
+  const path = join(workdir, 'supabase', 'config.toml');
+  const config = await readFile(path, 'utf8');
+  const heading = `[functions.${functionName}]`;
+  const lines = config.split('\n');
+  const start = lines.findIndex((line) => line.trim() === heading);
+  if (start === -1) {
+    const trimmed = config.endsWith('\n') ? config : `${config}\n`;
+    await atomicWrite(path, `${trimmed}\n${heading}\nverify_jwt = ${verifyJwt}\n`);
+    return;
+  }
+  let end = start + 1;
+  while (end < lines.length && !/^\[.*\]$/.test(lines[end]!.trim())) end += 1;
+  const updated = [
+    ...lines.slice(0, start),
+    heading,
+    `verify_jwt = ${verifyJwt}`,
+    ...lines.slice(end),
+  ].join('\n');
+  await atomicWrite(path, updated);
 }
 
 function isContained(parent: string, candidate: string): boolean {
