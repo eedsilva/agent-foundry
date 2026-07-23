@@ -46,5 +46,11 @@ describe('AppEnvironmentSchema', () => {
         endpoints: { api: 'http://127.0.0.1:54321?jwt=must-not-persist' },
       }),
     ).toThrow();
+    expect(() =>
+      AppEnvironmentSchema.parse({
+        ...ENVIRONMENT,
+        endpoints: { api: 'http://127.0.0.1:54321#access_token=must-not-persist' },
+      }),
+    ).toThrow();
   });
 });

@@ -7,8 +7,8 @@ const CredentialFreeEndpointSchema = z
   .refine((value) => {
     if (!URL.canParse(value)) return false;
     const url = new URL(value);
-    return !url.username && !url.password && !url.search;
-  }, 'Endpoint URLs must not include credentials or query strings');
+    return !url.username && !url.password && !url.search && !url.hash;
+  }, 'Endpoint URLs must not include credentials, query strings, or fragments');
 
 export const EnvironmentLifecycleOperationSchema = z.enum([
   'initialize',
