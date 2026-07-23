@@ -12,6 +12,7 @@ const step: AgentStep = {
   title: 'Implement',
   instructions: 'Implement the requested change.',
   inputArtifacts: [],
+  secretRefs: [],
   outputArtifact: 'implementation',
   mutatesWorkspace: true,
   maxAttempts: 1,
