@@ -33,6 +33,32 @@ export type DestructiveEnvironmentConfirmation = z.infer<
   typeof DestructiveEnvironmentConfirmationSchema
 >;
 
+export const MigrationPreviewSchema = z
+  .object({
+    migrationPath: z.string().min(1),
+    checksum: z.string().regex(/^[a-f0-9]{64}$/),
+    destructiveStatements: z.array(z.string().min(1)),
+  })
+  .strict();
+export type MigrationPreview = z.infer<typeof MigrationPreviewSchema>;
+
+export const MigrationBackupSchema = z
+  .object({
+    path: z.string().min(1),
+    checksum: z.string().regex(/^[a-f0-9]{64}$/),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+export type MigrationBackup = z.infer<typeof MigrationBackupSchema>;
+
+export const MigrationApprovalSchema = z
+  .object({
+    migrationChecksum: z.string().regex(/^[a-f0-9]{64}$/),
+    backup: MigrationBackupSchema,
+  })
+  .strict();
+export type MigrationApproval = z.infer<typeof MigrationApprovalSchema>;
+
 export const AppEnvironmentSchema = z
   .object({
     projectId: PathSegmentSchema,

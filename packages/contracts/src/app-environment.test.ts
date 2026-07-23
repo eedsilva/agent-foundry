@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { AppEnvironmentSchema } from './index.js';
+import {
+  AppEnvironmentSchema,
+  MigrationApprovalSchema,
+  MigrationBackupSchema,
+  MigrationPreviewSchema,
+} from './index.js';
 
 const ENVIRONMENT = {
   projectId: 'project-1',
@@ -50,6 +55,47 @@ describe('AppEnvironmentSchema', () => {
       AppEnvironmentSchema.parse({
         ...ENVIRONMENT,
         endpoints: { api: 'http://127.0.0.1:54321#access_token=must-not-persist' },
+      }),
+    ).toThrow();
+  });
+});
+
+describe('migration review schemas', () => {
+  it('accepts a preview, backup, and approval with SHA-256 checksums', () => {
+    const migrationChecksum = 'a'.repeat(64);
+    const backup = {
+      path: 'supabase/backups/20260723.sql',
+      checksum: 'b'.repeat(64),
+      createdAt: '2026-07-23T12:00:00.000Z',
+    };
+
+    expect(
+      MigrationPreviewSchema.parse({
+        migrationPath: 'supabase/migrations/20260723000000_create_widgets.sql',
+        checksum: migrationChecksum,
+        destructiveStatements: ['DROP TABLE widgets'],
+      }),
+    ).toEqual(expect.objectContaining({ checksum: migrationChecksum }));
+    expect(MigrationBackupSchema.parse(backup)).toEqual(backup);
+    expect(MigrationApprovalSchema.parse({ migrationChecksum, backup })).toEqual(
+      expect.objectContaining({ migrationChecksum }),
+    );
+  });
+
+  it('rejects malformed migration review inputs', () => {
+    expect(() => MigrationApprovalSchema.parse({ migrationChecksum: 'bad' })).toThrow();
+    expect(() =>
+      MigrationPreviewSchema.parse({
+        migrationPath: '',
+        checksum: 'not-a-checksum',
+        destructiveStatements: [''],
+      }),
+    ).toThrow();
+    expect(() =>
+      MigrationBackupSchema.parse({
+        path: '',
+        checksum: 'not-a-checksum',
+        createdAt: 'not-a-timestamp',
       }),
     ).toThrow();
   });
