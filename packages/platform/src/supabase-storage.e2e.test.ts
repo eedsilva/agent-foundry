@@ -30,11 +30,6 @@ interface User {
   accessToken: string;
 }
 
-interface SignedUpload {
-  url: string;
-  token: string;
-}
-
 describe.runIf(process.env.RUN_SUPABASE_STORAGE_E2E === 'true')(
   'generated Supabase Storage',
   () => {
@@ -457,7 +452,7 @@ async function createSignedUploadUrl(
   credentials: Credentials,
   token: string,
   objectName: string,
-): Promise<SignedUpload> {
+): Promise<string> {
   const response = requireOk(
     await requestSignedUploadUrl(credentials, token, objectName),
     'create signed upload URL',
@@ -468,9 +463,8 @@ async function createSignedUploadUrl(
   }
   try {
     const url = new URL(`${credentials.apiUrl}/storage/v1${payload.url}`);
-    const signedToken = url.searchParams.get('token');
-    if (!signedToken) throw new Error();
-    return { url: url.toString(), token: signedToken };
+    if (!url.searchParams.has('token')) throw new Error();
+    return url.toString();
   } catch {
     throw new Error('Storage returned an invalid signed upload response.');
   }
@@ -479,13 +473,11 @@ async function createSignedUploadUrl(
 async function uploadToSignedUrl(
   credentials: Credentials,
   token: string,
-  signedUpload: SignedUpload,
+  signedUploadUrl: string,
   bytes: Uint8Array<ArrayBuffer>,
 ): Promise<Response> {
   try {
-    const url = new URL(signedUpload.url);
-    url.searchParams.set('token', signedUpload.token);
-    return await boundedFetch(url, {
+    return await boundedFetch(signedUploadUrl, {
       method: 'PUT',
       headers: {
         ...authHeaders(credentials.anonKey, token),
