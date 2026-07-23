@@ -727,9 +727,7 @@ describe('ScoreBasedModelRouter', () => {
 
   it('gives fallbacks their own confidence, distinct from the selected model', async () => {
     const metrics = new MemoryMetrics(
-      new Map([
-        ['seasoned:implementation:developer', metricWithAttempts('seasoned', 200, 0.9)],
-      ]),
+      new Map([['seasoned:implementation:developer', metricWithAttempts('seasoned', 200, 0.9)]]),
     );
     const router = new ScoreBasedModelRouter(
       [

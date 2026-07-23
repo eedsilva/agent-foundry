@@ -27,7 +27,11 @@ export function buildCalibrationReport(metrics: ModelMetric[]): CalibrationRepor
     const weight = metric.qualityEvaluations;
 
     const index = bucketIndex(predicted);
-    const bucket = buckets.get(index) ?? { weightSum: 0, predictedWeighted: 0, observedWeighted: 0 };
+    const bucket = buckets.get(index) ?? {
+      weightSum: 0,
+      predictedWeighted: 0,
+      observedWeighted: 0,
+    };
     bucket.weightSum += weight;
     bucket.predictedWeighted += predicted * weight;
     bucket.observedWeighted += observed * weight;
