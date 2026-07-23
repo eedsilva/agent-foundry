@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -236,6 +236,25 @@ describe('FileJobQueue lease semantics', () => {
     expect(reclaimed).not.toBeNull();
     expect(reclaimed?.lease?.workerId).toBe('worker-b');
     expect(reclaimed?.lease?.fencingToken).toBe(2);
+  });
+
+  it('waits one lease interval before recovering a lease-less processing claim', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    const processingPath = join(dataDir, 'queue', 'processing', 'job-1.worker-a.json');
+    await mkdir(join(dataDir, 'queue', 'processing'), { recursive: true });
+    await atomicWriteJson(processingPath, baseJob());
+    await utimes(processingPath, clock.now(), clock.now());
+
+    expect(await queue.reapExpired()).toEqual([]);
+
+    clock.advanceMs(60_001);
+    expect(await queue.reapExpired()).toMatchObject([{ id: 'job-1', lease: undefined }]);
+    expect(await queue.claim('worker-b')).toMatchObject({
+      id: 'job-1',
+      lease: { fencingToken: 1 },
+    });
   });
 
   it("recovers a dead worker's expired lease and fences out the stale claimant", async () => {
