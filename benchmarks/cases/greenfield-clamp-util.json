@@ -1,0 +1,21 @@
+{
+  "id": "greenfield-clamp-util",
+  "title": "Utilitário clamp em packages/domain",
+  "kind": "greenfield",
+  "workflowId": "dogfood-task-v1",
+  "baselineRef": "56568a3",
+  "allowedFiles": ["packages/domain/src/clamp.ts", "packages/domain/src/index.ts"],
+  "seedFiles": [
+    {
+      "path": "packages/domain/src/clamp.test.ts",
+      "content": "import { describe, expect, it } from 'vitest';\nimport { clamp } from './clamp.js';\n\ndescribe('clamp', () => {\n  it('returns the value unchanged when inside the range', () => {\n    expect(clamp(5, 0, 10)).toBe(5);\n  });\n\n  it('returns min when the value is below the range', () => {\n    expect(clamp(-3, 0, 10)).toBe(0);\n  });\n\n  it('returns max when the value is above the range', () => {\n    expect(clamp(42, 0, 10)).toBe(10);\n  });\n\n  it('throws when min is greater than max', () => {\n    expect(() => clamp(5, 10, 0)).toThrow();\n  });\n});\n"
+    }
+  ],
+  "verifyScript": "vitest run packages/domain/src/clamp.test.ts --pool=threads --maxWorkers=1",
+  "prompt": "# Tarefa: utilitário clamp em packages/domain\n\nEste é o monorepo agent-foundry (TypeScript, npm workspaces, Node >=20). O pacote packages/domain/src contém tipos e lógica de domínio puros, sem I/O. packages/domain/src/index.ts reexporta cada módulo com export * from './arquivo.js'.\n\n## Entregável\n\nCrie o arquivo NOVO packages/domain/src/clamp.ts, exportando:\n\n- clamp(value: number, min: number, max: number): number — retorna value se estiver dentro do intervalo [min, max]; retorna min se value for menor que min; retorna max se value for maior que max. Se min for maior que max, lance um Error.\n\nExporte o novo módulo a partir de packages/domain/src/index.ts, seguindo o padrão já usado nesse arquivo (export * from './clamp.js';).\n\nUm arquivo de teste já foi semeado no workspace em packages/domain/src/clamp.test.ts — NÃO o modifique. Ele define o contrato exato esperado.\n\n## Arquivos permitidos (allowlist)\n\nSó é permitido criar ou modificar:\n- packages/domain/src/clamp.ts\n- packages/domain/src/index.ts\n\nQualquer alteração fora dessa lista reprova a tarefa, mesmo que os testes passem.\n\n## Verificação\n\nO comando npm run dogfood:verify deve passar antes de finalizar. Ele executa vitest run packages/domain/src/clamp.test.ts --pool=threads --maxWorkers=1 sobre o teste semeado.\n",
+  "expectedSignals": [
+    "cria clamp.ts do zero, sem depender de código pré-existente",
+    "exporta clamp a partir de index.ts",
+    "não modifica nenhum arquivo fora da allowlist"
+  ]
+}

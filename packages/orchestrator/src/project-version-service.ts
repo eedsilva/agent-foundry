@@ -1,4 +1,8 @@
-import type { ArtifactReference, ProjectVersion } from '@agent-foundry/contracts';
+import {
+  EMPTY_TREE_HASH,
+  type ArtifactReference,
+  type ProjectVersion,
+} from '@agent-foundry/contracts';
 import {
   NotFoundError,
   type ArtifactStore,
@@ -54,9 +58,12 @@ export class ProjectVersionService {
     fromVersionId: string,
     toVersionId: string,
   ): Promise<{ diff: string }> {
-    const from = await this.requireVersion(projectId, fromVersionId);
+    const fromCommit =
+      fromVersionId === EMPTY_TREE_HASH
+        ? EMPTY_TREE_HASH
+        : (await this.requireVersion(projectId, fromVersionId)).commit;
     const to = await this.requireVersion(projectId, toVersionId);
-    return { diff: await this.workspaces.diff(projectId, from.commit, to.commit) };
+    return { diff: await this.workspaces.diff(projectId, fromCommit, to.commit) };
   }
 
   /**

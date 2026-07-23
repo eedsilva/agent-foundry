@@ -1,0 +1,25 @@
+{
+  "id": "bug-version-compare",
+  "title": "Bug de comparação de versões semânticas",
+  "kind": "bug",
+  "workflowId": "dogfood-task-v1",
+  "baselineRef": "56568a3",
+  "allowedFiles": ["packages/domain/src/version-compare.ts"],
+  "seedFiles": [
+    {
+      "path": "packages/domain/src/version-compare.ts",
+      "content": "export function compareVersions(a: string, b: string): number {\n  const majorA = Number(a.split('.')[0]);\n  const majorB = Number(b.split('.')[0]);\n  if (majorA !== majorB) return majorA - majorB;\n  return 0;\n}\n"
+    },
+    {
+      "path": "packages/domain/src/version-compare.test.ts",
+      "content": "import { describe, expect, it } from 'vitest';\nimport { compareVersions } from './version-compare.js';\n\ndescribe('compareVersions', () => {\n  it('returns 0 for identical versions', () => {\n    expect(compareVersions('1.2.3', '1.2.3')).toBe(0);\n  });\n\n  it('returns a negative number when the first major version is lower', () => {\n    expect(compareVersions('1.0.0', '2.0.0')).toBeLessThan(0);\n  });\n\n  it('returns a positive number when the first major version is higher', () => {\n    expect(compareVersions('3.0.0', '1.0.0')).toBeGreaterThan(0);\n  });\n\n  it('compares minor versions when major versions are equal', () => {\n    expect(compareVersions('1.1.0', '1.2.0')).toBeLessThan(0);\n    expect(compareVersions('1.5.0', '1.2.0')).toBeGreaterThan(0);\n  });\n\n  it('compares patch versions when major and minor versions are equal', () => {\n    expect(compareVersions('1.2.1', '1.2.9')).toBeLessThan(0);\n    expect(compareVersions('1.2.9', '1.2.1')).toBeGreaterThan(0);\n  });\n});\n"
+    }
+  ],
+  "verifyScript": "vitest run packages/domain/src/version-compare.test.ts --pool=threads --maxWorkers=1",
+  "prompt": "# Tarefa: corrigir bug de comparação de versões semânticas\n\nEste é o monorepo agent-foundry. O arquivo packages/domain/src/version-compare.ts já existe no workspace com uma implementação incompleta de compareVersions(a: string, b: string): number — ela só compara o segmento major de cada versão e retorna 0 sempre que os majors são iguais, ignorando minor e patch. Isso é o bug.\n\n## Entregável\n\nCorrija packages/domain/src/version-compare.ts para que compareVersions compare corretamente os três segmentos (major.minor.patch), nessa ordem de prioridade: se major difere, retorna majorA - majorB; senão, se minor difere, retorna minorA - minorB; senão, retorna patchA - patchB (0 quando as três partes são iguais). Mantenha a assinatura exata da função.\n\nUm arquivo de teste já foi semeado no workspace em packages/domain/src/version-compare.test.ts — NÃO o modifique. Ele expõe o bug (os dois últimos casos de teste falham com a implementação atual) e define o contrato exato esperado após a correção.\n\n## Arquivos permitidos (allowlist)\n\nSó é permitido criar ou modificar:\n- packages/domain/src/version-compare.ts\n\nQualquer alteração fora dessa lista reprova a tarefa, mesmo que os testes passem.\n\n## Verificação\n\nO comando npm run dogfood:verify deve passar antes de finalizar. Ele executa vitest run packages/domain/src/version-compare.test.ts --pool=threads --maxWorkers=1 sobre o teste semeado.\n",
+  "expectedSignals": [
+    "identifica que o bug está na comparação de minor/patch, não apenas no major",
+    "corrige compareVersions sem alterar sua assinatura",
+    "não modifica version-compare.test.ts"
+  ]
+}
