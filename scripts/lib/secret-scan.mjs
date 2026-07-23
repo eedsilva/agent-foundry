@@ -26,7 +26,7 @@ async function loadDomain() {
 // actually ship (app code, build output scanned separately by
 // scanDirectoryFiles) is still fully covered. Upgrade path: gitleaks-style
 // baseline file if false positives outside these paths become a problem.
-const EXCLUDED_TRACKED_PATH = /^(docs|examples)\/|\.(test|spec)\.(ts|tsx|js|mjs)$/;
+const EXCLUDED_TRACKED_PATH = /(?:^(docs|examples)\/|\.(test|spec)\.(ts|tsx|js|mjs)$)/;
 
 /** Every git-tracked file, scanned for known secret shapes (no known-value list — CI doesn't have one). */
 export async function scanTrackedFiles(root, knownSecrets = []) {
