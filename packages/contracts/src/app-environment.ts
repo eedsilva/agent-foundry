@@ -20,8 +20,6 @@ export const EnvironmentLifecycleOperationSchema = z.enum([
   'health',
   'reset',
   'cleanup',
-  'deploy-function',
-  'rollback-function',
   'invoke-function',
 ]);
 export type EnvironmentLifecycleOperation = z.infer<typeof EnvironmentLifecycleOperationSchema>;

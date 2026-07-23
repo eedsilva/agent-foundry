@@ -32,6 +32,7 @@ import {
 
 const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
+const NUL = Buffer.from('\0');
 const PORT_BASE = 20_000;
 const PORT_BLOCK_SIZE = 8;
 const HOST_PORT_FIELDS = [
@@ -85,7 +86,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     const existing = await this.#read(input.projectId);
     if (existing) return existing;
 
-    const projectId = safeProjectId(input.projectId);
+    const projectId = parsePathSegment('project ID', input.projectId);
     const { workdir, composeProjectName, network, volumes } = projectResources(
       this.#dataDir,
       projectId,
@@ -367,6 +368,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       environment.workdir,
       environment.projectId,
       version,
+      files,
     );
     await this.#touch(environment);
     return version;
@@ -415,6 +417,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       environment.workdir,
       environment.projectId,
       version,
+      files,
     );
     await this.#touch(environment);
     return version;
@@ -497,7 +500,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   async #read(projectId: string): Promise<AppEnvironment | null> {
-    const safeId = safeProjectId(projectId);
+    const safeId = parsePathSegment('project ID', projectId);
     const path = metadataPath(this.#dataDir, safeId);
     try {
       const environment = AppEnvironmentSchema.parse(JSON.parse(await readFile(path, 'utf8')));
@@ -557,12 +560,6 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       release();
     }
   }
-}
-
-function safeProjectId(projectId: string): string {
-  const result = PathSegmentSchema.safeParse(projectId);
-  if (!result.success) throw new ValidationError(`Invalid project ID: ${result.error.message}`);
-  return result.data;
 }
 
 function parsePathSegment(label: string, value: string): string {
@@ -692,22 +689,30 @@ async function migrationPreviews(workdir: string): Promise<MigrationPreview[]> {
   return Promise.all(paths.map((path) => migrationPreview(workdir, path)));
 }
 
-async function requireContainedFile(workdir: string, inputPath: string): Promise<string> {
+async function requireContainedPath(
+  workdir: string,
+  inputPath: string,
+  label: string,
+): Promise<string> {
   if (isAbsolute(inputPath)) {
-    throw new ValidationError('Environment file must be a relative path.');
+    throw new ValidationError(`${label} must be a relative path.`);
   }
   const candidate = resolve(workdir, inputPath);
   if (!isContained(workdir, candidate)) {
-    throw new ValidationError('Environment file must remain inside the project environment.');
+    throw new ValidationError(`${label} must remain inside the project environment.`);
   }
   const [resolvedWorkdir, resolvedCandidate] = await Promise.all([
     realpath(workdir),
     realpath(candidate),
   ]);
   if (!isContained(resolvedWorkdir, resolvedCandidate)) {
-    throw new ValidationError('Environment file must remain inside the project environment.');
+    throw new ValidationError(`${label} must remain inside the project environment.`);
   }
   return candidate;
+}
+
+async function requireContainedFile(workdir: string, inputPath: string): Promise<string> {
+  return requireContainedPath(workdir, inputPath, 'Environment file');
 }
 
 async function containedOutputFile(workdir: string, inputPath: string): Promise<string> {
@@ -737,21 +742,7 @@ async function containedOutputFile(workdir: string, inputPath: string): Promise<
 }
 
 async function requireContainedDirectory(workdir: string, inputPath: string): Promise<string> {
-  if (isAbsolute(inputPath)) {
-    throw new ValidationError('Function source must be a relative path.');
-  }
-  const candidate = resolve(workdir, inputPath);
-  if (!isContained(workdir, candidate)) {
-    throw new ValidationError('Function source must remain inside the project environment.');
-  }
-  const [resolvedWorkdir, resolvedCandidate] = await Promise.all([
-    realpath(workdir),
-    realpath(candidate),
-  ]);
-  if (!isContained(resolvedWorkdir, resolvedCandidate)) {
-    throw new ValidationError('Function source must remain inside the project environment.');
-  }
-  return candidate;
+  return requireContainedPath(workdir, inputPath, 'Function source');
 }
 
 interface FunctionFile {
@@ -778,13 +769,9 @@ async function collectFunctionFiles(root: string): Promise<FunctionFile[]> {
 }
 
 function functionChecksum(files: FunctionFile[]): string {
-  const hash = createHash('sha256');
-  for (const file of [...files].sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
-    hash.update(file.relativePath);
-    hash.update('\0');
-    hash.update(file.content);
-  }
-  return hash.digest('hex');
+  const sorted = [...files].sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  const parts = sorted.flatMap((file) => [Buffer.from(file.relativePath), NUL, file.content]);
+  return sha256(Buffer.concat(parts));
 }
 
 function functionVersionsDir(dataDir: string, projectId: string, functionName: string): string {
@@ -885,17 +872,11 @@ async function activateFunctionVersion(
   workdir: string,
   projectId: string,
   version: FunctionVersion,
+  files: FunctionFile[],
 ): Promise<void> {
-  const versionDir = functionVersionFilesDir(
-    dataDir,
-    projectId,
-    version.functionName,
-    version.versionId,
-  );
   const liveDir = liveFunctionDir(workdir, version.functionName);
   await rm(liveDir, { recursive: true, force: true });
   await mkdir(liveDir, { recursive: true });
-  const files = await collectFunctionFiles(versionDir);
   await Promise.all(
     files.map(async (file) => {
       const target = join(liveDir, file.relativePath);
@@ -1060,8 +1041,8 @@ function backupManifestPath(dataDir: string, projectId: string, manifestId: stri
   return join(
     dataDir,
     'migration-backups',
-    safeProjectId(projectId),
-    `${safeProjectId(manifestId)}.json`,
+    parsePathSegment('project ID', projectId),
+    `${parsePathSegment('project ID', manifestId)}.json`,
   );
 }
 
