@@ -66,7 +66,10 @@ describe('migration review schemas', () => {
     const backup = {
       path: 'supabase/backups/20260723.sql',
       checksum: 'b'.repeat(64),
+      schemaChecksum: 'c'.repeat(64),
+      dataChecksum: 'd'.repeat(64),
       createdAt: '2026-07-23T12:00:00.000Z',
+      manifestId: 'backup-1',
     };
 
     expect(
@@ -77,9 +80,13 @@ describe('migration review schemas', () => {
       }),
     ).toEqual(expect.objectContaining({ checksum: migrationChecksum }));
     expect(MigrationBackupSchema.parse(backup)).toEqual(backup);
-    expect(MigrationApprovalSchema.parse({ migrationChecksum, backup })).toEqual(
-      expect.objectContaining({ migrationChecksum }),
-    );
+    expect(
+      MigrationApprovalSchema.parse({
+        migrationChecksum,
+        migrationChecksums: [migrationChecksum, 'e'.repeat(64)],
+        backup,
+      }),
+    ).toEqual(expect.objectContaining({ migrationChecksum }));
   });
 
   it('rejects invalid SHA-256 checksums with otherwise-valid inputs', () => {
@@ -91,14 +98,23 @@ describe('migration review schemas', () => {
     const backup = {
       path: 'supabase/backups/20260723.sql',
       checksum: 'b'.repeat(64),
+      schemaChecksum: 'c'.repeat(64),
+      dataChecksum: 'd'.repeat(64),
       createdAt: '2026-07-23T12:00:00.000Z',
+      manifestId: 'backup-1',
     };
     const approval = { migrationChecksum: 'c'.repeat(64), backup };
 
     expect(() => MigrationPreviewSchema.parse({ ...preview, checksum: 'g'.repeat(64) })).toThrow();
     expect(() => MigrationBackupSchema.parse({ ...backup, checksum: 'g'.repeat(64) })).toThrow();
     expect(() =>
+      MigrationBackupSchema.parse({ ...backup, schemaChecksum: 'g'.repeat(64) }),
+    ).toThrow();
+    expect(() =>
       MigrationApprovalSchema.parse({ ...approval, migrationChecksum: 'g'.repeat(64) }),
+    ).toThrow();
+    expect(() =>
+      MigrationApprovalSchema.parse({ ...approval, migrationChecksums: ['g'.repeat(64)] }),
     ).toThrow();
   });
 
@@ -111,7 +127,10 @@ describe('migration review schemas', () => {
     const backup = {
       path: 'supabase/backups/20260723.sql',
       checksum: 'b'.repeat(64),
+      schemaChecksum: 'c'.repeat(64),
+      dataChecksum: 'd'.repeat(64),
       createdAt: '2026-07-23T12:00:00.000Z',
+      manifestId: 'backup-1',
     };
 
     expect(() => MigrationPreviewSchema.parse({ ...preview, extra: true })).toThrow();
