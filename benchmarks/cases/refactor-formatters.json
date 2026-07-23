@@ -20,6 +20,7 @@
   "expectedSignals": [
     "extrai a lógica de arredondamento duplicada para um único helper",
     "preserva o comportamento observável (os testes semeados continuam passando sem alteração)",
-    "não altera a assinatura pública de formatBytes/formatDuration"
+    "não altera a assinatura pública de formatBytes/formatDuration",
+    "passar em verifyScript sozinho não confirma o refactor — um agente que não altera nada também passa; expectedSignals é o sinal humano para este kind"
   ]
 }

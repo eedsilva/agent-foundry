@@ -1,9 +1,14 @@
-import { readdir, rm, mkdtemp } from 'node:fs/promises';
+import { readdir, readFile, rm, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { BenchmarkCaseSchema, BENCHMARK_CASE_KINDS } from '@agent-foundry/contracts';
+import {
+  BenchmarkCaseSchema,
+  BenchmarkReportSchema,
+  BenchmarkRunRecordSchema,
+  BENCHMARK_CASE_KINDS,
+} from '@agent-foundry/contracts';
 import { freezeBenchmarkReport, loadBenchmarkCases, runBenchmarkCase } from './benchmark-runner.js';
 
 const repoRoot = resolve(import.meta.dirname, '../../..');
@@ -171,4 +176,49 @@ describe('freezeBenchmarkReport', () => {
       freezeBenchmarkReport([record], { baselinesDir, baselineRef: '56568a3' }),
     ).rejects.toThrow(/every case kind/);
   }, 60_000);
+
+  // This is the exact seam that broke: runBenchmarkCase must persist the
+  // *reshaped* BenchmarkRunRecord (caseId/caseKind/modelId, not
+  // taskId/issueRef/humanEdit) at a location scripts/benchmark.ts's
+  // loadRecords() actually reads — not runDogfoodTask's own internal
+  // dogfood/ subfolder, which holds DogfoodRunRecord-shaped files that
+  // BenchmarkRunRecordSchema.strict() rejects. Round-trip through disk the
+  // same way the CLI does: run every real corpus case, re-read the written
+  // JSON files off disk, re-parse them as BenchmarkRunRecord, and only then
+  // freeze.
+  it('round-trips the real corpus through disk exactly as scripts/benchmark.ts reads it back', async () => {
+    const cases = await loadBenchmarkCases(casesDir);
+    const dataDir = await tempDir('benchmark-roundtrip-data-');
+
+    for (const benchmarkCase of cases) {
+      await runBenchmarkCase(benchmarkCase, MODEL, {
+        executorMode: 'mock',
+        repoRoot,
+        dataDir,
+      });
+    }
+
+    // Exactly scripts/benchmark.ts's loadRecords(): readdir, filter .json,
+    // JSON.parse + BenchmarkRunRecordSchema.parse each — reading the
+    // in-memory records back would not exercise the disk round-trip that
+    // broke.
+    const entries = (await readdir(dataDir)).filter((name) => name.endsWith('.json'));
+    expect(entries.length).toBeGreaterThanOrEqual(cases.length);
+    const records = await Promise.all(
+      entries.map(async (name) =>
+        BenchmarkRunRecordSchema.parse(JSON.parse(await readFile(join(dataDir, name), 'utf8'))),
+      ),
+    );
+
+    const baselinesDir = await tempDir('benchmark-roundtrip-baselines-');
+    await expect(
+      freezeBenchmarkReport(records, { baselinesDir, baselineRef: '56568a3' }),
+    ).resolves.toBeUndefined();
+
+    const jsonPath = join(baselinesDir, 'v0.9-benchmark.json');
+    const mdPath = join(baselinesDir, 'v0.9-benchmark.md');
+    const parsedReport = BenchmarkReportSchema.parse(JSON.parse(await readFile(jsonPath, 'utf8')));
+    expect(parsedReport.runs).toHaveLength(records.length);
+    await expect(readFile(mdPath, 'utf8')).resolves.toContain('# v0.9 benchmark baseline');
+  }, 300_000);
 });

@@ -1,12 +1,13 @@
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { atomicWriteJson, ensureDir } from '@agent-foundry/persistence';
 import {
+  BENCHMARK_CASE_KINDS,
   BenchmarkCaseSchema,
   BenchmarkReportSchema,
   BenchmarkRunRecordSchema,
   DogfoodTaskSchema,
   type BenchmarkCase,
-  type BenchmarkCaseKind,
   type BenchmarkReport,
   type BenchmarkRunRecord,
   type ProviderCanaryProvider,
@@ -15,14 +16,7 @@ import { markdownCell, publishBaselinePair } from './baseline-publish.js';
 import { runDogfoodTask, type RunDogfoodTaskOptions } from './dogfood.js';
 
 const BASELINE_STEM = 'v0.9-benchmark';
-const ALL_KINDS: readonly BenchmarkCaseKind[] = [
-  'greenfield',
-  'existing-repo',
-  'bug',
-  'refactor',
-  'review',
-  'security-sensitive',
-];
+const FOUNDRY_ROOT = resolve(import.meta.dirname, '../../..');
 
 export interface RunBenchmarkCaseOptions {
   repoRoot: string;
@@ -88,12 +82,22 @@ export async function runBenchmarkCase(
   const record = await runDogfoodTask(dogfoodTask, dogfoodOptions);
   const { taskId: _taskId, issueRef: _issueRef, humanEdit: _humanEdit, ...rest } = record;
 
-  return BenchmarkRunRecordSchema.parse({
+  const benchmarkRecord = BenchmarkRunRecordSchema.parse({
     ...rest,
     caseId: benchmarkCase.id,
     caseKind: benchmarkCase.kind,
     modelId: model.id,
   });
+
+  const recordsDir = options.dataDir ?? join(FOUNDRY_ROOT, '.data', 'benchmark');
+  await ensureDir(recordsDir);
+  const tag = String(benchmarkRecord.attempt).padStart(2, '0');
+  await atomicWriteJson(
+    join(recordsDir, `${benchmarkCase.id}--${model.id}-attempt${tag}.json`),
+    benchmarkRecord,
+  );
+
+  return benchmarkRecord;
 }
 
 export function renderBenchmarkMarkdown(report: BenchmarkReport): string {
@@ -124,7 +128,7 @@ export async function freezeBenchmarkReport(
   options: { baselinesDir: string; baselineRef: string },
 ): Promise<void> {
   const kinds = new Set(records.map((record) => record.caseKind));
-  const missing = ALL_KINDS.filter((kind) => !kinds.has(kind));
+  const missing = BENCHMARK_CASE_KINDS.filter((kind) => !kinds.has(kind));
   if (missing.length > 0) {
     throw new Error(`Benchmark freeze requires every case kind; missing: ${missing.join(', ')}.`);
   }
@@ -141,6 +145,7 @@ export async function freezeBenchmarkReport(
       'Each case runs through the real product pipeline with a run-scoped model override; results depend on provider CLI availability and authentication on the host that ran it.',
       'Failures are frozen alongside passes so the baseline reflects true per-model reliability, not a green wall.',
       'expectedSignals on each case are documentation for reviewers; this runner does not automatically grade output against them.',
+      'The refactor and review corpus kinds are behavior-preserving by design; a passed verifyScript on those kinds does not by itself confirm the requested change was made — expectedSignals is the human-graded signal for those two kinds.',
     ],
   });
 

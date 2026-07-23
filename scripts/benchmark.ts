@@ -26,15 +26,14 @@ function argValue(flag: string): string | undefined {
 
 async function loadRecords(): Promise<BenchmarkRunRecord[]> {
   let entries: string[];
-  const recordsDir = join(benchmarkDir, 'dogfood');
   try {
-    entries = (await readdir(recordsDir)).filter((name) => name.endsWith('.json'));
+    entries = (await readdir(benchmarkDir)).filter((name) => name.endsWith('.json'));
   } catch {
     return [];
   }
   return Promise.all(
     entries.map(async (name) =>
-      BenchmarkRunRecordSchema.parse(JSON.parse(await readFile(join(recordsDir, name), 'utf8'))),
+      BenchmarkRunRecordSchema.parse(JSON.parse(await readFile(join(benchmarkDir, name), 'utf8'))),
     ),
   );
 }
@@ -115,7 +114,7 @@ try {
     process.exitCode = failures === 0 ? 0 : 1;
   } else {
     console.error(
-      'Usage: tsx scripts/benchmark.ts --case <id> --model <modelId> | --all [--models <id,id>] | --freeze [--executor-mode mock]',
+      'Usage: tsx scripts/benchmark.ts --case <id> --models <id,id> | --all [--models <id,id>] | --freeze [--executor-mode mock]',
     );
     process.exit(1);
   }
