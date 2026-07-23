@@ -1,4 +1,4 @@
-import { readdir, rename, rm } from 'node:fs/promises';
+import { readdir, rename, rm, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { QueueJobSchema, type QueueJob } from '@agent-foundry/contracts';
 import { LeaseLostError, type Clock, type JobQueue } from '@agent-foundry/domain';
@@ -159,8 +159,11 @@ export class FileJobQueue implements JobQueue {
         continue;
       }
 
-      const expiresAt = job.lease ? new Date(job.lease.expiresAt).getTime() : 0;
-      if (expiresAt > now) continue;
+      if (!job.lease) {
+        if ((await stat(from)).mtimeMs + this.leaseMs > now) continue;
+      } else if (new Date(job.lease.expiresAt).getTime() > now) {
+        continue;
+      }
 
       const recoveredJob = QueueJobSchema.parse({ ...job, lease: undefined });
       await ensureDir(this.dir('pending'));
