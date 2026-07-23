@@ -112,6 +112,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Benchmark corpus fixtures pin real, historical commits as their
+          # baselineRef and a test resolves them via `git cat-file`; the
+          # default shallow (depth-1) checkout only fetches the PR head and
+          # would make that resolution fail here even though it passes with
+          # a full local clone.
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
