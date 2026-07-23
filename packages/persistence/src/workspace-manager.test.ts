@@ -221,6 +221,42 @@ describe('FileWorkspaceManager.preserveDraft', () => {
   });
 });
 
+describe('FileWorkspaceManager applyScaffold', () => {
+  it('writes scaffold files verbatim into the project workspace root', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+
+    const { written } = await manager.applyScaffold('project-1', [
+      { path: 'lib/supabase/client.ts', content: 'export const marker = "scaffold";\n' },
+      { path: 'middleware.ts', content: 'export const config = {};\n' },
+    ]);
+
+    expect(written.sort()).toEqual(['lib/supabase/client.ts', 'middleware.ts']);
+    const workspace = manager.workspacePath('project-1');
+    await expect(readFile(join(workspace, 'lib/supabase/client.ts'), 'utf8')).resolves.toBe(
+      'export const marker = "scaffold";\n',
+    );
+    await expect(readFile(join(workspace, 'middleware.ts'), 'utf8')).resolves.toBe(
+      'export const config = {};\n',
+    );
+  });
+
+  it('rejects an absolute scaffold path', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+
+    await expect(
+      manager.applyScaffold('project-1', [{ path: '/etc/passwd', content: 'x' }]),
+    ).rejects.toThrow('Unsafe scaffold path');
+  });
+});
+
 describe('FileWorkspaceManager version primitives', () => {
   it('diff returns a non-empty diff between two commits with different content and an empty diff comparing a ref to itself', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));

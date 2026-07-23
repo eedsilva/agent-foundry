@@ -728,6 +728,15 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.lastPrd = prd;
     return Promise.resolve();
   }
+  lastScaffoldFiles: Array<{ path: string; content: string }> = [];
+  applyScaffold(
+    _projectId: string,
+    files: Array<{ path: string; content: string }>,
+  ): Promise<{ written: string[] }> {
+    checkPower(this.power);
+    this.lastScaffoldFiles = files;
+    return Promise.resolve({ written: files.map((file) => file.path) });
+  }
   lastRequestMarkdown: string | undefined;
   writeRunContext(input: {
     projectId: string;

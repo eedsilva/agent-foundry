@@ -86,6 +86,9 @@ class FakeWorkspaces implements WorkspaceManager {
   writePrd(): Promise<void> {
     return Promise.resolve();
   }
+  applyScaffold(): Promise<{ written: string[] }> {
+    return Promise.resolve({ written: [] });
+  }
   writeRunContext(): Promise<{ requestPath: string; schemaPath: string; inputPaths: string[] }> {
     return Promise.resolve({
       requestPath: 'request.md',

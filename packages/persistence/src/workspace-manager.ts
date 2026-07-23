@@ -66,6 +66,23 @@ export class FileWorkspaceManager implements WorkspaceManager {
     await atomicWriteText(join(this.workspacePath(projectId), 'PRD.md'), `${prd.trim()}\n`);
   }
 
+  async applyScaffold(
+    projectId: string,
+    files: Array<{ path: string; content: string }>,
+  ): Promise<{ written: string[] }> {
+    await this.ensure(projectId);
+    const workspace = this.workspacePath(projectId);
+    const written: string[] = [];
+    for (const file of files) {
+      if (isAbsolute(file.path)) throw new Error(`Unsafe scaffold path: ${file.path}`);
+      const destination = join(workspace, ...file.path.split('/').map(safeSegment));
+      await ensureDir(dirname(destination));
+      await atomicWriteText(destination, file.content);
+      written.push(file.path);
+    }
+    return { written };
+  }
+
   async writeRunContext(input: {
     projectId: string;
     runId: string;
