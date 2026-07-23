@@ -262,6 +262,7 @@ export class WorkflowOrchestrator {
     } catch (error) {
       if (error instanceof LeaseLostError) throw error;
       if (error instanceof ApprovalTimeoutScheduleError) {
+        throwIfCancelled(signal, run.id);
         await this.finalizeApproval(run.id, projectId, error.nodeId);
         throw error;
       }
@@ -1000,6 +1001,7 @@ export class WorkflowOrchestrator {
         leaseEpoch: 0,
       });
     } catch (error) {
+      if (error instanceof LeaseLostError) throw error;
       throw new ApprovalTimeoutScheduleError(nodeId, error);
     }
   }

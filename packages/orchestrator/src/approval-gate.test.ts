@@ -26,6 +26,25 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(harness.events.types()).not.toContain('run.approval_requested');
   });
 
+  it('does not finalize approval when timeout scheduling races a lost worker lease', async () => {
+    const harness = makeHarness({}, undefined, {
+      gate: { timeout: { policy: 'auto-approve', afterMs: 60_000 } },
+    });
+    await seedRun(harness);
+    const lease = new AbortController();
+    harness.queue.enqueue = async () => {
+      lease.abort(new LeaseLostError('job-1', 'worker-a'));
+      throw new Error('queue unavailable');
+    };
+
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1', lease.signal),
+    ).rejects.toBeInstanceOf(LeaseLostError);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('running');
+    expect(harness.events.types()).not.toContain('run.approval_requested');
+  });
+
   it('approves and advances to completion', async () => {
     const harness = makeHarness({}, undefined, { gate: {} });
     await seedRun(harness);
