@@ -1263,6 +1263,7 @@ export function makeHarness(
   const metricsRecords: Parameters<MetricsRepository['record']>[0][] = [];
   const metrics: MetricsRepository = {
     get: () => Promise.resolve(null),
+    list: () => Promise.resolve([]),
     record: (input) => {
       metricsRecords.push(input);
       return Promise.resolve();

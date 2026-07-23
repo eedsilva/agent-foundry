@@ -130,6 +130,7 @@ function makeOrchestrator(
   };
   const metrics: MetricsRepository = {
     get: () => Promise.resolve(null),
+    list: () => Promise.resolve([]),
     record: () => Promise.resolve(),
     recordQuality: () => Promise.resolve(),
   };

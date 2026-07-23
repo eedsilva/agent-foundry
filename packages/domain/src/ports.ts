@@ -52,6 +52,9 @@ import type {
   KnowledgeFile,
   AppEnvironment,
   DestructiveEnvironmentConfirmation,
+  FunctionArtifact,
+  FunctionInvocationResult,
+  FunctionVersion,
   MigrationApproval,
   MigrationBackup,
   MigrationPreview,
@@ -280,6 +283,8 @@ export interface MetricsRepository {
     role: AgentRole,
     category?: TaskCategory,
   ): Promise<ModelMetric | null>;
+  /** All stored metrics, for cross-model reporting (e.g. calibration). */
+  list(): Promise<ModelMetric[]>;
   record(input: {
     modelId: string;
     taskKind: TaskKind;
@@ -567,4 +572,24 @@ export interface GeneratedProjectRuntime {
     projectId: string;
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<void>;
+  deployFunction(input: {
+    projectId: string;
+    functionPath: string;
+    artifact: FunctionArtifact;
+  }): Promise<FunctionVersion>;
+  listFunctionVersions(input: {
+    projectId: string;
+    functionName: string;
+  }): Promise<FunctionVersion[]>;
+  rollbackFunction(input: {
+    projectId: string;
+    functionName: string;
+    versionId: string;
+  }): Promise<FunctionVersion>;
+  invokeFunction(input: {
+    projectId: string;
+    functionName: string;
+    body?: string;
+    headers?: Record<string, string>;
+  }): Promise<FunctionInvocationResult>;
 }

@@ -17,6 +17,7 @@ import type {
   RouteConstraints,
 } from '@agent-foundry/domain';
 import { summarizeQualityObservations } from './quality-signals.js';
+import { routeConfidence } from './confidence.js';
 
 export class ScoreBasedModelRouter implements ModelRouter {
   constructor(
@@ -80,10 +81,12 @@ export class ScoreBasedModelRouter implements ModelRouter {
           })
         : [];
       const quality = observations.length ? summarizeQualityObservations(observations) : undefined;
+      const score = this.score(model, profile, metric, quality?.aggregate);
       ranked.push({
         model,
-        score: this.score(model, profile, metric, quality?.aggregate),
+        score,
         ...(quality ? { quality } : {}),
+        confidence: routeConfidence(metric, quality, score.historical),
       });
     }
 

@@ -8,6 +8,7 @@ import type {
 } from '@agent-foundry/contracts';
 import type { MetricsRepository, QualityObservationRepository } from '@agent-foundry/domain';
 import { ScoreBasedModelRouter } from './score-router.js';
+import { routeConfidence } from './confidence.js';
 
 class MemoryMetrics implements MetricsRepository {
   readonly requestedCategories: Array<string | undefined> = [];
@@ -23,6 +24,9 @@ class MemoryMetrics implements MetricsRepository {
   }
   async record(): Promise<void> {}
   async recordQuality(): Promise<void> {}
+  async list(): Promise<ModelMetric[]> {
+    return [...this.values.values()];
+  }
 }
 
 class MemoryQualityObservations implements QualityObservationRepository {
@@ -123,6 +127,26 @@ function quotaMetric({
     totalEstimatedCostUsd: 0,
     quotaUnitsTotal,
     quotaUnitsKnownCount,
+    consecutiveFailures: 0,
+    qualityEvaluations: 0,
+    qualityApprovals: 0,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function metricWithAttempts(modelId: string, attempts: number, successRatio: number): ModelMetric {
+  return {
+    modelId,
+    taskKind: 'implementation',
+    role: 'developer',
+    taxonomyVersion: '2',
+    category: 'implementation/frontend',
+    attempts,
+    successes: Math.round(attempts * successRatio),
+    totalDurationMs: Math.max(1, attempts) * 1_000,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalEstimatedCostUsd: 0,
     consecutiveFailures: 0,
     qualityEvaluations: 0,
     qualityApprovals: 0,
@@ -648,5 +672,138 @@ describe('ScoreBasedModelRouter', () => {
     const a = await router.route(profile);
     const b = await router.route(profile, undefined, {});
     expect(b.selected.model.id).toBe(a.selected.model.id);
+  });
+
+  it('has zero confidence and a full-width interval for a model with no history', async () => {
+    const router = new ScoreBasedModelRouter(
+      [model('untested', { tags: ['coding'] })],
+      new MemoryMetrics(),
+    );
+
+    const route = await router.route(profile);
+
+    expect(route.selected.confidence).toMatchObject({
+      value: 0,
+      sampleSize: 0,
+      coldStart: true,
+      interval: { lower: 0, upper: 1 },
+    });
+  });
+
+  it('increases confidence monotonically as sample size grows, crossing 0.5 by n=4', async () => {
+    const attemptCounts = [0, 4, 40, 400];
+    const values: number[] = [];
+
+    for (const attempts of attemptCounts) {
+      const metrics =
+        attempts === 0
+          ? new MemoryMetrics()
+          : new MemoryMetrics(
+              new Map([
+                ['grower:implementation:developer', metricWithAttempts('grower', attempts, 0.8)],
+              ]),
+            );
+      const router = new ScoreBasedModelRouter([model('grower', { tags: ['coding'] })], metrics);
+      const route = await router.route(profile);
+      values.push(route.selected.confidence!.value);
+    }
+
+    for (let index = 1; index < values.length; index += 1) {
+      expect(values[index]!).toBeGreaterThan(values[index - 1]!);
+    }
+    expect(values[1]!).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('narrows the confidence interval as sample size grows for a fixed historical score', () => {
+    const widths = [4, 40, 400].map((n) => {
+      const metric = metricWithAttempts('fixed', n, 0.8);
+      const confidence = routeConfidence(metric, undefined, 0.8);
+      return confidence.interval.upper - confidence.interval.lower;
+    });
+
+    expect(widths[1]!).toBeLessThan(widths[0]!);
+    expect(widths[2]!).toBeLessThan(widths[1]!);
+  });
+
+  it('gives a thin high-rate model lower confidence than an established slightly-lower one (conflicting history)', async () => {
+    const metrics = new MemoryMetrics(
+      new Map([
+        ['thin-perfect:implementation:developer', metricWithAttempts('thin-perfect', 1, 1)],
+        ['established:implementation:developer', metricWithAttempts('established', 10, 0.7)],
+      ]),
+    );
+    const router = new ScoreBasedModelRouter(
+      [model('thin-perfect', { tags: ['coding'] }), model('established', { tags: ['coding'] })],
+      metrics,
+    );
+
+    const route = await router.route(profile);
+    const ranked = [route.selected, ...route.fallbacks];
+    const thin = ranked.find((candidate) => candidate.model.id === 'thin-perfect')!;
+    const established = ranked.find((candidate) => candidate.model.id === 'established')!;
+
+    // Model A: 1/1 (perfect raw rate, almost no evidence). Model B: 7/10 (lower
+    // raw rate, far more evidence). Confidence must surface that A's streak is
+    // less trustworthy than B's track record, despite A's higher raw rate.
+    expect(thin.confidence!.value).toBeLessThan(established.confidence!.value);
+    const thinWidth = thin.confidence!.interval.upper - thin.confidence!.interval.lower;
+    const establishedWidth =
+      established.confidence!.interval.upper - established.confidence!.interval.lower;
+    expect(thinWidth).toBeGreaterThan(establishedWidth);
+    expect(route.selected.model.id).toBe('established');
+  });
+
+  it('gives fallbacks their own confidence, distinct from the selected model', async () => {
+    const metrics = new MemoryMetrics(
+      new Map([['seasoned:implementation:developer', metricWithAttempts('seasoned', 200, 0.9)]]),
+    );
+    const router = new ScoreBasedModelRouter(
+      [
+        model('seasoned', {
+          provider: 'claude',
+          tags: ['coding'],
+          capabilities: { ...baseCapabilities, coding: 0.9 },
+        }),
+        model('rookie', {
+          provider: 'codex',
+          tags: ['coding'],
+          capabilities: { ...baseCapabilities, coding: 0.85 },
+        }),
+      ],
+      metrics,
+    );
+
+    const route = await router.route(profile);
+
+    expect(route.selected.confidence).toBeDefined();
+    expect(route.fallbacks[0]?.confidence).toBeDefined();
+    expect(route.fallbacks[0]?.confidence?.sampleSize).not.toBe(
+      route.selected.confidence?.sampleSize,
+    );
+  });
+
+  it('rejects a model on hard rules before scoring can favor it (regression)', async () => {
+    const metrics = new MemoryMetrics(
+      new Map([['no-write:implementation:developer', metricWithAttempts('no-write', 500, 1)]]),
+    );
+    const router = new ScoreBasedModelRouter(
+      [
+        model('no-write', {
+          canWriteWorkspace: false,
+          tags: ['coding'],
+          capabilities: { ...baseCapabilities, coding: 0.99 },
+        }),
+        model('writable', { canWriteWorkspace: true, tags: ['coding'] }),
+      ],
+      metrics,
+    );
+
+    const route = await router.route(profile);
+
+    expect(route.selected.model.id).not.toBe('no-write');
+    expect(route.rejected).toContainEqual({
+      modelId: 'no-write',
+      reason: 'cannot mutate the workspace',
+    });
   });
 });

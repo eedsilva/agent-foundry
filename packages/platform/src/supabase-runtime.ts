@@ -1,9 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
   AppEnvironmentSchema,
+  FUNCTION_INVOCATION_BODY_MAX_BYTES,
+  FunctionArtifactSchema,
+  FunctionInvocationResultSchema,
+  FunctionVersionSchema,
   MigrationApprovalSchema,
   MigrationBackupSchema,
   MigrationPreviewSchema,
@@ -11,6 +15,9 @@ import {
   type AppEnvironment,
   type DestructiveEnvironmentConfirmation,
   type EnvironmentLifecycleOperation,
+  type FunctionArtifact,
+  type FunctionInvocationResult,
+  type FunctionVersion,
   type MigrationApproval,
   type MigrationBackup,
   type MigrationPreview,
@@ -19,6 +26,7 @@ import {
   EnvironmentOperationError,
   ValidationError,
   redactString,
+  withSpan,
   type GeneratedProjectRuntime,
 } from '@agent-foundry/domain';
 import {
@@ -29,6 +37,7 @@ import {
 
 const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
+const NUL = Buffer.from('\0');
 const PORT_BASE = 20_000;
 const PORT_BLOCK_SIZE = 8;
 const HOST_PORT_FIELDS = [
@@ -80,7 +89,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   async initialize(input: { projectId: string }): Promise<AppEnvironment> {
-    const projectId = safeProjectId(input.projectId);
+    const projectId = parsePathSegment('project ID', input.projectId);
     const inFlight = this.#initializations.get(projectId);
     if (inFlight) return inFlight;
     const initialization = this.#initialize(projectId).finally(() => {
@@ -396,8 +405,169 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     await rm(environment.workdir, { recursive: true, force: true });
   }
 
+  async deployFunction(input: {
+    projectId: string;
+    functionPath: string;
+    artifact: FunctionArtifact;
+  }): Promise<FunctionVersion> {
+    const environment = await this.#require(input.projectId);
+    const artifact = FunctionArtifactSchema.parse(input.artifact);
+    if (input.functionPath !== `supabase/functions/${artifact.name}`) {
+      throw new ValidationError('Function source path must match supabase/functions/<name>.');
+    }
+    const sourceDir = await requireContainedDirectory(environment.workdir, input.functionPath);
+    const files = await collectFunctionFiles(sourceDir);
+    if (!files.some((file) => file.relativePath === artifact.entrypoint)) {
+      throw new ValidationError(
+        `Function entrypoint "${artifact.entrypoint}" was not found in source.`,
+      );
+    }
+    const version = FunctionVersionSchema.parse({
+      functionName: artifact.name,
+      versionId: randomUUID(),
+      checksum: functionChecksum(files),
+      artifact,
+      createdAt: this.#now().toISOString(),
+    });
+    await storeFunctionVersion(this.#dataDir, environment.projectId, version, files);
+    await activateFunctionVersion(
+      this.#dataDir,
+      environment.workdir,
+      environment.projectId,
+      version,
+      files,
+    );
+    await this.#touch(environment);
+    return version;
+  }
+
+  async listFunctionVersions(input: {
+    projectId: string;
+    functionName: string;
+  }): Promise<FunctionVersion[]> {
+    const environment = await this.#require(input.projectId);
+    const functionName = parsePathSegment('function name', input.functionName);
+    return readFunctionVersions(this.#dataDir, environment.projectId, functionName);
+  }
+
+  async rollbackFunction(input: {
+    projectId: string;
+    functionName: string;
+    versionId: string;
+  }): Promise<FunctionVersion> {
+    const environment = await this.#require(input.projectId);
+    const functionName = parsePathSegment('function name', input.functionName);
+    const versionId = parsePathSegment('version ID', input.versionId);
+    const manifestPath = functionVersionManifestPath(
+      this.#dataDir,
+      environment.projectId,
+      functionName,
+      versionId,
+    );
+    let version: FunctionVersion;
+    try {
+      version = FunctionVersionSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
+    } catch (error) {
+      if (isNotFound(error)) {
+        throw new ValidationError(`Function version "${versionId}" was not found.`);
+      }
+      throw error;
+    }
+    const files = await collectFunctionFiles(
+      functionVersionFilesDir(this.#dataDir, environment.projectId, functionName, versionId),
+    );
+    if (functionChecksum(files) !== version.checksum) {
+      throw new ValidationError('Stored function version failed checksum verification.');
+    }
+    await activateFunctionVersion(
+      this.#dataDir,
+      environment.workdir,
+      environment.projectId,
+      version,
+      files,
+    );
+    await this.#touch(environment);
+    return version;
+  }
+
+  async invokeFunction(input: {
+    projectId: string;
+    functionName: string;
+    body?: string;
+    headers?: Record<string, string>;
+  }): Promise<FunctionInvocationResult> {
+    const environment = await this.#require(input.projectId);
+    const functionName = parsePathSegment('function name', input.functionName);
+    let current: FunctionVersion;
+    try {
+      const pointer = JSON.parse(
+        await readFile(
+          currentFunctionVersionPath(this.#dataDir, environment.projectId, functionName),
+          'utf8',
+        ),
+      ) as { versionId: string };
+      const manifestPath = functionVersionManifestPath(
+        this.#dataDir,
+        environment.projectId,
+        functionName,
+        pointer.versionId,
+      );
+      current = FunctionVersionSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
+    } catch (error) {
+      if (isNotFound(error)) {
+        throw new ValidationError(`Function "${functionName}" has no deployed version.`);
+      }
+      throw error;
+    }
+    const apiUrl = environment.endpoints.api;
+    if (!apiUrl) {
+      throw new EnvironmentOperationError(
+        'invoke-function',
+        undefined,
+        'Environment has no API endpoint.',
+      );
+    }
+    return withSpan(
+      'function.invoke',
+      { 'function.name': functionName, 'project.id': environment.projectId },
+      async (span) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), current.artifact.timeoutMs);
+        const started = this.#now().getTime();
+        try {
+          const response = await fetch(`${apiUrl}/functions/v1/${functionName}`, {
+            method: 'POST',
+            ...(input.headers !== undefined ? { headers: input.headers } : {}),
+            ...(input.body !== undefined ? { body: input.body } : {}),
+            signal: controller.signal,
+          });
+          const text = await response.text();
+          span.setAttribute('http.status_code', response.status);
+          return FunctionInvocationResultSchema.parse({
+            status: response.status,
+            body: capUtf8(text, FUNCTION_INVOCATION_BODY_MAX_BYTES),
+            durationMs: this.#now().getTime() - started,
+            timedOut: false,
+          });
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') {
+            return FunctionInvocationResultSchema.parse({
+              status: 504,
+              body: '',
+              durationMs: this.#now().getTime() - started,
+              timedOut: true,
+            });
+          }
+          throw operationError('invoke-function', error);
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+    );
+  }
+
   async #read(projectId: string): Promise<AppEnvironment | null> {
-    const safeId = safeProjectId(projectId);
+    const safeId = parsePathSegment('project ID', projectId);
     const path = metadataPath(this.#dataDir, safeId);
     try {
       const environment = AppEnvironmentSchema.parse(JSON.parse(await readFile(path, 'utf8')));
@@ -459,9 +629,9 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 }
 
-function safeProjectId(projectId: string): string {
-  const result = PathSegmentSchema.safeParse(projectId);
-  if (!result.success) throw new ValidationError(`Invalid project ID: ${result.error.message}`);
+function parsePathSegment(label: string, value: string): string {
+  const result = PathSegmentSchema.safeParse(value);
+  if (!result.success) throw new ValidationError(`Invalid ${label}: ${result.error.message}`);
   return result.data;
 }
 
@@ -586,22 +756,30 @@ async function migrationPreviews(workdir: string): Promise<MigrationPreview[]> {
   return Promise.all(paths.map((path) => migrationPreview(workdir, path)));
 }
 
-async function requireContainedFile(workdir: string, inputPath: string): Promise<string> {
+async function requireContainedPath(
+  workdir: string,
+  inputPath: string,
+  label: string,
+): Promise<string> {
   if (isAbsolute(inputPath)) {
-    throw new ValidationError('Environment file must be a relative path.');
+    throw new ValidationError(`${label} must be a relative path.`);
   }
   const candidate = resolve(workdir, inputPath);
   if (!isContained(workdir, candidate)) {
-    throw new ValidationError('Environment file must remain inside the project environment.');
+    throw new ValidationError(`${label} must remain inside the project environment.`);
   }
   const [resolvedWorkdir, resolvedCandidate] = await Promise.all([
     realpath(workdir),
     realpath(candidate),
   ]);
   if (!isContained(resolvedWorkdir, resolvedCandidate)) {
-    throw new ValidationError('Environment file must remain inside the project environment.');
+    throw new ValidationError(`${label} must remain inside the project environment.`);
   }
   return candidate;
+}
+
+async function requireContainedFile(workdir: string, inputPath: string): Promise<string> {
+  return requireContainedPath(workdir, inputPath, 'Environment file');
 }
 
 async function containedOutputFile(workdir: string, inputPath: string): Promise<string> {
@@ -628,6 +806,178 @@ async function containedOutputFile(workdir: string, inputPath: string): Promise<
     if (!isNotFound(error)) throw error;
   }
   return candidate;
+}
+
+async function requireContainedDirectory(workdir: string, inputPath: string): Promise<string> {
+  return requireContainedPath(workdir, inputPath, 'Function source');
+}
+
+interface FunctionFile {
+  relativePath: string;
+  content: Buffer;
+}
+
+async function collectFunctionFiles(root: string): Promise<FunctionFile[]> {
+  const files: FunctionFile[] = [];
+  async function walk(dir: string): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const absolute = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolute);
+      } else if (entry.isFile()) {
+        files.push({ relativePath: relative(root, absolute), content: await readFile(absolute) });
+      }
+    }
+  }
+  await walk(root);
+  if (!files.length) throw new ValidationError('Function source directory contains no files.');
+  return files;
+}
+
+function functionChecksum(files: FunctionFile[]): string {
+  const sorted = [...files].sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  const parts = sorted.flatMap((file) => [Buffer.from(file.relativePath), NUL, file.content]);
+  return sha256(Buffer.concat(parts));
+}
+
+function functionVersionsDir(dataDir: string, projectId: string, functionName: string): string {
+  return join(dataDir, 'projects', projectId, 'functions', functionName, 'versions');
+}
+
+function functionVersionManifestPath(
+  dataDir: string,
+  projectId: string,
+  functionName: string,
+  versionId: string,
+): string {
+  return join(functionVersionsDir(dataDir, projectId, functionName), `${versionId}.json`);
+}
+
+function functionVersionFilesDir(
+  dataDir: string,
+  projectId: string,
+  functionName: string,
+  versionId: string,
+): string {
+  return join(functionVersionsDir(dataDir, projectId, functionName), versionId);
+}
+
+function currentFunctionVersionPath(
+  dataDir: string,
+  projectId: string,
+  functionName: string,
+): string {
+  return join(dataDir, 'projects', projectId, 'functions', functionName, 'current.json');
+}
+
+async function storeFunctionVersion(
+  dataDir: string,
+  projectId: string,
+  version: FunctionVersion,
+  files: FunctionFile[],
+): Promise<void> {
+  const versionDir = functionVersionFilesDir(
+    dataDir,
+    projectId,
+    version.functionName,
+    version.versionId,
+  );
+  await mkdir(versionDir, { recursive: true });
+  await Promise.all(
+    files.map(async (file) => {
+      const target = join(versionDir, file.relativePath);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, file.content);
+    }),
+  );
+  await atomicWrite(
+    functionVersionManifestPath(dataDir, projectId, version.functionName, version.versionId),
+    `${JSON.stringify(version, null, 2)}\n`,
+  );
+}
+
+async function readFunctionVersions(
+  dataDir: string,
+  projectId: string,
+  functionName: string,
+): Promise<FunctionVersion[]> {
+  const dir = functionVersionsDir(dataDir, projectId, functionName);
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (isNotFound(error)) return [];
+    throw error;
+  }
+  const manifests = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+    .map((entry) => join(dir, entry.name));
+  const versions = await Promise.all(
+    manifests.map(async (path) => {
+      const [version, stats] = await Promise.all([
+        readFile(path, 'utf8').then((raw) => FunctionVersionSchema.parse(JSON.parse(raw))),
+        stat(path),
+      ]);
+      return { version, mtimeMs: stats.mtimeMs };
+    }),
+  );
+  // ponytail: createdAt has ms resolution and a frozen clock can tie; mtimeMs
+  // breaks the tie deterministically. Add a write-sequence counter if two
+  // real deploys can land in the same millisecond in production.
+  return versions
+    .sort((a, b) => a.version.createdAt.localeCompare(b.version.createdAt) || a.mtimeMs - b.mtimeMs)
+    .map((entry) => entry.version);
+}
+
+function liveFunctionDir(workdir: string, functionName: string): string {
+  return join(workdir, 'supabase', 'functions', functionName);
+}
+
+async function activateFunctionVersion(
+  dataDir: string,
+  workdir: string,
+  projectId: string,
+  version: FunctionVersion,
+  files: FunctionFile[],
+): Promise<void> {
+  const liveDir = liveFunctionDir(workdir, version.functionName);
+  await rm(liveDir, { recursive: true, force: true });
+  await mkdir(liveDir, { recursive: true });
+  await Promise.all(
+    files.map(async (file) => {
+      const target = join(liveDir, file.relativePath);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, file.content);
+    }),
+  );
+  await writeFunctionConfigSection(workdir, version.functionName, version.artifact);
+  await atomicWrite(
+    currentFunctionVersionPath(dataDir, projectId, version.functionName),
+    `${JSON.stringify({ versionId: version.versionId }, null, 2)}\n`,
+  );
+}
+
+async function writeFunctionConfigSection(
+  workdir: string,
+  functionName: string,
+  artifact: FunctionArtifact,
+): Promise<void> {
+  const path = join(workdir, 'supabase', 'config.toml');
+  const config = await readFile(path, 'utf8');
+  const heading = `[functions.${functionName}]`;
+  const fields = [`verify_jwt = ${artifact.verifyJwt}`, `entrypoint = "${artifact.entrypoint}"`];
+  const lines = config.split('\n');
+  const start = lines.findIndex((line) => line.trim() === heading);
+  if (start === -1) {
+    const trimmed = config.endsWith('\n') ? config : `${config}\n`;
+    await atomicWrite(path, `${trimmed}\n${heading}\n${fields.join('\n')}\n`);
+    return;
+  }
+  let end = start + 1;
+  while (end < lines.length && !/^\[.*\]$/.test(lines[end]!.trim())) end += 1;
+  const updated = [...lines.slice(0, start), heading, ...fields, ...lines.slice(end)].join('\n');
+  await atomicWrite(path, updated);
 }
 
 function isContained(parent: string, candidate: string): boolean {
@@ -758,8 +1108,8 @@ function backupManifestPath(dataDir: string, projectId: string, manifestId: stri
   return join(
     dataDir,
     'migration-backups',
-    safeProjectId(projectId),
-    `${safeProjectId(manifestId)}.json`,
+    parsePathSegment('project ID', projectId),
+    `${parsePathSegment('project ID', manifestId)}.json`,
   );
 }
 

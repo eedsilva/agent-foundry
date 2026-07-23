@@ -20,6 +20,7 @@ export const EnvironmentLifecycleOperationSchema = z.enum([
   'health',
   'reset',
   'cleanup',
+  'invoke-function',
 ]);
 export type EnvironmentLifecycleOperation = z.infer<typeof EnvironmentLifecycleOperationSchema>;
 
@@ -33,7 +34,7 @@ export type DestructiveEnvironmentConfirmation = z.infer<
   typeof DestructiveEnvironmentConfirmationSchema
 >;
 
-const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+export const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 
 export const MigrationPreviewSchema = z
   .object({
