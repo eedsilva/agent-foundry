@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { importSpecifiers, inspectArchitecture } from './architecture.mjs';
+
+const root = resolve(import.meta.dirname, '../..');
 
 test('extrai imports estáticos, type-only, export e dinâmicos', () => {
   assert.deepEqual(
@@ -32,4 +34,10 @@ test('detecta deep import e dependência ausente', async () => {
   const result = await inspectArchitecture(root, allowed);
   assert.ok(result.errors.some((error) => error.includes('deep import')));
   assert.ok(result.errors.some((error) => error.includes('não declara')));
+});
+
+test('platform is a declared leaf workspace', async () => {
+  const result = await inspectArchitecture(root);
+  assert.equal(result.ok, true, result.errors.join('\n'));
+  assert.ok(result.packages.some(({ manifest }) => manifest.name === '@agent-foundry/platform'));
 });

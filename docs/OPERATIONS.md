@@ -727,6 +727,28 @@ Em uso local, faça snapshot de todo `DATA_DIR`, incluindo `runs/`. Para restore
 
 Cada projeto greenfield possui nome de Compose, portas, rede, volumes e `.env` próprios. O lifecycle suportado é initialize, start, stop, inspect, migrate, seed, health e cleanup. Reset destrutivo exige confirmação e backup recente.
 
+Em `EXECUTOR_MODE=real`, a criação do projeto inicializa sua stack Supabase antes de persistir o projeto. Pré-requisitos no host:
+
+```bash
+supabase --version
+docker info
+```
+
+Ambos devem terminar com sucesso. `EXECUTOR_MODE=mock` não instancia esse runtime e não requer Supabase ou Docker.
+
+O diretório autoritativo de cada runtime é `DATA_DIR/projects/<projectId>/environment/`; `environment.json` contém somente nomes de recursos, paths, portas, endpoints sem credenciais e timestamps de saúde. Nunca registre stdout/stderr bruto do Supabase, URLs de banco, JWTs ou chaves. Logs podem conter somente `EnvironmentOperationError.operation`, `exitCode` e o `diagnostic` já limitado e redigido pelo adapter.
+
+Use o lifecycle do `GeneratedProjectRuntime`, que fixa `--workdir`, nome de rede e validação de path. `initialize`, `start`, `stop`, `inspect` e `health` são seguros para repetição; `migrate` e `seed` aceitam somente arquivos contidos no workdir. `reset` e `cleanup` exigem `confirmed: true` e `backupCreatedAt` de um backup independente criado há no máximo 24 horas. Não execute `supabase db reset`, `supabase stop --no-backup` nem remova o workdir diretamente.
+
+Se ocorrer `EnvironmentOperationError`:
+
+1. registre apenas operação, exit code e diagnóstico redigido;
+2. confirme `supabase --version` e `docker info`;
+3. preserve e faça backup do workdir, então rode `inspect`/`health` para reconciliar metadata e estado real;
+4. corrija o pré-requisito indicado e repita a mesma operação idempotente; para falha durante `initialize` sem `environment.json`, preserve o diretório parcial e só o remova após backup e confirmação explícita antes de tentar novamente.
+
+Migrations, autenticação, storage e functions pertencem aos issues #70–#73; não improvise esses contratos durante recuperação operacional.
+
 ### Deploy em VPS existente
 
 O deployer usa SSH para um host cadastrado pelo operador. Ubuntu LTS é a plataforma canônica; Debian é compatibilidade best effort. O preflight verifica Docker Engine, Compose, Caddy, espaço em disco, portas, permissões, clock e diretórios antes de alterar o host.

@@ -50,6 +50,8 @@ import type {
   WorkflowDefinition,
   WorkflowRun,
   KnowledgeFile,
+  AppEnvironment,
+  DestructiveEnvironmentConfirmation,
 } from '@agent-foundry/contracts';
 
 export interface ProjectRepository {
@@ -524,4 +526,22 @@ export interface BlobStore {
   /** All keys under a prefix, with creation time — used by GC. */
   list(prefix: string): Promise<BlobListEntry[]>;
   createSignedDownloadUrl(key: string, expiresInSeconds: number): Promise<string>;
+}
+
+export interface GeneratedProjectRuntime {
+  initialize(input: { projectId: string }): Promise<AppEnvironment>;
+  start(projectId: string): Promise<AppEnvironment>;
+  stop(projectId: string): Promise<AppEnvironment>;
+  inspect(projectId: string): Promise<AppEnvironment | null>;
+  migrate(input: { projectId: string; migrationPath: string }): Promise<AppEnvironment>;
+  seed(input: { projectId: string; seedPath: string }): Promise<AppEnvironment>;
+  health(projectId: string): Promise<AppEnvironment>;
+  reset(input: {
+    projectId: string;
+    confirmation: DestructiveEnvironmentConfirmation;
+  }): Promise<AppEnvironment>;
+  cleanup(input: {
+    projectId: string;
+    confirmation: DestructiveEnvironmentConfirmation;
+  }): Promise<void>;
 }

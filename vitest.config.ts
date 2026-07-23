@@ -20,6 +20,7 @@ export default defineConfig({
       '@agent-foundry/harness': `${root}packages/harness/src/index.ts`,
       '@agent-foundry/model-router': `${root}packages/model-router/src/index.ts`,
       '@agent-foundry/executors': `${root}packages/executors/src/index.ts`,
+      '@agent-foundry/platform': `${root}packages/platform/src/index.ts`,
       '@agent-foundry/orchestrator': `${root}packages/orchestrator/src/index.ts`,
       '@agent-foundry/composition': `${root}packages/composition/src/index.ts`,
     },

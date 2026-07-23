@@ -57,6 +57,7 @@ import {
   type ExecutionPlane,
   type ExecutionStatus,
   type HarnessRepository,
+  type GeneratedProjectRuntime,
   type IdGenerator,
   type JobQueue,
   type MetricsRepository,
@@ -1118,6 +1119,7 @@ export function makeHarness(
     verification?: () => VerificationReport | Promise<VerificationReport>;
     browserVerification?: BrowserVerificationCoordinator;
     qualityObservationService?: QualityObservationService;
+    generatedProjectRuntime?: GeneratedProjectRuntime;
     versions?: ProjectVersionService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
   } = {},
@@ -1303,6 +1305,8 @@ export function makeHarness(
     stores.clock,
     ids,
     stores.modelOverrides,
+    undefined,
+    opts.generatedProjectRuntime,
   );
   return {
     ...stores,

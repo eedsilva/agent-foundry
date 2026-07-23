@@ -23,6 +23,9 @@
       "path": "../executors"
     },
     {
+      "path": "../platform"
+    },
+    {
       "path": "../orchestrator"
     }
   ]

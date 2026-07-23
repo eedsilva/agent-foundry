@@ -26,6 +26,7 @@
     "@agent-foundry/model-router": "0.1.0",
     "@agent-foundry/orchestrator": "0.1.0",
     "@agent-foundry/persistence": "0.1.0",
+    "@agent-foundry/platform": "0.1.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.220.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
