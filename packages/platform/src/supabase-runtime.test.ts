@@ -260,27 +260,45 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
     expect(metadata).not.toMatch(/db-secret|jwt-secret|anon-secret|DB_URL|JWT_SECRET|ANON_KEY/);
   });
 
-  it('rejects wrong migration bytes observed before start even if they are repaired later', async () => {
-    let repaired = false;
+  it('tears down the exact workdir after a partial start failure', async () => {
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    const partialMarker = join(workdir, 'partial-start');
     const command = vi.fn<SupabaseCommand>(async (...args) => {
-      const workdir = args[args.indexOf('--workdir') + 1];
-      if (args[0] !== 'start' || !workdir) return statusCommand(...args);
-      const migration = join(workdir, 'supabase', 'migrations', GENERATED_STORAGE_MIGRATION);
-      await writeFile(migration, 'wrong pre-start bytes');
-      try {
-        return await statusCommand(...args);
-      } finally {
-        await writeFile(migration, generatedStorageMigration());
-        repaired = true;
+      if (args[0] === 'start') {
+        await writeFile(partialMarker, 'partial');
+        throw Object.assign(
+          new Error(`PASSWORD=start-secret partial-start-failure ${'x'.repeat(10_000)}`),
+          {
+            exitCode: 44,
+            stderr: 'ACCESS_TOKEN=start-token',
+          },
+        );
       }
+      return statusCommand(...args);
     });
     const { runtime } = fixture(command);
 
-    await expect(runtime.initialize({ projectId: 'project-a' })).rejects.toThrow(
-      /Environment start failed/,
-    );
-    expect(migrationsAtStart).toEqual(['wrong pre-start bytes']);
-    expect(repaired).toBe(true);
+    const rejection = await runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
+
+    expect(rejection).toMatchObject({ operation: 'start', exitCode: 44 });
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(rejection.diagnostic).toContain('partial-start-failure');
+    expect(rejection.diagnostic).not.toMatch(/start-secret|start-token/);
+    expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
+    expect(command.mock.calls.slice(-2)).toEqual([
+      [
+        'start',
+        '--workdir',
+        workdir,
+        '--output',
+        'json',
+        '--yes',
+        '--network-id',
+        'supabase_project-a_network',
+      ],
+      ['stop', '--workdir', workdir, '--no-backup', '--yes'],
+    ]);
+    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('does not initialize or start Supabase twice for the same project', async () => {
@@ -311,14 +329,17 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
       if (args[0] === 'seed' && args[1] === 'buckets' && failSeed) {
         failSeed = false;
         await writeFile(partialMarker, 'partial');
-        throw Object.assign(new Error('PASSWORD=seed-secret original-seed-failure'), {
-          exitCode: 41,
-        });
+        throw Object.assign(
+          new Error(`PASSWORD=seed-secret original-seed-failure ${'x'.repeat(10_000)}`),
+          {
+            exitCode: 41,
+          },
+        );
       }
       if (args[0] === 'stop') {
         stopAttempts += 1;
         if (stopAttempts === 1) {
-          throw new Error('PASSWORD=cleanup-secret cleanup-stop-failure');
+          throw new Error(`PASSWORD=cleanup-secret cleanup-stop-failure ${'y'.repeat(10_000)}`);
         }
       }
       if (args[0] === 'init' && stopAttempts === 2) {
@@ -343,7 +364,8 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
     expect(sameRejection).toBe(rejection);
     if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
     expect(rejection.diagnostic).toContain('original-seed-failure');
-    expect(rejection.diagnostic).not.toMatch(/seed-secret|cleanup-secret|cleanup-stop-failure/);
+    expect(rejection.diagnostic).toContain('cleanup-stop-failure');
+    expect(rejection.diagnostic).not.toMatch(/seed-secret|cleanup-secret/);
     expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
     expect(command.mock.calls).toContainEqual([
       'stop',
@@ -383,16 +405,20 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
     ).toHaveLength(2);
   });
 
-  it('blocks initialization while retained-workdir teardown still fails', async () => {
+  it('removes a failed pre-start workdir so the same runtime can retry initialization', async () => {
     const workdir = join(dataDir, 'projects', 'project-a', 'environment');
-    const configPath = join(workdir, 'supabase', 'config.toml');
-    await mkdir(join(workdir, 'supabase'), { recursive: true });
-    await writeFile(configPath, INITIAL_CONFIG);
+    const partialMarker = join(workdir, 'partial-init');
+    let failInit = true;
     const command = vi.fn<SupabaseCommand>(async (...args) => {
-      if (args[0] === 'stop') {
-        throw Object.assign(new Error('PASSWORD=recovery-secret retained-recovery-stop-failure'), {
-          exitCode: 42,
+      if (args[0] === 'init' && failInit) {
+        failInit = false;
+        await writeFile(partialMarker, 'partial');
+        throw Object.assign(new Error('PASSWORD=init-secret partial-init-failure'), {
+          exitCode: 45,
         });
+      }
+      if (args[0] === 'init') {
+        await expect(stat(partialMarker)).rejects.toMatchObject({ code: 'ENOENT' });
       }
       return statusCommand(...args);
     });
@@ -400,13 +426,23 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
 
     const rejection = await runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
 
-    expect(rejection).toMatchObject({ operation: 'initialize', exitCode: 42 });
+    expect(rejection).toMatchObject({ operation: 'initialize', exitCode: 45 });
     if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
-    expect(rejection.diagnostic).toContain('retained-recovery-stop-failure');
-    expect(rejection.diagnostic).not.toContain('recovery-secret');
+    expect(rejection.diagnostic).toContain('partial-init-failure');
+    expect(rejection.diagnostic).not.toContain('init-secret');
     expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
-    expect(command.mock.calls).toEqual([['stop', '--workdir', workdir, '--no-backup', '--yes']]);
-    await expect(readFile(configPath, 'utf8')).resolves.toBe(INITIAL_CONFIG);
+    expect(command.mock.calls).toEqual([['init', '--workdir', workdir]]);
+    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(runtime.inspect('project-a')).resolves.toBeNull();
+
+    await expect(runtime.initialize({ projectId: 'project-a' })).resolves.toMatchObject({
+      projectId: 'project-a',
+      workdir,
+      health: { state: 'healthy' },
+    });
+    expect(command.mock.calls.filter(([name]) => name === 'stop')).toHaveLength(0);
+    expect(command.mock.calls.filter(([name]) => name === 'init')).toHaveLength(2);
+    expect(command.mock.calls.filter(([name]) => name === 'start')).toHaveLength(1);
   });
 
   it('rolls back and redacts an authoritative status failure after bucket seed', async () => {

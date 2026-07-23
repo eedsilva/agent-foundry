@@ -2,13 +2,13 @@
 
 ## Acceptance
 
-| Acceptance intent                 | Implementation                                                                                       | Evidence                                    |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Compose/environment scoped bucket | private `uploads` bucket inside #69 isolated workdir/stack                                           | runtime two-project isolation + config test |
-| Size/type policy and signed URL   | native 10MiB/MIME bucket limits; signed upload/download                                              | real storage E2E                            |
-| Ownership and authorization       | owner path plus read-only metadata and `storage.objects` RLS                                         | real A/B and direct-DML denial E2E          |
-| Malware hook and quarantine       | service-role queue/completion; clean-only read policy                                                | unit SQL contract + real quarantine denial  |
-| Retention export and cleanup      | manifest, explicit export confirmation, expired-candidate selection, API byte delete before metadata | real lifecycle E2E                          |
+| Acceptance intent                 | Implementation                                                                                       | Evidence                                       |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Compose/environment scoped bucket | private `uploads` bucket inside #69 isolated workdir/stack                                           | mocked CLI two-project isolation + config test |
+| Size/type policy and signed URL   | native 10MiB/MIME bucket limits; signed upload/download                                              | real storage E2E                               |
+| Ownership and authorization       | owner path plus read-only metadata and `storage.objects` RLS                                         | real A/B and direct-DML denial E2E             |
+| Malware hook and quarantine       | service-role queue/completion; clean-only read policy                                                | unit SQL contract + real quarantine denial     |
+| Retention export and cleanup      | manifest, explicit export confirmation, expired-candidate selection, API byte delete before metadata | real lifecycle E2E                             |
 
 ## Results
 
@@ -18,19 +18,20 @@ Focused storage/runtime unit suite:
 npx vitest run packages/platform/src/supabase-storage.test.ts packages/platform/src/supabase-runtime.test.ts --pool=threads --maxWorkers=1
 ```
 
-Result: 2 files passed, 27 / 27 tests green.
+Result: 2 files passed, 30 / 30 tests green.
 
-Authoritative branch CI storage E2E: run `30035930063`, job `89303808401`, at storage
-implementation head `3cb9d41a89d29cea48dd14f45cb991533700e656`; passed in 3m11s.
-[Open storage-e2e job](https://github.com/eedsilva/agent-foundry/actions/runs/30035930063/job/89303808401).
+Authoritative branch CI storage E2E: run `30036468027`, job `89305663316`, at pre-recovery-fix
+head `060f82eb00220bae81db75039e4887cc9c2fa5c4`; passed together with every other CI job.
+[Open storage-e2e job](https://github.com/eedsilva/agent-foundry/actions/runs/30036468027/job/89305663316).
 
 The prior run `30031557014` exposed an incompatibility in parsing `supabase start` output. The
 `25184c8` runtime fix reads the authoritative `supabase status --output json` result after start. This
 is engineering evidence for the fix, not an acceptance failure for the green storage E2E. Run
-`30035930063` verifies the signed-upload wire contract, a valid PNG round trip, cross-user denial,
-native bucket limits, quarantine, export, and cleanup on the security-fixed implementation. The broad
-CI `test` job is reported only when its GitHub job reaches a successful terminal state; no broad-suite
-count is inferred from the storage job.
+`30036468027` verifies the signed-upload wire contract, a valid PNG round trip, cross-user denial,
+native bucket limits, quarantine, export, and cleanup on the security-fixed implementation. That real
+Docker E2E initializes one project; the mocked CLI runtime suite separately proves two-project
+workdir, network, and port isolation. The later initialization-recovery hardening requires a new
+final-head CI run; no broad-suite count is inferred from the storage job.
 
 ## Contract checks
 

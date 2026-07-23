@@ -113,21 +113,23 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
         throw operationError('initialize', error);
       }
     }
-    await mkdir(workdir, { recursive: true });
-    await this.#execute('initialize', 'init', '--workdir', workdir);
-    await this.#configure(workdir, composeProjectName);
-    await this.#execute(
-      'start',
-      'start',
-      '--workdir',
-      workdir,
-      '--output',
-      'json',
-      '--yes',
-      '--network-id',
-      network,
-    );
+    let startAttempted = false;
     try {
+      await mkdir(workdir, { recursive: true });
+      await this.#execute('initialize', 'init', '--workdir', workdir);
+      await this.#configure(workdir, composeProjectName);
+      startAttempted = true;
+      await this.#execute(
+        'start',
+        'start',
+        '--workdir',
+        workdir,
+        '--output',
+        'json',
+        '--yes',
+        '--network-id',
+        network,
+      );
       await this.#execute('initialize', 'seed', 'buckets', '--workdir', workdir);
       const result = await this.#execute(
         'initialize',
@@ -159,19 +161,20 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       await persist(environment);
       return environment;
     } catch (error) {
-      const stopped = await this.#execute(
-        'initialize',
-        'stop',
-        '--workdir',
-        workdir,
-        '--no-backup',
-        '--yes',
-      ).then(
-        () => true,
-        () => false,
-      );
-      if (stopped) await rm(workdir, { recursive: true, force: true }).catch(() => undefined);
-      throw error;
+      const original = asOperationError('initialize', error);
+      if (startAttempted) {
+        try {
+          await this.#execute('initialize', 'stop', '--workdir', workdir, '--no-backup', '--yes');
+        } catch (cleanupError) {
+          throw recoveryError(original, cleanupError);
+        }
+      }
+      try {
+        await rm(workdir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        throw recoveryError(original, cleanupError);
+      }
+      throw original;
     }
   }
 
@@ -895,6 +898,30 @@ function operationError(
     operation,
     typeof record.exitCode === 'number' ? record.exitCode : undefined,
     capUtf8(diagnostic, MAX_DIAGNOSTIC_BYTES),
+  );
+}
+
+function asOperationError(
+  operation: EnvironmentLifecycleOperation,
+  error: unknown,
+): EnvironmentOperationError {
+  return error instanceof EnvironmentOperationError ? error : operationError(operation, error);
+}
+
+function recoveryError(
+  original: EnvironmentOperationError,
+  cleanupError: unknown,
+): EnvironmentOperationError {
+  const cleanup = asOperationError('initialize', cleanupError);
+  const separator = '\nRecovery cleanup failed: ';
+  const diagnosticBudget = Math.floor((MAX_DIAGNOSTIC_BYTES - Buffer.byteLength(separator)) / 2);
+  return new EnvironmentOperationError(
+    original.operation,
+    original.exitCode,
+    `${capUtf8(original.diagnostic, diagnosticBudget)}${separator}${capUtf8(
+      cleanup.diagnostic,
+      diagnosticBudget,
+    )}`,
   );
 }
 
