@@ -443,7 +443,7 @@ describe('BaseCliExecutor environment isolation', () => {
       execaMock.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
       await new FixtureExecutor(1_000_000).execute(request);
 
-      const [, , options] = execaMock.mock.calls[0];
+      const [, , options] = execaMock.mock.calls[0]!;
       expect(options.env).toBeDefined();
       expect(options.env).not.toHaveProperty('DATABASE_URL');
       expect(Object.keys(options.env).length).toBeGreaterThan(0);
