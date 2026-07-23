@@ -1,6 +1,7 @@
 import { ApprovalDecisionSchema } from '@agent-foundry/contracts';
 import { describe, expect, it } from 'vitest';
 import { makeHarness, makeStores, seedRun } from './testing/harness.js';
+import { WorkerLoop } from './worker-loop.js';
 
 describe('approval gates halt the run for a human decision (#13)', () => {
   it('approves and advances to completion', async () => {
@@ -56,6 +57,138 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(harness.events.types()).toContain('run.rejected');
     // #14: the project summary must mirror this, not fall back to "running".
     expect((await harness.projects.get('project-1'))?.status).toBe('rejected');
+  });
+
+  it.each([
+    ['auto-approve', 'approve', 'completed'],
+    ['auto-reject', 'reject', 'rejected'],
+  ] as const)('applies %s when its timeout expires', async (policy, action, status) => {
+    let now = new Date('2026-07-14T12:00:00.000Z');
+    const harness = makeHarness({}, makeStores({ now: () => now }), {
+      gate: { timeout: { policy, afterMs: 60_000 } },
+    });
+    await seedRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [pending] = await harness.service.listApprovals('run-1');
+    expect(harness.enqueued).toEqual([
+      expect.objectContaining({
+        type: 'run-project',
+        id: `run-1:approval-timeout:${pending!.request.id}`,
+        projectId: 'project-1',
+        workflowId: harness.workflow.id,
+        runId: 'run-1',
+        attempts: 0,
+        maxAttempts: 1,
+        createdAt: '2026-07-14T12:00:00.000Z',
+        availableAt: pending!.request.timeoutAt,
+        leaseEpoch: 0,
+      }),
+    ]);
+
+    now = new Date('2026-07-14T12:01:00.000Z');
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    expect((await harness.service.listApprovals('run-1'))[0]?.decision).toMatchObject({
+      action,
+      decidedBy: 'system:approval-timeout',
+    });
+    expect((await harness.runs.get('run-1'))?.status).toBe(status);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    expect(await harness.service.listApprovals('run-1')).toHaveLength(1);
+    expect(harness.enqueued).toHaveLength(1);
+  });
+
+  it('worker nacks and retries a failed delayed timeout enqueue', async () => {
+    const harness = makeHarness({}, undefined, {
+      gate: { timeout: { policy: 'auto-approve', afterMs: 60_000 } },
+    });
+    await harness.service.create({
+      name: 'Timeout retry',
+      prd: 'Create an approval gate.',
+      workflowId: harness.workflow.id,
+    });
+    const [originalJob] = harness.enqueued;
+    expect(originalJob).toMatchObject({ type: 'run-project', maxAttempts: 2 });
+    harness.failNextEnqueue(new Error('queue unavailable'));
+    harness.queueForWorker(originalJob!);
+    const worker = new WorkerLoop(
+      harness.queue,
+      harness.orchestrator,
+      {} as import('./conversation-operation-runner.js').ConversationOperationRunner,
+      { workerId: 'worker-1', pollIntervalMs: 1_000 },
+    );
+
+    await worker.runOnce();
+    expect((await harness.runs.get(originalJob!.runId!))?.status).toBe('awaiting_approval');
+    expect(harness.nacked).toHaveLength(1);
+
+    await worker.runOnce();
+    const [pending] = await harness.service.listApprovals(originalJob!.runId!);
+    expect(harness.enqueued).toContainEqual(
+      expect.objectContaining({
+        id: `${originalJob!.runId}:approval-timeout:${pending!.request.id}`,
+        availableAt: pending!.request.timeoutAt,
+      }),
+    );
+  });
+
+  it('keeps the run awaiting approval when finite timeout scheduling retries exhaust', async () => {
+    const harness = makeHarness({}, undefined, {
+      gate: { timeout: { policy: 'auto-approve', afterMs: 60_000 } },
+    });
+    await harness.service.create({
+      name: 'Timeout retry exhaustion',
+      prd: 'Create an approval gate.',
+      workflowId: harness.workflow.id,
+    });
+    const [originalJob] = harness.enqueued;
+    harness.queueForWorker(originalJob!);
+    const worker = new WorkerLoop(
+      harness.queue,
+      harness.orchestrator,
+      {} as import('./conversation-operation-runner.js').ConversationOperationRunner,
+      { workerId: 'worker-1', pollIntervalMs: 1_000 },
+    );
+
+    harness.failNextEnqueue(new Error('queue unavailable'));
+    await worker.runOnce();
+    harness.failNextEnqueue(new Error('queue unavailable'));
+    await worker.runOnce();
+
+    expect(await worker.runOnce()).toBe(false);
+    expect(harness.nacked).toHaveLength(2);
+    expect((await harness.runs.get(originalJob!.runId!))?.status).toBe('awaiting_approval');
+  });
+
+  it('does not enqueue an explicit no-timeout gate', async () => {
+    const harness = makeHarness({}, undefined, { gate: { timeout: { policy: 'none' } } });
+    await seedRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect(harness.enqueued).toEqual([]);
+  });
+
+  it('ignores a stale timeout replay after a manual decision', async () => {
+    let now = new Date('2026-07-14T12:00:00.000Z');
+    const harness = makeHarness({}, makeStores({ now: () => now }), {
+      gate: { timeout: { policy: 'auto-approve', afterMs: 60_000 } },
+    });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+
+    now = new Date('2026-07-14T12:01:00.000Z');
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    const [settled] = await harness.service.listApprovals('run-1');
+    expect(settled?.decision).toMatchObject({ action: 'approve', decidedBy: 'ed' });
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
   });
 
   it('rejects with return-to-step: rewinds the repair step and re-halts with a fresh request', async () => {

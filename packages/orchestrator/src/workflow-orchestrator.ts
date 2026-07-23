@@ -6,6 +6,7 @@ import type {
   AgentStep,
   AgentStreamEventInput,
   ApprovalGateStep,
+  ApprovalRequest,
   ArtifactReference,
   ExecutableStep,
   ExecutorStreamEvent,
@@ -46,6 +47,7 @@ import type {
   HarnessRepository,
   HarnessSelection,
   IdGenerator,
+  JobQueue,
   MetricsRepository,
   ModelRouter,
   ModelOverrideRepository,
@@ -110,6 +112,16 @@ interface DecisionLogEntry {
   decision: AgentArtifact['decisions'][number];
 }
 
+class ApprovalTimeoutScheduleError extends Error {
+  constructor(
+    readonly nodeId: string,
+    cause: unknown,
+  ) {
+    super(`Failed to schedule approval timeout: ${errorMessage(cause)}`);
+    this.name = 'ApprovalTimeoutScheduleError';
+  }
+}
+
 export class WorkflowOrchestrator {
   constructor(
     private readonly projects: ProjectRepository,
@@ -118,6 +130,7 @@ export class WorkflowOrchestrator {
     private readonly stepAttempts: StepAttemptRepository,
     private readonly approvalRequests: ApprovalRequestRepository,
     private readonly approvalDecisions: ApprovalDecisionRepository,
+    private readonly queue: JobQueue,
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
     private readonly stepEvents: StepEventRepository,
@@ -228,6 +241,10 @@ export class WorkflowOrchestrator {
         runId: run.id,
       });
     } catch (error) {
+      if (error instanceof ApprovalTimeoutScheduleError) {
+        await this.finalizeApproval(run.id, projectId, error.nodeId);
+        throw error;
+      }
       if (error instanceof RunPausedError) {
         await this.finalizePause(run.id, projectId, workflow, error.nodeId);
         return;
@@ -824,7 +841,7 @@ export class WorkflowOrchestrator {
             }
           : {};
       const approvalRequestId = this.ids.next();
-      await this.approvalRequests.create({
+      const approvalRequest: ApprovalRequest = {
         id: approvalRequestId,
         runId,
         stepRunId: stepRun.id,
@@ -833,7 +850,9 @@ export class WorkflowOrchestrator {
         allowedActions: node.actions,
         ...timeout,
         createdAt: requestTimestamp.toISOString(),
-      });
+      };
+      await this.approvalRequests.create(approvalRequest);
+      await this.enqueueApprovalTimeout(project, node.id, approvalRequest);
       await this.stepEvents
         .append({
           id: this.ids.next(),
@@ -853,7 +872,30 @@ export class WorkflowOrchestrator {
         `Approval gate ${node.id} has a pending StepRun but no ApprovalRequest`,
       );
     }
-    const decision = normalizeApprovalDecision(await this.approvalDecisions.get(runId, request.id));
+    let decision = normalizeApprovalDecision(await this.approvalDecisions.get(runId, request.id));
+    const timeoutPolicy = request.timeout?.policy;
+    if (!decision && request.timeoutAt && new Date(request.timeoutAt) > this.clock.now()) {
+      await this.enqueueApprovalTimeout(project, node.id, request);
+    }
+    if (
+      !decision &&
+      request.timeoutAt &&
+      timeoutPolicy &&
+      timeoutPolicy !== 'none' &&
+      new Date(request.timeoutAt) <= this.clock.now()
+    ) {
+      const decidedAt = this.clock.now().toISOString();
+      decision = {
+        id: this.ids.next(),
+        requestId: request.id,
+        runId,
+        stepRunId: request.stepRunId,
+        action: timeoutPolicy === 'auto-approve' ? 'approve' : 'reject',
+        decidedBy: 'system:approval-timeout',
+        decidedAt,
+      };
+      await this.approvalDecisions.create(decision);
+    }
     if (!decision) throw new ApprovalRequiredError(runId, node.id);
 
     if (decision.action === 'reject') {
@@ -886,6 +928,30 @@ export class WorkflowOrchestrator {
     });
     await this.emitArtifactCreated(project.id, artifact, node.id, runId);
     return artifact;
+  }
+
+  private async enqueueApprovalTimeout(
+    project: Project,
+    nodeId: string,
+    request: ApprovalRequest,
+  ): Promise<void> {
+    if (!request.timeoutAt) return;
+    try {
+      await this.queue.enqueue({
+        id: `${request.runId}:approval-timeout:${request.id}`,
+        type: 'run-project',
+        projectId: project.id,
+        workflowId: project.workflowId,
+        runId: request.runId,
+        attempts: 0,
+        maxAttempts: 1,
+        createdAt: request.createdAt,
+        availableAt: request.timeoutAt,
+        leaseEpoch: 0,
+      });
+    } catch (error) {
+      throw new ApprovalTimeoutScheduleError(nodeId, error);
+    }
   }
 
   private async executeQualityLoop(

@@ -9,6 +9,7 @@ import {
   SystemClock,
   type ExecutorRegistry,
   type HarnessRepository,
+  type JobQueue,
   type MetricsRepository,
   type ModelRouter,
   type VerificationService,
@@ -127,6 +128,14 @@ function makeOrchestrator(versions?: ProjectVersionService, executorHealth?: Exe
   const verifier: VerificationService = {
     verify: () => Promise.reject(new Error('verify is not used by this fixture')),
   };
+  const queue: JobQueue = {
+    enqueue: () => Promise.resolve(),
+    claim: () => Promise.resolve(null),
+    heartbeat: (job) => Promise.resolve(job),
+    ack: () => Promise.resolve(),
+    nack: () => Promise.resolve(),
+    reapExpired: () => Promise.resolve([]),
+  };
   const executors: Pick<ExecutorRegistry, 'health'> | undefined = executorHealth
     ? { health: () => Promise.resolve(executorHealth) }
     : undefined;
@@ -138,6 +147,7 @@ function makeOrchestrator(versions?: ProjectVersionService, executorHealth?: Exe
     stepAttempts,
     approvalRequests,
     approvalDecisions,
+    queue,
     artifacts,
     events,
     stepEvents,

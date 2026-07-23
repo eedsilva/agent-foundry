@@ -1105,6 +1105,7 @@ export interface GateOptions {
   onReject?: 'end' | 'return-to-step';
   returnToStepId?: string;
   repairArtifact?: string;
+  timeout?: { policy: 'none' | 'auto-approve' | 'auto-reject'; afterMs?: number };
 }
 
 export function makeHarness(
@@ -1244,6 +1245,8 @@ export function makeHarness(
     recordQuality: () => Promise.resolve(),
   };
   const enqueued: QueueJob[] = [];
+  const nacked: QueueJob[] = [];
+  let claimed: QueueJob | null = null;
   let enqueueFailure: Error | undefined;
   const queue: JobQueue = {
     enqueue: (job) => {
@@ -1255,10 +1258,19 @@ export function makeHarness(
       if (!enqueued.some((pending) => pending.id === job.id)) enqueued.push(job);
       return Promise.resolve();
     },
-    claim: () => Promise.resolve(null),
+    claim: () => {
+      const job = claimed;
+      claimed = null;
+      return Promise.resolve(job);
+    },
     heartbeat: (job) => Promise.resolve(job),
     ack: () => Promise.resolve(),
-    nack: () => Promise.resolve(),
+    nack: (job) => {
+      nacked.push(job);
+      const retried = { ...job, attempts: job.attempts + 1, lease: undefined };
+      claimed = retried.attempts < retried.maxAttempts ? retried : null;
+      return Promise.resolve();
+    },
     reapExpired: () => Promise.resolve([]),
   };
   const orchestrator = new WorkflowOrchestrator(
@@ -1268,6 +1280,7 @@ export function makeHarness(
     stores.stepAttempts,
     stores.approvalRequests,
     stores.approvalDecisions,
+    queue,
     stores.artifacts,
     stores.events,
     stores.stepEvents,
@@ -1316,6 +1329,11 @@ export function makeHarness(
     orchestrator,
     service,
     enqueued,
+    queue,
+    nacked,
+    queueForWorker(job: QueueJob) {
+      claimed = job;
+    },
     failNextEnqueue(error: Error) {
       enqueueFailure = error;
     },

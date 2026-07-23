@@ -64,6 +64,8 @@ import {
 import { policyHash, workflowHash } from './idempotency.js';
 import type { QualityObservationService } from './quality-observation-service.js';
 
+const RUN_PROJECT_MAX_ATTEMPTS = 2;
+
 export class ProjectService {
   constructor(
     private readonly projects: ProjectRepository,
@@ -166,7 +168,7 @@ export class ProjectService {
       workflowId: project.workflowId,
       runId,
       attempts: 0,
-      maxAttempts: 1,
+      maxAttempts: RUN_PROJECT_MAX_ATTEMPTS,
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
@@ -292,7 +294,7 @@ export class ProjectService {
       workflowId: project.workflowId,
       runId,
       attempts: 0,
-      maxAttempts: 1,
+      maxAttempts: RUN_PROJECT_MAX_ATTEMPTS,
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
@@ -959,7 +961,7 @@ export class ProjectService {
       workflowId: project.workflowId,
       runId,
       attempts: 0,
-      maxAttempts: 1,
+      maxAttempts: RUN_PROJECT_MAX_ATTEMPTS,
       createdAt: now,
       availableAt: now,
       leaseEpoch: 0,
