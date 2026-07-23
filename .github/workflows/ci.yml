@@ -91,6 +91,22 @@ jobs:
       - run: npm ci
       - run: npm run roadmap:check
 
+  secrets:
+    name: secrets
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Build the web app so the client-bundle scan has something to scan
+        run: npm run build --workspace @agent-foundry/contracts && npm run build --workspace @agent-foundry/domain && npm run build --workspace @agent-foundry/web
+      - run: npm run secrets:check
+
   typecheck:
     name: typecheck
     needs: preflight
