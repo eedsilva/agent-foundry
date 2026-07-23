@@ -9,7 +9,7 @@ import {
   type BenchmarkCaseKind,
   type BenchmarkReport,
   type BenchmarkRunRecord,
-  type Provider,
+  type ProviderCanaryProvider,
 } from '@agent-foundry/contracts';
 import { markdownCell, publishBaselinePair } from './baseline-publish.js';
 import { runDogfoodTask, type RunDogfoodTaskOptions } from './dogfood.js';
@@ -35,7 +35,7 @@ export interface RunBenchmarkCaseOptions {
 // structurally, so scripts/benchmark.ts can pass catalog entries straight in.
 export interface BenchmarkModelTarget {
   id: string;
-  provider: Provider;
+  provider: ProviderCanaryProvider;
   model: string;
 }
 

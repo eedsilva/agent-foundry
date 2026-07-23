@@ -13,7 +13,7 @@ import {
   type DogfoodRunRecord,
   type DogfoodTask,
   type ExecutionUsage,
-  type Provider,
+  type ProviderCanaryProvider,
   type RouteDecision,
   type StepAttempt,
   type StepRun,
@@ -38,7 +38,7 @@ export interface RunDogfoodTaskOptions {
   executorMode?: 'real' | 'mock';
   modelOverride?: {
     modelId: string;
-    provider: Provider;
+    provider: ProviderCanaryProvider;
     model: string;
     reason: string;
     estimatedImpact: string;
