@@ -17,6 +17,7 @@ import {
   parseAgentArtifact,
 } from './json-output.js';
 import { killProcessTree, terminateProcessTree } from './process-tree.js';
+import { pickSafeEnvironment } from './safe-environment.js';
 
 export interface CliInvocation {
   command: string;
@@ -133,7 +134,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         // Own process group on POSIX so cancellation can terminate the whole CLI tree.
         detached: process.platform !== 'win32',
         ...(invocation.input !== undefined ? { input: invocation.input } : {}),
-        ...(invocation.environment ? { env: cleanEnvironment(invocation.environment) } : {}),
+        env: cleanEnvironment({ ...pickSafeEnvironment(), ...invocation.environment }),
       }) as unknown as CliSubprocess;
       if (onEvent) attachStreamTap(subprocess, this.createStreamMapper(), onEvent);
       if (signal) {
