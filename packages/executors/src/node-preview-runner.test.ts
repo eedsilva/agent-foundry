@@ -239,6 +239,40 @@ describe('NodePreviewRunner', () => {
     expect(await canConnect(port)).toBe(false);
   }, 10_000);
 
+  it('injects resolved secret values into the dev server process, scoped to a safe base env', async () => {
+    const originalDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgres://control-plane-only-leak-canary';
+    try {
+      const secretStore = {
+        resolveAll: async () => ({ STRIPE_SECRET_KEY: 'sk-injected-for-test' }),
+      };
+      const runner = new NodePreviewRunner({ secretStore });
+      let session = await newSession('sess-secret-injection');
+      session = {
+        ...session,
+        commandPlan: {
+          packageManager: 'npm',
+          install: { ok: true, command: 'npm', args: ['ci'] },
+          build: { ok: true, command: 'npm', args: ['run', 'build'] },
+          dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
+          detectedAt: new Date().toISOString(),
+        },
+      };
+      session = await startTracked(runner, session);
+      const port = session.process!.port!;
+
+      const response = await fetch(`http://127.0.0.1:${port}/echo-env`);
+      const env = await response.json();
+
+      expect(env.STRIPE_SECRET_KEY).toBe('sk-injected-for-test');
+      expect(env.DATABASE_URL).toBeUndefined();
+      expect(env.PORT).toBe(String(port));
+    } finally {
+      if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = originalDatabaseUrl;
+    }
+  });
+
   it('starts the fixture dev server and reports it healthy on a distinct port', async () => {
     const runner = new NodePreviewRunner({
       startupTimeoutMs: 5_000,
