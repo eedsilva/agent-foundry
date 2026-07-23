@@ -22,6 +22,7 @@ export function buildCalibrationReport(metrics: ModelMetric[]): CalibrationRepor
   let totalSampleSize = 0;
 
   for (const metric of evaluated) {
+    // Mirrors score-router.ts's qualityHistory Laplace smoothing — must stay in sync if that formula changes.
     const predicted = (metric.qualityApprovals + 2) / (metric.qualityEvaluations + 4);
     const observed = metric.qualityApprovals / metric.qualityEvaluations;
     const weight = metric.qualityEvaluations;

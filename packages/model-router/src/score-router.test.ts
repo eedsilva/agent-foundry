@@ -725,6 +725,34 @@ describe('ScoreBasedModelRouter', () => {
     expect(widths[2]!).toBeLessThan(widths[1]!);
   });
 
+  it('gives a thin high-rate model lower confidence than an established slightly-lower one (conflicting history)', async () => {
+    const metrics = new MemoryMetrics(
+      new Map([
+        ['thin-perfect:implementation:developer', metricWithAttempts('thin-perfect', 1, 1)],
+        ['established:implementation:developer', metricWithAttempts('established', 10, 0.7)],
+      ]),
+    );
+    const router = new ScoreBasedModelRouter(
+      [model('thin-perfect', { tags: ['coding'] }), model('established', { tags: ['coding'] })],
+      metrics,
+    );
+
+    const route = await router.route(profile);
+    const ranked = [route.selected, ...route.fallbacks];
+    const thin = ranked.find((candidate) => candidate.model.id === 'thin-perfect')!;
+    const established = ranked.find((candidate) => candidate.model.id === 'established')!;
+
+    // Model A: 1/1 (perfect raw rate, almost no evidence). Model B: 7/10 (lower
+    // raw rate, far more evidence). Confidence must surface that A's streak is
+    // less trustworthy than B's track record, despite A's higher raw rate.
+    expect(thin.confidence!.value).toBeLessThan(established.confidence!.value);
+    const thinWidth = thin.confidence!.interval.upper - thin.confidence!.interval.lower;
+    const establishedWidth =
+      established.confidence!.interval.upper - established.confidence!.interval.lower;
+    expect(thinWidth).toBeGreaterThan(establishedWidth);
+    expect(route.selected.model.id).toBe('established');
+  });
+
   it('gives fallbacks their own confidence, distinct from the selected model', async () => {
     const metrics = new MemoryMetrics(
       new Map([['seasoned:implementation:developer', metricWithAttempts('seasoned', 200, 0.9)]]),

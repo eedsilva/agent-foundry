@@ -1,4 +1,9 @@
-import type { ModelMetric, QualitySignalSummary, RouteConfidence } from '@agent-foundry/contracts';
+import {
+  RouteConfidenceSchema,
+  type ModelMetric,
+  type QualitySignalSummary,
+  type RouteConfidence,
+} from '@agent-foundry/contracts';
 
 /** Matches the Laplace `+4` denominator used by score-router's score() method. */
 export const PRIOR_PSEUDO_COUNT = 4;
@@ -22,7 +27,7 @@ export function routeConfidence(
   const value = n / (n + PRIOR_PSEUDO_COUNT);
   const coldStart = n < PRIOR_PSEUDO_COUNT;
 
-  return {
+  return RouteConfidenceSchema.parse({
     value,
     sampleSize: n,
     interval: wilsonInterval(historicalScore, n),
@@ -30,7 +35,7 @@ export function routeConfidence(
     rationale: `${n} observations; prior weight ${Math.round((1 - value) * 100)}%${
       coldStart ? ' (cold start — conservative)' : ''
     }`,
-  };
+  });
 }
 
 /** 95% Wilson score interval for a binomial proportion at sample size n. */
