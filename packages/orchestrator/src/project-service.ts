@@ -153,13 +153,6 @@ export class ProjectService {
     const scaffoldFiles = await this.harness.scaffoldFiles(workflow.stack);
     if (scaffoldFiles.length > 0) {
       await this.workspaces.applyScaffold(project.id, scaffoldFiles);
-      await this.artifacts.put({
-        projectId: project.id,
-        name: 'scaffold-manifest',
-        content: scaffoldFiles.map((file) => file.path),
-        contentType: 'application/json',
-        createdBy: `scaffold:${workflow.stack}`,
-      });
     }
     await this.projects.create(project);
     await this.runs.create(run);
@@ -170,6 +163,15 @@ export class ProjectService {
       contentType: 'text/markdown',
       createdBy: 'user',
     });
+    if (scaffoldFiles.length > 0) {
+      await this.artifacts.put({
+        projectId: project.id,
+        name: 'scaffold-manifest',
+        content: scaffoldFiles.map((file) => file.path),
+        contentType: 'application/json',
+        createdBy: `scaffold:${workflow.stack}`,
+      });
+    }
     await this.appendEvent(project.id, 'project.created', 'Project and workspace created.');
     if (scaffoldFiles.length > 0) {
       await this.appendEvent(
