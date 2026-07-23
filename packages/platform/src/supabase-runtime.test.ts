@@ -53,12 +53,10 @@ const HOST_PORT_FIELDS = [
 
 let dataDir: string;
 let projectIdsAtStart: string[];
-let migrationsAtStart: string[];
 
 beforeEach(async () => {
   dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-platform-'));
   projectIdsAtStart = [];
-  migrationsAtStart = [];
 });
 
 afterEach(async () => {
@@ -81,7 +79,6 @@ async function statusCommand(
         join(workdir, 'supabase', 'migrations', GENERATED_STORAGE_MIGRATION),
         'utf8',
       );
-      migrationsAtStart.push(migration);
       expect(migration).toBe(generatedStorageMigration());
       projectIdsAtStart.push(config.match(/^project_id\s*=\s*"([^"]+)"/m)?.[1] ?? 'missing');
     }

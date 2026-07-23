@@ -402,6 +402,10 @@ function authHeaders(apiKey: string, token: string): Record<string, string> {
   return { apikey: apiKey, Authorization: `Bearer ${token}` };
 }
 
+function apiKeyForToken(credentials: Credentials, token: string): string {
+  return token === credentials.serviceRoleKey ? credentials.serviceRoleKey : credentials.anonKey;
+}
+
 function rpc(
   credentials: Credentials,
   token: string,
@@ -411,10 +415,7 @@ function rpc(
   return boundedFetch(`${credentials.apiUrl}/rest/v1/rpc/${name}`, {
     method: 'POST',
     headers: {
-      ...authHeaders(
-        token === credentials.serviceRoleKey ? credentials.serviceRoleKey : credentials.anonKey,
-        token,
-      ),
+      ...authHeaders(apiKeyForToken(credentials, token), token),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -509,10 +510,7 @@ function uploadObject(
   return boundedFetch(storageObjectUrl(credentials.apiUrl, '', objectName), {
     method: 'POST',
     headers: {
-      ...authHeaders(
-        token === credentials.serviceRoleKey ? credentials.serviceRoleKey : credentials.anonKey,
-        token,
-      ),
+      ...authHeaders(apiKeyForToken(credentials, token), token),
       'Content-Type': mediaType,
     },
     body: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
@@ -572,10 +570,7 @@ function readObject(
   objectName: string,
 ): Promise<Response> {
   return boundedFetch(storageObjectUrl(credentials.apiUrl, 'authenticated', objectName), {
-    headers: authHeaders(
-      token === credentials.serviceRoleKey ? credentials.serviceRoleKey : credentials.anonKey,
-      token,
-    ),
+    headers: authHeaders(apiKeyForToken(credentials, token), token),
   });
 }
 
@@ -608,10 +603,7 @@ async function metadataRows(
     await boundedFetch(
       `${credentials.apiUrl}/rest/v1/storage_uploads?select=object_name,owner_id&object_name=eq.${encodeURIComponent(objectName)}`,
       {
-        headers: authHeaders(
-          token === credentials.serviceRoleKey ? credentials.serviceRoleKey : credentials.anonKey,
-          token,
-        ),
+        headers: authHeaders(apiKeyForToken(credentials, token), token),
       },
     ),
     'read upload metadata',
