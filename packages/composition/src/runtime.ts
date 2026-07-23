@@ -197,13 +197,12 @@ export async function createRuntime(
     gitAuthorName: config.gitAuthorName,
     gitAuthorEmail: config.gitAuthorEmail,
   });
-  const generatedProjectRuntime =
-    config.executorMode === 'real'
-      ? overrides.generatedProjectRuntime === null
-        ? undefined
-        : (overrides.generatedProjectRuntime ??
-          new SupabaseGeneratedProjectRuntime({ dataDir: config.dataDir }))
-      : undefined;
+  let generatedProjectRuntime: GeneratedProjectRuntime | undefined;
+  if (config.executorMode === 'real' && overrides.generatedProjectRuntime !== null) {
+    generatedProjectRuntime =
+      overrides.generatedProjectRuntime ??
+      new SupabaseGeneratedProjectRuntime({ dataDir: config.dataDir });
+  }
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
   const router = new ScoreBasedModelRouter(catalog, metrics, qualityObservations);
   const executors =

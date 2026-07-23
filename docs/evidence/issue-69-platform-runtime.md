@@ -4,14 +4,14 @@ Date: 2026-07-22
 
 ## Acceptance mapping
 
-| Intent | Implemented boundary | Automated evidence |
-| --- | --- | --- |
-| Per-project Supabase lifecycle | `SupabaseGeneratedProjectRuntime` owns initialize, start, stop, inspect, migrate, seed, health, reset, and cleanup | `packages/platform/src/supabase-runtime.test.ts` |
-| Isolation | Each project receives a distinct CLI workdir, Compose project name, Docker network, and allocated ports | The two-project lifecycle test asserts distinct resources and all 14 host ports |
-| Safe persistence | `AppEnvironment` stores only validated resource metadata, public endpoints, ports, and health | Lifecycle fixtures include credentials in CLI output and assert that persisted metadata contains none |
-| Idempotency and recovery | Lifecycle state is persisted atomically; repeat start/stop/initialize calls are no-ops and command errors are redacted | Adapter unit tests cover idempotency, partial failure diagnostics, and recovery |
-| Destructive operations | Reset and cleanup require explicit confirmation and a recent independent backup | Adapter tests assert both destructive gates |
-| Builder integration | Real-mode project creation initializes the runtime before persistence; mock mode remains Docker-free | `project-service.test.ts` and `runtime.integration.test.ts` |
+| Intent                         | Implemented boundary                                                                                                   | Automated evidence                                                                                    |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Per-project Supabase lifecycle | `SupabaseGeneratedProjectRuntime` owns initialize, start, stop, inspect, migrate, seed, health, reset, and cleanup     | `packages/platform/src/supabase-runtime.test.ts`                                                      |
+| Isolation                      | Each project receives a distinct CLI workdir, Compose project name, Docker network, and allocated ports                | The two-project lifecycle test asserts distinct resources and all 14 host ports                       |
+| Safe persistence               | `AppEnvironment` stores only validated resource metadata, public endpoints, ports, and health                          | Lifecycle fixtures include credentials in CLI output and assert that persisted metadata contains none |
+| Idempotency and recovery       | Lifecycle state is persisted atomically; repeat start/stop/initialize calls are no-ops and command errors are redacted | Adapter unit tests cover idempotency, partial failure diagnostics, and recovery                       |
+| Destructive operations         | Reset and cleanup require explicit confirmation and a recent independent backup                                        | Adapter tests assert both destructive gates                                                           |
+| Builder integration            | Real-mode project creation initializes the runtime before persistence; mock mode remains Docker-free                   | `project-service.test.ts` and `runtime.integration.test.ts`                                           |
 
 ## Validation results
 

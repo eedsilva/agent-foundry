@@ -175,7 +175,7 @@ function configureMockBrowserRuntime(runtime: Runtime): void {
   });
 }
 
-describe('mock runtime', () => {
+describe('runtime composition', () => {
   it('composes the Playwright browser verifier through the preview coordinator', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-browser-runtime-'));
     temporaryDirectories.push(dataDir);
