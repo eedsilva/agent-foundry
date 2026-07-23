@@ -20,6 +20,7 @@ export const ALLOWED_INTERNAL_DEPENDENCIES = new Map([
       '@agent-foundry/model-router',
       '@agent-foundry/orchestrator',
       '@agent-foundry/persistence',
+      '@agent-foundry/platform',
     ]),
   ],
   [

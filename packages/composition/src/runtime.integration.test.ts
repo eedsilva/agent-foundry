@@ -196,6 +196,7 @@ describe('mock runtime', () => {
     expect((runtime as Runtime & { knowledgeFiles?: unknown }).knowledgeFiles).toBeInstanceOf(
       FileKnowledgeFileRepository,
     );
+    expect(runtime.generatedProjectRuntime).toBeUndefined();
   });
 
   it('binds mock browser screenshot evidence to the same direct-edit run', async () => {

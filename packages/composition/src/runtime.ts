@@ -83,7 +83,9 @@ import type {
   StepEventRepository,
   StepRunRepository,
   WorkflowRunRepository,
+  GeneratedProjectRuntime,
 } from '@agent-foundry/domain';
+import { SupabaseGeneratedProjectRuntime } from '@agent-foundry/platform';
 import { BrowserTestPlanArtifactSchema, type PreviewSession } from '@agent-foundry/contracts';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
 
@@ -130,6 +132,7 @@ export interface Runtime {
   previewSelectionService: PreviewSelectionService;
   projectVersions: FileProjectVersionRepository;
   projectVersionService: ProjectVersionService;
+  generatedProjectRuntime?: GeneratedProjectRuntime;
 }
 
 export interface RuntimeOverrides {
@@ -192,6 +195,10 @@ export async function createRuntime(
     gitAuthorName: config.gitAuthorName,
     gitAuthorEmail: config.gitAuthorEmail,
   });
+  const generatedProjectRuntime =
+    config.executorMode === 'real'
+      ? new SupabaseGeneratedProjectRuntime({ dataDir: config.dataDir })
+      : undefined;
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
   const router = new ScoreBasedModelRouter(catalog, metrics, qualityObservations);
   const executors =
@@ -316,6 +323,7 @@ export async function createRuntime(
     ids,
     modelOverrides,
     qualityObservationService,
+    generatedProjectRuntime,
   );
   const conversationService = new ConversationService(
     projects,
@@ -407,6 +415,7 @@ export async function createRuntime(
     previewSelectionService,
     projectVersions,
     projectVersionService,
+    ...(generatedProjectRuntime ? { generatedProjectRuntime } : {}),
   };
 }
 

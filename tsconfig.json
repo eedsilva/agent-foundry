@@ -8,6 +8,7 @@
     { "path": "./packages/harness" },
     { "path": "./packages/model-router" },
     { "path": "./packages/executors" },
+    { "path": "./packages/platform" },
     { "path": "./packages/orchestrator" },
     { "path": "./packages/composition" },
     { "path": "./apps/api" },
