@@ -7,6 +7,43 @@ import {
   generatedStorageMigration,
 } from './supabase-storage.js';
 
+function assertStorageMetadataReadOnly(sql: string): void {
+  const statements = sql
+    .split(';')
+    .map((statement) => statement.toLowerCase().replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  for (const statement of statements) {
+    if (
+      /^create policy\b/.test(statement) &&
+      /\bon\s+public\s*\.\s*storage_uploads\b/.test(statement)
+    ) {
+      const operation = statement.match(/\bfor\s+(all|select|insert|update|delete)\b/)?.[1];
+      if (operation !== 'select') {
+        throw new Error('Generated storage metadata must remain read-only.');
+      }
+    }
+
+    const grant = statement.match(
+      /^grant\s+(.+?)\s+on\s+(?:table\s+)?public\s*\.\s*storage_uploads\s+to\s+(.+)$/,
+    );
+    if (!grant) continue;
+
+    const grantsMutation = grant[1]!
+      .split(',')
+      .some((privilege) =>
+        /^(?:all(?: privileges)?|insert|update|delete)\b/.test(privilege.trim()),
+      );
+    const grantsLowRole = grant[2]!
+      .replace(/\s+with grant option$/, '')
+      .split(',')
+      .some((role) => ['public', 'anon', 'authenticated'].includes(role.trim()));
+    if (grantsMutation && grantsLowRole) {
+      throw new Error('Generated storage metadata must remain read-only.');
+    }
+  }
+}
+
 describe('generated Supabase Storage artifacts', () => {
   it('adds one private uploads bucket with exact size and MIME limits', () => {
     const configured = configureGeneratedStorage('project_id = "supabase_project-a"\n');
@@ -54,8 +91,25 @@ public = true
     );
   });
 
+  it.each([
+    [
+      'renamed INSERT policy',
+      `create policy renamed_metadata_write
+         on public.storage_uploads for insert to authenticated
+         with check (true);`,
+    ],
+    ['GRANT ALL', 'GRANT ALL ON TABLE public.storage_uploads TO authenticated;'],
+    ['mixed-case DML grant', 'GrAnT UPDATE, DELETE ON public . storage_uploads TO PUBLIC, anon;'],
+  ])('detects a malicious metadata permission mutation: %s', (_, mutation) => {
+    expect(() =>
+      assertStorageMetadataReadOnly(`${generatedStorageMigration()}\n${mutation}`),
+    ).toThrowError('Generated storage metadata must remain read-only.');
+  });
+
   it('generates owner RLS, quarantine, signed-read, export, and cleanup contracts', () => {
     const sql = generatedStorageMigration();
+
+    assertStorageMetadataReadOnly(sql);
 
     for (const required of [
       "create type public.storage_scan_status as enum ('quarantine', 'clean', 'rejected')",
