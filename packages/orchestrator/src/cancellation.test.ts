@@ -586,6 +586,7 @@ function makeHarness(
   };
   const metrics: MetricsRepository = {
     get: () => Promise.resolve(null),
+    list: () => Promise.resolve([]),
     record: vi.fn(() => Promise.resolve()),
     recordQuality: vi.fn(() => Promise.resolve()),
   };

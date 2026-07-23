@@ -280,6 +280,8 @@ export interface MetricsRepository {
     role: AgentRole,
     category?: TaskCategory,
   ): Promise<ModelMetric | null>;
+  /** All stored metrics, for cross-model reporting (e.g. calibration). */
+  list(): Promise<ModelMetric[]>;
   record(input: {
     modelId: string;
     taskKind: TaskKind;

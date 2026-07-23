@@ -27,6 +27,7 @@
     "dogfood:run": "tsx scripts/dogfood.ts",
     "benchmark:run": "tsx scripts/benchmark.ts",
     "benchmark:freeze": "tsx scripts/benchmark.ts --freeze",
+    "calibration:report": "tsx scripts/calibration-report.ts",
     "check": "npm run format:check && npm run lint && npm run architecture:check && npm run roadmap:check && npm run typecheck && npm test && npm run build",
     "test:unit": "vitest run --pool=threads --maxWorkers=1",
     "test:scripts": "node --test scripts/lib/*.test.mjs",
