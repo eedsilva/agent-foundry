@@ -83,11 +83,11 @@ export class WorkerLoop {
           },
         ),
       );
-      stopHeartbeat();
+      await stopHeartbeat();
       if (!state.leaseLost) await this.queue.ack(state.job, this.options.workerId);
       log?.info('job completed');
     } catch (error) {
-      stopHeartbeat();
+      await stopHeartbeat();
       if (!state.leaseLost) {
         await this.queue.nack(
           state.job,
@@ -117,15 +117,16 @@ export class WorkerLoop {
    * each heartbeat settles so calls never overlap. Lease loss stops the run;
    * transient failures retry on the next interval.
    */
-  private startHeartbeat(state: HeartbeatState, leaseAbort: AbortController): () => void {
+  private startHeartbeat(state: HeartbeatState, leaseAbort: AbortController): () => Promise<void> {
     const intervalMs = this.options.heartbeatIntervalMs ?? 15_000;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let active = Promise.resolve();
 
     const tick = (): void => {
       if (stopped) return;
       timer = setTimeout(() => {
-        void this.queue
+        active = this.queue
           .heartbeat(state.job, this.options.workerId)
           .then((renewed) => {
             state.job = renewed;
@@ -143,9 +144,10 @@ export class WorkerLoop {
     };
     tick();
 
-    return () => {
+    return async () => {
       stopped = true;
       if (timer) clearTimeout(timer);
+      await active;
     };
   }
 }

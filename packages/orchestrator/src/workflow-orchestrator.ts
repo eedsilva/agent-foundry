@@ -184,21 +184,6 @@ export class WorkflowOrchestrator {
     }
     span.setAttribute('foundry.run.id', run.id);
     span.setAttribute('foundry.workflow.id', workflow.id);
-    // A ceiling can crash after the terminal state write but before summary
-    // sync or event append, so failed redelivery finishes those idempotently.
-    if (run.status === 'failed' && run.execution?.ceiling) {
-      await this.finalizeEmergencyCeiling(run.id, projectId);
-      return;
-    }
-    if (isWorkflowRunStatusTerminal(run.status)) return;
-    if (run.status === 'cancel_requested') {
-      await this.finalizeCancellation(run.id, projectId);
-      return;
-    }
-    if (run.status === 'pause_requested') {
-      await this.finalizePause(run.id, projectId, workflow);
-      return;
-    }
     const cancellation = new AbortController();
     const signal = externalSignal
       ? AbortSignal.any([cancellation.signal, externalSignal])
@@ -206,6 +191,27 @@ export class WorkflowOrchestrator {
     const stopWatching = this.watchForCancellation(run.id, cancellation);
     try {
       throwIfCancelled(signal, run.id);
+      // A ceiling can crash after the terminal state write but before summary
+      // sync or event append, so failed redelivery finishes those idempotently.
+      if (run.status === 'failed' && run.execution?.ceiling) {
+        throwIfCancelled(signal, run.id);
+        await this.finalizeEmergencyCeiling(run.id, projectId);
+        return;
+      }
+      if (isWorkflowRunStatusTerminal(run.status)) {
+        throwIfCancelled(signal, run.id);
+        return;
+      }
+      if (run.status === 'cancel_requested') {
+        throwIfCancelled(signal, run.id);
+        await this.finalizeCancellation(run.id, projectId);
+        return;
+      }
+      if (run.status === 'pause_requested') {
+        throwIfCancelled(signal, run.id);
+        await this.finalizePause(run.id, projectId, workflow);
+        return;
+      }
       await this.workspaces.ensureGit(projectId);
       run = await this.ensureInitialVerifiedCheckpoint(run.id, projectId);
       if (run.execution?.ceiling) {
@@ -241,8 +247,10 @@ export class WorkflowOrchestrator {
         });
       }
       await this.assertExecutionMayContinue(run.id, signal);
-      run = await this.completeRun(run.id);
+      run = await this.completeRun(run.id, signal);
+      throwIfCancelled(signal, run.id);
       await this.syncProjectSummary(run);
+      throwIfCancelled(signal, run.id);
       const durationMs = Date.now() - startedAt;
       span.setAttribute('foundry.run.duration_ms', durationMs);
       recordRunDuration(durationMs, { status: 'completed' });
@@ -276,13 +284,16 @@ export class WorkflowOrchestrator {
       if (error instanceof EmergencyCeilingError) {
         const latest = await this.requireRun(run.id);
         if (latest.status === 'cancel_requested' || latest.status === 'cancelled') {
+          throwIfCancelled(signal, run.id);
           await this.finalizeCancellation(run.id, projectId);
           return;
         }
+        throwIfCancelled(signal, run.id);
         if (!(await this.finalizeEmergencyCeiling(run.id, projectId))) return;
         throw error;
       }
       const latest = await this.stopActiveExecution(run.id);
+      throwIfCancelled(signal, run.id);
       if (latest.status === 'running' || latest.status === 'pause_requested') {
         run = await this.runs.update(
           transitionWorkflowRun(latest, 'failed', this.clock.now(), { error: runError(error) }),
@@ -325,10 +336,12 @@ export class WorkflowOrchestrator {
     });
   }
 
-  private async completeRun(runId: string): Promise<WorkflowRun> {
+  private async completeRun(runId: string, signal?: AbortSignal): Promise<WorkflowRun> {
+    if (signal) throwIfCancelled(signal, runId);
     await this.stopActiveExecution(runId);
-    await this.assertExecutionMayContinue(runId);
+    await this.assertExecutionMayContinue(runId, signal);
     for (;;) {
+      if (signal) throwIfCancelled(signal, runId);
       const run = await this.requireRun(runId);
       if (run.status === 'cancel_requested' || run.status === 'cancelled') {
         throw new RunCancelledError(runId);
@@ -338,6 +351,7 @@ export class WorkflowOrchestrator {
       }
       if (run.status === 'completed') return run;
       try {
+        if (signal) throwIfCancelled(signal, runId);
         return await this.runs.update(
           transitionWorkflowRun(run, 'completed', this.clock.now()),
           run.version,

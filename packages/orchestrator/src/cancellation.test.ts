@@ -682,6 +682,52 @@ async function statusByStepId(
 }
 
 describe('cancellation during a workflow run', () => {
+  it('rethrows pre-aborted lease loss before finalizing a cancel-requested run', async () => {
+    const harness = makeHarness({});
+    await seedRun(harness);
+    await harness.service.cancelRun('run-1');
+    const lease = new AbortController();
+    lease.abort(new LeaseLostError('job-1', 'worker-a'));
+
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1', lease.signal),
+    ).rejects.toBeInstanceOf(LeaseLostError);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('cancel_requested');
+    expect(harness.events.types()).not.toContain('run.cancelled');
+  });
+
+  it('rethrows lease loss during completion without writing a terminal state or completion event', async () => {
+    const harness = makeHarness({});
+    await seedRun(harness);
+    const lease = new AbortController();
+    const update = harness.runs.update.bind(harness.runs);
+    let active = false;
+    let stopped = false;
+    vi.spyOn(harness.runs, 'update').mockImplementation(async (run, expectedVersion) => {
+      const updated = await update(run, expectedVersion);
+      if (run.execution?.activeSince) active = true;
+      if (
+        active &&
+        !stopped &&
+        run.status === 'running' &&
+        run.execution &&
+        !run.execution.activeSince
+      ) {
+        stopped = true;
+        lease.abort(new LeaseLostError('job-1', 'worker-a'));
+      }
+      return updated;
+    });
+
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1', lease.signal),
+    ).rejects.toBeInstanceOf(LeaseLostError);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('running');
+    expect(harness.events.types()).not.toContain('project.completed');
+  });
+
   it('rethrows an external lease loss without recording a terminal lifecycle state', async () => {
     const harness = makeHarness({ plan: 'reject-on-abort' });
     await seedRun(harness);

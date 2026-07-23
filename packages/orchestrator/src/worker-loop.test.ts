@@ -157,6 +157,34 @@ describe('WorkerLoop heartbeat renewal', () => {
     expect(queue.nack).not.toHaveBeenCalled();
   });
 
+  it('skips ack and nack when an in-flight heartbeat loses the lease after the run resolves', async () => {
+    const initialJob = job();
+    const renewal = deferred<QueueJob>();
+    const heartbeat = vi.fn().mockReturnValue(renewal.promise);
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(initialJob), heartbeat });
+    const run = deferred<void>();
+    const orchestrator = {
+      runProject: vi.fn().mockReturnValue(run.promise),
+    } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+      heartbeatIntervalMs: 100,
+    });
+
+    const runOncePromise = worker.runOnce();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(heartbeat).toHaveBeenCalledTimes(1);
+
+    run.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    renewal.reject(new LeaseLostError('job-1', 'worker-a'));
+    await runOncePromise;
+
+    expect(queue.ack).not.toHaveBeenCalled();
+    expect(queue.nack).not.toHaveBeenCalled();
+  });
+
   it('aborts an in-flight project run when the queue lease is lost', async () => {
     const initialJob = job();
     const heartbeat = vi.fn().mockRejectedValue(new LeaseLostError('job-1', 'worker-a'));
