@@ -392,6 +392,20 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
 
   const run = await getRun(projectId);
   expect(run.status).toBe('awaiting_approval');
+  const firstBuildCommit = await runtime.workspaces.checkpoint(
+    projectId,
+    'golden-flow first build',
+  );
+  await runtime.projectVersionService.recordFromStep({
+    projectId,
+    runId: run.id,
+    stepRunId: 'golden-flow-first-build-step',
+    attemptId: 'golden-flow-first-build-attempt',
+    commit: firstBuildCommit,
+  });
+  await expect(runtime.projectVersionService.list(projectId, 50)).resolves.toMatchObject([
+    { runId: run.id, commit: firstBuildCommit },
+  ]);
 
   await page.goto(`${webBaseUrl}/project/${projectId}`);
   // First visit to this route triggers Next dev's on-demand compile of the
