@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvironmentOperationError } from '@agent-foundry/domain';
 import { SupabaseGeneratedProjectRuntime, type SupabaseCommand } from './supabase-runtime.js';
+import { FunctionArtifactSchema, type FunctionArtifact } from '@agent-foundry/contracts';
 import { GENERATED_STORAGE_MIGRATION, generatedStorageMigration } from './supabase-storage.js';
 
 const NOW = new Date('2026-07-22T12:00:00.000Z');
@@ -157,6 +159,32 @@ async function writeMigration(workdir: string, name: string, sql: string): Promi
   await mkdir(join(workdir, 'supabase', 'migrations'), { recursive: true });
   await writeFile(join(workdir, migrationPath), sql);
   return migrationPath;
+}
+
+const FUNCTION_ARTIFACT: FunctionArtifact = FunctionArtifactSchema.parse({
+  name: 'hello',
+  entrypoint: 'index.ts',
+  verifyJwt: true,
+  envRefs: ['GREETING_SUFFIX'],
+  timeoutMs: 5_000,
+  memoryMb: 128,
+  egressAllowlist: [],
+});
+
+async function deployHello(
+  runtime: SupabaseGeneratedProjectRuntime,
+  projectId: string,
+  workdir: string,
+  body = 'export default () => new Response("hi");\n',
+) {
+  const functionDir = join(workdir, 'supabase', 'functions', 'hello');
+  await mkdir(functionDir, { recursive: true });
+  await writeFile(join(functionDir, 'index.ts'), body);
+  return runtime.deployFunction({
+    projectId,
+    functionPath: 'supabase/functions/hello',
+    artifact: FUNCTION_ARTIFACT,
+  });
 }
 
 describe('SupabaseGeneratedProjectRuntime', () => {
@@ -979,5 +1007,359 @@ SELECT '-- not a comment'; DROP TABLE quoted_line_marker;`,
     if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
     expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
     expect(rejection.diagnostic).not.toContain('�');
+  });
+});
+
+describe('function deployment', () => {
+  it('deploys a function as an immutable, checksummed version and activates it', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: statusCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'fn-project' });
+    const version = await deployHello(runtime, 'fn-project', environment.workdir);
+
+    expect(version.functionName).toBe('hello');
+    expect(version.checksum).toMatch(/^[a-f0-9]{64}$/);
+    expect(version.artifact).toEqual(FUNCTION_ARTIFACT);
+
+    const live = await readFile(
+      join(environment.workdir, 'supabase', 'functions', 'hello', 'index.ts'),
+      'utf8',
+    );
+    expect(live).toContain('new Response("hi")');
+
+    const config = await readFile(join(environment.workdir, 'supabase', 'config.toml'), 'utf8');
+    expect(config).toContain('[functions.hello]');
+    expect(config).toContain('verify_jwt = true');
+    expect(config).toContain('entrypoint = "index.ts"');
+  });
+
+  it('rejects a function source path outside the declared function name', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: statusCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'fn-project-2' });
+    const functionDir = join(environment.workdir, 'supabase', 'functions', 'other');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(join(functionDir, 'index.ts'), 'export default () => new Response("hi");\n');
+
+    await expect(
+      runtime.deployFunction({
+        projectId: 'fn-project-2',
+        functionPath: 'supabase/functions/other',
+        artifact: FUNCTION_ARTIFACT,
+      }),
+    ).rejects.toThrow(/must match/);
+  });
+
+  it('rejects a source path that escapes the project workdir', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: statusCommand,
+      now: () => NOW,
+    });
+    await runtime.initialize({ projectId: 'fn-project-3' });
+
+    await expect(
+      runtime.deployFunction({
+        projectId: 'fn-project-3',
+        functionPath: '../../etc/hello',
+        artifact: FUNCTION_ARTIFACT,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('lists deployed versions oldest first and supports rollback to a prior version', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: statusCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'fn-project-4' });
+    const first = await deployHello(
+      runtime,
+      'fn-project-4',
+      environment.workdir,
+      'export default () => new Response("v1");\n',
+    );
+    const second = await deployHello(
+      runtime,
+      'fn-project-4',
+      environment.workdir,
+      'export default () => new Response("v2");\n',
+    );
+
+    const versions = await runtime.listFunctionVersions({
+      projectId: 'fn-project-4',
+      functionName: 'hello',
+    });
+    expect(versions.map((version) => version.versionId)).toEqual([
+      first.versionId,
+      second.versionId,
+    ]);
+
+    await runtime.rollbackFunction({
+      projectId: 'fn-project-4',
+      functionName: 'hello',
+      versionId: first.versionId,
+    });
+    const live = await readFile(
+      join(environment.workdir, 'supabase', 'functions', 'hello', 'index.ts'),
+      'utf8',
+    );
+    expect(live).toContain('new Response("v1")');
+  });
+
+  it('points the active-version pointer at the rolled-back version, not the most recently deployed one', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: statusCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'fn-project-6' });
+    const functionDir = join(environment.workdir, 'supabase', 'functions', 'hello');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(join(functionDir, 'index.ts'), 'export default () => new Response("hi");\n');
+    const first = await runtime.deployFunction({
+      projectId: 'fn-project-6',
+      functionPath: 'supabase/functions/hello',
+      artifact: FunctionArtifactSchema.parse({ ...FUNCTION_ARTIFACT, timeoutMs: 5_000 }),
+    });
+    const second = await runtime.deployFunction({
+      projectId: 'fn-project-6',
+      functionPath: 'supabase/functions/hello',
+      artifact: FunctionArtifactSchema.parse({ ...FUNCTION_ARTIFACT, timeoutMs: 10_000 }),
+    });
+
+    await runtime.rollbackFunction({
+      projectId: 'fn-project-6',
+      functionName: 'hello',
+      versionId: first.versionId,
+    });
+
+    const versions = await runtime.listFunctionVersions({
+      projectId: 'fn-project-6',
+      functionName: 'hello',
+    });
+    expect(versions.map((version) => version.versionId)).toEqual([
+      first.versionId,
+      second.versionId,
+    ]);
+
+    const pointer = JSON.parse(
+      await readFile(
+        join(dataDir, 'projects', 'fn-project-6', 'functions', 'hello', 'current.json'),
+        'utf8',
+      ),
+    );
+    expect(pointer).toEqual({ versionId: first.versionId });
+  });
+
+  it('rejects rollback to an unknown version id', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: statusCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'fn-project-5' });
+    await deployHello(runtime, 'fn-project-5', environment.workdir);
+
+    await expect(
+      runtime.rollbackFunction({
+        projectId: 'fn-project-5',
+        functionName: 'hello',
+        versionId: '00000000-0000-0000-0000-000000000000',
+      }),
+    ).rejects.toThrow(/was not found/);
+  });
+});
+
+describe('function invocation', () => {
+  let server: Server;
+  let apiPort: number;
+
+  beforeEach(async () => {
+    server = createServer((req, res) => {
+      if (req.url === '/functions/v1/slow') {
+        // ponytail: the artifact's timeoutMs floor is 1_000ms (contract minimum), so the
+        // fake response must land well after that for the abort to win deterministically
+        // in CI. invokeFunction aborts and returns before this timer ever fires, so the
+        // large delay doesn't slow the test down (see afterEach: server.close() only waits
+        // on live connections, and the client-aborted socket is already gone by then).
+        setTimeout(() => {
+          res.writeHead(200);
+          res.end('too late');
+        }, 5_000);
+        return;
+      }
+      if (req.url === '/functions/v1/failing') {
+        res.writeHead(500);
+        res.end('boom');
+        return;
+      }
+      if (req.url === '/functions/v1/moderate') {
+        // Between the short (1_000ms) and long (5_000ms) timeoutMs used across these
+        // tests, so it distinguishes which deployed version's timeout is enforced.
+        setTimeout(() => {
+          res.writeHead(200);
+          res.end('moderate');
+        }, 2_000);
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('hi');
+    });
+    await new Promise<void>((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+    apiPort = (server.address() as { port: number }).port;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+  });
+
+  function invokeCommand(...args: string[]) {
+    return statusCommand(...args).then((result) => {
+      if (args[0] !== 'status') return result;
+      const status = JSON.parse(result.stdout) as Record<string, string>;
+      status.API_URL = `http://127.0.0.1:${apiPort}`;
+      return { ...result, stdout: JSON.stringify(status) };
+    });
+  }
+
+  it('invokes a deployed function and returns its response', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'invoke-project' });
+    await deployHello(runtime, 'invoke-project', environment.workdir);
+
+    const result = await runtime.invokeFunction({
+      projectId: 'invoke-project',
+      functionName: 'hello',
+    });
+    expect(result).toEqual({
+      status: 200,
+      body: 'hi',
+      durationMs: expect.any(Number),
+      timedOut: false,
+    });
+  });
+
+  it('surfaces a non-2xx response from the function without throwing', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'invoke-project-2' });
+    const functionDir = join(environment.workdir, 'supabase', 'functions', 'failing');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(
+      join(functionDir, 'index.ts'),
+      'export default () => new Response("boom", { status: 500 });\n',
+    );
+    await runtime.deployFunction({
+      projectId: 'invoke-project-2',
+      functionPath: 'supabase/functions/failing',
+      artifact: FunctionArtifactSchema.parse({ ...FUNCTION_ARTIFACT, name: 'failing' }),
+    });
+
+    const result = await runtime.invokeFunction({
+      projectId: 'invoke-project-2',
+      functionName: 'failing',
+    });
+    expect(result.status).toBe(500);
+    expect(result.timedOut).toBe(false);
+  });
+
+  it('enforces the deployed version timeout and reports a timeout result', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'invoke-project-3' });
+    const functionDir = join(environment.workdir, 'supabase', 'functions', 'slow');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(join(functionDir, 'index.ts'), 'export default () => new Response("hi");\n');
+    await runtime.deployFunction({
+      projectId: 'invoke-project-3',
+      functionPath: 'supabase/functions/slow',
+      artifact: FunctionArtifactSchema.parse({
+        ...FUNCTION_ARTIFACT,
+        name: 'slow',
+        timeoutMs: 1_000,
+      }),
+    });
+
+    const result = await runtime.invokeFunction({
+      projectId: 'invoke-project-3',
+      functionName: 'slow',
+    });
+    expect(result.timedOut).toBe(true);
+    expect(result.status).toBe(504);
+  });
+
+  it('invokes using the rolled-back version timeout, not the most recently deployed one', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'invoke-project-5' });
+    const functionDir = join(environment.workdir, 'supabase', 'functions', 'moderate');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(join(functionDir, 'index.ts'), 'export default () => new Response("hi");\n');
+    const first = await runtime.deployFunction({
+      projectId: 'invoke-project-5',
+      functionPath: 'supabase/functions/moderate',
+      artifact: FunctionArtifactSchema.parse({
+        ...FUNCTION_ARTIFACT,
+        name: 'moderate',
+        timeoutMs: 5_000,
+      }),
+    });
+    await runtime.deployFunction({
+      projectId: 'invoke-project-5',
+      functionPath: 'supabase/functions/moderate',
+      artifact: FunctionArtifactSchema.parse({
+        ...FUNCTION_ARTIFACT,
+        name: 'moderate',
+        timeoutMs: 1_000,
+      }),
+    });
+
+    await runtime.rollbackFunction({
+      projectId: 'invoke-project-5',
+      functionName: 'moderate',
+      versionId: first.versionId,
+    });
+    const result = await runtime.invokeFunction({
+      projectId: 'invoke-project-5',
+      functionName: 'moderate',
+    });
+
+    expect(result.timedOut).toBe(false);
+    expect(result.status).toBe(200);
+    expect(result.body).toBe('moderate');
+  });
+
+  it('rejects invoking a function with no deployed version', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    await runtime.initialize({ projectId: 'invoke-project-4' });
+
+    await expect(
+      runtime.invokeFunction({ projectId: 'invoke-project-4', functionName: 'hello' }),
+    ).rejects.toThrow(/no deployed version/);
   });
 });

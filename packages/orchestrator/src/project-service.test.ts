@@ -50,6 +50,10 @@ describe('ProjectService.create', () => {
         health: unused,
         reset: unused,
         cleanup: unused,
+        deployFunction: unused,
+        listFunctionVersions: unused,
+        rollbackFunction: unused,
+        invokeFunction: unused,
       } satisfies GeneratedProjectRuntime,
     });
 
