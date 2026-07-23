@@ -38,6 +38,41 @@ type ViewportKey = keyof typeof VIEWPORTS;
 
 const TERMINAL_SESSION_STATUSES = new Set(['stopped', 'failed', 'expired']);
 
+export function startPreviewLogPolling({
+  getPage,
+  onEntries,
+  onError,
+  schedule,
+}: {
+  getPage: (cursor?: number) => Promise<{ entries: PreviewLogEntry[]; nextCursor: number }>;
+  onEntries: (entries: PreviewLogEntry[]) => void;
+  onError: (cause: unknown) => void;
+  schedule: (callback: () => void) => ReturnType<typeof setTimeout>;
+}) {
+  let active = true;
+  let cursor: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const poll = async () => {
+    try {
+      const page = await getPage(cursor);
+      if (!active) return;
+      if (page.entries.length > 0) {
+        onEntries(page.entries);
+        cursor = page.nextCursor;
+      }
+    } catch (cause) {
+      if (active) onError(cause);
+    } finally {
+      if (active) timer = schedule(() => void poll());
+    }
+  };
+  void poll();
+  return () => {
+    active = false;
+    if (timer) clearTimeout(timer);
+  };
+}
+
 export function BlobMedia({
   src,
   alt,
@@ -186,27 +221,12 @@ export function PreviewPanel({
 
   useEffect(() => {
     if (!session || TERMINAL_SESSION_STATUSES.has(session.status)) return;
-    let active = true;
-    let cursor: number | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
-      try {
-        const page = await getPreviewLogs(projectId, session.id, cursor);
-        if (!active) return;
-        if (page.entries.length > 0) {
-          setLogs((current) => [...current, ...page.entries]);
-          cursor = page.nextCursor;
-        }
-        timer = setTimeout(poll, 2_000);
-      } catch (cause) {
-        if (active) setPanelError(cause instanceof Error ? cause.message : String(cause));
-      }
-    };
-    void poll();
-    return () => {
-      active = false;
-      if (timer) clearTimeout(timer);
-    };
+    return startPreviewLogPolling({
+      getPage: (cursor) => getPreviewLogs(projectId, session.id, cursor),
+      onEntries: (entries) => setLogs((current) => [...current, ...entries]),
+      onError: (cause) => setPanelError(cause instanceof Error ? cause.message : String(cause)),
+      schedule: (callback) => setTimeout(callback, 2_000),
+    });
   }, [projectId, session]);
 
   useEffect(() => {
