@@ -24,6 +24,11 @@ interface User {
   accessToken: string;
 }
 
+interface SignedUpload {
+  url: string;
+  token: string;
+}
+
 describe.runIf(process.env.RUN_SUPABASE_STORAGE_E2E === 'true')(
   'generated Supabase Storage',
   () => {
@@ -54,15 +59,41 @@ describe.runIf(process.env.RUN_SUPABASE_STORAGE_E2E === 'true')(
             }),
             'prepare allowed upload',
           ).arrayBuffer();
+
+          const preparedMetadata = await metadataRows(credentials, objectName, userA.accessToken);
+          expect(preparedMetadata).toHaveLength(1);
+          expect(preparedMetadata[0]?.object_name).toBe(objectName);
+          expect(preparedMetadata[0]?.owner_id).toBe(userA.id);
+
+          const directMetadataName = `${userA.id}/direct-metadata.png`;
+          await expectClientError(
+            await insertStorageMetadata(credentials, userA, {
+              object_name: directMetadataName,
+              owner_id: userA.id,
+              media_type: 'image/png',
+              size_bytes: 1,
+              scan_status: 'clean',
+              retain_until: new Date(0).toISOString(),
+              exported_at: new Date(0).toISOString(),
+            }),
+            'direct upload metadata insert',
+          );
+          expect(
+            await metadataRows(credentials, directMetadataName, userA.accessToken),
+          ).toHaveLength(0);
+
+          const signedUpload = await createSignedUploadUrl(
+            credentials,
+            userA.accessToken,
+            objectName,
+          );
+          await expectClientError(
+            await requestSignedUploadUrl(credentials, userB.accessToken, objectName),
+            'cross-owner signed upload URL',
+          );
           await requireOk(
-            await uploadObject(
-              credentials,
-              userA.accessToken,
-              objectName,
-              'image/png',
-              allowedBytes,
-            ),
-            'upload allowed object',
+            await uploadToSignedUrl(credentials, userA.accessToken, signedUpload, allowedBytes),
+            'upload allowed object through signed URL',
           ).arrayBuffer();
 
           await expectClientError(
@@ -381,6 +412,84 @@ function rpc(
   });
 }
 
+function insertStorageMetadata(
+  credentials: Credentials,
+  user: User,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  return boundedFetch(`${credentials.apiUrl}/rest/v1/storage_uploads`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(credentials.anonKey, user.accessToken),
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function requestSignedUploadUrl(
+  credentials: Credentials,
+  token: string,
+  objectName: string,
+): Promise<Response> {
+  return boundedFetch(storageObjectUrl(credentials.apiUrl, 'upload/sign', objectName), {
+    method: 'POST',
+    headers: {
+      ...authHeaders(credentials.anonKey, token),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  });
+}
+
+async function createSignedUploadUrl(
+  credentials: Credentials,
+  token: string,
+  objectName: string,
+): Promise<SignedUpload> {
+  const response = requireOk(
+    await requestSignedUploadUrl(credentials, token, objectName),
+    'create signed upload URL',
+  );
+  const payload = await json(response);
+  if (!isRecord(payload) || typeof payload.url !== 'string') {
+    throw new Error('Storage returned an invalid signed upload response.');
+  }
+  try {
+    const url = new URL(`${credentials.apiUrl}/storage/v1${payload.url}`);
+    const signedToken = url.searchParams.get('token');
+    if (!signedToken) throw new Error();
+    return { url: url.toString(), token: signedToken };
+  } catch {
+    throw new Error('Storage returned an invalid signed upload response.');
+  }
+}
+
+async function uploadToSignedUrl(
+  credentials: Credentials,
+  token: string,
+  signedUpload: SignedUpload,
+  bytes: Uint8Array<ArrayBuffer>,
+): Promise<Response> {
+  try {
+    const url = new URL(signedUpload.url);
+    url.searchParams.set('token', signedUpload.token);
+    return await boundedFetch(url, {
+      method: 'PUT',
+      headers: {
+        ...authHeaders(credentials.anonKey, token),
+        'x-upsert': 'false',
+        'cache-control': 'max-age=3600',
+        'content-type': 'image/png',
+      },
+      body: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    });
+  } catch {
+    throw new Error('Signed Storage upload failed.');
+  }
+}
+
 function uploadObject(
   credentials: Credentials,
   token: string,
@@ -484,11 +593,17 @@ async function expectNativeLimitRejection(
 async function metadataRows(
   credentials: Credentials,
   objectName: string,
+  token = credentials.serviceRoleKey,
 ): Promise<Record<string, unknown>[]> {
   const response = requireOk(
     await boundedFetch(
-      `${credentials.apiUrl}/rest/v1/storage_uploads?select=object_name&object_name=eq.${encodeURIComponent(objectName)}`,
-      { headers: authHeaders(credentials.serviceRoleKey, credentials.serviceRoleKey) },
+      `${credentials.apiUrl}/rest/v1/storage_uploads?select=object_name,owner_id&object_name=eq.${encodeURIComponent(objectName)}`,
+      {
+        headers: authHeaders(
+          token === credentials.serviceRoleKey ? credentials.serviceRoleKey : credentials.anonKey,
+          token,
+        ),
+      },
     ),
     'read upload metadata',
   );
