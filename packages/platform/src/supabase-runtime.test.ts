@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -812,5 +813,138 @@ describe('function deployment', () => {
         versionId: '00000000-0000-0000-0000-000000000000',
       }),
     ).rejects.toThrow(/was not found/);
+  });
+});
+
+describe('function invocation', () => {
+  let server: Server;
+  let apiPort: number;
+
+  beforeEach(async () => {
+    server = createServer((req, res) => {
+      if (req.url === '/functions/v1/slow') {
+        // ponytail: the artifact's timeoutMs floor is 1_000ms (contract minimum), so the
+        // fake response must land well after that for the abort to win deterministically
+        // in CI. invokeFunction aborts and returns before this timer ever fires, so the
+        // large delay doesn't slow the test down (see afterEach: server.close() only waits
+        // on live connections, and the client-aborted socket is already gone by then).
+        setTimeout(() => {
+          res.writeHead(200);
+          res.end('too late');
+        }, 5_000);
+        return;
+      }
+      if (req.url === '/functions/v1/failing') {
+        res.writeHead(500);
+        res.end('boom');
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('hi');
+    });
+    await new Promise<void>((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+    apiPort = (server.address() as { port: number }).port;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+  });
+
+  function invokeCommand(...args: string[]) {
+    return statusCommand(...args).then((result) => {
+      if (args[0] !== 'start') return result;
+      const status = JSON.parse(result.stdout) as Record<string, string>;
+      status.API_URL = `http://127.0.0.1:${apiPort}`;
+      return { ...result, stdout: JSON.stringify(status) };
+    });
+  }
+
+  it('invokes a deployed function and returns its response', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'invoke-project' });
+    await deployHello(runtime, 'invoke-project', environment.workdir);
+
+    const result = await runtime.invokeFunction({
+      projectId: 'invoke-project',
+      functionName: 'hello',
+    });
+    expect(result).toEqual({
+      status: 200,
+      body: 'hi',
+      durationMs: expect.any(Number),
+      timedOut: false,
+    });
+  });
+
+  it('surfaces a non-2xx response from the function without throwing', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'invoke-project-2' });
+    const functionDir = join(environment.workdir, 'supabase', 'functions', 'failing');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(
+      join(functionDir, 'index.ts'),
+      'export default () => new Response("boom", { status: 500 });\n',
+    );
+    await runtime.deployFunction({
+      projectId: 'invoke-project-2',
+      functionPath: 'supabase/functions/failing',
+      artifact: FunctionArtifactSchema.parse({ ...FUNCTION_ARTIFACT, name: 'failing' }),
+    });
+
+    const result = await runtime.invokeFunction({
+      projectId: 'invoke-project-2',
+      functionName: 'failing',
+    });
+    expect(result.status).toBe(500);
+    expect(result.timedOut).toBe(false);
+  });
+
+  it('enforces the deployed version timeout and reports a timeout result', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    const environment = await runtime.initialize({ projectId: 'invoke-project-3' });
+    const functionDir = join(environment.workdir, 'supabase', 'functions', 'slow');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(join(functionDir, 'index.ts'), 'export default () => new Response("hi");\n');
+    await runtime.deployFunction({
+      projectId: 'invoke-project-3',
+      functionPath: 'supabase/functions/slow',
+      artifact: FunctionArtifactSchema.parse({
+        ...FUNCTION_ARTIFACT,
+        name: 'slow',
+        timeoutMs: 1_000,
+      }),
+    });
+
+    const result = await runtime.invokeFunction({
+      projectId: 'invoke-project-3',
+      functionName: 'slow',
+    });
+    expect(result.timedOut).toBe(true);
+    expect(result.status).toBe(504);
+  });
+
+  it('rejects invoking a function with no deployed version', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    await runtime.initialize({ projectId: 'invoke-project-4' });
+
+    await expect(
+      runtime.invokeFunction({ projectId: 'invoke-project-4', functionName: 'hello' }),
+    ).rejects.toThrow(/no deployed version/);
   });
 });

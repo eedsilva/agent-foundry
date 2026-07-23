@@ -5,6 +5,7 @@ import { execa } from 'execa';
 import {
   AppEnvironmentSchema,
   FunctionArtifactSchema,
+  FunctionInvocationResultSchema,
   FunctionVersionSchema,
   MigrationApprovalSchema,
   MigrationBackupSchema,
@@ -24,6 +25,7 @@ import {
   EnvironmentOperationError,
   ValidationError,
   redactString,
+  withSpan,
   type GeneratedProjectRuntime,
 } from '@agent-foundry/domain';
 
@@ -419,13 +421,67 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     return version;
   }
 
-  async invokeFunction(_input: {
+  async invokeFunction(input: {
     projectId: string;
     functionName: string;
     body?: string;
     headers?: Record<string, string>;
   }): Promise<FunctionInvocationResult> {
-    throw new Error('invokeFunction not yet implemented');
+    const environment = await this.#require(input.projectId);
+    const versions = await readFunctionVersions(
+      this.#dataDir,
+      environment.projectId,
+      input.functionName,
+    );
+    const current = versions.at(-1);
+    if (!current) {
+      throw new ValidationError(`Function "${input.functionName}" has no deployed version.`);
+    }
+    const apiUrl = environment.endpoints.api;
+    if (!apiUrl) {
+      throw new EnvironmentOperationError(
+        'invoke-function',
+        undefined,
+        'Environment has no API endpoint.',
+      );
+    }
+    return withSpan(
+      'function.invoke',
+      { 'function.name': input.functionName, 'project.id': environment.projectId },
+      async (span) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), current.artifact.timeoutMs);
+        const started = this.#now().getTime();
+        try {
+          const response = await fetch(`${apiUrl}/functions/v1/${input.functionName}`, {
+            method: 'POST',
+            ...(input.headers !== undefined ? { headers: input.headers } : {}),
+            ...(input.body !== undefined ? { body: input.body } : {}),
+            signal: controller.signal,
+          });
+          const text = await response.text();
+          span.setAttribute('http.status_code', response.status);
+          return FunctionInvocationResultSchema.parse({
+            status: response.status,
+            body: text.slice(0, 1_048_576),
+            durationMs: this.#now().getTime() - started,
+            timedOut: false,
+          });
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') {
+            return FunctionInvocationResultSchema.parse({
+              status: 504,
+              body: '',
+              durationMs: this.#now().getTime() - started,
+              timedOut: true,
+            });
+          }
+          throw operationError('invoke-function', error);
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+    );
   }
 
   async #read(projectId: string): Promise<AppEnvironment | null> {
