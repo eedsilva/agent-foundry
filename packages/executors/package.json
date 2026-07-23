@@ -10,7 +10,9 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts src/docker-network-policy-sidecar.ts --format esm --clean --sourcemap --splitting false",
+    "build": "npm run build:index && npm run build:sidecar",
+    "build:index": "tsup src/index.ts --format esm --clean --sourcemap",
+    "build:sidecar": "esbuild src/docker-network-policy-sidecar.ts --bundle --platform=node --format=esm --target=node22 --packages=bundle --outfile=dist/docker-network-policy-sidecar.js --sourcemap",
     "typecheck": "tsc --noEmit"
   },
   "main": "./dist/index.js",

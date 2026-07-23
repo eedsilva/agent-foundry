@@ -1,3 +1,7 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execa } from 'execa';
 import { describe, expect, it, vi } from 'vitest';
 import type { NetworkPolicyEvent } from '@agent-foundry/contracts';
 import {
@@ -17,6 +21,20 @@ const EVENT: NetworkPolicyEvent = {
 };
 
 describe('network policy sidecar runtime', () => {
+  it('builds as one self-contained file with only Node built-in imports', async () => {
+    const packageDir = fileURLToPath(new URL('..', import.meta.url));
+    await execa('npm', ['run', 'build:sidecar'], { cwd: packageDir });
+    const output = await readFile(
+      join(packageDir, 'dist/docker-network-policy-sidecar.js'),
+      'utf8',
+    );
+    const imports = [...output.matchAll(/\b(?:from|import)\s*["']([^"']+)["']/g)].map(
+      (match) => match[1]!,
+    );
+
+    expect(imports.filter((specifier) => !specifier.startsWith('node:'))).toEqual([]);
+  });
+
   it('caps audit output at the shared event limit', () => {
     const write = vi.fn();
     const log = createBoundedEventLogger(write);
