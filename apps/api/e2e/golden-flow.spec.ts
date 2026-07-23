@@ -456,7 +456,7 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   const decideModalHeading = page.getByRole('heading', { name: /Human diff approval/ });
   await page.getByRole('button', { name: 'approve' }).first().click();
   await expect(decideModalHeading).toBeVisible();
-  await expect(page.locator('.diffView')).toBeVisible();
+  await expect(page.locator('.artifactModal .diffPane')).toContainText('diff --git');
   await expect(page.getByText('Nenhuma versão anterior para comparar.')).not.toBeVisible();
   await page.locator('.artifactModal').screenshot({ path: FIRST_BUILD_DIFF_SCREENSHOT });
   await page.getByLabel('Decidido por').fill('e2e-reviewer');

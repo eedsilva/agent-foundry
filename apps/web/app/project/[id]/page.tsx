@@ -491,7 +491,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     }
     const runId = run?.id;
     let active = true;
-    listVersions(id, 500)
+    listVersions(id, 200)
       .then((versions) => {
         if (!active) return;
         const { from, to } = findDiffApprovalVersions(versions, runId);
