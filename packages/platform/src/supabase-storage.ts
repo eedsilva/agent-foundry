@@ -9,9 +9,19 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]
 `;
 
 export function configureGeneratedStorage(config: string): string {
-  return config.includes(`[storage.buckets.${GENERATED_STORAGE_BUCKET}]`)
-    ? config
-    : `${config}\n${STORAGE_CONFIG}`;
+  const header = `[storage.buckets.${GENERATED_STORAGE_BUCKET}]`;
+  const sections = [...config.matchAll(/^\[storage\.buckets\.uploads\]\r?$/gm)];
+  if (sections.length === 0) return `${config}\n${STORAGE_CONFIG}`;
+
+  const start = sections[0]!.index;
+  const afterHeader = start + sections[0]![0].length;
+  const nextSection = config.slice(afterHeader).search(/\r?\n(?=\[[^\]\r\n]+\]\r?(?:\n|$))/);
+  const end = nextSection === -1 ? config.length : afterHeader + nextSection;
+  if (sections.length === 1 && config.slice(start, end).trimEnd() === STORAGE_CONFIG.trimEnd()) {
+    return config;
+  }
+
+  throw new Error('Generated Supabase uploads bucket configuration is incompatible.');
 }
 
 export function generatedStorageMigration(): string {
@@ -205,7 +215,10 @@ as $$
   select upload.*
   from public.storage_uploads upload
   where upload.retain_until <= now()
-    and (upload.scan_status = 'rejected' or upload.exported_at is not null)
+    and (
+      upload.scan_status = 'rejected'
+      or (upload.scan_status = 'clean' and upload.exported_at is not null)
+    )
 $$;
 
 revoke execute on function public.storage_cleanup_candidates()
@@ -225,7 +238,10 @@ begin
   delete from public.storage_uploads metadata
   where metadata.object_name = p_object_name
     and metadata.retain_until <= now()
-    and (metadata.scan_status = 'rejected' or metadata.exported_at is not null)
+    and (
+      metadata.scan_status = 'rejected'
+      or (metadata.scan_status = 'clean' and metadata.exported_at is not null)
+    )
     and not exists (
       select 1
       from storage.objects object

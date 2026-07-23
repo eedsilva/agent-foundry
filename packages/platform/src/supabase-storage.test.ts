@@ -23,6 +23,20 @@ describe('generated Supabase Storage artifacts', () => {
     expect(configureGeneratedStorage(configured)).toBe(configured);
   });
 
+  it('rejects an incompatible existing uploads bucket', () => {
+    const incompatible = `project_id = "supabase_project-a"
+
+[storage.buckets.uploads]
+public = true
+file_size_limit = "20MiB"
+allowed_mime_types = ["text/plain"]
+`;
+
+    expect(() => configureGeneratedStorage(incompatible)).toThrowError(
+      'Generated Supabase uploads bucket configuration is incompatible.',
+    );
+  });
+
   it('generates owner RLS, quarantine, signed-read, export, and cleanup contracts', () => {
     const sql = generatedStorageMigration();
 
@@ -51,5 +65,23 @@ describe('generated Supabase Storage artifacts', () => {
     }
     expect(sql).not.toMatch(/delete\s+from\s+storage\.objects/i);
     expect(sql).not.toMatch(/public\s*=\s*true/i);
+
+    const normalized = sql
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/\(\s+/g, '(')
+      .replace(/\s+\)/g, ')');
+    expect(normalized).toContain(
+      "(upload.scan_status = 'rejected' or (upload.scan_status = 'clean' and upload.exported_at is not null))",
+    );
+    expect(normalized).toContain(
+      "(metadata.scan_status = 'rejected' or (metadata.scan_status = 'clean' and metadata.exported_at is not null))",
+    );
+    expect(normalized).not.toContain(
+      "(upload.scan_status = 'rejected' or upload.exported_at is not null)",
+    );
+    expect(normalized).not.toContain(
+      "(metadata.scan_status = 'rejected' or metadata.exported_at is not null)",
+    );
   });
 });
