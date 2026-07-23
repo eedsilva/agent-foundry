@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,16 +17,30 @@ const STATUS = JSON.stringify({
 });
 
 let dataDir: string;
+let projectIdsAtStart: string[];
 
 beforeEach(async () => {
   dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-platform-'));
+  projectIdsAtStart = [];
 });
 
 afterEach(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-function statusCommand(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function statusCommand(
+  ...args: string[]
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const workdirIndex = args.indexOf('--workdir');
+  const workdir = workdirIndex === -1 ? undefined : args[workdirIndex + 1];
+  if (args[0] === 'init' && workdir) {
+    await mkdir(join(workdir, 'supabase'), { recursive: true });
+    await writeFile(join(workdir, 'supabase', 'config.toml'), 'project_id = "environment"\n');
+  }
+  if (args[0] === 'start' && workdir) {
+    const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
+    projectIdsAtStart.push(config.match(/^project_id\s*=\s*"([^"]+)"/m)?.[1] ?? 'missing');
+  }
   return Promise.resolve({ stdout: STATUS, stderr: '', exitCode: 0 });
 }
 
@@ -52,6 +66,16 @@ describe('SupabaseGeneratedProjectRuntime', () => {
 
     expect(first.workdir).not.toBe(second.workdir);
     expect(first.network).not.toBe(second.network);
+    const firstProjectId = (
+      await readFile(join(first.workdir, 'supabase', 'config.toml'), 'utf8')
+    ).match(/^project_id\s*=\s*"([^"]+)"/m)?.[1];
+    const secondProjectId = (
+      await readFile(join(second.workdir, 'supabase', 'config.toml'), 'utf8')
+    ).match(/^project_id\s*=\s*"([^"]+)"/m)?.[1];
+    expect(firstProjectId).toBe(first.composeProjectName);
+    expect(secondProjectId).toBe(second.composeProjectName);
+    expect(firstProjectId).not.toBe(secondProjectId);
+    expect(projectIdsAtStart).toEqual(expect.arrayContaining([firstProjectId, secondProjectId]));
     expect(command.mock.calls).toContainEqual(['init', '--workdir', first.workdir]);
     expect(command.mock.calls).toContainEqual([
       'start',
@@ -242,7 +266,8 @@ describe('SupabaseGeneratedProjectRuntime', () => {
     command.mockRejectedValueOnce(
       Object.assign(new Error(`JWT_SECRET=secret-value ${'x'.repeat(10_000)}`), {
         exitCode: 1,
-        stdout: 'ANON_KEY=another-secret',
+        stdout:
+          'ANON_KEY=another-secret DB_URL=postgresql://postgres:db-password@127.0.0.1:54322/postgres DATABASE_URL="postgresql://postgres:database-password@localhost/db"',
         stderr: '{"JWT_SECRET":"json-secret","PASSWORD":"hunter2"}',
       }),
     );
@@ -251,8 +276,25 @@ describe('SupabaseGeneratedProjectRuntime', () => {
 
     expect(rejection).toMatchObject({ operation: 'start', exitCode: 1 });
     if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
-    expect(rejection.diagnostic).not.toMatch(/secret-value|another-secret|json-secret|hunter2/);
+    expect(rejection.diagnostic).not.toMatch(
+      /secret-value|another-secret|db-password|database-password|json-secret|hunter2/,
+    );
     expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
     await expect(runtime.inspect('project-a')).resolves.toEqual(stopped);
+  });
+
+  it('caps multibyte diagnostics at 8 KiB without splitting a UTF-8 character', async () => {
+    const { command, runtime } = fixture();
+    await runtime.initialize({ projectId: 'project-a' });
+    await runtime.stop('project-a');
+    command.mockRejectedValueOnce(
+      Object.assign(new Error(`a${'😀'.repeat(3_000)}`), { exitCode: 1 }),
+    );
+
+    const rejection = await runtime.start('project-a').catch((error: unknown) => error);
+
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
+    expect(rejection.diagnostic).not.toContain('�');
   });
 });

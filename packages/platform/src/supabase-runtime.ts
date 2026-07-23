@@ -64,6 +64,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     );
     await mkdir(workdir, { recursive: true });
     await this.#execute('initialize', 'init', '--workdir', workdir);
+    await configureProjectId(workdir, composeProjectName);
     const result = await this.#execute(
       'start',
       'start',
@@ -403,14 +404,26 @@ function isContained(parent: string, candidate: string): boolean {
 
 async function persist(environment: AppEnvironment): Promise<void> {
   const path = join(environment.workdir, 'environment.json');
-  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  await mkdir(environment.workdir, { recursive: true });
+  await atomicWrite(path, `${JSON.stringify(AppEnvironmentSchema.parse(environment), null, 2)}\n`);
+}
+
+async function configureProjectId(workdir: string, projectId: string): Promise<void> {
+  const path = join(workdir, 'supabase', 'config.toml');
   try {
-    await writeFile(
-      temp,
-      `${JSON.stringify(AppEnvironmentSchema.parse(environment), null, 2)}\n`,
-      'utf8',
-    );
+    const config = await readFile(path, 'utf8');
+    if (!/^project_id\s*=.*$/m.test(config)) {
+      throw new Error('Generated Supabase config is missing project_id.');
+    }
+    await atomicWrite(path, config.replace(/^project_id\s*=.*$/m, `project_id = "${projectId}"`));
+  } catch (error) {
+    throw operationError('initialize', error);
+  }
+}
+
+async function atomicWrite(path: string, value: string): Promise<void> {
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temp, value, 'utf8');
     await rename(temp, path);
   } catch (error) {
     await rm(temp, { force: true });
@@ -436,15 +449,26 @@ function operationError(
 }
 
 function redactDiagnostic(value: string): string {
-  return redactString(value).replace(
-    /((?:["']?[A-Z0-9_]*(?:SECRET|PASSWORD|TOKEN|KEY)[A-Z0-9_]*["']?)\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\]]+)/gi,
-    '$1"[REDACTED]"',
-  );
+  return redactString(value)
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+(@)/gi, '$1[REDACTED]$2')
+    .replace(
+      /((?:["']?[A-Z0-9_]*(?:SECRET|PASSWORD|TOKEN|KEY)[A-Z0-9_]*["']?)\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\]]+)/gi,
+      '$1"[REDACTED]"',
+    );
 }
 
 function capUtf8(value: string, maxBytes: number): string {
   const bytes = Buffer.from(value);
-  return bytes.byteLength <= maxBytes ? value : bytes.subarray(0, maxBytes).toString('utf8');
+  if (bytes.byteLength <= maxBytes) return value;
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  for (let end = maxBytes; end > maxBytes - 4; end -= 1) {
+    try {
+      return decoder.decode(bytes.subarray(0, end));
+    } catch {
+      // Try the previous byte boundary.
+    }
+  }
+  return '';
 }
 
 function isNotFound(error: unknown): boolean {
