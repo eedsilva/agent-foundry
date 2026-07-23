@@ -48,16 +48,15 @@ create table public.storage_uploads (
 
 alter table public.storage_uploads enable row level security;
 
+revoke insert, update, delete on table public.storage_uploads
+  from public, anon, authenticated;
+revoke select, truncate, references, trigger on table public.storage_uploads
+  from public, anon, authenticated;
+grant select on table public.storage_uploads to authenticated;
+
 create policy storage_upload_owner_select
   on public.storage_uploads for select to authenticated
   using (owner_id = (select auth.uid()));
-
-create policy storage_upload_owner_insert
-  on public.storage_uploads for insert to authenticated
-  with check (
-    owner_id = (select auth.uid())
-    and object_name like (select auth.uid())::text || '/%'
-  );
 
 create policy storage_upload_insert
   on storage.objects for insert to authenticated

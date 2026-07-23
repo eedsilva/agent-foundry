@@ -89,6 +89,11 @@ public = true
       .replace(/\(\s+/g, '(')
       .replace(/\s+\)/g, ')');
     expect(normalized).toContain(
+      'revoke insert, update, delete on table public.storage_uploads from public, anon, authenticated;',
+    );
+    expect(normalized).toContain('grant select on table public.storage_uploads to authenticated;');
+    expect(normalized).not.toContain('create policy storage_upload_owner_insert');
+    expect(normalized).toContain(
       "(upload.scan_status = 'rejected' or (upload.scan_status = 'clean' and upload.exported_at is not null))",
     );
     expect(normalized).toContain(
