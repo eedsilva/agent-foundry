@@ -23,7 +23,7 @@ Deploy and rollback share a single `activateFunctionVersion` step, which — in 
 
 ## Consequences
 
-Agents can deploy, list, and roll back functions with the same auditability as migrations. A client that calls the Edge Runtime directly (bypassing `invokeFunction`) is not subject to our timeout, and no client is subject to our memory/egress ceilings yet. Enforcing those per function requires either an upstream Supabase CLI/Edge Runtime capability or moving to one Edge Runtime container per function so our own network-policy sidecar (`packages/executors/src/docker-network-policy-sidecar.ts`) and Docker resource limits could attach directly — both are larger changes tracked as follow-up, not part of this issue.
+Agents can deploy, list, and roll back functions with the same auditability as migrations. A client that calls the Edge Runtime directly (bypassing `invokeFunction`) is not subject to our timeout, and no client is subject to our memory/egress ceilings yet. Enforcing those per function requires either an upstream Supabase CLI/Edge Runtime capability or moving to one Edge Runtime container per function so our own network-policy sidecar (`packages/executors/src/docker-network-policy-sidecar.ts`) and Docker resource limits could attach directly — both are larger changes tracked as follow-up, not part of this issue. `invokeFunction` also does not attach an `Authorization` header automatically; callers of JWT-protected (`verifyJwt: true`) functions must pass one via the `headers` parameter.
 
 ## Validation and rollback
 

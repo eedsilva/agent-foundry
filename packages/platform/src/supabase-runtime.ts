@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
   AppEnvironmentSchema,
+  FUNCTION_INVOCATION_BODY_MAX_BYTES,
   FunctionArtifactSchema,
   FunctionInvocationResultSchema,
   FunctionVersionSchema,
@@ -376,7 +377,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     functionName: string;
   }): Promise<FunctionVersion[]> {
     const environment = await this.#require(input.projectId);
-    return readFunctionVersions(this.#dataDir, environment.projectId, input.functionName);
+    const functionName = safeFunctionName(input.functionName);
+    return readFunctionVersions(this.#dataDir, environment.projectId, functionName);
   }
 
   async rollbackFunction(input: {
@@ -385,28 +387,25 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     versionId: string;
   }): Promise<FunctionVersion> {
     const environment = await this.#require(input.projectId);
+    const functionName = safeFunctionName(input.functionName);
+    const versionId = safeVersionId(input.versionId);
     const manifestPath = functionVersionManifestPath(
       this.#dataDir,
       environment.projectId,
-      input.functionName,
-      input.versionId,
+      functionName,
+      versionId,
     );
     let version: FunctionVersion;
     try {
       version = FunctionVersionSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
     } catch (error) {
       if (isNotFound(error)) {
-        throw new ValidationError(`Function version "${input.versionId}" was not found.`);
+        throw new ValidationError(`Function version "${versionId}" was not found.`);
       }
       throw error;
     }
     const files = await collectFunctionFiles(
-      functionVersionFilesDir(
-        this.#dataDir,
-        environment.projectId,
-        input.functionName,
-        input.versionId,
-      ),
+      functionVersionFilesDir(this.#dataDir, environment.projectId, functionName, versionId),
     );
     if (functionChecksum(files) !== version.checksum) {
       throw new ValidationError('Stored function version failed checksum verification.');
@@ -428,23 +427,27 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     headers?: Record<string, string>;
   }): Promise<FunctionInvocationResult> {
     const environment = await this.#require(input.projectId);
+    const functionName = safeFunctionName(input.functionName);
     let current: FunctionVersion;
     try {
       const pointer = JSON.parse(
         await readFile(
-          currentFunctionVersionPath(this.#dataDir, environment.projectId, input.functionName),
+          currentFunctionVersionPath(this.#dataDir, environment.projectId, functionName),
           'utf8',
         ),
       ) as { versionId: string };
       const manifestPath = functionVersionManifestPath(
         this.#dataDir,
         environment.projectId,
-        input.functionName,
+        functionName,
         pointer.versionId,
       );
       current = FunctionVersionSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
-    } catch {
-      throw new ValidationError(`Function "${input.functionName}" has no deployed version.`);
+    } catch (error) {
+      if (isNotFound(error)) {
+        throw new ValidationError(`Function "${functionName}" has no deployed version.`);
+      }
+      throw error;
     }
     const apiUrl = environment.endpoints.api;
     if (!apiUrl) {
@@ -456,13 +459,13 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
     return withSpan(
       'function.invoke',
-      { 'function.name': input.functionName, 'project.id': environment.projectId },
+      { 'function.name': functionName, 'project.id': environment.projectId },
       async (span) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), current.artifact.timeoutMs);
         const started = this.#now().getTime();
         try {
-          const response = await fetch(`${apiUrl}/functions/v1/${input.functionName}`, {
+          const response = await fetch(`${apiUrl}/functions/v1/${functionName}`, {
             method: 'POST',
             ...(input.headers !== undefined ? { headers: input.headers } : {}),
             ...(input.body !== undefined ? { body: input.body } : {}),
@@ -472,7 +475,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
           span.setAttribute('http.status_code', response.status);
           return FunctionInvocationResultSchema.parse({
             status: response.status,
-            body: text.slice(0, 1_048_576),
+            body: capUtf8(text, FUNCTION_INVOCATION_BODY_MAX_BYTES),
             durationMs: this.#now().getTime() - started,
             timedOut: false,
           });
@@ -559,6 +562,18 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 function safeProjectId(projectId: string): string {
   const result = PathSegmentSchema.safeParse(projectId);
   if (!result.success) throw new ValidationError(`Invalid project ID: ${result.error.message}`);
+  return result.data;
+}
+
+function safeFunctionName(functionName: string): string {
+  const result = PathSegmentSchema.safeParse(functionName);
+  if (!result.success) throw new ValidationError(`Invalid function name: ${result.error.message}`);
+  return result.data;
+}
+
+function safeVersionId(versionId: string): string {
+  const result = PathSegmentSchema.safeParse(versionId);
+  if (!result.success) throw new ValidationError(`Invalid version ID: ${result.error.message}`);
   return result.data;
 }
 
@@ -894,7 +909,7 @@ async function activateFunctionVersion(
       await writeFile(target, file.content);
     }),
   );
-  await writeFunctionConfigSection(workdir, version.functionName, version.artifact.verifyJwt);
+  await writeFunctionConfigSection(workdir, version.functionName, version.artifact);
   await atomicWrite(
     currentFunctionVersionPath(dataDir, projectId, version.functionName),
     `${JSON.stringify({ versionId: version.versionId }, null, 2)}\n`,
@@ -904,26 +919,22 @@ async function activateFunctionVersion(
 async function writeFunctionConfigSection(
   workdir: string,
   functionName: string,
-  verifyJwt: boolean,
+  artifact: FunctionArtifact,
 ): Promise<void> {
   const path = join(workdir, 'supabase', 'config.toml');
   const config = await readFile(path, 'utf8');
   const heading = `[functions.${functionName}]`;
+  const fields = [`verify_jwt = ${artifact.verifyJwt}`, `entrypoint = "${artifact.entrypoint}"`];
   const lines = config.split('\n');
   const start = lines.findIndex((line) => line.trim() === heading);
   if (start === -1) {
     const trimmed = config.endsWith('\n') ? config : `${config}\n`;
-    await atomicWrite(path, `${trimmed}\n${heading}\nverify_jwt = ${verifyJwt}\n`);
+    await atomicWrite(path, `${trimmed}\n${heading}\n${fields.join('\n')}\n`);
     return;
   }
   let end = start + 1;
   while (end < lines.length && !/^\[.*\]$/.test(lines[end]!.trim())) end += 1;
-  const updated = [
-    ...lines.slice(0, start),
-    heading,
-    `verify_jwt = ${verifyJwt}`,
-    ...lines.slice(end),
-  ].join('\n');
+  const updated = [...lines.slice(0, start), heading, ...fields, ...lines.slice(end)].join('\n');
   await atomicWrite(path, updated);
 }
 
