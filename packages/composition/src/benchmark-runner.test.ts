@@ -10,6 +10,7 @@ import {
   BENCHMARK_CASE_KINDS,
 } from '@agent-foundry/contracts';
 import { freezeBenchmarkReport, loadBenchmarkCases, runBenchmarkCase } from './benchmark-runner.js';
+import { MINI_PACKAGE, seedFixtureRepo } from './testing-helpers.js';
 
 const repoRoot = resolve(import.meta.dirname, '../../..');
 const casesDir = resolve(repoRoot, 'benchmarks/cases');
@@ -57,33 +58,11 @@ async function suiteDir(prefix: string): Promise<string> {
 
 let miniFixture: Promise<{ path: string; sha: string }> | undefined;
 function sharedMiniFixture(): Promise<{ path: string; sha: string }> {
-  return (miniFixture ??= (async () => {
-    const path = await suiteDir('benchmark-fixture-shared-');
-    const MINI_PACKAGE = `${JSON.stringify({ name: 'mini', private: true, version: '0.0.0' }, null, 2)}\n`;
-    const { writeFile, mkdir } = await import('node:fs/promises');
-    const { dirname } = await import('node:path');
-    const files: Record<string, string> = {
+  return (miniFixture ??= (async () =>
+    seedFixtureRepo(await suiteDir('benchmark-fixture-shared-'), {
       'package.json': MINI_PACKAGE,
       'src/lib.js': 'export const value = 1;\n',
-    };
-    for (const [relative, content] of Object.entries(files)) {
-      const destination = join(path, relative);
-      await mkdir(dirname(destination), { recursive: true });
-      await writeFile(destination, content);
-    }
-    await execa('git', ['init', '--quiet'], { cwd: path });
-    await execa('git', ['config', 'user.name', 'Benchmark Fixture'], { cwd: path });
-    await execa('git', ['config', 'user.email', 'benchmark-fixture@example.invalid'], {
-      cwd: path,
-    });
-    await execa('git', ['add', '.'], { cwd: path });
-    await execa('git', ['commit', '--quiet', '-m', 'fixture baseline'], { cwd: path });
-    const short = await execa('git', ['rev-parse', '--short', 'HEAD'], { cwd: path });
-    await writeFile(join(path, 'EXTRA.txt'), 'later commit\n');
-    await execa('git', ['add', '.'], { cwd: path });
-    await execa('git', ['commit', '--quiet', '-m', 'later commit'], { cwd: path });
-    return { path, sha: short.stdout.trim() };
-  })());
+    }))());
 }
 
 function miniCase(overrides: Record<string, unknown> = {}) {

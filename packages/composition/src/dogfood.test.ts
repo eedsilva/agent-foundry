@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import {
@@ -17,6 +17,12 @@ import {
   renderDogfoodMarkdown,
   runDogfoodTask,
 } from './dogfood.js';
+import { MINI_PACKAGE, seedFixtureRepo } from './testing-helpers.js';
+
+const DOGFOOD_FIXTURE_IDENTITY = {
+  name: 'Dogfood Fixture',
+  email: 'dogfood-fixture@example.invalid',
+};
 
 const repoRoot = resolve(import.meta.dirname, '../../..');
 const workflowsDir = resolve(repoRoot, 'workflows');
@@ -50,37 +56,12 @@ async function suiteDir(prefix: string): Promise<string> {
   return dir;
 }
 
-async function seedFixtureRepo(
-  path: string,
-  files: Record<string, string>,
-): Promise<{ path: string; sha: string }> {
-  for (const [relative, content] of Object.entries(files)) {
-    const destination = join(path, relative);
-    await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, content);
-  }
-  await execa('git', ['init', '--quiet'], { cwd: path });
-  await execa('git', ['config', 'user.name', 'Dogfood Fixture'], { cwd: path });
-  await execa('git', ['config', 'user.email', 'dogfood-fixture@example.invalid'], { cwd: path });
-  await execa('git', ['add', '.'], { cwd: path });
-  await execa('git', ['commit', '--quiet', '-m', 'fixture baseline'], { cwd: path });
-  // Real tasks reference short SHAs of non-tip commits (e.g. 8896a3c), so the
-  // fixture baseline must not be a branch tip either.
-  const short = await execa('git', ['rev-parse', '--short', 'HEAD'], { cwd: path });
-  await writeFile(join(path, 'EXTRA.txt'), 'later commit\n');
-  await execa('git', ['add', '.'], { cwd: path });
-  await execa('git', ['commit', '--quiet', '-m', 'later commit'], { cwd: path });
-  return { path, sha: short.stdout.trim() };
-}
-
 async function createFixtureRepo(files: Record<string, string>): Promise<{
   path: string;
   sha: string;
 }> {
-  return seedFixtureRepo(await tempDir('dogfood-fixture-'), files);
+  return seedFixtureRepo(await tempDir('dogfood-fixture-'), files, DOGFOOD_FIXTURE_IDENTITY);
 }
-
-const MINI_PACKAGE = `${JSON.stringify({ name: 'mini', private: true, version: '0.0.0' }, null, 2)}\n`;
 
 // runDogfoodTask only reads from repoRoot, so the four passing/failing mini-task
 // tests can share one lazily-built fixture instead of each rebuilding an
@@ -88,10 +69,14 @@ const MINI_PACKAGE = `${JSON.stringify({ name: 'mini', private: true, version: '
 let miniFixture: Promise<{ path: string; sha: string }> | undefined;
 function sharedMiniFixture(): Promise<{ path: string; sha: string }> {
   return (miniFixture ??= (async () =>
-    seedFixtureRepo(await suiteDir('dogfood-fixture-shared-'), {
-      'package.json': MINI_PACKAGE,
-      'src/lib.js': 'export const value = 1;\n',
-    }))());
+    seedFixtureRepo(
+      await suiteDir('dogfood-fixture-shared-'),
+      {
+        'package.json': MINI_PACKAGE,
+        'src/lib.js': 'export const value = 1;\n',
+      },
+      DOGFOOD_FIXTURE_IDENTITY,
+    ))());
 }
 
 function miniTask(overrides: Record<string, unknown>): ReturnType<typeof DogfoodTaskSchema.parse> {
