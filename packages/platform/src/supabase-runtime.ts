@@ -21,6 +21,11 @@ import {
   redactString,
   type GeneratedProjectRuntime,
 } from '@agent-foundry/domain';
+import {
+  GENERATED_STORAGE_MIGRATION,
+  configureGeneratedStorage,
+  generatedStorageMigration,
+} from './supabase-storage.js';
 
 const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
@@ -96,6 +101,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       '--network-id',
       network,
     );
+    await this.#execute('initialize', 'seed', 'buckets', '--workdir', workdir);
     const timestamp = this.#now().toISOString();
     const environment = environmentFromStatus(
       {
@@ -738,7 +744,13 @@ async function configureProject(
     if (!foundProjectId || foundPorts.size !== HOST_PORT_FIELDS.length) {
       throw new Error('Generated Supabase config is missing required project or port fields.');
     }
-    await atomicWrite(path, configured);
+    const migrationsDir = join(workdir, 'supabase', 'migrations');
+    await mkdir(migrationsDir, { recursive: true });
+    await atomicWrite(path, configureGeneratedStorage(configured));
+    await atomicWrite(
+      join(migrationsDir, GENERATED_STORAGE_MIGRATION),
+      generatedStorageMigration(),
+    );
   } catch (error) {
     throw operationError('initialize', error);
   }

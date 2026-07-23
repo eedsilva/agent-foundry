@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvironmentOperationError } from '@agent-foundry/domain';
 import { SupabaseGeneratedProjectRuntime, type SupabaseCommand } from './supabase-runtime.js';
+import { GENERATED_STORAGE_MIGRATION, generatedStorageMigration } from './supabase-storage.js';
 
 const NOW = new Date('2026-07-22T12:00:00.000Z');
 const INITIAL_CONFIG = `project_id = "environment"
@@ -68,12 +69,13 @@ async function statusCommand(
   const workdirIndex = args.indexOf('--workdir');
   const workdir = workdirIndex === -1 ? undefined : args[workdirIndex + 1];
   if (args[0] === 'init' && workdir) {
-    await mkdir(join(workdir, 'supabase'), { recursive: true });
+    await mkdir(join(workdir, 'supabase', 'migrations'), { recursive: true });
     await writeFile(join(workdir, 'supabase', 'config.toml'), INITIAL_CONFIG);
   }
   if ((args[0] === 'start' || args[0] === 'status') && workdir) {
     const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
     if (args[0] === 'start') {
+      await readFile(join(workdir, 'supabase', 'migrations', GENERATED_STORAGE_MIGRATION), 'utf8');
       projectIdsAtStart.push(config.match(/^project_id\s*=\s*"([^"]+)"/m)?.[1] ?? 'missing');
     }
     const api = configPort(config, 'api', 'port');
@@ -162,6 +164,10 @@ describe('SupabaseGeneratedProjectRuntime', () => {
     ).match(/^project_id\s*=\s*"([^"]+)"/m)?.[1];
     const firstConfig = await readFile(join(first.workdir, 'supabase', 'config.toml'), 'utf8');
     const secondConfig = await readFile(join(second.workdir, 'supabase', 'config.toml'), 'utf8');
+    const firstMigration = await readFile(
+      join(first.workdir, 'supabase', 'migrations', GENERATED_STORAGE_MIGRATION),
+      'utf8',
+    );
     const firstHostPorts = HOST_PORT_FIELDS.map(([section, key]) =>
       configPort(firstConfig, section, key),
     );
@@ -172,6 +178,13 @@ describe('SupabaseGeneratedProjectRuntime', () => {
     expect(secondProjectId).toBe(second.composeProjectName);
     expect(firstProjectId).not.toBe(secondProjectId);
     expect(projectIdsAtStart).toEqual(expect.arrayContaining([firstProjectId, secondProjectId]));
+    expect(firstConfig).toContain(`[storage.buckets.uploads]
+public = false
+file_size_limit = "10MiB"
+allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
+    expect(firstMigration).toBe(generatedStorageMigration());
+    expect(firstMigration).toContain('create policy storage_upload_insert');
+    expect(firstMigration).toContain('create policy storage_clean_owner_select');
     expect(new Set([...firstHostPorts, ...secondHostPorts]).size).toBe(14);
     expect(firstHostPorts.every((port) => port > 0 && port <= 65_535)).toBe(true);
     expect(secondHostPorts.every((port) => port > 0 && port <= 65_535)).toBe(true);
@@ -191,6 +204,14 @@ describe('SupabaseGeneratedProjectRuntime', () => {
       '--network-id',
       first.network,
     ]);
+    expect(command.mock.calls).toContainEqual(['seed', 'buckets', '--workdir', first.workdir]);
+    const firstStart = command.mock.calls.findIndex(
+      ([name, , value]) => name === 'start' && value === first.workdir,
+    );
+    const firstSeed = command.mock.calls.findIndex(
+      ([name, , , value]) => name === 'seed' && value === first.workdir,
+    );
+    expect(firstStart).toBeLessThan(firstSeed);
     expect(first).toMatchObject({
       projectId: 'project-a',
       endpoints: {
