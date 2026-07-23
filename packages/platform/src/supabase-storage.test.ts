@@ -37,6 +37,23 @@ allowed_mime_types = ["text/plain"]
     );
   });
 
+  it.each([
+    ['trailing comment', '[storage.buckets.uploads] # existing bucket'],
+    ['quoted uploads key', '[storage.buckets."uploads"]'],
+    ['whitespace around keys', '[ storage . buckets . uploads ]'],
+    ['quoted parent keys', `['storage'."buckets".uploads]`],
+  ])('rejects an incompatible equivalent uploads bucket with %s', (_, header) => {
+    const incompatible = `project_id = "supabase_project-a"
+
+${header}
+public = true
+`;
+
+    expect(() => configureGeneratedStorage(incompatible)).toThrowError(
+      'Generated Supabase uploads bucket configuration is incompatible.',
+    );
+  });
+
   it('generates owner RLS, quarantine, signed-read, export, and cleanup contracts', () => {
     const sql = generatedStorageMigration();
 

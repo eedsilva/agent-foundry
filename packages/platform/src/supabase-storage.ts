@@ -9,13 +9,18 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]
 `;
 
 export function configureGeneratedStorage(config: string): string {
-  const header = `[storage.buckets.${GENERATED_STORAGE_BUCKET}]`;
-  const sections = [...config.matchAll(/^\[storage\.buckets\.uploads\]\r?$/gm)];
+  const sections = [
+    ...config.matchAll(
+      /^[ \t]*\[[ \t]*(?:storage|'storage'|"storage")[ \t]*\.[ \t]*(?:buckets|'buckets'|"buckets")[ \t]*\.[ \t]*(?:uploads|'uploads'|"uploads")[ \t]*\][ \t]*(?:#.*)?\r?$/gm,
+    ),
+  ];
   if (sections.length === 0) return `${config}\n${STORAGE_CONFIG}`;
 
   const start = sections[0]!.index;
   const afterHeader = start + sections[0]![0].length;
-  const nextSection = config.slice(afterHeader).search(/\r?\n(?=\[[^\]\r\n]+\]\r?(?:\n|$))/);
+  const nextSection = config
+    .slice(afterHeader)
+    .search(/\r?\n(?=[ \t]*\[\[?[^\]\r\n]+\]\]?[ \t]*(?:#.*)?\r?(?:\n|$))/);
   const end = nextSection === -1 ? config.length : afterHeader + nextSection;
   if (sections.length === 1 && config.slice(start, end).trimEnd() === STORAGE_CONFIG.trimEnd()) {
     return config;
