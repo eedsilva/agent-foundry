@@ -229,12 +229,11 @@ describe('FileWorkspaceManager applyScaffold', () => {
       gitAuthorEmail: 'test@example.com',
     });
 
-    const { written } = await manager.applyScaffold('project-1', [
+    await manager.applyScaffold('project-1', [
       { path: 'lib/supabase/client.ts', content: 'export const marker = "scaffold";\n' },
       { path: 'middleware.ts', content: 'export const config = {};\n' },
     ]);
 
-    expect(written.sort()).toEqual(['lib/supabase/client.ts', 'middleware.ts']);
     const workspace = manager.workspacePath('project-1');
     await expect(readFile(join(workspace, 'lib/supabase/client.ts'), 'utf8')).resolves.toBe(
       'export const marker = "scaffold";\n',

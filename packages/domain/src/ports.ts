@@ -447,10 +447,7 @@ export interface WorkspaceManager {
   workspacePath(projectId: string): string;
   ensure(projectId: string): Promise<void>;
   writePrd(projectId: string, prd: string): Promise<void>;
-  applyScaffold(
-    projectId: string,
-    files: Array<{ path: string; content: string }>,
-  ): Promise<{ written: string[] }>;
+  applyScaffold(projectId: string, files: Array<{ path: string; content: string }>): Promise<void>;
   writeRunContext(input: {
     projectId: string;
     runId: string;
