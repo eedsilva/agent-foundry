@@ -31,6 +31,7 @@ import {
   FilePreviewLogRepository,
   FilePreviewSessionRepository,
   FileProjectVersionRepository,
+  FileSecretStore,
   FileStepAttemptRepository,
   FileStepEventRepository,
   FileStepRunRepository,
@@ -111,6 +112,7 @@ export interface Runtime {
   policies: YamlPolicyRepository;
   harness: VersionedHarnessRepository;
   workspaces: FileWorkspaceManager;
+  secretStore: FileSecretStore;
   router: ScoreBasedModelRouter;
   executors: StaticExecutorRegistry | MockExecutorRegistry;
   executionPlane: LocalExecutionPlane;
@@ -197,6 +199,7 @@ export async function createRuntime(
     gitAuthorName: config.gitAuthorName,
     gitAuthorEmail: config.gitAuthorEmail,
   });
+  const secretStore = new FileSecretStore(workspaces);
   let generatedProjectRuntime: GeneratedProjectRuntime | undefined;
   if (config.executorMode === 'real' && overrides.generatedProjectRuntime !== null) {
     generatedProjectRuntime =
@@ -227,6 +230,7 @@ export async function createRuntime(
     maxOutputBytes: config.maxCliOutputBytes,
     healthPath: config.previewHealthPath,
     logRepository: previewLogs,
+    secretStore,
     ...(config.executorMode === 'real' && overrides.previewInstaller !== null
       ? {
           installer:
@@ -308,6 +312,7 @@ export async function createRuntime(
     browserVerification,
     qualityObservationService,
     executors,
+    secretStore,
   );
   const projectService = new ProjectService(
     projects,
@@ -399,6 +404,7 @@ export async function createRuntime(
     policies,
     harness,
     workspaces,
+    secretStore,
     router,
     executors,
     executionPlane,
