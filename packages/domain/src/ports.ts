@@ -52,6 +52,9 @@ import type {
   KnowledgeFile,
   AppEnvironment,
   DestructiveEnvironmentConfirmation,
+  FunctionArtifact,
+  FunctionInvocationResult,
+  FunctionVersion,
   MigrationApproval,
   MigrationBackup,
   MigrationPreview,
@@ -555,4 +558,24 @@ export interface GeneratedProjectRuntime {
     projectId: string;
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<void>;
+  deployFunction(input: {
+    projectId: string;
+    functionPath: string;
+    artifact: FunctionArtifact;
+  }): Promise<FunctionVersion>;
+  listFunctionVersions(input: {
+    projectId: string;
+    functionName: string;
+  }): Promise<FunctionVersion[]>;
+  rollbackFunction(input: {
+    projectId: string;
+    functionName: string;
+    versionId: string;
+  }): Promise<FunctionVersion>;
+  invokeFunction(input: {
+    projectId: string;
+    functionName: string;
+    body?: string;
+    headers?: Record<string, string>;
+  }): Promise<FunctionInvocationResult>;
 }

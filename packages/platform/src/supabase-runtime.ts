@@ -11,6 +11,9 @@ import {
   type AppEnvironment,
   type DestructiveEnvironmentConfirmation,
   type EnvironmentLifecycleOperation,
+  type FunctionArtifact,
+  type FunctionInvocationResult,
+  type FunctionVersion,
   type MigrationApproval,
   type MigrationBackup,
   type MigrationPreview,
@@ -327,6 +330,38 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       '--yes',
     );
     await rm(environment.workdir, { recursive: true, force: true });
+  }
+
+  async deployFunction(input: {
+    projectId: string;
+    functionPath: string;
+    artifact: FunctionArtifact;
+  }): Promise<FunctionVersion> {
+    throw new Error('deployFunction not yet implemented');
+  }
+
+  async listFunctionVersions(input: {
+    projectId: string;
+    functionName: string;
+  }): Promise<FunctionVersion[]> {
+    throw new Error('listFunctionVersions not yet implemented');
+  }
+
+  async rollbackFunction(input: {
+    projectId: string;
+    functionName: string;
+    versionId: string;
+  }): Promise<FunctionVersion> {
+    throw new Error('rollbackFunction not yet implemented');
+  }
+
+  async invokeFunction(input: {
+    projectId: string;
+    functionName: string;
+    body?: string;
+    headers?: Record<string, string>;
+  }): Promise<FunctionInvocationResult> {
+    throw new Error('invokeFunction not yet implemented');
   }
 
   async #read(projectId: string): Promise<AppEnvironment | null> {
