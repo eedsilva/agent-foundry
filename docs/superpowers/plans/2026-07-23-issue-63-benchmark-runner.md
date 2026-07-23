@@ -411,7 +411,7 @@ git commit -m "feat(contracts): add BenchmarkCase, BenchmarkRunRecord, Benchmark
 - Create: `benchmarks/cases/bug-version-compare.json`
 - Create: `benchmarks/cases/refactor-formatters.json`
 - Create: `benchmarks/cases/review-score-router.json`
-- Create: `benchmarks/cases/security-redaction-aws-key.json`
+- Create: `benchmarks/cases/security-redaction-google-api-key.json`
 
 **Interfaces:**
 - Consumes: `BenchmarkCaseSchema` shape from Task 2 (`id`, `title`, `workflowId`, `prompt`, `baselineRef`, `allowedFiles`, `seedFiles`, `verifyScript?`, `kind`, `expectedSignals`).
@@ -551,28 +551,37 @@ This task is data-only (no application code), so there is no red/green TDD cycle
 }
 ```
 
-- [ ] **Step 6: `benchmarks/cases/security-redaction-aws-key.json`**
+- [ ] **Step 6: `benchmarks/cases/security-redaction-google-api-key.json`**
+
+> Note: an earlier draft of this fixture targeted an AWS `AKIA...` access-key
+> pattern. Task-review caught that `packages/domain/src/redaction.ts` at
+> `56568a3` **already** redacts that exact pattern (`/\bAKIA[0-9A-Z]{16}\b/g`
+> is already in `VALUE_PATTERNS`), which made that case a no-op — a no-diff
+> agent run would trivially "pass." This corrected fixture targets a Google
+> Cloud API key (`AIza` + 35 alphanumeric/underscore/hyphen chars), confirmed
+> absent from `VALUE_PATTERNS` at the pinned baseline, so the case actually
+> discriminates a correct fix from doing nothing.
 
 ```json
 {
-  "id": "security-redaction-aws-key",
-  "title": "Redação de chaves de acesso AWS em packages/domain/src/redaction.ts",
+  "id": "security-redaction-google-api-key",
+  "title": "Redação de chaves de API do Google em packages/domain/src/redaction.ts",
   "kind": "security-sensitive",
   "workflowId": "dogfood-task-v1",
   "baselineRef": "56568a3",
   "allowedFiles": ["packages/domain/src/redaction.ts"],
   "seedFiles": [
     {
-      "path": "packages/domain/src/redaction-aws-key.test.ts",
-      "content": "import { describe, expect, it } from 'vitest';\nimport { redactString } from './redaction.js';\n\ndescribe('redactString (AWS access key)', () => {\n  it('redacts an AKIA-style AWS access key id embedded in text', () => {\n    const secret = 'AKIAIOSFODNN7EXAMPLE';\n    const result = redactString(`aws_access_key_id=${secret}`);\n    expect(result).not.toContain(secret);\n    expect(result).toContain('[REDACTED]');\n  });\n\n  it('leaves ordinary text untouched', () => {\n    const message = 'Deploy succeeded in 4200ms.';\n    expect(redactString(message)).toBe(message);\n  });\n});\n"
+      "path": "packages/domain/src/redaction-google-api-key.test.ts",
+      "content": "import { describe, expect, it } from 'vitest';\nimport { redactString } from './redaction.js';\n\ndescribe('redactString (Google API key)', () => {\n  it('redacts an AIza-style Google API key embedded in text', () => {\n    const secret = 'AIzaSyD4c9f8g7h6j5k4l3m2n1p0q9r8s7t6u5v';\n    const result = redactString(`google_api_key=${secret}`);\n    expect(result).not.toContain(secret);\n    expect(result).toContain('[REDACTED]');\n  });\n\n  it('leaves ordinary text untouched', () => {\n    const message = 'Deploy succeeded in 4200ms.';\n    expect(redactString(message)).toBe(message);\n  });\n});\n"
     }
   ],
-  "verifyScript": "vitest run packages/domain/src/redaction-aws-key.test.ts --pool=threads --maxWorkers=1",
-  "prompt": "# Tarefa: redação de chaves de acesso AWS (segurança)\n\nEste é o monorepo agent-foundry. O arquivo packages/domain/src/redaction.ts já existe e exporta redactString(text: string): string, que hoje redige tokens Bearer, chaves sk-..., tokens ghp_... do GitHub e JWTs embutidos em texto livre, substituindo o segredo por '[REDACTED]'. Leia o arquivo real antes de editar.\n\n## Entregável\n\nEstenda redactString em packages/domain/src/redaction.ts para também redigir identificadores de chave de acesso da AWS no formato AKIA seguido de 16 caracteres alfanuméricos maiúsculos (por exemplo AKIAIOSFODNN7EXAMPLE), embutidos em qualquer texto livre, substituindo o valor por '[REDACTED]' exatamente como os outros padrões já fazem. Não altere nem enfraqueça nenhum dos padrões de redação já existentes.\n\nUm arquivo de teste já foi semeado no workspace em packages/domain/src/redaction-aws-key.test.ts — NÃO o modifique. Ele define o contrato exato esperado para o novo padrão.\n\n## Arquivos permitidos (allowlist)\n\nSó é permitido criar ou modificar:\n- packages/domain/src/redaction.ts\n\nQualquer alteração fora dessa lista reprova a tarefa, mesmo que os testes passem.\n\n## Verificação\n\nO comando npm run dogfood:verify deve passar antes de finalizar. Ele executa vitest run packages/domain/src/redaction-aws-key.test.ts --pool=threads --maxWorkers=1 sobre o teste semeado.\n",
+  "verifyScript": "vitest run packages/domain/src/redaction-google-api-key.test.ts --pool=threads --maxWorkers=1",
+  "prompt": "# Tarefa: redação de chaves de API do Google (segurança)\n\nEste é o monorepo agent-foundry. O arquivo packages/domain/src/redaction.ts já existe e exporta redactString(text: string): string, cuja lista VALUE_PATTERNS hoje redige tokens Bearer, chaves sk-/rk-, tokens gh[pousr]_ do GitHub, JWTs e chaves de acesso AWS (AKIA...) embutidos em texto livre, substituindo o segredo por '[REDACTED]'. Leia o arquivo real antes de editar — NÃO presuma quais padrões já existem.\n\n## Entregável\n\nEstenda VALUE_PATTERNS em packages/domain/src/redaction.ts para também redigir chaves de API do Google Cloud no formato AIza seguido de exatamente 35 caracteres alfanuméricos, '_' ou '-' (39 caracteres no total, por exemplo AIzaSyD4c9f8g7h6j5k4l3m2n1p0q9r8s7t6u5v), embutidas em qualquer texto livre, substituindo o valor por '[REDACTED]' exatamente como os outros padrões já fazem. Não altere nem enfraqueça nenhum dos padrões de redação já existentes.\n\nUm arquivo de teste já foi semeado no workspace em packages/domain/src/redaction-google-api-key.test.ts — NÃO o modifique. Ele define o contrato exato esperado para o novo padrão.\n\n## Arquivos permitidos (allowlist)\n\nSó é permitido criar ou modificar:\n- packages/domain/src/redaction.ts\n\nQualquer alteração fora dessa lista reprova a tarefa, mesmo que os testes passem.\n\n## Verificação\n\nO comando npm run dogfood:verify deve passar antes de finalizar. Ele executa vitest run packages/domain/src/redaction-google-api-key.test.ts --pool=threads --maxWorkers=1 sobre o teste semeado.\n",
   "expectedSignals": [
-    "adiciona um padrão de redação para chaves de acesso AWS (AKIA...)",
-    "não enfraquece nenhum padrão de redação pré-existente (Bearer, sk-, ghp_, JWT)",
-    "não modifica redaction.test.ts nem redaction-aws-key.test.ts"
+    "adiciona um padrão de redação para chaves de API do Google (AIza...)",
+    "não enfraquece nenhum padrão de redação pré-existente (Bearer, sk-/rk-, gh*_, JWT, AKIA)",
+    "não modifica redaction.test.ts nem redaction-google-api-key.test.ts"
   ]
 }
 ```
