@@ -434,3 +434,27 @@ describe('BaseCliExecutor foundry.cli span', () => {
     ]);
   });
 });
+
+describe('BaseCliExecutor environment isolation', () => {
+  it('never inherits the control plane process env into the CLI subprocess', async () => {
+    const originalDatabaseUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgres://control-plane-only-leak-canary';
+    try {
+      execaMock.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+      await new FixtureExecutor(1_000_000).execute(request);
+
+      const [, , options] = execaMock.mock.calls[0]!;
+      expect(options.env).toBeDefined();
+      expect(options.env).not.toHaveProperty('DATABASE_URL');
+      expect(Object.keys(options.env).length).toBeGreaterThan(0);
+      // execa defaults extendEnv:true, which re-merges the full process.env
+      // underneath `env` above and would silently undo the assertions above
+      // in a real (non-mocked) execa run — this mock can't exercise that
+      // merge itself, so assert the guard against it is actually passed.
+      expect(options.extendEnv).toBe(false);
+    } finally {
+      if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = originalDatabaseUrl;
+    }
+  });
+});

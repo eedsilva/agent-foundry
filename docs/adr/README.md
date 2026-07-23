@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0033 Versioned local Supabase Functions deploy and rollback](0033-supabase-functions-versioned-local-deploy.md).
+Latest: [0033 App secret capabilities via a per-project `.env` file](0033-app-secret-capabilities.md).

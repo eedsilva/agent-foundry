@@ -16,6 +16,7 @@ import {
   type Clock,
   type PreviewLogRepository,
   type PreviewRunner,
+  type SecretStore,
 } from '@agent-foundry/domain';
 import {
   resolvePreviewCommandPlan,
@@ -28,6 +29,7 @@ import {
   terminatePersistedProcessTree,
   terminateProcessTree,
 } from './process-tree.js';
+import { safeSpawnEnv } from './safe-environment.js';
 
 export interface NodePreviewRunnerOptions {
   reservePort?: () => Promise<number>;
@@ -37,6 +39,7 @@ export interface NodePreviewRunnerOptions {
   healthPath?: string;
   logRepository?: PreviewLogRepository;
   installer?: PreviewInstaller;
+  secretStore?: Pick<SecretStore, 'resolveAll'>;
 }
 
 // execa's ResultPromise<Options> return type varies per call site's options
@@ -78,6 +81,7 @@ export class NodePreviewRunner implements PreviewRunner {
   private readonly healthPath: string;
   private readonly logRepository: PreviewLogRepository | undefined;
   private readonly installer: PreviewInstaller | undefined;
+  private readonly secretStore: Pick<SecretStore, 'resolveAll'> | undefined;
   private readonly processes = new Map<string, ProcessEntry>();
 
   constructor(options: NodePreviewRunnerOptions = {}) {
@@ -88,6 +92,7 @@ export class NodePreviewRunner implements PreviewRunner {
     this.healthPath = options.healthPath ?? '/';
     this.logRepository = options.logRepository;
     this.installer = options.installer;
+    this.secretStore = options.secretStore;
   }
 
   async prepare(session: PreviewSession): Promise<PreviewSession> {
@@ -217,9 +222,12 @@ export class NodePreviewRunner implements PreviewRunner {
     dev: { command: string; args: string[] },
   ): Promise<{ port: number; pid: number | undefined; crashedImmediately: boolean }> {
     const reservedPort = await this.reservePort();
+    const secrets = this.secretStore
+      ? await this.secretStore.resolveAll(session.workspaceRef.projectId)
+      : {};
     const child = execa(dev.command, dev.args, {
       cwd: session.workspaceRef.workspacePath,
-      env: { ...process.env, PORT: String(reservedPort), HOST: '127.0.0.1' },
+      ...safeSpawnEnv(process.env, { ...secrets, PORT: String(reservedPort), HOST: '127.0.0.1' }),
       reject: false,
       detached: process.platform !== 'win32',
     }) as unknown as DevServerProcess;

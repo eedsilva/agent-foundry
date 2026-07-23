@@ -117,6 +117,18 @@ Cada sessão usa `DATA_DIR/previews/<sessionId>/session.json` e `logs.json`. Esc
 
 `DATA_DIR`, logs, artifacts e cookies de preview continuam sendo dados sensíveis. Preview é restrito a loopback e a operador confiável; não é isolamento forte para código hostil. A recuperação de lock considera `pid` vivo no mesmo host (`process.kill(pid, 0)`). Portanto, todos os processos que compartilham `DATA_DIR` devem enxergar o mesmo namespace de PID; não compartilhe esse diretório entre containers/hosts com namespaces diferentes. Reuso extremo de PID pode manter um lock órfão até intervenção manual.
 
+### Segredos do app (por projeto)
+
+Para dar a um projeto gerado acesso a um segredo real (chave de API, token de terceiro), crie manualmente `DATA_DIR/projects/<projectId>/.env` com uma linha `CHAVE=valor` por segredo:
+
+```env
+STRIPE_SECRET_KEY=sk_live_...
+```
+
+Esse arquivo fica fora do `workspace/` versionado do projeto (não é commitado e não é rastreável por construção) e é distinto tanto do `.env` do runtime Supabase de cada projeto (seção "Runtime local por projeto", abaixo) quanto do `.env` raiz deste repositório, que é a configuração do próprio control plane — ver `.env.example`. Se o arquivo não existir, o projeto simplesmente não tem segredos declarados; isso não é um erro.
+
+Os nomes das chaves declaradas nesse arquivo tornam-se as capacidades que o agente de código pode referenciar em código gerado (por exemplo, `process.env.STRIPE_SECRET_KEY`); o agente vê somente o nome, nunca o valor — o valor real nunca entra no subprocesso do agente. Os valores só são injetados no processo do servidor de dev da preview em execução, no momento em que a sessão de preview é iniciada. Depois de criar ou editar o arquivo, reinicie a sessão de preview (`POST /projects/:projectId/preview/:sessionId/stop` seguido de um novo `POST /projects/:projectId/preview`) para que o processo em execução receba o valor novo ou alterado — ele não recarrega o arquivo sozinho. `npm run secrets:check` não varre esse arquivo (ele nunca é rastreado pelo Git); ele protege código-fonte, saída de build e o próprio repositório, não este arquivo operacional. Ver ADR 0033 para o design completo, incluindo por que o agente e o servidor de dev são tratados como dois níveis de confiança diferentes.
+
 ### Migração, rollback e recovery
 
 Não há sessão legada para migrar: previews anteriores eram somente em memória. Antes do upgrade, pare previews/processos antigos e a API; sessões em memória desaparecem e novas sessões começam no formato durável. Não crie backfill inventando PID, token ou estado.

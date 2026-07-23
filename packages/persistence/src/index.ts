@@ -8,6 +8,7 @@ export * from './metrics-repository.js';
 export * from './policy-repository.js';
 export * from './workflow-repository.js';
 export * from './workspace-manager.js';
+export * from './secret-store.js';
 export * from './quality-observation-repository.js';
 export * from './run-repositories.js';
 export * from './approval-repositories.js';

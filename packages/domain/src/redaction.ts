@@ -3,7 +3,7 @@ import type { ApprovalDecision, ProjectEvent } from '@agent-foundry/contracts';
 const SENSITIVE_WORD =
   /^(?:token|secret|secrets|password|passwd|credential|credentials|authorization|auth|bearer|cookie|cookies|session|apikey)$/i;
 
-const VALUE_PATTERNS = [
+export const VALUE_PATTERNS = [
   /\b(?:sk|rk)-[A-Za-z0-9_-]{16,}\b/g,
   /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,
   /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}/gi,

@@ -29,6 +29,13 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify(req.headers));
     return;
   }
+  if (req.url === '/echo-env') {
+    // Echoes the process's own environment, so preview-injection tests can
+    // assert exactly which variables the spawned dev server received.
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(process.env));
+    return;
+  }
   if (req.url === '/echo-body') {
     // Echoes the request's content-type and raw body bytes, so proxy tests can
     // assert the body actually arrived (not drained/empty) for content types

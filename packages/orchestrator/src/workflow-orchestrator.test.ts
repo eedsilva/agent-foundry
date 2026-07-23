@@ -3,6 +3,7 @@ import {
   RouteDecisionSchema,
   WorkflowDefinitionSchema,
   type ExecutorHealth,
+  type Project,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
@@ -12,11 +13,13 @@ import {
   type JobQueue,
   type MetricsRepository,
   type ModelRouter,
+  type SecretStore,
   type VerificationService,
   type WorkflowRepository,
 } from '@agent-foundry/domain';
 import {
   DEFAULT_POLICY,
+  FakeSecretStore,
   FakeWorkspaces,
   InMemoryApprovalDecisions,
   InMemoryApprovalRequests,
@@ -67,7 +70,11 @@ const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   ],
 });
 
-function makeOrchestrator(versions?: ProjectVersionService, executorHealth?: ExecutorHealth[]) {
+function makeOrchestrator(
+  versions?: ProjectVersionService,
+  executorHealth?: ExecutorHealth[],
+  secretStore?: SecretStore,
+) {
   const power = { on: true };
   const clock = new SystemClock();
   const ids = new SequentialIds();
@@ -169,9 +176,21 @@ function makeOrchestrator(versions?: ProjectVersionService, executorHealth?: Exe
     undefined,
     undefined,
     executors,
+    secretStore,
   );
 
-  return { projects, runs, stepRuns, artifacts, events, workspaces, clock, orchestrator, route };
+  return {
+    projects,
+    runs,
+    stepRuns,
+    artifacts,
+    events,
+    workspaces,
+    clock,
+    orchestrator,
+    route,
+    executor,
+  };
 }
 
 async function seedRun(stores: ReturnType<typeof makeOrchestrator>): Promise<void> {
@@ -247,5 +266,24 @@ describe('ProjectVersion recording hook (#40)', () => {
 
     expect((await stores.runs.get('run-1'))?.status).toBe('completed');
     expect(stores.workspaces.commits).toHaveLength(1);
+  });
+
+  it('populates ExecutionRequest.secrets with declared names only, never values', async () => {
+    const secretStore = new FakeSecretStore({ STRIPE_SECRET_KEY: 'sk-should-never-appear' });
+    const stores = makeOrchestrator(undefined, undefined, secretStore);
+    const project = {
+      id: 'project-1',
+      name: 'Test',
+      workflowId: WORKFLOW.id,
+      policyId: 'default',
+      version: 1,
+    } as Project;
+    await stores.projects.create(project);
+
+    await stores.orchestrator.runProject(project.id);
+
+    const submitted = stores.executor.submittedExecutionRequests.at(-1);
+    expect(submitted?.secrets).toEqual([{ name: 'STRIPE_SECRET_KEY', ref: 'STRIPE_SECRET_KEY' }]);
+    expect(JSON.stringify(submitted)).not.toContain('sk-should-never-appear');
   });
 });
