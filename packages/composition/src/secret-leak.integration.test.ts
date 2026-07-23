@@ -36,10 +36,7 @@ describe('secret leak scan', () => {
       workflowId: 'web-app-v1',
       prd: 'Build a tiny app so this test has a real workflow to run through mock execution.',
     });
-    await writeFile(
-      join(dataDir, 'projects', project.id, '.env'),
-      `FAKE_SECRET=${FAKE_SECRET}\n`,
-    );
+    await writeFile(join(dataDir, 'projects', project.id, '.env'), `FAKE_SECRET=${FAKE_SECRET}\n`);
 
     // 1. Capability surfaced by name only — the value is never touched here.
     expect(await runtime.secretStore.names(project.id)).toEqual(['FAKE_SECRET']);

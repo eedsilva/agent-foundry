@@ -15,10 +15,7 @@ describe('FileSecretStore', () => {
     );
     const store = new FileSecretStore({ projectRoot: () => projectRoot });
 
-    await expect(store.names('project-1')).resolves.toEqual([
-      'STRIPE_SECRET_KEY',
-      'DATABASE_URL',
-    ]);
+    await expect(store.names('project-1')).resolves.toEqual(['STRIPE_SECRET_KEY', 'DATABASE_URL']);
     await expect(store.resolveAll('project-1')).resolves.toEqual({
       STRIPE_SECRET_KEY: 'sk-test-1234567890abcdef',
       DATABASE_URL: 'postgres://x',

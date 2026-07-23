@@ -18,10 +18,6 @@ const SAFE_ENV_ALLOWLIST = new Set([
   'APPDATA',
 ]);
 
-export function pickSafeEnvironment(
-  source: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    Object.entries(source).filter(([key]) => SAFE_ENV_ALLOWLIST.has(key)),
-  );
+export function pickSafeEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(source).filter(([key]) => SAFE_ENV_ALLOWLIST.has(key)));
 }
