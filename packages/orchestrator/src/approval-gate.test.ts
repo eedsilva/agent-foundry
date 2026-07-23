@@ -961,6 +961,41 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(harness.events.types().filter((type) => type === 'run.approval_decided')).toHaveLength(1);
   });
 
+  it('retries an identical decision after an unrelated parked-run version update (#198)', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    let updateOnce = true;
+    harness.runs.onBeforeUpdate = async (candidate) => {
+      if (!updateOnce || candidate.status !== 'queued') return;
+      updateOnce = false;
+      const current = (await harness.runs.get('run-1'))!;
+      await harness.runs.update({ ...current, updatedAt: candidate.updatedAt }, current.version);
+    };
+
+    await expect(
+      harness.service.decideApproval('run-1', entry!.request.id, { action: 'approve', decidedBy: 'ed' }),
+    ).resolves.toMatchObject({ run: { status: 'queued' }, decision: { action: 'approve' } });
+  });
+
+  it('preserves a cancellation winner when approval CAS loses (#198)', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    let cancelOnce = true;
+    harness.runs.onBeforeUpdate = async (candidate) => {
+      if (!cancelOnce || candidate.status !== 'queued') return;
+      cancelOnce = false;
+      await harness.service.cancelRun('run-1');
+    };
+
+    await expect(
+      harness.service.decideApproval('run-1', entry!.request.id, { action: 'approve', decidedBy: 'ed' }),
+    ).rejects.toThrow('Version conflict');
+  });
+
   it('conflicts (#14) a genuinely simultaneous pair of differing decisions: one wins, one 409s', async () => {
     const harness = makeHarness({}, undefined, { gate: {} });
     await seedRun(harness);
