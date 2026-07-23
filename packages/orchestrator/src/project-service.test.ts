@@ -43,6 +43,8 @@ describe('ProjectService.create', () => {
         start: unused,
         stop: unused,
         inspect: unused,
+        previewMigration: unused,
+        backupMigration: unused,
         migrate: unused,
         seed: unused,
         health: unused,

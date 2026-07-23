@@ -559,6 +559,12 @@ DATABASE_URL=postgres://foundry:foundry@localhost:5432/foundry npm run db:migrat
 
 Roda `migrateUp` (migrations SQL embarcadas, seriadas por `pg_advisory_lock`) e imprime as versões aplicadas ou `schema up to date`. Rode antes do primeiro boot em modo postgres e após qualquer upgrade que adicione migration nova. A API e o worker nunca migram sozinhos: `assertSchemaCurrent` roda uma vez no boot e falha fechado, apontando para este comando, se a versão do schema estiver atrás do binário.
 
+### Migrações de projetos gerados (forward-only)
+
+Cada projeto gerado tem um runtime Supabase/Postgres isolado. Revise o preview e o SHA-256 do SQL contido em `supabase/migrations/*.sql` antes de aplicar. Para uma alteração destrutiva, gere primeiro um backup local combinado — dump de schema mais dump `--data-only` — no caminho contido solicitado; o runtime grava os checksums do artefato, schema e dados em um manifest gerado.
+
+O apply exige aprovação dos checksums de todas as migrations destrutivas do batch e o backup/manifest verificado, intacto e com no máximo 24 horas. Então ele executa somente `supabase migration up`; não há down migration nem restore automático. Se houver incompatibilidade, faça roll-forward da aplicação antes de um restore explícito do backup selecionado, com o projeto parado. O detector bloqueia `DROP`, `TRUNCATE`, `DELETE FROM` e `ALTER TABLE ... DROP COLUMN` após remover comentários; ele é um gate, não um parser SQL completo.
+
 ### Rollback
 
 Pare API e worker, volte `PERSISTENCE_MODE` para `file` (ou remova a variável) e reinicie. Dados gravados em modo postgres não são sincronizados de volta para `DATA_DIR`: o rollback restaura o comportamento em disco a partir do estado que já existia lá, não migra o conteúdo do Postgres. Para voltar a operar sobre os dados gravados em Postgres, mantenha `PERSISTENCE_MODE=postgres` e trate o banco como a fonte de verdade — não alterne os dois modos como se fossem réplicas do mesmo estado.

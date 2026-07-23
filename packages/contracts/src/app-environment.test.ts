@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { AppEnvironmentSchema } from './index.js';
+import {
+  AppEnvironmentSchema,
+  MigrationApprovalSchema,
+  MigrationBackupSchema,
+  MigrationPreviewSchema,
+} from './index.js';
 
 const ENVIRONMENT = {
   projectId: 'project-1',
@@ -50,6 +55,91 @@ describe('AppEnvironmentSchema', () => {
       AppEnvironmentSchema.parse({
         ...ENVIRONMENT,
         endpoints: { api: 'http://127.0.0.1:54321#access_token=must-not-persist' },
+      }),
+    ).toThrow();
+  });
+});
+
+describe('migration review schemas', () => {
+  it('accepts a preview, backup, and approval with SHA-256 checksums', () => {
+    const migrationChecksum = 'a'.repeat(64);
+    const backup = {
+      path: 'supabase/backups/20260723.sql',
+      checksum: 'b'.repeat(64),
+      schemaChecksum: 'c'.repeat(64),
+      dataChecksum: 'd'.repeat(64),
+      createdAt: '2026-07-23T12:00:00.000Z',
+      manifestId: 'backup-1',
+    };
+
+    expect(
+      MigrationPreviewSchema.parse({
+        migrationPath: 'supabase/migrations/20260723000000_create_widgets.sql',
+        checksum: migrationChecksum,
+        destructiveStatements: ['DROP TABLE widgets'],
+      }),
+    ).toEqual(expect.objectContaining({ checksum: migrationChecksum }));
+    expect(MigrationBackupSchema.parse(backup)).toEqual(backup);
+    expect(
+      MigrationApprovalSchema.parse({
+        migrationChecksum,
+        migrationChecksums: [migrationChecksum, 'e'.repeat(64)],
+        backup,
+      }),
+    ).toEqual(expect.objectContaining({ migrationChecksum }));
+  });
+
+  it('rejects invalid SHA-256 checksums with otherwise-valid inputs', () => {
+    const preview = {
+      migrationPath: 'supabase/migrations/20260723000000_create_widgets.sql',
+      checksum: 'a'.repeat(64),
+      destructiveStatements: ['DROP TABLE widgets'],
+    };
+    const backup = {
+      path: 'supabase/backups/20260723.sql',
+      checksum: 'b'.repeat(64),
+      schemaChecksum: 'c'.repeat(64),
+      dataChecksum: 'd'.repeat(64),
+      createdAt: '2026-07-23T12:00:00.000Z',
+      manifestId: 'backup-1',
+    };
+    const approval = { migrationChecksum: 'c'.repeat(64), backup };
+
+    expect(() => MigrationPreviewSchema.parse({ ...preview, checksum: 'g'.repeat(64) })).toThrow();
+    expect(() => MigrationBackupSchema.parse({ ...backup, checksum: 'g'.repeat(64) })).toThrow();
+    expect(() =>
+      MigrationBackupSchema.parse({ ...backup, schemaChecksum: 'g'.repeat(64) }),
+    ).toThrow();
+    expect(() =>
+      MigrationApprovalSchema.parse({ ...approval, migrationChecksum: 'g'.repeat(64) }),
+    ).toThrow();
+    expect(() =>
+      MigrationApprovalSchema.parse({ ...approval, migrationChecksums: ['g'.repeat(64)] }),
+    ).toThrow();
+  });
+
+  it('rejects extra keys on every migration review schema', () => {
+    const preview = {
+      migrationPath: 'supabase/migrations/20260723000000_create_widgets.sql',
+      checksum: 'a'.repeat(64),
+      destructiveStatements: ['DROP TABLE widgets'],
+    };
+    const backup = {
+      path: 'supabase/backups/20260723.sql',
+      checksum: 'b'.repeat(64),
+      schemaChecksum: 'c'.repeat(64),
+      dataChecksum: 'd'.repeat(64),
+      createdAt: '2026-07-23T12:00:00.000Z',
+      manifestId: 'backup-1',
+    };
+
+    expect(() => MigrationPreviewSchema.parse({ ...preview, extra: true })).toThrow();
+    expect(() => MigrationBackupSchema.parse({ ...backup, extra: true })).toThrow();
+    expect(() =>
+      MigrationApprovalSchema.parse({
+        migrationChecksum: 'c'.repeat(64),
+        backup,
+        extra: true,
       }),
     ).toThrow();
   });

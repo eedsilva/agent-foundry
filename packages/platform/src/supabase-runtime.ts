@@ -1,13 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
   AppEnvironmentSchema,
+  MigrationApprovalSchema,
+  MigrationBackupSchema,
+  MigrationPreviewSchema,
   PathSegmentSchema,
   type AppEnvironment,
   type DestructiveEnvironmentConfirmation,
   type EnvironmentLifecycleOperation,
+  type MigrationApproval,
+  type MigrationBackup,
+  type MigrationPreview,
 } from '@agent-foundry/contracts';
 import {
   EnvironmentOperationError,
@@ -176,9 +182,92 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     return inspected;
   }
 
-  async migrate(input: { projectId: string; migrationPath: string }): Promise<AppEnvironment> {
+  async previewMigration(input: {
+    projectId: string;
+    migrationPath: string;
+  }): Promise<MigrationPreview> {
     const environment = await this.#require(input.projectId);
-    await requireContainedFile(environment.workdir, input.migrationPath);
+    return migrationPreview(environment.workdir, input.migrationPath);
+  }
+
+  async backupMigration(input: {
+    projectId: string;
+    backupPath: string;
+  }): Promise<MigrationBackup> {
+    const environment = await this.#require(input.projectId);
+    const path = await containedOutputFile(environment.workdir, input.backupPath);
+    const suffix = randomUUID();
+    const schemaPath = `${path}.${suffix}.schema.sql`;
+    const dataPath = `${path}.${suffix}.data.sql`;
+    try {
+      await this.#execute(
+        'migrate',
+        'db',
+        'dump',
+        '--workdir',
+        environment.workdir,
+        '--local',
+        '--file',
+        schemaPath,
+      );
+      await this.#execute(
+        'migrate',
+        'db',
+        'dump',
+        '--workdir',
+        environment.workdir,
+        '--local',
+        '--data-only',
+        '--file',
+        dataPath,
+      );
+      const [schema, data] = await Promise.all([readFile(schemaPath), readFile(dataPath)]);
+      const backup = Buffer.concat([
+        schema,
+        schema.at(-1) === 10 ? Buffer.alloc(0) : Buffer.from('\n'),
+        data,
+      ]);
+      await atomicWrite(path, backup);
+      const manifest = MigrationBackupSchema.parse({
+        path: input.backupPath,
+        checksum: sha256(backup),
+        schemaChecksum: sha256(schema),
+        dataChecksum: sha256(data),
+        createdAt: this.#now().toISOString(),
+        manifestId: randomUUID(),
+      });
+      const manifestPath = backupManifestPath(
+        this.#dataDir,
+        environment.projectId,
+        manifest.manifestId,
+      );
+      await mkdir(dirname(manifestPath), { recursive: true });
+      await atomicWrite(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      return manifest;
+    } finally {
+      await Promise.all([rm(schemaPath, { force: true }), rm(dataPath, { force: true })]);
+    }
+  }
+
+  async migrate(input: {
+    projectId: string;
+    migrationPath: string;
+    approval?: MigrationApproval;
+  }): Promise<AppEnvironment> {
+    const environment = await this.#require(input.projectId);
+    await migrationFile(environment.workdir, input.migrationPath);
+    const destructive = (await migrationPreviews(environment.workdir)).filter(
+      (preview) => preview.destructiveStatements.length,
+    );
+    if (destructive.length) {
+      await requireMigrationApproval(
+        this.#dataDir,
+        environment,
+        destructive,
+        input.approval,
+        this.#now(),
+      );
+    }
     await this.#execute('migrate', 'migration', 'up', '--workdir', environment.workdir, '--yes');
     return this.#touch(environment);
   }
@@ -403,7 +492,34 @@ function requireDestructiveConfirmation(
   }
 }
 
-async function requireContainedFile(workdir: string, inputPath: string): Promise<void> {
+async function migrationFile(workdir: string, inputPath: string): Promise<string> {
+  if (!/^supabase\/migrations\/[^/\\]+\.sql$/.test(inputPath)) {
+    throw new ValidationError('Migration must be a supabase/migrations/*.sql artifact.');
+  }
+  return requireContainedFile(workdir, inputPath);
+}
+
+async function migrationPreview(workdir: string, migrationPath: string): Promise<MigrationPreview> {
+  const path = await migrationFile(workdir, migrationPath);
+  const sql = await readFile(path, 'utf8');
+  return MigrationPreviewSchema.parse({
+    migrationPath,
+    checksum: sha256(sql),
+    destructiveStatements: destructiveStatements(sql),
+  });
+}
+
+async function migrationPreviews(workdir: string): Promise<MigrationPreview[]> {
+  const directory = join(workdir, 'supabase', 'migrations');
+  const entries = await readdir(directory, { withFileTypes: true });
+  const paths = entries
+    .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith('.sql'))
+    .map((entry) => `supabase/migrations/${entry.name}`)
+    .sort();
+  return Promise.all(paths.map((path) => migrationPreview(workdir, path)));
+}
+
+async function requireContainedFile(workdir: string, inputPath: string): Promise<string> {
   if (isAbsolute(inputPath)) {
     throw new ValidationError('Environment file must be a relative path.');
   }
@@ -418,6 +534,33 @@ async function requireContainedFile(workdir: string, inputPath: string): Promise
   if (!isContained(resolvedWorkdir, resolvedCandidate)) {
     throw new ValidationError('Environment file must remain inside the project environment.');
   }
+  return candidate;
+}
+
+async function containedOutputFile(workdir: string, inputPath: string): Promise<string> {
+  if (isAbsolute(inputPath)) {
+    throw new ValidationError('Environment file must be a relative path.');
+  }
+  const candidate = resolve(workdir, inputPath);
+  if (!isContained(workdir, candidate)) {
+    throw new ValidationError('Environment file must remain inside the project environment.');
+  }
+  const [resolvedWorkdir, resolvedParent] = await Promise.all([
+    realpath(workdir),
+    realpath(dirname(candidate)),
+  ]);
+  if (resolvedParent !== resolvedWorkdir && !isContained(resolvedWorkdir, resolvedParent)) {
+    throw new ValidationError('Environment file must remain inside the project environment.');
+  }
+  try {
+    const resolvedCandidate = await realpath(candidate);
+    if (!isContained(resolvedWorkdir, resolvedCandidate)) {
+      throw new ValidationError('Environment file must remain inside the project environment.');
+    }
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
+  }
+  return candidate;
 }
 
 function isContained(parent: string, candidate: string): boolean {
@@ -427,6 +570,129 @@ function isContained(parent: string, candidate: string): boolean {
     path !== '..' &&
     !path.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) &&
     !isAbsolute(path)
+  );
+}
+
+function sha256(value: string | Buffer): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function destructiveStatements(sql: string): string[] {
+  const statements = sqlStatements(sql);
+  const destructivePatterns = [
+    /^DROP\b/i,
+    /^TRUNCATE\b/i,
+    /^DELETE\s+FROM\b/i,
+    /^ALTER\s+TABLE\b[\s\S]*\bDROP\s+COLUMN\b/i,
+  ];
+  return statements.filter((statement) =>
+    destructivePatterns.some((pattern) => pattern.test(statement)),
+  );
+}
+
+function sqlStatements(sql: string): string[] {
+  // ponytail: quote-aware required-pattern scanner; add a SQL parser if syntax coverage expands.
+  const statements: string[] = [];
+  let statement = '';
+  let quoted = false;
+  for (let index = 0; index < sql.length; index += 1) {
+    const character = sql[index]!;
+    const next = sql[index + 1];
+    if (quoted) {
+      statement += character;
+      if (character !== "'") continue;
+      if (next === "'") {
+        statement += next;
+        index += 1;
+      } else {
+        quoted = false;
+      }
+      continue;
+    }
+    if (character === "'") {
+      quoted = true;
+      statement += character;
+      continue;
+    }
+    if (character === '-' && next === '-') {
+      index += 2;
+      while (index < sql.length && sql[index] !== '\n' && sql[index] !== '\r') index += 1;
+      statement += '\n';
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      index += 2;
+      while (index < sql.length && !(sql[index] === '*' && sql[index + 1] === '/')) index += 1;
+      index += 1;
+      statement += ' ';
+      continue;
+    }
+    if (character === ';') {
+      if (statement.trim()) statements.push(statement.trim());
+      statement = '';
+    } else {
+      statement += character;
+    }
+  }
+  if (statement.trim()) statements.push(statement.trim());
+  return statements;
+}
+
+async function requireMigrationApproval(
+  dataDir: string,
+  environment: AppEnvironment,
+  previews: MigrationPreview[],
+  approval: MigrationApproval | undefined,
+  now: Date,
+): Promise<void> {
+  if (!approval) {
+    throw new ValidationError('Destructive migration requires approval and verified backup.');
+  }
+  const parsed = MigrationApprovalSchema.parse(approval);
+  const approvedChecksums = new Set([
+    parsed.migrationChecksum,
+    ...(parsed.migrationChecksums ?? []),
+  ]);
+  if (previews.some((preview) => !approvedChecksums.has(preview.checksum))) {
+    throw new ValidationError(
+      'Approved migration changed or approval does not cover every destructive migration in the batch.',
+    );
+  }
+  let manifest: MigrationBackup;
+  try {
+    const path = backupManifestPath(dataDir, environment.projectId, parsed.backup.manifestId);
+    manifest = MigrationBackupSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+  } catch {
+    throw new ValidationError(
+      'Destructive migration requires generated backup manifest provenance.',
+    );
+  }
+  if (JSON.stringify(manifest) !== JSON.stringify(parsed.backup)) {
+    throw new ValidationError('Approved backup does not match generated backup provenance.');
+  }
+  const backupTime = new Date(manifest.createdAt).getTime();
+  const age = now.getTime() - backupTime;
+  if (!Number.isFinite(backupTime) || age < 0 || age > MAX_BACKUP_AGE_MS) {
+    throw new ValidationError('Approved backup must be from the last 24 hours.');
+  }
+  let backup: Buffer;
+  try {
+    const path = await requireContainedFile(environment.workdir, manifest.path);
+    backup = await readFile(path);
+  } catch {
+    throw new ValidationError('Approved backup changed or is unavailable.');
+  }
+  if (sha256(backup) !== manifest.checksum) {
+    throw new ValidationError('Approved backup changed after verification.');
+  }
+}
+
+function backupManifestPath(dataDir: string, projectId: string, manifestId: string): string {
+  return join(
+    dataDir,
+    'migration-backups',
+    safeProjectId(projectId),
+    `${safeProjectId(manifestId)}.json`,
   );
 }
 
@@ -534,10 +800,10 @@ function configuredHostPorts(config: string): number[] {
   return ports;
 }
 
-async function atomicWrite(path: string, value: string): Promise<void> {
+async function atomicWrite(path: string, value: string | Buffer): Promise<void> {
   const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temp, value, 'utf8');
+    await writeFile(temp, value);
     await rename(temp, path);
   } catch (error) {
     await rm(temp, { force: true });

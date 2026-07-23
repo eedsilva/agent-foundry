@@ -52,6 +52,9 @@ import type {
   KnowledgeFile,
   AppEnvironment,
   DestructiveEnvironmentConfirmation,
+  MigrationApproval,
+  MigrationBackup,
+  MigrationPreview,
 } from '@agent-foundry/contracts';
 
 export interface ProjectRepository {
@@ -533,7 +536,13 @@ export interface GeneratedProjectRuntime {
   start(projectId: string): Promise<AppEnvironment>;
   stop(projectId: string): Promise<AppEnvironment>;
   inspect(projectId: string): Promise<AppEnvironment | null>;
-  migrate(input: { projectId: string; migrationPath: string }): Promise<AppEnvironment>;
+  previewMigration(input: { projectId: string; migrationPath: string }): Promise<MigrationPreview>;
+  backupMigration(input: { projectId: string; backupPath: string }): Promise<MigrationBackup>;
+  migrate(input: {
+    projectId: string;
+    migrationPath: string;
+    approval?: MigrationApproval;
+  }): Promise<AppEnvironment>;
   seed(input: { projectId: string; seedPath: string }): Promise<AppEnvironment>;
   health(projectId: string): Promise<AppEnvironment>;
   reset(input: {
