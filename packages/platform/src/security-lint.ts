@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   SecurityReportSchema,
@@ -6,25 +6,21 @@ import {
   type SecurityReport,
   type SecuritySeverity,
 } from '@agent-foundry/contracts';
-import { destructiveStatements, isNotFound, sqlStatements } from './supabase-runtime.js';
+import {
+  destructiveStatements,
+  isNotFound,
+  migrationSqlFilenames,
+  sqlStatements,
+} from './supabase-runtime.js';
 
 const WRITE_OPS = new Set(['insert', 'update', 'delete']);
-
-interface PolicyRecord {
-  file: string;
-  statement: string;
-  table: string;
-  op: string;
-  roles: string[];
-}
 
 interface TableRecord {
   name: string;
   file: string;
-  statement: string;
   sensitive: boolean;
   rlsEnabled: boolean;
-  policies: PolicyRecord[];
+  policyCount: number;
 }
 
 // ponytail: regex-on-statement-text, same precedent as destructiveStatements() —
@@ -77,10 +73,9 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
         tables.set(name, {
           name,
           file,
-          statement,
           sensitive: SENSITIVE_RE.test(statement),
           rlsEnabled: false,
-          policies: [],
+          policyCount: 0,
         });
         continue;
       }
@@ -96,14 +91,11 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
       if (policy) {
         const tableName = stripPublicSchema(policy[1]!);
         const op = policy[2]!.toLowerCase();
-        const roles = policy[3]!
-          .split(',')
-          .map((role) => role.trim().toLowerCase())
-          .filter(Boolean);
+        const roles = splitCsv(policy[3]!);
         const table = tables.get(tableName);
-        if (table) table.policies.push({ file, statement, table: tableName, op, roles });
+        if (table) table.policyCount += 1;
 
-        const isWrite = op === 'all' || WRITE_OPS.has(op);
+        const isWrite = writeOpsIn([op]).length > 0;
         if (
           isWrite &&
           (roles.includes('anon') || USING_TRUE_RE.test(statement) || CHECK_TRUE_RE.test(statement))
@@ -125,9 +117,9 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
 
       const grant = GRANT_TABLE_RE.exec(statement);
       if (grant) {
-        const ops = parseOps(grant[1]!);
+        const ops = splitCsv(grant[1]!);
         const table = grant[2]!;
-        const roles = parseRoles(grant[3]!);
+        const roles = splitCsv(grant[3]!);
         // PUBLIC is a pseudo-role that includes anon (and every other role) in
         // Postgres, so a grant to public is equivalent to a grant to anon here.
         if (roles.includes('anon') || roles.includes('public')) {
@@ -143,9 +135,9 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
 
       const revoke = REVOKE_TABLE_RE.exec(statement);
       if (revoke) {
-        const ops = parseOps(revoke[1]!);
+        const ops = splitCsv(revoke[1]!);
         const table = revoke[2]!;
-        const roles = parseRoles(revoke[3]!);
+        const roles = splitCsv(revoke[3]!);
         if (roles.includes('anon')) {
           const current = anonWriteGrants.get(table);
           if (current) for (const op of writeOpsIn(ops)) current.delete(op);
@@ -181,7 +173,7 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
           remediation: `Run "ALTER TABLE public.${table.name} ENABLE ROW LEVEL SECURITY;" and add owner-scoped policies.`,
         }),
       );
-    } else if (table.sensitive && table.policies.length === 0) {
+    } else if (table.sensitive && table.policyCount === 0) {
       findings.push(
         makeFinding({
           rule: 'sensitive-table-no-policy',
@@ -224,17 +216,13 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
 
 export async function lintMigrationsDir(dir: string): Promise<SecurityReport> {
   const migrationsDir = join(dir, 'supabase', 'migrations');
-  let entries;
+  let files: string[];
   try {
-    entries = await readdir(migrationsDir, { withFileTypes: true });
+    files = await migrationSqlFilenames(migrationsDir);
   } catch (error) {
     if (isNotFound(error)) return lintMigrationsSql([]);
     throw error;
   }
-  const files = entries
-    .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith('.sql'))
-    .map((entry) => entry.name)
-    .sort();
   const sqlByFile = await Promise.all(
     files.map(async (file) => ({
       file,
@@ -255,23 +243,17 @@ function stripPublicSchema(name: string): string {
   return unquoted.replace(/^public\./i, '');
 }
 
-// Mirrors the CREATE POLICY branch's `op === 'all' || WRITE_OPS.has(op)` handling:
-// GRANT/REVOKE ALL is the broadest form of write access and must count as covering
-// insert/update/delete, not fall through because WRITE_OPS.has('all') is false.
+// The single definition of "does this op set imply a write?" — used by both
+// the CREATE POLICY branch (single op) and the GRANT/REVOKE branches (op
+// list). ALL is the broadest form and must expand to insert/update/delete,
+// not fall through because WRITE_OPS.has('all') is false.
 function writeOpsIn(ops: string[]): string[] {
   return ops.includes('all') ? [...WRITE_OPS] : ops.filter((op) => WRITE_OPS.has(op));
 }
 
-function parseOps(raw: string): string[] {
+function splitCsv(raw: string): string[] {
   return raw
     .split(',')
-    .map((op) => op.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function parseRoles(raw: string): string[] {
-  return raw
-    .split(',')
-    .map((role) => role.trim().toLowerCase())
+    .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
 }

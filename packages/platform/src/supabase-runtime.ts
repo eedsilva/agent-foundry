@@ -787,12 +787,19 @@ async function migrationPreview(workdir: string, migrationPath: string): Promise
 
 async function migrationPreviews(workdir: string): Promise<MigrationPreview[]> {
   const directory = join(workdir, 'supabase', 'migrations');
-  const entries = await readdir(directory, { withFileTypes: true });
-  const paths = entries
-    .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith('.sql'))
-    .map((entry) => `supabase/migrations/${entry.name}`)
-    .sort();
+  const names = await migrationSqlFilenames(directory);
+  const paths = names.map((name) => `supabase/migrations/${name}`);
   return Promise.all(paths.map((path) => migrationPreview(workdir, path)));
+}
+
+// Shared by migrationPreviews() and the security linter (security-lint.ts):
+// sorted basenames of every *.sql file directly in a migrations directory.
+export async function migrationSqlFilenames(migrationsDir: string): Promise<string[]> {
+  const entries = await readdir(migrationsDir, { withFileTypes: true });
+  return entries
+    .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith('.sql'))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 async function requireContainedPath(

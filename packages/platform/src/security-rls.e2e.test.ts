@@ -110,10 +110,7 @@ describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
     }, STOP_TIMEOUT_MS + 10_000);
 
     it('denies anonymous SELECT on items (RLS is to authenticated only)', async () => {
-      const email = `rls-${randomUUID()}@example.test`;
-      const password = `Rls-${randomUUID()}-Aa1!`;
-      await requireOk(await signUp(credentials, email, password), 'sign up').arrayBuffer();
-      const session = await login(credentials, email, password);
+      const session = await signUpOwner(credentials);
       await requireOk(
         await insertItem(credentials, session, 'owned by authenticated user'),
         'insert as owner',
@@ -150,10 +147,7 @@ describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
     }, 30_000);
 
     it('lets an owner read and write their own rows', async () => {
-      const email = `rls-${randomUUID()}@example.test`;
-      const password = `Rls-${randomUUID()}-Aa1!`;
-      await requireOk(await signUp(credentials, email, password), 'sign up').arrayBuffer();
-      const session = await login(credentials, email, password);
+      const session = await signUpOwner(credentials);
 
       const inserted = rows(
         await json(
@@ -199,13 +193,7 @@ describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
     }, 30_000);
 
     it("denies a cross-owner UPDATE (IDOR): owner B's PATCH on owner A's row has no effect", async () => {
-      const emailA = `rls-${randomUUID()}@example.test`;
-      const emailB = `rls-${randomUUID()}@example.test`;
-      const password = `Rls-${randomUUID()}-Aa1!`;
-      await requireOk(await signUp(credentials, emailA, password), 'sign up A').arrayBuffer();
-      await requireOk(await signUp(credentials, emailB, password), 'sign up B').arrayBuffer();
-      const sessionA = await login(credentials, emailA, password);
-      const sessionB = await login(credentials, emailB, password);
+      const { sessionA, sessionB } = await signUpTwoOwners(credentials);
 
       const insertedRows = rows(
         await json(
@@ -234,13 +222,7 @@ describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
     }, 30_000);
 
     it("denies a cross-owner DELETE (IDOR): owner B's DELETE on owner A's row has no effect", async () => {
-      const emailA = `rls-${randomUUID()}@example.test`;
-      const emailB = `rls-${randomUUID()}@example.test`;
-      const password = `Rls-${randomUUID()}-Aa1!`;
-      await requireOk(await signUp(credentials, emailA, password), 'sign up A').arrayBuffer();
-      await requireOk(await signUp(credentials, emailB, password), 'sign up B').arrayBuffer();
-      const sessionA = await login(credentials, emailA, password);
-      const sessionB = await login(credentials, emailB, password);
+      const { sessionA, sessionB } = await signUpTwoOwners(credentials);
 
       const insertedRows = rows(
         await json(
@@ -266,13 +248,7 @@ describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
     }, 30_000);
 
     it("rejects INSERT with a spoofed user_id (privilege escalation via the migration's with check)", async () => {
-      const emailA = `rls-${randomUUID()}@example.test`;
-      const emailB = `rls-${randomUUID()}@example.test`;
-      const password = `Rls-${randomUUID()}-Aa1!`;
-      await requireOk(await signUp(credentials, emailA, password), 'sign up A').arrayBuffer();
-      await requireOk(await signUp(credentials, emailB, password), 'sign up B').arrayBuffer();
-      const sessionA = await login(credentials, emailA, password);
-      const sessionB = await login(credentials, emailB, password);
+      const { sessionA, sessionB } = await signUpTwoOwners(credentials);
 
       // B is authenticated (valid session) but claims A's user_id on
       // insert. The migration's `with check (user_id = (select auth.uid()))`
@@ -299,6 +275,23 @@ describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
     }, 30_000);
   },
 );
+
+async function signUpOwner(credentials: Credentials): Promise<Session> {
+  const email = `rls-${randomUUID()}@example.test`;
+  const password = `Rls-${randomUUID()}-Aa1!`;
+  await requireOk(await signUp(credentials, email, password), 'sign up').arrayBuffer();
+  return login(credentials, email, password);
+}
+
+async function signUpTwoOwners(
+  credentials: Credentials,
+): Promise<{ sessionA: Session; sessionB: Session }> {
+  const [sessionA, sessionB] = await Promise.all([
+    signUpOwner(credentials),
+    signUpOwner(credentials),
+  ]);
+  return { sessionA, sessionB };
+}
 
 async function waitForSchemaCache(credentials: Credentials, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
