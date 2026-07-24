@@ -43,15 +43,19 @@ import {
   YamlWorkflowRepository,
   assertSchemaCurrent,
   createPostgresClient,
+  NoopTransactionRunner,
   PostgresApprovalDecisionRepository,
   PostgresApprovalRequestRepository,
   PostgresArtifactStore,
   PostgresConversationRepository,
+  type PostgresDb,
   PostgresEventStore,
+  PostgresJobQueue,
   PostgresProjectRepository,
   PostgresStepAttemptRepository,
   PostgresStepEventRepository,
   PostgresStepRunRepository,
+  PostgresTransactionRunner,
   PostgresWorkflowRunRepository,
 } from '@agent-foundry/persistence';
 import {
@@ -79,10 +83,12 @@ import type {
   BrowserVerifier,
   ConversationRepository,
   EventStore,
+  JobQueue,
   ProjectRepository,
   StepAttemptRepository,
   StepEventRepository,
   StepRunRepository,
+  TransactionRunner,
   WorkflowRunRepository,
   GeneratedProjectRuntime,
 } from '@agent-foundry/domain';
@@ -104,7 +110,7 @@ export interface Runtime {
   knowledgeFiles: FileKnowledgeFileRepository;
   events: EventStore;
   stepEvents: StepEventRepository;
-  queue: FileJobQueue;
+  queue: JobQueue;
   metrics: FileMetricsRepository;
   qualityObservations: FileQualityObservationRepository;
   modelOverrides: FileModelOverrideRepository;
@@ -185,9 +191,14 @@ export async function createRuntime(
     conversations,
     events,
     stepEvents,
+    sql,
+    transactionRunner,
   } = await createMetadataStores(config, blobStore);
   const knowledgeFiles = new FileKnowledgeFileRepository(config.dataDir);
-  const queue = new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
+  const queue: JobQueue =
+    config.persistenceMode === 'postgres'
+      ? new PostgresJobQueue(sql!, { leaseMs: config.queueLeaseMs, clock })
+      : new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
   const metrics = new FileMetricsRepository(config.dataDir);
   const qualityObservations = new FileQualityObservationRepository(config.dataDir);
   const qualityObservationService = new QualityObservationService(qualityObservations, clock, ids);
@@ -324,6 +335,7 @@ export async function createRuntime(
     artifacts,
     events,
     queue,
+    transactionRunner,
     workflows,
     policies,
     harness,
@@ -430,9 +442,9 @@ export async function createRuntime(
   };
 }
 
-/** Metadata stores swapped between file and Postgres backends by PERSISTENCE_MODE; everything
- * else (queue, metrics, quality, previews, model overrides, project versions, workflows,
- * policies, workspaces) stays file-based regardless of this setting. */
+/** Metadata stores (and, since issue #55, the queue and transaction seam) swap between file and
+ * Postgres backends by PERSISTENCE_MODE; everything else (metrics, quality, previews, model
+ * overrides, project versions, workflows, policies, workspaces) stays file-based regardless. */
 async function createMetadataStores(
   config: RuntimeConfig,
   blobStore: BlobStore,
@@ -447,6 +459,8 @@ async function createMetadataStores(
   conversations: ConversationRepository;
   events: EventStore;
   stepEvents: StepEventRepository;
+  sql?: PostgresDb;
+  transactionRunner: TransactionRunner;
 }> {
   if (config.persistenceMode === 'file') {
     return {
@@ -460,6 +474,7 @@ async function createMetadataStores(
       conversations: new FileConversationRepository(config.dataDir),
       events: new FileEventStore(config.dataDir),
       stepEvents: new FileStepEventRepository(config.dataDir),
+      transactionRunner: new NoopTransactionRunner(),
     };
   }
   // loadRuntimeConfig already enforces DATABASE_URL when PERSISTENCE_MODE=postgres; this guards
@@ -480,6 +495,8 @@ async function createMetadataStores(
     conversations: new PostgresConversationRepository(sql),
     events: new PostgresEventStore(sql),
     stepEvents: new PostgresStepEventRepository(sql),
+    sql,
+    transactionRunner: new PostgresTransactionRunner(sql),
   };
 }
 
