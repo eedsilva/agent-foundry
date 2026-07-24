@@ -175,36 +175,21 @@ export class ProjectService {
     await this.transactionRunner.run(async (tx) => {
       await this.projects.create(project, tx);
       await this.runs.create(run, tx);
-      await this.appendEvent(
-        project.id,
-        'project.created',
-        'Project and workspace created.',
-        undefined,
-        {},
-        undefined,
+      await this.appendEvent(project.id, 'project.created', 'Project and workspace created.', {
         tx,
-      );
+      });
       if (scaffoldFiles.length > 0) {
         await this.appendEvent(
           project.id,
           'scaffold.applied',
           `Applied ${scaffoldFiles.length} scaffold file(s) for stack '${workflow.stack}'.`,
-          undefined,
-          {},
-          undefined,
-          tx,
+          { tx },
         );
       }
       await this.queue.enqueue(job, tx);
-      await this.appendEvent(
-        project.id,
-        'project.queued',
-        'Project queued for orchestration.',
-        undefined,
-        {},
-        undefined,
+      await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
         tx,
-      );
+      });
     });
 
     // Artifacts are written after the transaction commits: `artifacts.project_id`
@@ -327,9 +312,10 @@ export class ProjectService {
     // Created before the job is enqueued so the override is already visible
     // to the router by the time any worker could possibly claim the job —
     // no race window like there would be creating it after the fact.
-    // createModelOverride reads the run back via requireRun, so runs.create
-    // above must already be committed -- this call cannot move inside the
-    // transaction below.
+    // createModelOverride writes through ModelOverrideRepository, which is
+    // permanently file-based regardless of PERSISTENCE_MODE (see runtime.ts)
+    // -- it can never join the Postgres transaction below, so this call and
+    // runs.create above both stay outside/before it.
     if (input?.override) {
       await this.createModelOverride(runId, { ...input.override, scope: { kind: 'run' } });
     }
@@ -359,15 +345,7 @@ export class ProjectService {
     return this.transactionRunner.run(async (tx) => {
       const saved = await this.projects.update(updated, project.version, tx);
       await this.queue.enqueue(job, tx);
-      await this.appendEvent(
-        projectId,
-        'project.queued',
-        'Project manually re-queued.',
-        undefined,
-        {},
-        undefined,
-        tx,
-      );
+      await this.appendEvent(projectId, 'project.queued', 'Project manually re-queued.', { tx });
       return saved;
     });
   }
@@ -383,12 +361,9 @@ export class ProjectService {
           transitionWorkflowRun(run, 'cancel_requested', this.clock.now()),
           run.version,
         );
-        await this.appendEvent(
-          run.projectId,
-          'run.cancel_requested',
-          'Cancellation requested.',
+        await this.appendEvent(run.projectId, 'run.cancel_requested', 'Cancellation requested.', {
           runId,
-        );
+        });
         return updated;
       } catch (error) {
         if (!(error instanceof VersionConflictError) || retry >= 2) throw error;
@@ -410,7 +385,7 @@ export class ProjectService {
           run.projectId,
           'run.pause_requested',
           'Pause requested; the run parks at the next step boundary.',
-          runId,
+          { runId },
         );
         return updated;
       } catch (error) {
@@ -439,8 +414,7 @@ export class ProjectService {
         run.projectId,
         'run.resume_blocked',
         `Resume blocked: ${diagnostics.map((item) => item.field).join(', ')} changed.`,
-        runId,
-        { diagnostics },
+        { runId, data: { diagnostics } },
       );
       throw new ResumeBlockedError(runId, diagnostics);
     }
@@ -455,8 +429,7 @@ export class ProjectService {
       run.projectId,
       'run.resume_requested',
       resumeNodeId ? `Resume requested from ${resumeNodeId}.` : 'Resume requested.',
-      runId,
-      resumeNodeId ? { resumeNodeId } : {},
+      { runId, data: resumeNodeId ? { resumeNodeId } : {} },
     );
     return updated;
   }
@@ -518,11 +491,13 @@ export class ProjectService {
       run.projectId,
       'run.draft_discarded',
       `Draft ${ceiling.draftBranch} discarded by ${input.actor.displayName ?? input.actor.id}.`,
-      runId,
       {
-        draftBranch: ceiling.draftBranch,
-        discardedBy: input.actor,
-        ...(input.reason ? { reason: input.reason } : {}),
+        runId,
+        data: {
+          draftBranch: ceiling.draftBranch,
+          discardedBy: input.actor,
+          ...(input.reason ? { reason: input.reason } : {}),
+        },
       },
     );
     return updated;
@@ -593,12 +568,14 @@ export class ProjectService {
       run.projectId,
       'step.retry_requested',
       `Retry of ${target.stepId} requested (${input.mode} downstream).`,
-      runId,
       {
-        stepRunId,
-        mode: input.mode,
-        ...(override ? { override } : {}),
-        invalidatedStepRunIds,
+        runId,
+        data: {
+          stepRunId,
+          mode: input.mode,
+          ...(override ? { override } : {}),
+          invalidatedStepRunIds,
+        },
       },
     );
     return updated;
@@ -1062,14 +1039,16 @@ export class ProjectService {
       run.projectId,
       'run.approval_decided',
       `${decision.action} recorded for approval ${requestId}.`,
-      run.id,
       {
-        requestId,
-        action: decision.action,
-        decidedBy: decision.decidedBy,
-        ...(decision.actor ? { actor: decision.actor } : {}),
+        runId: run.id,
+        data: {
+          requestId,
+          action: decision.action,
+          decidedBy: decision.decidedBy,
+          ...(decision.actor ? { actor: decision.actor } : {}),
+        },
+        dedupeKey: `approval-decision:${decision.id}`,
       },
-      `approval-decision:${decision.id}`,
     );
   }
 
@@ -1111,11 +1090,9 @@ export class ProjectService {
     projectId: string,
     type: ProjectEvent['type'],
     message: string,
-    runId?: string,
-    data: Record<string, unknown> = {},
-    dedupeKey?: string,
-    tx?: Tx,
+    options: { runId?: string; data?: Record<string, unknown>; dedupeKey?: string; tx?: Tx } = {},
   ): Promise<void> {
+    const { runId, data = {}, dedupeKey, tx } = options;
     await this.events.append(
       {
         id: this.ids.next(),

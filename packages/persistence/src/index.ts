@@ -17,6 +17,7 @@ export * from './preview-repositories.js';
 export * from './conversation-repository.js';
 export * from './knowledge-file-repository.js';
 export * from './project-version-repository.js';
+export * from './queue-backoff.js';
 export * from './transaction-runner.js';
 export * from './postgres/client.js';
 export * from './postgres/job-queue.js';

@@ -10,6 +10,7 @@ import {
   readJsonOrNull,
   safeSegment,
 } from './fs-utils.js';
+import { nextBackoffMs } from './queue-backoff.js';
 
 const SYSTEM_CLOCK: Clock = { now: () => new Date() };
 
@@ -120,9 +121,7 @@ export class FileJobQueue implements JobQueue {
       ...current,
       attempts,
       lastError: error.message,
-      availableAt: new Date(
-        this.clock.now().getTime() + Math.min(30_000, 1_000 * 2 ** attempts),
-      ).toISOString(),
+      availableAt: new Date(this.clock.now().getTime() + nextBackoffMs(attempts)).toISOString(),
       lease: undefined,
     });
 

@@ -1,7 +1,8 @@
 import { QueueJobSchema, type QueueJob } from '@agent-foundry/contracts';
 import { LeaseLostError, type Clock, type JobQueue, type Tx } from '@agent-foundry/domain';
+import { nextBackoffMs } from '../queue-backoff.js';
 import type { PostgresDb } from './client.js';
-import { toJsonb } from './versioned.js';
+import { resolveDb, toJsonb } from './versioned.js';
 
 export interface PostgresJobQueueOptions {
   leaseMs: number;
@@ -36,7 +37,7 @@ export class PostgresJobQueue implements JobQueue {
 
   async enqueue(job: QueueJob, tx?: Tx): Promise<void> {
     const parsed = QueueJobSchema.parse(job);
-    const db = (tx as unknown as PostgresDb | undefined) ?? this.sql;
+    const db = resolveDb(this.sql, tx);
     await db`
       insert into jobs (
         id, type, project_id, workflow_id, run_id, operation_id, status,
@@ -106,7 +107,7 @@ export class PostgresJobQueue implements JobQueue {
     if (!job.lease) throw new LeaseLostError(job.id, workerId);
     const now = this.options.clock.now();
     const attempts = job.attempts + 1;
-    const backoffMs = Math.min(30_000, 1_000 * 2 ** attempts);
+    const backoffMs = nextBackoffMs(attempts);
     const dead = options?.permanent === true || attempts >= job.maxAttempts;
     const result = await this.sql`
       update jobs set

@@ -2,7 +2,7 @@ import { ProjectSchema, type Project } from '@agent-foundry/contracts';
 import type { ProjectRepository } from '@agent-foundry/domain';
 import { VersionConflictError, type Tx } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
-import { insertVersioned, updateVersioned } from './versioned.js';
+import { insertVersioned, resolveDb, updateVersioned } from './versioned.js';
 
 function columnsFor(project: Project): Record<string, unknown> {
   return {
@@ -17,7 +17,7 @@ export class PostgresProjectRepository implements ProjectRepository {
 
   async create(project: Project, tx?: Tx): Promise<void> {
     const parsed = ProjectSchema.parse(project);
-    await insertVersioned((tx as unknown as PostgresDb | undefined) ?? this.sql, {
+    await insertVersioned(resolveDb(this.sql, tx), {
       table: 'projects',
       entity: 'project',
       id: parsed.id,
@@ -39,7 +39,7 @@ export class PostgresProjectRepository implements ProjectRepository {
       throw new VersionConflictError('project', project.id, expectedVersion, project.version);
     }
     const next = ProjectSchema.parse({ ...project, version: expectedVersion + 1 });
-    await updateVersioned((tx as unknown as PostgresDb | undefined) ?? this.sql, {
+    await updateVersioned(resolveDb(this.sql, tx), {
       table: 'projects',
       entity: 'project',
       id: project.id,

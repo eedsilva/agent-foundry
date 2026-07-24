@@ -87,21 +87,26 @@ branch: `const dead = options?.permanent === true || attempts >= job.maxAttempts
 ### 5. Artifacts are not part of the transactional seam
 
 The `ArtifactStore.put()` method (and `putBlob()`) are deliberately kept outside the transactional
-seam. Artifacts have a foreign key to `projects(id)`, so they are safe to write _after_ the
-Project/Run/Event/Job transaction commits, once the project row is guaranteed to be visible.
-The implementation writes the artifact as a separate transaction: the orchestrator calls
-`transactionRunner.run(async (tx) => { ... }) to write state/event/job, then immediately calls
-`artifacts.put()`, which self-opens its own transaction and completes independently.
+seam: the orchestrator calls `transactionRunner.run(async (tx) => { ... })` to write state/event/job,
+then, after it commits, calls `artifacts.put()`, which self-opens its own transaction and completes
+independently.
 
-**Rationale:** Artifact writes are bulk blob operations (megabytes of HTML/screenshots/trace data).
-Holding an open Postgres transaction while a blob is being uploaded to cloud storage or disk would
-extend the transaction lifetime unnecessarily and risk timeout/lock contention. The artifact row
-must exist (FK checks), but the row can be created with stub metadata (name, size, contentType,
-createdAt) while the blob upload proceeds asynchronously in the `put()` implementation; the row is
-visible immediately after the transaction commits, and the blob will follow. Decoupling artifact
-writes from the state transaction simplifies timeouts and error handling: artifact failures do not
-roll back the state/event/job commits, and the caller can handle (log/retry/alert on) artifact
-failures independently.
+**Rationale:** `PostgresArtifactStore.put()`/`putBlob()` each acquire a per-project advisory lock
+(`acquireScopeLock`, a `pg_advisory_xact_lock` scoped to the project), held for the lifetime of
+`put()`'s own `sql.begin()` transaction. Threading the outer `tx` into `put()` so it joined the
+state/event/job transaction would hold that advisory lock for the whole outer transaction's
+duration instead of just the artifact insert, widening the lock-contention window for every other
+write targeting the same project. That is the load-bearing reason to keep artifacts out of the
+seam — not the foreign key. (The FK to `projects(id)` is not actually a barrier to threading `tx`
+through: a same-transaction insert can reference a row inserted earlier in that same,
+still-uncommitted transaction — Postgres only requires cross-transaction visibility to wait for a
+commit, and threading `tx` would make it a same-transaction insert. The FK only forces "write after
+commit" given the separate-transaction design chosen here for the lock-scope reason above.)
+Decoupling the two also keeps error handling simple: artifact failures do not roll back the
+state/event/job commit, and the caller can handle them independently. (`putBlob()`'s stream
+accumulation currently happens before its `sql.begin()` call, so today's artifact transaction is
+two short inserts, not a blob-upload-duration span; a future move to true streaming, as issue #54
+considers, would only strengthen the case for keeping artifacts out of the seam.)
 
 ### 6. Rollback: migration v2's `down` drops tables
 
@@ -127,9 +132,9 @@ no data recovery needed.
   as a parameter is the only pattern that fits that constraint (Decision 3).
 - **Separate `deadLetter(job, workerId, reason)` method**: rejected to avoid duplicating fencing
   guard and lease-clear logic across two methods (Decision 4).
-- **Thread `tx` through artifact writes**: rejected because artifact uploads are long-lived I/O that
-  should not hold database transactions, and the artifact row's FK to projects is not a consistency
-  boundary once the project is committed (Decision 5).
+- **Thread `tx` through artifact writes**: rejected because it would widen the per-project advisory
+  lock `put()`/`putBlob()` already hold to the whole outer transaction's duration, not because the
+  foreign key to `projects(id)` requires a commit — same-transaction inserts don't need one (Decision 5).
 - **Data migration or job replay on rollback**: rejected because jobs are ephemeral — they are
   enqueued fresh from the orchestrator each run, and rolling back to file-based mode would make
   Postgres-queued jobs invisible anyway (Decision 6).

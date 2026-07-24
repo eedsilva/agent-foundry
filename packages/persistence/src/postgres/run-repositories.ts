@@ -13,7 +13,7 @@ import type {
 } from '@agent-foundry/domain';
 import { VersionConflictError, type Tx } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
-import { insertVersioned, updateVersioned } from './versioned.js';
+import { insertVersioned, resolveDb, updateVersioned } from './versioned.js';
 
 function runColumns(run: WorkflowRun): Record<string, unknown> {
   return {
@@ -29,7 +29,7 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
 
   async create(run: WorkflowRun, tx?: Tx): Promise<void> {
     const parsed = WorkflowRunSchema.parse(run);
-    await insertVersioned((tx as unknown as PostgresDb | undefined) ?? this.sql, {
+    await insertVersioned(resolveDb(this.sql, tx), {
       table: 'workflow_runs',
       entity: 'workflow-run',
       id: parsed.id,

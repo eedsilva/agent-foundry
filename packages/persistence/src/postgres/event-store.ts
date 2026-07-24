@@ -1,14 +1,14 @@
 import { ProjectEventSchema, type ProjectEvent } from '@agent-foundry/contracts';
 import { redactEvent, type EventStore, type Tx } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
-import { toJsonb } from './versioned.js';
+import { resolveDb, toJsonb } from './versioned.js';
 
 export class PostgresEventStore implements EventStore {
   constructor(private readonly sql: PostgresDb) {}
 
   async append(event: ProjectEvent, tx?: Tx): Promise<void> {
     const parsed = redactEvent(ProjectEventSchema.parse(event));
-    const db = (tx as unknown as PostgresDb | undefined) ?? this.sql;
+    const db = resolveDb(this.sql, tx);
     // The partial unique index (project_id, dedupe_key) where dedupe_key is not
     // null replaces the file store's full-file scan: a replayed emission with
     // the same dedupeKey is a silent no-op.
