@@ -1,14 +1,15 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
 export default function SignUpPage() {
+  const router = useRouter();
   const supabase = createClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -16,6 +17,9 @@ export default function SignUpPage() {
     setLoading(true);
     setError(null);
 
+    // Local Supabase has no SMTP; email confirmation is disabled
+    // (packages/platform/src/supabase-auth.ts), so signup returns an
+    // active session immediately, same as sign-in.
     const { error: signUpError } = await supabase.auth.signUp({ email, password });
 
     setLoading(false);
@@ -23,11 +27,8 @@ export default function SignUpPage() {
       setError(signUpError.message);
       return;
     }
-    setSubmitted(true);
-  }
-
-  if (submitted) {
-    return <p className="mx-auto max-w-sm p-6">Check your email to confirm your account.</p>;
+    router.push('/');
+    router.refresh();
   }
 
   return (

@@ -43,11 +43,15 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
     const files = await repo.scaffoldFiles('nextjs');
 
     expect(files.map((file) => file.path).sort()).toEqual([
+      'app/actions.ts',
+      'app/layout.tsx',
+      'app/page.tsx',
       'app/sign-in/page.tsx',
       'app/sign-up/page.tsx',
       'lib/supabase/client.ts',
       'lib/supabase/server.ts',
       'middleware.ts',
+      'supabase/migrations/00000000000001_rls_baseline_example.sql',
     ]);
     const clientFile = files.find((file) => file.path === 'lib/supabase/client.ts');
     expect(clientFile?.content).toContain('createBrowserClient');

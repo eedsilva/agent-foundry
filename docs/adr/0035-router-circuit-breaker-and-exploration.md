@@ -1,4 +1,4 @@
-# ADR 0034: Derived circuit breaker and opt-in epsilon-greedy exploration in the model router
+# ADR 0035: Derived circuit breaker and opt-in epsilon-greedy exploration in the model router
 
 - Status: Accepted
 - Date: 2026-07-23

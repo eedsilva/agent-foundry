@@ -191,5 +191,5 @@ model is never explorable.
   attaches an `exploration` field when no policy is configured; never explores an
   explicit-pin route even with a policy configured.
 
-See the ADR ([0034](../../adr/0034-router-circuit-breaker-and-exploration.md)) for
+See the ADR ([0035](../../adr/0035-router-circuit-breaker-and-exploration.md)) for
 the accepted-decision record and rollback path.

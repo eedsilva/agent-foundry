@@ -285,6 +285,50 @@ allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
     expect(metadata).not.toMatch(/db-secret|jwt-secret|anon-secret|DB_URL|JWT_SECRET|ANON_KEY/);
   });
 
+  it('writes Supabase app credentials to the project .env, preserving other secrets', async () => {
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      const result = await statusCommand(...args);
+      if (args[0] !== 'status') return result;
+      const status = JSON.parse(result.stdout) as Record<string, string>;
+      status.SERVICE_ROLE_KEY = 'service-role-secret';
+      return { ...result, stdout: JSON.stringify(status) };
+    });
+    const { runtime } = fixture(command);
+    const envPath = join(dataDir, 'projects', 'project-a', '.env');
+    await mkdir(join(dataDir, 'projects', 'project-a'), { recursive: true });
+    await writeFile(envPath, 'STRIPE_SECRET_KEY=sk_test_operator\n');
+
+    const environment = await runtime.initialize({ projectId: 'project-a' });
+
+    const env = await readFile(envPath, 'utf8');
+    expect(env).toContain('STRIPE_SECRET_KEY=sk_test_operator');
+    expect(env).toContain(`NEXT_PUBLIC_SUPABASE_URL=${environment.endpoints.api}`);
+    expect(env).toContain('NEXT_PUBLIC_SUPABASE_ANON_KEY=anon-secret');
+    expect(env).toContain('SUPABASE_SERVICE_ROLE_KEY=service-role-secret');
+    expect(JSON.stringify(environment)).not.toMatch(/anon-secret|service-role-secret/);
+    const metadata = await readFile(join(environment.workdir, 'environment.json'), 'utf8');
+    expect(metadata).not.toMatch(/anon-secret|service-role-secret/);
+  });
+
+  it('disables email confirmation in the generated config so signup logs the user straight in', async () => {
+    const { runtime } = fixture();
+
+    const environment = await runtime.initialize({ projectId: 'project-a' });
+
+    const config = await readFile(join(environment.workdir, 'supabase', 'config.toml'), 'utf8');
+    expect(config).toMatch(/^\[auth\.email\]$/m);
+    expect(config).toMatch(/^enable_confirmations = false$/m);
+  });
+
+  it('does not write app credentials when the status response omits them', async () => {
+    const { runtime } = fixture();
+
+    await runtime.initialize({ projectId: 'project-a' });
+
+    const envPath = join(dataDir, 'projects', 'project-a', '.env');
+    await expect(readFile(envPath, 'utf8')).rejects.toThrow();
+  });
+
   it('tears down the exact workdir after a partial start failure', async () => {
     const workdir = join(dataDir, 'projects', 'project-a', 'environment');
     const partialMarker = join(workdir, 'partial-start');
