@@ -41,8 +41,13 @@ function cooldownState(
   now: Date,
 ): { elapsed: boolean; cooldownUntil: string | null } {
   if (!lastFailureAt) return { elapsed: false, cooldownUntil: null };
-  const cooldownUntil = new Date(new Date(lastFailureAt).getTime() + cooldownMs).toISOString();
-  const elapsed = now.getTime() - new Date(lastFailureAt).getTime() >= cooldownMs;
+  const lastFailureMs = new Date(lastFailureAt).getTime();
+  // Defensive: ModelMetricSchema validates lastFailureAt as a datetime string
+  // before it reaches here, but guard against an unparseable value anyway by
+  // falling back to the same "never cools down" behavior as no lastFailureAt.
+  if (Number.isNaN(lastFailureMs)) return { elapsed: false, cooldownUntil: null };
+  const cooldownUntil = new Date(lastFailureMs + cooldownMs).toISOString();
+  const elapsed = now.getTime() - lastFailureMs >= cooldownMs;
   return { elapsed, cooldownUntil };
 }
 
@@ -86,7 +91,7 @@ export function evaluateBreaker(
     metric.totalDurationMs / metric.attempts > config.latencyCeilingMs
   ) {
     const avgMs = metric.totalDurationMs / metric.attempts;
-    const baseReason = `average latency ${avgMs}ms exceeds ceiling ${config.latencyCeilingMs}ms`;
+    const baseReason = `average latency ${Math.round(avgMs)}ms exceeds ceiling ${config.latencyCeilingMs}ms`;
     const { elapsed } = cooldownState(metric.lastFailureAt, config.cooldownMs, now);
     if (elapsed) {
       return { state: 'half-open', reason: `${baseReason}; cooldown elapsed, probing` };

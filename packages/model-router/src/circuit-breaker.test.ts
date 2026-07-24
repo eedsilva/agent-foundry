@@ -110,6 +110,18 @@ describe('evaluateBreaker', () => {
     expect(result.reason).toContain('unknown');
   });
 
+  it('consecutive failures at threshold, malformed lastFailureAt -> open like no lastFailureAt, does not throw', () => {
+    const result = evaluateBreaker(
+      metric({ consecutiveFailures: 5, lastFailureAt: 'not-a-date' }),
+      undefined,
+      config,
+      NOW,
+    );
+    expect(result.state).toBe('open');
+    expect(result.reason).toContain('5 consecutive failures');
+    expect(result.reason).toContain('unknown');
+  });
+
   it('consecutive failures at threshold, lastFailureAt older than cooldownMs -> half-open', () => {
     const result = evaluateBreaker(
       metric({ consecutiveFailures: 5, lastFailureAt: '2026-07-23T11:58:00.000Z' }),
@@ -161,6 +173,19 @@ describe('evaluateBreaker', () => {
     );
     expect(result.state).toBe('open');
     expect(result.reason).toMatch(/average latency/);
+  });
+
+  it('latency: reason rounds a fractional average to a whole number of ms', () => {
+    // totalDurationMs / attempts = 900001.333...ms, not evenly divisible.
+    const result = evaluateBreaker(
+      metric({ attempts: 3, totalDurationMs: 2_700_004 }),
+      undefined,
+      config,
+      NOW,
+    );
+    expect(result.state).toBe('open');
+    expect(result.reason).toContain('average latency 900001ms');
+    expect(result.reason).not.toContain('.');
   });
 
   it('latency: average over ceiling, cooldown elapsed since lastFailureAt -> half-open', () => {

@@ -32,7 +32,7 @@ config, now)` is computed fresh on every `route()` call from the same
 `RouteConstraints.providerHealth`) the router already reads — no new persisted
 state. It returns `closed | open | half-open`, checking in priority order:
 unavailable health → rate-limited → consecutive failures at or above
-`failureThreshold` → average latency at or above `latencyCeilingMs` (with a
+`failureThreshold` → average latency exceeding `latencyCeilingMs` (with a
 `latencyMinAttempts` floor so one slow cold start can't trip it) → closed. A
 failure- or latency-based trip moves from `open` to `half-open` once
 `cooldownMs` has elapsed since `metric.lastFailureAt`, allowing exactly one probe
@@ -104,9 +104,11 @@ existing metrics path.
 **Migration:** none. `exploration` is optional and `.strict()`-additive on
 `RouteDecisionSchema`; existing persisted `RouteDecision` records without the
 field parse unchanged. `ScoreBasedModelRouter`'s new constructor argument is
-optional; existing call sites that don't pass it are unaffected (no breaker
-config defaults to `DEFAULT_BREAKER_CONFIG`, no exploration policy means no
-exploration branch is ever taken).
+optional; existing 3-arg construction sites remain source-compatible, but now
+have the circuit breaker active by default (via the constructor's internal
+`DEFAULT_BREAKER_CONFIG` merge) — this is the intended always-on protective
+behavior, not a regression. No exploration policy means no exploration branch
+is ever taken.
 
 **Operational:** no new persisted state, no new background job, no new
 configuration surface beyond the two optional constructor fields. `rejected[]`

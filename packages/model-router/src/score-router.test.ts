@@ -820,6 +820,47 @@ describe('ScoreBasedModelRouter', () => {
     ).toBe(true);
   });
 
+  it('excludes a model with consecutive failures at the breaker threshold from selected AND fallbacks (circuit-open)', async () => {
+    const metrics = new MemoryMetrics(
+      new Map([
+        [
+          'claude-metered:implementation:developer',
+          {
+            modelId: 'claude-metered',
+            taskKind: 'implementation',
+            role: 'developer',
+            taxonomyVersion: '2',
+            category: 'implementation/frontend',
+            attempts: 5,
+            successes: 0,
+            totalDurationMs: 5_000,
+            totalInputTokens: 0,
+            totalOutputTokens: 0,
+            totalEstimatedCostUsd: 0,
+            consecutiveFailures: 5,
+            qualityEvaluations: 0,
+            qualityApprovals: 0,
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      ]),
+    );
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), metrics);
+
+    const decision = await router.route(profile);
+
+    expect(decision.selected.model.id).not.toBe('claude-metered');
+    expect(decision.fallbacks.map((f) => f.model.id)).not.toContain('claude-metered');
+    expect(
+      decision.rejected.some(
+        (r) =>
+          r.modelId === 'claude-metered' &&
+          r.reason.startsWith('circuit-open:') &&
+          r.reason.includes('consecutive failures'),
+      ),
+    ).toBe(true);
+  });
+
   it('explores a non-top candidate on a low-risk task when an exploration policy is configured', async () => {
     const greedy = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
     const explorer = new ScoreBasedModelRouter(
@@ -868,7 +909,10 @@ describe('ScoreBasedModelRouter', () => {
 
   it('never explores an explicit-pin route even with an exploration policy configured', async () => {
     const router = new ScoreBasedModelRouter(
-      [model('automatic', { provider: 'claude' }), model('pinned', { provider: 'codex', model: 'gpt-5' })],
+      [
+        model('automatic', { provider: 'claude' }),
+        model('pinned', { provider: 'codex', model: 'gpt-5' }),
+      ],
       new MemoryMetrics(),
       undefined,
       { exploration: { baseRate: 1 }, random: () => 0 },
