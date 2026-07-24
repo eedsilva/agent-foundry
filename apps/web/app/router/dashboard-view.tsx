@@ -45,10 +45,10 @@ export interface ExperimentFormState {
 export const EMPTY_EXPERIMENT_FORM: ExperimentFormState = {
   hypothesis: '',
   variantAKey: 'control',
-  variantADescription: '',
+  variantADescription: 'Controle',
   variantAModelId: 'sonnet',
   variantBKey: 'treatment',
-  variantBDescription: '',
+  variantBDescription: 'Tratamento',
   variantBModelId: 'opus',
   taskKinds: ['implementation'],
   targetSampleSize: '30',
