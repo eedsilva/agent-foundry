@@ -207,6 +207,8 @@ export async function createRuntime(
       new SupabaseGeneratedProjectRuntime({ dataDir: config.dataDir });
   }
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
+  // The circuit breaker is on by default (DEFAULT_BREAKER_CONFIG merges in the
+  // router's constructor); no options are needed to enable it here.
   const router = new ScoreBasedModelRouter(catalog, metrics, qualityObservations);
   const executors =
     config.executorMode === 'mock'

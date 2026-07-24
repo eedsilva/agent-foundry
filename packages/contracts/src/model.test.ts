@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { CalibrationReportSchema, ModelMetricSchema, RouteConfidenceSchema } from './model.js';
+import {
+  CalibrationReportSchema,
+  ModelMetricSchema,
+  RouteConfidenceSchema,
+  RouteDecisionSchema,
+} from './model.js';
 
 describe('ModelMetricSchema known counts', () => {
   const base = {
@@ -99,6 +104,136 @@ describe('CalibrationReportSchema', () => {
       CalibrationReportSchema.parse({
         ...valid,
         buckets: [{ ...valid.buckets[0], sampleSize: -1 }],
+      }),
+    ).toThrow();
+  });
+});
+
+describe('RouteDecisionSchema exploration field', () => {
+  const base = {
+    routeId: 'route-1',
+    createdAt: '2026-07-16T12:00:00.000Z',
+    profile: {
+      role: 'developer' as const,
+      taskKind: 'implementation' as const,
+      complexity: 3,
+      risk: 3,
+      estimatedContextTokens: 1_000,
+      estimatedOutputTokens: 500,
+      mutatesWorkspace: true,
+      priorities: { quality: 1, speed: 0, cost: 0, reliability: 0 },
+    },
+    selected: {
+      model: {
+        id: 'codex-gpt-5',
+        provider: 'codex' as const,
+        model: 'gpt-5',
+        maxContextTokens: 100_000,
+        capabilities: {
+          planning: 1,
+          architecture: 1,
+          coding: 1,
+          review: 1,
+          repair: 1,
+          structuredOutput: 1,
+          speed: 1,
+          costEfficiency: 1,
+          reliability: 1,
+        },
+      },
+      score: {
+        capability: 1,
+        context: 1,
+        speed: 1,
+        cost: 1,
+        reliability: 1,
+        historical: 1,
+        tagAffinity: 1,
+        estimatedCostUsd: null,
+        total: 1,
+      },
+    },
+    fallbacks: [],
+    rejected: [],
+  };
+
+  it('parses a valid RouteDecision without exploration (back-compat)', () => {
+    const route = RouteDecisionSchema.parse(base);
+    expect(route.exploration).toBeUndefined();
+  });
+
+  it('parses a valid RouteDecision with a well-formed exploration object and round-trips', () => {
+    const exploration = {
+      explored: true,
+      rate: 0.1,
+      reason: 'Epsilon-greedy exploration',
+    };
+    const route = RouteDecisionSchema.parse({
+      ...base,
+      exploration,
+    });
+    expect(route.exploration).toEqual(exploration);
+    expect(route.exploration?.explored).toBe(true);
+    expect(route.exploration?.rate).toBe(0.1);
+    expect(route.exploration?.reason).toBe('Epsilon-greedy exploration');
+  });
+
+  it('rejects exploration object with rate out of [0, 1] range', () => {
+    expect(() =>
+      RouteDecisionSchema.parse({
+        ...base,
+        exploration: {
+          explored: false,
+          rate: 1.5,
+          reason: 'Invalid rate',
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      RouteDecisionSchema.parse({
+        ...base,
+        exploration: {
+          explored: false,
+          rate: -0.1,
+          reason: 'Invalid rate',
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects exploration object with empty or whitespace-only reason', () => {
+    expect(() =>
+      RouteDecisionSchema.parse({
+        ...base,
+        exploration: {
+          explored: false,
+          rate: 0.1,
+          reason: '',
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      RouteDecisionSchema.parse({
+        ...base,
+        exploration: {
+          explored: false,
+          rate: 0.1,
+          reason: '   ',
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects exploration object with extra unknown keys (strict mode)', () => {
+    expect(() =>
+      RouteDecisionSchema.parse({
+        ...base,
+        exploration: {
+          explored: true,
+          rate: 0.1,
+          reason: 'Valid reason',
+          extra: 'unknown',
+        },
       }),
     ).toThrow();
   });

@@ -255,6 +255,14 @@ export const RouteDecisionSchema = z.object({
       reason: z.string(),
     }),
   ),
+  exploration: z
+    .object({
+      explored: z.boolean(),
+      rate: z.number().min(0).max(1),
+      reason: z.string().trim().min(1),
+    })
+    .strict()
+    .optional(),
 });
 export type RouteDecision = z.infer<typeof RouteDecisionSchema>;
 
