@@ -47,6 +47,15 @@ create policy items_select_owner
 create policy items_insert_owner
   on public.items for insert to authenticated
   with check (user_id = (select auth.uid()));
+
+create policy items_update_owner
+  on public.items for update to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+
+create policy items_delete_owner
+  on public.items for delete to authenticated
+  using (user_id = (select auth.uid()));
 `;
 
 interface Session {
@@ -156,11 +165,41 @@ describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
         ),
       );
       expect(inserted).toHaveLength(1);
+      const itemId = inserted[0]?.id;
+      expect(typeof itemId).toBe('string');
 
       const listed = rows(
         await json(requireOk(await listItems(credentials, session), 'list own rows')),
       );
       expect(listed.some((row) => row.title === 'my own item')).toBe(true);
+
+      // Baseline for the cross-owner IDOR tests below: the owner's own
+      // UPDATE/DELETE must actually work under items_update_owner /
+      // items_delete_owner. Without this, a 0-row result for a
+      // cross-owner write would be indistinguishable from writes being
+      // globally broken for everyone (including the owner).
+      const updated = rows(
+        await json(
+          requireOk(
+            await updateItem(credentials, session, itemId as string, { title: 'my renamed item' }),
+            'update own row',
+          ),
+        ),
+      );
+      expect(updated).toHaveLength(1);
+      expect(updated[0]?.title).toBe('my renamed item');
+
+      const deleted = rows(
+        await json(
+          requireOk(await deleteItem(credentials, session, itemId as string), 'delete own row'),
+        ),
+      );
+      expect(deleted).toHaveLength(1);
+
+      const listedAfterDelete = rows(
+        await json(requireOk(await listItems(credentials, session), 'list own rows after delete')),
+      );
+      expect(listedAfterDelete.some((row) => row.id === itemId)).toBe(false);
     }, 30_000);
 
     it("denies a cross-owner UPDATE (IDOR): owner B's PATCH on owner A's row has no effect", async () => {
@@ -181,10 +220,11 @@ describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
       const itemId = insertedRows[0]?.id;
       expect(typeof itemId).toBe('string');
 
-      // B has no visible row matching this id under RLS, so PostgREST
-      // filters it out of the update's candidate set: the request itself
-      // does not error, it just affects zero rows. Assert on the effect
-      // (unchanged content when re-read as A), not just the HTTP status.
+      // items_update_owner's `using` clause only matches rows where
+      // user_id = auth.uid(), so B's row (owned by A) is outside B's
+      // update-visible set: the request itself does not error, it just
+      // affects zero rows. Assert on the effect (unchanged content when
+      // re-read as A), not just the HTTP status.
       const updateResponse = await updateItem(credentials, sessionB, itemId as string, {
         title: 'hijacked by B',
       });
