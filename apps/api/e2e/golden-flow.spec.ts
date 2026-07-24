@@ -10,6 +10,7 @@ import type {
   AgentExecutionRequest,
   AgentExecutionResult,
   OperationKind,
+  RouterDecisionLogEntry,
   TaskProfile,
 } from '@agent-foundry/contracts';
 import { buildApp } from '../src/app.js';
@@ -205,6 +206,81 @@ async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
       routeDecision,
     });
   }
+}
+
+// Seeds RouterDecisionLogEntry rows directly through the repository port,
+// the same way seedWorkspaceAndPlan seeds routeDecision artifact metadata via
+// runtime.router.route() rather than driving a full workflow run: the golden
+// -flow-e2e-v1.yaml fixture has no quality-loop node, so nothing here would
+// ever produce a RouterDecisionLogEntry through a live run. Task 6's
+// orchestrator instrumentation (does executeQualityLoopTraced actually call
+// decisionLog.append) is covered by
+// packages/orchestrator/src/quality-observation-integration.test.ts; this e2e
+// only needs to prove the dashboard/decisions/export/experiment HTTP+browser
+// surface (Tasks 7-8) render real decision-log content, including the
+// repairs > 0 case.
+async function seedRouterDecisions(projectId: string, runId: string): Promise<void> {
+  const base = {
+    schemaVersion: '1' as const,
+    createdAt: new Date().toISOString(),
+    projectId,
+    runId,
+    workflowId: 'golden-flow-e2e-v1',
+    harnessVersion: await runtime.harness.version(),
+  };
+  const entries: RouterDecisionLogEntry[] = [
+    {
+      ...base,
+      id: 'e2e-router-decision-1',
+      routeId: 'e2e-router-route-1',
+      nodeId: 'quality-loop',
+      taskKind: 'implementation',
+      category: 'implementation/frontend',
+      role: 'developer',
+      provider: 'claude',
+      modelId: 'sonnet',
+      model: 'claude-sonnet-5',
+      approved: true,
+      firstPass: true,
+      repairs: 0,
+      durationMs: 4_200,
+      confidence: 0.92,
+      sampleSize: 12,
+    },
+    {
+      ...base,
+      id: 'e2e-router-decision-2',
+      routeId: 'e2e-router-route-2',
+      nodeId: 'quality-loop',
+      taskKind: 'repair',
+      category: 'repair/integration',
+      role: 'fixer',
+      provider: 'codex',
+      modelId: 'gpt-5-codex',
+      model: 'gpt-5-codex',
+      approved: true,
+      firstPass: false,
+      repairs: 2,
+      durationMs: 9_800,
+    },
+    {
+      ...base,
+      id: 'e2e-router-decision-3',
+      routeId: 'e2e-router-route-3',
+      nodeId: 'quality-loop',
+      taskKind: 'implementation',
+      category: 'implementation/backend',
+      role: 'developer',
+      provider: 'agy',
+      modelId: 'agy-large',
+      model: 'agy-large-v1',
+      approved: false,
+      firstPass: false,
+      repairs: 1,
+      durationMs: 6_100,
+    },
+  ];
+  for (const entry of entries) await runtime.decisionLog.append(entry);
 }
 
 async function getRun(projectId: string): Promise<{ id: string; status: string }> {
@@ -726,4 +802,51 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   });
   await knowledge.getByRole('button', { name: 'Remover design-reference.png' }).click();
   await expect(page.getByText('Nenhum knowledge file ativo.')).toBeVisible();
+});
+
+test('router dashboard shows decisions and filters, an experiment can be registered, and export is PII-free', async ({
+  page,
+}) => {
+  const projectId = await createProject();
+  const run = await getRun(projectId);
+  await seedRouterDecisions(projectId, run.id);
+
+  const dashboardResponse = await fetch(`${apiBaseUrl}/router/dashboard`);
+  expect(dashboardResponse.ok).toBe(true);
+  const dashboard = (await dashboardResponse.json()) as {
+    facets: { taskKinds: string[]; workflowIds: string[] };
+    kpis: { sampleSize: number; avgRepairs: number | null };
+  };
+  expect(dashboard.facets.workflowIds).toContain('golden-flow-e2e-v1');
+  expect(dashboard.facets.taskKinds).toEqual(
+    expect.arrayContaining(['implementation', 'repair']),
+  );
+  expect(dashboard.kpis.sampleSize).toBeGreaterThan(0);
+  expect(dashboard.kpis.avgRepairs).not.toBeNull();
+  expect(dashboard.kpis.avgRepairs as number).toBeGreaterThan(0);
+
+  await page.goto(`${webBaseUrl}/router`);
+  await expect(page.getByRole('heading', { name: 'Dashboard do router' })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByText('Aprovação de primeira')).toBeVisible();
+  await expect(page.getByLabel('Tarefa')).toBeVisible();
+  // Confirms the repairs > 0 decision-log row (Task 6's quality-loop
+  // instrumentation branch) actually renders in the UI, not just in the API
+  // response.
+  await expect(page.getByText('2 reparo(s)')).toBeVisible();
+
+  const hypothesis = `E2E hypothesis ${Date.now()}`;
+  await page.getByLabel('Hipótese').fill(hypothesis);
+  await page.getByRole('button', { name: 'Registrar experimento' }).click();
+  await expect(page.getByText(hypothesis)).toBeVisible({ timeout: 10_000 });
+
+  const exportResponse = await fetch(`${apiBaseUrl}/router/export`);
+  expect(exportResponse.ok).toBe(true);
+  const { rows } = (await exportResponse.json()) as { rows: Record<string, unknown>[] };
+  expect(rows.length).toBeGreaterThan(0);
+  for (const row of rows) {
+    expect(row).not.toHaveProperty('projectId');
+    expect(row).not.toHaveProperty('runId');
+  }
 });
