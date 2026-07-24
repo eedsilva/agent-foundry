@@ -85,6 +85,23 @@ function fakeOperationRunner(
   } as unknown as import('./conversation-operation-runner.js').ConversationOperationRunner;
 }
 
+describe('WorkerLoop liveness', () => {
+  it('marks itself stopped when the queue claim fails', async () => {
+    const worker = new WorkerLoop(
+      fakeQueue({ claim: vi.fn().mockRejectedValue(new Error('database down')) }),
+      { runProject: vi.fn() } as unknown as WorkflowOrchestrator,
+      fakeOperationRunner(),
+      { workerId: 'worker-a', pollIntervalMs: 1_000 },
+    );
+
+    const started = worker.start().catch((error: unknown) => error);
+
+    expect(worker.isRunning).toBe(true);
+    await expect(started).resolves.toMatchObject({ message: 'database down' });
+    expect(worker.isRunning).toBe(false);
+  });
+});
+
 describe('WorkerLoop heartbeat renewal', () => {
   beforeEach(() => {
     vi.useFakeTimers();

@@ -45,6 +45,7 @@ export function classifyJobOutcome(error: unknown): JobOutcome {
 
 export class WorkerLoop {
   private stopped = false;
+  private running = false;
 
   constructor(
     private readonly queue: JobQueue,
@@ -52,6 +53,10 @@ export class WorkerLoop {
     private readonly operationRunner: ConversationOperationRunner,
     private readonly options: WorkerLoopOptions,
   ) {}
+
+  get isRunning(): boolean {
+    return this.running;
+  }
 
   async runOnce(): Promise<boolean> {
     const job = await this.queue.claim(this.options.workerId);
@@ -120,14 +125,20 @@ export class WorkerLoop {
 
   async start(signal?: AbortSignal): Promise<void> {
     this.stopped = false;
-    while (!this.stopped && !signal?.aborted) {
-      const worked = await this.runOnce();
-      if (!worked) await sleep(this.options.pollIntervalMs, signal);
+    this.running = true;
+    try {
+      while (!this.stopped && !signal?.aborted) {
+        const worked = await this.runOnce();
+        if (!worked) await sleep(this.options.pollIntervalMs, signal);
+      }
+    } finally {
+      this.running = false;
     }
   }
 
   stop(): void {
     this.stopped = true;
+    this.running = false;
   }
 
   /**

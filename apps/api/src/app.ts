@@ -200,6 +200,34 @@ export async function buildApp(
     time: new Date().toISOString(),
   }));
 
+  app.get('/ready', async (_request, reply) => {
+    let databaseReady = true;
+    try {
+      await runtime.checkReadiness();
+    } catch (error) {
+      databaseReady = false;
+      app.log.warn({ err: error }, 'Readiness database check failed');
+    }
+    const workerReady = !runtime.config.runWorkerInline || runtime.worker.isRunning;
+    const ok = databaseReady && workerReady;
+
+    return reply.status(ok ? 200 : 503).send({
+      ok,
+      database:
+        runtime.config.persistenceMode === 'postgres'
+          ? databaseReady
+            ? 'ready'
+            : 'unavailable'
+          : 'not_required',
+      worker: runtime.config.runWorkerInline
+        ? workerReady
+          ? 'ready'
+          : 'unavailable'
+        : 'not_required',
+      time: new Date().toISOString(),
+    });
+  });
+
   app.get('/runtime', async () => ({
     executorMode: runtime.config.executorMode,
     models: await runtime.router.catalog(),
