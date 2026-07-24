@@ -62,10 +62,11 @@ pre-#66 behavior including the absence of the `exploration` key on the result.
 `.strict()` `exploration: { explored: boolean, rate: number (0-1), reason: string
 }` field, set only on the policy-configured, non-pin branch.
 
-Production wiring (`packages/composition/src/runtime.ts`) passes `{ breaker:
-DEFAULT_BREAKER_CONFIG }` to `ScoreBasedModelRouter` and deliberately omits
-`exploration` — the breaker is unconditionally on, exploration stays opt-in and
-off by default.
+Production wiring (`packages/composition/src/runtime.ts`) constructs
+`ScoreBasedModelRouter` with no 4th argument at all: the breaker is on
+unconditionally because the constructor's own `DEFAULT_BREAKER_CONFIG` merge
+applies whenever `options.breaker` is omitted, and `exploration` stays opt-in
+and off by default because nothing configures it.
 
 ## Alternatives considered
 
@@ -104,11 +105,11 @@ existing metrics path.
 **Migration:** none. `exploration` is optional and `.strict()`-additive on
 `RouteDecisionSchema`; existing persisted `RouteDecision` records without the
 field parse unchanged. `ScoreBasedModelRouter`'s new constructor argument is
-optional; existing 3-arg construction sites remain source-compatible, but now
-have the circuit breaker active by default (via the constructor's internal
-`DEFAULT_BREAKER_CONFIG` merge) — this is the intended always-on protective
-behavior, not a regression. No exploration policy means no exploration branch
-is ever taken.
+optional; existing 3-arg construction sites (including production's) remain
+source-compatible and now have the circuit breaker active by default (via the
+constructor's internal `DEFAULT_BREAKER_CONFIG` merge) — this is the intended
+always-on protective behavior, not a regression. No exploration policy means
+no exploration branch is ever taken.
 
 **Operational:** no new persisted state, no new background job, no new
 configuration surface beyond the two optional constructor fields. `rejected[]`
@@ -129,12 +130,11 @@ five integration tests in `score-router.test.ts` covering the wired-together
 behavior end to end (circuit-open exclusion, low-risk explore, high-risk stays
 greedy, no policy means no `exploration` field, explicit pin never explores).
 
-Rollback is a straight code revert of the five commits (`e769957`, `abbb6b1`,
-`4a7f356`, `141e703`, `ba7ea9a`/`2705ad5`) — both new modules are additive and
-optional at every call site, so no data migration is needed either direction.
-To disable in production without a revert, drop the `{ breaker:
-DEFAULT_BREAKER_CONFIG }` option in `packages/composition/src/runtime.ts` (an
-unset breaker config still defaults to `DEFAULT_BREAKER_CONFIG` inside the
-router's constructor, so fully disabling the breaker requires passing an
-unreachable config, e.g. `failureThreshold: Infinity`, rather than omitting the
-option).
+Rollback is a straight code revert of this branch's commits — both new modules
+are additive and optional at every call site, so no data migration is needed
+either direction. To disable the breaker in production without a full revert,
+pass an unreachable config explicitly (e.g. `{ breaker: { failureThreshold:
+Infinity, ... } }`) to the `ScoreBasedModelRouter` construction in
+`packages/composition/src/runtime.ts` — omitting the option, the current
+state, does not disable it, since the constructor's own
+`DEFAULT_BREAKER_CONFIG` merge applies whenever `options.breaker` is absent.

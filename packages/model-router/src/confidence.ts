@@ -4,6 +4,7 @@ import {
   type QualitySignalSummary,
   type RouteConfidence,
 } from '@agent-foundry/contracts';
+import { clamp } from './clamp.js';
 
 /** Matches the Laplace `+4` denominator used by score-router's score() method. */
 export const PRIOR_PSEUDO_COUNT = 4;
@@ -47,8 +48,4 @@ function wilsonInterval(historicalScore: number, n: number): { lower: number; up
   const margin =
     (z * Math.sqrt((historicalScore * (1 - historicalScore)) / n + (z * z) / (4 * n * n))) / denom;
   return { lower: clamp(center - margin), upper: clamp(center + margin) };
-}
-
-function clamp(value: number): number {
-  return Math.max(0, Math.min(1, value));
 }

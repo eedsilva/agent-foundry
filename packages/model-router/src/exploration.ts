@@ -1,4 +1,5 @@
 import type { RankedModel, TaskKind, TaskProfile } from '@agent-foundry/contracts';
+import { clamp } from './clamp.js';
 
 /** Epsilon-greedy exploration policy. */
 export interface ExplorationPolicy {
@@ -14,10 +15,6 @@ export interface ExplorationChoice {
   index: number;
   /** Human-readable explanation of the decision. */
   reason: string;
-}
-
-function clamp01(value: number): number {
-  return Math.max(0, Math.min(1, value));
 }
 
 /**
@@ -43,7 +40,7 @@ export function effectiveEpsilon(policy: ExplorationPolicy, profile: TaskProfile
     return 0;
   }
   const epsilon = policy.perTaskKind?.[profile.taskKind] ?? policy.baseRate;
-  return clamp01(epsilon);
+  return clamp(epsilon);
 }
 
 /**

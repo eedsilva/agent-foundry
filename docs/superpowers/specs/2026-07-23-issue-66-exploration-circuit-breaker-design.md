@@ -136,12 +136,13 @@ pre-#66 behavior, not `exploration: undefined`-shaped-but-present.
 **Why opt-in, off by default in production.** This is a single-operator tool —
 there is no fleet of users to average surprise-worse-model picks against, and a
 silent regression from an exploratory pick has no A/B safety net. Production
-wiring (`packages/composition/src/runtime.ts`) passes `{ breaker:
-DEFAULT_BREAKER_CONFIG }` and deliberately omits `exploration`, so exploration is
-inert until someone opts in explicitly. The breaker has no equivalent opt-out: it
-is purely protective (it can only remove already-degraded candidates, never
-degrade the outcome versus greedy selection when nothing is broken), so it is
-unconditionally wired on.
+wiring (`packages/composition/src/runtime.ts`) constructs `ScoreBasedModelRouter`
+with no options at all: the breaker is on unconditionally because the
+constructor's own `DEFAULT_BREAKER_CONFIG` merge applies whenever
+`options.breaker` is omitted, and `exploration` stays inert until someone opts in
+explicitly. The breaker has no equivalent opt-out: it is purely protective (it can
+only remove already-degraded candidates, never degrade the outcome versus greedy
+selection when nothing is broken), so it needs no explicit wiring to be on.
 
 ### Sequencing inside `route()`
 

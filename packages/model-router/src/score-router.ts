@@ -1,6 +1,7 @@
 import { ulid } from 'ulid';
 import type {
   CapabilityScores,
+  ExecutorHealth,
   ModelDefinition,
   ModelMetric,
   RankedModel,
@@ -18,6 +19,7 @@ import type {
 } from '@agent-foundry/domain';
 import { summarizeQualityObservations } from './quality-signals.js';
 import { routeConfidence } from './confidence.js';
+import { clamp } from './clamp.js';
 import {
   DEFAULT_BREAKER_CONFIG,
   evaluateBreaker,
@@ -95,7 +97,13 @@ export class ScoreBasedModelRouter implements ModelRouter {
         continue;
       }
 
-      const constraintRejection = this.constraintRejection(model, profile, metric, constraints);
+      const constraintRejection = this.constraintRejection(
+        model,
+        profile,
+        metric,
+        health,
+        constraints,
+      );
       if (constraintRejection) {
         rejected.push({ modelId: model.id, reason: constraintRejection });
         continue;
@@ -178,12 +186,14 @@ export class ScoreBasedModelRouter implements ModelRouter {
     model: ModelDefinition,
     profile: TaskProfile,
     metric: ModelMetric | null,
+    health: ExecutorHealth | undefined,
     constraints?: RouteConstraints,
   ): string | null {
     if (!constraints) return null;
     // Rate-limit open is now owned by the circuit breaker (see route()); here we
     // only reuse rl/rateLimitApplies for the subscription quota budget below.
-    const health = constraints.providerHealth?.get(model.provider);
+    // `health` is passed in from route(), which already looked it up once for
+    // the breaker gate — avoids a second providerHealth Map lookup per candidate.
     const rl = health?.rateLimit;
     const rateLimitApplies = !rl?.resetAt || new Date(rl.resetAt).getTime() > Date.now();
     const budget = constraints.budget;
@@ -387,10 +397,6 @@ function normalizePriorities(priorities: TaskProfile['priorities']): TaskProfile
     cost: priorities.cost / sum,
     reliability: priorities.reliability / sum,
   };
-}
-
-function clamp(value: number): number {
-  return Math.max(0, Math.min(1, value));
 }
 
 function round(value: number): number {
