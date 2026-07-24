@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { AgentRoleSchema, PathSegmentSchema, ProviderSchema, TaskKindSchema } from './primitives.js';
+import {
+  AgentRoleSchema,
+  PathSegmentSchema,
+  ProviderSchema,
+  TaskKindSchema,
+} from './primitives.js';
 import { TaskCategorySchema } from './task-taxonomy.js';
 import { BenchmarkCaseKindSchema } from './benchmark.js';
 
@@ -37,24 +42,13 @@ export type RouterDecisionLogEntry = z.infer<typeof RouterDecisionLogEntrySchema
 // PII-free export projection: drops every identifier that ties a row back to
 // a specific project/run/node. There is no free-text field in the log entry
 // by construction — keep it that way so this omit stays a sufficient boundary.
-export const DecisionExportRowSchema = z.object({
-  schemaVersion: RouterDecisionLogEntrySchema.shape.schemaVersion,
-  createdAt: RouterDecisionLogEntrySchema.shape.createdAt,
-  workflowId: RouterDecisionLogEntrySchema.shape.workflowId,
-  harnessVersion: RouterDecisionLogEntrySchema.shape.harnessVersion,
-  taskKind: RouterDecisionLogEntrySchema.shape.taskKind,
-  category: RouterDecisionLogEntrySchema.shape.category,
-  role: RouterDecisionLogEntrySchema.shape.role,
-  provider: RouterDecisionLogEntrySchema.shape.provider,
-  modelId: RouterDecisionLogEntrySchema.shape.modelId,
-  model: RouterDecisionLogEntrySchema.shape.model,
-  approved: RouterDecisionLogEntrySchema.shape.approved,
-  firstPass: RouterDecisionLogEntrySchema.shape.firstPass,
-  repairs: RouterDecisionLogEntrySchema.shape.repairs,
-  durationMs: RouterDecisionLogEntrySchema.shape.durationMs,
-  confidence: RouterDecisionLogEntrySchema.shape.confidence,
-  sampleSize: RouterDecisionLogEntrySchema.shape.sampleSize,
-});
+export const DecisionExportRowSchema = RouterDecisionLogEntrySchema.omit({
+  id: true,
+  routeId: true,
+  projectId: true,
+  runId: true,
+  nodeId: true,
+}).strip();
 export type DecisionExportRow = z.infer<typeof DecisionExportRowSchema>;
 
 // --- Experiment registry (records, does not execute traffic-splitting) -----

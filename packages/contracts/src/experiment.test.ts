@@ -79,7 +79,9 @@ describe('ExperimentRecordSchema', () => {
         createdAt: '2026-07-24T00:00:00.000Z',
         updatedAt: '2026-07-24T00:00:00.000Z',
         hypothesis: 'x'.repeat(10),
-        variants: [{ key: 'control', description: 'only one', target: { kind: 'model', modelId: 'a' } }],
+        variants: [
+          { key: 'control', description: 'only one', target: { kind: 'model', modelId: 'a' } },
+        ],
         population: { taskKinds: ['implementation'], targetSampleSize: 30 },
         stopRule: { metric: 'first-pass-rate', comparator: 'gte', threshold: 0.8, minSamples: 20 },
         status: 'draft',
