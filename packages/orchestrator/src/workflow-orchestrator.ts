@@ -53,6 +53,7 @@ import type {
   ModelOverrideRepository,
   PolicyRepository,
   ProjectRepository,
+  RouterDecisionLogRepository,
   SecretStore,
   StepAttemptRepository,
   StepEventRepository,
@@ -153,6 +154,7 @@ export class WorkflowOrchestrator {
     private readonly qualityObservations?: QualityObservationService,
     private readonly executors?: Pick<ExecutorRegistry, 'health'>,
     private readonly secretStore?: SecretStore,
+    private readonly decisionLog?: RouterDecisionLogRepository,
   ) {}
 
   async runProject(
