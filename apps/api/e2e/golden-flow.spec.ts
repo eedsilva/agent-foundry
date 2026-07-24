@@ -876,21 +876,24 @@ test('regression gate passes an unchanged report and fails one missing a baselin
   const baseline = JSON.parse(await readFile(baselinePath, 'utf8')) as { runs: unknown[] };
   expect(baseline.runs.length).toBeGreaterThan(1);
 
-  const passResponse = await fetch(`${apiBaseUrl}/router/regression-gate`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ fresh: baseline }),
-  });
+  const missingOneCase = { ...baseline, runs: baseline.runs.slice(1) };
+  const [passResponse, failResponse] = await Promise.all([
+    fetch(`${apiBaseUrl}/router/regression-gate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fresh: baseline }),
+    }),
+    fetch(`${apiBaseUrl}/router/regression-gate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fresh: missingOneCase }),
+    }),
+  ]);
+
   expect(passResponse.ok).toBe(true);
   const { result: passResult } = (await passResponse.json()) as { result: { verdict: string } };
   expect(passResult.verdict).toBe('pass');
 
-  const missingOneCase = { ...baseline, runs: baseline.runs.slice(1) };
-  const failResponse = await fetch(`${apiBaseUrl}/router/regression-gate`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ fresh: missingOneCase }),
-  });
   expect(failResponse.ok).toBe(true);
   const { result: failResult } = (await failResponse.json()) as {
     result: { verdict: string; reasons: string[] };

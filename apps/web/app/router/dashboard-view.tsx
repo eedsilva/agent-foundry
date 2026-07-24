@@ -97,26 +97,72 @@ type ExperimentTextField =
   | 'variantAModelId'
   | 'variantBKey'
   | 'variantBDescription'
-  | 'variantBModelId';
+  | 'variantBModelId'
+  | 'targetSampleSize'
+  | 'stopRuleThreshold'
+  | 'stopRuleMinSamples';
 
 function TextField({
   label,
   field,
   form,
   onFormChange,
+  type,
+  min,
+  step,
 }: {
   label: string;
   field: ExperimentTextField;
+  form: ExperimentFormState;
+  onFormChange: (form: ExperimentFormState) => void;
+  type?: 'number';
+  min?: number;
+  step?: string;
+}) {
+  return (
+    <label>
+      {label}
+      <input
+        type={type}
+        min={min}
+        step={step}
+        value={form[field]}
+        onChange={(event) => onFormChange({ ...form, [field]: event.target.value })}
+      />
+    </label>
+  );
+}
+
+type ExperimentSelectField = 'stopRuleMetric' | 'stopRuleComparator';
+
+function SelectField<K extends ExperimentSelectField>({
+  label,
+  field,
+  options,
+  form,
+  onFormChange,
+}: {
+  label: string;
+  field: K;
+  options: readonly ExperimentFormState[K][];
   form: ExperimentFormState;
   onFormChange: (form: ExperimentFormState) => void;
 }) {
   return (
     <label>
       {label}
-      <input
+      <select
         value={form[field]}
-        onChange={(event) => onFormChange({ ...form, [field]: event.target.value })}
-      />
+        onChange={(event) =>
+          onFormChange({ ...form, [field]: event.target.value as ExperimentFormState[K] })
+        }
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
@@ -365,80 +411,48 @@ export function RouterDashboardView({
                 {kind}
               </label>
             ))}
-            <label>
-              Tamanho de amostra alvo
-              <input
-                type="number"
-                min={1}
-                value={form.targetSampleSize}
-                onChange={(event) =>
-                  onFormChange({ ...form, targetSampleSize: event.target.value })
-                }
-              />
-            </label>
+            <TextField
+              label="Tamanho de amostra alvo"
+              field="targetSampleSize"
+              type="number"
+              min={1}
+              form={form}
+              onFormChange={onFormChange}
+            />
           </fieldset>
 
           <fieldset>
             <legend>Regra de parada</legend>
-            <label>
-              Métrica
-              <select
-                value={form.stopRuleMetric}
-                onChange={(event) =>
-                  onFormChange({
-                    ...form,
-                    stopRuleMetric: event.target.value as ExperimentFormState['stopRuleMetric'],
-                  })
-                }
-              >
-                {ExperimentStopRuleSchema.shape.metric.options.map((metric) => (
-                  <option key={metric} value={metric}>
-                    {metric}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Comparador
-              <select
-                value={form.stopRuleComparator}
-                onChange={(event) =>
-                  onFormChange({
-                    ...form,
-                    stopRuleComparator: event.target
-                      .value as ExperimentFormState['stopRuleComparator'],
-                  })
-                }
-              >
-                {ExperimentStopRuleSchema.shape.comparator.options.map((comparator) => (
-                  <option key={comparator} value={comparator}>
-                    {comparator}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Limite
-              <input
-                type="number"
-                step="any"
-                value={form.stopRuleThreshold}
-                onChange={(event) =>
-                  onFormChange({ ...form, stopRuleThreshold: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              Amostras mínimas
-              <input
-                type="number"
-                min={1}
-                value={form.stopRuleMinSamples}
-                onChange={(event) =>
-                  onFormChange({ ...form, stopRuleMinSamples: event.target.value })
-                }
-              />
-            </label>
+            <SelectField
+              label="Métrica"
+              field="stopRuleMetric"
+              options={ExperimentStopRuleSchema.shape.metric.options}
+              form={form}
+              onFormChange={onFormChange}
+            />
+            <SelectField
+              label="Comparador"
+              field="stopRuleComparator"
+              options={ExperimentStopRuleSchema.shape.comparator.options}
+              form={form}
+              onFormChange={onFormChange}
+            />
+            <TextField
+              label="Limite"
+              field="stopRuleThreshold"
+              type="number"
+              step="any"
+              form={form}
+              onFormChange={onFormChange}
+            />
+            <TextField
+              label="Amostras mínimas"
+              field="stopRuleMinSamples"
+              type="number"
+              min={1}
+              form={form}
+              onFormChange={onFormChange}
+            />
           </fieldset>
 
           <button type="submit" className="primaryButton">
