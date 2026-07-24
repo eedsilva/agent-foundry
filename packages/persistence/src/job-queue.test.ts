@@ -414,4 +414,20 @@ describe('FileJobQueue lease semantics', () => {
       readFile(join(dataDir, 'queue', 'failed', 'job-1.worker-a.json'), 'utf8'),
     ).resolves.toBe(raw);
   });
+
+  it('dead-letters immediately when nack is called with permanent: true, even on the first attempt', async () => {
+    const dataDir = await temporaryDataDir();
+    const clock = new FakeClock(new Date(createdAt));
+    const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
+    await queue.enqueue(baseJob());
+    const claimed = await queue.claim('worker-a');
+
+    await queue.nack(claimed!, 'worker-a', new Error('unrecoverable'), { permanent: true });
+
+    expect(await queue.claim('worker-b')).toBeNull();
+    const failedPath = join(dataDir, 'queue', 'failed', 'job-1.json');
+    const failed = JSON.parse(await readFile(failedPath, 'utf8'));
+    expect(failed.attempts).toBe(1);
+    expect(failed.lastError).toBe('unrecoverable');
+  });
 });

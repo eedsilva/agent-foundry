@@ -106,7 +106,12 @@ export class FileJobQueue implements JobQueue {
     await rm(join(this.dir('pending'), `${safeSegment(job.id)}.json`), { force: true });
   }
 
-  async nack(job: QueueJob, workerId: string, error: Error): Promise<void> {
+  async nack(
+    job: QueueJob,
+    workerId: string,
+    error: Error,
+    options?: { permanent?: boolean },
+  ): Promise<void> {
     const current = await this.readLeasedJob(job.id, workerId);
     this.assertFencingToken(current, job, workerId);
     const from = this.processingPath(job.id, workerId);
@@ -121,7 +126,7 @@ export class FileJobQueue implements JobQueue {
       lease: undefined,
     });
 
-    if (attempts >= job.maxAttempts) {
+    if (options?.permanent === true || attempts >= job.maxAttempts) {
       const failed = this.dir('failed');
       await ensureDir(failed);
       await rm(join(this.dir('pending'), `${safeSegment(job.id)}.json`), { force: true });
