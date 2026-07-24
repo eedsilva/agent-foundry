@@ -91,6 +91,36 @@ export function activeRouterQuery(filters: RouterFilters): Record<string, string
   return Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== ''));
 }
 
+type ExperimentTextField =
+  | 'variantAKey'
+  | 'variantADescription'
+  | 'variantAModelId'
+  | 'variantBKey'
+  | 'variantBDescription'
+  | 'variantBModelId';
+
+function TextField({
+  label,
+  field,
+  form,
+  onFormChange,
+}: {
+  label: string;
+  field: ExperimentTextField;
+  form: ExperimentFormState;
+  onFormChange: (form: ExperimentFormState) => void;
+}) {
+  return (
+    <label>
+      {label}
+      <input
+        value={form[field]}
+        onChange={(event) => onFormChange({ ...form, [field]: event.target.value })}
+      />
+    </label>
+  );
+}
+
 export function RouterDashboardView({
   filters,
   onFiltersChange,
@@ -274,56 +304,46 @@ export function RouterDashboardView({
 
           <fieldset>
             <legend>Variante A</legend>
-            <label>
-              Chave (A)
-              <input
-                value={form.variantAKey}
-                onChange={(event) => onFormChange({ ...form, variantAKey: event.target.value })}
-              />
-            </label>
-            <label>
-              Descrição (A)
-              <input
-                value={form.variantADescription}
-                onChange={(event) =>
-                  onFormChange({ ...form, variantADescription: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              Modelo alvo (A)
-              <input
-                value={form.variantAModelId}
-                onChange={(event) => onFormChange({ ...form, variantAModelId: event.target.value })}
-              />
-            </label>
+            <TextField
+              label="Chave (A)"
+              field="variantAKey"
+              form={form}
+              onFormChange={onFormChange}
+            />
+            <TextField
+              label="Descrição (A)"
+              field="variantADescription"
+              form={form}
+              onFormChange={onFormChange}
+            />
+            <TextField
+              label="Modelo alvo (A)"
+              field="variantAModelId"
+              form={form}
+              onFormChange={onFormChange}
+            />
           </fieldset>
 
           <fieldset>
             <legend>Variante B</legend>
-            <label>
-              Chave (B)
-              <input
-                value={form.variantBKey}
-                onChange={(event) => onFormChange({ ...form, variantBKey: event.target.value })}
-              />
-            </label>
-            <label>
-              Descrição (B)
-              <input
-                value={form.variantBDescription}
-                onChange={(event) =>
-                  onFormChange({ ...form, variantBDescription: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              Modelo alvo (B)
-              <input
-                value={form.variantBModelId}
-                onChange={(event) => onFormChange({ ...form, variantBModelId: event.target.value })}
-              />
-            </label>
+            <TextField
+              label="Chave (B)"
+              field="variantBKey"
+              form={form}
+              onFormChange={onFormChange}
+            />
+            <TextField
+              label="Descrição (B)"
+              field="variantBDescription"
+              form={form}
+              onFormChange={onFormChange}
+            />
+            <TextField
+              label="Modelo alvo (B)"
+              field="variantBModelId"
+              form={form}
+              onFormChange={onFormChange}
+            />
           </fieldset>
 
           <fieldset>
