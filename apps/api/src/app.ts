@@ -263,17 +263,23 @@ export async function buildApp(
   });
 
   // Reads the baseline file off disk per call, so bound it the same way as
-  // the blob routes above: fixed-window per-IP counter. Checked inline (not
-  // via an onRequest hook) because CodeQL's js/missing-rate-limiting query
-  // doesn't trace a limit check through a hook passed in the route options.
+  // the blob routes above: fixed-window per-IP onRequest hook (see
+  // blobRateLimit below; CodeQL alert #28 dismissed the same pattern there
+  // as a false positive — the js/missing-rate-limiting query only
+  // recognizes known middleware packages, not in-house limiters).
   const regressionGateRateLimiter = createFixedWindowRateLimiter(30, 60_000, options.now);
-
-  app.post('/router/regression-gate', async (request, reply) => {
+  const regressionGateRateLimit = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> => {
     if (!regressionGateRateLimiter.allow(request.ip)) {
-      return reply
+      await reply
         .status(429)
         .send({ error: 'TooManyRequests', message: 'Rate limit exceeded. Try again shortly.' });
     }
+  };
+
+  app.post('/router/regression-gate', { onRequest: regressionGateRateLimit }, async (request) => {
     const { fresh } = RegressionGateRequestSchema.parse(request.body);
     const baselinePath = resolve(REPO_ROOT, 'docs/baselines', `${BASELINE_STEM}.json`);
     const baseline = BenchmarkReportSchema.parse(JSON.parse(await readFile(baselinePath, 'utf8')));
