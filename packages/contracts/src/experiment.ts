@@ -28,7 +28,10 @@ export const RouterDecisionLogEntrySchema = z
     role: AgentRoleSchema,
     provider: ProviderSchema.exclude(['mock']),
     modelId: PathSegmentSchema,
-    model: z.string().min(1),
+    // No .min(1): matches ModelDefinitionSchema.model, which catalog entries
+    // can interpolate to '' when their env var is unset (models/catalog.yaml's
+    // codex/agy fast/default variants) — selectable in mock-executor-mode runs.
+    model: z.string(),
     approved: z.boolean(),
     firstPass: z.boolean(),
     repairs: z.number().int().nonnegative(),

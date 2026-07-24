@@ -38,6 +38,14 @@ describe('RouterDecisionLogEntrySchema', () => {
   it('rejects an unknown field (strict)', () => {
     expect(() => RouterDecisionLogEntrySchema.parse({ ...decision, extra: 'nope' })).toThrow();
   });
+
+  it('accepts an empty model string, matching ModelDefinitionSchema.model (no min length)', () => {
+    // Catalog entries interpolate `${ENV_VAR:-}` to '' when the env var is
+    // unset (see models/catalog.yaml's codex/agy fast/default variants) —
+    // exactly what mock-executor-mode runs select. ModelDefinitionSchema.model
+    // has no min-length constraint for this reason; this schema must not add one.
+    expect(() => RouterDecisionLogEntrySchema.parse({ ...decision, model: '' })).not.toThrow();
+  });
 });
 
 describe('DecisionExportRowSchema', () => {
