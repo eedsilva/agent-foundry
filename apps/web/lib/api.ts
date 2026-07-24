@@ -3,6 +3,7 @@ import type {
   ApprovalListResponse,
   ClassifyMessageResponse,
   ConversationPageResponse,
+  CreateExperimentRequest,
   CreateMessageRequest,
   CreateModelOverrideRequest,
   CreateModelOverrideResponse,
@@ -12,6 +13,7 @@ import type {
   DecideChangeRequestResponse,
   DiscardDraftRequest,
   DraftDetailResponse,
+  ExperimentRecord,
   KnowledgeFile,
   KnowledgeFilePurpose,
   Message,
@@ -28,6 +30,8 @@ import type {
   RetryPlanResponse,
   RetryProjectRequest,
   RetryStepRequest,
+  RouterDashboardResponse,
+  RouterDecisionLogEntry,
   RunDetailResponse,
   RuntimeInfoResponse,
   StartOperationRequest,
@@ -137,6 +141,36 @@ export async function removeKnowledgeFile(
 
 export function getRuntime(): Promise<RuntimeInfoResponse> {
   return api<RuntimeInfoResponse>('/runtime');
+}
+
+export function getRouterDashboard(
+  query: Record<string, string>,
+): Promise<RouterDashboardResponse> {
+  const qs = new URLSearchParams(query).toString();
+  return api<RouterDashboardResponse>(`/router/dashboard${qs ? `?${qs}` : ''}`);
+}
+
+export function listRouterDecisions(
+  query: Record<string, string>,
+): Promise<{ decisions: RouterDecisionLogEntry[] }> {
+  const qs = new URLSearchParams(query).toString();
+  return api<{ decisions: RouterDecisionLogEntry[] }>(`/router/decisions${qs ? `?${qs}` : ''}`);
+}
+
+export function listExperiments(): Promise<{ experiments: ExperimentRecord[] }> {
+  return api<{ experiments: ExperimentRecord[] }>('/experiments');
+}
+
+export function createExperiment(input: CreateExperimentRequest): Promise<ExperimentRecord> {
+  return api<{ experiment: ExperimentRecord }>('/experiments', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }).then((response) => response.experiment);
+}
+
+export function routerExportUrl(query: Record<string, string>): string {
+  const qs = new URLSearchParams(query).toString();
+  return `${API_URL}/router/export${qs ? `?${qs}` : ''}`;
 }
 
 export function eventStreamUrl(id: string): string {

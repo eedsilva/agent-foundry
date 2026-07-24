@@ -750,3 +750,52 @@ dd {
   display: block;
   margin-bottom: 0.75rem;
 }
+.routerDashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+}
+.filterBar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.kpiTile {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kpiTile span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.kpiTile strong {
+  font-size: 22px;
+}
+.experimentTable {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+}
+.experimentTable th,
+.experimentTable td {
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 6px;
+}
