@@ -6,7 +6,7 @@ import {
   type SecurityReport,
   type SecuritySeverity,
 } from '@agent-foundry/contracts';
-import { destructiveStatements, sqlStatements } from './supabase-runtime.js';
+import { destructiveStatements, isNotFound, sqlStatements } from './supabase-runtime.js';
 
 const WRITE_OPS = new Set(['insert', 'update', 'delete']);
 
@@ -43,15 +43,31 @@ const REVOKE_TABLE_RE =
   /^REVOKE\s+([\w\s,]+?)\s+ON\s+TABLE\s+(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s+FROM\s+([^\n;]+)/i;
 const SENSITIVE_RE = /\b(?:user_id|owner_id)\b|\breferences\s+(?:public\.)?auth\.users\b/i;
 
-// Safe as a module-level mutable counter only because lintMigrationsSql is fully
-// synchronous (no internal `await`) — an async-ification would need per-call state.
-let findingCounter = 0;
-
 export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): SecurityReport {
-  findingCounter = 0;
   const tables = new Map<string, TableRecord>();
   const anonWriteGrants = new Map<string, Set<string>>(); // table -> write ops currently granted to anon
   const findings: SecurityFinding[] = [];
+
+  let findingCounter = 0;
+  function makeFinding(input: {
+    rule: SecurityFinding['rule'];
+    severity: SecuritySeverity;
+    table: string | null;
+    location: string;
+    evidence: string;
+    remediation: string;
+  }): SecurityFinding {
+    findingCounter += 1;
+    return {
+      id: `${input.rule}-${findingCounter}`,
+      rule: input.rule,
+      severity: input.severity,
+      table: input.table,
+      location: input.location,
+      evidence: input.evidence.trim().slice(0, 2_000),
+      remediation: input.remediation,
+    };
+  }
 
   for (const { file, sql } of sqlByFile) {
     for (const statement of sqlStatements(sql)) {
@@ -234,26 +250,6 @@ export function blocksRelease(report: SecurityReport): boolean {
   );
 }
 
-function makeFinding(input: {
-  rule: SecurityFinding['rule'];
-  severity: SecuritySeverity;
-  table: string | null;
-  location: string;
-  evidence: string;
-  remediation: string;
-}): SecurityFinding {
-  findingCounter += 1;
-  return {
-    id: `${input.rule}-${findingCounter}`,
-    rule: input.rule,
-    severity: input.severity,
-    table: input.table,
-    location: input.location,
-    evidence: input.evidence.trim().slice(0, 2_000),
-    remediation: input.remediation,
-  };
-}
-
 function stripPublicSchema(name: string): string {
   const unquoted = name.replace(/"/g, '');
   return unquoted.replace(/^public\./i, '');
@@ -278,10 +274,4 @@ function parseRoles(raw: string): string[] {
     .split(',')
     .map((role) => role.trim().toLowerCase())
     .filter(Boolean);
-}
-
-function isNotFound(error: unknown): boolean {
-  return (
-    error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
-  );
 }

@@ -9,12 +9,14 @@ import { SupabaseGeneratedProjectRuntime } from './supabase-runtime.js';
 import {
   authHeaders,
   boundedFetch,
-  isRecord,
   json,
+  login,
   readCredentials,
   requireOk,
   rows,
+  signUp,
   type Credentials,
+  type Session,
 } from './e2e-test-support.js';
 
 const execFileAsync = promisify(execFile);
@@ -57,12 +59,6 @@ create policy items_delete_owner
   on public.items for delete to authenticated
   using (user_id = (select auth.uid()));
 `;
-
-interface Session {
-  userId: string;
-  accessToken: string;
-  refreshToken: string;
-}
 
 describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
   'generated Supabase RLS access matrix',
@@ -317,51 +313,6 @@ async function waitForSchemaCache(credentials: Credentials, timeoutMs = 10_000):
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-}
-
-function signUp(credentials: Credentials, email: string, password: string): Promise<Response> {
-  return boundedFetch(`${credentials.apiUrl}/auth/v1/signup`, {
-    method: 'POST',
-    headers: {
-      ...authHeaders(credentials.anonKey, credentials.anonKey),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ email, password }),
-  });
-}
-
-function requestLogin(
-  credentials: Credentials,
-  email: string,
-  password: string,
-): Promise<Response> {
-  return boundedFetch(`${credentials.apiUrl}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: {
-      ...authHeaders(credentials.anonKey, credentials.anonKey),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ email, password }),
-  });
-}
-
-async function login(credentials: Credentials, email: string, password: string): Promise<Session> {
-  const response = requireOk(await requestLogin(credentials, email, password), 'login');
-  const payload = await json(response);
-  if (
-    !isRecord(payload) ||
-    typeof payload.access_token !== 'string' ||
-    typeof payload.refresh_token !== 'string' ||
-    !isRecord(payload.user) ||
-    typeof payload.user.id !== 'string'
-  ) {
-    throw new Error('Local Auth returned an invalid session.');
-  }
-  return {
-    userId: payload.user.id,
-    accessToken: payload.access_token,
-    refreshToken: payload.refresh_token,
-  };
 }
 
 function insertItem(credentials: Credentials, session: Session, title: string): Promise<Response> {

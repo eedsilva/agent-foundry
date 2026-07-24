@@ -1337,7 +1337,7 @@ function capUtf8(value: string, maxBytes: number): string {
   return '';
 }
 
-function isNotFound(error: unknown): boolean {
+export function isNotFound(error: unknown): boolean {
   return (
     error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
   );
