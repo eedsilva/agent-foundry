@@ -1,7 +1,9 @@
 import type { QueueJob } from '@agent-foundry/contracts';
 import type { JobQueue } from '@agent-foundry/domain';
 import {
+  EmergencyCeilingError,
   LeaseLostError,
+  RunCancelledError,
   errorMessage,
   recordQueueWait,
   withExtractedContext,
@@ -27,6 +29,18 @@ export interface WorkerLoopOptions {
 interface HeartbeatState {
   job: QueueJob;
   leaseLost: boolean;
+}
+
+export type JobOutcome = 'cancelled' | 'permanent' | 'transient';
+
+/** Maps a thrown run error to a queue outcome. Cancellation is consumed (ack,
+ * no retry); EmergencyCeilingError is terminal (dead-letter now); everything
+ * else defaults to transient (nack with backoff) -- the safe default for an
+ * error type this classifier doesn't recognize. */
+export function classifyJobOutcome(error: unknown): JobOutcome {
+  if (error instanceof RunCancelledError) return 'cancelled';
+  if (error instanceof EmergencyCeilingError) return 'permanent';
+  return 'transient';
 }
 
 export class WorkerLoop {
@@ -89,11 +103,15 @@ export class WorkerLoop {
     } catch (error) {
       await stopHeartbeat();
       if (!state.leaseLost) {
-        await this.queue.nack(
-          state.job,
-          this.options.workerId,
-          error instanceof Error ? error : new Error(errorMessage(error)),
-        );
+        const err = error instanceof Error ? error : new Error(errorMessage(error));
+        const outcome = classifyJobOutcome(error);
+        if (outcome === 'cancelled') {
+          await this.queue.ack(state.job, this.options.workerId);
+        } else {
+          await this.queue.nack(state.job, this.options.workerId, err, {
+            permanent: outcome === 'permanent',
+          });
+        }
       }
       log?.error({ err: error }, 'job failed');
     }

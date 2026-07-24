@@ -86,6 +86,9 @@ maybeDescribe('Postgres-backed runtime', () => {
       WORKER_ID: 'postgres-runtime-worker',
     });
 
+    const { PostgresJobQueue } = await import('@agent-foundry/persistence');
+    expect(runtime.queue).toBeInstanceOf(PostgresJobQueue);
+
     const project = await runtime.projectService.create({
       name: 'Postgres runtime sample',
       workflowId: 'web-app-v1',

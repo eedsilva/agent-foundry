@@ -69,6 +69,8 @@ import {
   type StepAttemptRepository,
   type StepEventRepository,
   type StepRunRepository,
+  type Tx,
+  type TransactionRunner,
   type VerificationService,
   type WorkflowRepository,
   type WorkflowRunRepository,
@@ -193,6 +195,12 @@ export class SequentialIds implements IdGenerator {
   next(): string {
     this.counter += 1;
     return `id-${String(this.counter).padStart(4, '0')}`;
+  }
+}
+
+export class NoopTransactionRunner implements TransactionRunner {
+  run<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+    return fn(undefined as unknown as Tx);
   }
 }
 
@@ -1336,6 +1344,7 @@ export function makeHarness(
     stores.artifacts,
     stores.events,
     queue,
+    new NoopTransactionRunner(),
     workflows,
     policies,
     harness,

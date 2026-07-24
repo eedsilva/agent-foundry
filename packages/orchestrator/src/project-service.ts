@@ -46,6 +46,8 @@ import type {
   ResumeDiagnostic,
   StepAttemptRepository,
   StepRunRepository,
+  TransactionRunner,
+  Tx,
   WorkspaceManager,
   WorkflowRunRepository,
   WorkflowRepository,
@@ -77,6 +79,7 @@ export class ProjectService {
     private readonly artifacts: ArtifactStore,
     private readonly events: EventStore,
     private readonly queue: JobQueue,
+    private readonly transactionRunner: TransactionRunner,
     private readonly workflows: WorkflowRepository,
     private readonly policies: PolicyRepository,
     private readonly harness: HarnessRepository,
@@ -154,8 +157,45 @@ export class ProjectService {
     if (scaffoldFiles.length > 0) {
       await this.workspaces.applyScaffold(project.id, scaffoldFiles);
     }
-    await this.projects.create(project);
-    await this.runs.create(run);
+
+    const job: QueueJob = {
+      id: this.ids.next(),
+      type: 'run-project',
+      projectId: project.id,
+      workflowId: project.workflowId,
+      runId,
+      attempts: 0,
+      maxAttempts: RUN_PROJECT_MAX_ATTEMPTS,
+      createdAt: now,
+      availableAt: now,
+      leaseEpoch: 0,
+      ...traceContextField(),
+    };
+
+    await this.transactionRunner.run(async (tx) => {
+      await this.projects.create(project, tx);
+      await this.runs.create(run, tx);
+      await this.appendEvent(project.id, 'project.created', 'Project and workspace created.', {
+        tx,
+      });
+      if (scaffoldFiles.length > 0) {
+        await this.appendEvent(
+          project.id,
+          'scaffold.applied',
+          `Applied ${scaffoldFiles.length} scaffold file(s) for stack '${workflow.stack}'.`,
+          { tx },
+        );
+      }
+      await this.queue.enqueue(job, tx);
+      await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
+        tx,
+      });
+    });
+
+    // Artifacts are written after the transaction commits: `artifacts.project_id`
+    // has a FK to `projects(id)`, and ArtifactStore.put isn't part of the
+    // transactional seam (see the design note at the top of this task in the
+    // plan) -- the project row must already be visible on its own connection.
     await this.artifacts.put({
       projectId: project.id,
       name: 'prd',
@@ -172,30 +212,7 @@ export class ProjectService {
         createdBy: `scaffold:${workflow.stack}`,
       });
     }
-    await this.appendEvent(project.id, 'project.created', 'Project and workspace created.');
-    if (scaffoldFiles.length > 0) {
-      await this.appendEvent(
-        project.id,
-        'scaffold.applied',
-        `Applied ${scaffoldFiles.length} scaffold file(s) for stack '${workflow.stack}'.`,
-      );
-    }
 
-    const job: QueueJob = {
-      id: this.ids.next(),
-      type: 'run-project',
-      projectId: project.id,
-      workflowId: project.workflowId,
-      runId,
-      attempts: 0,
-      maxAttempts: RUN_PROJECT_MAX_ATTEMPTS,
-      createdAt: now,
-      availableAt: now,
-      leaseEpoch: 0,
-      ...traceContextField(),
-    };
-    await this.queue.enqueue(job);
-    await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.');
     return project;
   }
 
@@ -295,6 +312,10 @@ export class ProjectService {
     // Created before the job is enqueued so the override is already visible
     // to the router by the time any worker could possibly claim the job —
     // no race window like there would be creating it after the fact.
+    // createModelOverride writes through ModelOverrideRepository, which is
+    // permanently file-based regardless of PERSISTENCE_MODE (see runtime.ts)
+    // -- it can never join the Postgres transaction below, so this call and
+    // runs.create above both stay outside/before it.
     if (input?.override) {
       await this.createModelOverride(runId, { ...input.override, scope: { kind: 'run' } });
     }
@@ -306,8 +327,8 @@ export class ProjectService {
     };
     delete updated.currentNodeId;
     delete updated.error;
-    const saved = await this.projects.update(updated, project.version);
-    await this.queue.enqueue({
+
+    const job: QueueJob = {
       id: this.ids.next(),
       type: 'run-project',
       projectId,
@@ -319,9 +340,14 @@ export class ProjectService {
       availableAt: now,
       leaseEpoch: 0,
       ...traceContextField(),
+    };
+
+    return this.transactionRunner.run(async (tx) => {
+      const saved = await this.projects.update(updated, project.version, tx);
+      await this.queue.enqueue(job, tx);
+      await this.appendEvent(projectId, 'project.queued', 'Project manually re-queued.', { tx });
+      return saved;
     });
-    await this.appendEvent(projectId, 'project.queued', 'Project manually re-queued.');
-    return saved;
   }
 
   async cancelRun(runId: string): Promise<WorkflowRun> {
@@ -335,12 +361,9 @@ export class ProjectService {
           transitionWorkflowRun(run, 'cancel_requested', this.clock.now()),
           run.version,
         );
-        await this.appendEvent(
-          run.projectId,
-          'run.cancel_requested',
-          'Cancellation requested.',
+        await this.appendEvent(run.projectId, 'run.cancel_requested', 'Cancellation requested.', {
           runId,
-        );
+        });
         return updated;
       } catch (error) {
         if (!(error instanceof VersionConflictError) || retry >= 2) throw error;
@@ -362,7 +385,7 @@ export class ProjectService {
           run.projectId,
           'run.pause_requested',
           'Pause requested; the run parks at the next step boundary.',
-          runId,
+          { runId },
         );
         return updated;
       } catch (error) {
@@ -391,8 +414,7 @@ export class ProjectService {
         run.projectId,
         'run.resume_blocked',
         `Resume blocked: ${diagnostics.map((item) => item.field).join(', ')} changed.`,
-        runId,
-        { diagnostics },
+        { runId, data: { diagnostics } },
       );
       throw new ResumeBlockedError(runId, diagnostics);
     }
@@ -407,8 +429,7 @@ export class ProjectService {
       run.projectId,
       'run.resume_requested',
       resumeNodeId ? `Resume requested from ${resumeNodeId}.` : 'Resume requested.',
-      runId,
-      resumeNodeId ? { resumeNodeId } : {},
+      { runId, data: resumeNodeId ? { resumeNodeId } : {} },
     );
     return updated;
   }
@@ -470,11 +491,13 @@ export class ProjectService {
       run.projectId,
       'run.draft_discarded',
       `Draft ${ceiling.draftBranch} discarded by ${input.actor.displayName ?? input.actor.id}.`,
-      runId,
       {
-        draftBranch: ceiling.draftBranch,
-        discardedBy: input.actor,
-        ...(input.reason ? { reason: input.reason } : {}),
+        runId,
+        data: {
+          draftBranch: ceiling.draftBranch,
+          discardedBy: input.actor,
+          ...(input.reason ? { reason: input.reason } : {}),
+        },
       },
     );
     return updated;
@@ -545,12 +568,14 @@ export class ProjectService {
       run.projectId,
       'step.retry_requested',
       `Retry of ${target.stepId} requested (${input.mode} downstream).`,
-      runId,
       {
-        stepRunId,
-        mode: input.mode,
-        ...(override ? { override } : {}),
-        invalidatedStepRunIds,
+        runId,
+        data: {
+          stepRunId,
+          mode: input.mode,
+          ...(override ? { override } : {}),
+          invalidatedStepRunIds,
+        },
       },
     );
     return updated;
@@ -973,17 +998,7 @@ export class ProjectService {
   private async requeueProject(projectId: string, runId: string, jobId?: string): Promise<void> {
     const project = await this.requireProject(projectId);
     const now = this.clock.now().toISOString();
-    if (project.status !== 'queued' || project.currentRunId !== runId) {
-      const updated: Project = {
-        ...project,
-        status: 'queued',
-        updatedAt: now,
-        currentRunId: runId,
-      };
-      delete updated.error;
-      await this.projects.update(updated, project.version);
-    }
-    await this.queue.enqueue({
+    const job: QueueJob = {
       id: jobId ?? `run-project-${runId}`,
       type: 'run-project',
       projectId,
@@ -995,6 +1010,19 @@ export class ProjectService {
       availableAt: now,
       leaseEpoch: 0,
       ...traceContextField(),
+    };
+    await this.transactionRunner.run(async (tx) => {
+      if (project.status !== 'queued' || project.currentRunId !== runId) {
+        const updated: Project = {
+          ...project,
+          status: 'queued',
+          updatedAt: now,
+          currentRunId: runId,
+        };
+        delete updated.error;
+        await this.projects.update(updated, project.version, tx);
+      }
+      await this.queue.enqueue(job, tx);
     });
   }
 
@@ -1011,14 +1039,16 @@ export class ProjectService {
       run.projectId,
       'run.approval_decided',
       `${decision.action} recorded for approval ${requestId}.`,
-      run.id,
       {
-        requestId,
-        action: decision.action,
-        decidedBy: decision.decidedBy,
-        ...(decision.actor ? { actor: decision.actor } : {}),
+        runId: run.id,
+        data: {
+          requestId,
+          action: decision.action,
+          decidedBy: decision.decidedBy,
+          ...(decision.actor ? { actor: decision.actor } : {}),
+        },
+        dedupeKey: `approval-decision:${decision.id}`,
       },
-      `approval-decision:${decision.id}`,
     );
   }
 
@@ -1060,20 +1090,22 @@ export class ProjectService {
     projectId: string,
     type: ProjectEvent['type'],
     message: string,
-    runId?: string,
-    data: Record<string, unknown> = {},
-    dedupeKey?: string,
+    options: { runId?: string; data?: Record<string, unknown>; dedupeKey?: string; tx?: Tx } = {},
   ): Promise<void> {
-    await this.events.append({
-      id: this.ids.next(),
-      projectId,
-      type,
-      createdAt: this.clock.now().toISOString(),
-      ...(runId ? { runId } : {}),
-      message,
-      data,
-      ...(dedupeKey ? { dedupeKey } : {}),
-    });
+    const { runId, data = {}, dedupeKey, tx } = options;
+    await this.events.append(
+      {
+        id: this.ids.next(),
+        projectId,
+        type,
+        createdAt: this.clock.now().toISOString(),
+        ...(runId ? { runId } : {}),
+        message,
+        data,
+        ...(dedupeKey ? { dedupeKey } : {}),
+      },
+      tx,
+    );
   }
 }
 

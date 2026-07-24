@@ -1,11 +1,19 @@
 import type { ISql } from 'postgres';
-import { NotFoundError, VersionConflictError } from '@agent-foundry/domain';
+import { NotFoundError, VersionConflictError, type Tx } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
 
 export function isUniqueViolation(error: unknown): boolean {
   return (
     error instanceof Error && 'code' in error && (error as { code?: unknown }).code === '23505'
   );
+}
+
+/** Resolves the effective query client for a write method: the caller's transaction
+ * handle when it's threading one through the seam, otherwise the repo's own pooled
+ * client. Centralizes the one cast every `tx?: Tx`-accepting method needs, the same
+ * way `toJsonb` centralizes its one cast below. */
+export function resolveDb(sql: PostgresDb, tx?: Tx): PostgresDb {
+  return (tx as unknown as PostgresDb | undefined) ?? sql;
 }
 
 /** Serializes the 11 verbatim `pg_advisory_xact_lock` call sites (conversation-repository.ts,

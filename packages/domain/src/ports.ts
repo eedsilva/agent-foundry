@@ -61,9 +61,9 @@ import type {
 } from '@agent-foundry/contracts';
 
 export interface ProjectRepository {
-  create(project: Project): Promise<void>;
+  create(project: Project, tx?: Tx): Promise<void>;
   get(projectId: string): Promise<Project | null>;
-  update(project: Project, expectedVersion: number): Promise<Project>;
+  update(project: Project, expectedVersion: number, tx?: Tx): Promise<Project>;
   list(limit?: number): Promise<Project[]>;
   /** Every project, unpaged — for sweeps (e.g. blob GC) that must see the whole set. */
   listAll(): Promise<Project[]>;
@@ -121,7 +121,7 @@ export interface ConversationSnapshot {
 }
 
 export interface WorkflowRunRepository {
-  create(run: WorkflowRun): Promise<void>;
+  create(run: WorkflowRun, tx?: Tx): Promise<void>;
   get(runId: string): Promise<WorkflowRun | null>;
   list(projectId: string, limit?: number): Promise<WorkflowRun[]>;
   update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun>;
@@ -200,7 +200,7 @@ export interface ArtifactStore {
 }
 
 export interface EventStore {
-  append(event: ProjectEvent): Promise<void>;
+  append(event: ProjectEvent, tx?: Tx): Promise<void>;
   list(projectId: string, limit?: number, afterId?: string): Promise<ProjectEvent[]>;
 }
 
@@ -215,12 +215,29 @@ export interface StepEventRepository {
  * when it is stale — reclaimed by reapExpired or claimed by another worker.
  */
 export interface JobQueue {
-  enqueue(job: QueueJob): Promise<void>;
+  enqueue(job: QueueJob, tx?: Tx): Promise<void>;
   claim(workerId: string): Promise<QueueJob | null>;
   heartbeat(job: QueueJob, workerId: string): Promise<QueueJob>;
   ack(job: QueueJob, workerId: string): Promise<void>;
-  nack(job: QueueJob, workerId: string, error: Error): Promise<void>;
+  nack(
+    job: QueueJob,
+    workerId: string,
+    error: Error,
+    options?: { permanent?: boolean },
+  ): Promise<void>;
   reapExpired(): Promise<QueueJob[]>;
+}
+
+/**
+ * Opaque transaction handle threaded through write methods that must join a
+ * shared database transaction. Never held past the callback that produced it
+ * -- Postgres impls cast it back to their Sql client; file impls ignore it
+ * (file mode has no cross-repository transactions).
+ */
+export type Tx = { readonly __tx: unique symbol };
+
+export interface TransactionRunner {
+  run<T>(fn: (tx: Tx) => Promise<T>): Promise<T>;
 }
 
 export interface WorkflowRepository {

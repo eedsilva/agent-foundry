@@ -1,8 +1,8 @@
 import { ProjectSchema, type Project } from '@agent-foundry/contracts';
 import type { ProjectRepository } from '@agent-foundry/domain';
-import { VersionConflictError } from '@agent-foundry/domain';
+import { VersionConflictError, type Tx } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
-import { insertVersioned, updateVersioned } from './versioned.js';
+import { insertVersioned, resolveDb, updateVersioned } from './versioned.js';
 
 function columnsFor(project: Project): Record<string, unknown> {
   return {
@@ -15,9 +15,9 @@ function columnsFor(project: Project): Record<string, unknown> {
 export class PostgresProjectRepository implements ProjectRepository {
   constructor(private readonly sql: PostgresDb) {}
 
-  async create(project: Project): Promise<void> {
+  async create(project: Project, tx?: Tx): Promise<void> {
     const parsed = ProjectSchema.parse(project);
-    await insertVersioned(this.sql, {
+    await insertVersioned(resolveDb(this.sql, tx), {
       table: 'projects',
       entity: 'project',
       id: parsed.id,
@@ -34,12 +34,12 @@ export class PostgresProjectRepository implements ProjectRepository {
     return rows[0] ? ProjectSchema.parse(rows[0].data) : null;
   }
 
-  async update(project: Project, expectedVersion: number): Promise<Project> {
+  async update(project: Project, expectedVersion: number, tx?: Tx): Promise<Project> {
     if (project.version !== expectedVersion) {
       throw new VersionConflictError('project', project.id, expectedVersion, project.version);
     }
     const next = ProjectSchema.parse({ ...project, version: expectedVersion + 1 });
-    await updateVersioned(this.sql, {
+    await updateVersioned(resolveDb(this.sql, tx), {
       table: 'projects',
       entity: 'project',
       id: project.id,

@@ -10,7 +10,7 @@ import {
   withSpan,
   type JobQueue,
 } from '@agent-foundry/domain';
-import { WorkerLoop, type JobLogger } from './worker-loop.js';
+import { classifyJobOutcome, WorkerLoop, type JobLogger } from './worker-loop.js';
 import type { WorkflowOrchestrator } from './workflow-orchestrator.js';
 
 function job(overrides: Partial<QueueJob> = {}): QueueJob {
@@ -272,6 +272,7 @@ describe('WorkerLoop heartbeat renewal', () => {
       renewedJob,
       'worker-a',
       expect.objectContaining({ message: 'boom' }),
+      { permanent: false },
     );
     expect(queue.ack).not.toHaveBeenCalled();
   });
@@ -415,5 +416,77 @@ describe('WorkerLoop job span trace propagation', () => {
 
     expect(dispatchedTraceId).toBe(enqueuingTraceId);
     expect(queue.ack).toHaveBeenCalled();
+  });
+});
+
+describe('classifyJobOutcome', () => {
+  it('classifies RunCancelledError as cancelled', async () => {
+    const { RunCancelledError } = await import('@agent-foundry/domain');
+    expect(classifyJobOutcome(new RunCancelledError('run-1'))).toBe('cancelled');
+  });
+
+  it('classifies EmergencyCeilingError as permanent', async () => {
+    const { EmergencyCeilingError } = await import('@agent-foundry/domain');
+    expect(classifyJobOutcome(new EmergencyCeilingError('run-1', 'active-time'))).toBe('permanent');
+  });
+
+  it('classifies a generic Error as transient', () => {
+    expect(classifyJobOutcome(new Error('boom'))).toBe('transient');
+  });
+});
+
+describe('WorkerLoop retry classification end-to-end', () => {
+  it('acks (does not nack) when the run fails with RunCancelledError', async () => {
+    const { RunCancelledError } = await import('@agent-foundry/domain');
+    const claimedJob = job();
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(claimedJob) });
+    const orchestrator = {
+      runProject: vi.fn().mockRejectedValue(new RunCancelledError('run-1')),
+    } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+    });
+
+    await worker.runOnce();
+
+    expect(queue.ack).toHaveBeenCalledWith(claimedJob, 'worker-a');
+    expect(queue.nack).not.toHaveBeenCalled();
+  });
+
+  it('nacks with permanent: true when the run fails with EmergencyCeilingError', async () => {
+    const { EmergencyCeilingError } = await import('@agent-foundry/domain');
+    const claimedJob = job();
+    const error = new EmergencyCeilingError('run-1', 'active-time');
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(claimedJob) });
+    const orchestrator = {
+      runProject: vi.fn().mockRejectedValue(error),
+    } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+    });
+
+    await worker.runOnce();
+
+    expect(queue.nack).toHaveBeenCalledWith(claimedJob, 'worker-a', error, { permanent: true });
+    expect(queue.ack).not.toHaveBeenCalled();
+  });
+
+  it('nacks with permanent: false for a generic run failure', async () => {
+    const claimedJob = job();
+    const error = new Error('generic failure');
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(claimedJob) });
+    const orchestrator = {
+      runProject: vi.fn().mockRejectedValue(error),
+    } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+    });
+
+    await worker.runOnce();
+
+    expect(queue.nack).toHaveBeenCalledWith(claimedJob, 'worker-a', error, { permanent: false });
   });
 });

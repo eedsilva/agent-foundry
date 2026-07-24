@@ -50,7 +50,12 @@ import {
   type WorkspaceManager,
 } from '@agent-foundry/domain';
 import { ProjectService } from './project-service.js';
-import { DEFAULT_POLICY, InMemoryPolicies, InMemoryStepEvents } from './testing/harness.js';
+import {
+  DEFAULT_POLICY,
+  InMemoryPolicies,
+  InMemoryStepEvents,
+  NoopTransactionRunner,
+} from './testing/harness.js';
 import { WorkflowOrchestrator } from './workflow-orchestrator.js';
 
 const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
@@ -631,6 +636,7 @@ function makeHarness(
     artifacts,
     events,
     queue,
+    new NoopTransactionRunner(),
     workflows,
     new InMemoryPolicies(DEFAULT_POLICY),
     harness,

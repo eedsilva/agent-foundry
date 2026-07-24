@@ -10,6 +10,7 @@ import {
   readJsonOrNull,
   safeSegment,
 } from './fs-utils.js';
+import { nextBackoffMs } from './queue-backoff.js';
 
 const SYSTEM_CLOCK: Clock = { now: () => new Date() };
 
@@ -106,7 +107,12 @@ export class FileJobQueue implements JobQueue {
     await rm(join(this.dir('pending'), `${safeSegment(job.id)}.json`), { force: true });
   }
 
-  async nack(job: QueueJob, workerId: string, error: Error): Promise<void> {
+  async nack(
+    job: QueueJob,
+    workerId: string,
+    error: Error,
+    options?: { permanent?: boolean },
+  ): Promise<void> {
     const current = await this.readLeasedJob(job.id, workerId);
     this.assertFencingToken(current, job, workerId);
     const from = this.processingPath(job.id, workerId);
@@ -115,13 +121,11 @@ export class FileJobQueue implements JobQueue {
       ...current,
       attempts,
       lastError: error.message,
-      availableAt: new Date(
-        this.clock.now().getTime() + Math.min(30_000, 1_000 * 2 ** attempts),
-      ).toISOString(),
+      availableAt: new Date(this.clock.now().getTime() + nextBackoffMs(attempts)).toISOString(),
       lease: undefined,
     });
 
-    if (attempts >= job.maxAttempts) {
+    if (options?.permanent === true || attempts >= job.maxAttempts) {
       const failed = this.dir('failed');
       await ensureDir(failed);
       await rm(join(this.dir('pending'), `${safeSegment(job.id)}.json`), { force: true });
