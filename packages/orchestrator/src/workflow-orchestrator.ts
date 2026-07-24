@@ -1064,6 +1064,7 @@ export class WorkflowOrchestrator {
         ) ?? null;
     }
 
+    const loopStartedAt = this.clock.now().getTime();
     let latest: StoredArtifact | null = null;
     for (let iteration = 1; ; iteration += 1) {
       await this.assertExecutionMayContinue(runId, signal);
@@ -1080,6 +1081,16 @@ export class WorkflowOrchestrator {
       const approved = this.conditionApproved(latest, node);
       if (qualitySubject) {
         await this.recordQualityOutcome(qualitySubject, approved);
+        await this.appendDecisionLog(
+          project.id,
+          workflow.id,
+          node.id,
+          runId,
+          qualitySubject,
+          approved,
+          iteration,
+          this.clock.now().getTime() - loopStartedAt,
+        );
         if (node.check.type === 'verify') {
           await this.qualityObservations?.recordDeterministic(qualitySubject, latest, approved);
         } else if (isReviewerRole(node.check.role)) {
@@ -2484,6 +2495,46 @@ export class WorkflowOrchestrator {
       taxonomyVersion: route.profile.taxonomyVersion,
       category: route.profile.category,
       approved,
+    });
+  }
+
+  private async appendDecisionLog(
+    projectId: string,
+    workflowId: string,
+    nodeId: string,
+    runId: string,
+    artifact: StoredArtifact,
+    approved: boolean,
+    iteration: number,
+    durationMs: number,
+  ): Promise<void> {
+    if (!this.decisionLog) return;
+    const route = artifact.metadata.routeDecision;
+    if (!route) return;
+    const executed = route.executed ?? route.selected;
+    await this.decisionLog.append({
+      schemaVersion: '1',
+      id: this.ids.next(),
+      routeId: route.routeId,
+      createdAt: this.clock.now().toISOString(),
+      projectId,
+      runId,
+      nodeId,
+      workflowId,
+      harnessVersion: await this.harness.version(),
+      taskKind: route.profile.taskKind,
+      category: route.profile.category,
+      role: route.profile.role,
+      provider: executed.model.provider,
+      modelId: executed.model.id,
+      model: executed.model.model,
+      approved,
+      firstPass: approved && iteration === 1,
+      repairs: iteration - 1,
+      durationMs,
+      ...(executed.confidence
+        ? { confidence: executed.confidence.value, sampleSize: executed.confidence.sampleSize }
+        : {}),
     });
   }
 

@@ -65,6 +65,7 @@ import {
   type ModelRouter,
   type PolicyRepository,
   type ProjectRepository,
+  type RouterDecisionLogRepository,
   type SecretStore,
   type StepAttemptRepository,
   type StepEventRepository,
@@ -1152,6 +1153,7 @@ export function makeHarness(
     verification?: () => VerificationReport | Promise<VerificationReport>;
     browserVerification?: BrowserVerificationCoordinator;
     qualityObservationService?: QualityObservationService;
+    decisionLog?: RouterDecisionLogRepository;
     generatedProjectRuntime?: GeneratedProjectRuntime;
     versions?: ProjectVersionService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
@@ -1333,6 +1335,9 @@ export function makeHarness(
     opts.versions,
     opts.browserVerification,
     opts.qualityObservationService,
+    undefined,
+    undefined,
+    opts.decisionLog,
   );
   const service = new ProjectService(
     stores.projects,
