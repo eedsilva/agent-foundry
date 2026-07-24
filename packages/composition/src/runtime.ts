@@ -14,7 +14,11 @@ import {
   type PreviewInstaller,
 } from '@agent-foundry/executors';
 import { VersionedHarnessRepository } from '@agent-foundry/harness';
-import { DEFAULT_BREAKER_CONFIG, ScoreBasedModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
+import {
+  DEFAULT_BREAKER_CONFIG,
+  ScoreBasedModelRouter,
+  loadModelCatalog,
+} from '@agent-foundry/model-router';
 import {
   FileApprovalDecisionRepository,
   FileApprovalRequestRepository,
