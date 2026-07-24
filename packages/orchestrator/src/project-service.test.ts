@@ -141,6 +141,51 @@ describe('ProjectService.create', () => {
     );
     expect(harness.nacked).toHaveLength(1);
   });
+
+  it('compensates initialized workspace and runtime when project persistence fails', async () => {
+    const transactionError = new Error('project transaction failed');
+    const stores = makeStores();
+    stores.projects.create = () => Promise.reject(transactionError);
+    const cleanupWorkspace = vi.spyOn(stores.workspaces, 'cleanup');
+    const cleanupRuntime = vi.fn(() => Promise.resolve());
+    const unused = () => Promise.reject(new Error('unused test runtime operation'));
+    const harness = makeHarness({}, stores, {
+      generatedProjectRuntime: {
+        initialize: vi.fn(async () => ENVIRONMENT),
+        start: unused,
+        stop: unused,
+        inspect: unused,
+        previewMigration: unused,
+        backupMigration: unused,
+        migrate: unused,
+        seed: unused,
+        health: unused,
+        reset: unused,
+        cleanup: cleanupRuntime,
+        deployFunction: unused,
+        listFunctionVersions: unused,
+        rollbackFunction: unused,
+        invokeFunction: unused,
+      } satisfies GeneratedProjectRuntime,
+    });
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+      }),
+    ).rejects.toBe(transactionError);
+
+    expect(cleanupWorkspace).toHaveBeenCalledWith('id-0001');
+    expect(cleanupRuntime).toHaveBeenCalledWith({
+      projectId: 'id-0001',
+      confirmation: expect.objectContaining({
+        confirmed: true,
+        backupCreatedAt: expect.any(String),
+      }),
+    });
+  });
 });
 
 describe('ProjectService.create scaffold application', () => {

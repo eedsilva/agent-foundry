@@ -734,6 +734,9 @@ export class FakeWorkspaces implements WorkspaceManager {
   ensure(): Promise<void> {
     return Promise.resolve();
   }
+  cleanup(): Promise<void> {
+    return Promise.resolve();
+  }
   lastPrd: string | undefined;
   writePrd(_projectId: string, prd: string): Promise<void> {
     this.lastPrd = prd;

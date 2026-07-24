@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { execa } from 'execa';
 import type { WorkspaceManager } from '@agent-foundry/domain';
@@ -66,6 +66,10 @@ export class FileWorkspaceManager implements WorkspaceManager {
         ].join('\n'),
       );
     }
+  }
+
+  async cleanup(projectId: string): Promise<void> {
+    await rm(this.workspacePath(projectId), { recursive: true, force: true });
   }
 
   async writePrd(projectId: string, prd: string): Promise<void> {
