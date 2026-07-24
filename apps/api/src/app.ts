@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Readable } from 'node:stream';
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, {
+  type FastifyError,
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from 'fastify';
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
 import {
@@ -129,7 +134,9 @@ export async function buildApp(
     registerRequestTracing(app);
   }
 
-  app.setErrorHandler((error, _request, reply) => {
+  // <FastifyError> instead of the default `unknown`, so the fallthrough below
+  // can read the statusCode Fastify's own errors already carry.
+  app.setErrorHandler<FastifyError>((error, _request, reply) => {
     if (error instanceof z.ZodError) {
       return reply.status(400).send({
         error: 'ValidationError',
@@ -172,6 +179,14 @@ export async function buildApp(
         message: error.message,
         decision: error.decision,
       });
+    }
+    // Fastify's own errors (invalid JSON body, body too large, unsupported
+    // media type) already carry the right 4xx on `statusCode`. Honour it, and
+    // log it as a client mistake — not a server fault with a stack trace.
+    const { statusCode } = error;
+    if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+      app.log.warn({ statusCode, err: error.message }, 'Client error');
+      return reply.status(statusCode).send({ error: error.name, message: error.message });
     }
     app.log.error(error);
     const name = error instanceof Error ? error.name : 'InternalServerError';
