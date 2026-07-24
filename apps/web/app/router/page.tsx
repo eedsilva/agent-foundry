@@ -2,7 +2,6 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import type {
-  CreateExperimentRequest,
   ExperimentRecord,
   RouterDashboardResponse,
   RouterDecisionLogEntry,
@@ -16,22 +15,20 @@ import {
 } from '../../lib/api.js';
 import {
   activeRouterQuery,
+  buildExperimentRequest,
+  EMPTY_EXPERIMENT_FORM,
   EMPTY_ROUTER_FILTERS,
   RouterDashboardView,
+  type ExperimentFormState,
   type RouterFilters,
 } from './dashboard-view.js';
-
-const FIXED_VARIANTS: CreateExperimentRequest['variants'] = [
-  { key: 'control', description: 'Controle', target: { kind: 'model', modelId: 'sonnet' } },
-  { key: 'treatment', description: 'Tratamento', target: { kind: 'model', modelId: 'opus' } },
-];
 
 export default function RouterDashboardPage() {
   const [filters, setFilters] = useState<RouterFilters>(EMPTY_ROUTER_FILTERS);
   const [dashboard, setDashboard] = useState<RouterDashboardResponse | null>(null);
   const [decisions, setDecisions] = useState<RouterDecisionLogEntry[]>([]);
   const [experiments, setExperiments] = useState<ExperimentRecord[]>([]);
-  const [hypothesis, setHypothesis] = useState('');
+  const [form, setForm] = useState<ExperimentFormState>(EMPTY_EXPERIMENT_FORM);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -47,15 +44,10 @@ export default function RouterDashboardPage() {
 
   async function handleSubmitExperiment(event: FormEvent) {
     event.preventDefault();
-    if (hypothesis.trim().length === 0) return;
-    const experiment = await createExperiment({
-      hypothesis,
-      variants: FIXED_VARIANTS,
-      population: { taskKinds: ['implementation'], targetSampleSize: 30 },
-      stopRule: { metric: 'first-pass-rate', comparator: 'gte', threshold: 0.8, minSamples: 20 },
-    });
+    if (form.hypothesis.trim().length === 0) return;
+    const experiment = await createExperiment(buildExperimentRequest(form));
     setExperiments((current) => [experiment, ...current]);
-    setHypothesis('');
+    setForm(EMPTY_EXPERIMENT_FORM);
   }
 
   if (error) return <p className="error">{error}</p>;
@@ -69,8 +61,8 @@ export default function RouterDashboardPage() {
       decisions={decisions}
       experiments={experiments}
       exportHref={routerExportUrl(activeRouterQuery(filters))}
-      hypothesis={hypothesis}
-      onHypothesisChange={setHypothesis}
+      form={form}
+      onFormChange={setForm}
       onSubmitExperiment={handleSubmitExperiment}
     />
   );
