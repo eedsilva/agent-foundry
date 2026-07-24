@@ -40,6 +40,8 @@ test.describe('issue radar cross-user access', () => {
     await pageA.getByLabel('Title').fill("A's private issue");
     await pageA.getByRole('button', { name: 'Save' }).click();
     await expect(pageA.getByText("A's private issue")).toBeVisible();
+    await pageA.getByRole('link', { name: /A's private issue/ }).click();
+    await expect(pageA).toHaveURL(/\/issues\//);
     const issueUrl = pageA.url();
 
     const contextB = await browser.newContext();
