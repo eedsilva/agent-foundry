@@ -275,6 +275,30 @@ grant all on table public.statements to authenticated;
     expect(report.schemaVersion).toBe('1');
     expect(() => SecurityReportSchema.parse(report)).not.toThrow();
   });
+
+  it('does not exhibit polynomial backtracking on adversarial near-miss input (CodeQL js/polynomial-redos)', () => {
+    // Each fixture is a prefix that starts matching POLICY_RE/GRANT_TABLE_RE/
+    // REVOKE_TABLE_RE, then never supplies the keyword the regex needs next —
+    // exactly the "many repetitions of whitespace, no match" shape CodeQL's
+    // scanner reported against the pre-fix regexes. A vulnerable regex here
+    // would take seconds-to-minutes on ~50 repeated separators; a safe one
+    // stays linear and finishes in milliseconds regardless of repeat count.
+    const repeat = 50_000;
+    const adversarial = [
+      `create policy a${' '.repeat(repeat)}`,
+      `create policy a on 0 for all to ${'  '.repeat(repeat)}`,
+      `grant ${'\t\t'.repeat(repeat)}`,
+      `revoke ${'\t\t'.repeat(repeat)}`,
+    ];
+
+    const start = performance.now();
+    for (const sql of adversarial) {
+      lintMigrationsSql([{ file: 'adversarial.sql', sql }]);
+    }
+    const elapsedMs = performance.now() - start;
+
+    expect(elapsedMs).toBeLessThan(2_000);
+  });
 });
 
 describe('lintMigrationsDir', () => {

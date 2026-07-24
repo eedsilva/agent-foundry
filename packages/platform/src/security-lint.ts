@@ -29,14 +29,20 @@ const CREATE_TABLE_RE =
   /^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\(/i;
 const ENABLE_RLS_RE =
   /^ALTER\s+TABLE\s+(?:ONLY\s+)?(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY\b/i;
+// Word-list groups below (e.g. `(?:\w+\s*,\s*)*\w+`) intentionally avoid a
+// char class that includes \s directly adjacent to a separate \s+ — that
+// shape (e.g. the former `.+?\s+ON` / `[\w\s,]+?\s+ON`) is ambiguous about
+// which side consumes a run of whitespace, causing polynomial backtracking
+// on non-matching input (CodeQL js/polynomial-redos). \w+ and \s+/`,` never
+// overlap, so there is exactly one way to parse a match — no backtracking.
 const POLICY_RE =
-  /^CREATE\s+POLICY\s+.+?\s+ON\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s+(?:AS\s+(?:PERMISSIVE|RESTRICTIVE)\s+)?FOR\s+(SELECT|INSERT|UPDATE|DELETE|ALL)\s+TO\s+([^\n]+?)(?=\s+USING\s*\(|\s+WITH\s+CHECK\s*\(|$)/is;
+  /^CREATE\s+POLICY\s+"?[\w]+"?\s+ON\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s+(?:AS\s+(?:PERMISSIVE|RESTRICTIVE)\s+)?FOR\s+(SELECT|INSERT|UPDATE|DELETE|ALL)\s+TO\s+((?:"?\w+"?\s*,\s*)*"?\w+"?)/i;
 const USING_TRUE_RE = /\bUSING\s*\(\s*true\s*\)/i;
 const CHECK_TRUE_RE = /\bWITH\s+CHECK\s*\(\s*true\s*\)/i;
 const GRANT_TABLE_RE =
-  /^GRANT\s+([\w\s,]+?)\s+ON\s+TABLE\s+(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s+TO\s+([^\n;]+)/i;
+  /^GRANT\s+((?:\w+\s*,\s*)*\w+)\s+ON\s+TABLE\s+(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s+TO\s+([^\n;]+)/i;
 const REVOKE_TABLE_RE =
-  /^REVOKE\s+([\w\s,]+?)\s+ON\s+TABLE\s+(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s+FROM\s+([^\n;]+)/i;
+  /^REVOKE\s+((?:\w+\s*,\s*)*\w+)\s+ON\s+TABLE\s+(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s+FROM\s+([^\n;]+)/i;
 const SENSITIVE_RE = /\b(?:user_id|owner_id)\b|\breferences\s+(?:public\.)?auth\.users\b/i;
 
 export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): SecurityReport {
