@@ -50,7 +50,6 @@ const HOST_PORT_FIELDS = [
   ['studio', 'port'],
   ['inbucket', 'port'],
   ['edge_runtime', 'inspector_port'],
-  ['analytics', 'port'],
 ] as const;
 
 let dataDir: string;
@@ -224,10 +223,13 @@ describe('SupabaseGeneratedProjectRuntime', () => {
 public = false
 file_size_limit = "10MiB"
 allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
+    expect(firstConfig).toContain(`[analytics]`);
+    expect(firstConfig).toContain(`enabled = false`);
+    expect(() => configPort(firstConfig, 'analytics', 'port')).toThrow('Missing analytics.port');
     expect(firstMigration).toBe(generatedStorageMigration());
     expect(firstMigration).toContain('create policy storage_upload_insert');
     expect(firstMigration).toContain('create policy storage_clean_owner_select');
-    expect(new Set([...firstHostPorts, ...secondHostPorts]).size).toBe(14);
+    expect(new Set([...firstHostPorts, ...secondHostPorts]).size).toBe(12);
     expect(firstHostPorts.every((port) => port > 0 && port <= 65_535)).toBe(true);
     expect(secondHostPorts.every((port) => port > 0 && port <= 65_535)).toBe(true);
     expect(first.ports.api).toBe(firstHostPorts[0]);
