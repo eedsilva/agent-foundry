@@ -74,6 +74,7 @@ import {
   type WorkflowRunRepository,
   type WorkspaceManager,
 } from '@agent-foundry/domain';
+import { NoopTransactionRunner } from '@agent-foundry/persistence';
 import { ProjectService } from '../project-service.js';
 import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
 import type { ProjectVersionService } from '../project-version-service.js';
@@ -1336,6 +1337,7 @@ export function makeHarness(
     stores.artifacts,
     stores.events,
     queue,
+    new NoopTransactionRunner(),
     workflows,
     policies,
     harness,
