@@ -1033,7 +1033,7 @@ function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function destructiveStatements(sql: string): string[] {
+export function destructiveStatements(sql: string): string[] {
   const statements = sqlStatements(sql);
   const destructivePatterns = [
     /^DROP\b/i,
@@ -1046,7 +1046,7 @@ function destructiveStatements(sql: string): string[] {
   );
 }
 
-function sqlStatements(sql: string): string[] {
+export function sqlStatements(sql: string): string[] {
   // ponytail: quote-aware required-pattern scanner; add a SQL parser if syntax coverage expands.
   const statements: string[] = [];
   let statement = '';
