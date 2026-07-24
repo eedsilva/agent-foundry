@@ -23,11 +23,7 @@ import {
   evaluateBreaker,
   type CircuitBreakerConfig,
 } from './circuit-breaker.js';
-import {
-  chooseExploration,
-  effectiveEpsilon,
-  type ExplorationPolicy,
-} from './exploration.js';
+import { chooseExploration, effectiveEpsilon, type ExplorationPolicy } from './exploration.js';
 
 export interface ScoreBasedModelRouterOptions {
   breaker?: Partial<CircuitBreakerConfig>;

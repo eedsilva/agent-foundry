@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { CalibrationReportSchema, ModelMetricSchema, RouteConfidenceSchema, RouteDecisionSchema } from './model.js';
+import {
+  CalibrationReportSchema,
+  ModelMetricSchema,
+  RouteConfidenceSchema,
+  RouteDecisionSchema,
+} from './model.js';
 
 describe('ModelMetricSchema known counts', () => {
   const base = {
