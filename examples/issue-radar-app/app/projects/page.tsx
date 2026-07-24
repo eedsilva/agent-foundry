@@ -14,7 +14,7 @@ export default async function ProjectsPage() {
   if (error) throw new Error(error.message);
 
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-6 p-6">
+    <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Projects</h1>
         <form action={signOut}>
