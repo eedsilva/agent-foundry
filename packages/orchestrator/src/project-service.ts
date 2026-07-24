@@ -175,7 +175,15 @@ export class ProjectService {
     await this.transactionRunner.run(async (tx) => {
       await this.projects.create(project, tx);
       await this.runs.create(run, tx);
-      await this.appendEvent(project.id, 'project.created', 'Project and workspace created.', undefined, {}, undefined, tx);
+      await this.appendEvent(
+        project.id,
+        'project.created',
+        'Project and workspace created.',
+        undefined,
+        {},
+        undefined,
+        tx,
+      );
       if (scaffoldFiles.length > 0) {
         await this.appendEvent(
           project.id,
@@ -188,7 +196,15 @@ export class ProjectService {
         );
       }
       await this.queue.enqueue(job, tx);
-      await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', undefined, {}, undefined, tx);
+      await this.appendEvent(
+        project.id,
+        'project.queued',
+        'Project queued for orchestration.',
+        undefined,
+        {},
+        undefined,
+        tx,
+      );
     });
 
     // Artifacts are written after the transaction commits: `artifacts.project_id`

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import type { Project, QueueJob, WorkflowRun } from '@agent-foundry/contracts';
 import { describePostgres } from './testing.js';
 import { PostgresTransactionRunner } from './transaction-runner.js';
@@ -57,7 +57,10 @@ describePostgres('transactional seam atomicity', (ctx) => {
     const projects = new PostgresProjectRepository(sql);
     const runs = new PostgresWorkflowRunRepository(sql);
     const events = new PostgresEventStore(sql);
-    const queue = new PostgresJobQueue(sql, { leaseMs: 60_000, clock: { now: () => new Date(now) } });
+    const queue = new PostgresJobQueue(sql, {
+      leaseMs: 60_000,
+      clock: { now: () => new Date(now) },
+    });
 
     await expect(
       runner.run(async (tx) => {
@@ -91,7 +94,10 @@ describePostgres('transactional seam atomicity', (ctx) => {
     const projects = new PostgresProjectRepository(sql);
     const runs = new PostgresWorkflowRunRepository(sql);
     const events = new PostgresEventStore(sql);
-    const queue = new PostgresJobQueue(sql, { leaseMs: 60_000, clock: { now: () => new Date(now) } });
+    const queue = new PostgresJobQueue(sql, {
+      leaseMs: 60_000,
+      clock: { now: () => new Date(now) },
+    });
 
     await runner.run(async (tx) => {
       await projects.create(project(), tx);

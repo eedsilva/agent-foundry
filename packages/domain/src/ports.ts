@@ -219,7 +219,12 @@ export interface JobQueue {
   claim(workerId: string): Promise<QueueJob | null>;
   heartbeat(job: QueueJob, workerId: string): Promise<QueueJob>;
   ack(job: QueueJob, workerId: string): Promise<void>;
-  nack(job: QueueJob, workerId: string, error: Error, options?: { permanent?: boolean }): Promise<void>;
+  nack(
+    job: QueueJob,
+    workerId: string,
+    error: Error,
+    options?: { permanent?: boolean },
+  ): Promise<void>;
   reapExpired(): Promise<QueueJob[]>;
 }
 

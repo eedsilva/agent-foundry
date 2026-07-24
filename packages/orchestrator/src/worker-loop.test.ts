@@ -427,9 +427,7 @@ describe('classifyJobOutcome', () => {
 
   it('classifies EmergencyCeilingError as permanent', async () => {
     const { EmergencyCeilingError } = await import('@agent-foundry/domain');
-    expect(classifyJobOutcome(new EmergencyCeilingError('run-1', 'active-time'))).toBe(
-      'permanent',
-    );
+    expect(classifyJobOutcome(new EmergencyCeilingError('run-1', 'active-time'))).toBe('permanent');
   });
 
   it('classifies a generic Error as transient', () => {

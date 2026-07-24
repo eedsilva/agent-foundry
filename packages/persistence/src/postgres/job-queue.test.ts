@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import type { QueueJob } from '@agent-foundry/contracts';
 import { LeaseLostError, type Clock } from '@agent-foundry/domain';
 import { describePostgres } from './testing.js';

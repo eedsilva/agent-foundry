@@ -10,8 +10,8 @@
 
 ## Global Constraints
 
-- Do not touch `FileProjectRepository`, `FileWorkflowRunRepository`, `FileEventStore`, or any `InMemory*` test fake for the new optional `tx?`/`options?` parameters — TypeScript allows an implementation to declare *fewer* parameters than its interface when the extra ones are optional, so these all satisfy the updated ports unmodified. Verify this with `tsc -b` after Task 1, don't assume it.
-- `ArtifactStore.put` is **not** touched and gets **no** `tx` param — artifact writes move to *after* the transaction commits (see Task 7), avoiding the FK-visibility problem entirely instead of threading a transaction through artifact storage.
+- Do not touch `FileProjectRepository`, `FileWorkflowRunRepository`, `FileEventStore`, or any `InMemory*` test fake for the new optional `tx?`/`options?` parameters — TypeScript allows an implementation to declare _fewer_ parameters than its interface when the extra ones are optional, so these all satisfy the updated ports unmodified. Verify this with `tsc -b` after Task 1, don't assume it.
+- `ArtifactStore.put` is **not** touched and gets **no** `tx` param — artifact writes move to _after_ the transaction commits (see Task 7), avoiding the FK-visibility problem entirely instead of threading a transaction through artifact storage.
 - Every Postgres-touching test uses `describePostgres` from `packages/persistence/src/postgres/testing.ts` (Docker-gated; CI refuses to skip — `testing.ts:16`).
 - Run `tsc -b` after every task that touches a `.ts` file (not just at the end) — this repo has bitten itself on `exactOptionalPropertyTypes` before.
 - One PR for issue #55. Do not push to `main`. Work stays on `feat/issue-55-durable-queue`.
@@ -20,33 +20,35 @@
 
 ## File Structure
 
-| File | Responsibility |
-|---|---|
-| `packages/domain/src/ports.ts` (modify) | Add `Tx`, `TransactionRunner`; widen `JobQueue.enqueue`/`nack`, `ProjectRepository.create/update`, `WorkflowRunRepository.create`, `EventStore.append` signatures with optional trailing params. |
-| `packages/persistence/src/transaction-runner.ts` (new) | `NoopTransactionRunner` — file-mode `TransactionRunner`. |
-| `packages/persistence/src/job-queue.ts` (modify) | `FileJobQueue.nack` gains `options?: { permanent?: boolean }`. |
-| `packages/persistence/src/postgres/migrations.ts` (modify) | Migration v2: `jobs` table. |
-| `packages/persistence/src/postgres/job-queue.ts` (new) | `PostgresJobQueue implements JobQueue`. |
-| `packages/persistence/src/postgres/transaction-runner.ts` (new) | `PostgresTransactionRunner` — `sql.begin` wrapper. |
-| `packages/persistence/src/postgres/project-repository.ts` (modify) | `create`/`update` accept optional `tx`. |
-| `packages/persistence/src/postgres/run-repositories.ts` (modify) | `PostgresWorkflowRunRepository.create` accepts optional `tx`. |
-| `packages/persistence/src/postgres/event-store.ts` (modify) | `append` accepts optional `tx`. |
-| `packages/orchestrator/src/worker-loop.ts` (modify) | `classifyJobOutcome` + rewired catch block. |
-| `packages/orchestrator/src/project-service.ts` (modify) | Inject `TransactionRunner`; wrap `create()`, manual re-run, `requeueProject()`. |
-| `packages/orchestrator/src/testing/harness.ts` (modify) | Pass a `NoopTransactionRunner` into the test `ProjectService`. |
-| `packages/composition/src/runtime.ts` (modify) | Branch queue on `persistenceMode`; return `sql`/`transactionRunner` from `createMetadataStores`; loosen `Runtime.queue` type. |
-| `docs/adr/0035-durable-queue-transactional-seam.md` (new) | Decision record. |
+| File                                                               | Responsibility                                                                                                                                                                                   |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/domain/src/ports.ts` (modify)                            | Add `Tx`, `TransactionRunner`; widen `JobQueue.enqueue`/`nack`, `ProjectRepository.create/update`, `WorkflowRunRepository.create`, `EventStore.append` signatures with optional trailing params. |
+| `packages/persistence/src/transaction-runner.ts` (new)             | `NoopTransactionRunner` — file-mode `TransactionRunner`.                                                                                                                                         |
+| `packages/persistence/src/job-queue.ts` (modify)                   | `FileJobQueue.nack` gains `options?: { permanent?: boolean }`.                                                                                                                                   |
+| `packages/persistence/src/postgres/migrations.ts` (modify)         | Migration v2: `jobs` table.                                                                                                                                                                      |
+| `packages/persistence/src/postgres/job-queue.ts` (new)             | `PostgresJobQueue implements JobQueue`.                                                                                                                                                          |
+| `packages/persistence/src/postgres/transaction-runner.ts` (new)    | `PostgresTransactionRunner` — `sql.begin` wrapper.                                                                                                                                               |
+| `packages/persistence/src/postgres/project-repository.ts` (modify) | `create`/`update` accept optional `tx`.                                                                                                                                                          |
+| `packages/persistence/src/postgres/run-repositories.ts` (modify)   | `PostgresWorkflowRunRepository.create` accepts optional `tx`.                                                                                                                                    |
+| `packages/persistence/src/postgres/event-store.ts` (modify)        | `append` accepts optional `tx`.                                                                                                                                                                  |
+| `packages/orchestrator/src/worker-loop.ts` (modify)                | `classifyJobOutcome` + rewired catch block.                                                                                                                                                      |
+| `packages/orchestrator/src/project-service.ts` (modify)            | Inject `TransactionRunner`; wrap `create()`, manual re-run, `requeueProject()`.                                                                                                                  |
+| `packages/orchestrator/src/testing/harness.ts` (modify)            | Pass a `NoopTransactionRunner` into the test `ProjectService`.                                                                                                                                   |
+| `packages/composition/src/runtime.ts` (modify)                     | Branch queue on `persistenceMode`; return `sql`/`transactionRunner` from `createMetadataStores`; loosen `Runtime.queue` type.                                                                    |
+| `docs/adr/0035-durable-queue-transactional-seam.md` (new)          | Decision record.                                                                                                                                                                                 |
 
 ---
 
 ## Task 1: Domain ports — `Tx`/`TransactionRunner`, widened signatures, `NoopTransactionRunner`
 
 **Files:**
+
 - Modify: `packages/domain/src/ports.ts:63-70` (ProjectRepository), `:123-128` (WorkflowRunRepository), `:202-205` (EventStore), `:217-224` (JobQueue)
 - Create: `packages/persistence/src/transaction-runner.ts`
 - Test: `packages/persistence/src/transaction-runner.test.ts`
 
 **Interfaces:**
+
 - Produces: `Tx` (opaque brand), `TransactionRunner.run<T>(fn: (tx: Tx) => Promise<T>): Promise<T>`, `NoopTransactionRunner` — all consumed by Tasks 4, 5, 7, 8.
 
 - [ ] **Step 1: Write the failing test for `NoopTransactionRunner`**
@@ -107,6 +109,7 @@ export interface TransactionRunner {
 Then widen these four existing signatures (add the trailing optional param only — nothing else changes):
 
 `ProjectRepository` (lines 63-70):
+
 ```typescript
 export interface ProjectRepository {
   create(project: Project, tx?: Tx): Promise<void>;
@@ -119,6 +122,7 @@ export interface ProjectRepository {
 ```
 
 `WorkflowRunRepository` (lines 123-128):
+
 ```typescript
 export interface WorkflowRunRepository {
   create(run: WorkflowRun, tx?: Tx): Promise<void>;
@@ -129,6 +133,7 @@ export interface WorkflowRunRepository {
 ```
 
 `EventStore` (lines 202-205):
+
 ```typescript
 export interface EventStore {
   append(event: ProjectEvent, tx?: Tx): Promise<void>;
@@ -137,13 +142,19 @@ export interface EventStore {
 ```
 
 `JobQueue` (lines 217-224):
+
 ```typescript
 export interface JobQueue {
   enqueue(job: QueueJob, tx?: Tx): Promise<void>;
   claim(workerId: string): Promise<QueueJob | null>;
   heartbeat(job: QueueJob, workerId: string): Promise<QueueJob>;
   ack(job: QueueJob, workerId: string): Promise<void>;
-  nack(job: QueueJob, workerId: string, error: Error, options?: { permanent?: boolean }): Promise<void>;
+  nack(
+    job: QueueJob,
+    workerId: string,
+    error: Error,
+    options?: { permanent?: boolean },
+  ): Promise<void>;
   reapExpired(): Promise<QueueJob[]>;
 }
 ```
@@ -193,10 +204,12 @@ git commit -m "feat(domain): add TransactionRunner port and widen write-method s
 ## Task 2: `FileJobQueue.nack` gains `permanent` dead-letter option
 
 **Files:**
+
 - Modify: `packages/persistence/src/job-queue.ts:109-136`
 - Test: `packages/persistence/src/job-queue.test.ts` (extend)
 
 **Interfaces:**
+
 - Consumes: `JobQueue.nack(job, workerId, error, options?: { permanent?: boolean })` from Task 1.
 - Produces: `FileJobQueue.nack` now dead-letters immediately when `options?.permanent === true`, regardless of `attempts`. Consumed by Task 6 (worker-loop) in file mode.
 
@@ -293,10 +306,12 @@ git commit -m "feat(queue): let FileJobQueue.nack dead-letter immediately via pe
 ## Task 3: Migration v2 — durable `jobs` table
 
 **Files:**
+
 - Modify: `packages/persistence/src/postgres/migrations.ts`
 - Test: `packages/persistence/src/postgres/migrator.test.ts` (no new test needed — its existing `'applies all migrations up, is idempotent, and reverts down'` and `'has strictly increasing versions...'` tests already iterate `MIGRATIONS` generically and will cover version 2 automatically)
 
 **Interfaces:**
+
 - Produces: a `jobs` table (columns listed below) that Task 4's `PostgresJobQueue` reads/writes directly — no ORM, no `data` blob (deliberate deviation from the house pattern; every other table stores `data jsonb` + projected columns, but `jobs` mutates field-by-field on every claim/heartbeat/nack/reap, so a synced blob would just drift — documented in the ADR, Task 9).
 
 - [ ] **Step 1: Run the existing generic migration test to confirm current baseline**
@@ -364,10 +379,12 @@ git commit -m "feat(persistence): add durable-queue migration (jobs table)"
 ## Task 4: `PostgresJobQueue implements JobQueue`
 
 **Files:**
+
 - Create: `packages/persistence/src/postgres/job-queue.ts`
 - Test: `packages/persistence/src/postgres/job-queue.test.ts` (new)
 
 **Interfaces:**
+
 - Consumes: `jobs` table from Task 3; `JobQueue`, `Tx`, `Clock`, `LeaseLostError` from `@agent-foundry/domain`; `QueueJobSchema`/`QueueJob` from `@agent-foundry/contracts`; `PostgresDb` from `./client.js`.
 - Produces: `PostgresJobQueue` class, consumed by Task 8 (`runtime.ts` wiring) and Task 5 (its `enqueue` is the one call in the transactional seam).
 
@@ -745,11 +762,13 @@ git commit -m "feat(persistence): add PostgresJobQueue with lease/fencing/backof
 ## Task 5: `PostgresTransactionRunner` + thread `tx` through Postgres repos + atomicity test
 
 **Files:**
+
 - Create: `packages/persistence/src/postgres/transaction-runner.ts`
 - Modify: `packages/persistence/src/postgres/project-repository.ts`, `packages/persistence/src/postgres/run-repositories.ts` (only `PostgresWorkflowRunRepository`), `packages/persistence/src/postgres/event-store.ts`
 - Test: `packages/persistence/src/postgres/transactional-atomicity.test.ts` (new)
 
 **Interfaces:**
+
 - Consumes: `Tx`/`TransactionRunner` (Task 1), `PostgresJobQueue.enqueue(job, tx?)` (Task 4), `insertVersioned`/`updateVersioned` (already accept a `sql: PostgresDb` first arg — a transaction handle from `sql.begin` is itself assignable to `PostgresDb`, so no changes needed there).
 - Produces: `PostgresTransactionRunner`, consumed by Task 8 (`runtime.ts`) and used implicitly by Task 7 (`project-service.ts`).
 
@@ -817,7 +836,10 @@ describePostgres('transactional seam atomicity', (ctx) => {
     const projects = new PostgresProjectRepository(sql);
     const runs = new PostgresWorkflowRunRepository(sql);
     const events = new PostgresEventStore(sql);
-    const queue = new PostgresJobQueue(sql, { leaseMs: 60_000, clock: { now: () => new Date(now) } });
+    const queue = new PostgresJobQueue(sql, {
+      leaseMs: 60_000,
+      clock: { now: () => new Date(now) },
+    });
 
     await expect(
       runner.run(async (tx) => {
@@ -851,7 +873,10 @@ describePostgres('transactional seam atomicity', (ctx) => {
     const projects = new PostgresProjectRepository(sql);
     const runs = new PostgresWorkflowRunRepository(sql);
     const events = new PostgresEventStore(sql);
-    const queue = new PostgresJobQueue(sql, { leaseMs: 60_000, clock: { now: () => new Date(now) } });
+    const queue = new PostgresJobQueue(sql, {
+      leaseMs: 60_000,
+      clock: { now: () => new Date(now) },
+    });
 
     await runner.run(async (tx) => {
       await projects.create(project(), tx);
@@ -1034,10 +1059,12 @@ git commit -m "feat(persistence): thread transaction through project/run/event/q
 ## Task 6: Retry classification in the worker (transient / permanent / cancelled)
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/worker-loop.ts:1-9` (imports), `:89-99` (catch block)
 - Test: `packages/orchestrator/src/worker-loop.test.ts` (extend + fix one existing assertion)
 
 **Interfaces:**
+
 - Consumes: `RunCancelledError` (`packages/domain/src/errors.ts:171`), `EmergencyCeilingError` (`packages/domain/src/errors.ts:93`), `JobQueue.nack(..., options?)` (Task 1/2/4).
 - Produces: `classifyJobOutcome(error: unknown): 'cancelled' | 'permanent' | 'transient'` — exported for direct unit testing.
 
@@ -1128,12 +1155,12 @@ describe('WorkerLoop retry classification end-to-end', () => {
 Also **fix the existing test** at line ~247-277 (`'nacks with the run error and the latest heartbeat-renewed job when the run fails'`) — its `expect(queue.nack).toHaveBeenCalledWith(...)` currently has 3 arguments; add the 4th:
 
 ```typescript
-    expect(queue.nack).toHaveBeenCalledWith(
-      renewedJob,
-      'worker-a',
-      expect.objectContaining({ message: 'boom' }),
-      { permanent: false },
-    );
+expect(queue.nack).toHaveBeenCalledWith(
+  renewedJob,
+  'worker-a',
+  expect.objectContaining({ message: 'boom' }),
+  { permanent: false },
+);
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1219,11 +1246,13 @@ git commit -m "feat(orchestrator): classify job outcomes as cancelled/permanent/
 ## Task 7: `ProjectService` — transactional `create()`, manual re-run, and `requeueProject()`
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/project-service.ts` (constructor at line 69, `create()` at lines 122-200, manual re-run at lines ~277-325, `requeueProject()` at lines 973-999, `appendEvent` helper at lines 1059-~1075)
 - Modify: `packages/orchestrator/src/testing/harness.ts` (the one `new ProjectService(...)` call site, ~line 1329)
 - Test: `packages/orchestrator/src/project-service.test.ts` (run existing suite; fix any test asserting exact mock-call ordering between artifacts and events — see Step 5)
 
 **Interfaces:**
+
 - Consumes: `TransactionRunner` (Task 1), widened `ProjectRepository`/`WorkflowRunRepository`/`EventStore`/`JobQueue` signatures (Task 1).
 - Produces: `ProjectService` constructor gains one new required parameter, `transactionRunner: TransactionRunner`, inserted immediately after `queue`.
 
@@ -1501,34 +1530,34 @@ Replace the full `retry` method (lines 279-325) with:
 In `packages/orchestrator/src/testing/harness.ts`, add `NoopTransactionRunner` to the imports (near the top, alongside other `@agent-foundry/persistence` imports — check the existing import block for the right specifier), and insert it into the `new ProjectService(...)` call (~line 1329) at the same constructor position as Step 1:
 
 ```typescript
-  const service = new ProjectService(
-    stores.projects,
-    stores.runs,
-    stores.stepRuns,
-    stores.stepAttempts,
-    stores.approvalRequests,
-    stores.approvalDecisions,
-    stores.artifacts,
-    stores.events,
-    queue,
-    new NoopTransactionRunner(),
-    workflows,
-    policies,
-    harness,
-    router,
-    stores.workspaces,
-    stores.clock,
-    ids,
-    stores.modelOverrides,
-    undefined,
-    opts.generatedProjectRuntime,
-  );
+const service = new ProjectService(
+  stores.projects,
+  stores.runs,
+  stores.stepRuns,
+  stores.stepAttempts,
+  stores.approvalRequests,
+  stores.approvalDecisions,
+  stores.artifacts,
+  stores.events,
+  queue,
+  new NoopTransactionRunner(),
+  workflows,
+  policies,
+  harness,
+  router,
+  stores.workspaces,
+  stores.clock,
+  ids,
+  stores.modelOverrides,
+  undefined,
+  opts.generatedProjectRuntime,
+);
 ```
 
 - [ ] **Step 7: Run the existing project-service test suite**
 
 Run: `npx vitest run packages/orchestrator/src/project-service.test.ts`
-Expected: mostly PASS. If any test asserts the *order* of mock calls between `artifacts.put` and `events.append`/`queue.enqueue` (not just that each was called), it will fail because artifacts now happen last. Fix those specific assertions to match the new order (state → event → enqueue → artifacts) — do not weaken assertions that check *values*, only ones that check *call order* between artifacts and the rest.
+Expected: mostly PASS. If any test asserts the _order_ of mock calls between `artifacts.put` and `events.append`/`queue.enqueue` (not just that each was called), it will fail because artifacts now happen last. Fix those specific assertions to match the new order (state → event → enqueue → artifacts) — do not weaken assertions that check _values_, only ones that check _call order_ between artifacts and the rest.
 
 - [ ] **Step 8: Run the full orchestrator suite**
 
@@ -1552,10 +1581,12 @@ git commit -m "feat(orchestrator): make project create/re-run/requeue enqueue at
 ## Task 8: Composition wiring — branch the queue on `persistenceMode`
 
 **Files:**
+
 - Modify: `packages/composition/src/runtime.ts` (lines 107, 190, 317-337, 436-484)
 - Test: existing `packages/composition/src/runtime.postgres.test.ts` (run to confirm no regression; add one assertion)
 
 **Interfaces:**
+
 - Consumes: `PostgresJobQueue` (Task 4), `PostgresTransactionRunner`/`NoopTransactionRunner` (Tasks 1, 5).
 - Produces: `Runtime.queue: JobQueue` (was `FileJobQueue`); `Runtime` now follows `PERSISTENCE_MODE` for the queue too.
 
@@ -1607,7 +1638,7 @@ Add `PostgresDb`, `PostgresJobQueue`, `PostgresTransactionRunner`, and `NoopTran
 Then change line 107:
 
 ```typescript
-  queue: JobQueue;
+queue: JobQueue;
 ```
 
 Change `createMetadataStores`'s return type (lines 439-450) and its two branches (451-484) to also return `sql` and `transactionRunner`:
@@ -1682,25 +1713,25 @@ Update the doc comment directly above the function (currently lines 433-435):
 Change the destructuring at line 177-188 to also pull `sql` and `transactionRunner`, and change line 190:
 
 ```typescript
-  const {
-    projects,
-    runs,
-    stepRuns,
-    stepAttempts,
-    approvalRequests,
-    approvalDecisions,
-    artifacts,
-    conversations,
-    events,
-    stepEvents,
-    sql,
-    transactionRunner,
-  } = await createMetadataStores(config, blobStore);
-  const knowledgeFiles = new FileKnowledgeFileRepository(config.dataDir);
-  const queue: JobQueue =
-    config.persistenceMode === 'postgres'
-      ? new PostgresJobQueue(sql!, { leaseMs: config.queueLeaseMs, clock })
-      : new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
+const {
+  projects,
+  runs,
+  stepRuns,
+  stepAttempts,
+  approvalRequests,
+  approvalDecisions,
+  artifacts,
+  conversations,
+  events,
+  stepEvents,
+  sql,
+  transactionRunner,
+} = await createMetadataStores(config, blobStore);
+const knowledgeFiles = new FileKnowledgeFileRepository(config.dataDir);
+const queue: JobQueue =
+  config.persistenceMode === 'postgres'
+    ? new PostgresJobQueue(sql!, { leaseMs: config.queueLeaseMs, clock })
+    : new FileJobQueue(config.dataDir, { leaseMs: config.queueLeaseMs, clock });
 ```
 
 - [ ] **Step 3: Pass `transactionRunner` into `ProjectService`**
@@ -1708,28 +1739,28 @@ Change the destructuring at line 177-188 to also pull `sql` and `transactionRunn
 At the `new ProjectService(...)` call (lines 317-337), insert `transactionRunner` right after `queue`:
 
 ```typescript
-  const projectService = new ProjectService(
-    projects,
-    runs,
-    stepRuns,
-    stepAttempts,
-    approvalRequests,
-    approvalDecisions,
-    artifacts,
-    events,
-    queue,
-    transactionRunner,
-    workflows,
-    policies,
-    harness,
-    router,
-    workspaces,
-    clock,
-    ids,
-    modelOverrides,
-    qualityObservationService,
-    generatedProjectRuntime,
-  );
+const projectService = new ProjectService(
+  projects,
+  runs,
+  stepRuns,
+  stepAttempts,
+  approvalRequests,
+  approvalDecisions,
+  artifacts,
+  events,
+  queue,
+  transactionRunner,
+  workflows,
+  policies,
+  harness,
+  router,
+  workspaces,
+  clock,
+  ids,
+  modelOverrides,
+  qualityObservationService,
+  generatedProjectRuntime,
+);
 ```
 
 - [ ] **Step 4: Run the composition test suite**
@@ -1742,8 +1773,8 @@ Expected: PASS. `runtime.postgres.test.ts` builds a real Postgres runtime (Docke
 Read `packages/composition/src/runtime.postgres.test.ts` first to find an existing `createRuntime` call under postgres mode, then add near it:
 
 ```typescript
-    const { PostgresJobQueue } = await import('@agent-foundry/persistence');
-    expect(runtime.queue).toBeInstanceOf(PostgresJobQueue);
+const { PostgresJobQueue } = await import('@agent-foundry/persistence');
+expect(runtime.queue).toBeInstanceOf(PostgresJobQueue);
 ```
 
 - [ ] **Step 6: Run the full test suite**
@@ -1768,14 +1799,17 @@ git commit -m "feat(composition): wire PostgresJobQueue and the transaction seam
 ## Task 9: ADR + Definition of Done evidence
 
 **Files:**
+
 - Create: `docs/adr/0035-durable-queue-transactional-seam.md`
 
 **Interfaces:**
+
 - None (documentation only).
 
 - [ ] **Step 1: Write the ADR**
 
 Read one existing ADR first (e.g. `docs/adr/0034-generated-app-supabase-credential-bridge.md`) to match the house format/frontmatter, then write `docs/adr/0035-durable-queue-transactional-seam.md` covering:
+
 1. **Decision:** transactional seam (single `sql.begin` around state + event + enqueue) instead of a transactional outbox table + relay poller, because `project_events` is already the only transport (SSE polls it directly — no external bus to decouple from).
 2. **`jobs` table is columns-canonical**, not `data jsonb` + projected columns like every other table — queue rows mutate field-by-field on every claim/heartbeat/nack/reap, so a synced blob would drift.
 3. **`Tx` is an opaque brand, threaded not held** — postgres.js `.begin()` only exists on the top-level pooled client (not on `sql.reserve()`), so `PostgresTransactionRunner` is always built from the same client the repos use; a `tx` handle must be passed into every write call, never cached.
@@ -1804,6 +1838,7 @@ Expected: all green
 - [ ] **Step 2: End-to-end against real Postgres**
 
 Start a local Postgres (`docker-compose up -d postgres` or equivalent — check `docker-compose.yml`), set `PERSISTENCE_MODE=postgres` and `DATABASE_URL`, run `npm run db:migrate`, start `apps/worker` and `apps/api`, create a project via the API, and confirm:
+
 - a row appears in `jobs` (not on disk)
 - the worker claims it (lease/fencing columns populate)
 - killing the worker mid-run and waiting past `QUEUE_LEASE_MS` causes the reaper to return the job to `pending`
