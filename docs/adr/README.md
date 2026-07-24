@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0033 App secret capabilities via a per-project `.env` file](0033-app-secret-capabilities.md).
+Latest: [0034 Derived circuit breaker and opt-in epsilon-greedy exploration in the model router](0034-router-circuit-breaker-and-exploration.md).
