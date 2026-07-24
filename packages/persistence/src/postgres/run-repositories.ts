@@ -11,7 +11,7 @@ import type {
   StepRunRepository,
   WorkflowRunRepository,
 } from '@agent-foundry/domain';
-import { VersionConflictError } from '@agent-foundry/domain';
+import { VersionConflictError, type Tx } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
 import { insertVersioned, updateVersioned } from './versioned.js';
 
@@ -27,9 +27,9 @@ function runColumns(run: WorkflowRun): Record<string, unknown> {
 export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
   constructor(private readonly sql: PostgresDb) {}
 
-  async create(run: WorkflowRun): Promise<void> {
+  async create(run: WorkflowRun, tx?: Tx): Promise<void> {
     const parsed = WorkflowRunSchema.parse(run);
-    await insertVersioned(this.sql, {
+    await insertVersioned((tx as unknown as PostgresDb | undefined) ?? this.sql, {
       table: 'workflow_runs',
       entity: 'workflow-run',
       id: parsed.id,
