@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   WorkflowDefinitionSchema,
   type QualityObservation,
+  type RouterDecisionLogEntry,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
-import type { IdGenerator, QualityObservationRepository } from '@agent-foundry/domain';
+import type {
+  IdGenerator,
+  QualityObservationRepository,
+  RouterDecisionLogRepository,
+} from '@agent-foundry/domain';
 import { completeRun, makeHarness } from './testing/harness.js';
 import { QualityObservationService } from './quality-observation-service.js';
 
@@ -110,6 +115,16 @@ class MemoryQualityObservations implements QualityObservationRepository {
   }
 }
 
+class MemoryRouterDecisionLog implements RouterDecisionLogRepository {
+  readonly values: RouterDecisionLogEntry[] = [];
+  async append(entry: RouterDecisionLogEntry): Promise<void> {
+    this.values.push(entry);
+  }
+  async list(): Promise<RouterDecisionLogEntry[]> {
+    return this.values;
+  }
+}
+
 describe('WorkflowOrchestrator quality observations', () => {
   it('records an approved blind review for the setup output', async () => {
     const observations = new MemoryQualityObservations();
@@ -159,6 +174,25 @@ describe('WorkflowOrchestrator quality observations', () => {
         blind: true,
         score: 1,
         subject: { artifact: { name: 'implementation', revision: 1 } },
+      },
+    ]);
+  });
+
+  it('appends a router decision log entry for the approved iteration', async () => {
+    const decisionLog = new MemoryRouterDecisionLog();
+    const harness = makeHarness({}, undefined, { workflow, decisionLog });
+
+    await completeRun(harness);
+
+    expect(decisionLog.values).toMatchObject([
+      {
+        approved: true,
+        firstPass: true,
+        repairs: 0,
+        workflowId: workflow.id,
+        harnessVersion: harness.harnessVersion.value,
+        taskKind: 'implementation',
+        modelId: expect.any(String),
       },
     ]);
   });

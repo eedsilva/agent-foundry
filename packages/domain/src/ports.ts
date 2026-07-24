@@ -19,6 +19,7 @@ import type {
   ExecutionState,
   ExecutorHealth,
   ExecutorStreamEvent,
+  ExperimentRecord,
   ModelDefinition,
   ModelMetric,
   ModelOverrideRecord,
@@ -39,6 +40,7 @@ import type {
   QueueJob,
   RouteDecision,
   RouteOverrideProvenance,
+  RouterDecisionLogEntry,
   StoredArtifact,
   StepAttempt,
   StepRun,
@@ -145,6 +147,26 @@ export interface StepAttemptRepository {
 export interface ModelOverrideRepository {
   create(override: Omit<ModelOverrideRecord, 'sequence'>): Promise<ModelOverrideRecord>;
   list(runId: string): Promise<ModelOverrideRecord[]>;
+}
+
+/** Create-only, per-run production decision log — one row per quality-loop iteration. */
+export interface RouterDecisionLogRepository {
+  append(entry: RouterDecisionLogEntry): Promise<void>;
+  list(filter?: {
+    workflowId?: string | undefined;
+    provider?: string | undefined;
+    modelId?: string | undefined;
+    taskKind?: string | undefined;
+    harnessVersion?: string | undefined;
+  }): Promise<RouterDecisionLogEntry[]>;
+}
+
+/** Mutable CRUD store — records a hypothesis/variants/population/stop-rule; does not execute traffic-splitting. */
+export interface ExperimentRepository {
+  create(record: ExperimentRecord): Promise<ExperimentRecord>;
+  update(record: ExperimentRecord): Promise<ExperimentRecord>;
+  get(id: string): Promise<ExperimentRecord | null>;
+  list(): Promise<ExperimentRecord[]>;
 }
 
 /** Create-only: neither ApprovalRequest nor ApprovalDecision is ever updated. */

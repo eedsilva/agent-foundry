@@ -21,11 +21,13 @@ import {
   FileArtifactStore,
   FileConversationRepository,
   FileEventStore,
+  FileExperimentRepository,
   FileJobQueue,
   FileKnowledgeFileRepository,
   FileMetricsRepository,
   FileModelOverrideRepository,
   FileQualityObservationRepository,
+  FileRouterDecisionLogRepository,
   FileProjectRepository,
   FilePreviewLifecycleLock,
   FilePreviewLogRepository,
@@ -114,6 +116,8 @@ export interface Runtime {
   metrics: FileMetricsRepository;
   qualityObservations: FileQualityObservationRepository;
   modelOverrides: FileModelOverrideRepository;
+  decisionLog: FileRouterDecisionLogRepository;
+  experiments: FileExperimentRepository;
   workflows: YamlWorkflowRepository;
   policies: YamlPolicyRepository;
   harness: VersionedHarnessRepository;
@@ -203,6 +207,8 @@ export async function createRuntime(
   const qualityObservations = new FileQualityObservationRepository(config.dataDir);
   const qualityObservationService = new QualityObservationService(qualityObservations, clock, ids);
   const modelOverrides = new FileModelOverrideRepository(config.dataDir);
+  const decisionLog = new FileRouterDecisionLogRepository(config.dataDir);
+  const experiments = new FileExperimentRepository(config.dataDir);
   const workflows = new YamlWorkflowRepository(config.workflowsDir);
   const policies = new YamlPolicyRepository(config.policiesDir);
   const harness = new VersionedHarnessRepository(config.harnessDir);
@@ -326,6 +332,7 @@ export async function createRuntime(
     qualityObservationService,
     executors,
     secretStore,
+    decisionLog,
   );
   const projectService = new ProjectService(
     projects,
@@ -414,6 +421,8 @@ export async function createRuntime(
     metrics,
     qualityObservations,
     modelOverrides,
+    decisionLog,
+    experiments,
     workflows,
     policies,
     harness,

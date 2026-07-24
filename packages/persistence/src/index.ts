@@ -13,6 +13,8 @@ export * from './quality-observation-repository.js';
 export * from './run-repositories.js';
 export * from './approval-repositories.js';
 export * from './model-override-repository.js';
+export * from './router-decision-log-repository.js';
+export * from './experiment-repository.js';
 export * from './preview-repositories.js';
 export * from './conversation-repository.js';
 export * from './knowledge-file-repository.js';

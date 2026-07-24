@@ -1,14 +1,25 @@
 import cors from '@fastify/cors';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
-import { blobKeyFor, listRisks, getRiskById, verifyBlobToken } from '@agent-foundry/composition';
+import {
+  BASELINE_STEM,
+  blobKeyFor,
+  compareBenchmarkReports,
+  listRisks,
+  getRiskById,
+  verifyBlobToken,
+} from '@agent-foundry/composition';
 import { currentTraceIds } from '@agent-foundry/domain';
 import {
+  BenchmarkReportSchema,
   BranchVersionRequestSchema,
   ClassifyMessageResponseSchema,
+  CreateExperimentRequestSchema,
   CreateQualityObservationRequestSchema,
   CreateProjectRequestSchema,
   CreateModelOverrideRequestSchema,
@@ -20,14 +31,19 @@ import {
   DecideChangeRequestRequestSchema,
   DecideChangeRequestResponseSchema,
   DecideOperationRequestSchema,
+  DecisionExportRowSchema,
   DiscardDraftRequestSchema,
   PathSegmentSchema,
   PreviewSelectionRequestSchema,
   PreviewSelectionResultSchema,
+  RegressionGateRequestSchema,
   RetryProjectRequestSchema,
   RetryStepRequestSchema,
+  RouterDashboardQuerySchema,
+  RouterDashboardResponseSchema,
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
+  UpdateExperimentRequestSchema,
   UpdateOperationProposalRequestSchema,
   VisualEditSchema,
   UpdateKnowledgeFileRequestSchema,
@@ -77,6 +93,13 @@ const NonNegativeCursorSchema = CanonicalDecimalSchema.pipe(z.number().int().non
 const BLOB_URL_TTL_SECONDS = 300;
 const MAX_KNOWLEDGE_FILE_BYTES = 4 * 1024 * 1024;
 const KNOWLEDGE_FILE_BODY_LIMIT = Math.ceil(((MAX_KNOWLEDGE_FILE_BYTES + 1) * 4) / 3) + 4_096;
+const REPO_ROOT = resolve(import.meta.dirname, '../../..');
+
+function percentile(sortedValues: number[], fraction: number): number | null {
+  if (sortedValues.length === 0) return null;
+  const index = Math.min(sortedValues.length - 1, Math.floor(fraction * sortedValues.length));
+  return sortedValues[index] ?? null;
+}
 
 export async function buildApp(
   runtime: Runtime,
@@ -167,6 +190,138 @@ export async function buildApp(
     models: await runtime.router.catalog(),
     executors: await runtime.executors.health(),
   }));
+
+  app.get('/router/dashboard', async (request) => {
+    const query = RouterDashboardQuerySchema.parse(request.query);
+    const filtered = await runtime.decisionLog.list(query);
+    const all = await runtime.decisionLog.list();
+    const metrics = await runtime.metrics.list();
+    // ponytail: cost/quota only filter by modelId+taskKind — ModelMetric doesn't
+    // carry provider/workflowId/harnessVersion — and are lifetime totals, not
+    // scoped to the current filter's time window. Add filtering here once
+    // ModelMetric gains those dimensions.
+    const matchingMetrics = metrics.filter(
+      (metric) =>
+        (!query.modelId || metric.modelId === query.modelId) &&
+        (!query.taskKind || metric.taskKind === query.taskKind),
+    );
+    // firstPassRate/avgRepairs/timeToApproved describe completed-task outcomes,
+    // not raw per-iteration rows — an unapproved mid-repair row isn't "time to
+    // approval" yet and would over-weight tasks that needed more repairs.
+    const approvedEntries = filtered.filter((entry) => entry.approved);
+    const durations = approvedEntries
+      .map((entry) => entry.durationMs)
+      .sort((left, right) => left - right);
+    const firstPassCount = approvedEntries.filter((entry) => entry.firstPass).length;
+    const confidences = filtered
+      .map((entry) => entry.confidence)
+      .filter((value): value is number => value !== undefined);
+    const totalCost = matchingMetrics.reduce(
+      (sum, metric) => sum + metric.totalEstimatedCostUsd,
+      0,
+    );
+    const totalQuota = matchingMetrics.reduce(
+      (sum, metric) => sum + (metric.quotaUnitsTotal ?? 0),
+      0,
+    );
+
+    return RouterDashboardResponseSchema.parse({
+      facets: {
+        taskKinds: [...new Set(all.map((entry) => entry.taskKind))],
+        providers: [...new Set(all.map((entry) => entry.provider))],
+        modelIds: [...new Set(all.map((entry) => entry.modelId))],
+        workflowIds: [...new Set(all.map((entry) => entry.workflowId))],
+        harnessVersions: [...new Set(all.map((entry) => entry.harnessVersion))],
+      },
+      kpis: {
+        sampleSize: filtered.length,
+        firstPassRate: approvedEntries.length ? firstPassCount / approvedEntries.length : null,
+        avgRepairs: approvedEntries.length
+          ? approvedEntries.reduce((sum, entry) => sum + entry.repairs, 0) / approvedEntries.length
+          : null,
+        timeToApprovedMsP50: percentile(durations, 0.5),
+        timeToApprovedMsP95: percentile(durations, 0.95),
+        avgConfidence: confidences.length
+          ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+          : null,
+        costUsd: matchingMetrics.length ? totalCost : null,
+        quotaUnits: matchingMetrics.length ? totalQuota : null,
+      },
+    });
+  });
+
+  app.get('/router/decisions', async (request) => {
+    const query = RouterDashboardQuerySchema.parse(request.query);
+    return { decisions: await runtime.decisionLog.list(query) };
+  });
+
+  app.get('/router/export', async (request, reply) => {
+    const query = RouterDashboardQuerySchema.parse(request.query);
+    const decisions = await runtime.decisionLog.list(query);
+    reply.header('content-disposition', 'attachment; filename="router-decisions-export.json"');
+    return { rows: decisions.map((entry) => DecisionExportRowSchema.parse(entry)) };
+  });
+
+  // Reads the baseline file off disk per call, so bound it the same way as
+  // the blob routes above: fixed-window per-IP onRequest hook (see
+  // blobRateLimit below; CodeQL alert #28 dismissed the same pattern there
+  // as a false positive — the js/missing-rate-limiting query only
+  // recognizes known middleware packages, not in-house limiters).
+  const regressionGateRateLimiter = createFixedWindowRateLimiter(30, 60_000, options.now);
+  const regressionGateRateLimit = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    if (!regressionGateRateLimiter.allow(request.ip)) {
+      await reply
+        .status(429)
+        .send({ error: 'TooManyRequests', message: 'Rate limit exceeded. Try again shortly.' });
+    }
+  };
+
+  app.post('/router/regression-gate', { onRequest: regressionGateRateLimit }, async (request) => {
+    const { fresh } = RegressionGateRequestSchema.parse(request.body);
+    const baselinePath = resolve(REPO_ROOT, 'docs/baselines', `${BASELINE_STEM}.json`);
+    const baseline = BenchmarkReportSchema.parse(JSON.parse(await readFile(baselinePath, 'utf8')));
+    return { result: compareBenchmarkReports(fresh, baseline) };
+  });
+
+  app.get('/experiments', async () => ({ experiments: await runtime.experiments.list() }));
+
+  app.post('/experiments', async (request, reply) => {
+    const input = CreateExperimentRequestSchema.parse(request.body);
+    const now = new Date().toISOString();
+    const experiment = await runtime.experiments.create({
+      schemaVersion: '1',
+      id: randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+      status: 'draft',
+      ...input,
+    });
+    return reply.status(201).send({ experiment });
+  });
+
+  app.get('/experiments/:id', async (request) => {
+    const { id } = z.object({ id: PathSegmentSchema }).parse(request.params);
+    const experiment = await runtime.experiments.get(id);
+    if (!experiment) throw new NotFoundError(`experiment ${id} not found`);
+    return { experiment };
+  });
+
+  app.patch('/experiments/:id', async (request) => {
+    const { id } = z.object({ id: PathSegmentSchema }).parse(request.params);
+    const input = UpdateExperimentRequestSchema.parse(request.body);
+    const existing = await runtime.experiments.get(id);
+    if (!existing) throw new NotFoundError(`experiment ${id} not found`);
+    const experiment = await runtime.experiments.update({
+      ...existing,
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.conclusion !== undefined ? { conclusion: input.conclusion } : {}),
+      updatedAt: new Date().toISOString(),
+    });
+    return { experiment };
+  });
 
   app.get('/workflows', async () => ({ workflows: await runtime.workflows.list() }));
 

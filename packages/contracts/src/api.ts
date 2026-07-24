@@ -12,7 +12,9 @@ import {
   ModelOverrideRecordSchema,
   ModelOverrideScopeSchema,
 } from './model.js';
-import { ActorRefSchema, PathSegmentSchema, ProviderSchema } from './primitives.js';
+import { ActorRefSchema, PathSegmentSchema, ProviderSchema, TaskKindSchema } from './primitives.js';
+import { BenchmarkReportSchema } from './benchmark.js';
+import { ExperimentRecordSchema } from './experiment.js';
 import { ApprovalActionSchema } from './workflow.js';
 import {
   AttachmentSchema,
@@ -357,6 +359,55 @@ export const RuntimeInfoResponseSchema = z.object({
   executors: z.array(ExecutorHealthSchema),
 });
 export type RuntimeInfoResponse = z.infer<typeof RuntimeInfoResponseSchema>;
+
+export const RouterDashboardQuerySchema = z.object({
+  taskKind: TaskKindSchema.optional(),
+  provider: ProviderSchema.exclude(['mock']).optional(),
+  modelId: PathSegmentSchema.optional(),
+  workflowId: z.string().min(1).optional(),
+  harnessVersion: z.string().min(1).optional(),
+});
+export type RouterDashboardQuery = z.infer<typeof RouterDashboardQuerySchema>;
+
+export const RouterDashboardResponseSchema = z.object({
+  facets: z.object({
+    taskKinds: z.array(TaskKindSchema),
+    providers: z.array(ProviderSchema.exclude(['mock'])),
+    modelIds: z.array(z.string()),
+    workflowIds: z.array(z.string()),
+    harnessVersions: z.array(z.string()),
+  }),
+  kpis: z.object({
+    sampleSize: z.number().int().nonnegative(),
+    firstPassRate: z.number().min(0).max(1).nullable(),
+    avgRepairs: z.number().nonnegative().nullable(),
+    timeToApprovedMsP50: z.number().nonnegative().nullable(),
+    timeToApprovedMsP95: z.number().nonnegative().nullable(),
+    avgConfidence: z.number().min(0).max(1).nullable(),
+    costUsd: z.number().nonnegative().nullable(),
+    quotaUnits: z.number().nonnegative().nullable(),
+  }),
+});
+export type RouterDashboardResponse = z.infer<typeof RouterDashboardResponseSchema>;
+
+export const CreateExperimentRequestSchema = ExperimentRecordSchema.omit({
+  schemaVersion: true,
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  status: true,
+  conclusion: true,
+});
+export type CreateExperimentRequest = z.infer<typeof CreateExperimentRequestSchema>;
+
+export const UpdateExperimentRequestSchema = z.object({
+  status: z.enum(['draft', 'running', 'stopped', 'concluded']).optional(),
+  conclusion: z.string().optional(),
+});
+export type UpdateExperimentRequest = z.infer<typeof UpdateExperimentRequestSchema>;
+
+export const RegressionGateRequestSchema = z.object({ fresh: BenchmarkReportSchema });
+export type RegressionGateRequest = z.infer<typeof RegressionGateRequestSchema>;
 
 export const BranchVersionRequestSchema = z.object({ label: z.string().min(1).optional() });
 export type BranchVersionRequest = z.infer<typeof BranchVersionRequestSchema>;

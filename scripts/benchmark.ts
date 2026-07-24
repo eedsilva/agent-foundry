@@ -1,15 +1,19 @@
 import { resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import {
+  BenchmarkReportSchema,
   BenchmarkRunRecordSchema,
   type BenchmarkRunRecord,
   type ModelDefinition,
 } from '@agent-foundry/contracts';
 import { loadModelCatalog } from '@agent-foundry/model-router';
 import {
+  BASELINE_STEM,
   freezeBenchmarkReport,
   loadBenchmarkCases,
   runBenchmarkCase,
 } from '../packages/composition/src/benchmark-runner.js';
+import { compareBenchmarkReports } from '../packages/composition/src/regression-gate.js';
 import {
   argValue as sharedArgValue,
   assertRealModeReady,
@@ -89,9 +93,25 @@ try {
       }
     }
     process.exitCode = failures === 0 ? 0 : 1;
+  } else if (args.includes('--gate')) {
+    const records = await loadRecords();
+    const fresh = BenchmarkReportSchema.parse({
+      schemaVersion: '1',
+      createdAt: new Date().toISOString(),
+      baselineRef: records[0]?.baselineRef ?? 'unknown',
+      runs: records,
+      limitations: [],
+    });
+    const baselineJsonPath = resolve(rootDir, 'docs/baselines', `${BASELINE_STEM}.json`);
+    const baseline = BenchmarkReportSchema.parse(
+      JSON.parse(await readFile(baselineJsonPath, 'utf8')),
+    );
+    const result = compareBenchmarkReports(fresh, baseline);
+    console.log(JSON.stringify(result, null, 2));
+    process.exitCode = result.verdict === 'fail' ? 1 : 0;
   } else {
     console.error(
-      'Usage: tsx scripts/benchmark.ts --case <id> --models <id,id> | --all [--models <id,id>] | --freeze [--executor-mode mock]',
+      'Usage: tsx scripts/benchmark.ts --case <id> --models <id,id> | --all [--models <id,id>] | --freeze [--executor-mode mock] | --gate',
     );
     process.exit(1);
   }
