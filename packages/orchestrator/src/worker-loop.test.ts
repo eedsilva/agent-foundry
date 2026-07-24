@@ -356,6 +356,34 @@ describe('WorkerLoop heartbeat renewal', () => {
     expect(queue.nack).not.toHaveBeenCalled();
   });
 
+  it('still surfaces a post-claim nack failure from start', async () => {
+    const claimedJob = job();
+    const runError = new Error('run boom');
+    const nackError = new Error('nack boom');
+    const queue = fakeQueue({
+      claim: vi.fn().mockResolvedValue(claimedJob),
+      nack: vi.fn().mockRejectedValueOnce(nackError),
+    });
+    const orchestrator = {
+      runProject: vi.fn().mockRejectedValue(runError),
+    } as unknown as WorkflowOrchestrator;
+    const logger = fakeLogger();
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 100,
+      logger,
+    });
+    const startFailure = worker.start().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(queue.claim).toHaveBeenCalledTimes(1);
+    expect(logger.error).not.toHaveBeenCalledWith(
+      { err: expect.objectContaining({ message: 'nack boom' }) },
+      'claim failed',
+    );
+    await expect(startFailure).resolves.toEqual(expect.objectContaining({ message: 'nack boom' }));
+  });
+
   it('dispatches a run-conversation-operation job to the operation runner, not runProject', async () => {
     const queue = fakeQueue({
       claim: vi
