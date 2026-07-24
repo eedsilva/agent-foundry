@@ -818,9 +818,7 @@ test('router dashboard shows decisions and filters, an experiment can be registe
     kpis: { sampleSize: number; avgRepairs: number | null };
   };
   expect(dashboard.facets.workflowIds).toContain('golden-flow-e2e-v1');
-  expect(dashboard.facets.taskKinds).toEqual(
-    expect.arrayContaining(['implementation', 'repair']),
-  );
+  expect(dashboard.facets.taskKinds).toEqual(expect.arrayContaining(['implementation', 'repair']));
   expect(dashboard.kpis.sampleSize).toBeGreaterThan(0);
   expect(dashboard.kpis.avgRepairs).not.toBeNull();
   expect(dashboard.kpis.avgRepairs as number).toBeGreaterThan(0);

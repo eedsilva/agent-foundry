@@ -25,11 +25,13 @@
 ### Task 1: Contracts — experiment, decision-log, and regression-gate schemas
 
 **Files:**
+
 - Create: `packages/contracts/src/experiment.ts`
 - Create: `packages/contracts/src/experiment.test.ts`
 - Modify: `packages/contracts/src/index.ts` (add barrel export)
 
 **Interfaces:**
+
 - Produces (consumed by every later task): `RouterDecisionLogEntrySchema` / `RouterDecisionLogEntry`, `ExperimentVariantSchema`/`ExperimentStopRuleSchema`/`ExperimentRecordSchema`/`ExperimentRecord`, `RegressionCaseDeltaSchema`/`RegressionGateResultSchema`/`RegressionGateResult`, `DecisionExportRowSchema`/`DecisionExportRow`.
 
 - [ ] **Step 1: Write the failing test**
@@ -117,7 +119,9 @@ describe('ExperimentRecordSchema', () => {
         createdAt: '2026-07-24T00:00:00.000Z',
         updatedAt: '2026-07-24T00:00:00.000Z',
         hypothesis: 'x'.repeat(10),
-        variants: [{ key: 'control', description: 'only one', target: { kind: 'model', modelId: 'a' } }],
+        variants: [
+          { key: 'control', description: 'only one', target: { kind: 'model', modelId: 'a' } },
+        ],
         population: { taskKinds: ['implementation'], targetSampleSize: 30 },
         stopRule: { metric: 'first-pass-rate', comparator: 'gte', threshold: 0.8, minSamples: 20 },
         status: 'draft',
@@ -162,7 +166,12 @@ Expected: FAIL with "Cannot find module './experiment.js'" (or similar resolutio
 ```typescript
 // packages/contracts/src/experiment.ts
 import { z } from 'zod';
-import { AgentRoleSchema, PathSegmentSchema, ProviderSchema, TaskKindSchema } from './primitives.js';
+import {
+  AgentRoleSchema,
+  PathSegmentSchema,
+  ProviderSchema,
+  TaskKindSchema,
+} from './primitives.js';
 import { TaskCategorySchema } from './task-taxonomy.js';
 import { BenchmarkCaseKindSchema } from './benchmark.js';
 
@@ -314,9 +323,11 @@ git commit -m "feat(contracts): add router decision log, experiment, and regress
 ### Task 2: Domain ports — RouterDecisionLogRepository, ExperimentRepository
 
 **Files:**
+
 - Modify: `packages/domain/src/ports.ts` (append after `ModelOverrideRepository`, line ~148)
 
 **Interfaces:**
+
 - Consumes: `RouterDecisionLogEntry`, `ExperimentRecord` from `@agent-foundry/contracts` (Task 1).
 - Produces: `RouterDecisionLogRepository`, `ExperimentRepository` — implemented by Task 3, consumed by Task 5 (runtime wiring) and Task 6 (orchestrator).
 
@@ -374,6 +385,7 @@ git commit -m "feat(domain): add RouterDecisionLogRepository and ExperimentRepos
 ### Task 3: File persistence repositories
 
 **Files:**
+
 - Create: `packages/persistence/src/router-decision-log-repository.ts`
 - Create: `packages/persistence/src/router-decision-log-repository.test.ts`
 - Create: `packages/persistence/src/experiment-repository.ts`
@@ -381,6 +393,7 @@ git commit -m "feat(domain): add RouterDecisionLogRepository and ExperimentRepos
 - Modify: `packages/persistence/src/index.ts` (add two barrel exports)
 
 **Interfaces:**
+
 - Consumes: `RouterDecisionLogRepository`, `ExperimentRepository` (Task 2); `RouterDecisionLogEntrySchema`, `ExperimentRecordSchema` (Task 1); `atomicCreateJson`, `atomicWriteJson`, `ensureDir`, `exists`, `readJson`, `readJsonOrNull`, `safeSegment` from `./fs-utils.js`.
 - Produces: `FileRouterDecisionLogRepository`, `FileExperimentRepository` — consumed by Task 5 (`runtime.ts`).
 
@@ -470,7 +483,10 @@ Expected: FAIL — module `./router-decision-log-repository.js` not found.
 // packages/persistence/src/router-decision-log-repository.ts
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { RouterDecisionLogEntrySchema, type RouterDecisionLogEntry } from '@agent-foundry/contracts';
+import {
+  RouterDecisionLogEntrySchema,
+  type RouterDecisionLogEntry,
+} from '@agent-foundry/contracts';
 import type { RouterDecisionLogRepository } from '@agent-foundry/domain';
 import { atomicCreateJson, ensureDir, exists, readJson, safeSegment } from './fs-utils.js';
 
@@ -588,7 +604,9 @@ describe('FileExperimentRepository', () => {
 
   it('updates status and conclusion', async () => {
     await repo.create(record({ id: 'exp-1', status: 'draft' }));
-    const updated = await repo.update(record({ id: 'exp-1', status: 'concluded', conclusion: 'Opus wins.' }));
+    const updated = await repo.update(
+      record({ id: 'exp-1', status: 'concluded', conclusion: 'Opus wins.' }),
+    );
     expect(updated.status).toBe('concluded');
     expect(await repo.get('exp-1')).toMatchObject({ status: 'concluded' });
   });
@@ -612,7 +630,14 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ExperimentRecordSchema, type ExperimentRecord } from '@agent-foundry/contracts';
 import type { ExperimentRepository } from '@agent-foundry/domain';
-import { atomicCreateJson, atomicWriteJson, ensureDir, readJson, readJsonOrNull, safeSegment } from './fs-utils.js';
+import {
+  atomicCreateJson,
+  atomicWriteJson,
+  ensureDir,
+  readJson,
+  readJsonOrNull,
+  safeSegment,
+} from './fs-utils.js';
 
 export class FileExperimentRepository implements ExperimentRepository {
   constructor(private readonly dataDir: string) {}
@@ -643,7 +668,9 @@ export class FileExperimentRepository implements ExperimentRepository {
     await ensureDir(this.root());
     const files = (await readdir(this.root())).filter((file) => file.endsWith('.json'));
     const records = await Promise.all(
-      files.map(async (file) => ExperimentRecordSchema.parse(await readJson(join(this.root(), file)))),
+      files.map(async (file) =>
+        ExperimentRecordSchema.parse(await readJson(join(this.root(), file))),
+      ),
     );
     return records.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
@@ -688,11 +715,13 @@ git commit -m "feat(persistence): add file-backed router decision log and experi
 ### Task 4: Regression gate comparator
 
 **Files:**
+
 - Create: `packages/composition/src/regression-gate.ts`
 - Create: `packages/composition/src/regression-gate.test.ts`
 - Modify: `packages/composition/src/index.ts` (add barrel export)
 
 **Interfaces:**
+
 - Consumes: `BenchmarkReport`, `RegressionGateResultSchema` (Task 1, already-existing `BenchmarkReport` from `benchmark.ts`).
 - Produces: `compareBenchmarkReports(fresh, baseline): RegressionGateResult` — consumed by Task 7 (API) and Task 8 (CLI).
 
@@ -768,8 +797,16 @@ describe('compareBenchmarkReports', () => {
   });
 
   it('does not fail on a duration or repairs regression alone', () => {
-    const baseline = report({ runs: [run({ status: 'passed', durationMs: 5_000, repairs: { iterations: 1, repairEvents: 0 } })] });
-    const fresh = report({ runs: [run({ status: 'passed', durationMs: 20_000, repairs: { iterations: 3, repairEvents: 2 } })] });
+    const baseline = report({
+      runs: [
+        run({ status: 'passed', durationMs: 5_000, repairs: { iterations: 1, repairEvents: 0 } }),
+      ],
+    });
+    const fresh = report({
+      runs: [
+        run({ status: 'passed', durationMs: 20_000, repairs: { iterations: 3, repairEvents: 2 } }),
+      ],
+    });
 
     const result = compareBenchmarkReports(fresh, baseline);
     expect(result.verdict).toBe('pass');
@@ -788,7 +825,11 @@ Expected: FAIL — module not found.
 
 ```typescript
 // packages/composition/src/regression-gate.ts
-import { RegressionGateResultSchema, type BenchmarkReport, type RegressionGateResult } from '@agent-foundry/contracts';
+import {
+  RegressionGateResultSchema,
+  type BenchmarkReport,
+  type RegressionGateResult,
+} from '@agent-foundry/contracts';
 
 // ponytail: status-only gate (passed -> failed is the only hard failure).
 // Duration/repairs deltas are reported but non-blocking, to avoid flaky
@@ -862,10 +903,12 @@ git commit -m "feat(composition): add pure benchmark regression gate comparator"
 ### Task 5: Wire new repositories into runtime.ts and the orchestrator constructor
 
 **Files:**
+
 - Modify: `packages/composition/src/runtime.ts`
 - Modify: `packages/orchestrator/src/workflow-orchestrator.ts` (constructor signature only — instrumentation body is Task 6)
 
 **Interfaces:**
+
 - Consumes: `FileRouterDecisionLogRepository`, `FileExperimentRepository` (Task 3).
 - Produces: `Runtime.decisionLog: FileRouterDecisionLogRepository`, `Runtime.experiments: FileExperimentRepository`; `WorkflowOrchestrator` gains a new optional constructor parameter `decisionLog?: RouterDecisionLogRepository` — consumed by Task 6 and Task 7 (`apps/api`).
 
@@ -885,8 +928,8 @@ In `packages/composition/src/runtime.ts`, add to the `@agent-foundry/persistence
 After `modelOverrides: FileModelOverrideRepository;` (line 110):
 
 ```typescript
-  decisionLog: FileRouterDecisionLogRepository;
-  experiments: FileExperimentRepository;
+decisionLog: FileRouterDecisionLogRepository;
+experiments: FileExperimentRepository;
 ```
 
 - [ ] **Step 3: Construct the repositories**
@@ -894,8 +937,8 @@ After `modelOverrides: FileModelOverrideRepository;` (line 110):
 After `const modelOverrides = new FileModelOverrideRepository(config.dataDir);` (line 194):
 
 ```typescript
-  const decisionLog = new FileRouterDecisionLogRepository(config.dataDir);
-  const experiments = new FileExperimentRepository(config.dataDir);
+const decisionLog = new FileRouterDecisionLogRepository(config.dataDir);
+const experiments = new FileExperimentRepository(config.dataDir);
 ```
 
 - [ ] **Step 4: Pass decisionLog into WorkflowOrchestrator**
@@ -944,11 +987,13 @@ git commit -m "feat(composition): wire router decision log and experiment reposi
 ### Task 6: Orchestrator instrumentation — append a decision-log row per quality-loop iteration
 
 **Files:**
+
 - Modify: `packages/orchestrator/src/workflow-orchestrator.ts`
 - Modify: `packages/orchestrator/src/testing/harness.ts` (thread `decisionLog` through the shared test harness)
 - Modify: `packages/orchestrator/src/quality-observation-integration.test.ts` (add the new assertion next to the existing blind-review/deterministic-check tests, which already exercise the exact setup→review→repair→approval path this needs)
 
 **Interfaces:**
+
 - Consumes: `this.decisionLog` (Task 5), `this.harness.version()`, `this.clock.now()`, `this.ids.next()` (all already-existing fields), `route.executed ?? route.selected` (`RankedModel`), `route.profile.{taskKind,category,role}`.
 - Produces: one `RouterDecisionLogEntry` appended per quality-loop iteration when a `qualitySubject` carries a `routeDecision` — read by Task 7's dashboard endpoints.
 
@@ -998,24 +1043,24 @@ Add `type RouterDecisionLogEntry` to the existing `@agent-foundry/contracts` imp
 Add a new test inside the `describe('WorkflowOrchestrator quality observations', ...)` block, alongside the existing `'records an approved blind review for the setup output'` test:
 
 ```typescript
-  it('appends a router decision log entry for the approved iteration', async () => {
-    const decisionLog = new MemoryRouterDecisionLog();
-    const harness = makeHarness({}, undefined, { workflow, decisionLog });
+it('appends a router decision log entry for the approved iteration', async () => {
+  const decisionLog = new MemoryRouterDecisionLog();
+  const harness = makeHarness({}, undefined, { workflow, decisionLog });
 
-    await completeRun(harness);
+  await completeRun(harness);
 
-    expect(decisionLog.values).toMatchObject([
-      {
-        approved: true,
-        firstPass: true,
-        repairs: 0,
-        workflowId: workflow.id,
-        harnessVersion: harness.harnessVersion.value,
-        taskKind: 'code-review',
-        modelId: expect.any(String),
-      },
-    ]);
-  });
+  expect(decisionLog.values).toMatchObject([
+    {
+      approved: true,
+      firstPass: true,
+      repairs: 0,
+      workflowId: workflow.id,
+      harnessVersion: harness.harnessVersion.value,
+      taskKind: 'code-review',
+      modelId: expect.any(String),
+    },
+  ]);
+});
 ```
 
 (If `harness.harnessVersion` isn't the exact property name the `Stores` type exposes for the fixture harness version, use whatever `stores.harnessVersion.value` is called elsewhere in this same file/`makeHarness` — it's the same value the mock `HarnessRepository.version()` in `makeHarness` returns.)
@@ -1030,7 +1075,7 @@ Expected: FAIL — `decisionLog.values` is empty (the orchestrator doesn't call 
 In `executeQualityLoopTraced`, immediately before `let latest: StoredArtifact | null = null;`, add:
 
 ```typescript
-    const loopStartedAt = this.clock.now().getTime();
+const loopStartedAt = this.clock.now().getTime();
 ```
 
 - [ ] **Step 5: Call appendDecisionLog alongside recordQualityOutcome**
@@ -1038,29 +1083,29 @@ In `executeQualityLoopTraced`, immediately before `let latest: StoredArtifact | 
 Inside the `for` loop, the existing block reads:
 
 ```typescript
-      if (qualitySubject) {
-        await this.recordQualityOutcome(qualitySubject, approved);
-        if (node.check.type === 'verify') {
-          await this.qualityObservations?.recordDeterministic(qualitySubject, latest, approved);
-        } else if (isReviewerRole(node.check.role)) {
-          await this.qualityObservations?.recordBlindReview(qualitySubject, latest, approved);
-        }
-      }
+if (qualitySubject) {
+  await this.recordQualityOutcome(qualitySubject, approved);
+  if (node.check.type === 'verify') {
+    await this.qualityObservations?.recordDeterministic(qualitySubject, latest, approved);
+  } else if (isReviewerRole(node.check.role)) {
+    await this.qualityObservations?.recordBlindReview(qualitySubject, latest, approved);
+  }
+}
 ```
 
 Add one line right after `await this.recordQualityOutcome(qualitySubject, approved);`:
 
 ```typescript
-        await this.appendDecisionLog(
-          project.id,
-          workflow.id,
-          node.id,
-          runId,
-          qualitySubject,
-          approved,
-          iteration,
-          this.clock.now().getTime() - loopStartedAt,
-        );
+await this.appendDecisionLog(
+  project.id,
+  workflow.id,
+  node.id,
+  runId,
+  qualitySubject,
+  approved,
+  iteration,
+  this.clock.now().getTime() - loopStartedAt,
+);
 ```
 
 - [ ] **Step 6: Implement the appendDecisionLog helper**
@@ -1136,11 +1181,13 @@ git commit -m "feat(orchestrator): append a router decision log entry per qualit
 ### Task 7: API endpoints — dashboard, decisions, experiments CRUD, regression gate, export
 
 **Files:**
+
 - Modify: `packages/contracts/src/api.ts` (request/response schemas)
 - Modify: `apps/api/src/app.ts` (route registration)
 - Create: `apps/api/src/router.test.ts`
 
 **Interfaces:**
+
 - Consumes: `runtime.decisionLog`, `runtime.experiments`, `runtime.metrics` (Task 5), `compareBenchmarkReports` (Task 4), `ExperimentRecordSchema`/`RegressionGateResultSchema`/`DecisionExportRowSchema` (Task 1).
 - Produces: `GET /router/dashboard`, `GET /router/decisions`, `GET /router/export`, `POST /router/regression-gate`, `GET /experiments`, `POST /experiments`, `GET /experiments/:id`, `PATCH /experiments/:id` — consumed by Task 8 (web) and Task 9 (e2e).
 
@@ -1310,109 +1357,118 @@ Add to the existing `@agent-foundry/contracts` import block in `apps/api/src/app
 Add `compareBenchmarkReports` to the existing `@agent-foundry/composition` import line:
 
 ```typescript
-import { blobKeyFor, compareBenchmarkReports, listRisks, getRiskById, verifyBlobToken } from '@agent-foundry/composition';
+import {
+  blobKeyFor,
+  compareBenchmarkReports,
+  listRisks,
+  getRiskById,
+  verifyBlobToken,
+} from '@agent-foundry/composition';
 ```
 
 Add the routes after the existing `GET /runtime` block (line ~169):
 
 ```typescript
-  app.get('/router/dashboard', async (request) => {
-    const query = RouterDashboardQuerySchema.parse(request.query);
-    const filtered = await runtime.decisionLog.list(query);
-    const all = await runtime.decisionLog.list();
-    const metrics = await runtime.metrics.list();
-    const matchingMetrics = metrics.filter(
-      (metric) =>
-        (!query.modelId || metric.modelId === query.modelId) &&
-        (!query.taskKind || metric.taskKind === query.taskKind),
-    );
-    const durations = filtered.map((entry) => entry.durationMs).sort((left, right) => left - right);
-    const firstPassCount = filtered.filter((entry) => entry.firstPass).length;
-    const confidences = filtered
-      .map((entry) => entry.confidence)
-      .filter((value): value is number => value !== undefined);
-    const totalCost = matchingMetrics.reduce((sum, metric) => sum + metric.totalEstimatedCostUsd, 0);
-    const totalQuota = matchingMetrics.reduce((sum, metric) => sum + (metric.quotaUnitsTotal ?? 0), 0);
+app.get('/router/dashboard', async (request) => {
+  const query = RouterDashboardQuerySchema.parse(request.query);
+  const filtered = await runtime.decisionLog.list(query);
+  const all = await runtime.decisionLog.list();
+  const metrics = await runtime.metrics.list();
+  const matchingMetrics = metrics.filter(
+    (metric) =>
+      (!query.modelId || metric.modelId === query.modelId) &&
+      (!query.taskKind || metric.taskKind === query.taskKind),
+  );
+  const durations = filtered.map((entry) => entry.durationMs).sort((left, right) => left - right);
+  const firstPassCount = filtered.filter((entry) => entry.firstPass).length;
+  const confidences = filtered
+    .map((entry) => entry.confidence)
+    .filter((value): value is number => value !== undefined);
+  const totalCost = matchingMetrics.reduce((sum, metric) => sum + metric.totalEstimatedCostUsd, 0);
+  const totalQuota = matchingMetrics.reduce(
+    (sum, metric) => sum + (metric.quotaUnitsTotal ?? 0),
+    0,
+  );
 
-    return RouterDashboardResponseSchema.parse({
-      facets: {
-        taskKinds: [...new Set(all.map((entry) => entry.taskKind))],
-        providers: [...new Set(all.map((entry) => entry.provider))],
-        modelIds: [...new Set(all.map((entry) => entry.modelId))],
-        workflowIds: [...new Set(all.map((entry) => entry.workflowId))],
-        harnessVersions: [...new Set(all.map((entry) => entry.harnessVersion))],
-      },
-      kpis: {
-        sampleSize: filtered.length,
-        firstPassRate: filtered.length ? firstPassCount / filtered.length : null,
-        avgRepairs: filtered.length
-          ? filtered.reduce((sum, entry) => sum + entry.repairs, 0) / filtered.length
-          : null,
-        timeToApprovedMsP50: percentile(durations, 0.5),
-        timeToApprovedMsP95: percentile(durations, 0.95),
-        avgConfidence: confidences.length
-          ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
-          : null,
-        costUsd: matchingMetrics.length ? totalCost : null,
-        quotaUnits: matchingMetrics.length ? totalQuota : null,
-      },
-    });
+  return RouterDashboardResponseSchema.parse({
+    facets: {
+      taskKinds: [...new Set(all.map((entry) => entry.taskKind))],
+      providers: [...new Set(all.map((entry) => entry.provider))],
+      modelIds: [...new Set(all.map((entry) => entry.modelId))],
+      workflowIds: [...new Set(all.map((entry) => entry.workflowId))],
+      harnessVersions: [...new Set(all.map((entry) => entry.harnessVersion))],
+    },
+    kpis: {
+      sampleSize: filtered.length,
+      firstPassRate: filtered.length ? firstPassCount / filtered.length : null,
+      avgRepairs: filtered.length
+        ? filtered.reduce((sum, entry) => sum + entry.repairs, 0) / filtered.length
+        : null,
+      timeToApprovedMsP50: percentile(durations, 0.5),
+      timeToApprovedMsP95: percentile(durations, 0.95),
+      avgConfidence: confidences.length
+        ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+        : null,
+      costUsd: matchingMetrics.length ? totalCost : null,
+      quotaUnits: matchingMetrics.length ? totalQuota : null,
+    },
   });
+});
 
-  app.get('/router/decisions', async (request) => {
-    const query = RouterDashboardQuerySchema.parse(request.query);
-    return { decisions: await runtime.decisionLog.list(query) };
+app.get('/router/decisions', async (request) => {
+  const query = RouterDashboardQuerySchema.parse(request.query);
+  return { decisions: await runtime.decisionLog.list(query) };
+});
+
+app.get('/router/export', async (request, reply) => {
+  const query = RouterDashboardQuerySchema.parse(request.query);
+  const decisions = await runtime.decisionLog.list(query);
+  reply.header('content-disposition', 'attachment; filename="router-decisions-export.json"');
+  return { rows: decisions.map((entry) => DecisionExportRowSchema.parse(entry)) };
+});
+
+app.post('/router/regression-gate', async (request) => {
+  const { fresh } = RegressionGateRequestSchema.parse(request.body);
+  const baselinePath = resolve(REPO_ROOT, 'docs/baselines/v0.9-benchmark.json');
+  const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));
+  return { result: compareBenchmarkReports(fresh, baseline) };
+});
+
+app.get('/experiments', async () => ({ experiments: await runtime.experiments.list() }));
+
+app.post('/experiments', async (request, reply) => {
+  const input = CreateExperimentRequestSchema.parse(request.body);
+  const now = new Date().toISOString();
+  const experiment = await runtime.experiments.create({
+    schemaVersion: '1',
+    id: randomUUID(),
+    createdAt: now,
+    updatedAt: now,
+    status: 'draft',
+    ...input,
   });
+  return reply.status(201).send({ experiment });
+});
 
-  app.get('/router/export', async (request, reply) => {
-    const query = RouterDashboardQuerySchema.parse(request.query);
-    const decisions = await runtime.decisionLog.list(query);
-    reply.header('content-disposition', 'attachment; filename="router-decisions-export.json"');
-    return { rows: decisions.map((entry) => DecisionExportRowSchema.parse(entry)) };
+app.get('/experiments/:id', async (request) => {
+  const { id } = z.object({ id: PathSegmentSchema }).parse(request.params);
+  const experiment = await runtime.experiments.get(id);
+  if (!experiment) throw new NotFoundError(`experiment ${id} not found`);
+  return { experiment };
+});
+
+app.patch('/experiments/:id', async (request) => {
+  const { id } = z.object({ id: PathSegmentSchema }).parse(request.params);
+  const input = UpdateExperimentRequestSchema.parse(request.body);
+  const existing = await runtime.experiments.get(id);
+  if (!existing) throw new NotFoundError(`experiment ${id} not found`);
+  const experiment = await runtime.experiments.update({
+    ...existing,
+    ...input,
+    updatedAt: new Date().toISOString(),
   });
-
-  app.post('/router/regression-gate', async (request) => {
-    const { fresh } = RegressionGateRequestSchema.parse(request.body);
-    const baselinePath = resolve(REPO_ROOT, 'docs/baselines/v0.9-benchmark.json');
-    const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));
-    return { result: compareBenchmarkReports(fresh, baseline) };
-  });
-
-  app.get('/experiments', async () => ({ experiments: await runtime.experiments.list() }));
-
-  app.post('/experiments', async (request, reply) => {
-    const input = CreateExperimentRequestSchema.parse(request.body);
-    const now = new Date().toISOString();
-    const experiment = await runtime.experiments.create({
-      schemaVersion: '1',
-      id: randomUUID(),
-      createdAt: now,
-      updatedAt: now,
-      status: 'draft',
-      ...input,
-    });
-    return reply.status(201).send({ experiment });
-  });
-
-  app.get('/experiments/:id', async (request) => {
-    const { id } = z.object({ id: PathSegmentSchema }).parse(request.params);
-    const experiment = await runtime.experiments.get(id);
-    if (!experiment) throw new NotFoundError(`experiment ${id} not found`);
-    return { experiment };
-  });
-
-  app.patch('/experiments/:id', async (request) => {
-    const { id } = z.object({ id: PathSegmentSchema }).parse(request.params);
-    const input = UpdateExperimentRequestSchema.parse(request.body);
-    const existing = await runtime.experiments.get(id);
-    if (!existing) throw new NotFoundError(`experiment ${id} not found`);
-    const experiment = await runtime.experiments.update({
-      ...existing,
-      ...input,
-      updatedAt: new Date().toISOString(),
-    });
-    return { experiment };
-  });
+  return { experiment };
+});
 ```
 
 Add the `percentile` helper and the two new imports (`resolve` from `node:path`, `readFile` from `node:fs/promises`, and a `REPO_ROOT` constant) near the top of `app.ts`:
@@ -1455,6 +1511,7 @@ git commit -m "feat(api): add router dashboard, decisions, export, regression-ga
 ### Task 8: Web dashboard page
 
 **Files:**
+
 - Modify: `apps/web/lib/api.ts` (fetch wrappers)
 - Create: `apps/web/app/router/dashboard-view.tsx` (presentational component + pure helpers — unit tested)
 - Create: `apps/web/app/router/dashboard-view.test.tsx`
@@ -1462,6 +1519,7 @@ git commit -m "feat(api): add router dashboard, decisions, export, regression-ga
 - Modify: `apps/web/app/globals.css` (new classes)
 
 **Interfaces:**
+
 - Consumes: `RouterDashboardResponse`, `RouterDecisionLogEntry`, `ExperimentRecord`, `CreateExperimentRequest` types from `@agent-foundry/contracts` (Task 1/7); `api<T>()` from `./api.js` (existing).
 - Produces: `/router` route rendered by the app; `RouterDashboardView`, `RouterFilters`, `EMPTY_ROUTER_FILTERS`, `activeRouterQuery` — exercised by Task 10's e2e (via `page.tsx`) and this task's own unit test (via `dashboard-view.tsx` directly).
 
@@ -1472,7 +1530,9 @@ This codebase has no `@testing-library/react` dependency and vitest's environmen
 Add near `getRuntime`:
 
 ```typescript
-export function getRouterDashboard(query: Record<string, string>): Promise<RouterDashboardResponse> {
+export function getRouterDashboard(
+  query: Record<string, string>,
+): Promise<RouterDashboardResponse> {
   const qs = new URLSearchParams(query).toString();
   return api<RouterDashboardResponse>(`/router/dashboard${qs ? `?${qs}` : ''}`);
 }
@@ -1764,8 +1824,8 @@ export function RouterDashboardView({
         <ul className="artifactList">
           {decisions.map((decision) => (
             <li key={decision.id}>
-              {decision.modelId} · {decision.taskKind} · {decision.approved ? 'aprovado' : 'reprovado'} ·{' '}
-              {decision.repairs} reparo(s)
+              {decision.modelId} · {decision.taskKind} ·{' '}
+              {decision.approved ? 'aprovado' : 'reprovado'} · {decision.repairs} reparo(s)
             </li>
           ))}
         </ul>
@@ -1820,7 +1880,12 @@ Expected: PASS.
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { CreateExperimentRequest, ExperimentRecord, RouterDashboardResponse, RouterDecisionLogEntry } from '@agent-foundry/contracts';
+import type {
+  CreateExperimentRequest,
+  ExperimentRecord,
+  RouterDashboardResponse,
+  RouterDecisionLogEntry,
+} from '@agent-foundry/contracts';
 import {
   createExperiment,
   getRouterDashboard,
@@ -1828,7 +1893,12 @@ import {
   listRouterDecisions,
   routerExportUrl,
 } from '../../lib/api.js';
-import { activeRouterQuery, EMPTY_ROUTER_FILTERS, RouterDashboardView, type RouterFilters } from './dashboard-view.js';
+import {
+  activeRouterQuery,
+  EMPTY_ROUTER_FILTERS,
+  RouterDashboardView,
+  type RouterFilters,
+} from './dashboard-view.js';
 
 const FIXED_VARIANTS: CreateExperimentRequest['variants'] = [
   { key: 'control', description: 'Controle', target: { kind: 'model', modelId: 'sonnet' } },
@@ -1965,9 +2035,11 @@ git commit -m "feat(web): add router dashboard and experiment registry page"
 ### Task 9: Regression gate CLI flag
 
 **Files:**
+
 - Modify: `scripts/benchmark.ts`
 
 **Interfaces:**
+
 - Consumes: `compareBenchmarkReports` (Task 4), existing `loadRecords()`/`resolveModels()` helpers already in the file.
 
 This depends only on Task 4 and can run any time after it.
@@ -2034,9 +2106,11 @@ git commit -m "feat(scripts): add --gate flag to run the regression gate against
 ### Task 10: E2E — extend golden-flow.spec.ts
 
 **Files:**
+
 - Modify: `apps/api/e2e/golden-flow.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `runtime.decisionLog`, `runtime.experiments` (via the in-process `runtime` already available in the spec file), `apiBaseUrl`, `webBaseUrl` (existing spec-level variables).
 
 This is the final task — it depends on Tasks 6, 7, and 8 all being merged.
@@ -2046,7 +2120,9 @@ This is the final task — it depends on Tasks 6, 7, and 8 all being merged.
 Insert a new top-level `test(...)` block in `apps/api/e2e/golden-flow.spec.ts`, after the existing tests, reusing the `projectId`/`run` produced by the existing flow (the file already drives a project through a repair loop, which is what appends decision-log rows via Task 6's instrumentation):
 
 ```typescript
-test('router dashboard shows decisions and filters, and an experiment can be registered', async ({ page }) => {
+test('router dashboard shows decisions and filters, and an experiment can be registered', async ({
+  page,
+}) => {
   const dashboardResponse = await fetch(`${apiBaseUrl}/router/dashboard`);
   expect(dashboardResponse.ok).toBe(true);
   const dashboard = (await dashboardResponse.json()) as {
@@ -2057,7 +2133,9 @@ test('router dashboard shows decisions and filters, and an experiment can be reg
   expect(dashboard.kpis.sampleSize).toBeGreaterThan(0);
 
   await page.goto(`${webBaseUrl}/router`);
-  await expect(page.getByRole('heading', { name: 'Dashboard do router' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'Dashboard do router' })).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(page.getByText('Aprovação de primeira')).toBeVisible();
   await expect(page.getByLabelText('Tarefa')).toBeVisible();
 
