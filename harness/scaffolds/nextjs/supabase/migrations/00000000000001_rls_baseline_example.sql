@@ -1,0 +1,37 @@
+-- RLS baseline example (see harness/stacks/supabase.md).
+--
+-- This file is a documentation template, not a live migration — every
+-- statement below is commented out, so applying it is a no-op. When you add
+-- a table that holds user data, copy this pattern into a new, real migration
+-- (supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql), replacing `items` and
+-- its columns with your own.
+--
+-- create table public.items (
+--   id uuid primary key default gen_random_uuid(),
+--   user_id uuid not null references auth.users(id) default auth.uid(),
+--   title text not null,
+--   created_at timestamptz not null default now()
+-- );
+--
+-- alter table public.items enable row level security;
+--
+-- -- Default-deny: no policy below means no access. Add exactly the
+-- -- operations this table's owner needs — never more.
+-- create policy items_select_owner
+--   on public.items for select to authenticated
+--   using (user_id = (select auth.uid()));
+--
+-- create policy items_insert_owner
+--   on public.items for insert to authenticated
+--   with check (user_id = (select auth.uid()));
+--
+-- create policy items_update_owner
+--   on public.items for update to authenticated
+--   using (user_id = (select auth.uid()))
+--   with check (user_id = (select auth.uid()));
+--
+-- create policy items_delete_owner
+--   on public.items for delete to authenticated
+--   using (user_id = (select auth.uid()));
+--
+-- -- Never grant anon write access to a user-data table.

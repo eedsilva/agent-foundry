@@ -616,6 +616,32 @@ it, and then confirm export. To roll back generation, stop creating storage for 
 existing applied schema stays in place and must be rolled forward or explicitly removed after preserved
 exported bytes make recovery possible.
 
+### Generated-app auth and RLS baseline
+
+Every generated project ships email/password auth wired end to end (`harness/scaffolds/nextjs`)
+against its own isolated local Supabase stack. `SupabaseGeneratedProjectRuntime#initialize`
+(`packages/platform/src/supabase-runtime.ts`) writes the stack's `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` into the same per-project `.env`
+described in "Segredos do app (por projeto)" above (ADR 0034) — it is a second, automated writer of
+that file alongside any operator-set secrets; existing keys are preserved, not overwritten. Email
+confirmation is disabled in the generated `config.toml` (no SMTP in v1), so signup returns an active
+session immediately, same as sign-in.
+
+Password reset is deliberately **not** self-service (`docs/PRODUCT_CONTRACT.md`). To reset a user's
+password as an administrator, use the service-role key from the project's `.env` against the local
+GoTrue admin API:
+
+```bash
+curl -X PUT "$NEXT_PUBLIC_SUPABASE_URL/auth/v1/admin/users/<user-id>" \
+  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"password": "<new-password>"}'
+```
+
+Never expose this as an app route or client-callable endpoint — the service-role key must stay
+server-only, and this is an operator action against `DATA_DIR`, not a product feature.
+
 ### Rollback
 
 Pare API e worker, volte `PERSISTENCE_MODE` para `file` (ou remova a variável) e reinicie. Dados gravados em modo postgres não são sincronizados de volta para `DATA_DIR`: o rollback restaura o comportamento em disco a partir do estado que já existia lá, não migra o conteúdo do Postgres. Para voltar a operar sobre os dados gravados em Postgres, mantenha `PERSISTENCE_MODE=postgres` e trate o banco como a fonte de verdade — não alterne os dois modos como se fossem réplicas do mesmo estado.

@@ -15,6 +15,7 @@ Applies whenever the golden stack's backend is the project's isolated local Supa
 - Default-deny: no table is queryable until a policy exists. Write explicit `select`/`insert`/`update`/`delete` policies scoped to `auth.uid()`.
 - Name policies `<table>_<operation>_<scope>` (e.g. `tasks_select_owner`) so intent is legible in `supabase db diff`.
 - Never grant `anon` write access to a user-data table.
+- `supabase/migrations/00000000000001_rls_baseline_example.sql` is a commented-out template of this pattern (table, RLS, four owner policies) — copy it into a new, real migration for each table you add.
 
 ## Auth
 
