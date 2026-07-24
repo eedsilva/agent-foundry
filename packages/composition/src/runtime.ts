@@ -14,7 +14,7 @@ import {
   type PreviewInstaller,
 } from '@agent-foundry/executors';
 import { VersionedHarnessRepository } from '@agent-foundry/harness';
-import { ScoreBasedModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
+import { DEFAULT_BREAKER_CONFIG, ScoreBasedModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
 import {
   FileApprovalDecisionRepository,
   FileApprovalRequestRepository,
@@ -207,7 +207,9 @@ export async function createRuntime(
       new SupabaseGeneratedProjectRuntime({ dataDir: config.dataDir });
   }
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
-  const router = new ScoreBasedModelRouter(catalog, metrics, qualityObservations);
+  const router = new ScoreBasedModelRouter(catalog, metrics, qualityObservations, {
+    breaker: DEFAULT_BREAKER_CONFIG,
+  });
   const executors =
     config.executorMode === 'mock'
       ? new MockExecutorRegistry(new MockAgentExecutor())
