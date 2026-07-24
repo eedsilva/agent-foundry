@@ -308,6 +308,54 @@ describe('WorkerLoop heartbeat renewal', () => {
     expect(heartbeat).not.toHaveBeenCalled();
   });
 
+  it('continues polling after a claim rejection', async () => {
+    const claimedJob = job({ id: 'job-9', runId: 'run-9', projectId: 'project-9' });
+    const run = deferred<void>();
+    const queue = fakeQueue({
+      claim: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('claim boom'))
+        .mockResolvedValueOnce(claimedJob),
+    });
+    const orchestrator = {
+      runProject: vi.fn().mockReturnValue(run.promise),
+    } as unknown as WorkflowOrchestrator;
+    const logger = fakeLogger();
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 100,
+      logger,
+    });
+    const stop = new AbortController();
+
+    const startPromise = worker.start(stop.signal);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(queue.claim).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      { err: expect.objectContaining({ message: 'claim boom' }) },
+      'claim failed',
+    );
+    expect(queue.ack).not.toHaveBeenCalled();
+    expect(queue.nack).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(queue.claim).toHaveBeenCalledTimes(2);
+    expect(orchestrator.runProject).toHaveBeenCalledWith(
+      'project-9',
+      'web-app-v1',
+      'run-9',
+      expect.any(AbortSignal),
+    );
+
+    stop.abort();
+    run.resolve();
+    await startPromise;
+
+    expect(queue.ack).toHaveBeenCalledWith(claimedJob, 'worker-a');
+    expect(queue.nack).not.toHaveBeenCalled();
+  });
+
   it('dispatches a run-conversation-operation job to the operation runner, not runProject', async () => {
     const queue = fakeQueue({
       claim: vi
