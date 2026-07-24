@@ -4,8 +4,6 @@ import { createClient } from '@/lib/supabase/server';
 import { signOut } from '@/app/actions';
 import { NewProjectForm } from './new-project-form';
 
-export const dynamic = 'force-dynamic';
-
 export default async function ProjectsPage() {
   const supabase = await createClient();
   const { data: projects, error } = await supabase
