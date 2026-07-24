@@ -8,11 +8,11 @@ import type { RouterDecisionLogRepository } from '@agent-foundry/domain';
 import { atomicCreateJson, ensureDir, exists, readJson, safeSegment } from './fs-utils.js';
 
 export interface RouterDecisionLogFilter {
-  workflowId?: string;
-  provider?: string;
-  modelId?: string;
-  taskKind?: string;
-  harnessVersion?: string;
+  workflowId?: string | undefined;
+  provider?: string | undefined;
+  modelId?: string | undefined;
+  taskKind?: string | undefined;
+  harnessVersion?: string | undefined;
 }
 
 // ponytail: list() scans every run directory linearly; add a cross-run index

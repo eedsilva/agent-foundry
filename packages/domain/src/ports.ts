@@ -153,11 +153,11 @@ export interface ModelOverrideRepository {
 export interface RouterDecisionLogRepository {
   append(entry: RouterDecisionLogEntry): Promise<void>;
   list(filter?: {
-    workflowId?: string;
-    provider?: string;
-    modelId?: string;
-    taskKind?: string;
-    harnessVersion?: string;
+    workflowId?: string | undefined;
+    provider?: string | undefined;
+    modelId?: string | undefined;
+    taskKind?: string | undefined;
+    harnessVersion?: string | undefined;
   }): Promise<RouterDecisionLogEntry[]>;
 }
 
