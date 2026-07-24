@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0035 Derived circuit breaker and opt-in epsilon-greedy exploration in the model router](0035-router-circuit-breaker-and-exploration.md).
+Latest: [0036 Static security lint and RLS access-matrix verification before release](0036-security-verification-before-release.md).

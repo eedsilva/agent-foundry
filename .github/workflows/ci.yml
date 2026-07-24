@@ -69,6 +69,23 @@ jobs:
           version: 2.62.5
       - run: RUN_SUPABASE_AUTH_E2E=true npx vitest run packages/platform/src/supabase-auth.e2e.test.ts --pool=threads --maxWorkers=1
 
+  rls-e2e:
+    name: rls-e2e
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
+        with:
+          version: 2.62.5
+      - run: RUN_SUPABASE_RLS_E2E=true npx vitest run packages/platform/src/security-rls.e2e.test.ts --pool=threads --maxWorkers=1
+
   format:
     name: format
     needs: preflight

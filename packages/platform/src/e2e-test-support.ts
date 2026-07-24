@@ -83,3 +83,62 @@ export function rows(value: unknown): Record<string, unknown>[] {
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
+
+export interface Session {
+  userId: string;
+  accessToken: string;
+  refreshToken: string;
+}
+
+export function signUp(
+  credentials: Credentials,
+  email: string,
+  password: string,
+): Promise<Response> {
+  return boundedFetch(`${credentials.apiUrl}/auth/v1/signup`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(credentials.anonKey, credentials.anonKey),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function requestLogin(
+  credentials: Credentials,
+  email: string,
+  password: string,
+): Promise<Response> {
+  return boundedFetch(`${credentials.apiUrl}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(credentials.anonKey, credentials.anonKey),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function login(
+  credentials: Credentials,
+  email: string,
+  password: string,
+): Promise<Session> {
+  const response = requireOk(await requestLogin(credentials, email, password), 'login');
+  const payload = await json(response);
+  if (
+    !isRecord(payload) ||
+    typeof payload.access_token !== 'string' ||
+    typeof payload.refresh_token !== 'string' ||
+    !isRecord(payload.user) ||
+    typeof payload.user.id !== 'string'
+  ) {
+    throw new Error('Local Auth returned an invalid session.');
+  }
+  return {
+    userId: payload.user.id,
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token,
+  };
+}

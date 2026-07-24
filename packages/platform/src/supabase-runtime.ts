@@ -787,12 +787,19 @@ async function migrationPreview(workdir: string, migrationPath: string): Promise
 
 async function migrationPreviews(workdir: string): Promise<MigrationPreview[]> {
   const directory = join(workdir, 'supabase', 'migrations');
-  const entries = await readdir(directory, { withFileTypes: true });
-  const paths = entries
-    .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith('.sql'))
-    .map((entry) => `supabase/migrations/${entry.name}`)
-    .sort();
+  const names = await migrationSqlFilenames(directory);
+  const paths = names.map((name) => `supabase/migrations/${name}`);
   return Promise.all(paths.map((path) => migrationPreview(workdir, path)));
+}
+
+// Shared by migrationPreviews() and the security linter (security-lint.ts):
+// sorted basenames of every *.sql file directly in a migrations directory.
+export async function migrationSqlFilenames(migrationsDir: string): Promise<string[]> {
+  const entries = await readdir(migrationsDir, { withFileTypes: true });
+  return entries
+    .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith('.sql'))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 async function requireContainedPath(
@@ -1033,7 +1040,7 @@ function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function destructiveStatements(sql: string): string[] {
+export function destructiveStatements(sql: string): string[] {
   const statements = sqlStatements(sql);
   const destructivePatterns = [
     /^DROP\b/i,
@@ -1046,7 +1053,7 @@ function destructiveStatements(sql: string): string[] {
   );
 }
 
-function sqlStatements(sql: string): string[] {
+export function sqlStatements(sql: string): string[] {
   // ponytail: quote-aware required-pattern scanner; add a SQL parser if syntax coverage expands.
   const statements: string[] = [];
   let statement = '';
@@ -1337,7 +1344,7 @@ function capUtf8(value: string, maxBytes: number): string {
   return '';
 }
 
-function isNotFound(error: unknown): boolean {
+export function isNotFound(error: unknown): boolean {
   return (
     error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
   );
