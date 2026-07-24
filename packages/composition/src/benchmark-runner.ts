@@ -19,7 +19,7 @@ import {
   type RunDogfoodTaskOptions,
 } from './dogfood.js';
 
-const BASELINE_STEM = 'v0.9-benchmark';
+export const BASELINE_STEM = 'v0.9-benchmark';
 const FOUNDRY_ROOT = resolve(import.meta.dirname, '../../..');
 
 export type RunBenchmarkCaseOptions = Omit<RunDogfoodTaskOptions, 'modelOverride'>;

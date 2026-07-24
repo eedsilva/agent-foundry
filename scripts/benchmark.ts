@@ -8,6 +8,7 @@ import {
 } from '@agent-foundry/contracts';
 import { loadModelCatalog } from '@agent-foundry/model-router';
 import {
+  BASELINE_STEM,
   freezeBenchmarkReport,
   loadBenchmarkCases,
   runBenchmarkCase,
@@ -101,7 +102,7 @@ try {
       runs: records,
       limitations: [],
     });
-    const baselineJsonPath = resolve(rootDir, 'docs/baselines/v0.9-benchmark.json');
+    const baselineJsonPath = resolve(rootDir, 'docs/baselines', `${BASELINE_STEM}.json`);
     const baseline = BenchmarkReportSchema.parse(
       JSON.parse(await readFile(baselineJsonPath, 'utf8')),
     );

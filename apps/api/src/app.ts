@@ -7,6 +7,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
 import {
+  BASELINE_STEM,
   blobKeyFor,
   compareBenchmarkReports,
   listRisks,
@@ -15,6 +16,7 @@ import {
 } from '@agent-foundry/composition';
 import { currentTraceIds } from '@agent-foundry/domain';
 import {
+  BenchmarkReportSchema,
   BranchVersionRequestSchema,
   ClassifyMessageResponseSchema,
   CreateExperimentRequestSchema,
@@ -194,13 +196,23 @@ export async function buildApp(
     const filtered = await runtime.decisionLog.list(query);
     const all = await runtime.decisionLog.list();
     const metrics = await runtime.metrics.list();
+    // ponytail: cost/quota only filter by modelId+taskKind — ModelMetric doesn't
+    // carry provider/workflowId/harnessVersion — and are lifetime totals, not
+    // scoped to the current filter's time window. Add filtering here once
+    // ModelMetric gains those dimensions.
     const matchingMetrics = metrics.filter(
       (metric) =>
         (!query.modelId || metric.modelId === query.modelId) &&
         (!query.taskKind || metric.taskKind === query.taskKind),
     );
-    const durations = filtered.map((entry) => entry.durationMs).sort((left, right) => left - right);
-    const firstPassCount = filtered.filter((entry) => entry.firstPass).length;
+    // firstPassRate/avgRepairs/timeToApproved describe completed-task outcomes,
+    // not raw per-iteration rows — an unapproved mid-repair row isn't "time to
+    // approval" yet and would over-weight tasks that needed more repairs.
+    const approvedEntries = filtered.filter((entry) => entry.approved);
+    const durations = approvedEntries
+      .map((entry) => entry.durationMs)
+      .sort((left, right) => left - right);
+    const firstPassCount = approvedEntries.filter((entry) => entry.firstPass).length;
     const confidences = filtered
       .map((entry) => entry.confidence)
       .filter((value): value is number => value !== undefined);
@@ -223,9 +235,9 @@ export async function buildApp(
       },
       kpis: {
         sampleSize: filtered.length,
-        firstPassRate: filtered.length ? firstPassCount / filtered.length : null,
-        avgRepairs: filtered.length
-          ? filtered.reduce((sum, entry) => sum + entry.repairs, 0) / filtered.length
+        firstPassRate: approvedEntries.length ? firstPassCount / approvedEntries.length : null,
+        avgRepairs: approvedEntries.length
+          ? approvedEntries.reduce((sum, entry) => sum + entry.repairs, 0) / approvedEntries.length
           : null,
         timeToApprovedMsP50: percentile(durations, 0.5),
         timeToApprovedMsP95: percentile(durations, 0.95),
@@ -252,8 +264,8 @@ export async function buildApp(
 
   app.post('/router/regression-gate', async (request) => {
     const { fresh } = RegressionGateRequestSchema.parse(request.body);
-    const baselinePath = resolve(REPO_ROOT, 'docs/baselines/v0.9-benchmark.json');
-    const baseline = JSON.parse(await readFile(baselinePath, 'utf8'));
+    const baselinePath = resolve(REPO_ROOT, 'docs/baselines', `${BASELINE_STEM}.json`);
+    const baseline = BenchmarkReportSchema.parse(JSON.parse(await readFile(baselinePath, 'utf8')));
     return { result: compareBenchmarkReports(fresh, baseline) };
   });
 

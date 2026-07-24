@@ -149,7 +149,10 @@ export function RouterDashboardView({
           <span>Reparos (média)</span>
           <strong>{dashboard.kpis.avgRepairs?.toFixed(2) ?? '—'}</strong>
         </div>
-        <div className="kpiTile">
+        <div
+          className="kpiTile"
+          title="Custo agregado por modelo/tarefa ao longo de toda a vida; não filtra por provider, workflow ou versão do harness."
+        >
           <span>Custo (USD)</span>
           <strong>{dashboard.kpis.costUsd?.toFixed(4) ?? '—'}</strong>
         </div>
