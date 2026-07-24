@@ -1,7 +1,11 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { ExperimentRecord, RouterDashboardResponse } from '@agent-foundry/contracts';
+import {
+  CreateExperimentRequestSchema,
+  type ExperimentRecord,
+  type RouterDashboardResponse,
+} from '@agent-foundry/contracts';
 import {
   buildExperimentRequest,
   EMPTY_EXPERIMENT_FORM,
@@ -105,5 +109,10 @@ describe('buildExperimentRequest', () => {
       population: { taskKinds: ['implementation', 'code-review'], targetSampleSize: 40 },
       stopRule: { metric: 'first-pass-rate', comparator: 'gte', threshold: 0.75, minSamples: 15 },
     });
+  });
+
+  it('produces a request that satisfies CreateExperimentRequestSchema when submitted untouched', () => {
+    const request = buildExperimentRequest({ ...EMPTY_EXPERIMENT_FORM, hypothesis: 'x' });
+    expect(() => CreateExperimentRequestSchema.parse(request)).not.toThrow();
   });
 });
