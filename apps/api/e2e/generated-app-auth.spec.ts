@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { test, expect } from '@playwright/test';
 import { parse as parseDotEnv } from 'dotenv';
 import { createRuntime } from '@agent-foundry/composition';
+import { reserveEphemeralPort, waitForHttp } from './support.js';
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -15,32 +15,6 @@ const SCAFFOLD_DIR = resolve(REPO_ROOT, 'harness/scaffolds/nextjs');
 const PROJECT_ID = 'generated-app-auth-e2e';
 const STOP_TIMEOUT_MS = 60_000;
 const SETUP_TIMEOUT_MS = 10 * 60_000;
-
-async function reserveEphemeralPort(): Promise<number> {
-  return new Promise((resolvePort, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      server.close(() => resolvePort(port));
-    });
-  });
-}
-
-async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-    } catch {
-      // not up yet
-    }
-    await new Promise((resolvePoll) => setTimeout(resolvePoll, 500));
-  }
-  throw new Error(`Timed out waiting for ${url}`);
-}
 
 test.describe('generated app auth', () => {
   test.describe.configure({ timeout: SETUP_TIMEOUT_MS });

@@ -22,9 +22,16 @@ export function credentialsFromStatus(stdout: string): SupabaseAppCredentials | 
   const apiUrl = source.API_URL;
   const anonKey = source.ANON_KEY;
   const serviceRoleKey = source.SERVICE_ROLE_KEY;
-  if (typeof apiUrl !== 'string' || !URL.canParse(apiUrl)) return undefined;
-  if (typeof anonKey !== 'string' || !anonKey) return undefined;
-  if (typeof serviceRoleKey !== 'string' || !serviceRoleKey) return undefined;
+  if (
+    typeof apiUrl !== 'string' ||
+    !URL.canParse(apiUrl) ||
+    typeof anonKey !== 'string' ||
+    !anonKey ||
+    typeof serviceRoleKey !== 'string' ||
+    !serviceRoleKey
+  ) {
+    return undefined;
+  }
   return { apiUrl, anonKey, serviceRoleKey };
 }
 

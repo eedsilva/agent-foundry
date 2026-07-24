@@ -1,4 +1,3 @@
-import { createServer } from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,35 +6,10 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { execa } from 'execa';
 import { buildApp } from '../src/app.js';
+import { reserveEphemeralPort, waitForHttp } from './support.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
 const FIXTURE_SCRIPT = resolve(REPO_ROOT, 'packages/executors/src/fixtures/preview-dev-server.mjs');
-
-async function reserveEphemeralPort(): Promise<number> {
-  return new Promise((resolvePort, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      server.close(() => resolvePort(port));
-    });
-  });
-}
-
-async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-    } catch {
-      // not up yet
-    }
-    await new Promise((resolvePoll) => setTimeout(resolvePoll, 500));
-  }
-  throw new Error(`Timed out waiting for ${url}`);
-}
 
 let runtime: Runtime;
 let apiClose: () => Promise<void>;

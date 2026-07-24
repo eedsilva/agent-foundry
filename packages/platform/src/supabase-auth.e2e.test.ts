@@ -7,10 +7,19 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SupabaseGeneratedProjectRuntime } from './supabase-runtime.js';
+import {
+  authHeaders,
+  boundedFetch,
+  isRecord,
+  json,
+  readCredentials,
+  requireOk,
+  rows,
+  type Credentials,
+} from './e2e-test-support.js';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ID = 'project-a';
-const FETCH_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 60_000;
 
 // A real table exercising the owner-RLS baseline documented in
@@ -35,13 +44,6 @@ create policy items_insert_owner
   with check (user_id = (select auth.uid()));
 `;
 
-interface Credentials {
-  apiUrl: string;
-  anonKey: string;
-  serviceRoleKey: string;
-  jwtSecret: string;
-}
-
 interface Session {
   userId: string;
   accessToken: string;
@@ -59,7 +61,7 @@ describe.runIf(process.env.RUN_SUPABASE_AUTH_E2E === 'true')('generated Supabase
       workdir = join(dataDir, 'projects', PROJECT_ID, 'environment');
       const runtime = new SupabaseGeneratedProjectRuntime({ dataDir });
       await runtime.initialize({ projectId: PROJECT_ID });
-      credentials = await readCredentials(workdir);
+      credentials = await readCredentials(workdir, STOP_TIMEOUT_MS);
       await mkdir(join(workdir, 'supabase', 'migrations'), { recursive: true });
       await writeFile(
         join(workdir, 'supabase', 'migrations', '00000000000002_items.sql'),
@@ -188,40 +190,6 @@ describe.runIf(process.env.RUN_SUPABASE_AUTH_E2E === 'true')('generated Supabase
     expect(rowsForAAgain.some((row) => row.title === 'owned by A')).toBe(true);
   }, 30_000);
 });
-
-async function readCredentials(workdir: string): Promise<Credentials> {
-  let stdout: string;
-  try {
-    ({ stdout } = await execFileAsync(
-      'supabase',
-      ['status', '--output', 'json', '--workdir', workdir],
-      { encoding: 'utf8', timeout: STOP_TIMEOUT_MS },
-    ));
-  } catch {
-    throw new Error('Supabase status failed.');
-  }
-  let status: unknown;
-  try {
-    status = JSON.parse(stdout);
-  } catch {
-    throw new Error('Supabase status returned invalid JSON.');
-  }
-  if (!isRecord(status)) throw new Error('Supabase status omitted required local credentials.');
-  const apiUrl = status.API_URL;
-  const anonKey = status.ANON_KEY;
-  const serviceRoleKey = status.SERVICE_ROLE_KEY;
-  const jwtSecret = status.JWT_SECRET;
-  if (
-    typeof apiUrl !== 'string' ||
-    !URL.canParse(apiUrl) ||
-    typeof anonKey !== 'string' ||
-    typeof serviceRoleKey !== 'string' ||
-    typeof jwtSecret !== 'string'
-  ) {
-    throw new Error('Supabase status omitted required local credentials.');
-  }
-  return { apiUrl, anonKey, serviceRoleKey, jwtSecret };
-}
 
 function signUp(credentials: Credentials, email: string, password: string): Promise<Response> {
   return boundedFetch(`${credentials.apiUrl}/auth/v1/signup`, {
@@ -353,22 +321,6 @@ function base64url(input: string | Buffer): string {
     .replace(/=+$/, '');
 }
 
-function authHeaders(apiKey: string, token: string): Record<string, string> {
-  return { apikey: apiKey, Authorization: `Bearer ${token}` };
-}
-
-function boundedFetch(input: string | URL, init?: RequestInit): Promise<Response> {
-  return fetch(input, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-}
-
-function requireOk(response: Response, operation: string): Response {
-  if (!response.ok) {
-    void response.body?.cancel();
-    throw new Error(`${operation} failed with HTTP ${response.status}.`);
-  }
-  return response;
-}
-
 async function expectClientError(response: Response, operation: string): Promise<void> {
   await response.arrayBuffer();
   if (response.status < 400 || response.status >= 500) {
@@ -376,23 +328,4 @@ async function expectClientError(response: Response, operation: string): Promise
       `${operation} expected an HTTP 4xx client error; received HTTP ${response.status}.`,
     );
   }
-}
-
-async function json(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    throw new Error('Local Supabase returned invalid JSON.');
-  }
-}
-
-function rows(value: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(value) || !value.every(isRecord)) {
-    throw new Error('PostgREST returned an invalid row set.');
-  }
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

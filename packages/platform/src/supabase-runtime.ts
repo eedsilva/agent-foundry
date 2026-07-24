@@ -34,7 +34,11 @@ import {
   configureGeneratedStorage,
   generatedStorageMigration,
 } from './supabase-storage.js';
-import { credentialsFromStatus, upsertEnvVars } from './supabase-secrets.js';
+import {
+  credentialsFromStatus,
+  upsertEnvVars,
+  type SupabaseAppCredentials,
+} from './supabase-secrets.js';
 import { configureGeneratedAuth } from './supabase-auth.js';
 
 const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
@@ -624,10 +628,9 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
    * resolves them into the dev-server subprocess. Merges with, rather than
    * overwrites, any operator-set secrets already in that file.
    */
-  async #writeAppSecrets(
-    projectId: string,
-    credentials: { apiUrl: string; anonKey: string; serviceRoleKey: string },
-  ): Promise<void> {
+  async #writeAppSecrets(projectId: string, credentials: SupabaseAppCredentials): Promise<void> {
+    // dirname(path) (dataDir/projects/projectId) already exists: #initialize
+    // mkdir's workdir, a child of it, before this is ever called.
     const path = projectEnvPath(this.#dataDir, projectId);
     let existing = '';
     try {
@@ -640,7 +643,6 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       NEXT_PUBLIC_SUPABASE_ANON_KEY: credentials.anonKey,
       SUPABASE_SERVICE_ROLE_KEY: credentials.serviceRoleKey,
     });
-    await mkdir(dirname(path), { recursive: true });
     await atomicWrite(path, updated);
   }
 
