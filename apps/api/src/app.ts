@@ -262,7 +262,22 @@ export async function buildApp(
     return { rows: decisions.map((entry) => DecisionExportRowSchema.parse(entry)) };
   });
 
-  app.post('/router/regression-gate', async (request) => {
+  const routerRegressionGateRateLimiter = createFixedWindowRateLimiter({
+    windowMs: 60_000,
+    maxRequests: 30,
+    now,
+  });
+
+  app.post('/router/regression-gate', async (request, reply) => {
+    const rateLimitKey = request.ip || 'unknown';
+    const rateLimit = routerRegressionGateRateLimiter(rateLimitKey);
+    if (!rateLimit.allowed) {
+      return reply.status(429).send({
+        error: 'Too Many Requests',
+        message: 'Rate limit exceeded for /router/regression-gate',
+      });
+    }
+
     const { fresh } = RegressionGateRequestSchema.parse(request.body);
     const baselinePath = resolve(REPO_ROOT, 'docs/baselines', `${BASELINE_STEM}.json`);
     const baseline = BenchmarkReportSchema.parse(JSON.parse(await readFile(baselinePath, 'utf8')));
