@@ -22,6 +22,7 @@ Criar uma aplicação web local que permita registrar, organizar e concluir issu
 - Exibir contagens por status em um dashboard simples.
 - Persistir dados entre reinicializações.
 - Exibir estados de loading, vazio e erro.
+- Anexar um arquivo (imagem ou PDF, até 10MB) a uma issue.
 
 ## Regras
 
@@ -39,6 +40,7 @@ Criar uma aplicação web local que permita registrar, organizar e concluir issu
 - Dados permanecem disponíveis após reiniciar a aplicação.
 - Entradas inválidas retornam mensagens específicas.
 - O dashboard reflete imediatamente as alterações.
+- O usuário consegue anexar um arquivo a uma issue e revê-lo depois.
 - Fluxos principais têm testes automatizados.
 - `npm run typecheck`, `npm test` e `npm run build` passam.
 
@@ -58,7 +60,6 @@ Criar uma aplicação web local que permita registrar, organizar e concluir issu
 - Notificações.
 - Integrações externas.
 - Aplicativo móvel nativo.
-- Anexos.
 
 ## Restrições
 
