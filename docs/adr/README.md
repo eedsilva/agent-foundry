@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0036 Static security lint and RLS access-matrix verification before release](0036-security-verification-before-release.md).
+Latest: [0037 Hand-author the Issue Radar reference app instead of live-generating it](0037-issue-radar-reference-app.md).

@@ -54,8 +54,10 @@ its RLS migrations are covered by a fast unit-level lint regression
 (`packages/platform/src/issue-radar-example-security-lint.test.ts`) in addition to the
 two browser specs. Negative: it does not, by itself, prove the live multi-agent
 generation loop can produce a working app from `examples/issue-radar.prd.md`
-unattended — that remains open, tracked risk (see `docs/RISK_REGISTER.md`'s real-CLI-loop
-entry), not closed by this ADR.
+unattended — that remains an open risk this repo has not yet formally logged in
+`docs/RISK_REGISTER.md` (whose five current entries cover secrets exposure, prompt
+injection, provider fallback, and artifact storage — not generation-loop reliability),
+not closed by this ADR.
 
 ## Validation and rollback
 

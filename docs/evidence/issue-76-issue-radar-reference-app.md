@@ -95,6 +95,19 @@ on every push/PR against `main`.
   repo's root-level "no `.env` tracked" policy enforced by `npm run secrets:check`. Found by
   running the full verification gate for this task; fixed by removing the override and
   `git rm --cached`-ing the file. See "Results" above for full detail.
+- `examples/issue-radar-app/Dockerfile` never passed `NEXT_PUBLIC_SUPABASE_URL`/
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY` into its build stage, so a real Compose deploy would
+  have baked `undefined` into the client bundle instead of the real Supabase URL/key
+  (Next.js inlines `NEXT_PUBLIC_*` vars at build time, not runtime). Found during
+  post-task review; fixed by adding `ARG`/`ENV` to the Dockerfile's build stage and
+  `build.args` to `docker-compose.yml`, verified by an actual `docker build` with test
+  values and confirming the literal value was inlined into the built `.next/static`
+  bundle.
+- That same `docker build` run surfaced a second, unconditional break: the app never had
+  a `public/` directory, but the Dockerfile's runtime stage does
+  `COPY --from=build /app/public ./public`, which fails every build regardless of the
+  fix above. Fixed by adding `examples/issue-radar-app/public/.gitkeep` so the directory
+  exists to copy; verified by the same `docker build` run completing successfully.
 
 ## Scope decisions
 
