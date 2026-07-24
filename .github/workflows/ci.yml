@@ -102,6 +102,8 @@ jobs:
       - uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
         with:
           version: 2.62.5
+      - name: Build the packages the e2e fixture imports at runtime (composition and its dependency chain)
+        run: npm run build:packages
       - run: npm run e2e --workspace @agent-foundry/api -- issue-radar-golden-journey.spec.ts issue-radar-cross-user-access.spec.ts
 
   format:
