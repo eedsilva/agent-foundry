@@ -86,6 +86,24 @@ jobs:
           version: 2.62.5
       - run: RUN_SUPABASE_RLS_E2E=true npx vitest run packages/platform/src/security-rls.e2e.test.ts --pool=threads --maxWorkers=1
 
+  issue-radar-e2e:
+    name: issue-radar-e2e
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
+        with:
+          version: 2.62.5
+      - run: npm run e2e --workspace @agent-foundry/api -- issue-radar-golden-journey.spec.ts issue-radar-cross-user-access.spec.ts
+
   format:
     name: format
     needs: preflight
