@@ -7,10 +7,19 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { SupabaseGeneratedProjectRuntime } from './supabase-runtime.js';
 import { GENERATED_STORAGE_BUCKET, GENERATED_STORAGE_MAX_BYTES } from './supabase-storage.js';
+import {
+  authHeaders,
+  boundedFetch,
+  isRecord,
+  json,
+  readCredentials,
+  requireOk,
+  rows,
+  type Credentials,
+} from './e2e-test-support.js';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ID = 'project-a';
-const FETCH_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 60_000;
 const PNG_1X1 = Uint8Array.from(
   Buffer.from(
@@ -18,12 +27,6 @@ const PNG_1X1 = Uint8Array.from(
     'base64',
   ),
 );
-
-interface Credentials {
-  apiUrl: string;
-  anonKey: string;
-  serviceRoleKey: string;
-}
 
 interface User {
   id: string;
@@ -45,7 +48,7 @@ describe.runIf(process.env.RUN_SUPABASE_STORAGE_E2E === 'true')(
 
         try {
           await runtime.initialize({ projectId: PROJECT_ID });
-          credentials = await readCredentials(workdir);
+          credentials = await readCredentials(workdir, STOP_TIMEOUT_MS);
           const userA = await createUser(credentials);
           const userB = await createUser(credentials);
           const allowedBytes = PNG_1X1;
@@ -325,38 +328,6 @@ async function cleanupStack(
   }
 }
 
-async function readCredentials(workdir: string): Promise<Credentials> {
-  let stdout: string;
-  try {
-    ({ stdout } = await execFileAsync(
-      'supabase',
-      ['status', '--output', 'json', '--workdir', workdir],
-      { encoding: 'utf8', timeout: STOP_TIMEOUT_MS },
-    ));
-  } catch {
-    throw new Error('Supabase status failed.');
-  }
-  let status: unknown;
-  try {
-    status = JSON.parse(stdout);
-  } catch {
-    throw new Error('Supabase status returned invalid JSON.');
-  }
-  if (!isRecord(status)) throw new Error('Supabase status omitted required local credentials.');
-  const apiUrl = status.API_URL;
-  const anonKey = status.ANON_KEY;
-  const serviceRoleKey = status.SERVICE_ROLE_KEY;
-  if (
-    typeof apiUrl !== 'string' ||
-    !URL.canParse(apiUrl) ||
-    typeof anonKey !== 'string' ||
-    typeof serviceRoleKey !== 'string'
-  ) {
-    throw new Error('Supabase status omitted required local credentials.');
-  }
-  return { apiUrl, anonKey, serviceRoleKey };
-}
-
 async function createUser(credentials: Credentials): Promise<User> {
   const suffix = randomUUID();
   const email = `storage-${suffix}@example.test`;
@@ -391,10 +362,6 @@ async function createUser(credentials: Credentials): Promise<User> {
     throw new Error('Local Auth returned an invalid session.');
   }
   return { id: session.user.id, accessToken: session.access_token };
-}
-
-function authHeaders(apiKey: string, token: string): Record<string, string> {
-  return { apikey: apiKey, Authorization: `Bearer ${token}` };
 }
 
 function apiKeyForToken(credentials: Credentials, token: string): string {
@@ -609,21 +576,6 @@ function storageObjectUrl(apiUrl: string, operation: string, objectName: string)
   return `${apiUrl}/storage/v1/object/${prefix}${GENERATED_STORAGE_BUCKET}/${encodedName}`;
 }
 
-function boundedFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-  return fetch(input, {
-    ...init,
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-}
-
-function requireOk(response: Response, operation: string): Response {
-  if (!response.ok) {
-    void response.body?.cancel();
-    throw new Error(`${operation} failed with HTTP ${response.status}.`);
-  }
-  return response;
-}
-
 async function expectClientError(
   response: Response,
   operation: string,
@@ -640,29 +592,10 @@ async function expectClientError(
   }
 }
 
-async function json(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    throw new Error('Local Supabase returned invalid JSON.');
-  }
-}
-
 function requireStoredKey(value: unknown, expectedKey: string): void {
   if (!isRecord(value) || typeof value.Key !== 'string' || value.Key !== expectedKey) {
     throw new Error('Signed Storage upload returned an invalid stored key.');
   }
-}
-
-function rows(value: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(value) || !value.every(isRecord)) {
-    throw new Error('PostgREST returned an invalid row set.');
-  }
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isNotFound(error: unknown): boolean {

@@ -34,6 +34,12 @@ import {
   configureGeneratedStorage,
   generatedStorageMigration,
 } from './supabase-storage.js';
+import {
+  credentialsFromStatus,
+  upsertEnvVars,
+  type SupabaseAppCredentials,
+} from './supabase-secrets.js';
+import { configureGeneratedAuth } from './supabase-auth.js';
 
 const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
@@ -167,6 +173,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
         timestamp,
         'initialize',
       );
+      const credentials = credentialsFromStatus(result.stdout);
+      if (credentials) await this.#writeAppSecrets(projectId, credentials);
       await persist(environment);
       return environment;
     } catch (error) {
@@ -614,6 +622,30 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
   }
 
+  /**
+   * Writes the generated app's Supabase connection credentials into its
+   * per-project .env (ADR 0033/0034) so NodePreviewRunner's SecretStore
+   * resolves them into the dev-server subprocess. Merges with, rather than
+   * overwrites, any operator-set secrets already in that file.
+   */
+  async #writeAppSecrets(projectId: string, credentials: SupabaseAppCredentials): Promise<void> {
+    // dirname(path) (dataDir/projects/projectId) already exists: #initialize
+    // mkdir's workdir, a child of it, before this is ever called.
+    const path = projectEnvPath(this.#dataDir, projectId);
+    let existing = '';
+    try {
+      existing = await readFile(path, 'utf8');
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+    }
+    const updated = upsertEnvVars(existing, {
+      NEXT_PUBLIC_SUPABASE_URL: credentials.apiUrl,
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: credentials.anonKey,
+      SUPABASE_SERVICE_ROLE_KEY: credentials.serviceRoleKey,
+    });
+    await atomicWrite(path, updated);
+  }
+
   async #configure(workdir: string, projectId: string): Promise<void> {
     const previous = this.#configurationQueue;
     let release = () => {};
@@ -651,6 +683,13 @@ function projectResources(dataDir: string, projectId: string) {
 
 function metadataPath(dataDir: string, projectId: string): string {
   return join(environmentDir(dataDir, projectId), 'environment.json');
+}
+
+// A sibling of environmentDir, matching WorkspaceManager.projectRoot
+// (packages/persistence/src/workspace-manager.ts) — outside the git-tracked
+// workspace/ directory by construction (ADR 0033).
+function projectEnvPath(dataDir: string, projectId: string): string {
+  return join(dataDir, 'projects', projectId, '.env');
 }
 
 function publicStatus(
@@ -1157,7 +1196,7 @@ async function configureProject(
     }
     const migrationsDir = join(workdir, 'supabase', 'migrations');
     await mkdir(migrationsDir, { recursive: true });
-    await atomicWrite(path, configureGeneratedStorage(configured));
+    await atomicWrite(path, configureGeneratedAuth(configureGeneratedStorage(configured)));
     await atomicWrite(
       join(migrationsDir, GENERATED_STORAGE_MIGRATION),
       generatedStorageMigration(),
