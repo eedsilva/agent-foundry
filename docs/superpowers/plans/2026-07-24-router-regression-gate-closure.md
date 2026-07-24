@@ -166,8 +166,8 @@ Run this in a long-lived background shell (or a terminal you don't interrupt) an
 
 Expected exit code: `1` (the script's own `--all` failure-count check treats every `failed` record as a script failure; that's fine, we only care that 18 JSON records landed in `.data/benchmark/`). Verify with:
 
-Run: `ls .data/benchmark | wc -l`
-Expected: `18`
+Run: `ls .data/benchmark/*.json | wc -l`
+Expected: `18` (a `dogfood/` subdirectory also appears under `.data/benchmark` — that's `runDogfoodTask`'s own bookkeeping, not a benchmark record; `loadJsonRecords` already filters to `*.json` so it's harmless, just don't count it in this check).
 
 - [ ] **Step 4: Freeze the baseline pair**
 
