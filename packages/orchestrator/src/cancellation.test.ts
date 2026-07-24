@@ -49,9 +49,13 @@ import {
   type WorkflowRunRepository,
   type WorkspaceManager,
 } from '@agent-foundry/domain';
-import { NoopTransactionRunner } from '@agent-foundry/persistence';
 import { ProjectService } from './project-service.js';
-import { DEFAULT_POLICY, InMemoryPolicies, InMemoryStepEvents } from './testing/harness.js';
+import {
+  DEFAULT_POLICY,
+  InMemoryPolicies,
+  InMemoryStepEvents,
+  NoopTransactionRunner,
+} from './testing/harness.js';
 import { WorkflowOrchestrator } from './workflow-orchestrator.js';
 
 const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
