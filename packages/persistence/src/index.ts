@@ -17,6 +17,7 @@ export * from './preview-repositories.js';
 export * from './conversation-repository.js';
 export * from './knowledge-file-repository.js';
 export * from './project-version-repository.js';
+export * from './transaction-runner.js';
 export * from './postgres/client.js';
 export * from './postgres/migrator.js';
 export * from './postgres/project-repository.js';
