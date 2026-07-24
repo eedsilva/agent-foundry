@@ -43,6 +43,8 @@ const REVOKE_TABLE_RE =
   /^REVOKE\s+([\w\s,]+?)\s+ON\s+TABLE\s+(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s+FROM\s+([^\n;]+)/i;
 const SENSITIVE_RE = /\b(?:user_id|owner_id)\b|\breferences\s+(?:public\.)?auth\.users\b/i;
 
+// Safe as a module-level mutable counter only because lintMigrationsSql is fully
+// synchronous (no internal `await`) — an async-ification would need per-call state.
 let findingCounter = 0;
 
 export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): SecurityReport {
@@ -110,8 +112,10 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
         const ops = parseOps(grant[1]!);
         const table = grant[2]!;
         const roles = parseRoles(grant[3]!);
-        if (roles.includes('anon')) {
-          const writeOps = ops.filter((op) => WRITE_OPS.has(op));
+        // PUBLIC is a pseudo-role that includes anon (and every other role) in
+        // Postgres, so a grant to public is equivalent to a grant to anon here.
+        if (roles.includes('anon') || roles.includes('public')) {
+          const writeOps = writeOpsIn(ops);
           if (writeOps.length) {
             const current = anonWriteGrants.get(table) ?? new Set<string>();
             for (const op of writeOps) current.add(op);
@@ -128,7 +132,7 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
         const roles = parseRoles(revoke[3]!);
         if (roles.includes('anon')) {
           const current = anonWriteGrants.get(table);
-          if (current) for (const op of ops) current.delete(op);
+          if (current) for (const op of writeOpsIn(ops)) current.delete(op);
         }
         continue;
       }
@@ -192,15 +196,14 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
     );
   }
 
-  const blocked = findings.some(
-    (finding) => finding.severity === 'high' || finding.severity === 'critical',
-  );
-  return SecurityReportSchema.parse({
+  const report = SecurityReportSchema.parse({
     schemaVersion: '1',
     findings,
-    blocked,
+    blocked: false,
     generatedAt: new Date().toISOString(),
   });
+  report.blocked = blocksRelease(report);
+  return report;
 }
 
 export async function lintMigrationsDir(dir: string): Promise<SecurityReport> {
@@ -254,6 +257,13 @@ function makeFinding(input: {
 function stripPublicSchema(name: string): string {
   const unquoted = name.replace(/"/g, '');
   return unquoted.replace(/^public\./i, '');
+}
+
+// Mirrors the CREATE POLICY branch's `op === 'all' || WRITE_OPS.has(op)` handling:
+// GRANT/REVOKE ALL is the broadest form of write access and must count as covering
+// insert/update/delete, not fall through because WRITE_OPS.has('all') is false.
+function writeOpsIn(ops: string[]): string[] {
+  return ops.includes('all') ? [...WRITE_OPS] : ops.filter((op) => WRITE_OPS.has(op));
 }
 
 function parseOps(raw: string): string[] {

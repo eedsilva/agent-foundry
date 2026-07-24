@@ -160,6 +160,85 @@ grant insert, update, delete on table public.receipts to authenticated;
     expect(report.findings.filter((f) => f.rule === 'anon-grant')).toHaveLength(0);
   });
 
+  it('flags GRANT ALL ON TABLE ... TO anon on a sensitive table', () => {
+    const grantAll = `create table public.payments (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id),
+  amount int not null
+);
+
+alter table public.payments enable row level security;
+
+create policy payments_select_owner
+  on public.payments for select to authenticated
+  using (owner_id = (select auth.uid()));
+
+grant all on table public.payments to anon;
+`;
+    const report = lintMigrationsSql([{ file: '007_payments.sql', sql: grantAll }]);
+    const findings = report.findings.filter((f) => f.rule === 'anon-grant');
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      rule: 'anon-grant',
+      severity: 'high',
+      table: 'payments',
+      location: '007_payments.sql',
+    });
+    expect(report.blocked).toBe(true);
+    expect(blocksRelease(report)).toBe(true);
+    expect(() => SecurityReportSchema.parse(report)).not.toThrow();
+  });
+
+  it('flags GRANT ... TO public as equivalent to a grant to anon', () => {
+    const grantPublic = `create table public.invoices (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id),
+  amount int not null
+);
+
+alter table public.invoices enable row level security;
+
+create policy invoices_select_owner
+  on public.invoices for select to authenticated
+  using (owner_id = (select auth.uid()));
+
+grant insert, update, delete on table public.invoices to public;
+`;
+    const report = lintMigrationsSql([{ file: '008_invoices.sql', sql: grantPublic }]);
+    const findings = report.findings.filter((f) => f.rule === 'anon-grant');
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      rule: 'anon-grant',
+      severity: 'high',
+      table: 'invoices',
+      location: '008_invoices.sql',
+    });
+    expect(report.blocked).toBe(true);
+    expect(blocksRelease(report)).toBe(true);
+    expect(() => SecurityReportSchema.parse(report)).not.toThrow();
+  });
+
+  it('does not flag anon-grant when a GRANT ALL to anon is revoked (ALL) before granting to authenticated', () => {
+    const revokedAllThenGranted = `create table public.statements (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id),
+  body text not null
+);
+
+alter table public.statements enable row level security;
+
+create policy statements_select_owner
+  on public.statements for select to authenticated
+  using (owner_id = (select auth.uid()));
+
+grant all on table public.statements to anon;
+revoke all on table public.statements from anon;
+grant all on table public.statements to authenticated;
+`;
+    const report = lintMigrationsSql([{ file: '009_statements.sql', sql: revokedAllThenGranted }]);
+    expect(report.findings.filter((f) => f.rule === 'anon-grant')).toHaveLength(0);
+  });
+
   it('flags a destructive statement using the same detector as destructiveStatements()', () => {
     const report = lintMigrationsSql([{ file: '006_drop_legacy.sql', sql: DESTRUCTIVE_MIGRATION }]);
     const findings = report.findings.filter((f) => f.rule === 'destructive-migration');
