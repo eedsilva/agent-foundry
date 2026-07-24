@@ -4,6 +4,7 @@ export * from './provider-canary.js';
 export * from './provider-canary-fixtures.js';
 export * from './dogfood.js';
 export * from './benchmark-runner.js';
+export * from './regression-gate.js';
 export type { Risk, RiskProbability, RiskImpact } from './risk-register.js';
 export { INITIAL_RISKS, getRiskById, listRisks } from './risk-register.js';
 export { listDeploymentProfiles, getDeploymentProfile } from './deployment-profiles.js';
