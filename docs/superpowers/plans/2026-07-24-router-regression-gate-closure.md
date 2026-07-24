@@ -23,10 +23,12 @@
 ### Task 1: Add a promotion-sensitive-path decision helper to the regression gate module
 
 **Files:**
+
 - Modify: `packages/composition/src/regression-gate.ts`
 - Test: `packages/composition/src/regression-gate.test.ts`
 
 **Interfaces:**
+
 - Produces: `PROMOTION_SENSITIVE_PATHS: readonly string[]` and `shouldRunRegressionGate(changedFiles: readonly string[]): boolean`, both exported from `packages/composition/src/regression-gate.ts`. Task 3's `scripts/promotion-gate-check.ts` imports `shouldRunRegressionGate` by exact name.
 
 - [ ] **Step 1: Write the failing tests**
@@ -65,7 +67,6 @@ Expected: FAIL — `shouldRunRegressionGate is not defined` (or a TypeScript imp
 Append to `packages/composition/src/regression-gate.ts` (after the `compareBenchmarkReports` function):
 
 ```ts
-
 // Promotion-sensitive paths: a change here is what "promoting catalog or
 // harness" means in this repo (see docs/OPERATIONS.md). CI wires this into
 // the regression-gate job via scripts/promotion-gate-check.ts.
@@ -99,11 +100,13 @@ git commit -m "feat(composition): add shouldRunRegressionGate promotion-path che
 ### Task 2: Freeze the v0.9 benchmark baseline
 
 **Files:**
+
 - Create: `docs/baselines/v0.9-benchmark.json`
 - Create: `docs/baselines/v0.9-benchmark.md`
 - Modify: `packages/composition/src/benchmark-runner.test.ts`
 
 **Interfaces:**
+
 - Consumes: `BASELINE_STEM` (already exported from `packages/composition/src/benchmark-runner.ts`, value `'v0.9-benchmark'`), `compareBenchmarkReports` (Task-independent, already exists in `regression-gate.ts`).
 - Produces: the committed baseline pair at `docs/baselines/v0.9-benchmark.{json,md}`, read by the existing `POST /router/regression-gate` handler (`apps/api/src/app.ts:284`) and by Task 3's CI job and Task 5's e2e test.
 
@@ -204,10 +207,12 @@ git commit -m "chore(benchmark): freeze the v0.9 mock-executor baseline"
 ### Task 3: Wire the regression gate into CI as a promotion-sensitive-path check
 
 **Files:**
+
 - Create: `scripts/promotion-gate-check.ts`
 - Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
+
 - Consumes: `shouldRunRegressionGate` from `packages/composition/src/regression-gate.js` (Task 1, must be complete first).
 - Produces: a `regression-gate` CI job that runs `scripts/benchmark.ts --all --executor-mode mock` + `scripts/benchmark.ts --gate` only when a PR/push touches `models/catalog.yaml` or `harness/manifest.json`.
 
@@ -255,42 +260,42 @@ Expected: no errors (this compiles the whole workspace including `scripts/`; if 
 In `.github/workflows/ci.yml`, insert this new job immediately before the `sandbox-sbom:` job (i.e., right after the `build:` job's steps end and before the `sandbox-sbom:` job starts):
 
 ```yaml
-  # ponytail: mock-executor-mode fresh run only, ~20-25 min — this repo has
-  # no CI-available real provider credentials, so it can only ever compare
-  # against a mock-mode baseline. See docs/OPERATIONS.md "Regression gate de
-  # promoção" for what that does and doesn't catch.
-  regression-gate:
-    name: regression-gate
-    needs: preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # The promotion-sensitive-path diff below needs real history to
-          # diff against, not just the shallow default checkout of the PR tip.
-          fetch-depth: 0
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - name: Decide whether this change touches a promotion-sensitive path
-        id: gate-check
-        run: |
-          BASE_SHA="${{ github.event.pull_request.base.sha || github.event.before }}"
-          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            RUN=$(git diff --name-only "$BASE_SHA" HEAD | npx tsx scripts/promotion-gate-check.ts)
-            echo "run=$RUN" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Generate fresh benchmark results (mock executor)
-        if: steps.gate-check.outputs.run == 'true'
-        run: npx tsx scripts/benchmark.ts --all --executor-mode mock
-      - name: Compare against the frozen v0.9 baseline
-        if: steps.gate-check.outputs.run == 'true'
-        run: npx tsx scripts/benchmark.ts --gate
+# ponytail: mock-executor-mode fresh run only, ~20-25 min — this repo has
+# no CI-available real provider credentials, so it can only ever compare
+# against a mock-mode baseline. See docs/OPERATIONS.md "Regression gate de
+# promoção" for what that does and doesn't catch.
+regression-gate:
+  name: regression-gate
+  needs: preflight
+  runs-on: ubuntu-latest
+  timeout-minutes: 35
+  steps:
+    - uses: actions/checkout@v7
+      with:
+        # The promotion-sensitive-path diff below needs real history to
+        # diff against, not just the shallow default checkout of the PR tip.
+        fetch-depth: 0
+    - uses: actions/setup-node@v6
+      with:
+        node-version-file: .nvmrc
+        cache: npm
+    - run: npm ci
+    - name: Decide whether this change touches a promotion-sensitive path
+      id: gate-check
+      run: |
+        BASE_SHA="${{ github.event.pull_request.base.sha || github.event.before }}"
+        if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+          echo "run=true" >> "$GITHUB_OUTPUT"
+        else
+          RUN=$(git diff --name-only "$BASE_SHA" HEAD | npx tsx scripts/promotion-gate-check.ts)
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Generate fresh benchmark results (mock executor)
+      if: steps.gate-check.outputs.run == 'true'
+      run: npx tsx scripts/benchmark.ts --all --executor-mode mock
+    - name: Compare against the frozen v0.9 baseline
+      if: steps.gate-check.outputs.run == 'true'
+      run: npx tsx scripts/benchmark.ts --gate
 ```
 
 - [ ] **Step 5: Validate the YAML**
@@ -312,11 +317,13 @@ git commit -m "ci: gate catalog/harness promotions on the v0.9 regression baseli
 ### Task 4: Complete the experiment registration web form
 
 **Files:**
+
 - Modify: `apps/web/app/router/dashboard-view.tsx`
 - Modify: `apps/web/app/router/page.tsx`
 - Modify: `apps/web/app/router/dashboard-view.test.tsx`
 
 **Interfaces:**
+
 - Produces: `ExperimentFormState` (interface), `EMPTY_EXPERIMENT_FORM` (const), `buildExperimentRequest(form: ExperimentFormState): CreateExperimentRequest` (function) — all exported from `apps/web/app/router/dashboard-view.tsx`. `RouterDashboardView`'s props change from `hypothesis: string; onHypothesisChange: (value: string) => void;` to `form: ExperimentFormState; onFormChange: (form: ExperimentFormState) => void;`.
 - Consumes: `CreateExperimentRequest`, `ExperimentStopRule`, `TaskKind`, `TaskKindSchema`, `ExperimentStopRuleSchema` from `@agent-foundry/contracts` (all already exist; `TaskKindSchema`/`ExperimentStopRuleSchema` need to be added to this file's imports — there's existing precedent for importing a runtime Zod schema into a web component and using `.options` at `apps/web/app/project/[id]/preview-panel.tsx:419` and `:449`).
 
@@ -386,8 +393,8 @@ with
 and add these two assertions right after the existing `expect(markup).toContain(experiment.hypothesis);` line:
 
 ```ts
-    expect(markup).toContain('Variante A');
-    expect(markup).toContain('Regra de parada');
+expect(markup).toContain('Variante A');
+expect(markup).toContain('Regra de parada');
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -532,191 +539,176 @@ with:
 Then replace the entire existing form block:
 
 ```tsx
-        <form onSubmit={onSubmitExperiment}>
-          <label>
-            Hipótese
-            <textarea
-              className="compactTextarea"
-              value={hypothesis}
-              onChange={(event) => onHypothesisChange(event.target.value)}
-            />
-          </label>
-          <button type="submit" className="primaryButton">
-            Registrar experimento
-          </button>
-        </form>
+<form onSubmit={onSubmitExperiment}>
+  <label>
+    Hipótese
+    <textarea
+      className="compactTextarea"
+      value={hypothesis}
+      onChange={(event) => onHypothesisChange(event.target.value)}
+    />
+  </label>
+  <button type="submit" className="primaryButton">
+    Registrar experimento
+  </button>
+</form>
 ```
 
 with:
 
 ```tsx
-        <form onSubmit={onSubmitExperiment}>
-          <label>
-            Hipótese
-            <textarea
-              className="compactTextarea"
-              value={form.hypothesis}
-              onChange={(event) => onFormChange({ ...form, hypothesis: event.target.value })}
-            />
-          </label>
+<form onSubmit={onSubmitExperiment}>
+  <label>
+    Hipótese
+    <textarea
+      className="compactTextarea"
+      value={form.hypothesis}
+      onChange={(event) => onFormChange({ ...form, hypothesis: event.target.value })}
+    />
+  </label>
 
-          <fieldset>
-            <legend>Variante A</legend>
-            <label>
-              Chave (A)
-              <input
-                value={form.variantAKey}
-                onChange={(event) => onFormChange({ ...form, variantAKey: event.target.value })}
-              />
-            </label>
-            <label>
-              Descrição (A)
-              <input
-                value={form.variantADescription}
-                onChange={(event) =>
-                  onFormChange({ ...form, variantADescription: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              Modelo alvo (A)
-              <input
-                value={form.variantAModelId}
-                onChange={(event) =>
-                  onFormChange({ ...form, variantAModelId: event.target.value })
-                }
-              />
-            </label>
-          </fieldset>
+  <fieldset>
+    <legend>Variante A</legend>
+    <label>
+      Chave (A)
+      <input
+        value={form.variantAKey}
+        onChange={(event) => onFormChange({ ...form, variantAKey: event.target.value })}
+      />
+    </label>
+    <label>
+      Descrição (A)
+      <input
+        value={form.variantADescription}
+        onChange={(event) => onFormChange({ ...form, variantADescription: event.target.value })}
+      />
+    </label>
+    <label>
+      Modelo alvo (A)
+      <input
+        value={form.variantAModelId}
+        onChange={(event) => onFormChange({ ...form, variantAModelId: event.target.value })}
+      />
+    </label>
+  </fieldset>
 
-          <fieldset>
-            <legend>Variante B</legend>
-            <label>
-              Chave (B)
-              <input
-                value={form.variantBKey}
-                onChange={(event) => onFormChange({ ...form, variantBKey: event.target.value })}
-              />
-            </label>
-            <label>
-              Descrição (B)
-              <input
-                value={form.variantBDescription}
-                onChange={(event) =>
-                  onFormChange({ ...form, variantBDescription: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              Modelo alvo (B)
-              <input
-                value={form.variantBModelId}
-                onChange={(event) =>
-                  onFormChange({ ...form, variantBModelId: event.target.value })
-                }
-              />
-            </label>
-          </fieldset>
+  <fieldset>
+    <legend>Variante B</legend>
+    <label>
+      Chave (B)
+      <input
+        value={form.variantBKey}
+        onChange={(event) => onFormChange({ ...form, variantBKey: event.target.value })}
+      />
+    </label>
+    <label>
+      Descrição (B)
+      <input
+        value={form.variantBDescription}
+        onChange={(event) => onFormChange({ ...form, variantBDescription: event.target.value })}
+      />
+    </label>
+    <label>
+      Modelo alvo (B)
+      <input
+        value={form.variantBModelId}
+        onChange={(event) => onFormChange({ ...form, variantBModelId: event.target.value })}
+      />
+    </label>
+  </fieldset>
 
-          <fieldset>
-            <legend>População</legend>
-            {TaskKindSchema.options.map((kind) => (
-              <label key={kind} className="checkboxLabel">
-                <input
-                  type="checkbox"
-                  checked={form.taskKinds.includes(kind)}
-                  onChange={(event) =>
-                    onFormChange({
-                      ...form,
-                      taskKinds: event.target.checked
-                        ? [...form.taskKinds, kind]
-                        : form.taskKinds.filter((value) => value !== kind),
-                    })
-                  }
-                />
-                {kind}
-              </label>
-            ))}
-            <label>
-              Tamanho de amostra alvo
-              <input
-                type="number"
-                min={1}
-                value={form.targetSampleSize}
-                onChange={(event) =>
-                  onFormChange({ ...form, targetSampleSize: event.target.value })
-                }
-              />
-            </label>
-          </fieldset>
+  <fieldset>
+    <legend>População</legend>
+    {TaskKindSchema.options.map((kind) => (
+      <label key={kind} className="checkboxLabel">
+        <input
+          type="checkbox"
+          checked={form.taskKinds.includes(kind)}
+          onChange={(event) =>
+            onFormChange({
+              ...form,
+              taskKinds: event.target.checked
+                ? [...form.taskKinds, kind]
+                : form.taskKinds.filter((value) => value !== kind),
+            })
+          }
+        />
+        {kind}
+      </label>
+    ))}
+    <label>
+      Tamanho de amostra alvo
+      <input
+        type="number"
+        min={1}
+        value={form.targetSampleSize}
+        onChange={(event) => onFormChange({ ...form, targetSampleSize: event.target.value })}
+      />
+    </label>
+  </fieldset>
 
-          <fieldset>
-            <legend>Regra de parada</legend>
-            <label>
-              Métrica
-              <select
-                value={form.stopRuleMetric}
-                onChange={(event) =>
-                  onFormChange({
-                    ...form,
-                    stopRuleMetric: event.target.value as ExperimentFormState['stopRuleMetric'],
-                  })
-                }
-              >
-                {ExperimentStopRuleSchema.shape.metric.options.map((metric) => (
-                  <option key={metric} value={metric}>
-                    {metric}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Comparador
-              <select
-                value={form.stopRuleComparator}
-                onChange={(event) =>
-                  onFormChange({
-                    ...form,
-                    stopRuleComparator: event.target
-                      .value as ExperimentFormState['stopRuleComparator'],
-                  })
-                }
-              >
-                {ExperimentStopRuleSchema.shape.comparator.options.map((comparator) => (
-                  <option key={comparator} value={comparator}>
-                    {comparator}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Limite
-              <input
-                type="number"
-                step="any"
-                value={form.stopRuleThreshold}
-                onChange={(event) =>
-                  onFormChange({ ...form, stopRuleThreshold: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              Amostras mínimas
-              <input
-                type="number"
-                min={1}
-                value={form.stopRuleMinSamples}
-                onChange={(event) =>
-                  onFormChange({ ...form, stopRuleMinSamples: event.target.value })
-                }
-              />
-            </label>
-          </fieldset>
+  <fieldset>
+    <legend>Regra de parada</legend>
+    <label>
+      Métrica
+      <select
+        value={form.stopRuleMetric}
+        onChange={(event) =>
+          onFormChange({
+            ...form,
+            stopRuleMetric: event.target.value as ExperimentFormState['stopRuleMetric'],
+          })
+        }
+      >
+        {ExperimentStopRuleSchema.shape.metric.options.map((metric) => (
+          <option key={metric} value={metric}>
+            {metric}
+          </option>
+        ))}
+      </select>
+    </label>
+    <label>
+      Comparador
+      <select
+        value={form.stopRuleComparator}
+        onChange={(event) =>
+          onFormChange({
+            ...form,
+            stopRuleComparator: event.target.value as ExperimentFormState['stopRuleComparator'],
+          })
+        }
+      >
+        {ExperimentStopRuleSchema.shape.comparator.options.map((comparator) => (
+          <option key={comparator} value={comparator}>
+            {comparator}
+          </option>
+        ))}
+      </select>
+    </label>
+    <label>
+      Limite
+      <input
+        type="number"
+        step="any"
+        value={form.stopRuleThreshold}
+        onChange={(event) => onFormChange({ ...form, stopRuleThreshold: event.target.value })}
+      />
+    </label>
+    <label>
+      Amostras mínimas
+      <input
+        type="number"
+        min={1}
+        value={form.stopRuleMinSamples}
+        onChange={(event) => onFormChange({ ...form, stopRuleMinSamples: event.target.value })}
+      />
+    </label>
+  </fieldset>
 
-          <button type="submit" className="primaryButton">
-            Registrar experimento
-          </button>
-        </form>
+  <button type="submit" className="primaryButton">
+    Registrar experimento
+  </button>
+</form>
 ```
 
 - [ ] **Step 5: Update page.tsx**
@@ -817,9 +809,11 @@ git commit -m "feat(web): capture variants, population, and stop rule on experim
 ### Task 5: E2E coverage — regression gate against the baseline, and a full-form experiment registration
 
 **Files:**
+
 - Modify: `apps/api/e2e/golden-flow.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `docs/baselines/v0.9-benchmark.json` (Task 2, must be complete first), the new experiment form fields' labels — `'Limite'`, `'Amostras mínimas'` (Task 4, must be complete first), `POST /router/regression-gate` (already exists, unchanged).
 
 - [ ] **Step 1: Extend the existing router-dashboard test to fill and verify the new form fields**
@@ -827,28 +821,28 @@ git commit -m "feat(web): capture variants, population, and stop rule on experim
 In `apps/api/e2e/golden-flow.spec.ts`, inside the `test('router dashboard shows decisions and filters, an experiment can be registered, and export is PII-free', ...)` block, replace:
 
 ```ts
-  const hypothesis = `E2E hypothesis ${Date.now()}`;
-  await page.getByLabel('Hipótese').fill(hypothesis);
-  await page.getByRole('button', { name: 'Registrar experimento' }).click();
-  await expect(page.getByText(hypothesis)).toBeVisible({ timeout: 10_000 });
+const hypothesis = `E2E hypothesis ${Date.now()}`;
+await page.getByLabel('Hipótese').fill(hypothesis);
+await page.getByRole('button', { name: 'Registrar experimento' }).click();
+await expect(page.getByText(hypothesis)).toBeVisible({ timeout: 10_000 });
 ```
 
 with:
 
 ```ts
-  const hypothesis = `E2E hypothesis ${Date.now()}`;
-  await page.getByLabel('Hipótese').fill(hypothesis);
-  await page.getByLabel('Limite').fill('0.65');
-  await page.getByLabel('Amostras mínimas').fill('12');
-  await page.getByRole('button', { name: 'Registrar experimento' }).click();
-  await expect(page.getByText(hypothesis)).toBeVisible({ timeout: 10_000 });
+const hypothesis = `E2E hypothesis ${Date.now()}`;
+await page.getByLabel('Hipótese').fill(hypothesis);
+await page.getByLabel('Limite').fill('0.65');
+await page.getByLabel('Amostras mínimas').fill('12');
+await page.getByRole('button', { name: 'Registrar experimento' }).click();
+await expect(page.getByText(hypothesis)).toBeVisible({ timeout: 10_000 });
 
-  const experimentsResponse = await fetch(`${apiBaseUrl}/experiments`);
-  const { experiments } = (await experimentsResponse.json()) as {
-    experiments: { hypothesis: string; stopRule: { threshold: number; minSamples: number } }[];
-  };
-  const registered = experiments.find((experiment) => experiment.hypothesis === hypothesis);
-  expect(registered?.stopRule).toMatchObject({ threshold: 0.65, minSamples: 12 });
+const experimentsResponse = await fetch(`${apiBaseUrl}/experiments`);
+const { experiments } = (await experimentsResponse.json()) as {
+  experiments: { hypothesis: string; stopRule: { threshold: number; minSamples: number } }[];
+};
+const registered = experiments.find((experiment) => experiment.hypothesis === hypothesis);
+expect(registered?.stopRule).toMatchObject({ threshold: 0.65, minSamples: 12 });
 ```
 
 - [ ] **Step 2: Add a new test for the regression gate against the frozen baseline**
@@ -856,7 +850,6 @@ with:
 Add this new top-level `test(...)` block immediately after the closing `});` of the `'router dashboard shows decisions and filters, an experiment can be registered, and export is PII-free'` test (i.e., at the end of the file):
 
 ```ts
-
 test('regression gate passes an unchanged report and fails one missing a baseline case', async () => {
   const baselinePath = resolve(REPO_ROOT, 'docs/baselines/v0.9-benchmark.json');
   const baseline = JSON.parse(await readFile(baselinePath, 'utf8')) as { runs: unknown[] };
@@ -905,17 +898,18 @@ git commit -m "test(e2e): cover regression gate against baseline and stop-rule r
 ### Task 6: Document the promotion gate in OPERATIONS.md
 
 **Files:**
+
 - Modify: `docs/OPERATIONS.md`
 
 **Interfaces:**
+
 - Consumes: the `regression-gate` CI job name from Task 3 (must be complete first, so this doc accurately describes what CI actually does).
 
 - [ ] **Step 1: Add a cross-reference sentence to the "Catálogo de modelos" section**
 
-In `docs/OPERATIONS.md`, after the line `Evite editar priors para “forçar” a escolha desejada sem dados. Nesse caso, use \`allowedProviders\`, tags ou uma política explícita no workflow. Manipular o score às escondidas só torna a decisão menos legível.` (end of the "Catálogo de modelos" section, right before `## Harness`), add:
+In `docs/OPERATIONS.md`, after the line `Evite editar priors para “forçar” a escolha desejada sem dados. Nesse caso, use \`allowedProviders\`, tags ou uma política explícita no workflow. Manipular o score às escondidas só torna a decisão menos legível.`(end of the "Catálogo de modelos" section, right before`## Harness`), add:
 
 ```markdown
-
 Mudanças em `models/catalog.yaml` disparam automaticamente o job `regression-gate` do CI contra o baseline `v0.9` congelado (veja "Regression gate de promoção" abaixo). O gate cobre regressões estruturais/de status, não substitui o registro manual acima.
 ```
 
@@ -923,8 +917,7 @@ Mudanças em `models/catalog.yaml` disparam automaticamente o job `regression-ga
 
 After the line `Teste mudanças de harness em projetos fixos e compare:` list (`- aprovação; - retrabalho; - tamanho do prompt; - decisões produzidas; - regressões de segurança.`), before `## Migração para Postgres`, add:
 
-```markdown
-
+````markdown
 Mudanças em `harness/manifest.json` também disparam o job `regression-gate` do CI, pelo mesmo baseline `v0.9` (veja abaixo).
 
 ## Regression gate de promoção
@@ -940,9 +933,11 @@ rm -rf .data/benchmark
 npx tsx scripts/benchmark.ts --all --executor-mode mock
 npx tsx scripts/benchmark.ts --freeze
 ```
+````
 
 O job `regression-gate` ainda não é um required status check em branch protection — isso é uma ação de governança separada (`npm run github:governance:apply`), fora do escopo desta mudança.
-```
+
+````
 
 - [ ] **Step 3: Verify the doc renders sensibly**
 
@@ -954,16 +949,18 @@ Expected: the new sections read in order — "Catálogo de modelos" (with new se
 ```bash
 git add docs/OPERATIONS.md
 git commit -m "docs: document the regression-gate CI check and its mock-mode limitation"
-```
+````
 
 ---
 
 ### Task 7: Add ADR 0037 for the regression-gate CI decision
 
 **Files:**
+
 - Create: `docs/adr/0037-regression-gate-ci-check.md`
 
 **Interfaces:**
+
 - Consumes: the exact CI job name and behavior from Task 3 (must be complete first).
 
 - [ ] **Step 1: Write the ADR**

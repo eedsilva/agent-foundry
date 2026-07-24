@@ -20,11 +20,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3339,
@@ -37,13 +33,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -55,11 +45,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -105,11 +91,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -144,9 +126,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-haiku"
-        ],
+        "attemptedModelIds": ["claude-haiku"],
         "override": {
           "modelId": "claude-haiku",
           "provider": "claude",
@@ -230,11 +210,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3339,
@@ -247,13 +223,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -265,13 +235,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -317,13 +281,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -358,9 +316,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-opus"
-        ],
+        "attemptedModelIds": ["claude-opus"],
         "override": {
           "modelId": "claude-opus",
           "provider": "claude",
@@ -444,11 +400,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3339,
@@ -461,13 +413,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -479,12 +425,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -530,12 +471,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -570,9 +506,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-sonnet"
-        ],
+        "attemptedModelIds": ["claude-sonnet"],
         "override": {
           "modelId": "claude-sonnet",
           "provider": "claude",
@@ -656,11 +590,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3339,
@@ -673,13 +603,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -691,11 +615,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -741,11 +661,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -780,9 +696,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-haiku"
-        ],
+        "attemptedModelIds": ["claude-haiku"],
         "override": {
           "modelId": "claude-haiku",
           "provider": "claude",
@@ -866,11 +780,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3339,
@@ -883,13 +793,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -901,13 +805,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -953,13 +851,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -994,9 +886,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-opus"
-        ],
+        "attemptedModelIds": ["claude-opus"],
         "override": {
           "modelId": "claude-opus",
           "provider": "claude",
@@ -1080,11 +970,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3339,
@@ -1097,13 +983,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -1115,12 +995,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -1166,12 +1041,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -1206,9 +1076,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-sonnet"
-        ],
+        "attemptedModelIds": ["claude-sonnet"],
         "override": {
           "modelId": "claude-sonnet",
           "provider": "claude",
@@ -1292,11 +1160,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3313,
@@ -1309,13 +1173,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -1327,11 +1185,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -1377,11 +1231,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -1416,9 +1266,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-haiku"
-        ],
+        "attemptedModelIds": ["claude-haiku"],
         "override": {
           "modelId": "claude-haiku",
           "provider": "claude",
@@ -1502,11 +1350,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3313,
@@ -1519,13 +1363,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -1537,13 +1375,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -1589,13 +1421,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -1630,9 +1456,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-opus"
-        ],
+        "attemptedModelIds": ["claude-opus"],
         "override": {
           "modelId": "claude-opus",
           "provider": "claude",
@@ -1716,11 +1540,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3313,
@@ -1733,13 +1553,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -1751,12 +1565,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -1802,12 +1611,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -1842,9 +1646,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-sonnet"
-        ],
+        "attemptedModelIds": ["claude-sonnet"],
         "override": {
           "modelId": "claude-sonnet",
           "provider": "claude",
@@ -1928,11 +1730,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3344,
@@ -1945,13 +1743,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -1963,11 +1755,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -2013,11 +1801,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -2052,9 +1836,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-haiku"
-        ],
+        "attemptedModelIds": ["claude-haiku"],
         "override": {
           "modelId": "claude-haiku",
           "provider": "claude",
@@ -2138,11 +1920,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3344,
@@ -2155,13 +1933,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -2173,13 +1945,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -2225,13 +1991,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -2266,9 +2026,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-opus"
-        ],
+        "attemptedModelIds": ["claude-opus"],
         "override": {
           "modelId": "claude-opus",
           "provider": "claude",
@@ -2352,11 +2110,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3344,
@@ -2369,13 +2123,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -2387,12 +2135,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -2438,12 +2181,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -2478,9 +2216,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-sonnet"
-        ],
+        "attemptedModelIds": ["claude-sonnet"],
         "override": {
           "modelId": "claude-sonnet",
           "provider": "claude",
@@ -2564,10 +2300,7 @@
           "taskKind": "planning",
           "taxonomyVersion": "2",
           "category": "planning",
-          "features": [
-            "database",
-            "frontend"
-          ],
+          "features": ["database", "frontend"],
           "complexity": 3,
           "risk": 2,
           "estimatedContextTokens": 3178,
@@ -2580,11 +2313,7 @@
             "cost": 0.1,
             "reliability": 0.25
           },
-          "preferredTags": [
-            "planning",
-            "reasoning",
-            "structured-output"
-          ]
+          "preferredTags": ["planning", "reasoning", "structured-output"]
         },
         "selected": {
           "model": {
@@ -2596,11 +2325,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -2646,11 +2371,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -2685,9 +2406,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-haiku"
-        ],
+        "attemptedModelIds": ["claude-haiku"],
         "override": {
           "modelId": "claude-haiku",
           "provider": "claude",
@@ -2742,10 +2461,7 @@
           "taskKind": "planning",
           "taxonomyVersion": "2",
           "category": "planning",
-          "features": [
-            "database",
-            "frontend"
-          ],
+          "features": ["database", "frontend"],
           "complexity": 3,
           "risk": 2,
           "estimatedContextTokens": 3178,
@@ -2758,11 +2474,7 @@
             "cost": 0.1,
             "reliability": 0.25
           },
-          "preferredTags": [
-            "planning",
-            "reasoning",
-            "structured-output"
-          ]
+          "preferredTags": ["planning", "reasoning", "structured-output"]
         },
         "selected": {
           "model": {
@@ -2774,13 +2486,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -2826,13 +2532,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -2867,9 +2567,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-opus"
-        ],
+        "attemptedModelIds": ["claude-opus"],
         "override": {
           "modelId": "claude-opus",
           "provider": "claude",
@@ -2924,10 +2622,7 @@
           "taskKind": "planning",
           "taxonomyVersion": "2",
           "category": "planning",
-          "features": [
-            "database",
-            "frontend"
-          ],
+          "features": ["database", "frontend"],
           "complexity": 3,
           "risk": 2,
           "estimatedContextTokens": 3178,
@@ -2940,11 +2635,7 @@
             "cost": 0.1,
             "reliability": 0.25
           },
-          "preferredTags": [
-            "planning",
-            "reasoning",
-            "structured-output"
-          ]
+          "preferredTags": ["planning", "reasoning", "structured-output"]
         },
         "selected": {
           "model": {
@@ -2956,12 +2647,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -3007,12 +2693,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -3047,9 +2728,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-sonnet"
-        ],
+        "attemptedModelIds": ["claude-sonnet"],
         "override": {
           "modelId": "claude-sonnet",
           "provider": "claude",
@@ -3104,11 +2783,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3369,
@@ -3121,13 +2796,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -3139,11 +2808,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -3189,11 +2854,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "fast",
-              "economy",
-              "triage"
-            ],
+            "tags": ["fast", "economy", "triage"],
             "capabilities": {
               "planning": 0.68,
               "architecture": 0.64,
@@ -3228,9 +2889,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-haiku"
-        ],
+        "attemptedModelIds": ["claude-haiku"],
         "override": {
           "modelId": "claude-haiku",
           "provider": "claude",
@@ -3314,11 +2973,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3369,
@@ -3331,13 +2986,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -3349,13 +2998,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -3401,13 +3044,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "reasoning",
-              "planning",
-              "architecture",
-              "review",
-              "quality"
-            ],
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
             "capabilities": {
               "planning": 0.96,
               "architecture": 0.97,
@@ -3442,9 +3079,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-opus"
-        ],
+        "attemptedModelIds": ["claude-opus"],
         "override": {
           "modelId": "claude-opus",
           "provider": "claude",
@@ -3528,11 +3163,7 @@
           "taskKind": "implementation",
           "taxonomyVersion": "2",
           "category": "implementation/database",
-          "features": [
-            "database",
-            "frontend",
-            "tests"
-          ],
+          "features": ["database", "frontend", "tests"],
           "complexity": 3,
           "risk": 3,
           "estimatedContextTokens": 3369,
@@ -3545,13 +3176,7 @@
             "cost": 0.06,
             "reliability": 0.24
           },
-          "preferredTags": [
-            "coding",
-            "tool-use",
-            "workspace-write",
-            "repository",
-            "typescript"
-          ]
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
         },
         "selected": {
           "model": {
@@ -3563,12 +3188,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -3614,12 +3234,7 @@
             "requireExplicitModel": false,
             "maxContextTokens": 100000,
             "canWriteWorkspace": true,
-            "tags": [
-              "balanced",
-              "planning",
-              "coding",
-              "review"
-            ],
+            "tags": ["balanced", "planning", "coding", "review"],
             "capabilities": {
               "planning": 0.9,
               "architecture": 0.91,
@@ -3654,9 +3269,7 @@
             "rationale": "0 observations; prior weight 100% (cold start — conservative)"
           }
         },
-        "attemptedModelIds": [
-          "claude-sonnet"
-        ],
+        "attemptedModelIds": ["claude-sonnet"],
         "override": {
           "modelId": "claude-sonnet",
           "provider": "claude",

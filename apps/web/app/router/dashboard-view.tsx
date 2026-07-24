@@ -294,9 +294,7 @@ export function RouterDashboardView({
               Modelo alvo (A)
               <input
                 value={form.variantAModelId}
-                onChange={(event) =>
-                  onFormChange({ ...form, variantAModelId: event.target.value })
-                }
+                onChange={(event) => onFormChange({ ...form, variantAModelId: event.target.value })}
               />
             </label>
           </fieldset>
@@ -323,9 +321,7 @@ export function RouterDashboardView({
               Modelo alvo (B)
               <input
                 value={form.variantBModelId}
-                onChange={(event) =>
-                  onFormChange({ ...form, variantBModelId: event.target.value })
-                }
+                onChange={(event) => onFormChange({ ...form, variantBModelId: event.target.value })}
               />
             </label>
           </fieldset>

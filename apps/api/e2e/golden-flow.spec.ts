@@ -850,7 +850,10 @@ test('router dashboard shows decisions and filters, an experiment can be registe
       async () => {
         const experimentsResponse = await fetch(`${apiBaseUrl}/experiments`);
         const { experiments } = (await experimentsResponse.json()) as {
-          experiments: { hypothesis: string; stopRule: { threshold: number; minSamples: number } }[];
+          experiments: {
+            hypothesis: string;
+            stopRule: { threshold: number; minSamples: number };
+          }[];
         };
         return experiments.find((experiment) => experiment.hypothesis === hypothesis)?.stopRule;
       },
