@@ -25,7 +25,10 @@ export function FiltersBar({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex gap-2">
-      <Select defaultValue={searchParams.get('status') ?? 'all'} onValueChange={(value) => setParam('status', value)}>
+      <Select
+        defaultValue={searchParams.get('status') ?? 'all'}
+        onValueChange={(value) => setParam('status', value)}
+      >
         <SelectTrigger className="w-40">
           <SelectValue placeholder="Status" />
         </SelectTrigger>

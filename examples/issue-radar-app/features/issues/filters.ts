@@ -1,4 +1,9 @@
-import { IssuePrioritySchema, IssueStatusSchema, type IssuePriority, type IssueStatus } from './schema';
+import {
+  IssuePrioritySchema,
+  IssueStatusSchema,
+  type IssuePriority,
+  type IssueStatus,
+} from './schema';
 
 export interface IssueFilters {
   statuses: IssueStatus[];

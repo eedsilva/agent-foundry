@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
-import { bootIssueRadarApp, teardownIssueRadarApp, type IssueRadarFixture } from './issue-radar-fixture.js';
+import {
+  bootIssueRadarApp,
+  teardownIssueRadarApp,
+  type IssueRadarFixture,
+} from './issue-radar-fixture.js';
 
 const SETUP_TIMEOUT_MS = 10 * 60_000;
 

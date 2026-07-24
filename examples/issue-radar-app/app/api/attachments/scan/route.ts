@@ -29,7 +29,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: lookupError.message }, { status: 500 });
   }
   if (!upload) {
-    return NextResponse.json({ error: 'Upload not found or not owned by caller.' }, { status: 404 });
+    return NextResponse.json(
+      { error: 'Upload not found or not owned by caller.' },
+      { status: 404 },
+    );
   }
 
   const serviceRole = createServiceRoleClient();

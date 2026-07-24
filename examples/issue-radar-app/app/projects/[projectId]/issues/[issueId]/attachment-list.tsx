@@ -14,7 +14,9 @@ export async function AttachmentList({ issueId }: { issueId: string }) {
 
   const links = await Promise.all(
     attachments.map(async (attachment) => {
-      const { data } = await supabase.storage.from('uploads').createSignedUrl(attachment.object_name, 60);
+      const { data } = await supabase.storage
+        .from('uploads')
+        .createSignedUrl(attachment.object_name, 60);
       return { objectName: attachment.object_name, url: data?.signedUrl };
     }),
   );
@@ -33,7 +35,9 @@ export async function AttachmentList({ issueId }: { issueId: string }) {
               {link.objectName.split('/').pop()}
             </a>
           ) : (
-            <span className="text-sm text-gray-400">{link.objectName.split('/').pop()} (processing…)</span>
+            <span className="text-sm text-gray-400">
+              {link.objectName.split('/').pop()} (processing…)
+            </span>
           )}
         </li>
       ))}

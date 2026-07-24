@@ -136,11 +136,9 @@ export async function bootIssueRadarApp(projectId: string): Promise<IssueRadarFi
     appProcess?.kill();
     if (workdir) {
       try {
-        await execFileAsync(
-          'supabase',
-          ['stop', '--workdir', workdir, '--no-backup', '--yes'],
-          { timeout: STOP_TIMEOUT_MS },
-        );
+        await execFileAsync('supabase', ['stop', '--workdir', workdir, '--no-backup', '--yes'], {
+          timeout: STOP_TIMEOUT_MS,
+        });
       } catch {
         // best-effort: temp dirs get removed below regardless
       }

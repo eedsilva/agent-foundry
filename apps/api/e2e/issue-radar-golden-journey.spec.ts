@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
-import { bootIssueRadarApp, teardownIssueRadarApp, type IssueRadarFixture } from './issue-radar-fixture.js';
+import {
+  bootIssueRadarApp,
+  teardownIssueRadarApp,
+  type IssueRadarFixture,
+} from './issue-radar-fixture.js';
 
 const SETUP_TIMEOUT_MS = 10 * 60_000;
 const FIXTURE_IMAGE = resolve(import.meta.dirname, 'fixtures/design-reference.png');
