@@ -73,6 +73,7 @@ the job transitions directly to `'failed'` status, skipping the attempt-count ga
 adding a separate `deadLetter()` method alongside `nack()`.
 
 **Rationale:** `nack()` and a hypothetical `deadLetter()` would both:
+
 - check the fencing token against the current lease
 - clear the lease (worker_id, fencing_token, heartbeat_at, expires_at)
 - update attempts and last_error
@@ -86,7 +87,7 @@ branch: `const dead = options?.permanent === true || attempts >= job.maxAttempts
 ### 5. Artifacts are not part of the transactional seam
 
 The `ArtifactStore.put()` method (and `putBlob()`) are deliberately kept outside the transactional
-seam. Artifacts have a foreign key to `projects(id)`, so they are safe to write *after* the
+seam. Artifacts have a foreign key to `projects(id)`, so they are safe to write _after_ the
 Project/Run/Event/Job transaction commits, once the project row is guaranteed to be visible.
 The implementation writes the artifact as a separate transaction: the orchestrator calls
 `transactionRunner.run(async (tx) => { ... }) to write state/event/job, then immediately calls
@@ -162,6 +163,7 @@ permanent error (e.g. validation failure on a payload) need to pass the flag.
 ## Validation and rollback
 
 The transactional seam is covered by:
+
 - `packages/persistence/src/postgres/job-queue.test.ts`: claim, heartbeat, ack, nack, and
   reapExpired behavior with fencing token validation and lease mutation.
 - `packages/persistence/src/postgres/transaction-runner.test.ts`: `run()` wraps a callback in
