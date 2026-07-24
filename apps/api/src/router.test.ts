@@ -78,4 +78,15 @@ describe('router dashboard + experiments API', () => {
       expect(row).not.toHaveProperty('nodeId');
     }
   });
+
+  it('rate-limits /router/regression-gate at 30 requests/min/IP', async () => {
+    const responses = [];
+    for (let i = 0; i < 31; i++) {
+      responses.push(
+        await app.inject({ method: 'POST', url: '/router/regression-gate', payload: {} }),
+      );
+    }
+    expect(responses.slice(0, 30).every((response) => response.statusCode !== 429)).toBe(true);
+    expect(responses[30]?.statusCode).toBe(429);
+  });
 });
