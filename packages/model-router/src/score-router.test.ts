@@ -484,7 +484,10 @@ describe('ScoreBasedModelRouter', () => {
     ]);
     const decision = await router.route(profile, undefined, { providerHealth: health });
     expect(decision.selected.model.provider).not.toBe('claude');
-    expect(decision.rejected.some((r) => r.reason.startsWith('rate-limited'))).toBe(true);
+    // Rate-limit open is now surfaced by the circuit breaker (circuit-open: prefix).
+    expect(decision.rejected.some((r) => r.reason.startsWith('circuit-open: rate-limited'))).toBe(
+      true,
+    );
   });
 
   it('excludes a model when its provider reports only a future rate-limit reset', async () => {
@@ -506,7 +509,7 @@ describe('ScoreBasedModelRouter', () => {
     expect(decision.selected.model.provider).not.toBe('claude');
     expect(decision.rejected).toContainEqual({
       modelId: 'claude-metered',
-      reason: 'rate-limited until 2999-01-01T00:00:00.000Z',
+      reason: 'circuit-open: rate-limited until 2999-01-01T00:00:00.000Z',
     });
   });
 
@@ -531,7 +534,7 @@ describe('ScoreBasedModelRouter', () => {
     ).toContain('claude-metered');
     expect(decision.rejected).not.toContainEqual({
       modelId: 'claude-metered',
-      reason: 'rate-limited until 2999-01-01T00:00:00.000Z',
+      reason: 'circuit-open: rate-limited until 2999-01-01T00:00:00.000Z',
     });
   });
 
@@ -780,6 +783,106 @@ describe('ScoreBasedModelRouter', () => {
     expect(route.fallbacks[0]?.confidence?.sampleSize).not.toBe(
       route.selected.confidence?.sampleSize,
     );
+  });
+
+  // --- Task 4: circuit breaker + exploration wiring (issue #66) ---
+
+  // A non-sensitive profile so exploration is allowed (risk < 4, no workspace writes).
+  const lowRiskProfile: TaskProfile = {
+    ...profile,
+    risk: 1,
+    complexity: 2,
+    mutatesWorkspace: false,
+    toolPolicy: 'read-only',
+  };
+
+  it('excludes a degraded (unavailable) provider from selected AND fallbacks (circuit-open)', async () => {
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const health = new Map([
+      [
+        'claude',
+        {
+          provider: 'claude' as const,
+          available: false,
+          message: 'provider down',
+        },
+      ],
+    ]);
+
+    const decision = await router.route(profile, undefined, { providerHealth: health });
+
+    expect(decision.selected.model.id).not.toBe('claude-metered');
+    expect(decision.fallbacks.map((f) => f.model.id)).not.toContain('claude-metered');
+    expect(
+      decision.rejected.some(
+        (r) => r.modelId === 'claude-metered' && r.reason.startsWith('circuit-open:'),
+      ),
+    ).toBe(true);
+  });
+
+  it('explores a non-top candidate on a low-risk task when an exploration policy is configured', async () => {
+    const greedy = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const explorer = new ScoreBasedModelRouter(
+      twoProviderCatalog(),
+      new MemoryMetrics(),
+      undefined,
+      { exploration: { baseRate: 1 }, random: () => 0 },
+    );
+
+    const greedyDecision = await greedy.route(lowRiskProfile);
+    const exploreDecision = await explorer.route(lowRiskProfile);
+
+    expect(exploreDecision.exploration?.explored).toBe(true);
+    expect(exploreDecision.exploration?.rate).toBe(1);
+    expect(exploreDecision.selected.model.id).not.toBe(greedyDecision.selected.model.id);
+  });
+
+  it('stays greedy on a high-risk (sensitive) task even with exploration configured', async () => {
+    const greedy = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const explorer = new ScoreBasedModelRouter(
+      twoProviderCatalog(),
+      new MemoryMetrics(),
+      undefined,
+      { exploration: { baseRate: 1 }, random: () => 0 },
+    );
+    // risk >= 4 makes the profile sensitive; the other two sensitivity triggers
+    // (mutatesWorkspace, toolPolicy) are covered in exploration.ts unit tests.
+    const sensitiveProfile: TaskProfile = {
+      ...lowRiskProfile,
+      risk: 5,
+    };
+
+    const greedyDecision = await greedy.route(sensitiveProfile);
+    const exploreDecision = await explorer.route(sensitiveProfile);
+
+    expect(exploreDecision.exploration?.explored).toBe(false);
+    expect(exploreDecision.exploration?.rate).toBe(0);
+    expect(exploreDecision.selected.model.id).toBe(greedyDecision.selected.model.id);
+  });
+
+  it('never attaches an exploration field when no exploration policy is configured', async () => {
+    const router = new ScoreBasedModelRouter(twoProviderCatalog(), new MemoryMetrics());
+    const decision = await router.route(lowRiskProfile);
+    expect(decision.exploration).toBeUndefined();
+  });
+
+  it('never explores an explicit-pin route even with an exploration policy configured', async () => {
+    const router = new ScoreBasedModelRouter(
+      [model('automatic', { provider: 'claude' }), model('pinned', { provider: 'codex', model: 'gpt-5' })],
+      new MemoryMetrics(),
+      undefined,
+      { exploration: { baseRate: 1 }, random: () => 0 },
+    );
+
+    const decision = await router.route(lowRiskProfile, {
+      modelId: 'pinned',
+      provider: 'codex',
+      model: 'gpt-5',
+      provenance: override,
+    });
+
+    expect(decision.exploration).toBeUndefined();
+    expect(decision.selected.model.id).toBe('pinned');
   });
 
   it('rejects a model on hard rules before scoring can favor it (regression)', async () => {

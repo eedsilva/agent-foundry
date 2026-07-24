@@ -18,14 +18,39 @@ import type {
 } from '@agent-foundry/domain';
 import { summarizeQualityObservations } from './quality-signals.js';
 import { routeConfidence } from './confidence.js';
+import {
+  DEFAULT_BREAKER_CONFIG,
+  evaluateBreaker,
+  type CircuitBreakerConfig,
+} from './circuit-breaker.js';
+import {
+  chooseExploration,
+  effectiveEpsilon,
+  type ExplorationPolicy,
+} from './exploration.js';
+
+export interface ScoreBasedModelRouterOptions {
+  breaker?: Partial<CircuitBreakerConfig>;
+  exploration?: ExplorationPolicy;
+  /** Injected for deterministic tests; defaults to Math.random. */
+  random?: () => number;
+}
 
 export class ScoreBasedModelRouter implements ModelRouter {
+  private readonly breakerConfig: CircuitBreakerConfig;
+  private readonly explorationPolicy: ExplorationPolicy | undefined;
+  private readonly random: () => number;
+
   constructor(
     private readonly models: ModelDefinition[],
     private readonly metrics: MetricsRepository,
     private readonly qualityObservations?: QualityObservationRepository,
+    options?: ScoreBasedModelRouterOptions,
   ) {
     if (models.length === 0) throw new Error('Model catalog has no enabled models');
+    this.breakerConfig = { ...DEFAULT_BREAKER_CONFIG, ...options?.breaker };
+    this.explorationPolicy = options?.exploration;
+    this.random = options?.random ?? Math.random;
   }
 
   async catalog(): Promise<ModelDefinition[]> {
@@ -65,6 +90,15 @@ export class ScoreBasedModelRouter implements ModelRouter {
         profile.role,
         profile.category,
       );
+      // Circuit breaker is a hard gate before scoring: an open provider is
+      // bounced, a half-open one stays eligible so selection can probe recovery.
+      const health = constraints?.providerHealth?.get(model.provider);
+      const breaker = evaluateBreaker(metric, health, this.breakerConfig, new Date());
+      if (breaker.state === 'open') {
+        rejected.push({ modelId: model.id, reason: `circuit-open: ${breaker.reason}` });
+        continue;
+      }
+
       const constraintRejection = this.constraintRejection(model, profile, metric, constraints);
       if (constraintRejection) {
         rejected.push({ modelId: model.id, reason: constraintRejection });
@@ -95,7 +129,19 @@ export class ScoreBasedModelRouter implements ModelRouter {
         right.score.total - left.score.total || left.model.id.localeCompare(right.model.id),
     );
 
-    const selected = ranked[0];
+    // Explicit pins and the default (no policy) stay greedy; otherwise the
+    // epsilon-greedy policy may steer selection to a non-top candidate.
+    let explorationResult: RouteDecision['exploration'];
+    let selected: RankedModel | undefined;
+    if (explicit || !this.explorationPolicy) {
+      selected = ranked[0];
+    } else {
+      const epsilon = effectiveEpsilon(this.explorationPolicy, profile);
+      const { index, reason } = chooseExploration(ranked, epsilon, this.random);
+      selected = ranked[index];
+      explorationResult = { explored: index > 0, rate: epsilon, reason };
+    }
+
     if (!selected) {
       throw new Error(
         `No model can satisfy ${profile.taskKind}. Rejections: ${rejected
@@ -111,6 +157,7 @@ export class ScoreBasedModelRouter implements ModelRouter {
       selected,
       fallbacks: explicit ? [] : diverseFallbacks(ranked, selected, 3),
       ...(explicit?.provenance ? { override: explicit.provenance } : {}),
+      ...(explorationResult ? { exploration: explorationResult } : {}),
       rejected,
     };
   }
@@ -138,12 +185,11 @@ export class ScoreBasedModelRouter implements ModelRouter {
     constraints?: RouteConstraints,
   ): string | null {
     if (!constraints) return null;
+    // Rate-limit open is now owned by the circuit breaker (see route()); here we
+    // only reuse rl/rateLimitApplies for the subscription quota budget below.
     const health = constraints.providerHealth?.get(model.provider);
     const rl = health?.rateLimit;
     const rateLimitApplies = !rl?.resetAt || new Date(rl.resetAt).getTime() > Date.now();
-    if (rl?.resetAt && (rl.remaining === 0 || rl.remaining === undefined) && rateLimitApplies) {
-      return `rate-limited until ${rl.resetAt}`;
-    }
     const budget = constraints.budget;
     if (budget?.maxCostUsd !== undefined && model.billingMode === 'metered') {
       const estimate = estimateCostUsd(model, profile, metric);
