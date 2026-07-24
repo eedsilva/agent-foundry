@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BenchmarkReport } from '@agent-foundry/contracts';
-import { compareBenchmarkReports } from './regression-gate.js';
+import { compareBenchmarkReports, shouldRunRegressionGate } from './regression-gate.js';
 
 function report(overrides: Partial<BenchmarkReport> = {}): BenchmarkReport {
   return {
@@ -87,5 +87,25 @@ describe('compareBenchmarkReports', () => {
     expect(result.verdict).toBe('pass');
     expect(result.deltas[0]?.durationDeltaMs).toBe(15_000);
     expect(result.deltas[0]?.repairsDelta).toBe(2);
+  });
+});
+
+describe('shouldRunRegressionGate', () => {
+  it('returns true when the catalog file changed', () => {
+    expect(shouldRunRegressionGate(['README.md', 'models/catalog.yaml'])).toBe(true);
+  });
+
+  it('returns true when the harness manifest changed', () => {
+    expect(shouldRunRegressionGate(['harness/manifest.json'])).toBe(true);
+  });
+
+  it('returns false when no promotion-sensitive path changed', () => {
+    expect(
+      shouldRunRegressionGate(['README.md', 'packages/composition/src/regression-gate.ts']),
+    ).toBe(false);
+  });
+
+  it('returns false for an empty change set', () => {
+    expect(shouldRunRegressionGate([])).toBe(false);
   });
 });
