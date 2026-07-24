@@ -197,4 +197,38 @@ drop type if exists project_status;
 drop domain if exists path_segment;
 `,
   },
+  {
+    version: 2,
+    name: 'durable-queue',
+    up: /* sql */ `
+create type job_status as enum ('pending','processing','completed','failed');
+
+create table jobs (
+  id path_segment primary key,
+  type text not null check (type in ('run-project','run-conversation-operation')),
+  project_id path_segment not null,
+  workflow_id path_segment not null,
+  run_id path_segment,
+  operation_id path_segment,
+  status job_status not null default 'pending',
+  attempts integer not null default 0 check (attempts >= 0),
+  max_attempts integer not null check (max_attempts >= 1),
+  created_at timestamptz not null,
+  available_at timestamptz not null,
+  last_error text,
+  lease_epoch integer not null default 0 check (lease_epoch >= 0),
+  worker_id text,
+  fencing_token integer,
+  heartbeat_at timestamptz,
+  expires_at timestamptz,
+  trace_context jsonb
+);
+create index jobs_claim_idx on jobs (available_at, id) where status = 'pending';
+create index jobs_reap_idx  on jobs (expires_at)       where status = 'processing';
+`,
+    down: /* sql */ `
+drop table if exists jobs;
+drop type if exists job_status;
+`,
+  },
 ];
