@@ -59,7 +59,6 @@ button {
   margin: 0 auto;
   padding: 72px 0 100px;
 }
-.hero,
 .projectHero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -92,39 +91,6 @@ h2 {
   max-width: 720px;
   font-size: 17px;
   margin: 22px 0 0;
-}
-.runtimeCard {
-  min-width: 330px;
-  border: 1px solid var(--line);
-  padding: 20px;
-  display: grid;
-  grid-template-columns: auto 1fr 1fr;
-  gap: 16px;
-  align-items: center;
-  background: var(--panel);
-  border-radius: var(--radius);
-}
-.runtimeCard small,
-.runtimeCard strong {
-  display: block;
-}
-.runtimeCard small {
-  color: var(--muted);
-  font:
-    700 10px ui-monospace,
-    monospace;
-  margin-bottom: 5px;
-}
-.statusDot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--warning);
-  box-shadow: 0 0 16px var(--warning);
-}
-.statusDot.live {
-  background: var(--accent);
-  box-shadow: 0 0 16px var(--accent);
 }
 .grid,
 .dashboardGrid {
@@ -221,12 +187,6 @@ h2 {
   align-items: center;
   gap: 12px;
 }
-.stepNumber {
-  color: var(--accent);
-  font:
-    800 12px ui-monospace,
-    monospace;
-}
 .hint {
   color: var(--muted);
   font:
@@ -285,65 +245,6 @@ textarea {
   background: transparent;
   color: var(--ink);
   border: 1px solid var(--line);
-}
-.pipeline {
-  list-style: none;
-  padding: 0;
-  margin: 8px 0 26px;
-}
-.pipeline li {
-  border-top: 1px solid var(--line);
-  padding: 18px 0;
-  display: grid;
-  grid-template-columns: 70px 1fr;
-  gap: 10px;
-  align-items: center;
-}
-.pipeline code {
-  color: var(--accent);
-  font-weight: 800;
-}
-.pipeline span {
-  color: var(--ink);
-}
-.finePrint {
-  color: var(--muted);
-  line-height: 1.7;
-  font-size: 13px;
-}
-.recent {
-  margin-top: 70px;
-}
-.sectionTitle {
-  margin-bottom: 20px;
-}
-.projectList {
-  border-top: 1px solid var(--line);
-}
-.projectRow {
-  display: grid;
-  grid-template-columns: 1fr auto 210px;
-  align-items: center;
-  gap: 18px;
-  padding: 18px 4px;
-  border-bottom: 1px solid var(--line);
-  transition: 0.2s ease;
-}
-.projectRow:hover {
-  padding-left: 12px;
-  background: rgba(255, 255, 255, 0.02);
-}
-.projectRow strong,
-.projectRow small {
-  display: block;
-}
-.projectRow small,
-.projectRow time {
-  color: var(--muted);
-  font:
-    11px ui-monospace,
-    monospace;
-  margin-top: 4px;
 }
 .pill.queued {
   color: var(--warning);
@@ -628,23 +529,13 @@ dd {
     width: min(100% - 24px, 1240px);
     padding-top: 42px;
   }
-  .hero,
   .projectHero,
   .grid,
   .dashboardGrid {
     grid-template-columns: 1fr;
   }
-  .runtimeCard {
-    min-width: 0;
-  }
   .projectStatusBlock {
     justify-items: start;
-  }
-  .projectRow {
-    grid-template-columns: 1fr auto;
-  }
-  .projectRow time {
-    grid-column: 1 / -1;
   }
   h1 {
     font-size: 44px;
