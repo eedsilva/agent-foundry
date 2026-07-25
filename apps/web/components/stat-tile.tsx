@@ -51,7 +51,8 @@ export function StatTile({
         {label}
       </span>
       <strong className="text-ink text-[24px] leading-none font-semibold">{value}</strong>
-      {hint ? <span className="text-ink-subtle text-[12px]">{hint}</span> : null}
+      {/* `--ink-subtle` is 2.98:1 on `--surface`; `--ink-muted` is 5.47:1. */}
+      {hint ? <span className="text-ink-muted text-[12px]">{hint}</span> : null}
     </div>
   );
 }

@@ -24,4 +24,10 @@ describe('StatTile', () => {
     expect(markup).not.toContain('text-ok');
     expect(markup).toContain('border-l-ok');
   });
+
+  it('keeps the hint above 4.5:1', () => {
+    // `--ink-subtle` is 2.98:1 on `--surface`; `--ink-muted` is 5.47:1.
+    const markup = renderToStaticMarkup(<StatTile label="x" value="1" hint="y" />);
+    expect(markup).not.toContain('text-ink-subtle');
+  });
 });
