@@ -40,6 +40,7 @@ import {
 import {
   ExecutionError,
   NotFoundError,
+  ProviderAuthenticationError,
   RunCancelledError,
   SystemClock,
   ValidationError,
@@ -902,6 +903,14 @@ export function invalidOutputError(): ExecutionError {
   return new ExecutionError('Agent did not return a valid artifact JSON object', {
     stdout: 'not json at all',
   });
+}
+
+/** Mirrors base-cli-executor.ts — the CLI never authenticated, so nothing was asked of the model. */
+export function authenticationError(): ProviderAuthenticationError {
+  return new ProviderAuthenticationError(
+    'claude CLI exited with code 1: Not logged in · Please run /login',
+    { provider: 'claude', exitCode: 1 },
+  );
 }
 
 /** Simulates a transport-level failure between control plane and execution plane — not a CLI/domain error. */

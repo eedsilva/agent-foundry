@@ -4,6 +4,20 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 const root = process.cwd();
 const env = { ...readDotEnv(resolve(root, '.env')), ...process.env };
+// Probe under the exact env `safeSpawnEnv()` gives a real execution, from the
+// same allowlist file — otherwise a probe can report ready for a CLI that is
+// unauthenticated the moment the orchestrator actually spawns it.
+const safeEnvAllowlist = new Set(
+  JSON.parse(
+    readFileSync(
+      new URL('../packages/executors/src/safe-env-allowlist.json', import.meta.url),
+      'utf8',
+    ),
+  ),
+);
+const probeEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => safeEnvAllowlist.has(key)),
+);
 const executorMode = env.EXECUTOR_MODE ?? 'mock';
 const realMode = executorMode === 'real';
 const checks = [
@@ -220,7 +234,7 @@ function isAgyModelList(output) {
 }
 
 function run(command, args) {
-  return spawnSync(command, args, { encoding: 'utf8', timeout: 10_000 });
+  return spawnSync(command, args, { encoding: 'utf8', timeout: 10_000, env: probeEnv });
 }
 
 function combinedOutput(result) {

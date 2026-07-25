@@ -71,6 +71,7 @@ import {
   LeaseLostError,
   NotFoundError,
   PolicyViolationError,
+  ProviderAuthenticationError,
   RunCancelledError,
   RunPausedError,
   errorMessage,
@@ -2255,15 +2256,21 @@ export class WorkflowOrchestrator {
       span.setAttribute('foundry.force_sample', true);
       if (failureRecordError) throw failureRecordError;
       if (error instanceof EmergencyCeilingError) throw error;
-      await this.metrics.record({
-        modelId: candidate.model.id,
-        taskKind: step.taskKind,
-        role: step.role,
-        taxonomyVersion: profile.taxonomyVersion,
-        category: profile.category,
-        success: false,
-        durationMs: Date.now() - attemptStartedAt,
-      });
+      // An unauthenticated CLI never reached the model, so it says nothing about
+      // the model's quality. Recording it would feed recentFailurePenalty in the
+      // score router and consecutiveFailures in the circuit breaker, letting an
+      // environment fault progressively deprioritise a perfectly good provider.
+      if (!(error instanceof ProviderAuthenticationError)) {
+        await this.metrics.record({
+          modelId: candidate.model.id,
+          taskKind: step.taskKind,
+          role: step.role,
+          taxonomyVersion: profile.taxonomyVersion,
+          category: profile.category,
+          success: false,
+          durationMs: Date.now() - attemptStartedAt,
+        });
+      }
       await this.emit(project.id, 'agent.failed', errorMessage(error), {
         nodeId: step.id,
         runId,
@@ -2408,7 +2415,8 @@ export class WorkflowOrchestrator {
     if (executionResult.state === 'cancelled') throw new RunCancelledError(runId);
     if (executionResult.state === 'failed' || !executionResult.agent) {
       const detail = executionResult.error;
-      throw new ExecutionError(detail?.message ?? 'Execution plane reported a failure', {
+      const ErrorType = detail?.authFailure ? ProviderAuthenticationError : ExecutionError;
+      throw new ErrorType(detail?.message ?? 'Execution plane reported a failure', {
         ...(detail?.exitCode !== undefined ? { exitCode: detail.exitCode } : {}),
         ...(detail?.stdout !== undefined ? { stdout: detail.stdout } : {}),
         ...(detail?.stderr !== undefined ? { stderr: detail.stderr } : {}),
