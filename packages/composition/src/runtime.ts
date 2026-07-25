@@ -145,6 +145,7 @@ export interface Runtime {
   projectVersions: FileProjectVersionRepository;
   projectVersionService: ProjectVersionService;
   generatedProjectRuntime?: GeneratedProjectRuntime;
+  checkReadiness(): Promise<void>;
 }
 
 export interface RuntimeOverrides {
@@ -198,6 +199,9 @@ export async function createRuntime(
     sql,
     transactionRunner,
   } = await createMetadataStores(config, blobStore);
+  const checkReadiness = async (): Promise<void> => {
+    if (sql) await sql`select 1`;
+  };
   const knowledgeFiles = new FileKnowledgeFileRepository(config.dataDir);
   const queue: JobQueue =
     config.persistenceMode === 'postgres'
@@ -449,6 +453,7 @@ export async function createRuntime(
     previewSelectionService,
     projectVersions,
     projectVersionService,
+    checkReadiness,
     ...(generatedProjectRuntime ? { generatedProjectRuntime } : {}),
   };
 }
