@@ -51,17 +51,27 @@ function authoritativeArtifactCandidates(provider: Provider, raw: string): unkno
     return messages.length > 0 ? [messages.at(-1)] : [];
   }
 
-  const results = documents.filter(
-    (document): document is Record<string, unknown> =>
-      document !== null &&
-      typeof document === 'object' &&
-      !Array.isArray(document) &&
-      (document as Record<string, unknown>).type === 'result',
-  );
-  const terminal = results.at(-1);
-  if (!terminal || terminal.is_error === true || terminal.subtype === 'error') return [];
+  const terminal = terminalResult(documents);
+  if (!terminal || isFailedResult(terminal)) return [];
   if (provider === 'claude') return [terminal.structured_output ?? terminal.result];
   return [terminal.output ?? terminal.result];
+}
+
+/** The last `type: 'result'` line — the record that closes a provider's turn. */
+function terminalResult(documents: unknown[]): Record<string, unknown> | undefined {
+  return documents
+    .filter(
+      (document): document is Record<string, unknown> =>
+        document !== null &&
+        typeof document === 'object' &&
+        !Array.isArray(document) &&
+        (document as Record<string, unknown>).type === 'result',
+    )
+    .at(-1);
+}
+
+function isFailedResult(terminal: Record<string, unknown>): boolean {
+  return terminal.is_error === true || terminal.subtype === 'error';
 }
 
 export function extractUsage(
@@ -135,6 +145,26 @@ export function extractRateLimit(provider: Provider, raw: string): ProviderRateL
     };
   }
   return undefined;
+}
+
+/**
+ * The provider's own account of why a nonzero exit happened, so the thrown
+ * ExecutionError carries the cause instead of only the exit code. `authFailure`
+ * keys on the terminal record's structured `subtype`, never on its prose.
+ */
+export function extractCliFailure(
+  provider: Provider,
+  stdout: string,
+): { message: string; authFailure: boolean } | undefined {
+  // ponytail: Claude only — codex and agy emit no structured terminal failure
+  // record, so they keep the bare exit code. Add a branch when one gains it.
+  if (provider !== 'claude') return undefined;
+
+  const terminal = terminalResult(providerDocuments(stdout));
+  if (!terminal || !isFailedResult(terminal)) return undefined;
+  const message = stringFrom(terminal, ['result']);
+  if (!message) return undefined;
+  return { message, authFailure: terminal.subtype === 'authentication_failed' };
 }
 
 export function extractExecutedModel(

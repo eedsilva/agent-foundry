@@ -436,25 +436,85 @@ describe('BaseCliExecutor foundry.cli span', () => {
 });
 
 describe('BaseCliExecutor environment isolation', () => {
-  it('never inherits the control plane process env into the CLI subprocess', async () => {
-    const originalDatabaseUrl = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = 'postgres://control-plane-only-leak-canary';
-    try {
-      execaMock.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
-      await new FixtureExecutor(1_000_000).execute(request);
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
-      const [, , options] = execaMock.mock.calls[0]!;
-      expect(options.env).toBeDefined();
-      expect(options.env).not.toHaveProperty('DATABASE_URL');
-      expect(Object.keys(options.env).length).toBeGreaterThan(0);
-      // execa defaults extendEnv:true, which re-merges the full process.env
-      // underneath `env` above and would silently undo the assertions above
-      // in a real (non-mocked) execa run — this mock can't exercise that
-      // merge itself, so assert the guard against it is actually passed.
-      expect(options.extendEnv).toBe(false);
-    } finally {
-      if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-      else process.env.DATABASE_URL = originalDatabaseUrl;
-    }
+  function stubProbeEnv(): void {
+    vi.stubEnv('DATABASE_URL', 'postgres://control-plane-only-leak-canary');
+    // POSIX identity, not a secret: the Claude CLI resolves its own login from
+    // it and reports authentication_failed when the spawn env withholds it.
+    vi.stubEnv('USER', 'control-plane-account');
+  }
+
+  it('never inherits the control plane process env into the CLI subprocess', async () => {
+    stubProbeEnv();
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+    await new FixtureExecutor(1_000_000).execute(request);
+
+    const [, , options] = execaMock.mock.calls.at(-1)!;
+    expect(options.env).toBeDefined();
+    expect(options.env).not.toHaveProperty('DATABASE_URL');
+    expect(options.env.USER).toBe('control-plane-account');
+    expect(Object.keys(options.env).length).toBeGreaterThan(0);
+    // execa defaults extendEnv:true, which re-merges the full process.env
+    // underneath `env` above and would silently undo the assertions above
+    // in a real (non-mocked) execa run — this mock can't exercise that
+    // merge itself, so assert the guard against it is actually passed.
+    expect(options.extendEnv).toBe(false);
+  });
+
+  it('probes health under the same scoped env execution will use', async () => {
+    stubProbeEnv();
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stdout: '1.2.3', stderr: '' });
+    await new FixtureExecutor(1_000_000).health();
+
+    const [, , options] = execaMock.mock.calls.at(-1)!;
+    expect(options.env).not.toHaveProperty('DATABASE_URL');
+    expect(options.env.USER).toBe('control-plane-account');
+    expect(options.extendEnv).toBe(false);
+  });
+});
+
+describe('BaseCliExecutor failure cause (issue #286)', () => {
+  it('throws ProviderAuthenticationError carrying the CLI cause on an auth failure', async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: fixture('claude.stream.auth-failed.stdout.jsonl'),
+      stderr: '',
+    });
+
+    await expect(
+      new FixtureExecutor(1_000_000, undefined, 'claude').execute(request),
+    ).rejects.toThrowError(
+      expect.objectContaining({
+        name: 'ProviderAuthenticationError',
+        message: 'claude CLI exited with code 1: Not logged in · Please run /login',
+      }),
+    );
+  });
+
+  it('keeps an ordinary provider error an ExecutionError while still naming the cause', async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: JSON.stringify({
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        result: 'The tool call failed.',
+      }),
+      stderr: '',
+    });
+
+    // `name` is the discriminator: the subclass overrides it, so asserting the
+    // base name is also asserting this did not become a ProviderAuthenticationError.
+    await expect(
+      new FixtureExecutor(1_000_000, undefined, 'claude').execute(request),
+    ).rejects.toThrowError(
+      expect.objectContaining({
+        name: 'ExecutionError',
+        message: 'claude CLI exited with code 1: The tool call failed.',
+      }),
+    );
   });
 });

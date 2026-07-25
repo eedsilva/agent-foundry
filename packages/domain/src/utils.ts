@@ -1,5 +1,10 @@
 import { EXECUTION_PROTOCOL_VERSION, type ExecutionResult } from '@agent-foundry/contracts';
-import { EmergencyCeilingError, ExecutionError, RunCancelledError } from './errors.js';
+import {
+  EmergencyCeilingError,
+  ExecutionError,
+  ProviderAuthenticationError,
+  RunCancelledError,
+} from './errors.js';
 
 export function getValueAtPath(value: unknown, path: string): unknown {
   const segments = path.split('.').filter(Boolean);
@@ -58,6 +63,9 @@ export function toExecutionResult(executionId: string, error: unknown): Executio
       ...(details.exitCode !== undefined ? { exitCode: details.exitCode } : {}),
       ...(details.stdout !== undefined ? { stdout: details.stdout } : {}),
       ...(details.stderr !== undefined ? { stderr: details.stderr } : {}),
+      // The error class does not survive the plane boundary, so carry the one
+      // fact the control plane must not lose: this was not a model failure.
+      ...(error instanceof ProviderAuthenticationError ? { kind: 'auth' as const } : {}),
     },
   };
 }

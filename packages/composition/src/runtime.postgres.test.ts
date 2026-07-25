@@ -72,6 +72,23 @@ maybeDescribe('Postgres-backed runtime', () => {
     );
   });
 
+  it('probes readiness through the production Postgres runtime', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-postgres-readiness-'));
+    temporaryDirectories.push(dataDir);
+    const runtime = await createRuntime({
+      ...process.env,
+      REPO_ROOT: rootDir,
+      DATA_DIR: dataDir,
+      PERSISTENCE_MODE: 'postgres',
+      DATABASE_URL: databaseUrl,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+      WORKER_ID: 'postgres-readiness-worker',
+    });
+
+    await expect(runtime.checkReadiness()).resolves.toBeUndefined();
+  }, 30_000);
+
   it('boots, round-trips a project through Postgres, and drives a mock run to completion', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-postgres-runtime-'));
     temporaryDirectories.push(dataDir);

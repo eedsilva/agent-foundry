@@ -1,9 +1,17 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+// The same list packages/executors/src/safe-environment.ts imports. The doctor
+// must probe under the env a real execution gets, or it reports ready for a CLI
+// that is unauthenticated the moment the orchestrator actually spawns it. Read
+// as data, not code: the doctor has to work on an unbuilt tree.
+import safeEnvAllowlist from '../packages/executors/src/safe-env-allowlist.json' with { type: 'json' };
 
 const root = process.cwd();
 const env = { ...readDotEnv(resolve(root, '.env')), ...process.env };
+const probeEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => safeEnvAllowlist.includes(key)),
+);
 const executorMode = env.EXECUTOR_MODE ?? 'mock';
 const realMode = executorMode === 'real';
 const checks = [
@@ -220,7 +228,7 @@ function isAgyModelList(output) {
 }
 
 function run(command, args) {
-  return spawnSync(command, args, { encoding: 'utf8', timeout: 10_000 });
+  return spawnSync(command, args, { encoding: 'utf8', timeout: 10_000, env: probeEnv });
 }
 
 function combinedOutput(result) {

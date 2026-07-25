@@ -40,6 +40,7 @@ import {
 import {
   ExecutionError,
   NotFoundError,
+  ProviderAuthenticationError,
   RunCancelledError,
   SystemClock,
   ValidationError,
@@ -713,6 +714,7 @@ export class FakeWorkspaces implements WorkspaceManager {
   readonly checkpoints: string[] = [];
   readonly commits: string[] = [];
   readonly rollbacks: string[] = [];
+  readonly cleanups: string[] = [];
   readonly drafts: string[] = [];
   readonly draftCommits = new Map<string, string>();
   current = 'initial-head';
@@ -731,6 +733,10 @@ export class FakeWorkspaces implements WorkspaceManager {
     return `/fake/${projectId}/workspace`;
   }
   ensure(): Promise<void> {
+    return Promise.resolve();
+  }
+  cleanup(projectId: string): Promise<void> {
+    this.cleanups.push(projectId);
     return Promise.resolve();
   }
   lastPrd: string | undefined;
@@ -902,6 +908,14 @@ export function invalidOutputError(): ExecutionError {
   return new ExecutionError('Agent did not return a valid artifact JSON object', {
     stdout: 'not json at all',
   });
+}
+
+/** Mirrors base-cli-executor.ts — the CLI never authenticated, so nothing was asked of the model. */
+export function authenticationError(): ProviderAuthenticationError {
+  return new ProviderAuthenticationError(
+    'claude CLI exited with code 1: Not logged in · Please run /login',
+    { provider: 'claude', exitCode: 1 },
+  );
 }
 
 /** Simulates a transport-level failure between control plane and execution plane — not a CLI/domain error. */
@@ -1338,6 +1352,7 @@ export function makeHarness(
     undefined,
     undefined,
     opts.decisionLog,
+    opts.generatedProjectRuntime,
   );
   const service = new ProjectService(
     stores.projects,
@@ -1359,7 +1374,6 @@ export function makeHarness(
     ids,
     stores.modelOverrides,
     undefined,
-    opts.generatedProjectRuntime,
   );
   return {
     ...stores,

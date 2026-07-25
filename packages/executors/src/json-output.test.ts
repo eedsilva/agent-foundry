@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  extractCliFailure,
   extractExecutedModel,
   extractRateLimit,
   extractUsage,
@@ -256,6 +257,35 @@ describe('extractRateLimit (issue #62)', () => {
 
   it('returns undefined when no rate-limit signal exists', () => {
     expect(extractRateLimit('codex', fixture('codex.partial-usage.stdout.jsonl'))).toBeUndefined();
+  });
+});
+
+describe('extractCliFailure (issue #286)', () => {
+  it('reports the terminal result message and flags an authentication subtype', () => {
+    expect(extractCliFailure('claude', fixture('claude.stream.auth-failed.stdout.jsonl'))).toEqual({
+      message: 'Not logged in · Please run /login',
+      authFailure: true,
+    });
+  });
+
+  it('reports an ordinary error without flagging it as an authentication failure', () => {
+    const stdout = JSON.stringify({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      result: 'The tool call failed.',
+    });
+
+    expect(extractCliFailure('claude', stdout)).toEqual({
+      message: 'The tool call failed.',
+      authFailure: false,
+    });
+  });
+
+  it('returns undefined when the run succeeded', () => {
+    expect(
+      extractCliFailure('claude', fixture('claude.stream.success.stdout.jsonl')),
+    ).toBeUndefined();
   });
 });
 
