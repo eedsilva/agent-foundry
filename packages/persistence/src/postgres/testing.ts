@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { afterAll, afterEach, beforeAll, describe } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, inject } from 'vitest';
 import { createPostgresClient, type PostgresDb } from './client.js';
 import { migrateUp } from './migrator.js';
 
@@ -24,6 +24,11 @@ export function describePostgres(name: string, fn: (ctx: { db: () => PostgresDb 
     let stop: (() => Promise<unknown>) | undefined;
 
     beforeAll(async () => {
+      const sharedUri = inject('sharedPgUri');
+      if (sharedUri) {
+        sql = createPostgresClient(sharedUri);
+        return;
+      }
       const { PostgreSqlContainer } = await import('@testcontainers/postgresql');
       const container = await new PostgreSqlContainer('postgres:17-alpine').start();
       stop = () => container.stop();

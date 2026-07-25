@@ -15,4 +15,4 @@ Full rules live in `AGENTS.md` ("Checks: what to run when") — read that sectio
 - Inner loop: `npm run test:unit:fast` (~30s) + `npx vitest run <slow files you touched>`.
 - Pre-PR: `npm run check`. E2E and regression gate are CI-only.
 - Slow bucket stays `--maxWorkers=1`; fast/slow lists in `package.json` must stay an exact partition (`npx vitest list --filesOnly` to verify).
-- Never remove: `.claude/` ignore entries (prettier/eslint/gitignore), `--cache` flags, or `--force` on typecheck.
+- Never remove: `.claude/` ignore entries (prettier/eslint/gitignore), `--cache` flags, or the `dist-types/` + `emitDeclarationOnly` setup in package tsconfigs (it's what keeps incremental `tsc -b` correct next to tsup `--clean`).

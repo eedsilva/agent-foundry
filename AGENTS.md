@@ -25,4 +25,5 @@ Perf guardrails (do not undo):
 
 - Keep `.claude/` in `.prettierignore`, `.gitignore`, and the `ignores` list in `eslint.config.mjs`. `.claude/worktrees/` holds many GB of stale worktrees ignored only via `.git/info/exclude`, which prettier/eslint do not read — without these entries the lint gates take 5+ minutes instead of seconds. Any new lint-like tool must get the same ignore entry.
 - Keep `--cache` on the prettier and eslint scripts.
-- `typecheck` keeps `--force`: incremental `tsc -b` hits stale-dist `TS6305` errors in this repo.
+- Composite tsconfigs emit declarations to `dist-types/` (`emitDeclarationOnly`), NEVER to `dist/` — tsup `--clean` owns `dist/` and wiping tsc's declarations while `tsconfig.tsbuildinfo` survives is what caused the historical `TS6305` stale-state errors that forced `--force`. Incremental `tsc -b` is now trusted: ~13s cold, ~2s warm. If typecheck state ever looks wrong, `npm run clean` and re-run.
+- Postgres test suites share one testcontainer via `SHARED_PG=1` (set by `test:unit:slow`; globalSetup at `packages/persistence/src/postgres/global-setup.ts`). New Postgres suites must use `describePostgres` from `testing.ts` and rely on its truncate-based cleanup; without the env flag each suite boots its own container.

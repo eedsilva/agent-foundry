@@ -8,6 +8,7 @@ export default defineConfig({
     include: ['packages/**/*.test.ts', 'apps/**/*.test.{ts,tsx}'],
     environment: 'node',
     testTimeout: 30_000,
+    globalSetup: ['packages/persistence/src/postgres/global-setup.ts'],
     coverage: {
       reporter: ['text', 'json', 'html'],
     },
