@@ -79,8 +79,9 @@ export function InspectorTabs({
       <div
         role="tablist"
         aria-label="Inspetor"
-        // Wraps rather than scrolls: six tabs do not fit the inspector column at
-        // 1440px, and a horizontally scrolled tablist hides tabs off-screen.
+        // Wraps rather than scrolls. A horizontally scrolled tablist silently
+        // hides tabs past the edge of the inspector column; wrapping keeps all
+        // six reachable at every width.
         className="glass rounded-panel flex shrink-0 flex-wrap gap-0.5 p-1"
       >
         {tabs.map((tab, index) => (

@@ -31,16 +31,6 @@ body {
     radial-gradient(circle at 75% -10%, rgba(217, 255, 82, 0.08), transparent 35%),
     var(--background);
 }
-a {
-  color: inherit;
-  text-decoration: none;
-}
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
 button {
   cursor: pointer;
 }

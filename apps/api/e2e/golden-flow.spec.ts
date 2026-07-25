@@ -735,6 +735,15 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await versionArticle(visualVersion.commit).getByRole('checkbox').check();
   await page.getByRole('button', { name: 'Comparar selecionadas' }).click();
   await expect(page.getByTestId('version-diff')).toContainText("'#ddd'");
+  // Second half of the deleted builder-shell-css.test.ts: the diff pane's own
+  // `max-w-full overflow-x-auto`. Asserted here, with the Versões panel actually
+  // visible — from the Mudanças tab the diff sits in a `hidden` panel and
+  // contributes nothing to scrollWidth, so the check would be vacuous.
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
 
   page.once('dialog', (dialog) => dialog.accept('golden-flow'));
   await Promise.all([

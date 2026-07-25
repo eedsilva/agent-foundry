@@ -63,7 +63,9 @@ export function RouterTab({ routes }: { routes: RouteEntry[] }) {
                       {executed.model.provider} · {executed.model.model || 'default da CLI'}
                     </p>
                     {usedFallback ? (
-                      <p className="text-warn mt-1 font-mono text-[10px] font-bold tracking-wide uppercase">
+                      // `text-warn` on the sunken card is 1.9:1; `--ink` on the
+                      // warn wash is 17.1:1 and the wash still reads as a warning.
+                      <p className="text-ink bg-warn/10 mt-1 inline-block rounded-full px-2 py-0.5 font-mono text-[10px] font-bold tracking-wide uppercase">
                         fallback de {route.selected.model.id}
                       </p>
                     ) : null}

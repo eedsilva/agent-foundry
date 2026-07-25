@@ -4,10 +4,14 @@ import React, { type ReactNode } from 'react';
 import type { ResumeBlockedResponse, WorkflowRun } from '@agent-foundry/contracts';
 import { cn } from '@/lib/utils';
 
-const TONE_CLASS = {
-  warn: 'text-warn',
-  err: 'text-err',
-  info: 'text-info',
+// The title is `--ink` (17.75:1 on the glass composite), not the tone colour:
+// `--warn`/`--err`/`--info` as text on near-white glass measure 2.09/3.78/3.75:1,
+// under the 4.5:1 DESIGN.md §7 requires. The tone rides on the dot, which is
+// non-text.
+const DOT_CLASS = {
+  warn: 'bg-warn',
+  err: 'bg-err',
+  info: 'bg-info',
 } as const;
 
 export function AlertStrip({
@@ -16,7 +20,7 @@ export function AlertStrip({
   detail,
   actions,
 }: {
-  tone: keyof typeof TONE_CLASS;
+  tone: keyof typeof DOT_CLASS;
   title: string;
   detail?: ReactNode;
   actions?: ReactNode;
@@ -25,11 +29,9 @@ export function AlertStrip({
     <div
       role="alert"
       data-testid="run-alert"
-      className={cn(
-        'glass rounded-panel flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-[13px]',
-        TONE_CLASS[tone],
-      )}
+      className="glass rounded-panel text-ink flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-[13px]"
     >
+      <span aria-hidden className={cn('size-2 shrink-0 rounded-full', DOT_CLASS[tone])} />
       <strong className="font-semibold">{title}</strong>
       {detail ? <span className="text-ink-muted min-w-0">{detail}</span> : null}
       {actions ? <span className="ml-auto flex gap-2">{actions}</span> : null}

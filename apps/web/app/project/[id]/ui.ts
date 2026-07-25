@@ -20,14 +20,20 @@ export const BTN =
  * decides whether `--accent` itself is darkened.
  */
 export const BTN_ACTIVE = 'border-accent bg-accent-wash text-ink';
+// `--surface` on `--accent` is 3.09:1; on `--accent-strong` it is 4.76:1. The
+// hover state darkens with a filter rather than a lighter token so the label
+// never drops back below 4.5:1. Task 7 owns any change to `--accent` itself.
 export const PRIMARY_BTN =
-  'bg-accent hover:bg-accent-strong rounded-control text-surface px-4 py-2 text-[14px] font-semibold disabled:opacity-60';
+  'bg-accent-strong hover:brightness-90 rounded-control text-surface px-4 py-2 text-[14px] font-semibold disabled:opacity-60';
 export const FIELD =
   'border-hairline rounded-control text-ink focus:border-accent bg-surface w-full border px-3 py-2 text-[14px] outline-none';
 export const TEXTAREA = `${FIELD} resize-y font-mono text-[12.5px] leading-relaxed`;
 export const LABEL = 'text-ink-muted flex flex-col gap-1.5 text-[13px] font-medium';
 export const RADIO = 'text-ink-muted flex items-center gap-2 text-[13px]';
-export const ERROR_BOX = 'text-err bg-err/10 rounded-control px-3 py-2 text-[13px]';
+// `text-err` on `bg-err/10` is 3.44:1. Same remedy as StatusPill: `--ink` for
+// the text (16.15:1), the tone carried by the wash and the left rule.
+export const ERROR_BOX =
+  'text-ink bg-err/10 border-err rounded-control border-l-2 px-3 py-2 text-[13px]';
 export const MONO_PANE =
   'bg-surface-sunken rounded-card text-ink max-w-full overflow-x-auto p-3 font-mono text-[12.5px] leading-relaxed';
 export const EYEBROW =
