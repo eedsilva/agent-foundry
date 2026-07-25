@@ -5,13 +5,15 @@ import { buildApp } from './app.js';
 function buildFakeRuntime(options?: {
   database?: () => Promise<void>;
   workerRunning?: boolean;
+  persistenceMode?: 'file' | 'postgres';
+  runWorkerInline?: boolean;
 }): Runtime {
   return {
     config: {
       webOrigin: 'http://localhost:3000',
       executorMode: 'mock',
-      persistenceMode: 'postgres',
-      runWorkerInline: true,
+      persistenceMode: options?.persistenceMode ?? 'postgres',
+      runWorkerInline: options?.runWorkerInline ?? true,
     },
     worker: { isRunning: options?.workerRunning ?? true },
     checkReadiness: options?.database ?? vi.fn().mockResolvedValue(undefined),
@@ -56,6 +58,22 @@ describe('readiness', () => {
 
     expect(response.statusCode, response.body).toBe(503);
     expect(response.json()).toMatchObject({ ok: false, database: 'ready', worker: 'unavailable' });
+    await app.close();
+  });
+
+  it('does not require disabled persistence or an external worker', async () => {
+    const app = await buildApp(
+      buildFakeRuntime({ persistenceMode: 'file', runWorkerInline: false, workerRunning: false }),
+    );
+
+    const response = await app.inject({ method: 'GET', url: '/ready' });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      database: 'not_required',
+      worker: 'not_required',
+    });
     await app.close();
   });
 });
