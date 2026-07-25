@@ -1,6 +1,6 @@
 'use client';
 
-import React, { type FormEvent } from 'react';
+import React, { useEffect, useState, type FormEvent } from 'react';
 import type {
   AgentArtifact,
   AgentStreamEvent,
@@ -11,10 +11,12 @@ import type {
   OperationKind,
 } from '@agent-foundry/contracts';
 import {
+  classifyMessage,
   decideChangeRequest,
   decideOperation,
   getConversation,
   getOperationProposal,
+  sendMessage,
   updateOperationProposal,
 } from '../../../lib/api';
 import { KnowledgeFiles } from './knowledge-files';
@@ -27,24 +29,12 @@ export function ChatPane({
   onKnowledgeFilesChange,
   conversation,
   setConversation,
-  conversationError,
-  setConversationError,
-  draft,
-  setDraft,
-  mode,
-  setMode,
-  buildChoice,
-  setBuildChoice,
-  pendingChangeRequest,
-  setPendingChangeRequest,
-  proposalEditor,
-  setProposalEditor,
   latestApprovedPlan,
   activeOperation,
   latestOperation,
   latestOperationRunTerminal,
   streamEvents,
-  onClassifyPrompt,
+  classifyPromptRef,
   onCancelRun,
   onOpenArtifactRef,
 }: {
@@ -54,31 +44,52 @@ export function ChatPane({
   onKnowledgeFilesChange: (knowledgeFiles: KnowledgeFile[]) => void;
   conversation: ConversationPageResponse | null;
   setConversation: (conversation: ConversationPageResponse) => void;
-  conversationError: string;
-  setConversationError: (message: string) => void;
-  draft: string;
-  setDraft: (draft: string) => void;
-  mode: 'plan' | 'build';
-  setMode: (mode: 'plan' | 'build') => void;
-  buildChoice: 'plan' | 'direct';
-  setBuildChoice: (choice: 'plan' | 'direct') => void;
-  pendingChangeRequest: ChangeRequest | null;
-  setPendingChangeRequest: (request: ChangeRequest | null) => void;
-  proposalEditor: ProposalEditorState | null;
-  setProposalEditor: (editor: ProposalEditorState | null) => void;
   latestApprovedPlan: Operation | undefined;
   activeOperation: Operation | undefined;
   latestOperation: Operation | undefined;
   latestOperationRunTerminal: boolean;
   streamEvents: AgentStreamEvent[];
-  onClassifyPrompt: (prompt: string) => Promise<void>;
+  classifyPromptRef: { current: (prompt: string) => void };
   onCancelRun: (runId: string) => void;
   onOpenArtifactRef: (name: string, revision: number) => void;
 }) {
+  const [draft, setDraft] = useState('');
+  const [mode, setMode] = useState<'plan' | 'build'>('plan');
+  const [buildChoice, setBuildChoice] = useState<'plan' | 'direct'>('plan');
+  const [conversationError, setConversationError] = useState('');
+  const [pendingChangeRequest, setPendingChangeRequest] = useState<ChangeRequest | null>(null);
+  const [proposalEditor, setProposalEditor] = useState<ProposalEditorState | null>(null);
+
+  async function classifyConversationPrompt(prompt: string) {
+    try {
+      const message = await sendMessage(id, {
+        role: 'user',
+        content: [{ type: 'text', text: prompt }],
+      });
+      setDraft('');
+      setConversationError('');
+      const { changeRequest } = await classifyMessage(id, message.id);
+      setPendingChangeRequest(changeRequest);
+      if (changeRequest.suggestedKind === 'plan' || changeRequest.suggestedKind === 'build') {
+        setMode(changeRequest.suggestedKind);
+      }
+      setConversation(await getConversation(id));
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  // The preview pane's conversational fallback runs this exact flow, and the
+  // flow writes state that now lives here. Assigning after every render keeps
+  // the ref current well before any preview interaction can fire it.
+  useEffect(() => {
+    classifyPromptRef.current = (prompt: string) => void classifyConversationPrompt(prompt);
+  });
+
   async function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft.trim()) return;
-    await onClassifyPrompt(draft);
+    await classifyConversationPrompt(draft);
   }
 
   async function confirmChangeRequest() {

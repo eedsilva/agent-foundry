@@ -1,6 +1,6 @@
 'use client';
 
-import React, { type FormEvent } from 'react';
+import React, { useState, type FormEvent } from 'react';
 import type {
   ModelDefinition,
   ResumeBlockedResponse,
@@ -24,14 +24,6 @@ export function ModelPinPanel({
   runtimeModels,
   runnableModels,
   stepTargets,
-  overrideScope,
-  setOverrideScope,
-  projectRetryWithPin,
-  setProjectRetryWithPin,
-  draftDiff,
-  setDraftDiff,
-  draftError,
-  setDraftError,
   decidedBy,
   refresh,
   setError,
@@ -43,19 +35,16 @@ export function ModelPinPanel({
   runtimeModels: ModelDefinition[];
   runnableModels: ModelDefinition[];
   stepTargets: ReturnType<typeof agentStepTargets>;
-  overrideScope: 'run' | 'step';
-  setOverrideScope: (scope: 'run' | 'step') => void;
-  projectRetryWithPin: boolean;
-  setProjectRetryWithPin: (value: boolean) => void;
-  draftDiff: string | null;
-  setDraftDiff: (diff: string | null) => void;
-  draftError: string;
-  setDraftError: (message: string) => void;
   decidedBy: string;
   refresh: () => void;
   setError: (message: string) => void;
   setResumeBlocked: (blocked: ResumeBlockedResponse | null) => void;
 }) {
+  const [overrideScope, setOverrideScope] = useState<'run' | 'step'>('run');
+  const [projectRetryWithPin, setProjectRetryWithPin] = useState(false);
+  const [draftDiff, setDraftDiff] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState('');
+
   async function submitOverride(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!run) return;
