@@ -60,44 +60,23 @@ export class WorkerLoop {
 
   async runOnce(): Promise<boolean> {
     const job = await this.queue.claim(this.options.workerId);
+    return this.runClaimedJob(job);
+  }
+
+  private async runOnceRecoveringClaim(): Promise<boolean> {
+    let job: QueueJob | null;
+    try {
+      job = await this.queue.claim(this.options.workerId);
+    } catch (error) {
+      this.options.logger?.error({ err: error }, 'claim failed');
+      return false;
+    }
+    return this.runClaimedJob(job);
+  }
+
+  private async runClaimedJob(job: QueueJob | null): Promise<boolean> {
     if (!job) return false;
 
-    await this.processClaimedJob(job);
-    return true;
-  }
-
-  async start(signal?: AbortSignal): Promise<void> {
-    this.stopped = false;
-    this.running = true;
-    try {
-      while (!this.stopped && !signal?.aborted) {
-        let job: QueueJob | null;
-        try {
-          job = await this.queue.claim(this.options.workerId);
-        } catch (error) {
-          this.options.logger?.error({ err: error }, 'claim failed');
-          await sleep(this.options.pollIntervalMs, signal);
-          continue;
-        }
-
-        if (!job) {
-          await sleep(this.options.pollIntervalMs, signal);
-          continue;
-        }
-
-        await this.processClaimedJob(job);
-      }
-    } finally {
-      this.running = false;
-    }
-  }
-
-  stop(): void {
-    this.stopped = true;
-    this.running = false;
-  }
-
-  private async processClaimedJob(job: QueueJob): Promise<void> {
     const state: HeartbeatState = { job, leaseLost: false };
     const leaseAbort = new AbortController();
     const stopHeartbeat = this.startHeartbeat(state, leaseAbort);
@@ -156,6 +135,27 @@ export class WorkerLoop {
       }
       log?.error({ err: error }, 'job failed');
     }
+    return true;
+  }
+
+  async start(signal?: AbortSignal): Promise<void> {
+    this.stopped = false;
+    this.running = true;
+    try {
+      while (!this.stopped && !signal?.aborted) {
+        const worked = await this.runOnceRecoveringClaim();
+        if (!worked) {
+          await sleep(this.options.pollIntervalMs, signal);
+        }
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+
+  stop(): void {
+    this.stopped = true;
+    this.running = false;
   }
 
   /**

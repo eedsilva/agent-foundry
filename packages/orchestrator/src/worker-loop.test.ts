@@ -308,6 +308,18 @@ describe('WorkerLoop heartbeat renewal', () => {
     expect(heartbeat).not.toHaveBeenCalled();
   });
 
+  it('preserves claim failures for direct runOnce callers', async () => {
+    const claimError = new Error('claim boom');
+    const queue = fakeQueue({ claim: vi.fn().mockRejectedValue(claimError) });
+    const orchestrator = { runProject: vi.fn() } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 100,
+    });
+
+    await expect(worker.runOnce()).rejects.toBe(claimError);
+  });
+
   it('continues polling after a claim rejection', async () => {
     const claimedJob = job({ id: 'job-9', runId: 'run-9', projectId: 'project-9' });
     const run = deferred<void>();
@@ -373,7 +385,10 @@ describe('WorkerLoop heartbeat renewal', () => {
       pollIntervalMs: 100,
       logger,
     });
-    const startFailure = worker.start().catch((error: unknown) => error);
+    const startPromise = worker.start();
+    const startFailure = expect(startPromise).rejects.toEqual(
+      expect.objectContaining({ message: 'nack boom' }),
+    );
     await vi.advanceTimersByTimeAsync(0);
 
     expect(queue.claim).toHaveBeenCalledTimes(1);
@@ -381,7 +396,7 @@ describe('WorkerLoop heartbeat renewal', () => {
       { err: expect.objectContaining({ message: 'nack boom' }) },
       'claim failed',
     );
-    await expect(startFailure).resolves.toEqual(expect.objectContaining({ message: 'nack boom' }));
+    await startFailure;
   });
 
   it('dispatches a run-conversation-operation job to the operation runner, not runProject', async () => {
