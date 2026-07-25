@@ -92,7 +92,6 @@ h2 {
   font-size: 17px;
   margin: 22px 0 0;
 }
-.grid,
 .dashboardGrid {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.8fr);
@@ -530,7 +529,6 @@ dd {
     padding-top: 42px;
   }
   .projectHero,
-  .grid,
   .dashboardGrid {
     grid-template-columns: 1fr;
   }
