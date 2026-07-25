@@ -11,7 +11,7 @@
     "dev": "concurrently -n api,worker,web -c auto \"npm run dev --workspace @agent-foundry/api\" \"npm run dev --workspace @agent-foundry/worker\" \"npm run dev --workspace @agent-foundry/web\"",
     "dev:inline": "concurrently -n api,web -c auto \"RUN_WORKER_INLINE=true npm run dev --workspace @agent-foundry/api\" \"npm run dev --workspace @agent-foundry/web\"",
     "build": "npm run build:packages && npm run build:apps",
-    "typecheck": "tsc -b --force --pretty false",
+    "typecheck": "tsc -b --pretty false",
     "test": "npm run test:unit && npm run test:scripts",
     "test:watch": "vitest",
     "format": "prettier --write --cache .",
