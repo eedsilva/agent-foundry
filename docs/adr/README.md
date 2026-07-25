@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0037 Hand-author the Issue Radar reference app instead of live-generating it](0037-issue-radar-reference-app.md).
+Latest: [0038 Generated applications are two-tier (Next.js + Fastify) and reach Supabase with the caller's JWT](0038-two-tier-generated-app-with-jwt-forwarded-supabase.md).
