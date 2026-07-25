@@ -55,8 +55,12 @@ export const ExecutionFailureSchema = z
     exitCode: z.number().int().optional(),
     stdout: z.string().optional(),
     stderr: z.string().optional(),
-    /** The CLI never authenticated, so the failure says nothing about the model. */
-    authFailure: z.boolean().optional(),
+    /**
+     * Why the failure is an environment fault rather than a model one — the
+     * error class does not survive this boundary. An enum, not a boolean per
+     * cause, so the next such kind extends it without a protocol change.
+     */
+    kind: z.enum(['auth']).optional(),
   })
   .strict();
 export type ExecutionFailure = z.infer<typeof ExecutionFailureSchema>;

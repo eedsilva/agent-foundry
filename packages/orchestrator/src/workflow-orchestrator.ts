@@ -2468,7 +2468,7 @@ export class WorkflowOrchestrator {
     if (executionResult.state === 'cancelled') throw new RunCancelledError(runId);
     if (executionResult.state === 'failed' || !executionResult.agent) {
       const detail = executionResult.error;
-      const ErrorType = detail?.authFailure ? ProviderAuthenticationError : ExecutionError;
+      const ErrorType = detail?.kind === 'auth' ? ProviderAuthenticationError : ExecutionError;
       throw new ErrorType(detail?.message ?? 'Execution plane reported a failure', {
         ...(detail?.exitCode !== undefined ? { exitCode: detail.exitCode } : {}),
         ...(detail?.stdout !== undefined ? { stdout: detail.stdout } : {}),

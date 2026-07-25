@@ -65,7 +65,7 @@ export function toExecutionResult(executionId: string, error: unknown): Executio
       ...(details.stderr !== undefined ? { stderr: details.stderr } : {}),
       // The error class does not survive the plane boundary, so carry the one
       // fact the control plane must not lose: this was not a model failure.
-      ...(error instanceof ProviderAuthenticationError ? { authFailure: true } : {}),
+      ...(error instanceof ProviderAuthenticationError ? { kind: 'auth' as const } : {}),
     },
   };
 }
