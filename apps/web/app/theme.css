@@ -36,6 +36,7 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --ease-glass: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 :root {
@@ -76,6 +77,75 @@
   }
 }
 
+@keyframes status-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.9);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+/* State changes get a small spatial cue; page loads stay still. */
+.motion-state-enter {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 220ms var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.overlay-surface {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 240ms var(--ease-glass);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+.overlay-surface[data-placement='right'] {
+  @starting-style {
+    transform: translateX(12px);
+  }
+}
+
+.status-dot-live {
+  animation: status-breathe 1.8s ease-in-out infinite;
+}
+
+.project-card-interactive {
+  transition:
+    border-color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .project-card-interactive:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+    box-shadow: var(--shadow-pop);
+    transform: translateY(-2px);
+  }
+}
+
+.project-card-interactive:active {
+  transform: translateY(1px) scale(0.995);
+}
+
 /*
  * DESIGN.md §7: all motion behind `prefers-reduced-motion`.
  */
@@ -87,6 +157,11 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  .status-dot-live {
+    opacity: 1;
+    transform: none;
   }
 }
 

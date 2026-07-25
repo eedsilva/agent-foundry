@@ -297,7 +297,7 @@ function DecisionsPanel({ decisions }: { decisions: RouterDecisionLogEntry[] }) 
                   >
                     <button
                       type="button"
-                      className="hover:text-accent-strong inline-flex items-center gap-1 uppercase"
+                      className="hover:text-accent-strong inline-flex items-center gap-1 uppercase transition-colors duration-150"
                       onClick={() => setSort((current) => nextDecisionSort(current, column.key))}
                     >
                       {column.label}
@@ -311,7 +311,10 @@ function DecisionsPanel({ decisions }: { decisions: RouterDecisionLogEntry[] }) 
             </thead>
             <tbody>
               {sortDecisions(decisions, sort).map((decision) => (
-                <tr key={decision.id} className="hover:bg-accent-wash">
+                <tr
+                  key={decision.id}
+                  className="hover:bg-accent-wash transition-colors duration-150"
+                >
                   <td className={TD}>
                     <button
                       type="button"

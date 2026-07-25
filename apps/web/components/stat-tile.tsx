@@ -5,7 +5,7 @@ import type { StatusTone } from './status-pill';
 /**
  * Solid content card — never glass (DESIGN.md §2.3: glass is chrome).
  *
- * The tone rides on the left border, never on the value. Measured against
+ * The tone rides on a tinted surface and border, never on the value. Measured against
  * `--surface` #FFFFFF: `--ok` 3.01:1, `--warn` 2.16:1, `--err` 3.91:1,
  * `--info` 3.88:1 — all far below the 4.5:1 DESIGN.md §7 requires for text,
  * so the value stays `--ink` (18.35:1).
@@ -18,10 +18,10 @@ import type { StatusTone } from './status-pill';
  * the tokens themselves.
  */
 const TONE_BORDER: Record<StatusTone, string> = {
-  ok: 'border-l-2 border-l-ok',
-  warn: 'border-l-2 border-l-warn',
-  err: 'border-l-2 border-l-err',
-  info: 'border-l-2 border-l-info',
+  ok: 'border-ok/30 bg-ok/5',
+  warn: 'border-warn/30 bg-warn/5',
+  err: 'border-err/30 bg-err/5',
+  info: 'border-info/30 bg-info/5',
   neutral: '',
 };
 

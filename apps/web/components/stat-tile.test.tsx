@@ -22,7 +22,7 @@ describe('StatTile', () => {
     const markup = renderToStaticMarkup(<StatTile label="x" value="1" tone="ok" />);
     // `--ok` as text on white is 2.55:1; DESIGN.md §7 requires 4.5:1.
     expect(markup).not.toContain('text-ok');
-    expect(markup).toContain('border-l-ok');
+    expect(markup).toContain('border-ok/30');
   });
 
   it('keeps the hint above 4.5:1', () => {

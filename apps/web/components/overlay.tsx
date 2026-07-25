@@ -121,7 +121,7 @@ export function Overlay({
         !open && 'hidden',
       )}
     >
-      <div className={sheet ? SHEET : MODAL}>
+      <div className={cn(sheet ? SHEET : MODAL, 'overlay-surface')} data-placement={placement}>
         <div className={PANEL_HEADER}>
           <div>
             {eyebrow ? <p className={EYEBROW}>{eyebrow}</p> : null}

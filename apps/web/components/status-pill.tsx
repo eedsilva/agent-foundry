@@ -66,7 +66,14 @@ export function StatusPill({
         className,
       )}
     >
-      <span aria-hidden className={cn('size-1.5 rounded-full', DOT_CLASS[tone])} />
+      <span
+        aria-hidden
+        className={cn(
+          'size-1.5 rounded-full',
+          DOT_CLASS[tone],
+          tone === 'info' && 'status-dot-live',
+        )}
+      />
       {label ?? status}
     </span>
   );

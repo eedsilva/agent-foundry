@@ -113,7 +113,12 @@ export default function HomePage() {
             </p>
           ) : null}
 
-          <button disabled={submitting} className={`${PRIMARY_BTN} py-2.5`}>
+          <button
+            type="submit"
+            disabled={submitting}
+            aria-busy={submitting}
+            className={`${PRIMARY_BTN} py-2.5`}
+          >
             {submitting ? 'Criando e enfileirando…' : 'Fundir projeto'}
           </button>
         </form>

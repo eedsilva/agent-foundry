@@ -105,7 +105,7 @@ export function InspectorTabs({
             onKeyDown={(event) => onKeyDown(event, index)}
             onClick={() => onTabChange(tab.id)}
             className={cn(
-              'rounded-control flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium',
+              'rounded-control active:scale-[0.98] flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-[background-color,color,transform] duration-150 ease-[var(--ease-out)]',
               // `text-accent` on `bg-accent-wash` is only 2.85:1 — see BTN_ACTIVE in ../ui.
               tab.id === activeTab
                 ? 'bg-accent-wash text-ink font-semibold'

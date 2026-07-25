@@ -33,7 +33,7 @@ export function AlertStrip({
       // announces once, politely, when it appears.
       role={tone === 'err' ? 'alert' : 'status'}
       data-testid="run-alert"
-      className="glass rounded-panel text-ink flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-[13px]"
+      className="glass motion-state-enter rounded-panel text-ink flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-[13px]"
     >
       <span aria-hidden className={cn('size-2 shrink-0 rounded-full', DOT_CLASS[tone])} />
       <strong className="font-semibold">{title}</strong>

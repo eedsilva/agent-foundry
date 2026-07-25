@@ -38,6 +38,14 @@ describe('theme.css', () => {
     expect(css).toMatch(/--glass-stroke:\s*rgba\(255,\s*255,\s*255,\s*0?\.72\)/);
   });
 
+  it('declares purposeful motion primitives with reduced-motion support', () => {
+    expect(css).toContain('--ease-out: cubic-bezier(0.23, 1, 0.32, 1)');
+    expect(css).toContain('.motion-state-enter');
+    expect(css).toContain('.overlay-surface');
+    expect(css).toContain('.status-dot-live');
+    expect(css).toContain('prefers-reduced-motion: reduce');
+  });
+
   it('has no dark theme branch', () => {
     expect(css).not.toMatch(/prefers-color-scheme:\s*dark/);
     expect(css).not.toMatch(/\.dark\s*\{/);

@@ -37,4 +37,11 @@ describe('StatusPill', () => {
     const markup = renderToStaticMarkup(<StatusPill status="completed" label="concluído" />);
     expect(markup).toContain('concluído');
   });
+
+  it('breathes only while a status is actively running', () => {
+    expect(renderToStaticMarkup(<StatusPill status="running" />)).toContain('status-dot-live');
+    expect(renderToStaticMarkup(<StatusPill status="completed" />)).not.toContain(
+      'status-dot-live',
+    );
+  });
 });

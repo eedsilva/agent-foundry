@@ -7,7 +7,7 @@ import { StatusPill } from '@/components/status-pill';
 import type { ProjectDetail } from '../../../lib/api';
 
 const RUN_BUTTON =
-  'border-hairline rounded-control text-ink hover:bg-accent-wash border px-3 py-1.5 text-[13px] font-medium';
+  'border-hairline rounded-control text-ink hover:bg-accent-wash active:scale-[0.98] border px-3 py-1.5 text-[13px] font-medium transition-[background-color,border-color,color,transform] duration-150 ease-[var(--ease-out)]';
 
 export function BuilderHeader({
   project,
@@ -27,7 +27,10 @@ export function BuilderHeader({
       as="header"
       className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5"
     >
-      <a href="/" className="text-ink-muted hover:text-ink shrink-0 text-[13px]">
+      <a
+        href="/"
+        className="text-ink-muted hover:text-ink shrink-0 text-[13px] transition-colors duration-150"
+      >
         ← projetos
       </a>
 
