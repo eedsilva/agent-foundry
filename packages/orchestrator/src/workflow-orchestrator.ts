@@ -44,6 +44,7 @@ import type {
   ExecutionPlane,
   ExecutorRegistry,
   ExplicitModelRoute,
+  GeneratedProjectRuntime,
   HarnessRepository,
   HarnessSelection,
   IdGenerator,
@@ -125,6 +126,18 @@ class ApprovalTimeoutScheduleError extends Error {
   }
 }
 
+const PROVISIONING_FAILURE_MESSAGE =
+  'Project provisioning failed. Review the project event timeline for details.';
+
+class ProjectProvisioningError extends Error {
+  readonly code = 'PROJECT_PROVISIONING_FAILED';
+
+  constructor(cause: unknown) {
+    super(errorMessage(cause));
+    this.name = 'ProjectProvisioningError';
+  }
+}
+
 export class WorkflowOrchestrator {
   constructor(
     private readonly projects: ProjectRepository,
@@ -155,6 +168,7 @@ export class WorkflowOrchestrator {
     private readonly executors?: Pick<ExecutorRegistry, 'health'>,
     private readonly secretStore?: SecretStore,
     private readonly decisionLog?: RouterDecisionLogRepository,
+    private readonly generatedProjectRuntime?: GeneratedProjectRuntime,
   ) {}
 
   async runProject(
@@ -215,6 +229,38 @@ export class WorkflowOrchestrator {
         throwIfCancelled(signal, run.id);
         await this.finalizePause(run.id, projectId, workflow);
         return;
+      }
+      if (this.generatedProjectRuntime) {
+        if (run.status !== 'running') {
+          run = await this.runs.update(
+            transitionWorkflowRun(run, 'running', this.clock.now()),
+            run.version,
+          );
+          await this.syncProjectSummary(run);
+        }
+        await this.emit(
+          projectId,
+          'project.provisioning_started',
+          'Project provisioning started.',
+          {
+            runId: run.id,
+            dedupeKey: `${run.id}:project.provisioning_started`,
+          },
+        );
+        try {
+          await this.generatedProjectRuntime.initialize({ projectId });
+        } catch (error) {
+          await this.emit(projectId, 'project.provisioning_failed', PROVISIONING_FAILURE_MESSAGE, {
+            runId: run.id,
+            dedupeKey: `${run.id}:project.provisioning_failed`,
+            data: { diagnostic: errorMessage(error) },
+          });
+          throw new ProjectProvisioningError(error);
+        }
+        await this.emit(projectId, 'project.provisioned', 'Project provisioning completed.', {
+          runId: run.id,
+          dedupeKey: `${run.id}:project.provisioned`,
+        });
       }
       await this.workspaces.ensureGit(projectId);
       run = await this.ensureInitialVerifiedCheckpoint(run.id, projectId);
@@ -312,10 +358,17 @@ export class WorkflowOrchestrator {
       const durationMs = Date.now() - startedAt;
       span.setAttribute('foundry.run.duration_ms', durationMs);
       recordRunDuration(durationMs, { status: 'failed' });
-      await this.emit(projectId, 'project.failed', errorMessage(error), {
-        runId: run.id,
-        dedupeKey: `${run.id}:project.failed`,
-      });
+      await this.emit(
+        projectId,
+        'project.failed',
+        error instanceof ProjectProvisioningError
+          ? PROVISIONING_FAILURE_MESSAGE
+          : errorMessage(error),
+        {
+          runId: run.id,
+          dedupeKey: `${run.id}:project.failed`,
+        },
+      );
       throw error;
     } finally {
       stopWatching();
@@ -2770,7 +2823,10 @@ export class WorkflowOrchestrator {
       ? await this.stepRuns.get(run.id, run.currentStepRunId)
       : null;
     if (!currentNodeId) currentNodeId = currentStep?.nodeId;
-    const summaryError = run.error?.message ?? currentStep?.error?.message;
+    const summaryError =
+      run.error?.code === 'PROJECT_PROVISIONING_FAILED'
+        ? PROVISIONING_FAILURE_MESSAGE
+        : (run.error?.message ?? currentStep?.error?.message);
     const updated: Project = {
       ...project,
       status: projectStatusForRun(run),

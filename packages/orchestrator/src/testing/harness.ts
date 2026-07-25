@@ -1338,6 +1338,7 @@ export function makeHarness(
     undefined,
     undefined,
     opts.decisionLog,
+    opts.generatedProjectRuntime,
   );
   const service = new ProjectService(
     stores.projects,
@@ -1359,7 +1360,6 @@ export function makeHarness(
     ids,
     stores.modelOverrides,
     undefined,
-    opts.generatedProjectRuntime,
   );
   return {
     ...stores,

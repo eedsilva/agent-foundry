@@ -35,7 +35,6 @@ import type {
   ArtifactStore,
   Clock,
   EventStore,
-  GeneratedProjectRuntime,
   HarnessRepository,
   IdGenerator,
   JobQueue,
@@ -89,7 +88,6 @@ export class ProjectService {
     private readonly ids: IdGenerator,
     private readonly modelOverrides?: ModelOverrideRepository,
     private readonly qualityObservations?: QualityObservationService,
-    private readonly generatedProjectRuntime?: GeneratedProjectRuntime,
   ) {}
 
   async createModelOverride(
@@ -151,7 +149,6 @@ export class ProjectService {
     };
 
     await this.workspaces.ensure(project.id);
-    await this.generatedProjectRuntime?.initialize({ projectId: project.id });
     await this.workspaces.writePrd(project.id, input.prd);
     const scaffoldFiles = await this.harness.scaffoldFiles(workflow.stack);
     if (scaffoldFiles.length > 0) {

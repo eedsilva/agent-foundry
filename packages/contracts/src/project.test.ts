@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ArtifactMetadataSchema, ExecutorHealthSchema, QueueJobSchema } from './project.js';
+import {
+  ArtifactMetadataSchema,
+  ExecutorHealthSchema,
+  ProjectEventSchema,
+  QueueJobSchema,
+} from './project.js';
 
 describe('ArtifactMetadataSchema', () => {
   it('leaves storage unset for an existing JSON artifact and accepts it unchanged', () => {
@@ -61,6 +66,21 @@ describe('QueueJobSchema job types (#37)', () => {
       type: 'run-project',
     });
     expect(() => QueueJobSchema.parse({ ...base, type: 'bogus' })).toThrow();
+  });
+});
+
+describe('ProjectEventSchema provisioning lifecycle', () => {
+  it('accepts provisioning events with persisted diagnostics', () => {
+    const event = ProjectEventSchema.parse({
+      id: 'event-1',
+      projectId: 'project-1',
+      type: 'project.provisioning_failed',
+      createdAt: '2026-07-24T12:00:00.000Z',
+      message: 'Project provisioning failed. Review the project event timeline for details.',
+      data: { diagnostic: 'supabase start failed: raw CLI/container output' },
+    });
+
+    expect(event.data).toMatchObject({ diagnostic: expect.any(String) });
   });
 });
 

@@ -490,6 +490,26 @@ describe('WorkerLoop retry classification end-to-end', () => {
     expect(queue.ack).not.toHaveBeenCalled();
   });
 
+  it('nacks provisioning failure as permanent for manual retry', async () => {
+    const claimedJob = job();
+    const error = Object.assign(new Error('runtime initialization failed'), {
+      code: 'PROJECT_PROVISIONING_FAILED',
+    });
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(claimedJob) });
+    const orchestrator = {
+      runProject: vi.fn().mockRejectedValue(error),
+    } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+    });
+
+    await worker.runOnce();
+
+    expect(queue.nack).toHaveBeenCalledWith(claimedJob, 'worker-a', error, { permanent: true });
+    expect(queue.ack).not.toHaveBeenCalled();
+  });
+
   it('nacks with permanent: false for a generic run failure', async () => {
     const claimedJob = job();
     const error = new Error('generic failure');

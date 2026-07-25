@@ -34,12 +34,20 @@ interface HeartbeatState {
 export type JobOutcome = 'cancelled' | 'permanent' | 'transient';
 
 /** Maps a thrown run error to a queue outcome. Cancellation is consumed (ack,
- * no retry); EmergencyCeilingError is terminal (dead-letter now); everything
- * else defaults to transient (nack with backoff) -- the safe default for an
- * error type this classifier doesn't recognize. */
+ * no retry); EmergencyCeilingError and provisioning failures are terminal
+ * (manual retry required); everything else defaults to transient (nack with
+ * backoff) -- the safe default for an error type this classifier doesn't recognize. */
 export function classifyJobOutcome(error: unknown): JobOutcome {
   if (error instanceof RunCancelledError) return 'cancelled';
   if (error instanceof EmergencyCeilingError) return 'permanent';
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'PROJECT_PROVISIONING_FAILED'
+  ) {
+    return 'permanent';
+  }
   return 'transient';
 }
 
