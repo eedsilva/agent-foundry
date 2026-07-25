@@ -175,13 +175,15 @@ describe('freezeBenchmarkReport', () => {
     const cases = await loadBenchmarkCases(casesDir);
     const dataDir = await tempDir('benchmark-roundtrip-data-');
 
-    for (const benchmarkCase of cases) {
-      await runBenchmarkCase(benchmarkCase, MODEL, {
-        executorMode: 'mock',
-        repoRoot,
-        dataDir,
-      });
-    }
+    await Promise.all(
+      cases.map((benchmarkCase) =>
+        runBenchmarkCase(benchmarkCase, MODEL, {
+          executorMode: 'mock',
+          repoRoot,
+          dataDir,
+        }),
+      ),
+    );
 
     // Exactly scripts/benchmark.ts's loadRecords(): readdir, filter .json,
     // JSON.parse + BenchmarkRunRecordSchema.parse each — reading the

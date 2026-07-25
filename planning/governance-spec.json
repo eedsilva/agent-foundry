@@ -6,16 +6,7 @@
     "target": "branch",
     "enforcement": "active",
     "include": ["~DEFAULT_BRANCH"],
-    "requiredStatusChecks": [
-      "format",
-      "lint",
-      "architecture",
-      "roadmap",
-      "typecheck",
-      "test",
-      "build",
-      "dependency-review"
-    ],
+    "requiredStatusChecks": ["static", "test", "build", "dependency-review"],
     "pullRequest": {
       "requiredApprovingReviewCount": 0,
       "dismissStaleReviewsOnPush": false,

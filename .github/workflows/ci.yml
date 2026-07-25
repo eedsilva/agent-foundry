@@ -106,11 +106,11 @@ jobs:
         run: npm run build:packages
       - run: npm run e2e --workspace @agent-foundry/api -- issue-radar-golden-journey.spec.ts issue-radar-cross-user-access.spec.ts
 
-  format:
-    name: format
+  static:
+    name: static
     needs: preflight
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -118,49 +118,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm run format:check
-
-  lint:
-    name: lint
-    needs: preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
-
-  architecture:
-    name: architecture
-    needs: preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run architecture:check
-
-  roadmap:
-    name: roadmap
-    needs: preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run roadmap:check
+      - run: npm run check:static
 
   secrets:
     name: secrets
@@ -177,20 +135,6 @@ jobs:
       - name: Build the web app so the client-bundle scan has something to scan
         run: npm run build --workspace @agent-foundry/contracts && npm run build --workspace @agent-foundry/domain && npm run build --workspace @agent-foundry/web
       - run: npm run secrets:check
-
-  typecheck:
-    name: typecheck
-    needs: preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
 
   test:
     name: test
