@@ -156,7 +156,7 @@ export function KnowledgeFiles({
           {knowledgeFiles.map((file) => {
             const revision = file.revisions.at(-1)!;
             return (
-              <article key={file.id}>
+              <article key={file.id} data-testid="knowledge-file">
                 <div>
                   <strong>{file.name}</strong>
                   <p className="hint">

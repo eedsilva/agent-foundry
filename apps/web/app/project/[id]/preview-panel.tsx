@@ -77,17 +77,19 @@ export function BlobMedia({
   src,
   alt,
   kind,
+  testId,
 }: {
   src: string;
   alt: string;
   kind: 'image' | 'video';
+  testId?: string;
 }) {
   const [failed, setFailed] = useState(false);
   if (failed) return <p className="hint">Evidência expirada ou indisponível.</p>;
   return kind === 'image' ? (
-    <img src={src} alt={alt} onError={() => setFailed(true)} />
+    <img src={src} alt={alt} data-testid={testId} onError={() => setFailed(true)} />
   ) : (
-    <video controls src={src} onError={() => setFailed(true)} />
+    <video controls src={src} data-testid={testId} onError={() => setFailed(true)} />
   );
 }
 
@@ -98,6 +100,7 @@ function ScreenshotFigure({ shot, projectId }: { shot: ArtifactReference; projec
         src={getArtifactBlobUrl(projectId, shot.name, shot.revision)}
         alt={shot.name}
         kind="image"
+        testId="screenshot-thumb"
       />
       <figcaption className="hint">{shot.name}</figcaption>
     </figure>
@@ -388,6 +391,7 @@ export function PreviewPanel({
             <div className="previewFrameWrap">
               <iframe
                 ref={iframeRef}
+                data-testid="preview-frame"
                 src={session.url}
                 width={VIEWPORTS[viewport].width}
                 height={VIEWPORTS[viewport].height}

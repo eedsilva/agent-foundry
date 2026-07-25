@@ -465,7 +465,7 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     timeout: 30_000,
   });
 
-  const routesPanel = page.locator('.routesPanel');
+  const routesPanel = page.getByTestId('router-decisions');
   const implementationRoutes = routesPanel
     .getByRole('heading', { name: 'implementation', exact: true })
     .locator('..');
@@ -476,10 +476,10 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     .getByRole('heading', { name: 'repair', exact: true })
     .locator('..');
   await expect(repairRoutes).toContainText('repair/integration · taxonomy v2');
-  await expect(routesPanel.locator('.routeGrid article h4')).toHaveCount(3);
+  await expect(routesPanel.getByTestId('route-card').locator('h4')).toHaveCount(3);
 
   await page.getByRole('button', { name: 'Iniciar preview' }).click();
-  const iframe = page.locator('.previewFrameWrap iframe');
+  const iframe = page.getByTestId('preview-frame');
   await expect(iframe).toBeVisible({ timeout: 30_000 });
   await expect(iframe).toHaveAttribute('width', '1280');
 
@@ -492,7 +492,7 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   await expect(
     page.getByRole('region', { name: 'Preview' }).getByText('Load the root page'),
   ).toBeVisible();
-  await expect(page.locator('.screenshotFilmstrip img').first()).toBeVisible();
+  await expect(page.getByTestId('screenshot-thumb').first()).toBeVisible();
 
   // Exclude the previewed iframe's own document: it's the fixture dev
   // server's bare-text stand-in page (packages/executors/src/fixtures/
@@ -501,16 +501,16 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   // deliverable — buttons, tabs, labels), not arbitrary previewed content.
   const axeResults = await new AxeBuilder({ page })
     .include('.previewPanel')
-    .exclude('.previewFrameWrap iframe')
+    .exclude('[data-testid="preview-frame"]')
     .analyze();
   expect(axeResults.violations).toEqual([]);
 
   const screenshotArtifactButton = page
-    .locator('.artifactList button')
+    .getByTestId('artifact-item')
     .filter({ hasText: 'browser-screenshot' })
     .first();
   await screenshotArtifactButton.click();
-  await expect(page.locator('.artifactModal img')).toBeVisible();
+  await expect(page.getByTestId('artifact-modal').getByTestId('artifact-image')).toBeVisible();
   await page.getByRole('button', { name: '×' }).click();
 
   // Scoped to the decide-modal's own heading: the live timeline ("Linha do
@@ -520,9 +520,11 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   const decideModalHeading = page.getByRole('heading', { name: /Human diff approval/ });
   await page.getByRole('button', { name: 'approve' }).first().click();
   await expect(decideModalHeading).toBeVisible();
-  await expect(page.locator('.artifactModal .diffPane')).toContainText('diff --git');
+  await expect(page.getByTestId('artifact-modal').getByTestId('artifact-diff')).toContainText(
+    'diff --git',
+  );
   await expect(page.getByText('Nenhuma versão anterior para comparar.')).not.toBeVisible();
-  await page.locator('.artifactModal').screenshot({ path: FIRST_BUILD_DIFF_SCREENSHOT });
+  await page.getByTestId('artifact-modal').screenshot({ path: FIRST_BUILD_DIFF_SCREENSHOT });
   await page.getByLabel('Decidido por').fill('e2e-reviewer');
   await page.getByRole('button', { name: /Confirmar approve/ }).click();
   await expect(decideModalHeading).not.toBeVisible();
@@ -561,7 +563,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   const knowledgeReads = installGoldenFixtureExecutor();
 
   await page.getByLabel('Adicionar knowledge file').setInputFiles(REFERENCE_IMAGE);
-  let knowledge = page.locator('.knowledgeFileList article').filter({
+  let knowledge = page.getByTestId('knowledge-file').filter({
     hasText: 'design-reference.png',
   });
   await expect(knowledge).toContainText('design-reference · v1 · fixado');
@@ -593,7 +595,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   ]);
   await runConversationJob();
   await expect(
-    regions.chat.locator('.operationBadge').filter({ hasText: 'plan, pending' }),
+    regions.chat.getByTestId('operation-badge').filter({ hasText: 'plan, pending' }),
   ).toBeVisible();
   await regions.chat.getByRole('button', { name: 'Editar proposta' }).click();
   await regions.chat.getByLabel('Proposta editável').fill(
@@ -626,7 +628,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     regions.chat.getByRole('button', { name: 'Aprovar' }).click(),
   ]);
   await expect(
-    regions.chat.locator('.operationBadge').filter({ hasText: 'plan, approved' }),
+    regions.chat.getByTestId('operation-badge').filter({ hasText: 'plan, approved' }),
   ).toBeVisible();
   await expect(latestOperationRequest(projectId, 'plan')).resolves.toContain(
     expectedKnowledgeContext,
@@ -646,7 +648,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   ]);
   await runConversationJob();
   await expect(
-    regions.chat.locator('.operationBadge').filter({ hasText: 'build' }).last(),
+    regions.chat.getByTestId('operation-badge').filter({ hasText: 'build' }).last(),
   ).toBeVisible();
   const buildRequest = await latestOperationRequest(projectId, 'build');
   expect(buildRequest).toContain('- Workflow: conversation-build');
@@ -655,18 +657,18 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
 
   await expect(page.getByRole('region', { name: 'Preview' })).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Iniciar preview' }).click();
-  const iframe = page.locator('.previewFrameWrap iframe');
+  const iframe = page.getByTestId('preview-frame');
   await expect(iframe).toBeVisible({ timeout: 30_000 });
   const src = await iframe.getAttribute('src');
   if (!src) throw new Error('preview iframe has no src');
   const fixtureUrl = new URL(src);
   fixtureUrl.pathname = `${fixtureUrl.pathname.replace(/\/$/, '')}/dom-source-map-fixture`;
-  const iframeHandle = await page.waitForSelector('.previewFrameWrap iframe');
+  const iframeHandle = await page.waitForSelector('[data-testid="preview-frame"]');
   const frame = await iframeHandle.contentFrame();
   if (!frame) throw new Error('preview iframe has no content frame');
   await frame.goto(fixtureUrl.toString());
   await page.getByRole('button', { name: 'Selecionar elemento' }).click();
-  const selected = page.frameLocator('.previewFrameWrap iframe').locator('#simple');
+  const selected = page.frameLocator('[data-testid="preview-frame"]').locator('#simple');
   await selected.click();
   await expect(page.getByText('src/Greeting.tsx')).toBeVisible();
   await page.getByLabel('Propriedade').selectOption('backgroundColor');
@@ -797,7 +799,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   expect(boxes[0]!.y).toBeLessThan(boxes[1]!.y);
   expect(boxes[1]!.y).toBeLessThan(boxes[2]!.y);
 
-  knowledge = page.locator('.knowledgeFileList article').filter({
+  knowledge = page.getByTestId('knowledge-file').filter({
     hasText: 'design-reference.png',
   });
   await knowledge.getByRole('button', { name: 'Remover design-reference.png' }).click();

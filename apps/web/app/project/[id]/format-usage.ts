@@ -1,5 +1,7 @@
 import type { ExecutionUsage } from '@agent-foundry/contracts';
 
+export const formatSeconds = (ms: number) => `${Math.round(ms / 1000)}s`;
+
 export function formatObservedUsage(usage: ExecutionUsage | undefined): string {
   if (!usage) return 'observado: desconhecido';
   const parts: string[] = [];

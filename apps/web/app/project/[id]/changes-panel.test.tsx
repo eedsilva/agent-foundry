@@ -2,7 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { ProjectVersion } from '@agent-foundry/contracts';
-import { ChangesPanel, ProjectBuilderShell, editorHref } from './changes-panel';
+import { ChangesPanel, editorHref } from './changes-panel';
 
 const version: ProjectVersion = {
   schemaVersion: '1',
@@ -17,22 +17,6 @@ const version: ProjectVersion = {
   version: 1,
   createdAt: '2026-07-21T12:00:00.000Z',
 };
-
-describe('ProjectBuilderShell', () => {
-  it('keeps Chat, Preview, and Changes in mobile document order', () => {
-    const markup = renderToStaticMarkup(
-      <ProjectBuilderShell
-        chat={<section role="region" aria-label="Chat" />}
-        preview={<section role="region" aria-label="Preview" />}
-        changes={<section role="region" aria-label="Changes" />}
-      />,
-    );
-
-    expect(
-      [...markup.matchAll(/aria-label="(Chat|Preview|Changes)"/g)].map((match) => match[1]),
-    ).toEqual(['Chat', 'Preview', 'Changes']);
-  });
-});
 
 describe('ChangesPanel', () => {
   it('keeps editor, version, diff, checks, and approval controls reachable', () => {

@@ -8,24 +8,6 @@ export function editorHref(workspacePath: string): string {
   return `vscode://file/${encodeURIComponent(workspacePath)}`;
 }
 
-export function ProjectBuilderShell({
-  chat,
-  preview,
-  changes,
-}: {
-  chat: ReactNode;
-  preview: ReactNode;
-  changes: ReactNode;
-}) {
-  return (
-    <div className="builderGrid">
-      {chat}
-      {preview}
-      {changes}
-    </div>
-  );
-}
-
 export function ChangesPanel({
   projectId,
   workspacePath,

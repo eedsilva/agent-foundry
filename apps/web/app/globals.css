@@ -103,7 +103,10 @@ h2 {
   gap: 16px;
   align-items: start;
 }
-.builderGrid > .panel {
+/* The three panes are wrapped by BuilderShell, so the grid items are the pane
+   divs now; keep the overflow guard on both them and the panels inside. */
+.builderGrid > *,
+.builderGrid > * > .panel {
   min-width: 0;
 }
 .knowledgeFiles,
