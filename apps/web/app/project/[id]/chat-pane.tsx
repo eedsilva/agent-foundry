@@ -21,7 +21,7 @@ import {
 } from '../../../lib/api';
 import { KnowledgeFiles } from './knowledge-files';
 import { ConversationList, type ProposalEditorState } from './conversation-list';
-import { BTN, ERROR_BOX, HINT, META, PANEL_TITLE, PRIMARY_BTN, RADIO, TEXTAREA } from './ui';
+import { BTN, ERROR_BOX, HINT, META, PANEL_TITLE, PRIMARY_BTN, RADIO, TEXTAREA } from '@/lib/ui';
 
 export function ChatPane({
   id,

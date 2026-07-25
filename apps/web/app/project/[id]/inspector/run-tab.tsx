@@ -5,7 +5,7 @@ import type { RunDetailResponse, StepRun } from '@agent-foundry/contracts';
 import { EmptyState } from '@/components/empty-state';
 import { StatusPill } from '@/components/status-pill';
 import { formatObservedUsage, formatSeconds } from '../format-usage.js';
-import { BTN, HINT, PANEL, PANEL_HEADER, PANEL_TITLE, ROW } from '../ui';
+import { BTN, HINT, PANEL, PANEL_HEADER, PANEL_TITLE, ROW } from '@/lib/ui';
 import { isFallback } from './shared';
 
 export function RunTab({

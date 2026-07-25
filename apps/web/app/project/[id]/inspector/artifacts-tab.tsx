@@ -3,7 +3,7 @@
 import React from 'react';
 import type { StoredArtifact } from '@agent-foundry/contracts';
 import { EmptyState } from '@/components/empty-state';
-import { CARD_BUTTON, HINT, PANEL, PANEL_HEADER, PANEL_TITLE } from '../ui';
+import { CARD_BUTTON, HINT, PANEL, PANEL_HEADER, PANEL_TITLE } from '@/lib/ui';
 
 export function ArtifactsTab({
   artifacts,

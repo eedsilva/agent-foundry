@@ -1,5 +1,5 @@
 /**
- * Class strings shared by the builder panes. Token-derived utilities only —
+ * Class strings shared across the app's surfaces. Token-derived utilities only —
  * no stock Tailwind palette, no raw hex, and `glass` stays on chrome
  * (header, tab strip, alert strip, dialogs), never on these content surfaces.
  */

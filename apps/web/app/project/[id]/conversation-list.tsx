@@ -8,7 +8,7 @@ import type {
   Operation,
 } from '@agent-foundry/contracts';
 import { EmptyState } from '@/components/empty-state';
-import { BTN, CHIP, ERROR_BOX, MONO_PANE, TEXTAREA } from './ui';
+import { BTN, CHIP, ERROR_BOX, MONO_PANE, TEXTAREA } from '@/lib/ui';
 
 export type ProposalEditorState = {
   operationId: string;

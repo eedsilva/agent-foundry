@@ -1,7 +1,7 @@
 'use client';
 
 import React, { type ReactNode } from 'react';
-import { BTN, PANEL, PANEL_HEADER, PANEL_TITLE, SECTION_TITLE } from './ui';
+import { BTN, PANEL, PANEL_HEADER, PANEL_TITLE, SECTION_TITLE } from '@/lib/ui';
 
 export function editorHref(workspacePath: string): string {
   return `vscode://file/${encodeURIComponent(workspacePath)}`;

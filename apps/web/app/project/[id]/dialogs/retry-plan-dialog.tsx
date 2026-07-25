@@ -19,7 +19,7 @@ import {
   PANEL_HEADER,
   PANEL_TITLE,
   RADIO,
-} from '../ui';
+} from '@/lib/ui';
 
 export type RetryPlanTarget = { step: StepRun; plan: RetryPlanResponse };
 

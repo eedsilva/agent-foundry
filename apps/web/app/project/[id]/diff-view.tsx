@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { DIFF_ADDED, DIFF_REMOVED, MONO_PANE } from './ui';
+import { DIFF_ADDED, DIFF_REMOVED, MONO_PANE } from '@/lib/ui';
 
 export type DiffSpan = { value: string; added?: boolean; removed?: boolean };
 

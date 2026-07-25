@@ -2,7 +2,7 @@
 
 import React from 'react';
 import type { ActorRef, ModelDefinition } from '@agent-foundry/contracts';
-import { FIELD, LABEL, TEXTAREA } from './ui';
+import { FIELD, LABEL, TEXTAREA } from '@/lib/ui';
 
 const ACTOR_KINDS = ['user', 'system', 'worker', 'provider'] as const;
 

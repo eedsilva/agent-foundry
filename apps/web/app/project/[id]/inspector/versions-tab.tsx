@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { VersionHistory } from '../version-history';
-import { PANEL } from '../ui';
+import { PANEL } from '@/lib/ui';
 
 export function VersionsTab({ projectId, refreshKey }: { projectId: string; refreshKey?: string }) {
   return (

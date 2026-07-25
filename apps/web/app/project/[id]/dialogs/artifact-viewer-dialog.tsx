@@ -22,7 +22,7 @@ import {
   MONO_PANE,
   PANEL_HEADER,
   PANEL_TITLE,
-} from '../ui';
+} from '@/lib/ui';
 
 function artifactText(content: unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content, null, 2);

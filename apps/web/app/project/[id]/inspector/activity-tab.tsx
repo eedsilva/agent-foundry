@@ -5,7 +5,7 @@ import type { ProjectEvent } from '@agent-foundry/contracts';
 import { EmptyState } from '@/components/empty-state';
 import { StatusPill } from '@/components/status-pill';
 import { formatSeconds } from '../format-usage.js';
-import { HINT, PANEL, PANEL_HEADER, PANEL_TITLE } from '../ui';
+import { HINT, PANEL, PANEL_HEADER, PANEL_TITLE } from '@/lib/ui';
 
 function eventBadges(event: ProjectEvent): string[] {
   const data = event.data;

@@ -3,7 +3,7 @@
 import React, { useMemo } from 'react';
 import { taskCategoryLevels, type RouteDecision } from '@agent-foundry/contracts';
 import { EmptyState } from '@/components/empty-state';
-import { HINT, PANEL, PANEL_HEADER, PANEL_TITLE, SECTION_TITLE } from '../ui';
+import { HINT, PANEL, PANEL_HEADER, PANEL_TITLE, SECTION_TITLE } from '@/lib/ui';
 import { isFallback } from './shared';
 
 export type RouteEntry = { artifact: string; route: RouteDecision };

@@ -11,7 +11,7 @@ import type {
 import { EmptyState } from '@/components/empty-state';
 import { ChangesPanel } from '../changes-panel';
 import { VerificationReportView } from '../preview-panel';
-import { BTN, HINT, ROW } from '../ui';
+import { BTN, HINT, ROW } from '@/lib/ui';
 
 export function ChangesTab({
   projectId,

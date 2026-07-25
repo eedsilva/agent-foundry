@@ -31,7 +31,7 @@ import { latestBrowserVerificationReport } from '../../../lib/browser-verificati
 import { EmptyState } from '@/components/empty-state';
 import { StatusPill } from '@/components/status-pill';
 import { cn } from '@/lib/utils';
-import { BTN, BTN_ACTIVE, ERROR_BOX, FIELD, HINT, LABEL, MONO_PANE, PANEL_TITLE } from './ui';
+import { BTN, BTN_ACTIVE, ERROR_BOX, FIELD, HINT, LABEL, MONO_PANE, PANEL_TITLE } from '@/lib/ui';
 
 const VIEWPORTS = {
   desktop: { label: 'Desktop', width: 1280, height: 800 },

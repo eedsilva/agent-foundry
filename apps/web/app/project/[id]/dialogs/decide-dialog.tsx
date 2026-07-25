@@ -25,7 +25,7 @@ import {
   PANEL_HEADER,
   PANEL_TITLE,
   TEXTAREA,
-} from '../ui';
+} from '@/lib/ui';
 
 export const NO_PREDECESSOR_VERSION_MESSAGE = 'Nenhuma versão anterior para comparar.';
 

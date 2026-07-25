@@ -22,7 +22,7 @@ import {
   PANEL_HEADER,
   PANEL_TITLE,
   SECTION_TITLE,
-} from './ui';
+} from '@/lib/ui';
 
 type VersionAction = 'revert' | 'branch' | 'protect';
 

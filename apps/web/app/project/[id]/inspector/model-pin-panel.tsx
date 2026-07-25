@@ -27,7 +27,7 @@ import {
   PANEL_TITLE,
   SECTION_TITLE,
   TEXTAREA,
-} from '../ui';
+} from '@/lib/ui';
 
 export function ModelPinPanel({
   id,

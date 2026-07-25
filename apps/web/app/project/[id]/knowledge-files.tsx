@@ -9,7 +9,7 @@ import {
   setKnowledgeFilePinned,
   uploadKnowledgeFile,
 } from '../../../lib/api';
-import { BTN, ERROR_BOX, FIELD, HINT, LABEL, PANEL_HEADER, SECTION_TITLE } from './ui';
+import { BTN, ERROR_BOX, FIELD, HINT, LABEL, PANEL_HEADER, SECTION_TITLE } from '@/lib/ui';
 
 export const MAX_KNOWLEDGE_FILE_BYTES = 4 * 1024 * 1024;
 
