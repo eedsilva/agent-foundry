@@ -85,6 +85,29 @@ function fakeOperationRunner(
   } as unknown as import('./conversation-operation-runner.js').ConversationOperationRunner;
 }
 
+describe('WorkerLoop liveness', () => {
+  it('keeps running when the queue claim fails', async () => {
+    const claim = vi.fn().mockRejectedValueOnce(new Error('database down')).mockResolvedValue(null);
+    const worker = new WorkerLoop(
+      fakeQueue({ claim }),
+      { runProject: vi.fn() } as unknown as WorkflowOrchestrator,
+      fakeOperationRunner(),
+      { workerId: 'worker-a', pollIntervalMs: 1_000 },
+    );
+    const stop = new AbortController();
+
+    const started = worker.start(stop.signal);
+
+    expect(worker.isRunning).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(worker.isRunning).toBe(true);
+    stop.abort();
+    await started;
+    expect(worker.isRunning).toBe(false);
+  });
+});
+
 describe('WorkerLoop heartbeat renewal', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -291,6 +314,97 @@ describe('WorkerLoop heartbeat renewal', () => {
     expect(heartbeat).not.toHaveBeenCalled();
   });
 
+  it('preserves claim failures for direct runOnce callers', async () => {
+    const claimError = new Error('claim boom');
+    const queue = fakeQueue({ claim: vi.fn().mockRejectedValue(claimError) });
+    const orchestrator = { runProject: vi.fn() } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 100,
+    });
+
+    await expect(worker.runOnce()).rejects.toBe(claimError);
+  });
+
+  it('continues polling after a claim rejection', async () => {
+    const claimedJob = job({ id: 'job-9', runId: 'run-9', projectId: 'project-9' });
+    const run = deferred<void>();
+    const queue = fakeQueue({
+      claim: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('claim boom'))
+        .mockResolvedValueOnce(claimedJob),
+    });
+    const orchestrator = {
+      runProject: vi.fn().mockReturnValue(run.promise),
+    } as unknown as WorkflowOrchestrator;
+    const logger = fakeLogger();
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 100,
+      logger,
+    });
+    const stop = new AbortController();
+
+    const startPromise = worker.start(stop.signal);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(queue.claim).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      { err: expect.objectContaining({ message: 'claim boom' }) },
+      'claim failed',
+    );
+    expect(queue.ack).not.toHaveBeenCalled();
+    expect(queue.nack).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(queue.claim).toHaveBeenCalledTimes(2);
+    expect(orchestrator.runProject).toHaveBeenCalledWith(
+      'project-9',
+      'web-app-v1',
+      'run-9',
+      expect.any(AbortSignal),
+    );
+
+    stop.abort();
+    run.resolve();
+    await startPromise;
+
+    expect(queue.ack).toHaveBeenCalledWith(claimedJob, 'worker-a');
+    expect(queue.nack).not.toHaveBeenCalled();
+  });
+
+  it('still surfaces a post-claim nack failure from start', async () => {
+    const claimedJob = job();
+    const runError = new Error('run boom');
+    const nackError = new Error('nack boom');
+    const queue = fakeQueue({
+      claim: vi.fn().mockResolvedValue(claimedJob),
+      nack: vi.fn().mockRejectedValueOnce(nackError),
+    });
+    const orchestrator = {
+      runProject: vi.fn().mockRejectedValue(runError),
+    } as unknown as WorkflowOrchestrator;
+    const logger = fakeLogger();
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 100,
+      logger,
+    });
+    const startPromise = worker.start();
+    const startFailure = expect(startPromise).rejects.toEqual(
+      expect.objectContaining({ message: 'nack boom' }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(queue.claim).toHaveBeenCalledTimes(1);
+    expect(logger.error).not.toHaveBeenCalledWith(
+      { err: expect.objectContaining({ message: 'nack boom' }) },
+      'claim failed',
+    );
+    await startFailure;
+  });
+
   it('dispatches a run-conversation-operation job to the operation runner, not runProject', async () => {
     const queue = fakeQueue({
       claim: vi
@@ -458,6 +572,26 @@ describe('WorkerLoop retry classification end-to-end', () => {
     const { EmergencyCeilingError } = await import('@agent-foundry/domain');
     const claimedJob = job();
     const error = new EmergencyCeilingError('run-1', 'active-time');
+    const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(claimedJob) });
+    const orchestrator = {
+      runProject: vi.fn().mockRejectedValue(error),
+    } as unknown as WorkflowOrchestrator;
+    const worker = new WorkerLoop(queue, orchestrator, fakeOperationRunner(), {
+      workerId: 'worker-a',
+      pollIntervalMs: 1_000,
+    });
+
+    await worker.runOnce();
+
+    expect(queue.nack).toHaveBeenCalledWith(claimedJob, 'worker-a', error, { permanent: true });
+    expect(queue.ack).not.toHaveBeenCalled();
+  });
+
+  it('nacks provisioning failure as permanent for manual retry', async () => {
+    const claimedJob = job();
+    const error = Object.assign(new Error('runtime initialization failed'), {
+      code: 'PROJECT_PROVISIONING_FAILED',
+    });
     const queue = fakeQueue({ claim: vi.fn().mockResolvedValue(claimedJob) });
     const orchestrator = {
       runProject: vi.fn().mockRejectedValue(error),

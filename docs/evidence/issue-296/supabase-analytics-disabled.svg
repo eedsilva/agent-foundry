@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">Issue 296 Supabase analytics disabled evidence</title>
+  <desc id="desc">Generated Supabase configuration disables analytics and the focused runtime test passes.</desc>
+  <rect width="1200" height="680" fill="#101722"/>
+  <rect x="36" y="32" width="1128" height="616" rx="16" fill="#172231" stroke="#334155"/>
+  <circle cx="72" cy="70" r="9" fill="#ef4444"/>
+  <circle cx="101" cy="70" r="9" fill="#f59e0b"/>
+  <circle cx="130" cy="70" r="9" fill="#22c55e"/>
+  <text x="170" y="78" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22">Issue #296 · generated Supabase config</text>
+  <text x="72" y="138" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20">$ analytics contract</text>
+  <rect x="72" y="164" width="1056" height="130" rx="10" fill="#0b1220"/>
+  <text x="104" y="212" fill="#7dd3fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28">[analytics]</text>
+  <text x="104" y="256" fill="#86efac" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28">enabled = false</text>
+  <text x="72" y="350" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20">$ validation</text>
+  <rect x="72" y="376" width="1056" height="184" rx="10" fill="#0b1220"/>
+  <text x="104" y="424" fill="#e2e8f0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="24">✓ supabase-runtime.test.ts</text>
+  <text x="104" y="464" fill="#86efac" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="24">34 passed · 0 failed</text>
+  <text x="104" y="504" fill="#e2e8f0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="24">✓ isolated host ports</text>
+  <text x="104" y="544" fill="#86efac" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="24">12 unique ports · no analytics port</text>
+  <text x="72" y="610" fill="#64748b" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">eedsilva/agent-foundry · fix/296-review-followups-clean</text>
+</svg>

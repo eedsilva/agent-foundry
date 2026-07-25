@@ -6,6 +6,14 @@ import React, { type ReactNode } from 'react';
  * Task 4 keeps every inspector section stacked in the order the builder page
  * rendered them before the split. The tab strip arrives in Task 5.
  */
+export function ProjectTimeline({ children }: { children: ReactNode }) {
+  return (
+    <section id="project-timeline" className="dashboardGrid">
+      {children}
+    </section>
+  );
+}
+
 export function Inspector({
   changes,
   modelPin,
@@ -25,10 +33,10 @@ export function Inspector({
     <>
       {changes}
       {modelPin}
-      <section className="dashboardGrid">
+      <ProjectTimeline>
         {activity}
         {artifacts}
-      </section>
+      </ProjectTimeline>
       {run}
       {routes}
     </>

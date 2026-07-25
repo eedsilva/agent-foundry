@@ -53,7 +53,6 @@ const HOST_PORT_FIELDS = [
   ['studio', 'port'],
   ['inbucket', 'port'],
   ['edge_runtime', 'inspector_port'],
-  ['analytics', 'port'],
 ] as const;
 const PORT_SLOT_COUNT =
   Math.floor((65_535 - PORT_BASE - (HOST_PORT_FIELDS.length - 1)) / PORT_BLOCK_SIZE) + 1;
@@ -1187,6 +1186,12 @@ async function configureProject(
         if (!section && /^project_id\s*=/.test(line)) {
           foundProjectId = true;
           return `project_id = "${projectId}"`;
+        }
+        if (section === 'analytics' && /^enabled\s*=/.test(line)) {
+          return 'enabled = false';
+        }
+        if (section === 'analytics' && /^port\s*=/.test(line)) {
+          return '';
         }
         const fieldIndex = HOST_PORT_FIELDS.findIndex(
           ([fieldSection, key]) =>

@@ -1,0 +1,18 @@
+[
+  "PATH",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "TERM",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "SHELL",
+  "USER",
+  "LOGNAME",
+  "NODE_ENV",
+  "SystemRoot",
+  "ComSpec",
+  "USERPROFILE",
+  "APPDATA"
+]

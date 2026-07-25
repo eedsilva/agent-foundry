@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","model":"claude-sonnet-5","permissionMode":"plan","claude_code_version":"2.1.207"}
+{"type":"result","subtype":"authentication_failed","is_error":true,"result":"Not logged in · Please run /login","duration_ms":412,"num_turns":0}

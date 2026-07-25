@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Readable } from 'node:stream';
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, {
+  type FastifyError,
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from 'fastify';
 import { z } from 'zod';
 import type { Runtime } from '@agent-foundry/composition';
 import {
@@ -91,6 +96,7 @@ const CanonicalDecimalSchema = z
 const NonNegativeCursorSchema = CanonicalDecimalSchema.pipe(z.number().int().nonnegative());
 
 const BLOB_URL_TTL_SECONDS = 300;
+export const BODY_LIMIT_BYTES = 1_000_000;
 const MAX_KNOWLEDGE_FILE_BYTES = 4 * 1024 * 1024;
 const KNOWLEDGE_FILE_BODY_LIMIT = Math.ceil(((MAX_KNOWLEDGE_FILE_BYTES + 1) * 4) / 3) + 4_096;
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -112,7 +118,7 @@ export async function buildApp(
       mixin: () => currentTraceIds(),
       ...(options.loggerStream ? { stream: options.loggerStream } : {}),
     },
-    bodyLimit: 1_000_000,
+    bodyLimit: BODY_LIMIT_BYTES,
   });
 
   const allowedOrigins = runtime.config.webOrigin.split(',').map((origin) => origin.trim());
@@ -129,7 +135,9 @@ export async function buildApp(
     registerRequestTracing(app);
   }
 
-  app.setErrorHandler((error, _request, reply) => {
+  // <FastifyError> instead of the default `unknown`, so the fallthrough below
+  // can read the statusCode Fastify's own errors already carry.
+  app.setErrorHandler<FastifyError>((error, _request, reply) => {
     if (error instanceof z.ZodError) {
       return reply.status(400).send({
         error: 'ValidationError',
@@ -173,6 +181,18 @@ export async function buildApp(
         decision: error.decision,
       });
     }
+    // Fastify's own errors (invalid JSON body, body too large, unsupported
+    // media type) already carry the right 4xx on `statusCode`. Honour it, and
+    // log it as a client mistake — not a server fault with a stack trace.
+    // `name` is 'FastifyError' for all of them, so the discriminator clients
+    // read is `code` (FST_ERR_CTP_INVALID_JSON_BODY and friends) when present.
+    const { statusCode } = error;
+    if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+      app.log.warn({ statusCode, code: error.code }, error.message);
+      return reply
+        .status(statusCode)
+        .send({ error: error.code ?? error.name, message: error.message });
+    }
     app.log.error(error);
     const name = error instanceof Error ? error.name : 'InternalServerError';
     const message = error instanceof Error ? error.message : 'Unexpected server error.';
@@ -184,6 +204,34 @@ export async function buildApp(
     executorMode: runtime.config.executorMode,
     time: new Date().toISOString(),
   }));
+
+  app.get('/ready', async (_request, reply) => {
+    let databaseReady = true;
+    try {
+      await runtime.checkReadiness();
+    } catch (error) {
+      databaseReady = false;
+      app.log.warn({ err: error }, 'Readiness database check failed');
+    }
+    const workerReady = !runtime.config.runWorkerInline || runtime.worker.isRunning;
+    const ok = databaseReady && workerReady;
+
+    return reply.status(ok ? 200 : 503).send({
+      ok,
+      database:
+        runtime.config.persistenceMode === 'postgres'
+          ? databaseReady
+            ? 'ready'
+            : 'unavailable'
+          : 'not_required',
+      worker: runtime.config.runWorkerInline
+        ? workerReady
+          ? 'ready'
+          : 'unavailable'
+        : 'not_required',
+      time: new Date().toISOString(),
+    });
+  });
 
   app.get('/runtime', async () => ({
     executorMode: runtime.config.executorMode,

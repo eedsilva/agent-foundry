@@ -9,8 +9,15 @@ import type {
   ProviderRateLimit,
 } from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
-import { ExecutionError, RunCancelledError, errorMessage, withSpan } from '@agent-foundry/domain';
 import {
+  ExecutionError,
+  ProviderAuthenticationError,
+  RunCancelledError,
+  errorMessage,
+  withSpan,
+} from '@agent-foundry/domain';
+import {
+  extractCliFailure,
   extractExecutedModel,
   extractRateLimit,
   extractUsage,
@@ -165,13 +172,22 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     const rateLimit = extractRateLimit(this.provider, stdout);
     if (rateLimit) this.lastRateLimit = rateLimit;
     if (result.exitCode !== 0) {
-      throw new ExecutionError(`${this.provider} CLI exited with code ${String(result.exitCode)}`, {
-        provider: this.provider,
-        model: request.model,
-        ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
-        stdout: stdout.slice(0, 20_000),
-        stderr: stderr.slice(0, 20_000),
-      });
+      // Surface the provider's own reason in the message: it is what the
+      // agent.failed event and the failure artifact carry, and burying it in
+      // details.stdout made an unauthenticated CLI look like a model failure.
+      const failure = extractCliFailure(this.provider, stdout);
+      const ErrorType = failure?.authFailure ? ProviderAuthenticationError : ExecutionError;
+      throw new ErrorType(
+        `${this.provider} CLI exited with code ${String(result.exitCode)}` +
+          (failure ? `: ${failure.message}` : ''),
+        {
+          provider: this.provider,
+          model: request.model,
+          ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+          stdout: stdout.slice(0, 20_000),
+          stderr: stderr.slice(0, 20_000),
+        },
+      );
     }
 
     const response = await this.responseText(invocation, stdout);
@@ -207,6 +223,11 @@ export abstract class BaseCliExecutor implements AgentExecutor {
       const result = await execa(this.command, ['--version'], {
         reject: false,
         timeout: 10_000,
+        // Same scoped env as execute(), so `available` cannot be true for a
+        // CLI only reachable through a variable execute() strips. `--version`
+        // never touches the credential store, so this still says nothing about
+        // authentication — scripts/doctor.mjs is what probes that.
+        ...safeSpawnEnv(process.env),
       });
       const available = result.exitCode === 0;
       return {

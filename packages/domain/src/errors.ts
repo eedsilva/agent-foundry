@@ -49,7 +49,8 @@ export class BlobIntegrityError extends Error {
 }
 
 export class ExecutionError extends Error {
-  override readonly name = 'ExecutionError';
+  // Annotated `string`, not the literal, so subclasses can override it.
+  override readonly name: string = 'ExecutionError';
 
   constructor(
     message: string,
@@ -64,6 +65,11 @@ export class ExecutionError extends Error {
   ) {
     super(message);
   }
+}
+
+/** The CLI never authenticated: an environment fault, so model scoring must skip it. */
+export class ProviderAuthenticationError extends ExecutionError {
+  override readonly name = 'ProviderAuthenticationError';
 }
 
 export class EnvironmentOperationError extends Error {

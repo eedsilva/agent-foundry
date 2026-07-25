@@ -20,7 +20,17 @@ const telemetry = startTelemetry({
   sampleRatio: config.otelTracesSamplerRatio,
   slowRunThresholdMs: config.otelSlowRunThresholdMs,
 });
-const runtime = await createRuntime(process.env, config);
+type WorkerLogger = {
+  child(bindings: Record<string, unknown>): WorkerLogger;
+  info(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+};
+const workerLogger: WorkerLogger = {
+  child: () => workerLogger,
+  info: (...args) => console.info(...args),
+  error: (...args) => console.error(...args),
+};
+const runtime = await createRuntime(process.env, config, workerLogger);
 
 // Log deployment profile at startup
 console.log(`[info] Deployment profile: ${runtime.config.deploymentProfile}`);

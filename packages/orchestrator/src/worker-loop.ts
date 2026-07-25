@@ -34,17 +34,26 @@ interface HeartbeatState {
 export type JobOutcome = 'cancelled' | 'permanent' | 'transient';
 
 /** Maps a thrown run error to a queue outcome. Cancellation is consumed (ack,
- * no retry); EmergencyCeilingError is terminal (dead-letter now); everything
- * else defaults to transient (nack with backoff) -- the safe default for an
- * error type this classifier doesn't recognize. */
+ * no retry); EmergencyCeilingError and provisioning failures are terminal
+ * (manual retry required); everything else defaults to transient (nack with
+ * backoff) -- the safe default for an error type this classifier doesn't recognize. */
 export function classifyJobOutcome(error: unknown): JobOutcome {
   if (error instanceof RunCancelledError) return 'cancelled';
   if (error instanceof EmergencyCeilingError) return 'permanent';
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'PROJECT_PROVISIONING_FAILED'
+  ) {
+    return 'permanent';
+  }
   return 'transient';
 }
 
 export class WorkerLoop {
   private stopped = false;
+  private running = false;
 
   constructor(
     private readonly queue: JobQueue,
@@ -53,8 +62,27 @@ export class WorkerLoop {
     private readonly options: WorkerLoopOptions,
   ) {}
 
+  get isRunning(): boolean {
+    return this.running;
+  }
+
   async runOnce(): Promise<boolean> {
     const job = await this.queue.claim(this.options.workerId);
+    return this.runClaimedJob(job);
+  }
+
+  private async runOnceRecoveringClaim(): Promise<boolean> {
+    let job: QueueJob | null;
+    try {
+      job = await this.queue.claim(this.options.workerId);
+    } catch (error) {
+      this.options.logger?.error({ err: error }, 'claim failed');
+      return false;
+    }
+    return this.runClaimedJob(job);
+  }
+
+  private async runClaimedJob(job: QueueJob | null): Promise<boolean> {
     if (!job) return false;
 
     const state: HeartbeatState = { job, leaseLost: false };
@@ -120,14 +148,22 @@ export class WorkerLoop {
 
   async start(signal?: AbortSignal): Promise<void> {
     this.stopped = false;
-    while (!this.stopped && !signal?.aborted) {
-      const worked = await this.runOnce();
-      if (!worked) await sleep(this.options.pollIntervalMs, signal);
+    this.running = true;
+    try {
+      while (!this.stopped && !signal?.aborted) {
+        const worked = await this.runOnceRecoveringClaim();
+        if (!worked) {
+          await sleep(this.options.pollIntervalMs, signal);
+        }
+      }
+    } finally {
+      this.running = false;
     }
   }
 
   stop(): void {
     this.stopped = true;
+    this.running = false;
   }
 
   /**

@@ -534,6 +534,8 @@ Versione qualquer mudança em `models/catalog.yaml`. Registre:
 
 Evite editar priors para “forçar” a escolha desejada sem dados. Nesse caso, use `allowedProviders`, tags ou uma política explícita no workflow. Manipular o score às escondidas só torna a decisão menos legível.
 
+Mudanças em `models/catalog.yaml` disparam automaticamente o job `regression-gate` do CI contra o baseline `v0.9` congelado (veja "Regression gate de promoção" abaixo). O gate cobre regressões estruturais/de status, não substitui o registro manual acima.
+
 ## Harness
 
 Cada alteração no harness deve incrementar `version` em `harness/manifest.json`. Sem isso, duas execuções podem parecer equivalentes apesar de receber instruções diferentes.
@@ -545,6 +547,24 @@ Teste mudanças de harness em projetos fixos e compare:
 - tamanho do prompt;
 - decisões produzidas;
 - regressões de segurança.
+
+Mudanças em `harness/manifest.json` também disparam o job `regression-gate` do CI, pelo mesmo baseline `v0.9` (veja abaixo).
+
+## Regression gate de promoção
+
+O job `regression-gate` (`.github/workflows/ci.yml`) roda `scripts/benchmark.ts --all --executor-mode mock` seguido de `scripts/benchmark.ts --gate` sempre que um PR ou push muda `models/catalog.yaml` ou `harness/manifest.json`. Ele compara o resultado fresco contra `docs/baselines/v0.9-benchmark.json` via `compareBenchmarkReports`: falha o check apenas se algum caso regredir de `passed` para `failed` em relação ao baseline, ou se um caso do baseline sumir do resultado fresco. Duração e número de reparos são reportados mas não bloqueiam (ver comentário `ponytail` em `packages/composition/src/regression-gate.ts`).
+
+**Limitação importante:** o baseline `v0.9-benchmark.json` foi congelado com `--executor-mode mock`, e todo caso do corpus de benchmark atual falha nesse modo (o executor mock não resolve o `verifyScript` específico de cada caso — isso é esperado, não um bug). Isso significa que o gate de CI hoje só detecta regressões estruturais (um caso sumir, uma execução travar antes do teto de reparos), não regressões de qualidade de modelo. Detectar regressão de qualidade real exige congelar um baseline com `--executor-mode real` (requer credenciais de provider, que o CI não tem) e comparar execuções frescas também em modo `real` — **nunca** troque o arquivo que o CI lê por um baseline `real` sem também trocar o modo do executor no job de CI, ou toda PR vai falhar permanentemente (o fresco mock nunca teria como "passar" um caso que o baseline real registrou como `passed`).
+
+Para recongelar o baseline depois de uma mudança deliberada no catálogo ou no harness:
+
+```bash
+rm -rf .data/benchmark
+npx tsx scripts/benchmark.ts --all --executor-mode mock
+npx tsx scripts/benchmark.ts --freeze
+```
+
+O job `regression-gate` ainda não é um required status check em branch protection — isso é uma ação de governança separada (`npm run github:governance:apply`), fora do escopo desta mudança.
 
 ## Migração para Postgres
 

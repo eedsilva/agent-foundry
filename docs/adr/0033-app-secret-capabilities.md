@@ -61,7 +61,10 @@ trust levels, and only one of them ever sees a real value:
 Both subprocess spawn points stopped inheriting the control plane's full `process.env`.
 `pickSafeEnvironment()` (`packages/executors/src/safe-environment.ts`) allowlists only the OS/tooling
 variables a spawned child needs to start and find its own config (`PATH`, `HOME`, `LANG`, `TERM`,
-`TMPDIR`, `NODE_ENV`, and their Windows equivalents) — never an application secret.
+`TMPDIR`, `NODE_ENV`, the POSIX identity pair `USER`/`LOGNAME`, and their Windows equivalents) — never
+an application secret. The identity pair is on the list because a CLI resolves its own per-user
+credential store from it — the Claude CLI reports `authentication_failed` without `USER` — and because
+those values name the account already running the control plane rather than granting any access.
 `BaseCliExecutor.executeInvocation` and `NodePreviewRunner.attemptSpawn` both build `env` from
 `pickSafeEnvironment()` merged with only what that call site adds explicitly: the CLI's own
 `invocation.environment` for the former; `resolveAll()`'s result plus `PORT`/`HOST` for the latter.

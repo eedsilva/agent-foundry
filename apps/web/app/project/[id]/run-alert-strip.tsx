@@ -3,6 +3,14 @@
 import React from 'react';
 import type { ResumeBlockedResponse, WorkflowRun } from '@agent-foundry/contracts';
 
+export function ProjectProvisioningError({ error }: { error: string }) {
+  return (
+    <p className="errorBox">
+      {error} <a href="#project-timeline">Ver detalhes na linha do tempo</a>
+    </p>
+  );
+}
+
 export function RunAlertStrip({
   projectError,
   error,
@@ -18,7 +26,7 @@ export function RunAlertStrip({
 }) {
   return (
     <>
-      {projectError ? <p className="errorBox">{projectError}</p> : null}
+      {projectError ? <ProjectProvisioningError error={projectError} /> : null}
       {error ? <p className="errorBox">{error}</p> : null}
 
       {run?.status === 'paused' ? (

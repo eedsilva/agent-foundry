@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AppEnvironment } from '@agent-foundry/contracts';
 import type { GeneratedProjectRuntime } from '@agent-foundry/domain';
 import { makeHarness, makeStores, seedRun } from './testing/harness.js';
+import { WorkerLoop } from './worker-loop.js';
 
 const ENVIRONMENT: AppEnvironment = {
   projectId: 'id-0001',
@@ -30,10 +31,10 @@ describe('ProjectService.get', () => {
 });
 
 describe('ProjectService.create', () => {
-  it('initializes the generated-project runtime before persisting a new project', async () => {
+  it('defers generated-runtime initialization until a worker claims the durable project job', async () => {
     const stores = makeStores();
     const initialize = vi.fn(async ({ projectId }: { projectId: string }) => {
-      expect(await stores.projects.get(projectId)).toBeNull();
+      expect(await stores.projects.get(projectId)).toMatchObject({ id: projectId });
       return ENVIRONMENT;
     });
     const unused = () => Promise.reject(new Error('unused test runtime operation'));
@@ -63,7 +64,99 @@ describe('ProjectService.create', () => {
       workflowId: harness.workflow.id,
     });
 
+    expect(initialize).not.toHaveBeenCalled();
+    expect(harness.enqueued).toEqual([
+      expect.objectContaining({ type: 'run-project', projectId: 'id-0001', runId: 'id-0002' }),
+    ]);
+
+    harness.queueForWorker(harness.enqueued[0]!);
+    const worker = new WorkerLoop(harness.queue, harness.orchestrator, {} as never, {
+      workerId: 'worker-1',
+      pollIntervalMs: 1_000,
+    });
+    await worker.runOnce();
+
     expect(initialize).toHaveBeenCalledWith({ projectId: 'id-0001' });
+    expect((await harness.events.list('id-0001')).map((event) => event.type)).toEqual(
+      expect.arrayContaining(['project.provisioning_started', 'project.provisioned']),
+    );
+  });
+
+  it('persists provisioning diagnostics while exposing a concise project error', async () => {
+    const stores = makeStores();
+    const diagnostic = 'supabase start failed: raw CLI/container output';
+    const initialize = vi.fn().mockRejectedValue(new Error(diagnostic));
+    const unused = () => Promise.reject(new Error('unused test runtime operation'));
+    const harness = makeHarness({}, stores, {
+      generatedProjectRuntime: {
+        initialize,
+        start: unused,
+        stop: unused,
+        inspect: unused,
+        previewMigration: unused,
+        backupMigration: unused,
+        migrate: unused,
+        seed: unused,
+        health: unused,
+        reset: unused,
+        cleanup: unused,
+        deployFunction: unused,
+        listFunctionVersions: unused,
+        rollbackFunction: unused,
+        invokeFunction: unused,
+      } satisfies GeneratedProjectRuntime,
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    harness.queueForWorker(harness.enqueued[0]!);
+
+    const worker = new WorkerLoop(harness.queue, harness.orchestrator, {} as never, {
+      workerId: 'worker-1',
+      pollIntervalMs: 1_000,
+    });
+    await worker.runOnce();
+
+    expect(await stores.projects.get('id-0001')).toMatchObject({
+      status: 'failed',
+      error: 'Project provisioning failed. Review the project event timeline for details.',
+    });
+    expect(await stores.runs.get('id-0002')).toMatchObject({
+      status: 'failed',
+      error: { code: 'PROJECT_PROVISIONING_FAILED', message: diagnostic },
+    });
+    const events = await harness.events.list('id-0001');
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'project.provisioning_started' }),
+        expect.objectContaining({
+          type: 'project.provisioning_failed',
+          message: 'Project provisioning failed. Review the project event timeline for details.',
+          data: { diagnostic },
+        }),
+      ]),
+    );
+    expect(harness.nacked).toHaveLength(1);
+  });
+
+  it('removes every initialized project resource when project persistence fails', async () => {
+    const transactionError = new Error('project transaction failed');
+    const stores = makeStores();
+    stores.projects.create = () => Promise.reject(transactionError);
+    const harness = makeHarness({}, stores);
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+      }),
+    ).rejects.toBe(transactionError);
+
+    expect(harness.workspaces.cleanups).toEqual(['id-0001']);
   });
 });
 
