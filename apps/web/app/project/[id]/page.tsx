@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useMemo, useState, type FormEvent } from 'react';
+import React, { use, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { diffLines } from 'diff';
 import {
   EMPTY_TREE_HASH,
@@ -207,6 +207,22 @@ function eventBadges(event: ProjectEvent): string[] {
     badges.push(`${data.name} r${data.revision}`);
   }
   return badges;
+}
+
+export function ProjectProvisioningError({ error }: { error: string }) {
+  return (
+    <p className="errorBox">
+      {error} <a href="#project-timeline">Ver detalhes na linha do tempo</a>
+    </p>
+  );
+}
+
+export function ProjectTimeline({ children }: { children: ReactNode }) {
+  return (
+    <section id="project-timeline" className="dashboardGrid">
+      {children}
+    </section>
+  );
 }
 
 /** A completed operation's diff/artifact links show once its run is no longer in flight, and (for plans) only after approval has been decided. */
@@ -934,11 +950,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
       </section>
 
-      {detail.project.error ? (
-        <p className="errorBox">
-          {detail.project.error} <a href="#project-timeline">Ver detalhes na linha do tempo</a>
-        </p>
-      ) : null}
+      {detail.project.error ? <ProjectProvisioningError error={detail.project.error} /> : null}
       {error ? <p className="errorBox">{error}</p> : null}
 
       <ProjectBuilderShell
@@ -1432,7 +1444,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </section>
       ) : null}
 
-      <section id="project-timeline" className="dashboardGrid">
+      <ProjectTimeline>
         <div className="panel">
           <div className="panelHeader">
             <h2>Linha do tempo</h2>
@@ -1488,7 +1500,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             ))}
           </div>
         </div>
-      </section>
+      </ProjectTimeline>
 
       {runDetail && runDetail.steps.length > 0 ? (
         <section className="panel">
