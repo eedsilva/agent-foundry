@@ -9,10 +9,13 @@ import {
 } from '@agent-foundry/contracts';
 import {
   buildExperimentRequest,
+  DEFAULT_DECISION_SORT,
   EMPTY_EXPERIMENT_FORM,
   EMPTY_ROUTER_FILTERS,
   RouterDashboardView,
   activeRouterQuery,
+  nextDecisionSort,
+  sortDecisions,
 } from './dashboard-view.js';
 
 const dashboard: RouterDashboardResponse = {
@@ -133,8 +136,52 @@ describe('RouterDashboardView', () => {
     expect(markup).toContain('data-testid="decision-detail"');
     expect(markup).toContain('data-testid="new-experiment"');
     expect(markup).toContain('Novo experimento');
-    // Both dialogs stay in the DOM while closed, hidden by `dialog:not([open])`.
+    // Both overlays stay in the DOM while closed, hidden by `dialog:not([open])`.
     expect(markup).not.toContain('<dialog open');
+    // Every header cell is a real column header (DESIGN.md §7).
+    expect(markup.match(/<th[ >]/g)).toHaveLength(8);
+    expect(markup.match(/scope="col"/g)).toHaveLength(8);
+  });
+
+  it('marks the sorted column with aria-sort and defaults to newest first', () => {
+    const markup = renderToStaticMarkup(
+      <RouterDashboardView
+        filters={EMPTY_ROUTER_FILTERS}
+        onFiltersChange={() => {}}
+        dashboard={dashboard}
+        decisions={[decision, { ...decision, id: 'other', createdAt: '2026-07-25T10:30:00.000Z' }]}
+        experiments={[experiment]}
+        exportHref="http://localhost:4000/router/export"
+        form={EMPTY_EXPERIMENT_FORM}
+        onFormChange={() => {}}
+        onSubmitExperiment={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('aria-sort="descending"');
+    expect(markup.match(/aria-sort="none"/g)).toHaveLength(5);
+    // Newest row first.
+    expect(markup.indexOf('2026-07-25 10:30')).toBeLessThan(markup.indexOf('2026-07-24 10:30'));
+  });
+
+  it('opens the decision detail as a right-hand glass sheet, not a centred dialog', () => {
+    const markup = renderToStaticMarkup(
+      <RouterDashboardView
+        filters={EMPTY_ROUTER_FILTERS}
+        onFiltersChange={() => {}}
+        dashboard={dashboard}
+        decisions={[decision]}
+        experiments={[experiment]}
+        exportHref="http://localhost:4000/router/export"
+        form={EMPTY_EXPERIMENT_FORM}
+        onFormChange={() => {}}
+        onSubmitExperiment={() => {}}
+      />,
+    );
+
+    const sheet = /<dialog[^>]*data-testid="decision-detail"[^>]*>/.exec(markup)?.[0] ?? '';
+    expect(sheet).toContain('justify-end');
+    expect(markup).toMatch(/data-testid="decision-detail"[\s\S]{0,400}?rounded-l-sheet/);
   });
 
   it('keeps glass off the stat tiles and the content panels', () => {
@@ -152,11 +199,63 @@ describe('RouterDashboardView', () => {
       />,
     );
 
-    // Exactly one glass surface on the page: the filter toolbar.
-    expect(markup.match(/\bglass\b/g)).toHaveLength(1);
+    // Exactly two glass surfaces, both chrome (DESIGN.md §2.3): the filter
+    // toolbar and the detail slide-over. Stat tiles, panels, tables and the
+    // experiment dialog sheet are solid.
+    expect(markup.match(/\bglass\b/g)).toHaveLength(2);
+    expect(markup).not.toMatch(/class="[^"]*\bglass\b[^"]*bg-surface/);
     // No stock Tailwind palette, no raw hex — tokens only.
     expect(markup).not.toMatch(/\b(bg|text|border)-(white|black|gray|slate|zinc|neutral)-?/);
     expect(markup).not.toMatch(/#[0-9a-fA-F]{6}\b/);
+  });
+});
+
+describe('sortDecisions', () => {
+  const older = { ...decision, id: 'older', createdAt: '2026-07-20T00:00:00.000Z', repairs: 10 };
+  const rejected = { ...decision, id: 'rejected', approved: false, repairs: 2 };
+
+  it('defaults to newest first', () => {
+    expect(sortDecisions([older, decision], DEFAULT_DECISION_SORT).map((d) => d.id)).toEqual([
+      decision.id,
+      'older',
+    ]);
+  });
+
+  it('sorts numbers numerically, not lexically', () => {
+    expect(
+      sortDecisions([older, decision], { key: 'repairs', direction: 'asc' }).map((d) => d.repairs),
+    ).toEqual([2, 10]);
+  });
+
+  it('sorts booleans as false before true', () => {
+    expect(
+      sortDecisions([decision, rejected], { key: 'approved', direction: 'asc' }).map(
+        (d) => d.approved,
+      ),
+    ).toEqual([false, true]);
+  });
+
+  it('leaves the input array untouched', () => {
+    const input = [older, decision];
+    sortDecisions(input, { key: 'repairs', direction: 'asc' });
+    expect(input.map((d) => d.id)).toEqual(['older', decision.id]);
+  });
+});
+
+describe('nextDecisionSort', () => {
+  it('starts a new column ascending and toggles the current one', () => {
+    expect(nextDecisionSort(DEFAULT_DECISION_SORT, 'repairs')).toEqual({
+      key: 'repairs',
+      direction: 'asc',
+    });
+    expect(nextDecisionSort({ key: 'repairs', direction: 'asc' }, 'repairs')).toEqual({
+      key: 'repairs',
+      direction: 'desc',
+    });
+    expect(nextDecisionSort({ key: 'repairs', direction: 'desc' }, 'repairs')).toEqual({
+      key: 'repairs',
+      direction: 'asc',
+    });
   });
 });
 

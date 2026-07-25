@@ -16,6 +16,7 @@ import { GlassBar } from '@/components/glass-bar';
 import { StatTile } from '@/components/stat-tile';
 import { StatusPill } from '@/components/status-pill';
 import {
+  ERROR_BOX,
   FIELD,
   ICON_BTN,
   LABEL,
@@ -119,24 +120,34 @@ const FIELDSET = 'border-hairline rounded-card m-0 grid gap-3 border p-3 sm:grid
 const LEGEND = 'text-ink px-1 text-[13px] font-semibold';
 
 /**
+ * Right-hand slide-over (DESIGN.md §5.4). A sheet is chrome, so §3.3's glass
+ * applies here — the table stays legible behind it, which is the whole point
+ * of a sheet over a centred dialog.
+ */
+const SHEET = 'glass rounded-l-sheet shadow-modal h-full w-[min(560px,100%)] overflow-auto p-6';
+
+/**
  * Non-modal `<dialog>`: it stays in the DOM when closed (the UA's
  * `dialog:not([open]) { display: none }` hides it) so the markup can be
  * asserted without a DOM harness, and `hidden` wins over `MODAL_BACKDROP`'s
  * `grid` through tailwind-merge's display group.
  */
-function Dialog({
+function Overlay({
   open,
   onClose,
   testId,
   label,
+  placement = 'center',
   children,
 }: {
   open: boolean;
   onClose: () => void;
   testId: string;
   label: string;
+  placement?: 'center' | 'right';
   children: ReactNode;
 }) {
+  const sheet = placement === 'right';
   return (
     <dialog
       open={open}
@@ -145,11 +156,12 @@ function Dialog({
       className={cn(
         MODAL_BACKDROP,
         'text-ink m-0 h-full max-h-none w-full max-w-none border-0',
+        sheet && 'flex justify-end p-0',
         !open && 'hidden',
       )}
       onClick={onClose}
     >
-      <div className={MODAL} onClick={(event) => event.stopPropagation()}>
+      <div className={sheet ? SHEET : MODAL} onClick={(event) => event.stopPropagation()}>
         <div className={PANEL_HEADER}>
           <h2 className={PANEL_TITLE}>{label}</h2>
           <button type="button" className={ICON_BTN} aria-label="Fechar" onClick={onClose}>
@@ -268,8 +280,49 @@ function SelectField<K extends ExperimentSelectField>({
   );
 }
 
+export const DECISION_COLUMNS = [
+  { key: 'createdAt', label: 'Quando' },
+  { key: 'taskKind', label: 'Tarefa' },
+  { key: 'modelId', label: 'Modelo' },
+  { key: 'provider', label: 'Provider' },
+  { key: 'approved', label: 'Resultado' },
+  { key: 'repairs', label: 'Reparos' },
+] as const satisfies readonly { key: keyof RouterDecisionLogEntry; label: string }[];
+
+export type DecisionSort = {
+  key: (typeof DECISION_COLUMNS)[number]['key'];
+  direction: 'asc' | 'desc';
+};
+
+export const DEFAULT_DECISION_SORT: DecisionSort = { key: 'createdAt', direction: 'desc' };
+
+/** Newest-first by default; booleans sort as 0/1, everything else naturally. */
+export function sortDecisions(
+  decisions: RouterDecisionLogEntry[],
+  sort: DecisionSort,
+): RouterDecisionLogEntry[] {
+  const sign = sort.direction === 'asc' ? 1 : -1;
+  return [...decisions].sort((a, b) => {
+    const left = a[sort.key];
+    const right = b[sort.key];
+    const compared =
+      typeof left === 'number' && typeof right === 'number'
+        ? left - right
+        : typeof left === 'boolean' && typeof right === 'boolean'
+          ? Number(left) - Number(right)
+          : String(left).localeCompare(String(right));
+    return sign * compared;
+  });
+}
+
+export function nextDecisionSort(sort: DecisionSort, key: DecisionSort['key']): DecisionSort {
+  if (sort.key !== key) return { key, direction: 'asc' };
+  return { key, direction: sort.direction === 'asc' ? 'desc' : 'asc' };
+}
+
 function DecisionsPanel({ decisions }: { decisions: RouterDecisionLogEntry[] }) {
   const [detail, setDetail] = useState<RouterDecisionLogEntry | null>(null);
+  const [sort, setSort] = useState<DecisionSort>(DEFAULT_DECISION_SORT);
 
   return (
     <section className={PANEL}>
@@ -286,16 +339,35 @@ function DecisionsPanel({ decisions }: { decisions: RouterDecisionLogEntry[] }) 
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                <th className={TH}>Quando</th>
-                <th className={TH}>Tarefa</th>
-                <th className={TH}>Modelo</th>
-                <th className={TH}>Provider</th>
-                <th className={TH}>Resultado</th>
-                <th className={TH}>Reparos</th>
+                {DECISION_COLUMNS.map((column) => (
+                  <th
+                    key={column.key}
+                    scope="col"
+                    className={TH}
+                    aria-sort={
+                      sort.key === column.key
+                        ? sort.direction === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                    }
+                  >
+                    <button
+                      type="button"
+                      className="hover:text-accent-strong inline-flex items-center gap-1 uppercase"
+                      onClick={() => setSort((current) => nextDecisionSort(current, column.key))}
+                    >
+                      {column.label}
+                      <span aria-hidden>
+                        {sort.key === column.key ? (sort.direction === 'asc' ? '↑' : '↓') : '↕'}
+                      </span>
+                    </button>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {decisions.map((decision) => (
+              {sortDecisions(decisions, sort).map((decision) => (
                 <tr key={decision.id} className="hover:bg-accent-wash">
                   <td className={TD}>
                     <button
@@ -323,14 +395,17 @@ function DecisionsPanel({ decisions }: { decisions: RouterDecisionLogEntry[] }) 
         </div>
       )}
 
-      <Dialog
+      <Overlay
         open={detail !== null}
         onClose={() => setDetail(null)}
         testId="decision-detail"
         label="Detalhe da decisão"
+        placement="right"
       >
+        {/* Glass is the sheet's chrome; the dense field list stays on a solid
+            card (DESIGN.md §2.3) so it never has to be read through blur. */}
         {detail ? (
-          <dl className="m-0 grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+          <dl className="bg-surface border-hairline rounded-card m-0 grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-4 gap-y-1.5 border p-4 text-[13px]">
             {Object.entries(detail).map(([key, value]) => (
               <React.Fragment key={key}>
                 {/* `--ink-subtle` (EYEBROW) is 2.98:1 on white; `--ink-muted` is 5.47:1. */}
@@ -342,7 +417,7 @@ function DecisionsPanel({ decisions }: { decisions: RouterDecisionLogEntry[] }) 
             ))}
           </dl>
         ) : null}
-      </Dialog>
+      </Overlay>
     </section>
   );
 }
@@ -356,9 +431,24 @@ function ExperimentsPanel({
   experiments: ExperimentRecord[];
   form: ExperimentFormState;
   onFormChange: (form: ExperimentFormState) => void;
-  onSubmitExperiment: (event: FormEvent) => void;
+  onSubmitExperiment: (event: FormEvent) => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState('');
+
+  // The dialog closes only once the request has actually resolved. A failed
+  // POST keeps it open with the form intact and surfaces the reason — the
+  // inline form it replaced never disappeared on failure either.
+  async function handleSubmit(event: FormEvent) {
+    setError('');
+    try {
+      await onSubmitExperiment(event);
+      // Mirrors the page's own guard: an empty hypothesis is never submitted.
+      if (form.hypothesis.trim().length > 0) setOpen(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
 
   return (
     <section className={PANEL}>
@@ -376,8 +466,12 @@ function ExperimentsPanel({
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                <th className={TH}>Hipótese</th>
-                <th className={TH}>Status</th>
+                <th scope="col" className={TH}>
+                  Hipótese
+                </th>
+                <th scope="col" className={TH}>
+                  Status
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -394,21 +488,19 @@ function ExperimentsPanel({
         </div>
       )}
 
-      <Dialog
+      <Overlay
         open={open}
         onClose={() => setOpen(false)}
         testId="new-experiment"
         label="Novo experimento"
       >
-        <form
-          className="grid gap-4"
-          onSubmit={(event) => {
-            onSubmitExperiment(event);
-            // Mirrors the page's own guard: an empty hypothesis is not
-            // submitted, so the dialog stays open with the form intact.
-            if (form.hypothesis.trim().length > 0) setOpen(false);
-          }}
-        >
+        <form className="grid gap-4" onSubmit={(event) => void handleSubmit(event)}>
+          {error ? (
+            <p role="alert" className={ERROR_BOX}>
+              {error}
+            </p>
+          ) : null}
+
           <label className={LABEL}>
             Hipótese
             <textarea
@@ -531,7 +623,7 @@ function ExperimentsPanel({
             Registrar experimento
           </button>
         </form>
-      </Dialog>
+      </Overlay>
     </section>
   );
 }
@@ -555,7 +647,7 @@ export function RouterDashboardView({
   exportHref: string;
   form: ExperimentFormState;
   onFormChange: (form: ExperimentFormState) => void;
-  onSubmitExperiment: (event: FormEvent) => void;
+  onSubmitExperiment: (event: FormEvent) => void | Promise<void>;
 }) {
   return (
     <main className="mx-auto flex w-[min(1240px,calc(100%-40px))] flex-col gap-6 py-10">

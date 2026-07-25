@@ -5,11 +5,17 @@ import type { StatusTone } from './status-pill';
 /**
  * Solid content card — never glass (DESIGN.md §2.3: glass is chrome).
  *
- * The tone rides on the left border, not on the value: `--ok` (2.55:1),
- * `--warn` (1.94:1), `--err` (3.53:1) and `--info` (3.91:1) as text on
- * `--surface` all fail the 4.5:1 DESIGN.md §7 requires. The value therefore
- * stays `--ink` (16.15:1) and the border — a non-text element, held to 3:1 —
- * carries the status.
+ * The tone rides on the left border, never on the value. Measured against
+ * `--surface` #FFFFFF: `--ok` 3.01:1, `--warn` 2.16:1, `--err` 3.91:1,
+ * `--info` 3.88:1 — all far below the 4.5:1 DESIGN.md §7 requires for text,
+ * so the value stays `--ink` (18.35:1).
+ *
+ * The border is **decorative only**: `--warn` at 2.16:1 (and `--ok` at
+ * 3.01:1, which only just clears) cannot be the sole carrier of meaning under
+ * WCAG 1.4.11. Callers must keep the status legible in `label`/`value`; a
+ * status that has to be readable on its own belongs in `StatusPill`, whose
+ * wash + dot + `--ink` label is the audited pattern. Task 7 owns any change to
+ * the tokens themselves.
  */
 const TONE_BORDER: Record<StatusTone, string> = {
   ok: 'border-l-2 border-l-ok',
