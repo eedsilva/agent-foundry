@@ -20,7 +20,7 @@ export function RuntimePill() {
     <span
       data-testid="runtime-pill"
       title={runtime ? `${runtime.executors.length} executores` : 'conectando'}
-      className="border-hairline text-ink-muted inline-flex items-center gap-2 rounded-full border bg-white/60 px-3 py-1.5 font-mono text-[12px]"
+      className="border-hairline text-ink-muted inline-flex items-center gap-2 rounded-full border bg-surface/60 px-3 py-1.5 font-mono text-[12px]"
     >
       <span aria-hidden className={cn('size-1.5 rounded-full', live ? 'bg-ok' : 'bg-ink-subtle')} />
       {runtime ? `${runtime.executorMode} · ${runtime.models.length} modelos` : 'conectando…'}

@@ -15,7 +15,7 @@ export function TopBar({ activePath }: { activePath: string }) {
       className="sticky top-0 z-30 flex h-14 items-center gap-6 rounded-none border-x-0 border-t-0 px-6"
     >
       <a href="/" className="flex items-center gap-2.5">
-        <span className="bg-accent grid size-7 place-items-center rounded-[7px] font-mono text-[11px] font-bold text-white">
+        <span className="bg-accent grid size-7 place-items-center rounded-[7px] font-mono text-[11px] font-bold text-surface">
           AF
         </span>
         <strong className="text-ink text-[14px]">Agent Foundry</strong>
