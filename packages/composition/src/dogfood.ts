@@ -373,8 +373,13 @@ async function seedWorkspace(
   // `git diff --check` fails every task before the agent writes a line.
   await appendGitInfoFile(workspacePath, 'attributes', ['*.patch -whitespace']);
   // Short SHAs (e.g. 8896a3c) cannot be fetched directly: resolve the full
-  // commit in the source repo, fetch its branches and tags, then check out
+  // commit in the source repo, fetch the refs that reach it, then check out
   // the resolved commit's tree.
+  //
+  // `refs/remotes/*` matters as much as `refs/heads/*`: a GitHub Actions PR
+  // checkout leaves the repository on a detached HEAD with no local branches
+  // at all, so a heads-only refspec transfers nothing and the checkout below
+  // fails with `unable to read tree <sha>`.
   const baselineSha = await gitOutput(repoRoot, [
     'rev-parse',
     '--verify',
@@ -385,6 +390,7 @@ async function seedWorkspace(
     '--no-tags',
     repoRoot,
     '+refs/heads/*:refs/dogfood/heads/*',
+    '+refs/remotes/*:refs/dogfood/remotes/*',
     '+refs/tags/*:refs/dogfood/tags/*',
   ]);
   await git(workspacePath, ['checkout', baselineSha, '--', '.']);
