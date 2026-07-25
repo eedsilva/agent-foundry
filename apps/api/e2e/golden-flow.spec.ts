@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import type { AgentExecutor } from '@agent-foundry/domain';
@@ -46,6 +46,12 @@ const BROWSER_TEST_PLAN = {
     ],
   },
 };
+
+/** Inspector panels stay mounted but hidden; open the tab before asserting on it. */
+async function openInspectorTab(page: Page, label: string) {
+  await page.getByRole('tab', { name: label }).click();
+  await expect(page.getByRole('tab', { name: label })).toHaveAttribute('aria-selected', 'true');
+}
 
 let runtime: Runtime;
 let apiClose: () => Promise<void>;
@@ -461,10 +467,11 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   // First visit to this route triggers Next dev's on-demand compile of the
   // project page (on top of the client-side data fetch); default 5s
   // assertion timeout is too tight for a cold compile.
-  await expect(page.getByRole('heading', { name: 'Aprovações' })).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(page.getByRole('tab', { name: 'Mudanças' })).toBeVisible({ timeout: 30_000 });
+  await openInspectorTab(page, 'Mudanças');
+  await expect(page.getByRole('heading', { name: 'Aprovações' })).toBeVisible();
 
+  await openInspectorTab(page, 'Router');
   const routesPanel = page.getByTestId('router-decisions');
   const implementationRoutes = routesPanel
     .getByRole('heading', { name: 'implementation', exact: true })
@@ -500,11 +507,12 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   // by design. This scan targets the PreviewPanel chrome itself (Task 4's
   // deliverable — buttons, tabs, labels), not arbitrary previewed content.
   const axeResults = await new AxeBuilder({ page })
-    .include('.previewPanel')
+    .include('[data-testid="preview-panel"]')
     .exclude('[data-testid="preview-frame"]')
     .analyze();
   expect(axeResults.violations).toEqual([]);
 
+  await openInspectorTab(page, 'Artefatos');
   const screenshotArtifactButton = page
     .getByTestId('artifact-item')
     .filter({ hasText: 'browser-screenshot' })
@@ -517,6 +525,7 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   // tempo") also renders an event whose message equals the node title
   // ("Human diff approval"), as a plain <p>, which collides with a bare
   // getByText match.
+  await openInspectorTab(page, 'Mudanças');
   const decideModalHeading = page.getByRole('heading', { name: /Human diff approval/ });
   await page.getByRole('button', { name: 'approve' }).first().click();
   await expect(decideModalHeading).toBeVisible();
@@ -532,6 +541,22 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   expect(await runtime.worker.runOnce()).toBe(true);
   const finalRun = await getRun(projectId);
   expect(finalRun.status).toBe('completed');
+
+  // Replaces builder-shell-css.test.ts, which grepped globals.css for the grid
+  // rules Task 5 deleted: below the lg breakpoint the three panes stack, and
+  // long lines scroll inside their pane instead of widening the document.
+  await page.setViewportSize({ width: 900, height: 900 });
+  const chatBox = await page.getByTestId('pane-chat').boundingBox();
+  const centerBox = await page.getByTestId('pane-center').boundingBox();
+  expect(chatBox).not.toBeNull();
+  expect(centerBox).not.toBeNull();
+  expect(centerBox!.y).toBeGreaterThan(chatBox!.y + chatBox!.height - 1);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 900 });
 });
 
 test('golden flow: attach reference, plan, build, visual edit, revert, rebuild', async ({
@@ -553,6 +578,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await expect(regions.chat).toBeVisible({ timeout: 30_000 });
   await expect(regions.preview).toBeVisible();
   await expect(regions.changes).toBeVisible();
+  await openInspectorTab(page, 'Mudanças');
   const decideModalHeading = page.getByRole('heading', { name: /Human diff approval/ });
   await page.getByRole('button', { name: 'approve' }).first().click();
   await page.getByLabel('Decidido por').fill('golden-flow-reviewer');
@@ -699,15 +725,16 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   if (!visualVersion || !baselineVersion) throw new Error('golden versions were not recorded');
   const versionArticle = (commit: string, kind = 'run') =>
     page
-      .locator('.versionList article')
+      .getByTestId('version-item')
       .filter({ hasText: commit.slice(0, 7) })
       .filter({ has: page.getByText(kind, { exact: true }) });
+  await openInspectorTab(page, 'Versões');
   await expect(versionArticle(baselineVersion.commit)).toBeVisible({ timeout: 30_000 });
   await expect(versionArticle(visualVersion.commit)).toBeVisible();
   await versionArticle(baselineVersion.commit).getByRole('checkbox').check();
   await versionArticle(visualVersion.commit).getByRole('checkbox').check();
   await page.getByRole('button', { name: 'Comparar selecionadas' }).click();
-  await expect(page.locator('.diffPane')).toContainText("'#ddd'");
+  await expect(page.getByTestId('version-diff')).toContainText("'#ddd'");
 
   page.once('dialog', (dialog) => dialog.accept('golden-flow'));
   await Promise.all([
@@ -770,6 +797,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await expect.poll(() => runtime.projectVersionService.list(projectId, 50)).toHaveLength(5);
   const [rebuiltVersion] = await runtime.projectVersionService.list(projectId, 50);
   await expect(versionArticle(rebuiltVersion!.commit)).toBeVisible({ timeout: 30_000 });
+  await openInspectorTab(page, 'Mudanças');
   const changes = page.getByRole('region', { name: 'Changes' });
   await expect(changes).toContainText('Checks');
   await expect(changes).toContainText('passed');

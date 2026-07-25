@@ -16,6 +16,18 @@ import {
 } from '../../../../lib/model-overrides';
 import { DiffView, unifiedDiffToSpans } from '../diff-view';
 import { ModelPinFields, pinFields } from '../model-pin-fields';
+import {
+  BTN,
+  ERROR_BOX,
+  FIELD,
+  HINT,
+  LABEL,
+  PANEL,
+  PANEL_HEADER,
+  PANEL_TITLE,
+  SECTION_TITLE,
+  TEXTAREA,
+} from '../ui';
 
 export function ModelPinPanel({
   id,
@@ -125,59 +137,47 @@ export function ModelPinPanel({
   if (!run || !evidence) return null;
 
   return (
-    <section className="panel modelPinPanel">
-      <div className="panelHeader">
-        <h2>Limite de emergência e modelo fixado</h2>
-        <span className="hint">run {run.id}</span>
+    <section className={PANEL}>
+      <div className={PANEL_HEADER}>
+        <h2 className={PANEL_TITLE}>Limite de emergência e modelo fixado</h2>
+        <span className={HINT}>run {run.id}</span>
       </div>
-      <dl className="executionEvidence">
-        <div>
-          <dt>tempo ativo</dt>
-          <dd>{evidence.activeElapsed}</dd>
-        </div>
-        <div>
-          <dt>reparos consecutivos</dt>
-          <dd>{evidence.consecutiveRepairs}</dd>
-        </div>
-        {evidence.ceiling ? (
-          <div>
-            <dt>limite atingido</dt>
-            <dd>{evidence.ceiling}</dd>
-          </div>
-        ) : null}
-        {evidence.errorCode ? (
-          <div>
-            <dt>erro</dt>
-            <dd>{evidence.errorCode}</dd>
-          </div>
-        ) : null}
+      <dl className="mb-4 grid grid-cols-2 gap-x-3 gap-y-1.5">
+        <Evidence label="tempo ativo" value={evidence.activeElapsed} />
+        <Evidence label="reparos consecutivos" value={String(evidence.consecutiveRepairs)} />
+        {evidence.ceiling ? <Evidence label="limite atingido" value={evidence.ceiling} /> : null}
+        {evidence.errorCode ? <Evidence label="erro" value={evidence.errorCode} /> : null}
         {evidence.draftBranch ? (
-          <div>
-            <dt>branch preservada</dt>
-            <dd>{evidence.draftBranch}</dd>
-          </div>
+          <Evidence label="branch preservada" value={evidence.draftBranch} />
         ) : null}
       </dl>
 
       {evidence.draftBranch ? (
-        <div className="panel">
-          <div className="panelHeader">
-            <h2>Draft preservado</h2>
-            <span className="hint">{evidence.draftBranch}</span>
+        <div className="border-hairline rounded-card mb-4 border p-3">
+          <div className={PANEL_HEADER}>
+            <h3 className={SECTION_TITLE}>Draft preservado</h3>
+            <span className={HINT}>{evidence.draftBranch}</span>
           </div>
-          {draftError ? <p className="errorBox">{draftError}</p> : null}
-          <button type="button" className="secondaryButton" onClick={() => void loadDraftDiff()}>
-            {draftDiff === null ? 'Ver diff' : 'Recarregar diff'}
-          </button>
-          {draftDiff !== null ? <DiffView parts={unifiedDiffToSpans(draftDiff)} /> : null}
-          <button
-            type="button"
-            className="secondaryButton"
-            onClick={() => void discardCurrentDraft()}
-          >
-            Descartar draft
-          </button>
+          {draftError ? (
+            <p role="alert" className={ERROR_BOX}>
+              {draftError}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={BTN} onClick={() => void loadDraftDiff()}>
+              {draftDiff === null ? 'Ver diff' : 'Recarregar diff'}
+            </button>
+            <button type="button" className={BTN} onClick={() => void discardCurrentDraft()}>
+              Descartar draft
+            </button>
+          </div>
+          {draftDiff !== null ? (
+            <div className="mt-3">
+              <DiffView parts={unifiedDiffToSpans(draftDiff)} />
+            </div>
+          ) : null}
           <form
+            className="mt-3 flex flex-col gap-3"
             onSubmit={(event) => {
               event.preventDefault();
               const data = new FormData(event.currentTarget);
@@ -193,31 +193,33 @@ export function ModelPinPanel({
               }
             }}
           >
-            <label>
+            <label className={LABEL}>
               Novo prompt para a nova tentativa (opcional)
-              <textarea name="retryPrompt" rows={3} />
+              <textarea className={`${TEXTAREA} min-h-[76px]`} name="retryPrompt" rows={3} />
             </label>
-            <label>
+            <label className="text-ink-muted flex items-center gap-2 text-[13px] font-medium">
               <input
                 type="checkbox"
+                className="accent-accent size-4"
                 checked={projectRetryWithPin}
                 onChange={(event) => setProjectRetryWithPin(event.target.checked)}
-              />{' '}
+              />
               Fixar um modelo para esta tentativa
             </label>
             {projectRetryWithPin ? <ModelPinFields models={runnableModels} /> : null}
-            <button className="secondaryButton" type="submit">
+            <button className={`${BTN} self-start`} type="submit">
               Tentar novamente a partir deste draft
             </button>
           </form>
         </div>
       ) : null}
 
-      <form onSubmit={(event) => void submitOverride(event)}>
-        <div className="modelPinGrid">
-          <label>
+      <form className="flex flex-col gap-3" onSubmit={(event) => void submitOverride(event)}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className={LABEL}>
             Escopo
             <select
+              className={FIELD}
               name="scope"
               value={overrideScope}
               onChange={(event) => setOverrideScope(event.target.value as 'run' | 'step')}
@@ -227,9 +229,9 @@ export function ModelPinPanel({
             </select>
           </label>
           {overrideScope === 'step' ? (
-            <label>
+            <label className={LABEL}>
               Step de agente
-              <select name="stepTarget" required>
+              <select className={FIELD} name="stepTarget" required>
                 <option value="">Selecione…</option>
                 {stepTargets.map((target) => (
                   <option
@@ -242,12 +244,21 @@ export function ModelPinPanel({
               </select>
             </label>
           ) : null}
-          <ModelPinFields models={runnableModels} />
         </div>
-        <button className="secondaryButton" type="submit" disabled={!runnableModels.length}>
+        <ModelPinFields models={runnableModels} />
+        <button className={`${BTN} self-start`} type="submit" disabled={!runnableModels.length}>
           Fixar modelo
         </button>
       </form>
     </section>
+  );
+}
+
+function Evidence({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border-hairline flex justify-between gap-2 border-t pt-1.5">
+      <dt className="text-ink-subtle text-[11px]">{label}</dt>
+      <dd className="text-ink m-0 font-mono text-[11px] [overflow-wrap:anywhere]">{value}</dd>
+    </div>
   );
 }

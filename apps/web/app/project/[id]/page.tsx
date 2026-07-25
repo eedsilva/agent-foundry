@@ -36,13 +36,20 @@ import { PreviewPanel } from './preview-panel';
 import { useAgentStream } from './use-agent-stream';
 import { useConversation } from './use-conversation';
 import { useProjectRun } from './use-project-run';
-import { Inspector } from './inspector';
+import {
+  InspectorTabs,
+  ProjectTimeline,
+  inspectorTabFromSearch,
+  type InspectorTab,
+  type InspectorTabId,
+} from './inspector';
 import { ActivityTab } from './inspector/activity-tab';
 import { ArtifactsTab } from './inspector/artifacts-tab';
 import { ChangesTab } from './inspector/changes-tab';
 import { ModelPinPanel } from './inspector/model-pin-panel';
 import { RouterTab, type RouteEntry } from './inspector/router-tab';
 import { RunTab } from './inspector/run-tab';
+import { VersionsTab } from './inspector/versions-tab';
 import { RetryPlanDialog, type RetryPlanTarget } from './dialogs/retry-plan-dialog';
 import {
   DecideDialog,
@@ -68,6 +75,26 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [deciding, setDeciding] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [previousArtifact, setPreviousArtifact] = useState<StoredArtifact | null>(null);
+  // `?tab=` keeps the inspector deep-linkable and reload-proof. Read once from
+  // `location` rather than `useSearchParams` + `router.replace`: a router
+  // navigation re-resolves this page's `params` promise, and a suspended
+  // `use(params)` would unmount the panes — which is exactly what ChatPane's
+  // and ModelPinPanel's pane-local state cannot survive. `history.replaceState`
+  // changes the URL without any of that. Nothing below depends on this value
+  // during SSR (the server render is the "Carregando execução…" branch), so
+  // reading `location` in the initializer cannot mismatch on hydration.
+  const [activeTab, setActiveTab] = useState<InspectorTabId>(() =>
+    inspectorTabFromSearch(
+      typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('tab'),
+    ),
+  );
+
+  function selectTab(tab: InspectorTabId) {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', tab);
+    window.history.replaceState(null, '', url);
+  }
 
   const { conversation, setConversation, latestOperation, latestApprovedPlan } =
     useConversation(id);
@@ -276,7 +303,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   );
 
   if (!detail) {
-    return <div className="shell loadingState">{error || 'Carregando execução…'}</div>;
+    return (
+      <div className="text-ink-muted px-4 py-10 text-center text-[14px]">
+        {error || 'Carregando execução…'}
+      </div>
+    );
   }
 
   const projectId = detail.project.id;
@@ -285,6 +316,86 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       .then(openArtifact)
       .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
   };
+
+  const pendingApprovals = approvals.filter((entry) => !entry.decision).length;
+  const inspectorTabs: InspectorTab[] = [
+    {
+      id: 'atividade',
+      label: 'Atividade',
+      content: (
+        <ProjectTimeline>
+          <ActivityTab events={events} live={live} />
+        </ProjectTimeline>
+      ),
+    },
+    {
+      id: 'execucao',
+      label: 'Execução',
+      content: (
+        <RunTab
+          runDetail={runDetail}
+          runIsTerminal={runIsTerminal}
+          onOpenRetryPlan={(step) => void openRetryPlan(step)}
+        />
+      ),
+    },
+    {
+      id: 'mudancas',
+      label: 'Mudanças',
+      ...(pendingApprovals > 0
+        ? { badge: { tone: 'warn' as const, count: pendingApprovals } }
+        : {}),
+      content: (
+        <ChangesTab
+          projectId={projectId}
+          workspacePath={detail.workspacePath}
+          changesReport={changesReport}
+          approvals={approvals}
+          nodeForRequest={nodeForRequest}
+          onOpenDecide={(request, node, action) => void openDecide(request, node, action)}
+          onOpenArtifactRef={openArtifactRef}
+        />
+      ),
+    },
+    {
+      id: 'artefatos',
+      label: 'Artefatos',
+      content: <ArtifactsTab artifacts={detail.artifacts} onOpenArtifact={openArtifact} />,
+    },
+    {
+      id: 'router',
+      label: 'Router',
+      content: (
+        <div className="flex flex-col gap-3">
+          <RouterTab routes={routes} />
+          <ModelPinPanel
+            id={id}
+            run={run}
+            evidence={evidence}
+            runtimeModels={runtimeModels}
+            runnableModels={runnableModels}
+            stepTargets={stepTargets}
+            decidedBy={decidedBy}
+            refresh={refresh}
+            setError={setError}
+            setResumeBlocked={setResumeBlocked}
+          />
+        </div>
+      ),
+    },
+    {
+      id: 'versoes',
+      label: 'Versões',
+      content: (
+        <VersionsTab
+          projectId={id}
+          {...(activeOperationRun
+            ? { refreshKey: `${activeOperationRun.run.id}:${activeOperationRun.run.status}` }
+            : {})}
+        />
+      ),
+    },
+  ];
 
   return (
     <BuilderShell
@@ -378,45 +489,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         />
       }
       inspector={
-        <Inspector
-          changes={
-            <ChangesTab
-              id={id}
-              projectId={projectId}
-              workspacePath={detail.workspacePath}
-              activeOperationRun={activeOperationRun}
-              changesReport={changesReport}
-              approvals={approvals}
-              nodeForRequest={nodeForRequest}
-              onOpenDecide={(request, node, action) => void openDecide(request, node, action)}
-              onOpenArtifactRef={openArtifactRef}
-            />
-          }
-          modelPin={
-            <ModelPinPanel
-              id={id}
-              run={run}
-              evidence={evidence}
-              runtimeModels={runtimeModels}
-              runnableModels={runnableModels}
-              stepTargets={stepTargets}
-              decidedBy={decidedBy}
-              refresh={refresh}
-              setError={setError}
-              setResumeBlocked={setResumeBlocked}
-            />
-          }
-          activity={<ActivityTab events={events} live={live} />}
-          artifacts={<ArtifactsTab artifacts={detail.artifacts} onOpenArtifact={openArtifact} />}
-          run={
-            <RunTab
-              runDetail={runDetail}
-              runIsTerminal={runIsTerminal}
-              onOpenRetryPlan={(step) => void openRetryPlan(step)}
-            />
-          }
-          routes={<RouterTab routes={routes} />}
-        />
+        <InspectorTabs activeTab={activeTab} onTabChange={selectTab} tabs={inspectorTabs} />
       }
     />
   );

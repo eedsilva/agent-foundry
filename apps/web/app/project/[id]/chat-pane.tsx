@@ -21,6 +21,7 @@ import {
 } from '../../../lib/api';
 import { KnowledgeFiles } from './knowledge-files';
 import { ConversationList, type ProposalEditorState } from './conversation-list';
+import { BTN, ERROR_BOX, HINT, META, PANEL_TITLE, PRIMARY_BTN, RADIO, TEXTAREA } from './ui';
 
 export function ChatPane({
   id,
@@ -178,90 +179,131 @@ export function ChatPane({
   }
 
   return (
-    <section className="panel chatPanel" role="region" aria-label="Chat">
-      <h2>Conversa</h2>
-      {conversationError ? <p className="errorBox">{conversationError}</p> : null}
-      <ConversationList
-        projectId={projectId}
-        conversation={conversation}
-        activeOperation={activeOperation}
-        latestOperation={latestOperation}
-        latestOperationRunTerminal={latestOperationRunTerminal}
-        streamEvents={streamEvents}
-        proposalEditor={proposalEditor}
-        setProposalEditor={setProposalEditor}
-        onEditProposal={(operationId) => void editProposal(operationId)}
-        onSaveProposal={() => void saveProposal()}
-        onDecide={(operationId, action) => void decide(operationId, action)}
-        onCancelRun={onCancelRun}
-        onOpenArtifactRef={onOpenArtifactRef}
-      />
-      <KnowledgeFiles
-        projectId={id}
-        knowledgeFiles={knowledgeFiles}
-        onChange={onKnowledgeFilesChange}
-      />
-      <form onSubmit={(event) => void submitMessage(event)}>
-        <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={3} />
+    <section role="region" aria-label="Chat" className="flex min-h-0 flex-1 flex-col">
+      <div className="border-hairline flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
+        <h2 className={PANEL_TITLE}>Conversa</h2>
+        <span className={HINT}>{conversation?.messages.length ?? 0} mensagens</span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        {conversationError ? (
+          <p role="alert" className={`${ERROR_BOX} mb-3`}>
+            {conversationError}
+          </p>
+        ) : null}
+        <ConversationList
+          projectId={projectId}
+          conversation={conversation}
+          activeOperation={activeOperation}
+          latestOperation={latestOperation}
+          latestOperationRunTerminal={latestOperationRunTerminal}
+          streamEvents={streamEvents}
+          proposalEditor={proposalEditor}
+          setProposalEditor={setProposalEditor}
+          onEditProposal={(operationId) => void editProposal(operationId)}
+          onSaveProposal={() => void saveProposal()}
+          onDecide={(operationId, action) => void decide(operationId, action)}
+          onCancelRun={onCancelRun}
+          onOpenArtifactRef={onOpenArtifactRef}
+        />
+        <KnowledgeFiles
+          projectId={id}
+          knowledgeFiles={knowledgeFiles}
+          onChange={onKnowledgeFilesChange}
+        />
+      </div>
+
+      <form
+        className="border-hairline flex shrink-0 flex-col gap-3 border-t px-4 py-3"
+        onSubmit={(event) => void submitMessage(event)}
+      >
+        <textarea
+          aria-label="Mensagem"
+          className={`${TEXTAREA} min-h-[76px]`}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          rows={3}
+        />
         {pendingChangeRequest && (
-          <div className="panel" style={{ marginBottom: '0.5rem' }}>
-            <p>
-              Suggested: <strong>{pendingChangeRequest.suggestedKind}</strong> —{' '}
+          <div className="border-hairline rounded-card bg-surface-sunken flex flex-col gap-2 border p-3 text-[13px]">
+            <p className="text-ink">
+              Suggested:{' '}
+              <strong className="font-semibold">{pendingChangeRequest.suggestedKind}</strong> —{' '}
               {pendingChangeRequest.rationale}
             </p>
             {pendingChangeRequest.referencedDecisionIds.length > 0 && (
-              <p>References: {pendingChangeRequest.referencedDecisionIds.join(', ')}</p>
+              <p className={META}>
+                References: {pendingChangeRequest.referencedDecisionIds.join(', ')}
+              </p>
             )}
             {(pendingChangeRequest.suggestedKind === 'plan' ||
               pendingChangeRequest.suggestedKind === 'build') && (
-              <p>Use the Plan/Build toggle below to confirm or correct this before sending.</p>
+              <p className={META}>
+                Use the Plan/Build toggle below to confirm or correct this before sending.
+              </p>
             )}
-            <button type="button" onClick={() => void confirmChangeRequest()}>
-              Confirm{' '}
-              {pendingChangeRequest.suggestedKind === 'plan' ||
-              pendingChangeRequest.suggestedKind === 'build'
-                ? mode
-                : pendingChangeRequest.suggestedKind}
-            </button>
-            <button type="button" onClick={() => void discardChangeRequest()}>
-              Discard
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={BTN} onClick={() => void confirmChangeRequest()}>
+                Confirm{' '}
+                {pendingChangeRequest.suggestedKind === 'plan' ||
+                pendingChangeRequest.suggestedKind === 'build'
+                  ? mode
+                  : pendingChangeRequest.suggestedKind}
+              </button>
+              <button type="button" className={BTN} onClick={() => void discardChangeRequest()}>
+                Discard
+              </button>
+            </div>
           </div>
         )}
-        <div className="modelPinGrid">
-          <label>
-            <input type="radio" checked={mode === 'plan'} onChange={() => setMode('plan')} /> Plan
-            (somente proposta, sem alterar código)
+        <div className="flex flex-col gap-1.5">
+          <label className={RADIO}>
+            <input
+              type="radio"
+              className="accent-accent size-4"
+              checked={mode === 'plan'}
+              onChange={() => setMode('plan')}
+            />{' '}
+            Plan (somente proposta, sem alterar código)
           </label>
-          <label>
-            <input type="radio" checked={mode === 'build'} onChange={() => setMode('build')} />{' '}
+          <label className={RADIO}>
+            <input
+              type="radio"
+              className="accent-accent size-4"
+              checked={mode === 'build'}
+              onChange={() => setMode('build')}
+            />{' '}
             Build (vai alterar código e consumir budget)
           </label>
         </div>
         {mode === 'build' ? (
-          <div className="modelPinGrid">
+          <div className="flex flex-col gap-1.5">
             {latestApprovedPlan ? (
-              <label>
+              <label className={RADIO}>
                 <input
                   type="radio"
+                  className="accent-accent size-4"
                   checked={buildChoice === 'plan'}
                   onChange={() => setBuildChoice('plan')}
                 />{' '}
                 Build a partir do plano aprovado
               </label>
             ) : null}
-            <label>
+            <label className={RADIO}>
               <input
                 type="radio"
+                className="accent-accent size-4"
                 checked={buildChoice === 'direct' || !latestApprovedPlan}
                 onChange={() => setBuildChoice('direct')}
               />{' '}
               Build direto, sem plano (decisão explícita)
             </label>
-            <p className="errorBox">Esta ação vai alterar o código do projeto e consumir budget.</p>
+            <p role="alert" className={ERROR_BOX}>
+              Esta ação vai alterar o código do projeto e consumir budget.
+            </p>
           </div>
         ) : null}
-        <button className="secondaryButton" type="submit">
+        <button className={`${PRIMARY_BTN} self-start`} type="submit">
           Enviar
         </button>
       </form>

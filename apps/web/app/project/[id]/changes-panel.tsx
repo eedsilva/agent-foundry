@@ -1,51 +1,44 @@
 'use client';
 
 import React, { type ReactNode } from 'react';
-import type { ProjectVersion } from '@agent-foundry/contracts';
-import { VersionHistory } from './version-history';
+import { BTN, PANEL, PANEL_HEADER, PANEL_TITLE, SECTION_TITLE } from './ui';
 
 export function editorHref(workspacePath: string): string {
   return `vscode://file/${encodeURIComponent(workspacePath)}`;
 }
 
+/**
+ * The `Changes` landmark now lives on the inspector itself (`InspectorTabs`),
+ * which wraps this panel; version history moved to its own inspector tab.
+ */
 export function ChangesPanel({
-  projectId,
   workspacePath,
-  initialVersions = [],
   checks,
   approvals,
-  refreshKey,
 }: {
-  projectId: string;
   workspacePath: string;
-  initialVersions?: ProjectVersion[];
   checks: ReactNode;
   approvals: ReactNode;
-  refreshKey?: string;
 }) {
   return (
-    <section className="panel changesPanel" role="region" aria-label="Changes">
-      <div className="panelHeader">
-        <h2>Changes</h2>
-        <a className="secondaryButton" href={editorHref(workspacePath)}>
+    <section className={PANEL}>
+      <div className={PANEL_HEADER}>
+        <h2 className={PANEL_TITLE}>Changes</h2>
+        <a className={BTN} href={editorHref(workspacePath)}>
           Open in editor
         </a>
       </div>
-      <p className="hint workspacePath">{workspacePath}</p>
-      <VersionHistory
-        projectId={projectId}
-        initialVersions={initialVersions}
-        embedded
-        {...(refreshKey === undefined ? {} : { refreshKey })}
-      />
+      <p className="text-ink-subtle font-mono text-[11px] [overflow-wrap:anywhere]">
+        {workspacePath}
+      </p>
 
-      <section className="changesSection">
-        <h3>Checks</h3>
+      <section className="border-hairline mt-4 border-t pt-4">
+        <h3 className={`${SECTION_TITLE} mb-2`}>Checks</h3>
         {checks}
       </section>
 
-      <section className="changesSection approvalPanel">
-        <h3>Aprovações</h3>
+      <section className="border-hairline mt-4 border-t pt-4">
+        <h3 className={`${SECTION_TITLE} mb-2`}>Aprovações</h3>
         {approvals}
       </section>
     </section>

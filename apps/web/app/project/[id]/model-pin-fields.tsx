@@ -2,6 +2,7 @@
 
 import React from 'react';
 import type { ActorRef, ModelDefinition } from '@agent-foundry/contracts';
+import { FIELD, LABEL, TEXTAREA } from './ui';
 
 const ACTOR_KINDS = ['user', 'system', 'worker', 'provider'] as const;
 
@@ -17,10 +18,10 @@ export function pinFields(data: FormData) {
 
 export function ModelPinFields({ models }: { models: ModelDefinition[] }) {
   return (
-    <div className="modelPinGrid">
-      <label>
+    <div className="grid gap-3 sm:grid-cols-2">
+      <label className={LABEL}>
         Modelo do runtime
-        <select name="modelId" required>
+        <select className={FIELD} name="modelId" required>
           <option value="">Selecione…</option>
           {models.map((model) => (
             <option key={model.id} value={model.id}>
@@ -29,9 +30,9 @@ export function ModelPinFields({ models }: { models: ModelDefinition[] }) {
           ))}
         </select>
       </label>
-      <label>
+      <label className={LABEL}>
         Tipo de ator
-        <select name="actorKind" required defaultValue="user">
+        <select className={FIELD} name="actorKind" required defaultValue="user">
           {ACTOR_KINDS.map((kind) => (
             <option key={kind} value={kind}>
               {kind}
@@ -39,17 +40,17 @@ export function ModelPinFields({ models }: { models: ModelDefinition[] }) {
           ))}
         </select>
       </label>
-      <label>
+      <label className={LABEL}>
         ID do ator
-        <input name="actorId" required />
+        <input className={FIELD} name="actorId" required />
       </label>
-      <label>
+      <label className={LABEL}>
         Motivo
-        <textarea className="compactTextarea" name="reason" required />
+        <textarea className={`${TEXTAREA} min-h-[84px]`} name="reason" required />
       </label>
-      <label>
+      <label className={LABEL}>
         Impacto estimado
-        <textarea className="compactTextarea" name="estimatedImpact" required />
+        <textarea className={`${TEXTAREA} min-h-[84px]`} name="estimatedImpact" required />
       </label>
     </div>
   );

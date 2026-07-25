@@ -1,0 +1,46 @@
+/**
+ * Class strings shared by the builder panes. Token-derived utilities only —
+ * no stock Tailwind palette, no raw hex, and `glass` stays on chrome
+ * (header, tab strip, alert strip, dialogs), never on these content surfaces.
+ */
+export const PANEL = 'bg-surface border-hairline rounded-panel shadow-card border p-4';
+export const PANEL_HEADER = 'mb-3 flex items-center justify-between gap-3';
+export const PANEL_TITLE = 'text-ink text-[15px] font-semibold';
+export const SECTION_TITLE = 'text-ink text-[13px] font-semibold';
+export const HINT = 'text-ink-subtle font-mono text-[11px]';
+export const META = 'text-ink-muted text-[13px]';
+export const ROW = 'flex items-center gap-3';
+export const BTN =
+  'border-hairline rounded-control text-ink hover:bg-accent-wash border px-3 py-1.5 text-[13px] font-medium disabled:opacity-50';
+/**
+ * Active toggle. The label stays `--ink`, not `--accent`: `--accent` (#0FA3A3)
+ * on `--accent-wash` over white (#ECF8F8) measures 2.85:1, well under the 4.5:1
+ * DESIGN.md §7 requires, and axe fails the preview panel on it. The accent
+ * border plus the wash carry the active state instead. Task 7's contrast audit
+ * decides whether `--accent` itself is darkened.
+ */
+export const BTN_ACTIVE = 'border-accent bg-accent-wash text-ink';
+export const PRIMARY_BTN =
+  'bg-accent hover:bg-accent-strong rounded-control text-surface px-4 py-2 text-[14px] font-semibold disabled:opacity-60';
+export const FIELD =
+  'border-hairline rounded-control text-ink focus:border-accent bg-surface w-full border px-3 py-2 text-[14px] outline-none';
+export const TEXTAREA = `${FIELD} resize-y font-mono text-[12.5px] leading-relaxed`;
+export const LABEL = 'text-ink-muted flex flex-col gap-1.5 text-[13px] font-medium';
+export const RADIO = 'text-ink-muted flex items-center gap-2 text-[13px]';
+export const ERROR_BOX = 'text-err bg-err/10 rounded-control px-3 py-2 text-[13px]';
+export const MONO_PANE =
+  'bg-surface-sunken rounded-card text-ink max-w-full overflow-x-auto p-3 font-mono text-[12.5px] leading-relaxed';
+export const EYEBROW =
+  'text-ink-subtle font-mono text-[11px] font-bold tracking-[0.12em] uppercase';
+export const MODAL_BACKDROP = 'bg-ink/40 fixed inset-0 z-40 grid place-items-center p-6';
+export const MODAL =
+  'bg-surface border-hairline rounded-sheet shadow-modal max-h-[88vh] w-[min(1000px,100%)] overflow-auto border p-6';
+export const ICON_BTN =
+  'border-hairline text-ink hover:bg-accent-wash grid size-9 shrink-0 place-items-center rounded-full border text-[20px] leading-none';
+export const DIFF_ADDED = 'text-ok bg-ok/10';
+export const DIFF_REMOVED = 'text-err bg-err/10 line-through';
+/** Neutral metadata chip. Anything that is a *status* uses `StatusPill` instead. */
+export const CHIP =
+  'bg-surface-sunken text-ink-muted inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[12px] font-semibold';
+export const CARD_BUTTON =
+  'border-hairline rounded-card hover:border-accent bg-surface flex w-full items-center justify-between gap-3 border p-3 text-left';

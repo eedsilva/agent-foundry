@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import type { ProjectVersion } from '@agent-foundry/contracts';
+import { EmptyState } from '@/components/empty-state';
 import {
   branchFromVersion,
   compareVersions,
@@ -9,6 +10,19 @@ import {
   revertToVersion,
   setVersionProtected,
 } from '../../../lib/api';
+import {
+  BTN,
+  CHIP,
+  DIFF_ADDED,
+  DIFF_REMOVED,
+  ERROR_BOX,
+  HINT,
+  MONO_PANE,
+  PANEL,
+  PANEL_HEADER,
+  PANEL_TITLE,
+  SECTION_TITLE,
+} from './ui';
 
 type VersionAction = 'revert' | 'branch' | 'protect';
 
@@ -143,49 +157,61 @@ export function VersionHistoryView({
   onCompare: () => void;
   onUpdate: (version: ProjectVersion, action: VersionAction) => void;
 }) {
+  const Title = embedded ? 'h3' : 'h2';
   return (
     <>
-      <section className={embedded ? 'changesSection' : 'panel'}>
-        <div className="panelHeader">
-          {embedded ? <h3>Versões</h3> : <h2>Versões</h2>}
+      <section className={embedded ? '' : PANEL}>
+        <div className={PANEL_HEADER}>
+          <Title className={embedded ? SECTION_TITLE : PANEL_TITLE}>Versões</Title>
           <button
-            className="secondaryButton"
+            type="button"
+            className={BTN}
             disabled={selectedIds.length !== 2 || comparing}
             onClick={onCompare}
           >
             {comparing ? 'Comparando…' : 'Comparar selecionadas'}
           </button>
         </div>
-        {error ? <p className="errorBox">{error}</p> : null}
+        {error ? (
+          <p role="alert" className={ERROR_BOX}>
+            {error}
+          </p>
+        ) : null}
         {loading ? (
-          <p className="hint">Carregando versões…</p>
+          <p className={HINT}>Carregando versões…</p>
         ) : versions.length === 0 ? (
-          <p className="emptyState">Nenhuma versão registrada ainda.</p>
+          <EmptyState title="Nenhuma versão registrada ainda." />
         ) : (
-          <div className="versionList">
+          <div data-testid="version-list" className="flex flex-col gap-2">
             {versions.map((version) => (
-              <article key={version.id}>
-                <label className="versionSelect">
+              <article
+                key={version.id}
+                data-testid="version-item"
+                className="border-hairline rounded-card flex flex-col gap-2 border p-3"
+              >
+                <label className="flex items-start gap-2">
                   <input
                     type="checkbox"
+                    className="accent-accent mt-1 size-4 shrink-0"
                     aria-label={`Selecionar versão ${version.version}`}
                     checked={selectedIds.includes(version.id)}
                     disabled={!selectedIds.includes(version.id) && selectedIds.length >= 2}
                     onChange={() => onToggleSelected(version.id)}
                   />
-                  <span>
-                    <span className="pill">{version.kind}</span>{' '}
-                    <span className="pill">v{version.version}</span>{' '}
-                    {version.protected ? <span className="pill">protegida</span> : null}
-                    <small className="hint">
+                  <span className="min-w-0">
+                    <span className={CHIP}>{version.kind}</span>{' '}
+                    <span className={CHIP}>v{version.version}</span>{' '}
+                    {version.protected ? <span className={CHIP}>protegida</span> : null}
+                    <small className={`${HINT} mt-1.5 block`}>
                       {version.commit.slice(0, 7)} ·{' '}
                       {new Date(version.createdAt).toLocaleString('pt-BR')}
                     </small>
                   </span>
                 </label>
-                <div className="versionActions">
+                <div className="flex flex-wrap gap-2">
                   <button
-                    className="secondaryButton"
+                    type="button"
+                    className={BTN}
                     data-version-action="revert"
                     aria-label={`Reverter para versão ${version.version}`}
                     disabled={busy}
@@ -194,7 +220,8 @@ export function VersionHistoryView({
                     Reverter
                   </button>
                   <button
-                    className="secondaryButton"
+                    type="button"
+                    className={BTN}
                     data-version-action="branch"
                     aria-label={`Criar branch da versão ${version.version}`}
                     disabled={busy}
@@ -203,7 +230,8 @@ export function VersionHistoryView({
                     Branch
                   </button>
                   <button
-                    className="secondaryButton"
+                    type="button"
+                    className={BTN}
                     data-version-action="protect"
                     aria-label={`${version.protected ? 'Desproteger' : 'Proteger'} versão ${version.version}`}
                     disabled={busy}
@@ -219,20 +247,20 @@ export function VersionHistoryView({
       </section>
 
       {diff !== null || embedded ? (
-        <section className={embedded ? 'changesSection' : 'panel'}>
-          {embedded ? <h3>Diff</h3> : <h2>Diff</h2>}
+        <section className={embedded ? 'border-hairline mt-4 border-t pt-4' : `${PANEL} mt-4`}>
+          <Title className={`${embedded ? SECTION_TITLE : PANEL_TITLE} mb-2`}>Diff</Title>
           {diff === null ? (
-            <p className="hint">Selecione duas versões para comparar.</p>
+            <p className={HINT}>Selecione duas versões para comparar.</p>
           ) : (
-            <pre className="diffPane">
+            <pre data-testid="version-diff" className={MONO_PANE}>
               {diff.split('\n').map((line, index) => (
                 <span
                   key={index}
                   className={
                     line.startsWith('+')
-                      ? 'diffAdded'
+                      ? DIFF_ADDED
                       : line.startsWith('-')
-                        ? 'diffRemoved'
+                        ? DIFF_REMOVED
                         : undefined
                   }
                 >

@@ -12,6 +12,20 @@ import type {
 import { decideApproval } from '../../../../lib/api';
 import { DiffView, unifiedDiffToSpans } from '../diff-view';
 import { VerificationReportView } from '../preview-panel';
+import {
+  BTN,
+  ERROR_BOX,
+  EYEBROW,
+  FIELD,
+  HINT,
+  ICON_BTN,
+  LABEL,
+  MODAL,
+  MODAL_BACKDROP,
+  PANEL_HEADER,
+  PANEL_TITLE,
+  TEXTAREA,
+} from '../ui';
 
 export const NO_PREDECESSOR_VERSION_MESSAGE = 'Nenhuma versão anterior para comparar.';
 
@@ -94,30 +108,32 @@ export function DecideDialog({
   if (!decideTarget) return null;
 
   return (
-    <div className="modalBackdrop" onClick={() => setDecideTarget(null)} role="presentation">
+    <div className={MODAL_BACKDROP} onClick={() => setDecideTarget(null)} role="presentation">
       <section
-        className="artifactModal"
+        className={MODAL}
         data-testid="artifact-modal"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="panelHeader">
+        <div className={PANEL_HEADER}>
           <div>
-            <p className="eyebrow">DECISÃO</p>
-            <h2>
+            <p className={EYEBROW}>DECISÃO</p>
+            <h2 className={PANEL_TITLE}>
               {decideTarget.action} · {decideTarget.node.title}
             </h2>
           </div>
-          <button className="iconButton" onClick={() => setDecideTarget(null)}>
+          <button className={ICON_BTN} onClick={() => setDecideTarget(null)}>
             ×
           </button>
         </div>
 
         {decideTarget.action === 'approve' ? (
-          <p>Aprovar avança o workflow para o próximo nó.</p>
+          <p className="text-ink text-[13px]">Aprovar avança o workflow para o próximo nó.</p>
         ) : decideTarget.action === 'reject' && decideTarget.node.onReject === 'end' ? (
-          <p>Rejeitar encerra a execução (status &quot;rejected&quot;); não pode ser retomada.</p>
+          <p className="text-ink text-[13px]">
+            Rejeitar encerra a execução (status &quot;rejected&quot;); não pode ser retomada.
+          </p>
         ) : decidePreview ? (
-          <div>
+          <div className="text-ink flex flex-col gap-2 text-[13px]">
             <p>
               Retorna para <code>{decideTarget.node.returnToStepId}</code>
               {decidePreview.downstream.length > 0
@@ -125,10 +141,10 @@ export function DecideDialog({
                 : ''}
               :
             </p>
-            <ul>
+            <ul className="text-ink-muted list-none p-0">
               {decidePreview.downstream.map((step) => (
                 <li key={step.id}>
-                  <code>{step.stepId}</code> ({step.status})
+                  <code className="font-mono">{step.stepId}</code> ({step.status})
                 </li>
               ))}
             </ul>
@@ -140,45 +156,55 @@ export function DecideDialog({
             ) : null}
           </div>
         ) : (
-          <p className="hint">Calculando consequências…</p>
+          <p className={HINT}>Calculando consequências…</p>
         )}
 
         {decideTarget.request.artifact.name === 'browser-verification.report' ? (
-          <div>
+          <div className="mt-3 flex flex-col gap-2">
             {decideReport ? (
               <VerificationReportView report={decideReport} projectId={projectId} />
             ) : null}
             {decideDiff === NO_PREDECESSOR_VERSION_MESSAGE ? (
-              <p className="hint">{NO_PREDECESSOR_VERSION_MESSAGE}</p>
+              <p className={HINT}>{NO_PREDECESSOR_VERSION_MESSAGE}</p>
             ) : decideDiff !== null ? (
               <DiffView parts={unifiedDiffToSpans(decideDiff)} testId="artifact-diff" />
             ) : (
-              <p className="hint">Carregando diff…</p>
+              <p className={HINT}>Carregando diff…</p>
             )}
           </div>
         ) : null}
 
-        <label>
+        <label className={`${LABEL} mt-4`}>
           {decideTarget.action === 'request-changes'
             ? 'Comentário (obrigatório)'
             : 'Comentário (opcional)'}
-          <textarea value={decideNote} onChange={(event) => setDecideNote(event.target.value)} />
+          <textarea
+            className={`${TEXTAREA} min-h-[96px]`}
+            value={decideNote}
+            onChange={(event) => setDecideNote(event.target.value)}
+          />
         </label>
 
-        <label>
+        <label className={`${LABEL} mt-3`}>
           Decidido por
           <input
+            className={FIELD}
             value={decidedBy}
             onChange={(event) => setDecidedBy(event.target.value)}
             required
           />
         </label>
 
-        {decideError ? <p className="errorBox">{decideError}</p> : null}
+        {decideError ? (
+          <p role="alert" className={`${ERROR_BOX} mt-3`}>
+            {decideError}
+          </p>
+        ) : null}
 
-        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+        <div className="mt-4 flex gap-3">
           <button
-            className="secondaryButton"
+            type="button"
+            className={BTN}
             disabled={deciding}
             onClick={() => void confirmDecide()}
           >

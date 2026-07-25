@@ -2,8 +2,11 @@
 
 import React from 'react';
 import type { RunDetailResponse, StepRun } from '@agent-foundry/contracts';
+import { EmptyState } from '@/components/empty-state';
+import { StatusPill } from '@/components/status-pill';
 import { formatObservedUsage, formatSeconds } from '../format-usage.js';
-import { isFallback, rowStyle } from './shared';
+import { BTN, HINT, PANEL, PANEL_HEADER, PANEL_TITLE, ROW } from '../ui';
+import { isFallback } from './shared';
 
 export function RunTab({
   runDetail,
@@ -14,34 +17,40 @@ export function RunTab({
   runIsTerminal: boolean;
   onOpenRetryPlan: (step: StepRun) => void;
 }) {
-  if (!runDetail || runDetail.steps.length === 0) return null;
+  if (!runDetail || runDetail.steps.length === 0) {
+    return (
+      <section className={PANEL}>
+        <h2 className={`${PANEL_TITLE} mb-3`}>Steps da execução</h2>
+        <EmptyState title="Nenhum step executado ainda." />
+      </section>
+    );
+  }
   return (
-    <section className="panel">
-      <div className="panelHeader">
-        <h2>Steps da execução</h2>
-        <span className="hint">
+    <section className={PANEL}>
+      <div className={PANEL_HEADER}>
+        <h2 className={PANEL_TITLE}>Steps da execução</h2>
+        <span className={HINT}>
           {runDetail.steps.length} step runs · run {runDetail.run.id}
         </span>
       </div>
-      <div className="artifactList">
+      <div className="flex flex-col gap-3">
         {runDetail.steps.map(({ step, attempts }) => (
-          <div key={step.id}>
-            <div style={rowStyle}>
-              <span style={{ flex: 1 }}>
-                <strong>{step.stepId}</strong>
-                <small>
-                  {' '}
+          <div key={step.id} className="border-hairline rounded-card border p-3">
+            <div className={ROW}>
+              <span className="min-w-0 flex-1">
+                <strong className="text-ink text-[13px] font-semibold">{step.stepId}</strong>
+                <small className="text-ink-subtle block text-[12px]">
                   {step.nodeId}
                   {step.iteration ? ` · iteração ${step.iteration}` : ''} · {attempts.length}{' '}
                   attempt(s)
                   {step.invalidatedAt ? ` · invalidado (${step.invalidationReason})` : ''}
                 </small>
               </span>
-              <span className={`pill ${step.status}`}>{step.status}</span>
+              <StatusPill status={step.status} />
               {runIsTerminal &&
               !step.invalidatedAt &&
               (step.status === 'completed' || step.status === 'failed') ? (
-                <button className="secondaryButton" onClick={() => onOpenRetryPlan(step)}>
+                <button type="button" className={BTN} onClick={() => onOpenRetryPlan(step)}>
                   Reexecutar
                 </button>
               ) : null}
@@ -49,21 +58,21 @@ export function RunTab({
             {attempts.map((attempt) => {
               const usedFallback = isFallback(attempt.routeDecision);
               return (
-                <div key={attempt.id} style={{ paddingLeft: '1.5rem' }}>
-                  <div style={rowStyle}>
-                    <small style={{ flex: 1 }}>
+                <div key={attempt.id} className="border-hairline mt-2 border-l pl-3">
+                  <div className={ROW}>
+                    <small className="text-ink-muted min-w-0 flex-1 font-mono text-[11px]">
                       #{attempt.sequence} · {attempt.model} → {attempt.executedModel ?? '—'}
                       {attempt.durationMs !== undefined
                         ? ` · ${formatSeconds(attempt.durationMs)}`
                         : ''}
                       {usedFallback ? ' · fallback' : ''}
                     </small>
-                    <span className={`pill ${attempt.status}`}>{attempt.status}</span>
+                    <StatusPill status={attempt.status} />
                   </div>
                   {attempt.status === 'failed' && attempt.error ? (
-                    <small>{attempt.error.message}</small>
+                    <small className="text-err block text-[12px]">{attempt.error.message}</small>
                   ) : null}
-                  <small style={{ display: 'block', opacity: 0.75 }}>
+                  <small className="text-ink-subtle block font-mono text-[11px]">
                     {formatObservedUsage(attempt.usage)}
                   </small>
                 </div>

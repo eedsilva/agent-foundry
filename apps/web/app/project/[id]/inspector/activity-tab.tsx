@@ -2,7 +2,10 @@
 
 import React from 'react';
 import type { ProjectEvent } from '@agent-foundry/contracts';
+import { EmptyState } from '@/components/empty-state';
+import { StatusPill } from '@/components/status-pill';
 import { formatSeconds } from '../format-usage.js';
+import { HINT, PANEL, PANEL_HEADER, PANEL_TITLE } from '../ui';
 
 function eventBadges(event: ProjectEvent): string[] {
   const data = event.data;
@@ -21,42 +24,52 @@ function eventBadges(event: ProjectEvent): string[] {
 
 export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: boolean }) {
   return (
-    <div className="panel">
-      <div className="panelHeader">
-        <h2>Linha do tempo</h2>
-        <div>
-          <span className="pill">{live ? 'ao vivo' : 'polling'}</span>
-          <span className="hint">{events.length} eventos</span>
+    <div className={PANEL}>
+      <div className={PANEL_HEADER}>
+        <h2 className={PANEL_TITLE}>Linha do tempo</h2>
+        <div className="flex items-center gap-2">
+          <StatusPill status={live ? 'running' : 'queued'} label={live ? 'ao vivo' : 'polling'} />
+          <span className={HINT}>{events.length} eventos</span>
         </div>
       </div>
-      <div className="timeline">
-        {[...events].reverse().map((event) => {
-          const badges = eventBadges(event);
-          return (
-            <article key={event.id}>
-              <span className="timelineDot" />
-              <div>
-                <div className="eventMeta">
-                  <span>
-                    <code>{event.type}</code>
+      {events.length === 0 ? (
+        <EmptyState title="Nenhum evento ainda." />
+      ) : (
+        <div aria-live="polite" className="border-hairline flex flex-col gap-4 border-l pl-4">
+          {[...events].reverse().map((event) => {
+            const badges = eventBadges(event);
+            return (
+              <article key={event.id} className="relative">
+                <span
+                  aria-hidden
+                  className="bg-accent absolute top-1.5 -left-[21px] size-2 rounded-full"
+                />
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="min-w-0">
+                    <code className="text-accent font-mono text-[11px]">{event.type}</code>
                     {badges.map((badge) => (
-                      <small key={badge}> · {badge}</small>
+                      <small key={badge} className="text-ink-subtle font-mono text-[10px]">
+                        {' '}
+                        · {badge}
+                      </small>
                     ))}
                   </span>
-                  <time>{new Date(event.createdAt).toLocaleTimeString('pt-BR')}</time>
+                  <time className="text-ink-subtle shrink-0 font-mono text-[10px]">
+                    {new Date(event.createdAt).toLocaleTimeString('pt-BR')}
+                  </time>
                 </div>
-                <p>{event.message}</p>
+                <p className="text-ink mt-1 text-[13px] leading-snug">{event.message}</p>
                 {event.nodeId ? (
-                  <small>
+                  <small className="text-ink-subtle font-mono text-[10px]">
                     {event.nodeId}
                     {event.runId ? ` · ${event.runId}` : ''}
                   </small>
                 ) : null}
-              </div>
-            </article>
-          );
-        })}
-      </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

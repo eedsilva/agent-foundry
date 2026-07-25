@@ -2,7 +2,12 @@
 
 import React from 'react';
 import type { WorkflowRun } from '@agent-foundry/contracts';
+import { GlassBar } from '@/components/glass-bar';
+import { StatusPill } from '@/components/status-pill';
 import type { ProjectDetail } from '../../../lib/api';
+
+const RUN_BUTTON =
+  'border-hairline rounded-control text-ink hover:bg-accent-wash border px-3 py-1.5 text-[13px] font-medium';
 
 export function BuilderHeader({
   project,
@@ -18,37 +23,48 @@ export function BuilderHeader({
   onRetry: () => void;
 }) {
   return (
-    <section className="projectHero">
-      <div>
-        <a className="backLink" href="/">
-          ← projetos
-        </a>
-        <p className="eyebrow">{project.id}</p>
-        <h1>{project.name}</h1>
-        <p className="lede">Nó atual: {project.currentNodeId ?? 'nenhum'}</p>
+    <GlassBar
+      as="header"
+      className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5"
+    >
+      <a href="/" className="text-ink-muted hover:text-ink shrink-0 text-[13px]">
+        ← projetos
+      </a>
+
+      <div className="min-w-0">
+        <h1 className="text-ink truncate text-[16px] leading-tight font-semibold tracking-[-0.01em]">
+          {project.name}
+        </h1>
+        <p className="text-ink-muted truncate font-mono text-[11px]">
+          {project.id} · nó atual: {project.currentNodeId ?? 'nenhum'}
+        </p>
       </div>
-      <div className="projectStatusBlock">
-        <span className={`pill large ${project.status}`}>{project.status}</span>
-        <time>Atualizado {new Date(project.updatedAt).toLocaleString('pt-BR')}</time>
+
+      <StatusPill status={project.status} />
+
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        <time className="text-ink-muted text-[12px]">
+          Atualizado {new Date(project.updatedAt).toLocaleString('pt-BR')}
+        </time>
         {runStatus === 'running' ? (
-          <button className="secondaryButton" onClick={() => onPause()}>
+          <button type="button" className={RUN_BUTTON} onClick={() => onPause()}>
             Pausar
           </button>
         ) : null}
         {runStatus === 'pause_requested' ? (
-          <span className="hint">pausando no próximo step…</span>
+          <span className="text-ink-subtle font-mono text-[11px]">pausando no próximo step…</span>
         ) : null}
         {runStatus === 'paused' ? (
-          <button className="secondaryButton" onClick={() => onResume()}>
+          <button type="button" className={RUN_BUTTON} onClick={() => onResume()}>
             Retomar
           </button>
         ) : null}
         {project.status === 'failed' ? (
-          <button className="secondaryButton" onClick={() => onRetry()}>
+          <button type="button" className={RUN_BUTTON} onClick={() => onRetry()}>
             Tentar novamente
           </button>
         ) : null}
       </div>
-    </section>
+    </GlassBar>
   );
 }

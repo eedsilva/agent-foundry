@@ -7,6 +7,8 @@ import type {
   Message,
   Operation,
 } from '@agent-foundry/contracts';
+import { EmptyState } from '@/components/empty-state';
+import { BTN, CHIP, ERROR_BOX, MONO_PANE, TEXTAREA } from './ui';
 
 export type ProposalEditorState = {
   operationId: string;
@@ -57,51 +59,69 @@ export function ConversationList({
   onCancelRun: (runId: string) => void;
   onOpenArtifactRef: (name: string, revision: number) => void;
 }) {
+  const messages = conversation?.messages ?? [];
+  if (messages.length === 0) {
+    return (
+      <EmptyState title="Nenhuma mensagem ainda." hint="Descreva o que você quer construir." />
+    );
+  }
   return (
-    <ul className="conversationList">
-      {(conversation?.messages ?? []).map((message: Message) => {
+    <ul className="flex list-none flex-col gap-3 p-0">
+      {messages.map((message: Message) => {
         const operation = conversation?.operations.find(
           (op: Operation) => op.messageId === message.id,
         );
         return (
-          <li key={message.id}>
-            <strong>{message.role}:</strong>{' '}
-            {message.content
-              .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
-              .join(' ')}
+          <li
+            key={message.id}
+            className="border-hairline bg-surface-sunken rounded-card border p-3 text-[13px]"
+          >
+            <strong className="text-ink-subtle font-mono text-[11px] tracking-wide uppercase">
+              {message.role}:
+            </strong>{' '}
+            <span className="text-ink">
+              {message.content
+                .map((block) => (block.type === 'text' ? block.text : `[${block.type}]`))
+                .join(' ')}
+            </span>
             {operation ? (
-              <span className="operationBadge" data-testid="operation-badge">
-                {' '}
-                ({operation.kind}
-                {operation.approval ? `, ${operation.approval.status}` : ''})
+              <span data-testid="operation-badge" className="mt-2 block">
+                <span className={CHIP}>
+                  {operation.kind}
+                  {operation.approval ? `, ${operation.approval.status}` : ''}
+                </span>
                 {operation.kind === 'plan' && operation.approval?.status === 'pending' ? (
-                  <>
+                  <span className="mt-2 flex flex-wrap gap-2">
                     {operation.artifactReferences.length > 0 ? (
                       <button
-                        className="secondaryButton"
+                        type="button"
+                        className={BTN}
                         onClick={() => onEditProposal(operation.id)}
                       >
                         Editar proposta
                       </button>
-                    ) : null}{' '}
+                    ) : null}
                     <button
-                      className="secondaryButton"
+                      type="button"
+                      className={BTN}
                       onClick={() => onDecide(operation.id, 'approve')}
                     >
                       Aprovar
                     </button>
                     <button
-                      className="secondaryButton"
+                      type="button"
+                      className={BTN}
                       onClick={() => onDecide(operation.id, 'reject')}
                     >
                       Rejeitar
                     </button>
-                  </>
+                  </span>
                 ) : null}
                 {proposalEditor?.operationId === operation.id ? (
-                  <div>
+                  <span className="mt-2 flex flex-col gap-2">
                     <textarea
                       aria-label="Proposta editável"
+                      className={`${TEXTAREA} min-h-[220px]`}
                       value={proposalEditor.content}
                       onChange={(event) =>
                         setProposalEditor({
@@ -111,40 +131,50 @@ export function ConversationList({
                       }
                       rows={14}
                     />
-                    <button className="secondaryButton" onClick={() => onSaveProposal()}>
-                      Salvar proposta
-                    </button>
-                    <button className="secondaryButton" onClick={() => setProposalEditor(null)}>
-                      Cancelar
-                    </button>
-                  </div>
+                    <span className="flex flex-wrap gap-2">
+                      <button type="button" className={BTN} onClick={() => onSaveProposal()}>
+                        Salvar proposta
+                      </button>
+                      <button type="button" className={BTN} onClick={() => setProposalEditor(null)}>
+                        Cancelar
+                      </button>
+                    </span>
+                  </span>
                 ) : null}
               </span>
             ) : null}
             {operation && operation.runId && operation.id === activeOperation?.id ? (
-              <div className="agentStreamActivity">
+              <div aria-live="polite" className="border-hairline mt-3 border-t pt-3">
                 {streamEvents
                   .filter((streamEvent) => streamEvent.runId === operation.runId)
                   .map((streamEvent) => {
                     if (streamEvent.type === 'assistant_delta') {
-                      return <p key={streamEvent.id}>{streamEvent.text}</p>;
+                      return (
+                        <p key={streamEvent.id} className="text-ink text-[13px]">
+                          {streamEvent.text}
+                        </p>
+                      );
                     }
                     if (streamEvent.type === 'tool_start' || streamEvent.type === 'tool_end') {
                       return (
-                        <details key={streamEvent.id}>
-                          <summary>{streamEvent.summary}</summary>
+                        <details key={streamEvent.id} className="text-ink-muted text-[12px]">
+                          <summary className="cursor-pointer">{streamEvent.summary}</summary>
                           {streamEvent.type === 'tool_end' && streamEvent.detail ? (
-                            <pre>{streamEvent.detail}</pre>
+                            <pre className={MONO_PANE}>{streamEvent.detail}</pre>
                           ) : null}
                         </details>
                       );
                     }
                     if (streamEvent.type === 'status') {
-                      return <small key={streamEvent.id}>{streamEvent.phase}…</small>;
+                      return (
+                        <small key={streamEvent.id} className="text-ink-subtle text-[12px]">
+                          {streamEvent.phase}…
+                        </small>
+                      );
                     }
                     if (streamEvent.type === 'error') {
                       return (
-                        <p key={streamEvent.id} className="errorBox">
+                        <p key={streamEvent.id} role="alert" className={ERROR_BOX}>
                           {streamEvent.message}
                         </p>
                       );
@@ -155,19 +185,29 @@ export function ConversationList({
                     // unrelated project DAG run this panel doesn't subscribe to.
                     return null;
                   })}
-                <button className="secondaryButton" onClick={() => onCancelRun(operation.runId!)}>
+                <button
+                  type="button"
+                  className={`${BTN} mt-2`}
+                  onClick={() => onCancelRun(operation.runId!)}
+                >
                   Cancelar
                 </button>
               </div>
             ) : null}
             {operation &&
             showsCompletedOperationLinks(operation, latestOperation, latestOperationRunTerminal) ? (
-              <div className="operationLinks">
-                <a href={`/project/${projectId}/versions`}>Ver diff</a>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <a
+                  href={`/project/${projectId}/versions`}
+                  className="text-accent hover:text-accent-strong text-[13px] font-medium"
+                >
+                  Ver diff
+                </a>
                 {operation.artifactReferences.map((ref) => (
                   <button
                     key={`${ref.name}-${ref.revision}`}
-                    className="secondaryButton"
+                    type="button"
+                    className={BTN}
                     onClick={() => onOpenArtifactRef(ref.name, ref.revision)}
                   >
                     {ref.name}

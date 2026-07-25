@@ -10,6 +10,16 @@ import type {
 import { retryStep } from '../../../../lib/api';
 import { retryMode, retryRequest } from '../../../../lib/model-overrides';
 import { ModelPinFields, pinFields } from '../model-pin-fields';
+import {
+  BTN,
+  EYEBROW,
+  ICON_BTN,
+  MODAL,
+  MODAL_BACKDROP,
+  PANEL_HEADER,
+  PANEL_TITLE,
+  RADIO,
+} from '../ui';
 
 export type RetryPlanTarget = { step: StepRun; plan: RetryPlanResponse };
 
@@ -52,18 +62,18 @@ export function RetryPlanDialog({
   if (!retryPlan) return null;
 
   return (
-    <div className="modalBackdrop" onClick={() => setRetryPlan(null)} role="presentation">
+    <div className={MODAL_BACKDROP} onClick={() => setRetryPlan(null)} role="presentation">
       <section
-        className="artifactModal"
+        className={MODAL}
         data-testid="artifact-modal"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="panelHeader">
+        <div className={PANEL_HEADER}>
           <div>
-            <p className="eyebrow">REEXECUTAR STEP</p>
-            <h2>{retryPlan.step.stepId}</h2>
+            <p className={EYEBROW}>REEXECUTAR STEP</p>
+            <h2 className={PANEL_TITLE}>{retryPlan.step.stepId}</h2>
           </div>
-          <button className="iconButton" onClick={() => setRetryPlan(null)}>
+          <button className={ICON_BTN} onClick={() => setRetryPlan(null)}>
             ×
           </button>
         </div>
@@ -77,15 +87,15 @@ export function RetryPlanDialog({
           }}
         >
           {retryPlan.plan.downstream.length > 0 ? (
-            <div>
+            <div className="text-ink flex flex-col gap-2 text-[13px]">
               <p>
                 Invalidar downstream reexecuta {retryPlan.plan.downstream.length} step(s) e gera
                 novas revisões destes artifacts (o histórico anterior é preservado):
               </p>
-              <ul>
+              <ul className="text-ink-muted list-none p-0">
                 {retryPlan.plan.downstream.map((step) => (
                   <li key={step.id}>
-                    <code>{step.stepId}</code> ({step.status})
+                    <code className="font-mono">{step.stepId}</code> ({step.status})
                   </li>
                 ))}
               </ul>
@@ -100,14 +110,17 @@ export function RetryPlanDialog({
               <p>Preservar downstream reexecuta apenas este step e mantém os outputs atuais.</p>
             </div>
           ) : (
-            <p>Nenhum step downstream: apenas este step será reexecutado.</p>
+            <p className="text-ink text-[13px]">
+              Nenhum step downstream: apenas este step será reexecutado.
+            </p>
           )}
 
           {retryPlan.step.stepType === 'agent' ? (
-            <div>
-              <label className="checkLabel">
+            <div className="mt-4 flex flex-col gap-3">
+              <label className={RADIO}>
                 <input
                   type="checkbox"
+                  className="accent-accent size-4"
                   checked={retryWithPin}
                   onChange={(event) => setRetryWithPin(event.target.checked)}
                 />
@@ -117,12 +130,12 @@ export function RetryPlanDialog({
             </div>
           ) : null}
 
-          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
-            <button className="secondaryButton" type="submit" value="preserve">
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button className={BTN} type="submit" value="preserve">
               Reexecutar preservando downstream
             </button>
             {retryPlan.plan.downstream.length > 0 ? (
-              <button className="secondaryButton" type="submit" value="invalidate">
+              <button className={BTN} type="submit" value="invalidate">
                 Reexecutar invalidando downstream
               </button>
             ) : null}

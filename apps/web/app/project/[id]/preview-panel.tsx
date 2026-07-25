@@ -28,6 +28,10 @@ import {
   stopPreview,
 } from '../../../lib/api';
 import { latestBrowserVerificationReport } from '../../../lib/browser-verification';
+import { EmptyState } from '@/components/empty-state';
+import { StatusPill } from '@/components/status-pill';
+import { cn } from '@/lib/utils';
+import { BTN, BTN_ACTIVE, ERROR_BOX, FIELD, HINT, LABEL, MONO_PANE, PANEL_TITLE } from './ui';
 
 const VIEWPORTS = {
   desktop: { label: 'Desktop', width: 1280, height: 800 },
@@ -78,31 +82,47 @@ export function BlobMedia({
   alt,
   kind,
   testId,
+  className,
 }: {
   src: string;
   alt: string;
   kind: 'image' | 'video';
   testId?: string;
+  className?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  if (failed) return <p className="hint">Evidência expirada ou indisponível.</p>;
+  if (failed) return <p className={HINT}>Evidência expirada ou indisponível.</p>;
+  const common = cn('rounded-control block max-w-full', className);
   return kind === 'image' ? (
-    <img src={src} alt={alt} data-testid={testId} onError={() => setFailed(true)} />
+    <img
+      className={common}
+      src={src}
+      alt={alt}
+      data-testid={testId}
+      onError={() => setFailed(true)}
+    />
   ) : (
-    <video controls src={src} data-testid={testId} onError={() => setFailed(true)} />
+    <video
+      className={common}
+      controls
+      src={src}
+      data-testid={testId}
+      onError={() => setFailed(true)}
+    />
   );
 }
 
 function ScreenshotFigure({ shot, projectId }: { shot: ArtifactReference; projectId: string }) {
   return (
-    <figure>
+    <figure className="m-0 shrink-0">
       <BlobMedia
         src={getArtifactBlobUrl(projectId, shot.name, shot.revision)}
         alt={shot.name}
         kind="image"
         testId="screenshot-thumb"
+        className="border-hairline h-[160px] border"
       />
-      <figcaption className="hint">{shot.name}</figcaption>
+      <figcaption className={HINT}>{shot.name}</figcaption>
     </figure>
   );
 }
@@ -115,21 +135,32 @@ export function VerificationReportView({
   projectId: string;
 }) {
   return (
-    <div className="checksList">
-      <p>{report.summary}</p>
+    <div className="flex flex-col gap-2">
+      <p className="text-ink text-[13px]">{report.summary}</p>
       {report.steps.map((step) => (
-        <details key={step.stepId} open={step.status === 'failed'}>
-          <summary>
-            <span className={`pill ${step.status}`}>{step.status}</span>
+        <details
+          key={step.stepId}
+          open={step.status === 'failed'}
+          className="border-hairline rounded-card border px-3 py-2 text-[13px]"
+        >
+          <summary className="text-ink flex cursor-pointer items-center gap-2">
+            <StatusPill status={step.status} />
             {step.title} · {Math.round(step.durationMs)}ms
           </summary>
-          {step.error ? <p className="errorBox">{step.error}</p> : null}
+          {step.error ? (
+            <p role="alert" className={`${ERROR_BOX} mt-2`}>
+              {step.error}
+            </p>
+          ) : null}
           {step.observations.length > 0 ? (
-            <ul>
+            <ul className="text-ink-muted mt-2 flex list-none flex-col gap-1 p-0 text-[12px]">
               {step.observations.map((observation, index) => (
                 <li key={index}>
-                  <code>{observation.kind}</code> {observation.message}
-                  {observation.url ? <small> · {observation.url}</small> : null}
+                  <code className="text-accent font-mono">{observation.kind}</code>{' '}
+                  {observation.message}
+                  {observation.url ? (
+                    <small className="text-ink-subtle"> · {observation.url}</small>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -137,7 +168,7 @@ export function VerificationReportView({
         </details>
       ))}
       {report.previewSession.evidence.screenshots.length > 0 ? (
-        <div className="screenshotFilmstrip">
+        <div className="flex gap-3 overflow-x-auto pb-2">
           {report.previewSession.evidence.screenshots.map((shot) => (
             <ScreenshotFigure
               key={`${shot.name}-${shot.revision}`}
@@ -147,32 +178,34 @@ export function VerificationReportView({
           ))}
         </div>
       ) : null}
-      {report.previewSession.evidence.trace ? (
-        <a
-          className="secondaryButton"
-          href={getArtifactBlobUrl(
-            projectId,
-            report.previewSession.evidence.trace.name,
-            report.previewSession.evidence.trace.revision,
-          )}
-          download
-        >
-          Baixar trace
-        </a>
-      ) : null}
-      {report.previewSession.evidence.video ? (
-        <a
-          className="secondaryButton"
-          href={getArtifactBlobUrl(
-            projectId,
-            report.previewSession.evidence.video.name,
-            report.previewSession.evidence.video.revision,
-          )}
-          download
-        >
-          Baixar vídeo
-        </a>
-      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {report.previewSession.evidence.trace ? (
+          <a
+            className={BTN}
+            href={getArtifactBlobUrl(
+              projectId,
+              report.previewSession.evidence.trace.name,
+              report.previewSession.evidence.trace.revision,
+            )}
+            download
+          >
+            Baixar trace
+          </a>
+        ) : null}
+        {report.previewSession.evidence.video ? (
+          <a
+            className={BTN}
+            href={getArtifactBlobUrl(
+              projectId,
+              report.previewSession.evidence.video.name,
+              report.previewSession.evidence.video.revision,
+            )}
+            download
+          >
+            Baixar vídeo
+          </a>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -352,225 +385,279 @@ export function PreviewPanel({
     selectionResult.column !== undefined;
 
   return (
-    <section className="panel previewPanel" role="region" aria-label="Preview">
-      <div className="panelHeader">
-        <h2>Preview</h2>
-        {session?.status ? (
-          <span className={`pill ${session.status}`}>{session.status}</span>
-        ) : null}
-      </div>
-
-      {panelError ? <p className="errorBox">{panelError}</p> : null}
-
-      {!sessionLoaded ? (
-        <p className="hint">Carregando…</p>
-      ) : !session || TERMINAL_SESSION_STATUSES.has(session.status) ? (
-        <button className="secondaryButton" onClick={() => void start()}>
-          Iniciar preview
-        </button>
-      ) : (
-        <>
-          <div className="viewportSwitcher">
+    <section
+      role="region"
+      aria-label="Preview"
+      data-testid="preview-panel"
+      className="flex min-h-0 flex-1 flex-col"
+    >
+      <div className="border-hairline flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-3">
+        <h2 className={PANEL_TITLE}>Preview</h2>
+        {session?.status ? <StatusPill status={session.status} /> : null}
+        {sessionLoaded && session && !TERMINAL_SESSION_STATUSES.has(session.status) ? (
+          <div className="ml-auto flex flex-wrap gap-2">
             {(Object.keys(VIEWPORTS) as ViewportKey[]).map((key) => (
               <button
                 key={key}
-                className={`secondaryButton${viewport === key ? ' active' : ''}`}
+                type="button"
+                className={cn(BTN, viewport === key && BTN_ACTIVE)}
                 onClick={() => setViewport(key)}
               >
                 {VIEWPORTS[key].label}
               </button>
             ))}
-            <button className="secondaryButton" onClick={() => void stop()}>
+            <button type="button" className={BTN} onClick={() => void stop()}>
               Parar preview
             </button>
-            <button className="secondaryButton" onClick={toggleSelecting}>
+            <button type="button" className={BTN} onClick={toggleSelecting}>
               {selecting ? 'Clique em um elemento…' : 'Selecionar elemento'}
             </button>
           </div>
-          {session.url ? (
-            <div className="previewFrameWrap">
-              <iframe
-                ref={iframeRef}
-                data-testid="preview-frame"
-                src={session.url}
-                width={VIEWPORTS[viewport].width}
-                height={VIEWPORTS[viewport].height}
-                title="Preview do aplicativo"
-              />
-            </div>
-          ) : (
-            <p className="hint">Preview iniciando…</p>
-          )}
-          {selectionError ? <p className="errorBox">{selectionError}</p> : null}
-          {selectionResult?.status === 'resolved' ? (
-            <div className="panel">
-              <p>
-                Elemento mapeado para: <strong>{selectionResult.file}</strong>
+        ) : null}
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
+        {panelError ? (
+          <p role="alert" className={ERROR_BOX}>
+            {panelError}
+          </p>
+        ) : null}
+
+        {!sessionLoaded ? (
+          <p className={HINT}>Carregando…</p>
+        ) : !session || TERMINAL_SESSION_STATUSES.has(session.status) ? (
+          <EmptyState
+            title="Nenhum preview em execução."
+            hint="Inicie um preview para ver o aplicativo gerado."
+            action={
+              <button type="button" className={BTN} onClick={() => void start()}>
+                Iniciar preview
+              </button>
+            }
+          />
+        ) : (
+          <>
+            {session.url ? (
+              /* Scrollable region: keyboard users must be able to reach and pan
+                 it (axe `scrollable-region-focusable`). */
+              <div
+                role="group"
+                tabIndex={0}
+                aria-label="Área do preview"
+                className="bg-surface-sunken rounded-card overflow-auto p-3"
+              >
+                <iframe
+                  ref={iframeRef}
+                  data-testid="preview-frame"
+                  className="bg-surface border-hairline rounded-control block border"
+                  src={session.url}
+                  width={VIEWPORTS[viewport].width}
+                  height={VIEWPORTS[viewport].height}
+                  title="Preview do aplicativo"
+                />
+              </div>
+            ) : (
+              <p className={HINT}>Preview iniciando…</p>
+            )}
+            {selectionError ? (
+              <p role="alert" className={ERROR_BOX}>
+                {selectionError}
               </p>
-              {hasCompleteResolvedSource ? (
-                <>
-                  <p className="hint">
-                    Linha {selectionResult.line}, coluna {selectionResult.column}
-                    {selectionResult.componentName ? ` · ${selectionResult.componentName}` : ''}
-                  </p>
-                  <div className="modelPinGrid">
-                    <label>
-                      Propriedade
-                      <select
-                        value={property}
-                        onChange={(event) => setProperty(event.target.value as VisualEditProperty)}
-                      >
-                        {VisualEditPropertySchema.options.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Valor atual
-                      <input
-                        value={oldValue}
-                        onChange={(event) => setOldValue(event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      Novo valor
-                      <input
-                        value={newValue}
-                        onChange={(event) => setNewValue(event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      Breakpoint
-                      <select
-                        value={breakpoint}
-                        onChange={(event) =>
-                          setBreakpoint(event.target.value as VisualEditBreakpoint | '')
-                        }
-                      >
-                        <option value="">Base</option>
-                        {VisualEditBreakpointSchema.options.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <button className="secondaryButton" onClick={previewVisualEdit}>
-                    Pré-visualizar alteração
+            ) : null}
+            {selectionResult?.status === 'resolved' ? (
+              <div className="border-hairline rounded-card flex flex-col gap-3 border p-3">
+                <p className="text-ink text-[13px]">
+                  Elemento mapeado para:{' '}
+                  <strong className="font-semibold">{selectionResult.file}</strong>
+                </p>
+                {hasCompleteResolvedSource ? (
+                  <>
+                    <p className={HINT}>
+                      Linha {selectionResult.line}, coluna {selectionResult.column}
+                      {selectionResult.componentName ? ` · ${selectionResult.componentName}` : ''}
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className={LABEL}>
+                        Propriedade
+                        <select
+                          className={FIELD}
+                          value={property}
+                          onChange={(event) =>
+                            setProperty(event.target.value as VisualEditProperty)
+                          }
+                        >
+                          {VisualEditPropertySchema.options.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className={LABEL}>
+                        Valor atual
+                        <input
+                          className={FIELD}
+                          value={oldValue}
+                          onChange={(event) => setOldValue(event.target.value)}
+                        />
+                      </label>
+                      <label className={LABEL}>
+                        Novo valor
+                        <input
+                          className={FIELD}
+                          value={newValue}
+                          onChange={(event) => setNewValue(event.target.value)}
+                        />
+                      </label>
+                      <label className={LABEL}>
+                        Breakpoint
+                        <select
+                          className={FIELD}
+                          value={breakpoint}
+                          onChange={(event) =>
+                            setBreakpoint(event.target.value as VisualEditBreakpoint | '')
+                          }
+                        >
+                          <option value="">Base</option>
+                          {VisualEditBreakpointSchema.options.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" className={BTN} onClick={previewVisualEdit}>
+                        Pré-visualizar alteração
+                      </button>
+                      <button type="button" className={BTN} onClick={() => void applyVisualEdit()}>
+                        Aplicar alteração
+                      </button>
+                      <button type="button" className={BTN} onClick={clearVisualEdit}>
+                        Limpar alteração
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className={HINT}>
+                      A origem não inclui linha e coluna; a edição direta não está disponível.
+                    </p>
+                    <button
+                      type="button"
+                      className={`${BTN} self-start`}
+                      onClick={() =>
+                        onConversationalFallback(
+                          `Quero uma edição visual no elemento ${selectionResult.domPath} em ${selectionResult.file}, mas a origem não inclui linha e coluna.`,
+                        )
+                      }
+                    >
+                      Continuar na conversa
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : null}
+            {selectionResult?.status === 'ambiguous' ? (
+              <div className="border-hairline rounded-card flex flex-col gap-2 border p-3 text-[13px]">
+                <p className="text-ink">Seleção ambígua — candidatos:</p>
+                <ul className="text-ink-muted list-none p-0">
+                  {selectionResult.candidates?.map((file) => (
+                    <li key={file}>{file}</li>
+                  ))}
+                </ul>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className={BTN} onClick={() => setSelectionResult(null)}>
+                    Descartar
                   </button>
-                  <button className="secondaryButton" onClick={() => void applyVisualEdit()}>
-                    Aplicar alteração
-                  </button>
-                  <button className="secondaryButton" onClick={clearVisualEdit}>
-                    Limpar alteração
-                  </button>
-                </>
-              ) : (
-                <>
-                  <p className="hint">
-                    A origem não inclui linha e coluna; a edição direta não está disponível.
-                  </p>
                   <button
-                    className="secondaryButton"
+                    type="button"
+                    className={BTN}
                     onClick={() =>
                       onConversationalFallback(
-                        `Quero uma edição visual no elemento ${selectionResult.domPath} em ${selectionResult.file}, mas a origem não inclui linha e coluna.`,
+                        `Quero uma edição visual no elemento ${selectionResult.domPath}, mas a origem é ambígua entre ${selectionResult.candidates?.join(', ')}.`,
                       )
                     }
                   >
                     Continuar na conversa
                   </button>
-                </>
-              )}
-            </div>
-          ) : null}
-          {selectionResult?.status === 'ambiguous' ? (
-            <div className="panel">
-              <p>Seleção ambígua — candidatos:</p>
-              <ul>
-                {selectionResult.candidates?.map((file) => (
-                  <li key={file}>{file}</li>
-                ))}
-              </ul>
-              <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
-                Descartar
-              </button>
-              <button
-                className="secondaryButton"
-                onClick={() =>
-                  onConversationalFallback(
-                    `Quero uma edição visual no elemento ${selectionResult.domPath}, mas a origem é ambígua entre ${selectionResult.candidates?.join(', ')}.`,
-                  )
-                }
-              >
-                Continuar na conversa
-              </button>
-            </div>
-          ) : null}
-          {selectionResult?.status === 'unsupported' ? (
-            <div className="panel">
-              <p>Não foi possível mapear este elemento a um arquivo de origem.</p>
-              <p className="hint">{selectionResult.domPath}</p>
-              {selectionResult.screenshot ? (
-                <BlobMedia
-                  src={getArtifactBlobUrl(
-                    projectId,
-                    selectionResult.screenshot.name,
-                    selectionResult.screenshot.revision,
-                  )}
-                  alt={selectionResult.domPath}
-                  kind="image"
-                />
-              ) : null}
-              <button className="secondaryButton" onClick={() => setSelectionResult(null)}>
-                Fechar
-              </button>
-              <button
-                className="secondaryButton"
-                onClick={() =>
-                  onConversationalFallback(
-                    `Quero uma edição visual no elemento ${selectionResult.domPath}, que não pôde ser mapeado para uma origem segura.`,
-                  )
-                }
-              >
-                Continuar na conversa
-              </button>
-            </div>
-          ) : null}
-        </>
-      )}
+                </div>
+              </div>
+            ) : null}
+            {selectionResult?.status === 'unsupported' ? (
+              <div className="border-hairline rounded-card flex flex-col gap-2 border p-3 text-[13px]">
+                <p className="text-ink">
+                  Não foi possível mapear este elemento a um arquivo de origem.
+                </p>
+                <p className={HINT}>{selectionResult.domPath}</p>
+                {selectionResult.screenshot ? (
+                  <BlobMedia
+                    src={getArtifactBlobUrl(
+                      projectId,
+                      selectionResult.screenshot.name,
+                      selectionResult.screenshot.revision,
+                    )}
+                    alt={selectionResult.domPath}
+                    kind="image"
+                  />
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className={BTN} onClick={() => setSelectionResult(null)}>
+                    Fechar
+                  </button>
+                  <button
+                    type="button"
+                    className={BTN}
+                    onClick={() =>
+                      onConversationalFallback(
+                        `Quero uma edição visual no elemento ${selectionResult.domPath}, que não pôde ser mapeado para uma origem segura.`,
+                      )
+                    }
+                  >
+                    Continuar na conversa
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
 
-      <div className="viewportSwitcher">
+      <div className="border-hairline flex shrink-0 flex-wrap gap-2 border-t px-4 py-2">
         <button
-          className={`secondaryButton${tab === 'logs' ? ' active' : ''}`}
+          type="button"
+          className={cn(BTN, tab === 'logs' && BTN_ACTIVE)}
           onClick={() => setTab('logs')}
         >
           Logs de runtime
         </button>
         <button
-          className={`secondaryButton${tab === 'verification' ? ' active' : ''}`}
+          type="button"
+          className={cn(BTN, tab === 'verification' && BTN_ACTIVE)}
           onClick={() => setTab('verification')}
         >
           Console, rede e testes
         </button>
       </div>
 
-      {tab === 'logs' ? (
-        logs.length === 0 ? (
-          <p className="emptyState">Nenhum log de runtime ainda.</p>
+      <div className="max-h-[38%] shrink-0 overflow-y-auto px-4 pt-1 pb-3">
+        {tab === 'logs' ? (
+          logs.length === 0 ? (
+            <p className="text-ink-subtle text-[13px]">Nenhum log de runtime ainda.</p>
+          ) : (
+            <pre className={MONO_PANE}>
+              {logs.map((entry) => `[${entry.stream}] ${entry.message}`).join('\n')}
+            </pre>
+          )
+        ) : !report ? (
+          <p className="text-ink-subtle text-[13px]">
+            Nenhuma verificação de navegador ainda para esta execução.
+          </p>
         ) : (
-          <pre className="previewLogPane">
-            {logs.map((entry) => `[${entry.stream}] ${entry.message}`).join('\n')}
-          </pre>
-        )
-      ) : !report ? (
-        <p className="emptyState">Nenhuma verificação de navegador ainda para esta execução.</p>
-      ) : (
-        <VerificationReportView report={report} projectId={projectId} />
-      )}
+          <VerificationReportView report={report} projectId={projectId} />
+        )}
+      </div>
     </section>
   );
 }

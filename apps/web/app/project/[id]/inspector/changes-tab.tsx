@@ -7,27 +7,23 @@ import type {
   ApprovalListResponse,
   ApprovalRequest,
   BrowserVerificationReport,
-  RunDetailResponse,
 } from '@agent-foundry/contracts';
+import { EmptyState } from '@/components/empty-state';
 import { ChangesPanel } from '../changes-panel';
 import { VerificationReportView } from '../preview-panel';
-import { rowStyle } from './shared';
+import { BTN, HINT, ROW } from '../ui';
 
 export function ChangesTab({
-  id,
   projectId,
   workspacePath,
-  activeOperationRun,
   changesReport,
   approvals,
   nodeForRequest,
   onOpenDecide,
   onOpenArtifactRef,
 }: {
-  id: string;
   projectId: string;
   workspacePath: string;
-  activeOperationRun: RunDetailResponse | null;
   changesReport: BrowserVerificationReport | null;
   approvals: ApprovalListResponse['approvals'];
   nodeForRequest: (request: ApprovalRequest) => ApprovalGateStep | null;
@@ -36,39 +32,37 @@ export function ChangesTab({
 }) {
   return (
     <ChangesPanel
-      projectId={id}
       workspacePath={workspacePath}
-      {...(activeOperationRun
-        ? { refreshKey: `${activeOperationRun.run.id}:${activeOperationRun.run.status}` }
-        : {})}
       checks={
         changesReport ? (
           <VerificationReportView report={changesReport} projectId={projectId} />
         ) : (
-          <p className="emptyState">Nenhum check de navegador disponível.</p>
+          <EmptyState title="Nenhum check de navegador disponível." />
         )
       }
       approvals={
         approvals.length > 0 ? (
           <>
-            <p className="hint">
+            <p className={HINT}>
               {approvals.filter((entry) => !entry.decision).length} pendente(s)
             </p>
-            <div className="artifactList">
+            <div className="mt-2 flex flex-col gap-3">
               {approvals.map((entry) => {
                 const node = nodeForRequest(entry.request);
                 return (
-                  <div key={entry.request.id}>
-                    <div style={rowStyle}>
-                      <span style={{ flex: 1 }}>
-                        <strong>{entry.request.nodeId}</strong>
-                        <small>
-                          {' '}
+                  <div key={entry.request.id} className="border-hairline rounded-card border p-3">
+                    <div className={ROW}>
+                      <span className="min-w-0 flex-1">
+                        <strong className="text-ink text-[13px] font-semibold">
+                          {entry.request.nodeId}
+                        </strong>
+                        <small className="text-ink-subtle block text-[12px]">
                           {entry.request.artifact.name} r{entry.request.artifact.revision}
                         </small>
                       </span>
                       <button
-                        className="secondaryButton"
+                        type="button"
+                        className={BTN}
                         onClick={() =>
                           onOpenArtifactRef(
                             entry.request.artifact.name,
@@ -80,24 +74,18 @@ export function ChangesTab({
                       </button>
                     </div>
                     {entry.decision ? (
-                      <p className="hint">
+                      <p className="text-ink-muted mt-2 text-[12px]">
                         {entry.decision.action} por {entry.decision.decidedBy} em{' '}
                         {new Date(entry.decision.decidedAt).toLocaleString('pt-BR')}
                         {entry.decision.note ? ` — "${entry.decision.note}"` : ''}
                       </p>
                     ) : node ? (
-                      <div
-                        style={{
-                          display: 'flex',
-                          gap: '0.5rem',
-                          flexWrap: 'wrap',
-                          marginTop: '6px',
-                        }}
-                      >
+                      <div className="mt-2 flex flex-wrap gap-2">
                         {node.actions.map((action) => (
                           <button
                             key={action}
-                            className="secondaryButton"
+                            type="button"
+                            className={BTN}
                             onClick={() => onOpenDecide(entry.request, node, action)}
                           >
                             {action}
@@ -105,7 +93,7 @@ export function ChangesTab({
                         ))}
                       </div>
                     ) : (
-                      <p className="hint">Aguardando definição do workflow…</p>
+                      <p className={`${HINT} mt-2`}>Aguardando definição do workflow…</p>
                     )}
                   </div>
                 );
@@ -113,7 +101,7 @@ export function ChangesTab({
             </div>
           </>
         ) : (
-          <p className="emptyState">Nenhuma aprovação registrada.</p>
+          <EmptyState title="Nenhuma aprovação registrada." />
         )
       }
     />

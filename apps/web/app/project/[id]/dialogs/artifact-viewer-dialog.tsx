@@ -11,6 +11,18 @@ import { getArtifact, getArtifactBlobUrl } from '../../../../lib/api';
 import { formatSeconds } from '../format-usage.js';
 import { BlobMedia } from '../preview-panel';
 import { DiffView } from '../diff-view';
+import { StatusPill } from '@/components/status-pill';
+import {
+  BTN,
+  EYEBROW,
+  HINT,
+  ICON_BTN,
+  MODAL,
+  MODAL_BACKDROP,
+  MONO_PANE,
+  PANEL_HEADER,
+  PANEL_TITLE,
+} from '../ui';
 
 function artifactText(content: unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content, null, 2);
@@ -33,15 +45,15 @@ function BlobArtifactPreview({
 }) {
   const blobUrl = getArtifactBlobUrl(projectId, name, revision);
   return (
-    <div className="blobPreview">
+    <div className="flex flex-col gap-3">
       {contentType.startsWith('image/') ? (
         <BlobMedia src={blobUrl} alt={name} kind="image" testId="artifact-image" />
       ) : contentType.startsWith('video/') ? (
         <BlobMedia src={blobUrl} alt={name} kind="video" testId="artifact-image" />
       ) : (
-        <p className="hint">Conteúdo binário ({contentType}).</p>
+        <p className={HINT}>Conteúdo binário ({contentType}).</p>
       )}
-      <a className="secondaryButton" href={blobUrl} download>
+      <a className={BTN} href={blobUrl} download>
         Baixar
       </a>
     </div>
@@ -87,26 +99,26 @@ export function ArtifactViewerDialog({
   if (!selected) return null;
 
   return (
-    <div className="modalBackdrop" onClick={() => setSelected(null)} role="presentation">
+    <div className={MODAL_BACKDROP} onClick={() => setSelected(null)} role="presentation">
       <section
-        className="artifactModal"
+        className={MODAL}
         data-testid="artifact-modal"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="panelHeader">
+        <div className={PANEL_HEADER}>
           <div>
-            <p className="eyebrow">ARTEFATO</p>
-            <h2>
+            <p className={EYEBROW}>ARTEFATO</p>
+            <h2 className={PANEL_TITLE}>
               {selected.metadata.name} · r{selected.metadata.revision}
             </h2>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div className="flex items-center gap-2">
             {selected.metadata.revision > 1 ? (
-              <button className="secondaryButton" onClick={() => void toggleDiff()}>
+              <button className={BTN} onClick={() => void toggleDiff()}>
                 {showDiff ? 'Ver conteúdo' : 'Comparar com revisão anterior'}
               </button>
             ) : null}
-            <button className="iconButton" onClick={() => setSelected(null)}>
+            <button className={ICON_BTN} onClick={() => setSelected(null)}>
               ×
             </button>
           </div>
@@ -120,23 +132,27 @@ export function ArtifactViewerDialog({
               )}
             />
           ) : (
-            <p className="hint">Carregando revisão anterior…</p>
+            <p className={HINT}>Carregando revisão anterior…</p>
           )
         ) : isVerificationReport(selected.content) ? (
-          <div className="checksList">
-            <p>{selected.content.summary}</p>
+          <div className="flex flex-col gap-2">
+            <p className="text-ink text-[13px]">{selected.content.summary}</p>
             {selected.content.commands.map((command, index) => (
-              <details key={`${command.name}-${index}`}>
-                <summary>
-                  <span
-                    className={`pill ${command.skipped ? 'skipped' : command.exitCode === 0 ? 'completed' : 'failed'}`}
-                  >
-                    {command.skipped ? 'skipped' : command.exitCode === 0 ? 'pass' : 'fail'}
-                  </span>
+              <details
+                key={`${command.name}-${index}`}
+                className="border-hairline rounded-card border px-3 py-2 text-[13px]"
+              >
+                <summary className="text-ink flex cursor-pointer items-center gap-2">
+                  <StatusPill
+                    status={
+                      command.skipped ? 'skipped' : command.exitCode === 0 ? 'completed' : 'failed'
+                    }
+                    label={command.skipped ? 'skipped' : command.exitCode === 0 ? 'pass' : 'fail'}
+                  />
                   {command.name} · {formatSeconds(command.durationMs)}
                 </summary>
-                {command.stdout ? <pre>{command.stdout}</pre> : null}
-                {command.stderr ? <pre>{command.stderr}</pre> : null}
+                {command.stdout ? <pre className={MONO_PANE}>{command.stdout}</pre> : null}
+                {command.stderr ? <pre className={MONO_PANE}>{command.stderr}</pre> : null}
               </details>
             ))}
           </div>
@@ -149,7 +165,9 @@ export function ArtifactViewerDialog({
             contentType={selected.metadata.contentType}
           />
         ) : (
-          <pre>{artifactText(selected.content)}</pre>
+          <pre className={`${MONO_PANE} whitespace-pre-wrap break-words`}>
+            {artifactText(selected.content)}
+          </pre>
         )}
       </section>
     </div>
