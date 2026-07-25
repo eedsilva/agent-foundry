@@ -223,8 +223,8 @@ describe('SupabaseGeneratedProjectRuntime', () => {
 public = false
 file_size_limit = "10MiB"
 allowed_mime_types = ["image/png", "image/jpeg", "application/pdf"]`);
-    expect(firstConfig).toContain(`[analytics]`);
-    expect(firstConfig).toContain(`enabled = false`);
+    expect(firstConfig).toContain(`[analytics]
+enabled = false`);
     expect(() => configPort(firstConfig, 'analytics', 'port')).toThrow('Missing analytics.port');
     expect(firstMigration).toBe(generatedStorageMigration());
     expect(firstMigration).toContain('create policy storage_upload_insert');
