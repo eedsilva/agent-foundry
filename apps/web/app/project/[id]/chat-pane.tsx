@@ -53,6 +53,13 @@ export function ChatPane({
   onCancelRun: (runId: string) => void;
   onOpenArtifactRef: (name: string, revision: number) => void;
 }) {
+  // Pane-local ONLY because this pane never unmounts: `builder-shell.tsx`
+  // renders the chat slot unconditionally. A tab strip (or a narrow-viewport
+  // layout) that unmounts ChatPane must either keep it mounted or lift this
+  // state back to `page.tsx` — otherwise `draft` is lost mid-typing and
+  // `classifyPromptRef.current` is left pointing at a dead closure, which
+  // turns the preview pane's conversational-fallback buttons into silent
+  // no-ops: no message sent, no error shown.
   const [draft, setDraft] = useState('');
   const [mode, setMode] = useState<'plan' | 'build'>('plan');
   const [buildChoice, setBuildChoice] = useState<'plan' | 'direct'>('plan');

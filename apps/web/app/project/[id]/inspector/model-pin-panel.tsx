@@ -40,6 +40,12 @@ export function ModelPinPanel({
   setError: (message: string) => void;
   setResumeBlocked: (blocked: ResumeBlockedResponse | null) => void;
 }) {
+  // Pane-local ONLY because this panel never unmounts: `inspector/index.tsx`
+  // stacks every section, and the `!run || !evidence` guard below returns null
+  // while staying mounted. A tab strip that conditionally renders `{modelPin}`
+  // must either keep it mounted or lift this state back to `page.tsx` — a
+  // loaded draft diff and the pin form's selections would otherwise reset on
+  // every tab switch.
   const [overrideScope, setOverrideScope] = useState<'run' | 'step'>('run');
   const [projectRetryWithPin, setProjectRetryWithPin] = useState(false);
   const [draftDiff, setDraftDiff] = useState<string | null>(null);
