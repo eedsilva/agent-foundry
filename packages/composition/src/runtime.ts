@@ -333,6 +333,7 @@ export async function createRuntime(
     executors,
     secretStore,
     decisionLog,
+    generatedProjectRuntime,
   );
   const projectService = new ProjectService(
     projects,
@@ -354,7 +355,6 @@ export async function createRuntime(
     ids,
     modelOverrides,
     qualityObservationService,
-    generatedProjectRuntime,
   );
   const conversationService = new ConversationService(
     projects,
