@@ -169,25 +169,30 @@ export class ProjectService {
       ...traceContextField(),
     };
 
-    await this.transactionRunner.run(async (tx) => {
-      await this.projects.create(project, tx);
-      await this.runs.create(run, tx);
-      await this.appendEvent(project.id, 'project.created', 'Project and workspace created.', {
-        tx,
+    try {
+      await this.transactionRunner.run(async (tx) => {
+        await this.projects.create(project, tx);
+        await this.runs.create(run, tx);
+        await this.appendEvent(project.id, 'project.created', 'Project and workspace created.', {
+          tx,
+        });
+        if (scaffoldFiles.length > 0) {
+          await this.appendEvent(
+            project.id,
+            'scaffold.applied',
+            `Applied ${scaffoldFiles.length} scaffold file(s) for stack '${workflow.stack}'.`,
+            { tx },
+          );
+        }
+        await this.queue.enqueue(job, tx);
+        await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
+          tx,
+        });
       });
-      if (scaffoldFiles.length > 0) {
-        await this.appendEvent(
-          project.id,
-          'scaffold.applied',
-          `Applied ${scaffoldFiles.length} scaffold file(s) for stack '${workflow.stack}'.`,
-          { tx },
-        );
-      }
-      await this.queue.enqueue(job, tx);
-      await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
-        tx,
-      });
-    });
+    } catch (error) {
+      await this.workspaces.cleanup(project.id).catch(() => undefined);
+      throw error;
+    }
 
     // Artifacts are written after the transaction commits: `artifacts.project_id`
     // has a FK to `projects(id)`, and ArtifactStore.put isn't part of the

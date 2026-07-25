@@ -141,6 +141,23 @@ describe('ProjectService.create', () => {
     );
     expect(harness.nacked).toHaveLength(1);
   });
+
+  it('removes every initialized project resource when project persistence fails', async () => {
+    const transactionError = new Error('project transaction failed');
+    const stores = makeStores();
+    stores.projects.create = () => Promise.reject(transactionError);
+    const harness = makeHarness({}, stores);
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+      }),
+    ).rejects.toBe(transactionError);
+
+    expect(harness.workspaces.cleanups).toEqual(['id-0001']);
+  });
 });
 
 describe('ProjectService.create scaffold application', () => {

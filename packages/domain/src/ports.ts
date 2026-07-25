@@ -490,6 +490,7 @@ export interface WorkspaceManager {
   projectRoot(projectId: string): string;
   workspacePath(projectId: string): string;
   ensure(projectId: string): Promise<void>;
+  cleanup(projectId: string): Promise<void>;
   writePrd(projectId: string, prd: string): Promise<void>;
   applyScaffold(projectId: string, files: Array<{ path: string; content: string }>): Promise<void>;
   writeRunContext(input: {

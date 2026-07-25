@@ -714,6 +714,7 @@ export class FakeWorkspaces implements WorkspaceManager {
   readonly checkpoints: string[] = [];
   readonly commits: string[] = [];
   readonly rollbacks: string[] = [];
+  readonly cleanups: string[] = [];
   readonly drafts: string[] = [];
   readonly draftCommits = new Map<string, string>();
   current = 'initial-head';
@@ -732,6 +733,10 @@ export class FakeWorkspaces implements WorkspaceManager {
     return `/fake/${projectId}/workspace`;
   }
   ensure(): Promise<void> {
+    return Promise.resolve();
+  }
+  cleanup(projectId: string): Promise<void> {
+    this.cleanups.push(projectId);
     return Promise.resolve();
   }
   lastPrd: string | undefined;
