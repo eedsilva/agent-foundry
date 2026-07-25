@@ -550,8 +550,12 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   await screenshotArtifactButton.click();
   await expect(page.getByTestId('artifact-modal').getByTestId('artifact-image')).toBeVisible();
   // The close control is `aria-label="Fechar"` now; "×" was its accessible
-  // name, which is not one.
+  // name, which is not one. This path unmounts the dialog instead of letting
+  // the UA close it, so focus return is the shell's unmount cleanup doing its
+  // job, not the platform's — assert it here too.
   await page.getByRole('button', { name: 'Fechar' }).click();
+  await expect(page.getByTestId('artifact-modal')).toHaveCount(0);
+  await expect(screenshotArtifactButton).toBeFocused();
 
   // Keyboard pass, tablist (ARIA tabs pattern): arrows step and wrap, Home and
   // End jump to the ends.
@@ -887,6 +891,17 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
 
   await mkdir(resolve(BUILDER_SCREENSHOT, '..'), { recursive: true });
   await page.setViewportSize({ width: 1440, height: 1200 });
+  // The lg shell is exactly one viewport tall, so the builder document must
+  // not scroll — anything taller paints bare mesh below the panes. It regressed
+  // once via the knowledge-file `sr-only` inputs: `position: absolute` with no
+  // positioned ancestor resolves against the initial containing block, which
+  // escapes both the chat scroller's and the pane's clip.
+  expect(
+    await page.evaluate(() => ({
+      scrollHeight: document.documentElement.scrollHeight,
+      clientHeight: document.documentElement.clientHeight,
+    })),
+  ).toMatchObject({ scrollHeight: 1200, clientHeight: 1200 });
   await page.screenshot({ path: BUILDER_SCREENSHOT, fullPage: true });
   expect((await stat(BUILDER_SCREENSHOT)).size).toBeGreaterThan(0);
   await test.info().attach('knowledge builder desktop', {

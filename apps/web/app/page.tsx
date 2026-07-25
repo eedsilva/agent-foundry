@@ -6,7 +6,8 @@ import type { Project } from '@agent-foundry/contracts';
 import { createProject, listProjects } from '../lib/api';
 import { ProjectCard } from '@/components/project-card';
 import { EmptyState } from '@/components/empty-state';
-import { ERROR_BOX, PRIMARY_BTN } from '@/lib/ui';
+import { ERROR_BOX, FIELD, LABEL, PAGE, PANEL, PANEL_TITLE, PRIMARY_BTN, TEXTAREA } from '@/lib/ui';
+import { cn } from '@/lib/utils';
 
 const SAMPLE_PRD = `# PRD: Issue Radar
 
@@ -69,7 +70,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1180px] px-6 py-10">
+    <div className={PAGE}>
       <header className="mb-8 max-w-[62ch]">
         <h1 className="text-ink text-[32px] leading-tight font-semibold tracking-[-0.02em]">
           Transforme um PRD em uma linha de montagem de agentes.
@@ -81,31 +82,28 @@ export default function HomePage() {
       </header>
 
       <section className="mb-10 grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,0.9fr)]">
-        <form
-          onSubmit={submit}
-          className="bg-surface border-hairline rounded-panel shadow-card flex flex-col gap-4 border p-5"
-        >
-          <h2 className="text-ink text-[15px] font-semibold">Forneça o problema</h2>
+        <form onSubmit={submit} className={cn(PANEL, 'flex flex-col gap-4')}>
+          <h2 className={PANEL_TITLE}>Forneça o problema</h2>
 
-          <label className="text-ink-muted flex flex-col gap-1.5 text-[13px] font-medium">
+          <label className={LABEL}>
             Nome do projeto
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
               maxLength={120}
               required
-              className="border-hairline rounded-control text-ink focus:border-accent bg-surface border px-3 py-2 text-[14px] outline-none"
+              className={FIELD}
             />
           </label>
 
-          <label className="text-ink-muted flex flex-col gap-1.5 text-[13px] font-medium">
+          <label className={LABEL}>
             PRD <span className="text-ink-subtle font-normal">mínimo de 50 caracteres</span>
             <textarea
               value={prd}
               onChange={(event) => setPrd(event.target.value)}
               minLength={50}
               required
-              className="border-hairline rounded-control text-ink focus:border-accent bg-surface min-h-[260px] resize-y border px-3 py-2 font-mono text-[12.5px] leading-relaxed outline-none"
+              className={cn(TEXTAREA, 'min-h-[260px]')}
             />
           </label>
 
@@ -120,8 +118,8 @@ export default function HomePage() {
           </button>
         </form>
 
-        <aside className="bg-surface border-hairline rounded-panel shadow-card border p-5">
-          <h2 className="text-ink mb-4 text-[15px] font-semibold">Pipeline</h2>
+        <aside className={PANEL}>
+          <h2 className={cn(PANEL_TITLE, 'mb-4')}>Pipeline</h2>
           <ol className="flex flex-col gap-3">
             {PIPELINE_NODES.map((node) => (
               <li key={node.code} className="flex items-baseline gap-3">

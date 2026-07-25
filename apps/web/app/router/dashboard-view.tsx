@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, type FormEvent, type ReactNode } from 'react';
+import React, { useState, type FormEvent } from 'react';
 import {
   ExperimentStopRuleSchema,
   TaskKindSchema,
@@ -15,15 +15,14 @@ import { EmptyState } from '@/components/empty-state';
 import { GlassBar } from '@/components/glass-bar';
 import { StatTile } from '@/components/stat-tile';
 import { StatusPill } from '@/components/status-pill';
-import { Overlay as ModalShell } from '@/components/overlay';
+import { Overlay } from '@/components/overlay';
 import {
   ERROR_BOX,
   FIELD,
-  ICON_BTN,
   LABEL,
+  PAGE,
   PANEL,
   PANEL_HEADER,
-  PANEL_TITLE,
   PRIMARY_BTN,
   RADIO,
   SECTION_TITLE,
@@ -117,36 +116,6 @@ const TH =
 const TD = 'text-ink border-hairline border-b px-2 py-2 align-top text-[13px]';
 const FIELDSET = 'border-hairline rounded-card m-0 grid gap-3 border p-3 sm:grid-cols-3';
 const LEGEND = 'text-ink px-1 text-[13px] font-semibold';
-
-/** The shared modal shell (focus trap, `Escape`, focus return) plus this
- * surface's standard title bar. */
-function Overlay({
-  open,
-  onClose,
-  testId,
-  label,
-  placement = 'center',
-  children,
-}: {
-  open: boolean;
-  onClose: () => void;
-  testId: string;
-  label: string;
-  placement?: 'center' | 'right';
-  children: ReactNode;
-}) {
-  return (
-    <ModalShell open={open} onClose={onClose} testId={testId} label={label} placement={placement}>
-      <div className={PANEL_HEADER}>
-        <h2 className={PANEL_TITLE}>{label}</h2>
-        <button type="button" className={ICON_BTN} aria-label="Fechar" onClick={onClose}>
-          ×
-        </button>
-      </div>
-      {children}
-    </ModalShell>
-  );
-}
 
 function FilterSelect({
   label,
@@ -411,14 +380,14 @@ function ExperimentsPanel({
   const [error, setError] = useState('');
 
   // The dialog closes only once the request has actually resolved. A failed
-  // POST keeps it open with the form intact and surfaces the reason — the
-  // inline form it replaced never disappeared on failure either.
+  // POST — including the page handler's own empty-hypothesis rejection —
+  // keeps it open with the form intact and surfaces the reason in ERROR_BOX;
+  // the inline form it replaced never disappeared on failure either.
   async function handleSubmit(event: FormEvent) {
     setError('');
     try {
       await onSubmitExperiment(event);
-      // Mirrors the page's own guard: an empty hypothesis is never submitted.
-      if (form.hypothesis.trim().length > 0) setOpen(false);
+      setOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -479,6 +448,7 @@ function ExperimentsPanel({
             Hipótese
             <textarea
               className={cn(TEXTAREA, 'min-h-[84px]')}
+              required
               value={form.hypothesis}
               onChange={(event) => onFormChange({ ...form, hypothesis: event.target.value })}
             />
@@ -624,7 +594,9 @@ export function RouterDashboardView({
   onSubmitExperiment: (event: FormEvent) => void | Promise<void>;
 }) {
   return (
-    <main className="mx-auto flex w-[min(1240px,calc(100%-40px))] flex-col gap-6 py-10">
+    // `<div>`, not `<main>`: app/layout.tsx already wraps every route in one,
+    // and nested landmarks are invalid HTML.
+    <div className={cn(PAGE, 'flex flex-col gap-6')}>
       <h1 className="text-ink m-0 text-[20px] font-semibold tracking-[-0.01em]">
         Dashboard do router
       </h1>
@@ -711,6 +683,6 @@ export function RouterDashboardView({
         onFormChange={onFormChange}
         onSubmitExperiment={onSubmitExperiment}
       />
-    </main>
+    </div>
   );
 }

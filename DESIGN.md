@@ -331,3 +331,40 @@ Dependencies: 3, 4, 6 depend on 2. 5 depends on 4. 7 depends on all. 6 can run p
 Task 4 deliberately splits the file before restyling it. A combined split-and-restyle PR on an
 1868-line file cannot be reviewed, and a behavior regression would be indistinguishable from a
 styling change.
+
+## 11. Accepted deviations
+
+What shipped differs from the spec above in the places below. These are decided, not pending —
+the sections above are kept as written so the reasoning that produced them stays readable.
+
+- **§6 `center-pane.tsx` does not exist.** There is no Preview / Diff / Artefato switcher. The
+  centre slot is `preview-panel.tsx` alone; diff and artifact are dialogs
+  (`dialogs/artifact-viewer-dialog.tsx`, `app/project/[id]/diff-view.tsx` inside it) for _all_
+  content types, not just images and blobs. A switcher whose two other views are already modal is
+  a control with one destination.
+- **§5.3 drag-resizable panes persisted to `localStorage`** were not built. The three-column
+  `grid` template with `minmax()` floors covers the sizing need without a drag handle, a resize
+  observer, a persisted store and a reset menu item.
+- **§5.3's below-1000px segmented control was deliberately rejected.** A segmented control that
+  swaps Chat / Preview / Inspector unmounts the two panes it is not showing, and both `ChatPane`
+  and `ModelPinPanel` hold pane-local state — including `classifyPromptRef` — that is destroyed on
+  unmount, so a narrow-viewport user would silently lose a draft and a pending classification by
+  switching tabs. The panes stack into one column instead: everything stays mounted, nothing is
+  lost, and the collapse is asserted at 900px in `golden-flow.spec.ts`.
+- **§5.1's runtime-pill popover** was not built. `components/runtime-pill.tsx` is a non-focusable
+  `<span>` carrying the executor count in a `title` attribute. The full `RuntimeInfoResponse` has
+  no second reader yet, and a popover would be a focusable control with no keyboard-reachable
+  content worth reaching.
+- **§4's `Timeline` and `DiffPane` do not live under `components/`.** They exist as
+  `app/project/[id]/inspector/activity-tab.tsx` and `app/project/[id]/diff-view.tsx` — each has
+  exactly the callers on that route, and §4's own rule ("no component gets built until a second
+  caller exists") argues against promoting them to shared primitives before one appears.
+- **§4's shadcn primitive list was never installed.** No `Button`, `Card`, `Tabs`, `Dialog`,
+  `Sheet`, `Popover`, `DropdownMenu`, `Table`, `Tooltip`, `Toast`, `ScrollArea`, `Separator`,
+  `Input`, `Textarea`, `Select`, `Checkbox` or `Badge` — there is no `components/ui/` directory.
+  Everything is hand-rolled on the token layer: shared class strings in `lib/ui.ts`, native
+  `<dialog>` for the modal shell, the native ARIA tabs pattern for the inspector. `components.json`
+  and the `lucide-react` / `class-variance-authority` dependencies were removed once it was clear
+  nothing consumed them; `components.json` in particular declared `"baseColor": "slate"`, so the
+  next `shadcn add` would have injected the stock slate palette into `theme.css` and broken the
+  token-only rule. Re-adding shadcn means re-running `shadcn init` with a token-only base colour.

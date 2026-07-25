@@ -2,13 +2,13 @@
 
 import { use } from 'react';
 import { VersionHistory } from '../version-history';
-import { EYEBROW } from '@/lib/ui';
+import { EYEBROW, PAGE } from '@/lib/ui';
 import { cn } from '@/lib/utils';
 
 export default function ProjectVersionsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   return (
-    <div className="mx-auto w-full max-w-[1180px] px-6 py-10">
+    <div className={PAGE}>
       <a
         href={`/project/${id}`}
         className="text-ink-muted hover:text-ink mb-6 inline-block text-[13px] font-medium"

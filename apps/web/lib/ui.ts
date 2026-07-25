@@ -3,6 +3,13 @@
  * no stock Tailwind palette, no raw hex, and `glass` stays on chrome
  * (header, tab strip, alert strip, dialogs), never on these content surfaces.
  */
+
+/**
+ * The one document-page container: home, versions and the router dashboard.
+ * The builder is a full-height app shell, not a document page, and keeps its
+ * own tighter gutter.
+ */
+export const PAGE = 'mx-auto w-full max-w-[1180px] px-6 py-10';
 export const PANEL = 'bg-surface border-hairline rounded-panel shadow-card border p-4';
 export const PANEL_HEADER = 'mb-3 flex items-center justify-between gap-3';
 export const PANEL_TITLE = 'text-ink text-[15px] font-semibold';
@@ -35,6 +42,14 @@ export const RADIO = 'text-ink-muted flex items-center gap-2 text-[13px]';
 // the text (16.15:1), the tone carried by the wash and the left rule.
 export const ERROR_BOX =
   'text-ink bg-err/10 border-err rounded-control border-l-2 px-3 py-2 text-[13px]';
+/**
+ * Same shape as ERROR_BOX for a caution that is not a failure — a `role="status"`
+ * notice must not wear the error wash. `--ink` on `--warn`/10 over `--surface`
+ * (#FDF6EC) is 17.07:1, and 15.20:1 over `--surface-sunken` — both well past
+ * §7's 4.5:1.
+ */
+export const WARN_BOX =
+  'text-ink bg-warn/10 border-warn rounded-control border-l-2 px-3 py-2 text-[13px]';
 export const MONO_PANE =
   'bg-surface-sunken rounded-card text-ink max-w-full overflow-x-auto p-3 font-mono text-[12.5px] leading-relaxed';
 export const EYEBROW =

@@ -46,7 +46,10 @@ export default function RouterDashboardPage() {
 
   async function handleSubmitExperiment(event: FormEvent) {
     event.preventDefault();
-    if (form.hypothesis.trim().length === 0) return;
+    // `required` on the field stops the empty case before submit; this catches
+    // whitespace-only, which `required` accepts. Throwing rather than
+    // returning is what makes it visible — the dialog renders it in ERROR_BOX.
+    if (form.hypothesis.trim().length === 0) throw new Error('Informe a hipótese do experimento.');
     const experiment = await createExperiment(buildExperimentRequest(form));
     setExperiments((current) => [experiment, ...current]);
     setForm(EMPTY_EXPERIMENT_FORM);

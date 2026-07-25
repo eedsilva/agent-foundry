@@ -13,7 +13,7 @@ import { BlobMedia } from '../preview-panel';
 import { DiffView } from '../diff-view';
 import { StatusPill } from '@/components/status-pill';
 import { Overlay } from '@/components/overlay';
-import { BTN, EYEBROW, HINT, ICON_BTN, MONO_PANE, PANEL_HEADER, PANEL_TITLE } from '@/lib/ui';
+import { BTN, HINT, MONO_PANE } from '@/lib/ui';
 
 function artifactText(content: unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content, null, 2);
@@ -95,26 +95,17 @@ export function ArtifactViewerDialog({
       onClose={() => setSelected(null)}
       testId="artifact-modal"
       label={`Artefato ${selected.metadata.name}`}
+      eyebrow="ARTEFATO"
+      title={`${selected.metadata.name} · r${selected.metadata.revision}`}
+      actions={
+        selected.metadata.revision > 1 ? (
+          <button className={BTN} onClick={() => void toggleDiff()}>
+            {showDiff ? 'Ver conteúdo' : 'Comparar com revisão anterior'}
+          </button>
+        ) : null
+      }
     >
       <>
-        <div className={PANEL_HEADER}>
-          <div>
-            <p className={EYEBROW}>ARTEFATO</p>
-            <h2 className={PANEL_TITLE}>
-              {selected.metadata.name} · r{selected.metadata.revision}
-            </h2>
-          </div>
-          <div className="flex items-center gap-2">
-            {selected.metadata.revision > 1 ? (
-              <button className={BTN} onClick={() => void toggleDiff()}>
-                {showDiff ? 'Ver conteúdo' : 'Comparar com revisão anterior'}
-              </button>
-            ) : null}
-            <button className={ICON_BTN} aria-label="Fechar" onClick={() => setSelected(null)}>
-              ×
-            </button>
-          </div>
-        </div>
         {showDiff ? (
           previousArtifact ? (
             <DiffView

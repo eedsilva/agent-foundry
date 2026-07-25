@@ -13,18 +13,7 @@ import { decideApproval } from '../../../../lib/api';
 import { DiffView, unifiedDiffToSpans } from '../diff-view';
 import { VerificationReportView } from '../preview-panel';
 import { Overlay } from '@/components/overlay';
-import {
-  BTN,
-  ERROR_BOX,
-  EYEBROW,
-  FIELD,
-  HINT,
-  ICON_BTN,
-  LABEL,
-  PANEL_HEADER,
-  PANEL_TITLE,
-  TEXTAREA,
-} from '@/lib/ui';
+import { BTN, ERROR_BOX, FIELD, HINT, LABEL, TEXTAREA } from '@/lib/ui';
 
 export const NO_PREDECESSOR_VERSION_MESSAGE = 'Nenhuma versão anterior para comparar.';
 
@@ -112,20 +101,9 @@ export function DecideDialog({
       onClose={() => setDecideTarget(null)}
       testId="artifact-modal"
       label={`${decideTarget.action} · ${decideTarget.node.title}`}
+      eyebrow="DECISÃO"
     >
       <>
-        <div className={PANEL_HEADER}>
-          <div>
-            <p className={EYEBROW}>DECISÃO</p>
-            <h2 className={PANEL_TITLE}>
-              {decideTarget.action} · {decideTarget.node.title}
-            </h2>
-          </div>
-          <button className={ICON_BTN} aria-label="Fechar" onClick={() => setDecideTarget(null)}>
-            ×
-          </button>
-        </div>
-
         {decideTarget.action === 'approve' ? (
           <p className="text-ink text-[13px]">Aprovar avança o workflow para o próximo nó.</p>
         ) : decideTarget.action === 'reject' && decideTarget.node.onReject === 'end' ? (

@@ -21,7 +21,17 @@ import {
 } from '../../../lib/api';
 import { KnowledgeFiles } from './knowledge-files';
 import { ConversationList, type ProposalEditorState } from './conversation-list';
-import { BTN, ERROR_BOX, HINT, META, PANEL_TITLE, PRIMARY_BTN, RADIO, TEXTAREA } from '@/lib/ui';
+import {
+  BTN,
+  ERROR_BOX,
+  HINT,
+  META,
+  PANEL_TITLE,
+  PRIMARY_BTN,
+  RADIO,
+  TEXTAREA,
+  WARN_BOX,
+} from '@/lib/ui';
 
 export function ChatPane({
   id,
@@ -185,7 +195,14 @@ export function ChatPane({
         <span className={HINT}>{conversation?.messages.length ?? 0} mensagens</span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      {/* `relative`: the knowledge-file controls below use `sr-only` file
+          inputs, which are `position: absolute`. Without a positioned ancestor
+          their containing block is the initial one, so they escape this
+          scroller's clip *and* the pane's `overflow-hidden`, sit at their
+          static position hundreds of pixels below the fold, and stretch
+          `documentElement.scrollHeight` past the viewport — which showed up as
+          bare mesh under the builder's panes (1538px at a 1200px viewport). */}
+      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {conversationError ? (
           <p role="alert" className={`${ERROR_BOX} mb-3`}>
             {conversationError}
@@ -301,7 +318,7 @@ export function ChatPane({
             {/* Steady-state copy, not a failure: `role="status"` announces it
                 once when Build mode is picked instead of interrupting on every
                 keystroke-driven re-render the way `role="alert"` did. */}
-            <p role="status" className={ERROR_BOX}>
+            <p role="status" className={WARN_BOX}>
               Esta ação vai alterar o código do projeto e consumir budget.
             </p>
           </div>
