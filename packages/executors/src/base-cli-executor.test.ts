@@ -7,7 +7,6 @@ import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import type { AgentExecutionRequest, Provider } from '@agent-foundry/contracts';
-import { ExecutionError, ProviderAuthenticationError, errorMessage } from '@agent-foundry/domain';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
 
 function fixture(name: string): string {
@@ -507,12 +506,15 @@ describe('BaseCliExecutor failure cause (issue #286)', () => {
       stderr: '',
     });
 
-    const error = await new FixtureExecutor(1_000_000, undefined, 'claude')
-      .execute(request)
-      .catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(ExecutionError);
-    expect(error).not.toBeInstanceOf(ProviderAuthenticationError);
-    expect(errorMessage(error)).toBe('claude CLI exited with code 1: The tool call failed.');
+    // `name` is the discriminator: the subclass overrides it, so asserting the
+    // base name is also asserting this did not become a ProviderAuthenticationError.
+    await expect(
+      new FixtureExecutor(1_000_000, undefined, 'claude').execute(request),
+    ).rejects.toThrowError(
+      expect.objectContaining({
+        name: 'ExecutionError',
+        message: 'claude CLI exited with code 1: The tool call failed.',
+      }),
+    );
   });
 });

@@ -67,11 +67,7 @@ export class ExecutionError extends Error {
   }
 }
 
-/**
- * The provider CLI could not authenticate. An environment fault, not a signal
- * about the model — callers that score model quality must skip it. Extends
- * ExecutionError so every existing `instanceof ExecutionError` branch holds.
- */
+/** The CLI never authenticated: an environment fault, so model scoring must skip it. */
 export class ProviderAuthenticationError extends ExecutionError {
   override readonly name = 'ProviderAuthenticationError';
 }

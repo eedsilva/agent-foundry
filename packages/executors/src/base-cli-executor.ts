@@ -223,8 +223,10 @@ export abstract class BaseCliExecutor implements AgentExecutor {
       const result = await execa(this.command, ['--version'], {
         reject: false,
         timeout: 10_000,
-        // Same scoped env as execute(): a probe run under the full inherited
-        // env reports available for a CLI that execute() cannot authenticate.
+        // Same scoped env as execute(), so `available` cannot be true for a
+        // CLI only reachable through a variable execute() strips. `--version`
+        // never touches the credential store, so this still says nothing about
+        // authentication — scripts/doctor.mjs is what probes that.
         ...safeSpawnEnv(process.env),
       });
       const available = result.exitCode === 0;

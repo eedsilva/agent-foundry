@@ -51,17 +51,27 @@ function authoritativeArtifactCandidates(provider: Provider, raw: string): unkno
     return messages.length > 0 ? [messages.at(-1)] : [];
   }
 
-  const results = documents.filter(
-    (document): document is Record<string, unknown> =>
-      document !== null &&
-      typeof document === 'object' &&
-      !Array.isArray(document) &&
-      (document as Record<string, unknown>).type === 'result',
-  );
-  const terminal = results.at(-1);
-  if (!terminal || terminal.is_error === true || terminal.subtype === 'error') return [];
+  const terminal = terminalResult(documents);
+  if (!terminal || isFailedResult(terminal)) return [];
   if (provider === 'claude') return [terminal.structured_output ?? terminal.result];
   return [terminal.output ?? terminal.result];
+}
+
+/** The last `type: 'result'` line — the record that closes a provider's turn. */
+function terminalResult(documents: unknown[]): Record<string, unknown> | undefined {
+  return documents
+    .filter(
+      (document): document is Record<string, unknown> =>
+        document !== null &&
+        typeof document === 'object' &&
+        !Array.isArray(document) &&
+        (document as Record<string, unknown>).type === 'result',
+    )
+    .at(-1);
+}
+
+function isFailedResult(terminal: Record<string, unknown>): boolean {
+  return terminal.is_error === true || terminal.subtype === 'error';
 }
 
 export function extractUsage(
@@ -150,17 +160,11 @@ export function extractCliFailure(
   // record, so they keep the bare exit code. Add a branch when one gains it.
   if (provider !== 'claude') return undefined;
 
-  for (const document of providerDocuments(stdout).reverse()) {
-    if (document === null || typeof document !== 'object' || Array.isArray(document)) continue;
-    const record = document as Record<string, unknown>;
-    if (record.type !== 'result' || (record.is_error !== true && record.subtype !== 'error')) {
-      continue;
-    }
-    const message = stringFrom(record, ['result']);
-    if (!message) continue;
-    return { message, authFailure: record.subtype === 'authentication_failed' };
-  }
-  return undefined;
+  const terminal = terminalResult(providerDocuments(stdout));
+  if (!terminal || !isFailedResult(terminal)) return undefined;
+  const message = stringFrom(terminal, ['result']);
+  if (!message) return undefined;
+  return { message, authFailure: terminal.subtype === 'authentication_failed' };
 }
 
 export function extractExecutedModel(
