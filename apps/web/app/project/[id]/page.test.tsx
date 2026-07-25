@@ -1,20 +1,10 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import * as page from './page';
-
-type ProvisioningErrorView = (props: { error: string }) => React.ReactElement;
-type TimelineView = (props: { children: React.ReactNode }) => React.ReactElement;
-
-const { ProjectProvisioningError, ProjectTimeline } = page as typeof page & {
-  ProjectProvisioningError: ProvisioningErrorView;
-  ProjectTimeline: TimelineView;
-};
+import { ProjectProvisioningError, ProjectTimeline } from './page';
 
 describe('ProjectPage provisioning failure', () => {
   it('renders a concise provisioning error with a timeline link', () => {
-    expect(ProjectProvisioningError).toBeTypeOf('function');
-
     const markup = renderToStaticMarkup(
       <ProjectProvisioningError error="Provisionamento indisponível." />,
     );
@@ -25,8 +15,6 @@ describe('ProjectPage provisioning failure', () => {
   });
 
   it('renders the timeline anchor target', () => {
-    expect(ProjectTimeline).toBeTypeOf('function');
-
     const markup = renderToStaticMarkup(
       <ProjectTimeline>
         <p>Linha do tempo</p>
