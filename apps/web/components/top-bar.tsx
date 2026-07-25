@@ -15,7 +15,8 @@ export function TopBar({ activePath }: { activePath: string }) {
       className="sticky top-0 z-30 flex h-14 items-center gap-6 rounded-none border-x-0 border-t-0 px-6"
     >
       <a href="/" className="flex items-center gap-2.5">
-        <span className="bg-accent grid size-7 place-items-center rounded-[7px] font-mono text-[11px] font-bold text-surface">
+        {/* `--surface` on `--accent` is 3.09:1; on `--accent-strong` 4.76:1. */}
+        <span className="bg-accent-strong rounded-control text-surface grid size-7 place-items-center font-mono text-[11px] font-bold">
           AF
         </span>
         <strong className="text-ink text-[14px]">Agent Foundry</strong>
@@ -31,7 +32,9 @@ export function TopBar({ activePath }: { activePath: string }) {
               {...(active ? { 'aria-current': 'page' as const } : {})}
               className={cn(
                 'rounded-control px-3 py-1.5 text-[13px] font-medium transition-colors',
-                active ? 'bg-accent-wash text-accent' : 'text-ink-muted hover:text-ink',
+                // `text-accent` on `bg-accent-wash` is 2.85:1 — the active
+                // state rides on the wash, the label stays `--ink`.
+                active ? 'bg-accent-wash text-ink font-semibold' : 'text-ink-muted hover:text-ink',
               )}
             >
               {item.label}

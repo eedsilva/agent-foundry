@@ -156,7 +156,7 @@ export function VerificationReportView({
             <ul className="text-ink-muted mt-2 flex list-none flex-col gap-1 p-0 text-[12px]">
               {step.observations.map((observation, index) => (
                 <li key={index}>
-                  <code className="text-accent font-mono">{observation.kind}</code>{' '}
+                  <code className="text-accent-strong font-mono">{observation.kind}</code>{' '}
                   {observation.message}
                   {observation.url ? (
                     <small className="text-ink-subtle"> · {observation.url}</small>

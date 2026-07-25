@@ -10,16 +10,8 @@ import type {
 import { retryStep } from '../../../../lib/api';
 import { retryMode, retryRequest } from '../../../../lib/model-overrides';
 import { ModelPinFields, pinFields } from '../model-pin-fields';
-import {
-  BTN,
-  EYEBROW,
-  ICON_BTN,
-  MODAL,
-  MODAL_BACKDROP,
-  PANEL_HEADER,
-  PANEL_TITLE,
-  RADIO,
-} from '@/lib/ui';
+import { Overlay } from '@/components/overlay';
+import { BTN, EYEBROW, ICON_BTN, PANEL_HEADER, PANEL_TITLE, RADIO } from '@/lib/ui';
 
 export type RetryPlanTarget = { step: StepRun; plan: RetryPlanResponse };
 
@@ -62,18 +54,19 @@ export function RetryPlanDialog({
   if (!retryPlan) return null;
 
   return (
-    <div className={MODAL_BACKDROP} onClick={() => setRetryPlan(null)} role="presentation">
-      <section
-        className={MODAL}
-        data-testid="artifact-modal"
-        onClick={(event) => event.stopPropagation()}
-      >
+    <Overlay
+      open
+      onClose={() => setRetryPlan(null)}
+      testId="artifact-modal"
+      label={`Reexecutar ${retryPlan.step.stepId}`}
+    >
+      <>
         <div className={PANEL_HEADER}>
           <div>
             <p className={EYEBROW}>REEXECUTAR STEP</p>
             <h2 className={PANEL_TITLE}>{retryPlan.step.stepId}</h2>
           </div>
-          <button className={ICON_BTN} onClick={() => setRetryPlan(null)}>
+          <button className={ICON_BTN} aria-label="Fechar" onClick={() => setRetryPlan(null)}>
             ×
           </button>
         </div>
@@ -141,7 +134,7 @@ export function RetryPlanDialog({
             ) : null}
           </div>
         </form>
-      </section>
-    </div>
+      </>
+    </Overlay>
   );
 }

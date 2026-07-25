@@ -38,7 +38,7 @@ export function ArtifactsTab({
                   {artifact.metadata.createdBy}
                 </small>
               </span>
-              <code className="text-accent shrink-0 font-mono text-[12px]">
+              <code className="text-accent-strong shrink-0 font-mono text-[12px]">
                 r{artifact.metadata.revision}
               </code>
             </button>

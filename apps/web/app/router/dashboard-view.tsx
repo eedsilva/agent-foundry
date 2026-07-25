@@ -15,13 +15,12 @@ import { EmptyState } from '@/components/empty-state';
 import { GlassBar } from '@/components/glass-bar';
 import { StatTile } from '@/components/stat-tile';
 import { StatusPill } from '@/components/status-pill';
+import { Overlay as ModalShell } from '@/components/overlay';
 import {
   ERROR_BOX,
   FIELD,
   ICON_BTN,
   LABEL,
-  MODAL,
-  MODAL_BACKDROP,
   PANEL,
   PANEL_HEADER,
   PANEL_TITLE,
@@ -119,19 +118,8 @@ const TD = 'text-ink border-hairline border-b px-2 py-2 align-top text-[13px]';
 const FIELDSET = 'border-hairline rounded-card m-0 grid gap-3 border p-3 sm:grid-cols-3';
 const LEGEND = 'text-ink px-1 text-[13px] font-semibold';
 
-/**
- * Right-hand slide-over (DESIGN.md §5.4). A sheet is chrome, so §3.3's glass
- * applies here — the table stays legible behind it, which is the whole point
- * of a sheet over a centred dialog.
- */
-const SHEET = 'glass rounded-l-sheet shadow-modal h-full w-[min(560px,100%)] overflow-auto p-6';
-
-/**
- * Non-modal `<dialog>`: it stays in the DOM when closed (the UA's
- * `dialog:not([open]) { display: none }` hides it) so the markup can be
- * asserted without a DOM harness, and `hidden` wins over `MODAL_BACKDROP`'s
- * `grid` through tailwind-merge's display group.
- */
+/** The shared modal shell (focus trap, `Escape`, focus return) plus this
+ * surface's standard title bar. */
 function Overlay({
   open,
   onClose,
@@ -147,30 +135,16 @@ function Overlay({
   placement?: 'center' | 'right';
   children: ReactNode;
 }) {
-  const sheet = placement === 'right';
   return (
-    <dialog
-      open={open}
-      aria-label={label}
-      data-testid={testId}
-      className={cn(
-        MODAL_BACKDROP,
-        'text-ink m-0 h-full max-h-none w-full max-w-none border-0',
-        sheet && 'flex justify-end p-0',
-        !open && 'hidden',
-      )}
-      onClick={onClose}
-    >
-      <div className={sheet ? SHEET : MODAL} onClick={(event) => event.stopPropagation()}>
-        <div className={PANEL_HEADER}>
-          <h2 className={PANEL_TITLE}>{label}</h2>
-          <button type="button" className={ICON_BTN} aria-label="Fechar" onClick={onClose}>
-            ×
-          </button>
-        </div>
-        {children}
+    <ModalShell open={open} onClose={onClose} testId={testId} label={label} placement={placement}>
+      <div className={PANEL_HEADER}>
+        <h2 className={PANEL_TITLE}>{label}</h2>
+        <button type="button" className={ICON_BTN} aria-label="Fechar" onClick={onClose}>
+          ×
+        </button>
       </div>
-    </dialog>
+      {children}
+    </ModalShell>
   );
 }
 

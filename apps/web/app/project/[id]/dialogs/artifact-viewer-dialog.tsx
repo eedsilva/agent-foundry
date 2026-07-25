@@ -12,17 +12,8 @@ import { formatSeconds } from '../format-usage.js';
 import { BlobMedia } from '../preview-panel';
 import { DiffView } from '../diff-view';
 import { StatusPill } from '@/components/status-pill';
-import {
-  BTN,
-  EYEBROW,
-  HINT,
-  ICON_BTN,
-  MODAL,
-  MODAL_BACKDROP,
-  MONO_PANE,
-  PANEL_HEADER,
-  PANEL_TITLE,
-} from '@/lib/ui';
+import { Overlay } from '@/components/overlay';
+import { BTN, EYEBROW, HINT, ICON_BTN, MONO_PANE, PANEL_HEADER, PANEL_TITLE } from '@/lib/ui';
 
 function artifactText(content: unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content, null, 2);
@@ -99,12 +90,13 @@ export function ArtifactViewerDialog({
   if (!selected) return null;
 
   return (
-    <div className={MODAL_BACKDROP} onClick={() => setSelected(null)} role="presentation">
-      <section
-        className={MODAL}
-        data-testid="artifact-modal"
-        onClick={(event) => event.stopPropagation()}
-      >
+    <Overlay
+      open
+      onClose={() => setSelected(null)}
+      testId="artifact-modal"
+      label={`Artefato ${selected.metadata.name}`}
+    >
+      <>
         <div className={PANEL_HEADER}>
           <div>
             <p className={EYEBROW}>ARTEFATO</p>
@@ -118,7 +110,7 @@ export function ArtifactViewerDialog({
                 {showDiff ? 'Ver conteúdo' : 'Comparar com revisão anterior'}
               </button>
             ) : null}
-            <button className={ICON_BTN} onClick={() => setSelected(null)}>
+            <button className={ICON_BTN} aria-label="Fechar" onClick={() => setSelected(null)}>
               ×
             </button>
           </div>
@@ -169,7 +161,7 @@ export function ArtifactViewerDialog({
             {artifactText(selected.content)}
           </pre>
         )}
-      </section>
-    </div>
+      </>
+    </Overlay>
   );
 }

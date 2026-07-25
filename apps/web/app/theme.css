@@ -4,7 +4,13 @@
   --color-bg: #f4f6f8;
   --color-ink: #10151a;
   --color-ink-muted: #5c6b7a;
-  --color-ink-subtle: #8a97a3;
+  /*
+   * DESIGN.md §7 names `--ink-subtle` on `--surface-sunken` as the tightest
+   * pair. The v1 value #8A97A3 measured 2.63:1 there (2.98:1 on `--surface`),
+   * both under the 4.5:1 §7 requires. #656E77 is the lightest value on the
+   * same hue ramp that clears it on both: 4.57:1 sunken, 5.19:1 surface.
+   */
+  --color-ink-subtle: #656e77;
   --color-surface: #ffffff;
   --color-surface-sunken: #eef1f4;
   --color-hairline: rgba(16, 21, 26, 0.08);
@@ -56,9 +62,31 @@
     background-attachment: fixed;
   }
 
+  /* Tailwind v4's preflight sets `cursor: default` on buttons; the legacy
+     stylesheet Task 7 deleted was the only thing restoring the pointer. */
+  button:not(:disabled),
+  [role='button']:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+
   :focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
+  }
+}
+
+/*
+ * DESIGN.md §7: all motion behind `prefers-reduced-motion`.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

@@ -58,10 +58,19 @@ export function InspectorTabs({
   tabs: InspectorTab[];
 }) {
   function onKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
-    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+    // ARIA authoring practices, tabs pattern: Left/Right wrap, Home/End jump.
+    const nextIndex =
+      event.key === 'ArrowRight'
+        ? (index + 1) % tabs.length
+        : event.key === 'ArrowLeft'
+          ? (index - 1 + tabs.length) % tabs.length
+          : event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? tabs.length - 1
+              : -1;
+    if (nextIndex < 0) return;
     event.preventDefault();
-    const delta = event.key === 'ArrowRight' ? 1 : -1;
-    const nextIndex = (index + delta + tabs.length) % tabs.length;
     const next = tabs[nextIndex];
     if (!next) return;
     onTabChange(next.id);

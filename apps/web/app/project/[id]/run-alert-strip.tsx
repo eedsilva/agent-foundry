@@ -27,7 +27,11 @@ export function AlertStrip({
 }) {
   return (
     <div
-      role="alert"
+      // `role="alert"` is an *assertive* live region: it interrupts the screen
+      // reader and re-announces on every re-render. Only a failure earns that.
+      // Steady-state strips ("execução pausada") use `role="status"`, which
+      // announces once, politely, when it appears.
+      role={tone === 'err' ? 'alert' : 'status'}
       data-testid="run-alert"
       className="glass rounded-panel text-ink flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-[13px]"
     >
@@ -39,13 +43,30 @@ export function AlertStrip({
   );
 }
 
-export function ProjectProvisioningError({ error }: { error: string }) {
+export function ProjectProvisioningError({
+  error,
+  onShowTimeline,
+}: {
+  error: string;
+  /**
+   * `#project-timeline` lives inside the Atividade tab panel, which is
+   * `hidden` from every other tab — the bare anchor is a no-op there. Switching
+   * the inspector first makes the target exist before the browser scrolls.
+   */
+  onShowTimeline?: () => void;
+}) {
   return (
     <AlertStrip
       tone="err"
       title={error}
       actions={
-        <a href="#project-timeline" className="text-accent hover:text-accent-strong font-medium">
+        // `--accent` as text on the near-white glass composite is ~3.2:1; the
+        // link is `--ink` + an underline, which is also the non-colour cue.
+        <a
+          href="#project-timeline"
+          onClick={() => onShowTimeline?.()}
+          className="text-ink hover:text-accent-strong font-medium underline underline-offset-2"
+        >
           Ver detalhes na linha do tempo
         </a>
       }
@@ -59,16 +80,20 @@ export function RunAlertStrip({
   run,
   resumeBlocked,
   onRetry,
+  onShowTimeline,
 }: {
   projectError: string | null | undefined;
   error: string;
   run: WorkflowRun | undefined;
   resumeBlocked: ResumeBlockedResponse | null;
   onRetry: () => void;
+  onShowTimeline: () => void;
 }) {
   return (
     <>
-      {projectError ? <ProjectProvisioningError error={projectError} /> : null}
+      {projectError ? (
+        <ProjectProvisioningError error={projectError} onShowTimeline={onShowTimeline} />
+      ) : null}
       {error ? <AlertStrip tone="err" title={error} /> : null}
 
       {run?.status === 'paused' ? (

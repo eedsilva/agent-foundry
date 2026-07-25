@@ -17,12 +17,13 @@ export const BTN =
  * on `--accent-wash` over white (#ECF8F8) measures 2.85:1, well under the 4.5:1
  * DESIGN.md §7 requires, and axe fails the preview panel on it. The accent
  * border plus the wash carry the active state instead. Task 7's contrast audit
- * decides whether `--accent` itself is darkened.
+ * left `--accent` alone (it is a UI/fill colour at 3.09:1 ≥ 3:1) and darkened
+ * only `--ink-subtle`; `--accent-strong` is the tinted *text* colour.
  */
 export const BTN_ACTIVE = 'border-accent bg-accent-wash text-ink';
 // `--surface` on `--accent` is 3.09:1; on `--accent-strong` it is 4.76:1. The
 // hover state darkens with a filter rather than a lighter token so the label
-// never drops back below 4.5:1. Task 7 owns any change to `--accent` itself.
+// never drops back below 4.5:1.
 export const PRIMARY_BTN =
   'bg-accent-strong hover:brightness-90 rounded-control text-surface px-4 py-2 text-[14px] font-semibold disabled:opacity-60';
 export const FIELD =
@@ -43,8 +44,12 @@ export const MODAL =
   'bg-surface border-hairline rounded-sheet shadow-modal max-h-[88vh] w-[min(1000px,100%)] overflow-auto border p-6';
 export const ICON_BTN =
   'border-hairline text-ink hover:bg-accent-wash grid size-9 shrink-0 place-items-center rounded-full border text-[20px] leading-none';
-export const DIFF_ADDED = 'text-ok bg-ok/10';
-export const DIFF_REMOVED = 'text-err bg-err/10 line-through';
+// Same remedy as StatusPill and ERROR_BOX: `--ok` on its own 10% wash over
+// `--surface-sunken` is 2.8:1 and `--err` 3.4:1, both under §7's 4.5:1. The
+// wash carries the tone, the `+`/`-` gutter character carries the meaning
+// without colour, and removals keep the strike-through.
+export const DIFF_ADDED = 'text-ink bg-ok/10';
+export const DIFF_REMOVED = 'text-ink bg-err/10 line-through';
 /** Neutral metadata chip. Anything that is a *status* uses `StatusPill` instead. */
 export const CHIP =
   'bg-surface-sunken text-ink-muted inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[12px] font-semibold';

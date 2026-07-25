@@ -199,7 +199,7 @@ export function ConversationList({
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <a
                   href={`/project/${projectId}/versions`}
-                  className="text-accent hover:text-accent-strong text-[13px] font-medium"
+                  className="text-accent-strong hover:text-ink text-[13px] font-medium underline underline-offset-2"
                 >
                   Ver diff
                 </a>

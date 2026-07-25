@@ -6,6 +6,7 @@ import type { Project } from '@agent-foundry/contracts';
 import { createProject, listProjects } from '../lib/api';
 import { ProjectCard } from '@/components/project-card';
 import { EmptyState } from '@/components/empty-state';
+import { ERROR_BOX, PRIMARY_BTN } from '@/lib/ui';
 
 const SAMPLE_PRD = `# PRD: Issue Radar
 
@@ -109,15 +110,12 @@ export default function HomePage() {
           </label>
 
           {error ? (
-            <p role="alert" className="text-err bg-err/10 rounded-control px-3 py-2 text-[13px]">
+            <p role="alert" className={ERROR_BOX}>
               {error}
             </p>
           ) : null}
 
-          <button
-            disabled={submitting}
-            className="bg-accent hover:bg-accent-strong rounded-control text-surface px-4 py-2.5 text-[14px] font-semibold disabled:opacity-60"
-          >
+          <button disabled={submitting} className={`${PRIMARY_BTN} py-2.5`}>
             {submitting ? 'Criando e enfileirando…' : 'Fundir projeto'}
           </button>
         </form>
@@ -127,7 +125,7 @@ export default function HomePage() {
           <ol className="flex flex-col gap-3">
             {PIPELINE_NODES.map((node) => (
               <li key={node.code} className="flex items-baseline gap-3">
-                <code className="text-accent w-[62px] shrink-0 font-mono text-[11px] font-bold">
+                <code className="text-accent-strong w-[62px] shrink-0 font-mono text-[11px] font-bold">
                   {node.code}
                 </code>
                 <span className="text-ink-muted text-[13px]">{node.title}</span>

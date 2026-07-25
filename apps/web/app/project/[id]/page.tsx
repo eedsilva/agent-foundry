@@ -416,6 +416,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             run={run}
             resumeBlocked={resumeBlocked}
             onRetry={() => void retry()}
+            onShowTimeline={() => selectTab('atividade')}
           />
           <RetryPlanDialog
             retryPlan={retryPlan}

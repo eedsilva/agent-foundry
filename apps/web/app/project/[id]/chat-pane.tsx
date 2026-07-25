@@ -298,7 +298,10 @@ export function ChatPane({
               />{' '}
               Build direto, sem plano (decisão explícita)
             </label>
-            <p role="alert" className={ERROR_BOX}>
+            {/* Steady-state copy, not a failure: `role="status"` announces it
+                once when Build mode is picked instead of interrupting on every
+                keystroke-driven re-render the way `role="alert"` did. */}
+            <p role="status" className={ERROR_BOX}>
               Esta ação vai alterar o código do projeto e consumir budget.
             </p>
           </div>

@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { TopBarClient } from '@/components/top-bar-client';
 import './theme.css';
-import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Agent Foundry',

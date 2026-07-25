@@ -51,7 +51,8 @@ export function StatTile({
         {label}
       </span>
       <strong className="text-ink text-[24px] leading-none font-semibold">{value}</strong>
-      {/* `--ink-subtle` is 2.98:1 on `--surface`; `--ink-muted` is 5.47:1. */}
+      {/* `--ink-muted` is 5.47:1 on `--surface`; `--ink-subtle` is 5.19:1
+          since Task 7 darkened it. The tile keeps the stronger one. */}
       {hint ? <span className="text-ink-muted text-[12px]">{hint}</span> : null}
     </div>
   );

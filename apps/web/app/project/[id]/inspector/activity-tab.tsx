@@ -46,7 +46,7 @@ export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: bo
                 />
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="min-w-0">
-                    <code className="text-accent font-mono text-[11px]">{event.type}</code>
+                    <code className="text-accent-strong font-mono text-[11px]">{event.type}</code>
                     {badges.map((badge) => (
                       <small key={badge} className="text-ink-subtle font-mono text-[10px]">
                         {' '}

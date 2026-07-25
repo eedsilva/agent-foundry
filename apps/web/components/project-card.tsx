@@ -21,7 +21,15 @@ export function ProjectCard({ project }: { project: Project }) {
         <StatusPill status={project.status} />
       </div>
 
-      <div className="flex gap-1" aria-hidden>
+      <div
+        className="flex gap-1"
+        role="img"
+        aria-label={
+          reachedIndex >= 0
+            ? `Etapa ${reachedIndex + 1} de ${STAGES.length}`
+            : 'Nenhuma etapa concluída'
+        }
+      >
         {STAGES.map((stage, index) => (
           <span
             key={stage}

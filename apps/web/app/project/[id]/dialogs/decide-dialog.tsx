@@ -12,6 +12,7 @@ import type {
 import { decideApproval } from '../../../../lib/api';
 import { DiffView, unifiedDiffToSpans } from '../diff-view';
 import { VerificationReportView } from '../preview-panel';
+import { Overlay } from '@/components/overlay';
 import {
   BTN,
   ERROR_BOX,
@@ -20,8 +21,6 @@ import {
   HINT,
   ICON_BTN,
   LABEL,
-  MODAL,
-  MODAL_BACKDROP,
   PANEL_HEADER,
   PANEL_TITLE,
   TEXTAREA,
@@ -108,12 +107,13 @@ export function DecideDialog({
   if (!decideTarget) return null;
 
   return (
-    <div className={MODAL_BACKDROP} onClick={() => setDecideTarget(null)} role="presentation">
-      <section
-        className={MODAL}
-        data-testid="artifact-modal"
-        onClick={(event) => event.stopPropagation()}
-      >
+    <Overlay
+      open
+      onClose={() => setDecideTarget(null)}
+      testId="artifact-modal"
+      label={`${decideTarget.action} · ${decideTarget.node.title}`}
+    >
+      <>
         <div className={PANEL_HEADER}>
           <div>
             <p className={EYEBROW}>DECISÃO</p>
@@ -121,7 +121,7 @@ export function DecideDialog({
               {decideTarget.action} · {decideTarget.node.title}
             </h2>
           </div>
-          <button className={ICON_BTN} onClick={() => setDecideTarget(null)}>
+          <button className={ICON_BTN} aria-label="Fechar" onClick={() => setDecideTarget(null)}>
             ×
           </button>
         </div>
@@ -211,7 +211,7 @@ export function DecideDialog({
             {deciding ? 'Registrando…' : `Confirmar ${decideTarget.action}`}
           </button>
         </div>
-      </section>
-    </div>
+      </>
+    </Overlay>
   );
 }

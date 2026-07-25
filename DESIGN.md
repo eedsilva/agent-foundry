@@ -40,7 +40,7 @@ Cool neutral base, teal accent.
 | `--bg`             | `#F4F6F8`                  | Page base beneath the mesh               |
 | `--ink`            | `#10151A`                  | Primary text                             |
 | `--ink-muted`      | `#5C6B7A`                  | Secondary text, labels                   |
-| `--ink-subtle`     | `#8A97A3`                  | Metadata, timestamps, placeholders       |
+| `--ink-subtle`     | `#656E77`                  | Metadata, timestamps, placeholders       |
 | `--surface`        | `#FFFFFF`                  | Content cards                            |
 | `--surface-sunken` | `#EEF1F4`                  | Inset areas: code, logs, empty states    |
 | `--hairline`       | `rgba(16, 21, 26, 0.08)`   | All borders and dividers                 |
@@ -52,7 +52,12 @@ Cool neutral base, teal accent.
 | `--err`            | `#E5484D`                  | Failed, rejected, error                  |
 | `--info`           | `#3E7BFA`                  | Running, in-progress, neutral notice     |
 
-Status colors are used as a `color` + a 10%-alpha `background` on pills, never as large fills.
+Status colors are used as a 10%-alpha `background` + a dot or left rule on pills, never as large
+fills and never as the `color` of the label: measured on `--surface`, `--ok` is 3.01:1, `--warn`
+2.16:1, `--err` 3.91:1, `--info` 3.88:1 and `--accent` 3.09:1 — all under §7's 4.5:1 for text. The
+label stays `--ink`; `--accent-strong` (4.76:1 on `--surface`) is the only tinted text colour and
+the only fill behind `--surface`-coloured text. `--ink-subtle` was darkened from `#8A97A3` to
+`#656E77` in Task 7 for the same reason (§7 names it as the tightest pair).
 
 ### 3.2 Background
 

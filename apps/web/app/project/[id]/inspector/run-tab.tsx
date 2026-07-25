@@ -70,7 +70,7 @@ export function RunTab({
                     <StatusPill status={attempt.status} />
                   </div>
                   {attempt.status === 'failed' && attempt.error ? (
-                    <small className="text-err block text-[12px]">{attempt.error.message}</small>
+                    <small className="text-ink block text-[12px]">{attempt.error.message}</small>
                   ) : null}
                   <small className="text-ink-subtle block font-mono text-[11px]">
                     {formatObservedUsage(attempt.usage)}

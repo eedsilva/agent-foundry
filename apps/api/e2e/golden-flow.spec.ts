@@ -28,6 +28,32 @@ const FIRST_BUILD_DIFF_SCREENSHOT = resolve(
   'test-results/issue-173-first-build-diff.png',
 );
 const ROUTER_SCREENSHOT = resolve(REPO_ROOT, 'test-results/router-dashboard-desktop.png');
+const HOME_SCREENSHOT = resolve(REPO_ROOT, 'test-results/home-desktop.png');
+const VERSIONS_SCREENSHOT = resolve(REPO_ROOT, 'test-results/project-versions-desktop.png');
+
+/**
+ * Whole-page axe scan. Until Task 7 this was scoped to
+ * `[data-testid="preview-panel"]`, which never saw the chat pane, the alert
+ * strip, the inspector, the home page or the router dashboard — four AA
+ * violations shipped past it. The only standing exclusion is the previewed
+ * `<iframe>`: it renders the fixture dev server's bare-text stand-in page
+ * (packages/executors/src/fixtures/preview-dev-server.mjs), not app markup, so
+ * it has no landmarks or `h1` by design.
+ */
+async function expectNoAxeViolations(page: Page, surface: string): Promise<void> {
+  const results = await new AxeBuilder({ page })
+    .exclude('[data-testid="preview-frame"]')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze();
+  expect(
+    results.violations.map((violation) => ({
+      surface,
+      id: violation.id,
+      impact: violation.impact,
+      nodes: violation.nodes.map((node) => node.target.join(' ')),
+    })),
+  ).toEqual([]);
+}
 const BROWSER_TEST_PLAN = {
   schemaVersion: '1' as const,
   status: 'completed' as const,
@@ -502,16 +528,9 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   ).toBeVisible();
   await expect(page.getByTestId('screenshot-thumb').first()).toBeVisible();
 
-  // Exclude the previewed iframe's own document: it's the fixture dev
-  // server's bare-text stand-in page (packages/executors/src/fixtures/
-  // preview-dev-server.mjs), not real app markup, so it has no landmarks/h1
-  // by design. This scan targets the PreviewPanel chrome itself (Task 4's
-  // deliverable — buttons, tabs, labels), not arbitrary previewed content.
-  const axeResults = await new AxeBuilder({ page })
-    .include('[data-testid="preview-panel"]')
-    .exclude('[data-testid="preview-frame"]')
-    .analyze();
-  expect(axeResults.violations).toEqual([]);
+  // Whole builder page: header, alert strip, chat pane, preview panel and the
+  // inspector, with the preview panel's console/network/test tabs open.
+  await expectNoAxeViolations(page, 'builder');
 
   await openInspectorTab(page, 'Artefatos');
   const screenshotArtifactButton = page
@@ -520,7 +539,40 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     .first();
   await screenshotArtifactButton.click();
   await expect(page.getByTestId('artifact-modal').getByTestId('artifact-image')).toBeVisible();
-  await page.getByRole('button', { name: '×' }).click();
+
+  // Keyboard pass, dialogs (DESIGN.md §7). Every dialog is a native <dialog>
+  // opened with showModal(), so Escape dismisses it and focus returns to the
+  // control that opened it — assert both rather than trusting the platform.
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('artifact-modal')).toHaveCount(0);
+  await expect(screenshotArtifactButton).toBeFocused();
+
+  await screenshotArtifactButton.click();
+  await expect(page.getByTestId('artifact-modal').getByTestId('artifact-image')).toBeVisible();
+  // The close control is `aria-label="Fechar"` now; "×" was its accessible
+  // name, which is not one.
+  await page.getByRole('button', { name: 'Fechar' }).click();
+
+  // Keyboard pass, tablist (ARIA tabs pattern): arrows step and wrap, Home and
+  // End jump to the ends.
+  await page.getByRole('tab', { name: 'Atividade' }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Execução' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await page.keyboard.press('End');
+  await expect(page.getByRole('tab', { name: 'Versões' })).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Atividade' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await page.keyboard.press('Home');
+  await expect(page.getByRole('tab', { name: 'Atividade' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
 
   // Scoped to the decide-modal's own heading: the live timeline ("Linha do
   // tempo") also renders an event whose message equals the node title
@@ -558,6 +610,22 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     ),
   ).toBe(true);
   await page.setViewportSize({ width: 1440, height: 900 });
+
+  // Second builder scan with the inspector on Mudanças: sibling tab panels are
+  // `hidden`, so one scan only ever covers the panel that is open.
+  await expectNoAxeViolations(page, 'builder/mudancas');
+
+  // `/project/:id/versions` was the last surface still on the deleted
+  // globals.css; it renders real versions here because the run above recorded
+  // one.
+  await page.goto(`${webBaseUrl}/project/${projectId}/versions`);
+  await expect(page.getByRole('heading', { name: 'Histórico de versões' })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId('version-item').first()).toBeVisible();
+  await mkdir(resolve(VERSIONS_SCREENSHOT, '..'), { recursive: true });
+  await page.screenshot({ path: VERSIONS_SCREENSHOT, fullPage: true });
+  await expectNoAxeViolations(page, 'versions');
 });
 
 test('golden flow: attach reference, plan, build, visual edit, revert, rebuild', async ({
@@ -874,6 +942,7 @@ test('router dashboard shows decisions and filters, an experiment can be registe
   // response.
   await expect(page.getByText('2 reparo(s)')).toBeVisible();
   await page.screenshot({ path: ROUTER_SCREENSHOT, fullPage: true });
+  await expectNoAxeViolations(page, 'router');
 
   const hypothesis = `E2E hypothesis ${Date.now()}`;
   // Experiment creation lives in a dialog now (DESIGN.md §5.4).
@@ -913,6 +982,17 @@ test('router dashboard shows decisions and filters, an experiment can be registe
     expect(row).not.toHaveProperty('projectId');
     expect(row).not.toHaveProperty('runId');
   }
+
+  // Home page: the project list is non-empty by now, so the scan sees the
+  // create form, the pipeline card and the ProjectCard grid.
+  await page.goto(`${webBaseUrl}/`);
+  await expect(page.getByRole('button', { name: 'Fundir projeto' })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId('project-card').first()).toBeVisible();
+  await mkdir(resolve(HOME_SCREENSHOT, '..'), { recursive: true });
+  await page.screenshot({ path: HOME_SCREENSHOT, fullPage: true });
+  await expectNoAxeViolations(page, 'home');
 });
 
 test('regression gate passes an unchanged report and fails one missing a baseline case', async () => {
