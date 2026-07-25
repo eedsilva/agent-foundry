@@ -1,6 +1,11 @@
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { AppEnvironment } from '@agent-foundry/contracts';
 import type { GeneratedProjectRuntime } from '@agent-foundry/domain';
+import { FileWorkspaceManager } from '@agent-foundry/persistence';
+import { SupabaseGeneratedProjectRuntime } from '@agent-foundry/platform';
 import { makeHarness, makeStores, seedRun } from './testing/harness.js';
 import { WorkerLoop } from './worker-loop.js';
 
@@ -142,49 +147,62 @@ describe('ProjectService.create', () => {
     expect(harness.nacked).toHaveLength(1);
   });
 
-  it('compensates initialized workspace and runtime when project persistence fails', async () => {
+  it('removes every initialized project resource when project persistence fails', async () => {
     const transactionError = new Error('project transaction failed');
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-project-service-'));
     const stores = makeStores();
     stores.projects.create = () => Promise.reject(transactionError);
-    const cleanupWorkspace = vi.spyOn(stores.workspaces, 'cleanup');
-    const cleanupRuntime = vi.fn(() => Promise.resolve());
-    const unused = () => Promise.reject(new Error('unused test runtime operation'));
-    const harness = makeHarness({}, stores, {
-      generatedProjectRuntime: {
-        initialize: vi.fn(async () => ENVIRONMENT),
-        start: unused,
-        stop: unused,
-        inspect: unused,
-        previewMigration: unused,
-        backupMigration: unused,
-        migrate: unused,
-        seed: unused,
-        health: unused,
-        reset: unused,
-        cleanup: cleanupRuntime,
-        deployFunction: unused,
-        listFunctionVersions: unused,
-        rollbackFunction: unused,
-        invokeFunction: unused,
-      } satisfies GeneratedProjectRuntime,
+    const workspaces = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
     });
-
-    await expect(
-      harness.service.create({
-        name: 'Issue Radar',
-        prd: 'Build it',
-        workflowId: harness.workflow.id,
-      }),
-    ).rejects.toBe(transactionError);
-
-    expect(cleanupWorkspace).toHaveBeenCalledWith('id-0001');
-    expect(cleanupRuntime).toHaveBeenCalledWith({
-      projectId: 'id-0001',
-      confirmation: expect.objectContaining({
-        confirmed: true,
-        backupCreatedAt: expect.any(String),
-      }),
+    (stores as unknown as { workspaces: FileWorkspaceManager }).workspaces = workspaces;
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: async (...args) => {
+        const workdir = args[args.indexOf('--workdir') + 1];
+        if (args[0] === 'init' && workdir) {
+          await mkdir(join(workdir, 'supabase', 'migrations'), { recursive: true });
+          await writeFile(
+            join(workdir, 'supabase', 'config.toml'),
+            `project_id = "environment"\n\n[api]\nport = 54321\n\n[db]\nport = 54322\nshadow_port = 54320\n\n[db.pooler]\nenabled = false\nport = 54329\n\n[studio]\nport = 54323\n\n[inbucket]\nport = 54324\n\n[edge_runtime]\ninspector_port = 8083\n\n[analytics]\nport = 54327\n`,
+          );
+        }
+        if (args[0] === 'status') {
+          return {
+            stdout: JSON.stringify({
+              API_URL: 'http://127.0.0.1:54321',
+              ANON_KEY: 'anon-secret',
+              SERVICE_ROLE_KEY: 'service-role-secret',
+            }),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
     });
+    const harness = makeHarness({}, stores, { generatedProjectRuntime: runtime });
+    const projectRoot = join(dataDir, 'projects', 'id-0001');
+
+    try {
+      await expect(
+        harness.service.create({
+          name: 'Issue Radar',
+          prd: 'Build it',
+          workflowId: harness.workflow.id,
+        }),
+      ).rejects.toBe(transactionError);
+
+      await expect(access(join(projectRoot, 'workspace'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(access(join(projectRoot, 'environment'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+      await expect(access(join(projectRoot, '.env'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(access(projectRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
   });
 });
 

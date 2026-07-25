@@ -69,7 +69,7 @@ export class FileWorkspaceManager implements WorkspaceManager {
   }
 
   async cleanup(projectId: string): Promise<void> {
-    await rm(this.workspacePath(projectId), { recursive: true, force: true });
+    await rm(this.projectRoot(projectId), { recursive: true, force: true });
   }
 
   async writePrd(projectId: string, prd: string): Promise<void> {
