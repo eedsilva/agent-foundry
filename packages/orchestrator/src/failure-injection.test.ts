@@ -3,6 +3,7 @@ import { EXECUTION_PROTOCOL_VERSION, type ExecutionRequest } from '@agent-foundr
 import { ExecutionError } from '@agent-foundry/domain';
 import {
   assertCountsUnchanged,
+  authenticationError,
   ControllableExecutor,
   completeRun,
   disconnectError,
@@ -177,6 +178,26 @@ describe('Group A: executor failure modes with fallback recovery', () => {
     expect(harness.workspaces.commits).toHaveLength(1);
 
     expect(harness.metricsRecords.filter((record) => !record.success)).toHaveLength(1);
+    expect(harness.metricsRecords.some((record) => record.success)).toBe(true);
+  });
+
+  it('recovers from an authentication failure without scoring it against the model (issue #286)', async () => {
+    const harness = makeHarness(
+      { implement: { kind: 'fail-once', error: authenticationError } },
+      undefined,
+      { fallback: true },
+    );
+    await seedRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    const implement = liveStepRun(harness, 'implement');
+    const attempts = await harness.stepAttempts.list('run-1', implement.id);
+    expect(attempts.map((attempt) => attempt.status)).toEqual(['failed', 'succeeded']);
+    // Visibility and the failure record are unchanged; only the quality signal is withheld.
+    expect(harness.events.events.some((event) => event.type === 'agent.failed')).toBe(true);
+    expect(harness.artifacts.named(`run-${attempts[0]!.id}-failure`)).toHaveLength(1);
+    expect(harness.metricsRecords.filter((record) => !record.success)).toHaveLength(0);
     expect(harness.metricsRecords.some((record) => record.success)).toBe(true);
   });
 

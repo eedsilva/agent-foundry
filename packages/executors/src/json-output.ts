@@ -137,6 +137,32 @@ export function extractRateLimit(provider: Provider, raw: string): ProviderRateL
   return undefined;
 }
 
+/**
+ * The provider's own account of why a nonzero exit happened, so the thrown
+ * ExecutionError carries the cause instead of only the exit code. `authFailure`
+ * keys on the terminal record's structured `subtype`, never on its prose.
+ */
+export function extractCliFailure(
+  provider: Provider,
+  stdout: string,
+): { message: string; authFailure: boolean } | undefined {
+  // ponytail: Claude only — codex and agy emit no structured terminal failure
+  // record, so they keep the bare exit code. Add a branch when one gains it.
+  if (provider !== 'claude') return undefined;
+
+  for (const document of providerDocuments(stdout).reverse()) {
+    if (document === null || typeof document !== 'object' || Array.isArray(document)) continue;
+    const record = document as Record<string, unknown>;
+    if (record.type !== 'result' || (record.is_error !== true && record.subtype !== 'error')) {
+      continue;
+    }
+    const message = stringFrom(record, ['result']);
+    if (!message) continue;
+    return { message, authFailure: record.subtype === 'authentication_failed' };
+  }
+  return undefined;
+}
+
 export function extractExecutedModel(
   provider: Provider,
   sources: { stdout: string; stderr: string; metadata: string },
