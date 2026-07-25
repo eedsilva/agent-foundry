@@ -86,18 +86,24 @@ function fakeOperationRunner(
 }
 
 describe('WorkerLoop liveness', () => {
-  it('marks itself stopped when the queue claim fails', async () => {
+  it('keeps running when the queue claim fails', async () => {
+    const claim = vi.fn().mockRejectedValueOnce(new Error('database down')).mockResolvedValue(null);
     const worker = new WorkerLoop(
-      fakeQueue({ claim: vi.fn().mockRejectedValue(new Error('database down')) }),
+      fakeQueue({ claim }),
       { runProject: vi.fn() } as unknown as WorkflowOrchestrator,
       fakeOperationRunner(),
       { workerId: 'worker-a', pollIntervalMs: 1_000 },
     );
+    const stop = new AbortController();
 
-    const started = worker.start().catch((error: unknown) => error);
+    const started = worker.start(stop.signal);
 
     expect(worker.isRunning).toBe(true);
-    await expect(started).resolves.toMatchObject({ message: 'database down' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(worker.isRunning).toBe(true);
+    stop.abort();
+    await started;
     expect(worker.isRunning).toBe(false);
   });
 });
