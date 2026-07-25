@@ -934,7 +934,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
       </section>
 
-      {detail.project.error ? <p className="errorBox">{detail.project.error}</p> : null}
+      {detail.project.error ? (
+        <p className="errorBox">
+          {detail.project.error} <a href="#project-timeline">Ver detalhes na linha do tempo</a>
+        </p>
+      ) : null}
       {error ? <p className="errorBox">{error}</p> : null}
 
       <ProjectBuilderShell
@@ -1428,7 +1432,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </section>
       ) : null}
 
-      <section className="dashboardGrid">
+      <section id="project-timeline" className="dashboardGrid">
         <div className="panel">
           <div className="panelHeader">
             <h2>Linha do tempo</h2>
