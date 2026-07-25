@@ -194,7 +194,9 @@ describe('ProjectService.create', () => {
         }),
       ).rejects.toBe(transactionError);
 
-      await expect(access(join(projectRoot, 'workspace'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(access(join(projectRoot, 'workspace'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
       await expect(access(join(projectRoot, 'environment'))).rejects.toMatchObject({
         code: 'ENOENT',
       });
