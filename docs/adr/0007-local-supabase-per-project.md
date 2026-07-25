@@ -4,6 +4,7 @@
 - Date: 2026-07-12
 - Owners: Core, Integrations
 - Supersedes: ADR 0006 for Personal Builder v1
+- Superseded in part by: [ADR 0038](0038-two-tier-generated-app-with-jwt-forwarded-supabase.md) — generated-application stack clause only
 
 ## Context
 
@@ -24,3 +25,9 @@ The release has a reproducible full-stack target and clear ownership. It accepts
 ## Validation and rollback
 
 Issue Radar must pass from clean local initialization through VPS deployment. The architectural decision can be superseded later; existing project exports must preserve code, migrations and data.
+
+## Partial supersession (2026-07-25)
+
+[ADR 0038](0038-two-tier-generated-app-with-jwt-forwarded-supabase.md) supersedes one clause of the Decision above: "V1 generates Next.js, TypeScript, Tailwind CSS and shadcn/ui applications." Generated projects are now a two-tier pnpm workspace — `apps/web` (Next.js, Tailwind, shadcn/ui) plus `apps/api` (Fastify) — with the browser calling only the API tier and the API tier reaching Supabase with the caller's JWT.
+
+Every other sentence of the Decision above remains in force, unchanged.
