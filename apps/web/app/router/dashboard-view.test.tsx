@@ -5,6 +5,7 @@ import {
   CreateExperimentRequestSchema,
   type ExperimentRecord,
   type RouterDashboardResponse,
+  type RouterDecisionLogEntry,
 } from '@agent-foundry/contracts';
 import {
   buildExperimentRequest,
@@ -49,6 +50,30 @@ const experiment: ExperimentRecord = {
   status: 'draft',
 };
 
+const decision: RouterDecisionLogEntry = {
+  schemaVersion: '1',
+  id: '01J000000000000000000000',
+  routeId: '01J000000000000000000001',
+  createdAt: '2026-07-24T10:30:00.000Z',
+  projectId: 'project-1',
+  runId: 'run-1',
+  nodeId: 'implement',
+  workflowId: 'golden-flow-e2e-v1',
+  harnessVersion: 'v3',
+  taskKind: 'implementation',
+  category: 'implementation/frontend',
+  role: 'developer',
+  provider: 'claude',
+  modelId: 'claude-opus',
+  model: 'claude-opus-4-8',
+  approved: true,
+  firstPass: false,
+  repairs: 2,
+  durationMs: 12_000,
+  confidence: 0.82,
+  sampleSize: 9,
+};
+
 describe('activeRouterQuery', () => {
   it('drops empty filter values', () => {
     expect(activeRouterQuery({ ...EMPTY_ROUTER_FILTERS, provider: 'claude' })).toEqual({
@@ -84,6 +109,54 @@ describe('RouterDashboardView', () => {
     expect(markup).toContain('Regra de parada');
     expect(markup).toMatch(/<option[^>]*value="implementation"[^>]*>implementation<\/option>/);
     expect(markup).toContain('http://localhost:4000/router/export');
+  });
+
+  it('renders the decisions as a table and moves experiment creation into a dialog', () => {
+    const markup = renderToStaticMarkup(
+      <RouterDashboardView
+        filters={EMPTY_ROUTER_FILTERS}
+        onFiltersChange={() => {}}
+        dashboard={dashboard}
+        decisions={[decision]}
+        experiments={[experiment]}
+        exportHref="http://localhost:4000/router/export"
+        form={EMPTY_EXPERIMENT_FORM}
+        onFormChange={() => {}}
+        onSubmitExperiment={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('<table');
+    expect(markup).toContain('<th');
+    // The e2e asserts this exact string; the table must keep rendering it.
+    expect(markup).toContain('2 reparo(s)');
+    expect(markup).toContain('data-testid="decision-detail"');
+    expect(markup).toContain('data-testid="new-experiment"');
+    expect(markup).toContain('Novo experimento');
+    // Both dialogs stay in the DOM while closed, hidden by `dialog:not([open])`.
+    expect(markup).not.toContain('<dialog open');
+  });
+
+  it('keeps glass off the stat tiles and the content panels', () => {
+    const markup = renderToStaticMarkup(
+      <RouterDashboardView
+        filters={EMPTY_ROUTER_FILTERS}
+        onFiltersChange={() => {}}
+        dashboard={dashboard}
+        decisions={[decision]}
+        experiments={[experiment]}
+        exportHref="http://localhost:4000/router/export"
+        form={EMPTY_EXPERIMENT_FORM}
+        onFormChange={() => {}}
+        onSubmitExperiment={() => {}}
+      />,
+    );
+
+    // Exactly one glass surface on the page: the filter toolbar.
+    expect(markup.match(/\bglass\b/g)).toHaveLength(1);
+    // No stock Tailwind palette, no raw hex — tokens only.
+    expect(markup).not.toMatch(/\b(bg|text|border)-(white|black|gray|slate|zinc|neutral)-?/);
+    expect(markup).not.toMatch(/#[0-9a-fA-F]{6}\b/);
   });
 });
 

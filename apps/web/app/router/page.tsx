@@ -13,6 +13,8 @@ import {
   listRouterDecisions,
   routerExportUrl,
 } from '../../lib/api.js';
+import { ERROR_BOX } from '@/lib/ui';
+import { cn } from '@/lib/utils';
 import {
   activeRouterQuery,
   buildExperimentRequest,
@@ -50,8 +52,13 @@ export default function RouterDashboardPage() {
     setForm(EMPTY_EXPERIMENT_FORM);
   }
 
-  if (error) return <p className="error">{error}</p>;
-  if (!dashboard) return <p>Carregando…</p>;
+  if (error)
+    return (
+      <p role="alert" className={cn(ERROR_BOX, 'm-6')}>
+        {error}
+      </p>
+    );
+  if (!dashboard) return <p className="text-ink-muted m-6 text-[13px]">Carregando…</p>;
 
   return (
     <RouterDashboardView

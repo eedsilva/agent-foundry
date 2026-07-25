@@ -27,6 +27,7 @@ const FIRST_BUILD_DIFF_SCREENSHOT = resolve(
   REPO_ROOT,
   'test-results/issue-173-first-build-diff.png',
 );
+const ROUTER_SCREENSHOT = resolve(REPO_ROOT, 'test-results/router-dashboard-desktop.png');
 const BROWSER_TEST_PLAN = {
   schemaVersion: '1' as const,
   status: 'completed' as const,
@@ -872,8 +873,12 @@ test('router dashboard shows decisions and filters, an experiment can be registe
   // instrumentation branch) actually renders in the UI, not just in the API
   // response.
   await expect(page.getByText('2 reparo(s)')).toBeVisible();
+  await page.screenshot({ path: ROUTER_SCREENSHOT, fullPage: true });
 
   const hypothesis = `E2E hypothesis ${Date.now()}`;
+  // Experiment creation lives in a dialog now (DESIGN.md §5.4).
+  await page.getByRole('button', { name: 'Novo experimento' }).click();
+  await expect(page.getByTestId('new-experiment')).toBeVisible();
   await page.getByLabel('Hipótese').fill(hypothesis);
   await page.getByLabel('Limite').fill('0.65');
   await page.getByLabel('Amostras mínimas').fill('12');

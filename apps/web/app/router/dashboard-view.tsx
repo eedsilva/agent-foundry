@@ -1,4 +1,6 @@
-import React, { type FormEvent } from 'react';
+'use client';
+
+import React, { useState, type FormEvent, type ReactNode } from 'react';
 import {
   ExperimentStopRuleSchema,
   TaskKindSchema,
@@ -9,6 +11,25 @@ import {
   type RouterDecisionLogEntry,
   type TaskKind,
 } from '@agent-foundry/contracts';
+import { EmptyState } from '@/components/empty-state';
+import { GlassBar } from '@/components/glass-bar';
+import { StatTile } from '@/components/stat-tile';
+import { StatusPill } from '@/components/status-pill';
+import {
+  FIELD,
+  ICON_BTN,
+  LABEL,
+  MODAL,
+  MODAL_BACKDROP,
+  PANEL,
+  PANEL_HEADER,
+  PANEL_TITLE,
+  PRIMARY_BTN,
+  RADIO,
+  SECTION_TITLE,
+  TEXTAREA,
+} from '@/lib/ui';
+import { cn } from '@/lib/utils';
 
 export interface RouterFilters {
   taskKind: string;
@@ -91,6 +112,84 @@ export function activeRouterQuery(filters: RouterFilters): Record<string, string
   return Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== ''));
 }
 
+const TH =
+  'text-ink-muted border-hairline border-b px-2 py-2 text-left text-[12px] font-semibold tracking-[0.04em] uppercase';
+const TD = 'text-ink border-hairline border-b px-2 py-2 align-top text-[13px]';
+const FIELDSET = 'border-hairline rounded-card m-0 grid gap-3 border p-3 sm:grid-cols-3';
+const LEGEND = 'text-ink px-1 text-[13px] font-semibold';
+
+/**
+ * Non-modal `<dialog>`: it stays in the DOM when closed (the UA's
+ * `dialog:not([open]) { display: none }` hides it) so the markup can be
+ * asserted without a DOM harness, and `hidden` wins over `MODAL_BACKDROP`'s
+ * `grid` through tailwind-merge's display group.
+ */
+function Dialog({
+  open,
+  onClose,
+  testId,
+  label,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  testId: string;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <dialog
+      open={open}
+      aria-label={label}
+      data-testid={testId}
+      className={cn(
+        MODAL_BACKDROP,
+        'text-ink m-0 h-full max-h-none w-full max-w-none border-0',
+        !open && 'hidden',
+      )}
+      onClick={onClose}
+    >
+      <div className={MODAL} onClick={(event) => event.stopPropagation()}>
+        <div className={PANEL_HEADER}>
+          <h2 className={PANEL_TITLE}>{label}</h2>
+          <button type="button" className={ICON_BTN} aria-label="Fechar" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        {children}
+      </div>
+    </dialog>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  anyLabel,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  anyLabel: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className={LABEL}>
+      {label}
+      <select className={FIELD} value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">{anyLabel}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 type ExperimentTextField =
   | 'variantAKey'
   | 'variantADescription'
@@ -120,9 +219,10 @@ function TextField({
   step?: string;
 }) {
   return (
-    <label>
+    <label className={LABEL}>
       {label}
       <input
+        className={FIELD}
         type={type}
         min={min}
         step={step}
@@ -149,9 +249,10 @@ function SelectField<K extends ExperimentSelectField>({
   onFormChange: (form: ExperimentFormState) => void;
 }) {
   return (
-    <label>
+    <label className={LABEL}>
       {label}
       <select
+        className={FIELD}
         value={form[field]}
         onChange={(event) =>
           onFormChange({ ...form, [field]: event.target.value as ExperimentFormState[K] })
@@ -167,189 +268,158 @@ function SelectField<K extends ExperimentSelectField>({
   );
 }
 
-export function RouterDashboardView({
-  filters,
-  onFiltersChange,
-  dashboard,
-  decisions,
+function DecisionsPanel({ decisions }: { decisions: RouterDecisionLogEntry[] }) {
+  const [detail, setDetail] = useState<RouterDecisionLogEntry | null>(null);
+
+  return (
+    <section className={PANEL}>
+      <div className={PANEL_HEADER}>
+        <h2 className={SECTION_TITLE}>Decisões ({decisions.length})</h2>
+      </div>
+      {decisions.length === 0 ? (
+        <EmptyState
+          title="Nenhuma decisão registrada"
+          hint="Rode um workflow ou limpe os filtros acima."
+        />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className={TH}>Quando</th>
+                <th className={TH}>Tarefa</th>
+                <th className={TH}>Modelo</th>
+                <th className={TH}>Provider</th>
+                <th className={TH}>Resultado</th>
+                <th className={TH}>Reparos</th>
+              </tr>
+            </thead>
+            <tbody>
+              {decisions.map((decision) => (
+                <tr key={decision.id} className="hover:bg-accent-wash">
+                  <td className={TD}>
+                    <button
+                      type="button"
+                      className="text-ink hover:text-accent-strong font-mono text-[12px] underline-offset-2 hover:underline"
+                      onClick={() => setDetail(decision)}
+                    >
+                      {decision.createdAt.slice(0, 16).replace('T', ' ')}
+                    </button>
+                  </td>
+                  <td className={TD}>{decision.taskKind}</td>
+                  <td className={cn(TD, 'font-mono text-[12px]')}>{decision.modelId}</td>
+                  <td className={TD}>{decision.provider}</td>
+                  <td className={TD}>
+                    <StatusPill
+                      status={decision.approved ? 'approved' : 'rejected'}
+                      label={decision.approved ? 'aprovado' : 'reprovado'}
+                    />
+                  </td>
+                  <td className={TD}>{decision.repairs} reparo(s)</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Dialog
+        open={detail !== null}
+        onClose={() => setDetail(null)}
+        testId="decision-detail"
+        label="Detalhe da decisão"
+      >
+        {detail ? (
+          <dl className="m-0 grid grid-cols-[minmax(9rem,auto)_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+            {Object.entries(detail).map(([key, value]) => (
+              <React.Fragment key={key}>
+                {/* `--ink-subtle` (EYEBROW) is 2.98:1 on white; `--ink-muted` is 5.47:1. */}
+                <dt className="text-ink-muted font-mono text-[11px] font-semibold">{key}</dt>
+                <dd className="text-ink m-0 font-mono text-[12.5px] break-all">
+                  {value === null ? '—' : String(value)}
+                </dd>
+              </React.Fragment>
+            ))}
+          </dl>
+        ) : null}
+      </Dialog>
+    </section>
+  );
+}
+
+function ExperimentsPanel({
   experiments,
-  exportHref,
   form,
   onFormChange,
   onSubmitExperiment,
 }: {
-  filters: RouterFilters;
-  onFiltersChange: (filters: RouterFilters) => void;
-  dashboard: RouterDashboardResponse;
-  decisions: RouterDecisionLogEntry[];
   experiments: ExperimentRecord[];
-  exportHref: string;
   form: ExperimentFormState;
   onFormChange: (form: ExperimentFormState) => void;
   onSubmitExperiment: (event: FormEvent) => void;
 }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <main className="shell routerDashboard">
-      <h1>Dashboard do router</h1>
+    <section className={PANEL}>
+      <div className={PANEL_HEADER}>
+        <h2 className={SECTION_TITLE}>Registro de experimentos</h2>
+        <button type="button" className={PRIMARY_BTN} onClick={() => setOpen(true)}>
+          Novo experimento
+        </button>
+      </div>
 
-      <section className="panel filterBar">
-        <label>
-          Tarefa
-          <select
-            value={filters.taskKind}
-            onChange={(event) => onFiltersChange({ ...filters, taskKind: event.target.value })}
-          >
-            <option value="">Todas</option>
-            {dashboard.facets.taskKinds.map((kind) => (
-              <option key={kind} value={kind}>
-                {kind}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Provider
-          <select
-            value={filters.provider}
-            onChange={(event) => onFiltersChange({ ...filters, provider: event.target.value })}
-          >
-            <option value="">Todos</option>
-            {dashboard.facets.providers.map((provider) => (
-              <option key={provider} value={provider}>
-                {provider}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Modelo
-          <select
-            value={filters.modelId}
-            onChange={(event) => onFiltersChange({ ...filters, modelId: event.target.value })}
-          >
-            <option value="">Todos</option>
-            {dashboard.facets.modelIds.map((modelId) => (
-              <option key={modelId} value={modelId}>
-                {modelId}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Workflow
-          <select
-            value={filters.workflowId}
-            onChange={(event) => onFiltersChange({ ...filters, workflowId: event.target.value })}
-          >
-            <option value="">Todos</option>
-            {dashboard.facets.workflowIds.map((workflowId) => (
-              <option key={workflowId} value={workflowId}>
-                {workflowId}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Versão do harness
-          <select
-            value={filters.harnessVersion}
-            onChange={(event) =>
-              onFiltersChange({ ...filters, harnessVersion: event.target.value })
-            }
-          >
-            <option value="">Todas</option>
-            {dashboard.facets.harnessVersions.map((version) => (
-              <option key={version} value={version}>
-                {version}
-              </option>
-            ))}
-          </select>
-        </label>
-        <a className="primaryButton" href={exportHref} download>
-          Exportar (sem PII)
-        </a>
-      </section>
-
-      <section className="panel kpiGrid">
-        <div className="kpiTile">
-          <span>Tempo até aprovação (p50)</span>
-          <strong>{dashboard.kpis.timeToApprovedMsP50 ?? '—'} ms</strong>
-        </div>
-        <div className="kpiTile">
-          <span>Tempo até aprovação (p95)</span>
-          <strong>{dashboard.kpis.timeToApprovedMsP95 ?? '—'} ms</strong>
-        </div>
-        <div className="kpiTile">
-          <span>Aprovação de primeira</span>
-          <strong>
-            {dashboard.kpis.firstPassRate === null
-              ? '—'
-              : `${Math.round(dashboard.kpis.firstPassRate * 100)}%`}
-          </strong>
-        </div>
-        <div className="kpiTile">
-          <span>Reparos (média)</span>
-          <strong>{dashboard.kpis.avgRepairs?.toFixed(2) ?? '—'}</strong>
-        </div>
-        <div
-          className="kpiTile"
-          title="Custo agregado por modelo/tarefa ao longo de toda a vida; não filtra por provider, workflow ou versão do harness."
-        >
-          <span>Custo (USD)</span>
-          <strong>{dashboard.kpis.costUsd?.toFixed(4) ?? '—'}</strong>
-        </div>
-        <div className="kpiTile">
-          <span>Confiança</span>
-          <strong>
-            {dashboard.kpis.avgConfidence === null
-              ? '—'
-              : `${Math.round(dashboard.kpis.avgConfidence * 100)}%`}
-          </strong>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Decisões ({decisions.length})</h2>
-        <ul className="artifactList">
-          {decisions.map((decision) => (
-            <li key={decision.id}>
-              {decision.modelId} · {decision.taskKind} ·{' '}
-              {decision.approved ? 'aprovado' : 'reprovado'} · {decision.repairs} reparo(s)
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="panel">
-        <h2>Registro de experimentos</h2>
-        <table className="experimentTable">
-          <thead>
-            <tr>
-              <th>Hipótese</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {experiments.map((exp) => (
-              <tr key={exp.id}>
-                <td>{exp.hypothesis}</td>
-                <td>{exp.status}</td>
+      {experiments.length === 0 ? (
+        <EmptyState title="Nenhum experimento registrado" />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className={TH}>Hipótese</th>
+                <th className={TH}>Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        <form onSubmit={onSubmitExperiment}>
-          <label>
+            </thead>
+            <tbody>
+              {experiments.map((exp) => (
+                <tr key={exp.id}>
+                  <td className={TD}>{exp.hypothesis}</td>
+                  <td className={TD}>
+                    <StatusPill status={exp.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        testId="new-experiment"
+        label="Novo experimento"
+      >
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            onSubmitExperiment(event);
+            // Mirrors the page's own guard: an empty hypothesis is not
+            // submitted, so the dialog stays open with the form intact.
+            if (form.hypothesis.trim().length > 0) setOpen(false);
+          }}
+        >
+          <label className={LABEL}>
             Hipótese
             <textarea
-              className="compactTextarea"
+              className={cn(TEXTAREA, 'min-h-[84px]')}
               value={form.hypothesis}
               onChange={(event) => onFormChange({ ...form, hypothesis: event.target.value })}
             />
           </label>
 
-          <fieldset>
-            <legend>Variante A</legend>
+          <fieldset className={FIELDSET}>
+            <legend className={LEGEND}>Variante A</legend>
             <TextField
               label="Chave (A)"
               field="variantAKey"
@@ -370,8 +440,8 @@ export function RouterDashboardView({
             />
           </fieldset>
 
-          <fieldset>
-            <legend>Variante B</legend>
+          <fieldset className={FIELDSET}>
+            <legend className={LEGEND}>Variante B</legend>
             <TextField
               label="Chave (B)"
               field="variantBKey"
@@ -392,25 +462,27 @@ export function RouterDashboardView({
             />
           </fieldset>
 
-          <fieldset>
-            <legend>População</legend>
-            {TaskKindSchema.options.map((kind) => (
-              <label key={kind} className="checkboxLabel">
-                <input
-                  type="checkbox"
-                  checked={form.taskKinds.includes(kind)}
-                  onChange={(event) =>
-                    onFormChange({
-                      ...form,
-                      taskKinds: event.target.checked
-                        ? [...form.taskKinds, kind]
-                        : form.taskKinds.filter((value) => value !== kind),
-                    })
-                  }
-                />
-                {kind}
-              </label>
-            ))}
+          <fieldset className={FIELDSET}>
+            <legend className={LEGEND}>População</legend>
+            <div className="flex flex-wrap gap-3 sm:col-span-2">
+              {TaskKindSchema.options.map((kind) => (
+                <label key={kind} className={RADIO}>
+                  <input
+                    type="checkbox"
+                    checked={form.taskKinds.includes(kind)}
+                    onChange={(event) =>
+                      onFormChange({
+                        ...form,
+                        taskKinds: event.target.checked
+                          ? [...form.taskKinds, kind]
+                          : form.taskKinds.filter((value) => value !== kind),
+                      })
+                    }
+                  />
+                  {kind}
+                </label>
+              ))}
+            </div>
             <TextField
               label="Tamanho de amostra alvo"
               field="targetSampleSize"
@@ -421,8 +493,8 @@ export function RouterDashboardView({
             />
           </fieldset>
 
-          <fieldset>
-            <legend>Regra de parada</legend>
+          <fieldset className={FIELDSET}>
+            <legend className={LEGEND}>Regra de parada</legend>
             <SelectField
               label="Métrica"
               field="stopRuleMetric"
@@ -455,11 +527,124 @@ export function RouterDashboardView({
             />
           </fieldset>
 
-          <button type="submit" className="primaryButton">
+          <button type="submit" className={cn(PRIMARY_BTN, 'justify-self-start')}>
             Registrar experimento
           </button>
         </form>
-      </section>
+      </Dialog>
+    </section>
+  );
+}
+
+export function RouterDashboardView({
+  filters,
+  onFiltersChange,
+  dashboard,
+  decisions,
+  experiments,
+  exportHref,
+  form,
+  onFormChange,
+  onSubmitExperiment,
+}: {
+  filters: RouterFilters;
+  onFiltersChange: (filters: RouterFilters) => void;
+  dashboard: RouterDashboardResponse;
+  decisions: RouterDecisionLogEntry[];
+  experiments: ExperimentRecord[];
+  exportHref: string;
+  form: ExperimentFormState;
+  onFormChange: (form: ExperimentFormState) => void;
+  onSubmitExperiment: (event: FormEvent) => void;
+}) {
+  return (
+    <main className="mx-auto flex w-[min(1240px,calc(100%-40px))] flex-col gap-6 py-10">
+      <h1 className="text-ink m-0 text-[20px] font-semibold tracking-[-0.01em]">
+        Dashboard do router
+      </h1>
+
+      <GlassBar className="flex flex-wrap items-end gap-3 p-3">
+        <FilterSelect
+          label="Tarefa"
+          anyLabel="Todas"
+          value={filters.taskKind}
+          options={dashboard.facets.taskKinds}
+          onChange={(taskKind) => onFiltersChange({ ...filters, taskKind })}
+        />
+        <FilterSelect
+          label="Provider"
+          anyLabel="Todos"
+          value={filters.provider}
+          options={dashboard.facets.providers}
+          onChange={(provider) => onFiltersChange({ ...filters, provider })}
+        />
+        <FilterSelect
+          label="Modelo"
+          anyLabel="Todos"
+          value={filters.modelId}
+          options={dashboard.facets.modelIds}
+          onChange={(modelId) => onFiltersChange({ ...filters, modelId })}
+        />
+        <FilterSelect
+          label="Workflow"
+          anyLabel="Todos"
+          value={filters.workflowId}
+          options={dashboard.facets.workflowIds}
+          onChange={(workflowId) => onFiltersChange({ ...filters, workflowId })}
+        />
+        <FilterSelect
+          label="Versão do harness"
+          anyLabel="Todas"
+          value={filters.harnessVersion}
+          options={dashboard.facets.harnessVersions}
+          onChange={(harnessVersion) => onFiltersChange({ ...filters, harnessVersion })}
+        />
+        <a className={cn(PRIMARY_BTN, 'ml-auto no-underline')} href={exportHref} download>
+          Exportar (sem PII)
+        </a>
+      </GlassBar>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <StatTile
+          label="Tempo até aprovação (p50)"
+          value={`${dashboard.kpis.timeToApprovedMsP50 ?? '—'} ms`}
+        />
+        <StatTile
+          label="Tempo até aprovação (p95)"
+          value={`${dashboard.kpis.timeToApprovedMsP95 ?? '—'} ms`}
+        />
+        <StatTile
+          label="Aprovação de primeira"
+          value={
+            dashboard.kpis.firstPassRate === null
+              ? '—'
+              : `${Math.round(dashboard.kpis.firstPassRate * 100)}%`
+          }
+        />
+        <StatTile label="Reparos (média)" value={dashboard.kpis.avgRepairs?.toFixed(2) ?? '—'} />
+        <StatTile
+          label="Custo (USD)"
+          value={dashboard.kpis.costUsd?.toFixed(4) ?? '—'}
+          title="Custo agregado por modelo/tarefa ao longo de toda a vida; não filtra por provider, workflow ou versão do harness."
+        />
+        <StatTile
+          label="Confiança"
+          value={
+            dashboard.kpis.avgConfidence === null
+              ? '—'
+              : `${Math.round(dashboard.kpis.avgConfidence * 100)}%`
+          }
+        />
+      </div>
+
+      <DecisionsPanel decisions={decisions} />
+
+      <ExperimentsPanel
+        experiments={experiments}
+        form={form}
+        onFormChange={onFormChange}
+        onSubmitExperiment={onSubmitExperiment}
+      />
     </main>
   );
 }
