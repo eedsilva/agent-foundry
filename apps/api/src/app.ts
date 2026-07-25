@@ -96,6 +96,7 @@ const CanonicalDecimalSchema = z
 const NonNegativeCursorSchema = CanonicalDecimalSchema.pipe(z.number().int().nonnegative());
 
 const BLOB_URL_TTL_SECONDS = 300;
+export const BODY_LIMIT_BYTES = 1_000_000;
 const MAX_KNOWLEDGE_FILE_BYTES = 4 * 1024 * 1024;
 const KNOWLEDGE_FILE_BODY_LIMIT = Math.ceil(((MAX_KNOWLEDGE_FILE_BYTES + 1) * 4) / 3) + 4_096;
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -117,7 +118,7 @@ export async function buildApp(
       mixin: () => currentTraceIds(),
       ...(options.loggerStream ? { stream: options.loggerStream } : {}),
     },
-    bodyLimit: 1_000_000,
+    bodyLimit: BODY_LIMIT_BYTES,
   });
 
   const allowedOrigins = runtime.config.webOrigin.split(',').map((origin) => origin.trim());
@@ -183,10 +184,14 @@ export async function buildApp(
     // Fastify's own errors (invalid JSON body, body too large, unsupported
     // media type) already carry the right 4xx on `statusCode`. Honour it, and
     // log it as a client mistake — not a server fault with a stack trace.
+    // `name` is 'FastifyError' for all of them, so the discriminator clients
+    // read is `code` (FST_ERR_CTP_INVALID_JSON_BODY and friends) when present.
     const { statusCode } = error;
     if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
-      app.log.warn({ statusCode, err: error.message }, 'Client error');
-      return reply.status(statusCode).send({ error: error.name, message: error.message });
+      app.log.warn({ statusCode, code: error.code }, error.message);
+      return reply
+        .status(statusCode)
+        .send({ error: error.code ?? error.name, message: error.message });
     }
     app.log.error(error);
     const name = error instanceof Error ? error.name : 'InternalServerError';
