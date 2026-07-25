@@ -3,6 +3,10 @@
 Version 1. Owns the visual language and information architecture of `apps/web`.
 Read this before changing anything under `apps/web/app` or adding a component.
 
+Rendered screenshots of all four surfaces live in `docs/evidence/ui-redesign/`
+(`home.png`, `builder.png`, `router.png`, `versions.png`), captured from the Playwright
+golden-flow run.
+
 ## 1. Problem
 
 The current UI is a dark, high-contrast console that stacks every panel vertically.
