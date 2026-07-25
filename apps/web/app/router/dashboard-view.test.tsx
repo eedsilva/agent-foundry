@@ -1,8 +1,18 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { ExperimentRecord, RouterDashboardResponse } from '@agent-foundry/contracts';
-import { EMPTY_ROUTER_FILTERS, RouterDashboardView, activeRouterQuery } from './dashboard-view.js';
+import {
+  CreateExperimentRequestSchema,
+  type ExperimentRecord,
+  type RouterDashboardResponse,
+} from '@agent-foundry/contracts';
+import {
+  buildExperimentRequest,
+  EMPTY_EXPERIMENT_FORM,
+  EMPTY_ROUTER_FILTERS,
+  RouterDashboardView,
+  activeRouterQuery,
+} from './dashboard-view.js';
 
 const dashboard: RouterDashboardResponse = {
   facets: {
@@ -61,8 +71,8 @@ describe('RouterDashboardView', () => {
         decisions={[]}
         experiments={[experiment]}
         exportHref="http://localhost:4000/router/export"
-        hypothesis=""
-        onHypothesisChange={() => {}}
+        form={EMPTY_EXPERIMENT_FORM}
+        onFormChange={() => {}}
         onSubmitExperiment={() => {}}
       />,
     );
@@ -70,7 +80,39 @@ describe('RouterDashboardView', () => {
     expect(markup).toContain('Aprovação de primeira');
     expect(markup).toContain('Tempo até aprovação (p50)');
     expect(markup).toContain(experiment.hypothesis);
+    expect(markup).toContain('Variante A');
+    expect(markup).toContain('Regra de parada');
     expect(markup).toMatch(/<option[^>]*value="implementation"[^>]*>implementation<\/option>/);
     expect(markup).toContain('http://localhost:4000/router/export');
+  });
+});
+
+describe('buildExperimentRequest', () => {
+  it('builds two model-target variants, population, and stop rule from form state', () => {
+    const request = buildExperimentRequest({
+      ...EMPTY_EXPERIMENT_FORM,
+      hypothesis: 'Opus beats Sonnet on frontend first-pass rate.',
+      variantADescription: 'Sonnet 5',
+      variantBDescription: 'Opus 4.8',
+      taskKinds: ['implementation', 'code-review'],
+      targetSampleSize: '40',
+      stopRuleThreshold: '0.75',
+      stopRuleMinSamples: '15',
+    });
+
+    expect(request).toEqual({
+      hypothesis: 'Opus beats Sonnet on frontend first-pass rate.',
+      variants: [
+        { key: 'control', description: 'Sonnet 5', target: { kind: 'model', modelId: 'sonnet' } },
+        { key: 'treatment', description: 'Opus 4.8', target: { kind: 'model', modelId: 'opus' } },
+      ],
+      population: { taskKinds: ['implementation', 'code-review'], targetSampleSize: 40 },
+      stopRule: { metric: 'first-pass-rate', comparator: 'gte', threshold: 0.75, minSamples: 15 },
+    });
+  });
+
+  it('produces a request that satisfies CreateExperimentRequestSchema when submitted untouched', () => {
+    const request = buildExperimentRequest({ ...EMPTY_EXPERIMENT_FORM, hypothesis: 'x' });
+    expect(() => CreateExperimentRequestSchema.parse(request)).not.toThrow();
   });
 });

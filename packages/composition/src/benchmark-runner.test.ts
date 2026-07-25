@@ -9,7 +9,13 @@ import {
   BenchmarkRunRecordSchema,
   BENCHMARK_CASE_KINDS,
 } from '@agent-foundry/contracts';
-import { freezeBenchmarkReport, loadBenchmarkCases, runBenchmarkCase } from './benchmark-runner.js';
+import {
+  BASELINE_STEM,
+  freezeBenchmarkReport,
+  loadBenchmarkCases,
+  runBenchmarkCase,
+} from './benchmark-runner.js';
+import { compareBenchmarkReports } from './regression-gate.js';
 import { MINI_PACKAGE, seedFixtureRepo } from './testing-helpers.js';
 
 const repoRoot = resolve(import.meta.dirname, '../../..');
@@ -200,4 +206,20 @@ describe('freezeBenchmarkReport', () => {
     expect(parsedReport.runs).toHaveLength(records.length);
     await expect(readFile(mdPath, 'utf8')).resolves.toContain('# v0.9 benchmark baseline');
   }, 300_000);
+});
+
+describe('the committed v0.9 baseline', () => {
+  it('parses, covers every benchmark case kind, and self-compares clean', async () => {
+    const baselinePath = resolve(repoRoot, 'docs/baselines', `${BASELINE_STEM}.json`);
+    const baseline = BenchmarkReportSchema.parse(JSON.parse(await readFile(baselinePath, 'utf8')));
+
+    const coveredKinds = new Set(baseline.runs.map((run) => run.caseKind));
+    for (const kind of BENCHMARK_CASE_KINDS) {
+      expect(coveredKinds.has(kind)).toBe(true);
+    }
+
+    const result = compareBenchmarkReports(baseline, baseline);
+    expect(result.verdict).toBe('pass');
+    expect(result.reasons).toHaveLength(0);
+  });
 });

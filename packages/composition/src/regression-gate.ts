@@ -46,3 +46,15 @@ export function compareBenchmarkReports(
     deltas,
   });
 }
+
+// Promotion-sensitive paths: a change here is what "promoting catalog or
+// harness" means in this repo (see docs/OPERATIONS.md). CI wires this into
+// the regression-gate job via scripts/promotion-gate-check.ts.
+export const PROMOTION_SENSITIVE_PATHS: readonly string[] = [
+  'models/catalog.yaml',
+  'harness/manifest.json',
+];
+
+export function shouldRunRegressionGate(changedFiles: readonly string[]): boolean {
+  return changedFiles.some((file) => PROMOTION_SENSITIVE_PATHS.includes(file));
+}

@@ -836,8 +836,30 @@ test('router dashboard shows decisions and filters, an experiment can be registe
 
   const hypothesis = `E2E hypothesis ${Date.now()}`;
   await page.getByLabel('Hipótese').fill(hypothesis);
+  await page.getByLabel('Limite').fill('0.65');
+  await page.getByLabel('Amostras mínimas').fill('12');
   await page.getByRole('button', { name: 'Registrar experimento' }).click();
   await expect(page.getByText(hypothesis)).toBeVisible({ timeout: 10_000 });
+
+  // expect(...).toBeVisible() above can resolve against the still-filled
+  // <textarea>'s own live value before the POST that persists the
+  // experiment has actually completed, so poll the API instead of reading
+  // it once immediately.
+  await expect
+    .poll(
+      async () => {
+        const experimentsResponse = await fetch(`${apiBaseUrl}/experiments`);
+        const { experiments } = (await experimentsResponse.json()) as {
+          experiments: {
+            hypothesis: string;
+            stopRule: { threshold: number; minSamples: number };
+          }[];
+        };
+        return experiments.find((experiment) => experiment.hypothesis === hypothesis)?.stopRule;
+      },
+      { timeout: 10_000 },
+    )
+    .toMatchObject({ threshold: 0.65, minSamples: 12 });
 
   const exportResponse = await fetch(`${apiBaseUrl}/router/export`);
   expect(exportResponse.ok).toBe(true);
@@ -847,4 +869,35 @@ test('router dashboard shows decisions and filters, an experiment can be registe
     expect(row).not.toHaveProperty('projectId');
     expect(row).not.toHaveProperty('runId');
   }
+});
+
+test('regression gate passes an unchanged report and fails one missing a baseline case', async () => {
+  const baselinePath = resolve(REPO_ROOT, 'docs/baselines/v0.9-benchmark.json');
+  const baseline = JSON.parse(await readFile(baselinePath, 'utf8')) as { runs: unknown[] };
+  expect(baseline.runs.length).toBeGreaterThan(1);
+
+  const missingOneCase = { ...baseline, runs: baseline.runs.slice(1) };
+  const [passResponse, failResponse] = await Promise.all([
+    fetch(`${apiBaseUrl}/router/regression-gate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fresh: baseline }),
+    }),
+    fetch(`${apiBaseUrl}/router/regression-gate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fresh: missingOneCase }),
+    }),
+  ]);
+
+  expect(passResponse.ok).toBe(true);
+  const { result: passResult } = (await passResponse.json()) as { result: { verdict: string } };
+  expect(passResult.verdict).toBe('pass');
+
+  expect(failResponse.ok).toBe(true);
+  const { result: failResult } = (await failResponse.json()) as {
+    result: { verdict: string; reasons: string[] };
+  };
+  expect(failResult.verdict).toBe('fail');
+  expect(failResult.reasons.some((reason) => reason.includes('missing'))).toBe(true);
 });
