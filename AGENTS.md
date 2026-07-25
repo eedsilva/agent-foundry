@@ -7,3 +7,22 @@ Every primary agent and subagent must do this before reading source or starting 
 3. Read `graphify-out/GRAPH_REPORT.md`; use `graphify query`, `graphify path`, or `graphify explain` before broad raw-file searches.
 
 After changing code, run `npm run graphify:refresh` again. For docs, images, or other semantic inputs, run `/graphify . --update` instead. If Graphify is missing, install the official CLI once with `uv tool install graphifyy` — the PyPI package name is `graphifyy` (double-y; `graphify` was unaffiliated/unavailable), but it installs a CLI command named `graphify`, matching the `graphify:refresh` script above. See https://github.com/Graphify-Labs/graphify. `graphify-out/` is local generated state and is intentionally not committed.
+
+## Checks: what to run when
+
+- **While editing (inner loop):** `npm run test:unit:fast` (~30s, 135 pure-unit files in parallel) plus the specific slow-bucket files you touched via `npx vitest run <path>`.
+- **Before opening/updating a PR:** `npm run check` — runs `check:static` (format/lint/architecture/roadmap/typecheck in parallel, ~2.5min), then `npm test`, `build`, `secrets:check`. E2E specs (Playwright, Supabase) and the regression gate run in CI only; don't run them locally unless debugging one.
+- **Static gates only:** `npm run check:static`. Prettier and ESLint are `--cache`d — warm reruns take ~4s each.
+
+Test-suite rules:
+
+- `test:unit` = `test:unit:fast` (parallel) then `test:unit:slow` (`--maxWorkers=1`). The slow bucket holds Docker-sandbox, Postgres-testcontainers, port-binding API, process-spawning, and wall-clock-assertion tests. **Never parallelize the slow bucket** — those tests flake under CPU contention, and parallelizing gains almost nothing (measured 2026-07).
+- The two buckets are an exact partition of the suite. If you add or move a test file, keep it that way: update the `--exclude` globs (fast) and positional paths (slow) together in `package.json`, and verify with `npx vitest list --filesOnly` that fast + slow counts equal the total.
+- New test that binds ports, spawns processes, uses containers, or asserts on elapsed time → slow bucket.
+- If a fast-bucket test flakes only under parallelism, move it to the slow bucket rather than retrying.
+
+Perf guardrails (do not undo):
+
+- Keep `.claude/` in `.prettierignore`, `.gitignore`, and the `ignores` list in `eslint.config.mjs`. `.claude/worktrees/` holds many GB of stale worktrees ignored only via `.git/info/exclude`, which prettier/eslint do not read — without these entries the lint gates take 5+ minutes instead of seconds. Any new lint-like tool must get the same ignore entry.
+- Keep `--cache` on the prettier and eslint scripts.
+- `typecheck` keeps `--force`: incremental `tsc -b` hits stale-dist `TS6305` errors in this repo.

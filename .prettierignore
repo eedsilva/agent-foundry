@@ -9,3 +9,5 @@ planning/ROADMAP.md
 *.tsbuildinfo
 .superpowers
 graphify-out/
+.claude/
+docs/

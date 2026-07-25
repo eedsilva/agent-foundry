@@ -55,6 +55,8 @@ export const ExecutionFailureSchema = z
     exitCode: z.number().int().optional(),
     stdout: z.string().optional(),
     stderr: z.string().optional(),
+    /** The CLI never authenticated, so the failure says nothing about the model. */
+    authFailure: z.boolean().optional(),
   })
   .strict();
 export type ExecutionFailure = z.infer<typeof ExecutionFailureSchema>;

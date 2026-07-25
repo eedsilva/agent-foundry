@@ -1,0 +1,3346 @@
+{
+  "schemaVersion": "1",
+  "createdAt": "2026-07-24T22:10:10.595Z",
+  "baselineRef": "56568a3",
+  "runs": [
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARJKN2QPZNZBWRSG3FJPE8",
+      "runId": "01KYARJKN2FKXTC9F32E3QKAF8",
+      "startedAt": "2026-07-24T19:10:31.570Z",
+      "status": "failed",
+      "durationMs": 38022,
+      "route": {
+        "routeId": "01KYARJZDT7MTAMHY1N5QP1X12",
+        "createdAt": "2026-07-24T19:10:43.642Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3339,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.74,
+            "context": 0.9675,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7489
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.74,
+            "context": 0.9675,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7489
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-haiku"],
+        "override": {
+          "modelId": "claude-haiku",
+          "provider": "claude",
+          "model": "haiku",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"bug-version-compare\" (bug)",
+          "estimatedImpact": "Measures claude-haiku performance on the bug corpus kind",
+          "createdAt": "2026-07-24T19:10:43.447Z",
+          "source": "run",
+          "overrideId": "01KYARJZ7PB2S1HADZEW46VSCX"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/haiku",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/bug-version-compare--claude-haiku-attempt01-request.md",
+      "diff": {
+        "checkpoint": "bddd5ae69144ba53df15979daef2cf6e3ed4ceaf",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 645,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 56,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 22,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARJKN2FKXTC9F32E3QKAF8 reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "bug-version-compare",
+      "caseKind": "bug",
+      "modelId": "claude-haiku"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARG811QDSYY7Z2TATPF8YE",
+      "runId": "01KYARG811FW3F0F9YAJ3DK91W",
+      "startedAt": "2026-07-24T19:09:14.129Z",
+      "status": "failed",
+      "durationMs": 38869,
+      "route": {
+        "routeId": "01KYARGMK0PHZJBFT9XYN8X2F7",
+        "createdAt": "2026-07-24T19:09:27.008Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3339,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7182
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7182
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-opus"],
+        "override": {
+          "modelId": "claude-opus",
+          "provider": "claude",
+          "model": "opus",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"bug-version-compare\" (bug)",
+          "estimatedImpact": "Measures claude-opus performance on the bug corpus kind",
+          "createdAt": "2026-07-24T19:09:26.752Z",
+          "source": "run",
+          "overrideId": "01KYARGMB0W76QJF2VWMPZH6W8"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/opus",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/bug-version-compare--claude-opus-attempt01-request.md",
+      "diff": {
+        "checkpoint": "848cb35ea5d09152f673a48707603e00df9c454b",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 606,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 58,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 22,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARG811FW3F0F9YAJ3DK91W reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "bug-version-compare",
+      "caseKind": "bug",
+      "modelId": "claude-opus"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARHE1C3N4FGBHN3B8Q467R",
+      "runId": "01KYARHE1CPA37S9HKY5EB9Z4D",
+      "startedAt": "2026-07-24T19:09:53.051Z",
+      "status": "failed",
+      "durationMs": 38469,
+      "route": {
+        "routeId": "01KYARHT8JC40SY79TPG5JQJWQ",
+        "createdAt": "2026-07-24T19:10:05.586Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3339,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.2,
+            "estimatedCostUsd": null,
+            "total": 0.78
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.2,
+            "estimatedCostUsd": null,
+            "total": 0.78
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-sonnet"],
+        "override": {
+          "modelId": "claude-sonnet",
+          "provider": "claude",
+          "model": "sonnet",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"bug-version-compare\" (bug)",
+          "estimatedImpact": "Measures claude-sonnet performance on the bug corpus kind",
+          "createdAt": "2026-07-24T19:10:05.366Z",
+          "source": "run",
+          "overrideId": "01KYARHT1PKB6VAM9002R7P1RQ"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/sonnet",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/bug-version-compare--claude-sonnet-attempt01-request.md",
+      "diff": {
+        "checkpoint": "712fc1a5cc07df89ebe5622710d8d0e5bf440eb0",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 626,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 53,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 20,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARHE1CPA37S9HKY5EB9Z4D reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "bug-version-compare",
+      "caseKind": "bug",
+      "modelId": "claude-sonnet"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARP7RT7D9FB00Y7EA3Z3KP",
+      "runId": "01KYARP7RTCZY8VEJ7TD44F4E5",
+      "startedAt": "2026-07-24T19:12:30.474Z",
+      "status": "failed",
+      "durationMs": 40445,
+      "route": {
+        "routeId": "01KYARPKT1RTD8GF9QD5T2BZCA",
+        "createdAt": "2026-07-24T19:12:42.817Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3339,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.74,
+            "context": 0.9675,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7489
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.74,
+            "context": 0.9675,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7489
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-haiku"],
+        "override": {
+          "modelId": "claude-haiku",
+          "provider": "claude",
+          "model": "haiku",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"existing-repo-truncate\" (existing-repo)",
+          "estimatedImpact": "Measures claude-haiku performance on the existing-repo corpus kind",
+          "createdAt": "2026-07-24T19:12:42.616Z",
+          "source": "run",
+          "overrideId": "01KYARPKKRB7XG0SSCRQF7JT33"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/haiku",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/existing-repo-truncate--claude-haiku-attempt01-request.md",
+      "diff": {
+        "checkpoint": "ddccc6cad94682d4977c4ac26ede08cc3c2d6fa5",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 801,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 53,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 26,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARP7RTCZY8VEJ7TD44F4E5 reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "existing-repo-truncate",
+      "caseKind": "existing-repo",
+      "modelId": "claude-haiku"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARKRV5KB1220W6C67GY02Y",
+      "runId": "01KYARKRV512YZC2411YPKZ2F4",
+      "startedAt": "2026-07-24T19:11:09.650Z",
+      "status": "failed",
+      "durationMs": 40323,
+      "route": {
+        "routeId": "01KYARM4V2DTHPKVEKXG91SKBM",
+        "createdAt": "2026-07-24T19:11:21.954Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3339,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7182
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7182
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-opus"],
+        "override": {
+          "modelId": "claude-opus",
+          "provider": "claude",
+          "model": "opus",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"existing-repo-truncate\" (existing-repo)",
+          "estimatedImpact": "Measures claude-opus performance on the existing-repo corpus kind",
+          "createdAt": "2026-07-24T19:11:21.737Z",
+          "source": "run",
+          "overrideId": "01KYARM4M9J6PDFT92QKBWFASD"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/opus",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/existing-repo-truncate--claude-opus-attempt01-request.md",
+      "diff": {
+        "checkpoint": "2ac9b9394f851d6be8ace22156ac65901029e2e1",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 777,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 50,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 23,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARKRV512YZC2411YPKZ2F4 reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "existing-repo-truncate",
+      "caseKind": "existing-repo",
+      "modelId": "claude-opus"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARN08T140CFGTF8VV19BCE",
+      "runId": "01KYARN08TGDV40RBDV9WGK409",
+      "startedAt": "2026-07-24T19:11:50.028Z",
+      "status": "failed",
+      "durationMs": 40387,
+      "route": {
+        "routeId": "01KYARNCE6B0Q83EYJ2E305275",
+        "createdAt": "2026-07-24T19:12:02.502Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3339,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.2,
+            "estimatedCostUsd": null,
+            "total": 0.78
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.2,
+            "estimatedCostUsd": null,
+            "total": 0.78
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-sonnet"],
+        "override": {
+          "modelId": "claude-sonnet",
+          "provider": "claude",
+          "model": "sonnet",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"existing-repo-truncate\" (existing-repo)",
+          "estimatedImpact": "Measures claude-sonnet performance on the existing-repo corpus kind",
+          "createdAt": "2026-07-24T19:12:02.294Z",
+          "source": "run",
+          "overrideId": "01KYARNC7PFFQB6GYD9EZ1FFQN"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/sonnet",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/existing-repo-truncate--claude-sonnet-attempt01-request.md",
+      "diff": {
+        "checkpoint": "b5eda942104b2841f2c786ef281685fb8830a1de",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 784,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 55,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 18,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARN08TGDV40RBDV9WGK409 reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "existing-repo-truncate",
+      "caseKind": "existing-repo",
+      "modelId": "claude-sonnet"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARSTY08J369WKDZ1GW8VEA",
+      "runId": "01KYARSTY0WJ9QE27RKB36V5AQ",
+      "startedAt": "2026-07-24T19:14:28.394Z",
+      "status": "failed",
+      "durationMs": 38599,
+      "route": {
+        "routeId": "01KYART74AREEZJMQ2CFR6WV18",
+        "createdAt": "2026-07-24T19:14:40.906Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3313,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.74,
+            "context": 0.9676,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7489
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.74,
+            "context": 0.9676,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7489
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-haiku"],
+        "override": {
+          "modelId": "claude-haiku",
+          "provider": "claude",
+          "model": "haiku",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"greenfield-clamp-util\" (greenfield)",
+          "estimatedImpact": "Measures claude-haiku performance on the greenfield corpus kind",
+          "createdAt": "2026-07-24T19:14:40.711Z",
+          "source": "run",
+          "overrideId": "01KYART6Y7T5MNVY3J3G4VC7FP"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/haiku",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/greenfield-clamp-util--claude-haiku-attempt01-request.md",
+      "diff": {
+        "checkpoint": "e72fcea56b877aeced77175bebdb6652cdb1eb24",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 633,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 55,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 26,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARSTY0WJ9QE27RKB36V5AQ reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "greenfield-clamp-util",
+      "caseKind": "greenfield",
+      "modelId": "claude-haiku"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARQFA9XKZDSGF5492Y7YZV",
+      "runId": "01KYARQFA9P6HD42HQ42XS63AA",
+      "startedAt": "2026-07-24T19:13:10.968Z",
+      "status": "failed",
+      "durationMs": 38702,
+      "route": {
+        "routeId": "01KYARQVWN65K0A51WVZ5RMD5N",
+        "createdAt": "2026-07-24T19:13:23.861Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3313,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.9751,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7182
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.9751,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7182
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-opus"],
+        "override": {
+          "modelId": "claude-opus",
+          "provider": "claude",
+          "model": "opus",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"greenfield-clamp-util\" (greenfield)",
+          "estimatedImpact": "Measures claude-opus performance on the greenfield corpus kind",
+          "createdAt": "2026-07-24T19:13:23.659Z",
+          "source": "run",
+          "overrideId": "01KYARQVPBTYVEW9PGPJGN3CV5"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/opus",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/greenfield-clamp-util--claude-opus-attempt01-request.md",
+      "diff": {
+        "checkpoint": "1051a7571f5d43a44663924eabb4c7c0115c0378",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 595,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 56,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 19,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARQFA9P6HD42HQ42XS63AA reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "greenfield-clamp-util",
+      "caseKind": "greenfield",
+      "modelId": "claude-opus"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARRN5M4AKGJBDYF2W64XAN",
+      "runId": "01KYARRN5NR81TNQJT9EFC0JTR",
+      "startedAt": "2026-07-24T19:13:49.727Z",
+      "status": "failed",
+      "durationMs": 38616,
+      "route": {
+        "routeId": "01KYARS1AK86AZ4SATJKWAJYJH",
+        "createdAt": "2026-07-24T19:14:02.195Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3313,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.9751,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.2,
+            "estimatedCostUsd": null,
+            "total": 0.78
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.9751,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.2,
+            "estimatedCostUsd": null,
+            "total": 0.78
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-sonnet"],
+        "override": {
+          "modelId": "claude-sonnet",
+          "provider": "claude",
+          "model": "sonnet",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"greenfield-clamp-util\" (greenfield)",
+          "estimatedImpact": "Measures claude-sonnet performance on the greenfield corpus kind",
+          "createdAt": "2026-07-24T19:14:01.980Z",
+          "source": "run",
+          "overrideId": "01KYARS13WH12Z998Z6QRE4WMC"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/sonnet",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/greenfield-clamp-util--claude-sonnet-attempt01-request.md",
+      "diff": {
+        "checkpoint": "3022adf8ad6f4d3cc4addda982f24ad64227112f",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 598,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 52,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 22,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARRN5NR81TNQJT9EFC0JTR reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "greenfield-clamp-util",
+      "caseKind": "greenfield",
+      "modelId": "claude-sonnet"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARXB4GBVZ26AYP67JENF1N",
+      "runId": "01KYARXB4G2AQEEPVRSWNC2CDB",
+      "startedAt": "2026-07-24T19:16:23.301Z",
+      "status": "failed",
+      "durationMs": 44291,
+      "route": {
+        "routeId": "01KYARXVTR02DP50Z81R0EFY1E",
+        "createdAt": "2026-07-24T19:16:40.408Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3344,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.74,
+            "context": 0.9675,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7489
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.74,
+            "context": 0.9675,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7489
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-haiku"],
+        "override": {
+          "modelId": "claude-haiku",
+          "provider": "claude",
+          "model": "haiku",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"refactor-formatters\" (refactor)",
+          "estimatedImpact": "Measures claude-haiku performance on the refactor corpus kind",
+          "createdAt": "2026-07-24T19:16:40.155Z",
+          "source": "run",
+          "overrideId": "01KYARXVJVNMSCNVJC2BAQ47PK"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/haiku",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/refactor-formatters--claude-haiku-attempt01-request.md",
+      "diff": {
+        "checkpoint": "ef5302b5e00f6f79f1461695c9215e68b4e8290d",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 0,
+          "durationMs": 661,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 54,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 22,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARXB4G2AQEEPVRSWNC2CDB reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "refactor-formatters",
+      "caseKind": "refactor",
+      "modelId": "claude-haiku"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARV0NNH1DH7WFN0DKY06DA",
+      "runId": "01KYARV0NPRSHYDPTK9RSK4WQ4",
+      "startedAt": "2026-07-24T19:15:07.044Z",
+      "status": "failed",
+      "durationMs": 38325,
+      "route": {
+        "routeId": "01KYARVCHHBHP7PRBHE8WKMZYD",
+        "createdAt": "2026-07-24T19:15:19.217Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3344,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7182
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7182
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-opus"],
+        "override": {
+          "modelId": "claude-opus",
+          "provider": "claude",
+          "model": "opus",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"refactor-formatters\" (refactor)",
+          "estimatedImpact": "Measures claude-opus performance on the refactor corpus kind",
+          "createdAt": "2026-07-24T19:15:18.998Z",
+          "source": "run",
+          "overrideId": "01KYARVCAPKNXTBVXWJ35XMANG"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/opus",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/refactor-formatters--claude-opus-attempt01-request.md",
+      "diff": {
+        "checkpoint": "7221a30c0691933993aeebdd6267cdaa44c8e17b",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 0,
+          "durationMs": 606,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 63,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 23,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARV0NPRSHYDPTK9RSK4WQ4 reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "refactor-formatters",
+      "caseKind": "refactor",
+      "modelId": "claude-opus"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARW6529CAK55S14EPD9GXD",
+      "runId": "01KYARW652HNCC9EEMKF9FRE0Z",
+      "startedAt": "2026-07-24T19:15:45.425Z",
+      "status": "failed",
+      "durationMs": 37828,
+      "route": {
+        "routeId": "01KYARWHS2CZBHR8B0W4XDR27H",
+        "createdAt": "2026-07-24T19:15:57.346Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3344,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.2,
+            "estimatedCostUsd": null,
+            "total": 0.78
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.975,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.2,
+            "estimatedCostUsd": null,
+            "total": 0.78
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-sonnet"],
+        "override": {
+          "modelId": "claude-sonnet",
+          "provider": "claude",
+          "model": "sonnet",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"refactor-formatters\" (refactor)",
+          "estimatedImpact": "Measures claude-sonnet performance on the refactor corpus kind",
+          "createdAt": "2026-07-24T19:15:57.143Z",
+          "source": "run",
+          "overrideId": "01KYARWHJPGDT597PBG1RXP1MH"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/sonnet",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/refactor-formatters--claude-sonnet-attempt01-request.md",
+      "diff": {
+        "checkpoint": "43b7a9bc0183451bf2c72f603cfd10e0b9591f02",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 0,
+          "durationMs": 669,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 57,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 24,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARW652HNCC9EEMKF9FRE0Z reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "refactor-formatters",
+      "caseKind": "refactor",
+      "modelId": "claude-sonnet"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARYYXT6NFQ99TYJ6G9WAWH",
+      "runId": "01KYARYYXTS1H812N7QRA1S4ZT",
+      "startedAt": "2026-07-24T19:17:16.340Z",
+      "status": "passed",
+      "durationMs": 3492,
+      "route": {
+        "routeId": "01KYARZ087CY83PS72YR0FGYN4",
+        "createdAt": "2026-07-24T19:17:17.703Z",
+        "profile": {
+          "role": "planner",
+          "taskKind": "planning",
+          "taxonomyVersion": "2",
+          "category": "planning",
+          "features": ["database", "frontend"],
+          "complexity": 3,
+          "risk": 2,
+          "estimatedContextTokens": 3178,
+          "estimatedOutputTokens": 8000,
+          "mutatesWorkspace": false,
+          "toolPolicy": "read-only",
+          "priorities": {
+            "quality": 0.55,
+            "speed": 0.1,
+            "cost": 0.1,
+            "reliability": 0.25
+          },
+          "preferredTags": ["planning", "reasoning", "structured-output"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.68,
+            "context": 0.9681,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7216
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.68,
+            "context": 0.9681,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7216
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-haiku"],
+        "override": {
+          "modelId": "claude-haiku",
+          "provider": "claude",
+          "model": "haiku",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"review-score-router\" (review)",
+          "estimatedImpact": "Measures claude-haiku performance on the review corpus kind",
+          "createdAt": "2026-07-24T19:17:17.515Z",
+          "source": "run",
+          "overrideId": "01KYARZ02B0P6BD7YHB2ET9ZCJ"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/haiku",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/review-score-router--claude-haiku-attempt01-request.md",
+      "diff": {
+        "checkpoint": "cee591647cbb05b31520409babbd4495b0737cba",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [],
+      "repairs": {
+        "iterations": 1,
+        "repairEvents": 0
+      },
+      "caseId": "review-score-router",
+      "caseKind": "review",
+      "modelId": "claude-haiku"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARYPEQV8E9M7SSQ2NK6MB8",
+      "runId": "01KYARYPEQQ4QPCC2J466XYVT3",
+      "startedAt": "2026-07-24T19:17:07.642Z",
+      "status": "passed",
+      "durationMs": 4570,
+      "route": {
+        "routeId": "01KYARYRBQG9YFNH9Q00P58E8T",
+        "createdAt": "2026-07-24T19:17:09.623Z",
+        "profile": {
+          "role": "planner",
+          "taskKind": "planning",
+          "taxonomyVersion": "2",
+          "category": "planning",
+          "features": ["database", "frontend"],
+          "complexity": 3,
+          "risk": 2,
+          "estimatedContextTokens": 3178,
+          "estimatedOutputTokens": 8000,
+          "mutatesWorkspace": false,
+          "toolPolicy": "read-only",
+          "priorities": {
+            "quality": 0.55,
+            "speed": 0.1,
+            "cost": 0.1,
+            "reliability": 0.25
+          },
+          "preferredTags": ["planning", "reasoning", "structured-output"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.96,
+            "context": 0.9756,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0.6667,
+            "estimatedCostUsd": null,
+            "total": 0.7453
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.96,
+            "context": 0.9756,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0.6667,
+            "estimatedCostUsd": null,
+            "total": 0.7453
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-opus"],
+        "override": {
+          "modelId": "claude-opus",
+          "provider": "claude",
+          "model": "opus",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"review-score-router\" (review)",
+          "estimatedImpact": "Measures claude-opus performance on the review corpus kind",
+          "createdAt": "2026-07-24T19:17:09.406Z",
+          "source": "run",
+          "overrideId": "01KYARYR4YVA1RCAFCGK54M9BA"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/opus",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/review-score-router--claude-opus-attempt01-request.md",
+      "diff": {
+        "checkpoint": "6c15ae42bacd549a930c15fd52df8268ca638d80",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [],
+      "repairs": {
+        "iterations": 1,
+        "repairEvents": 0
+      },
+      "caseId": "review-score-router",
+      "caseKind": "review",
+      "modelId": "claude-opus"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARYTXP5B7H1FBA5AKBKYZ6",
+      "runId": "01KYARYTXPX4417H90EYJVP1N6",
+      "startedAt": "2026-07-24T19:17:12.238Z",
+      "status": "passed",
+      "durationMs": 4085,
+      "route": {
+        "routeId": "01KYARYWRF3DFB3YB5HSAVQV0G",
+        "createdAt": "2026-07-24T19:17:14.127Z",
+        "profile": {
+          "role": "planner",
+          "taskKind": "planning",
+          "taxonomyVersion": "2",
+          "category": "planning",
+          "features": ["database", "frontend"],
+          "complexity": 3,
+          "risk": 2,
+          "estimatedContextTokens": 3178,
+          "estimatedOutputTokens": 8000,
+          "mutatesWorkspace": false,
+          "toolPolicy": "read-only",
+          "priorities": {
+            "quality": 0.55,
+            "speed": 0.1,
+            "cost": 0.1,
+            "reliability": 0.25
+          },
+          "preferredTags": ["planning", "reasoning", "structured-output"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.9756,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.3333,
+            "estimatedCostUsd": null,
+            "total": 0.7689
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.9756,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.3333,
+            "estimatedCostUsd": null,
+            "total": 0.7689
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-sonnet"],
+        "override": {
+          "modelId": "claude-sonnet",
+          "provider": "claude",
+          "model": "sonnet",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"review-score-router\" (review)",
+          "estimatedImpact": "Measures claude-sonnet performance on the review corpus kind",
+          "createdAt": "2026-07-24T19:17:13.927Z",
+          "source": "run",
+          "overrideId": "01KYARYWJ7Z4A530614GZYR9GB"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/sonnet",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/review-score-router--claude-sonnet-attempt01-request.md",
+      "diff": {
+        "checkpoint": "876afd5f8ce2009a2f3e4df4277c847e7647a95b",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [],
+      "repairs": {
+        "iterations": 1,
+        "repairEvents": 0
+      },
+      "caseId": "review-score-router",
+      "caseKind": "review",
+      "modelId": "claude-sonnet"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYAS1JCN2EA2JWVM5H0ER04V",
+      "runId": "01KYAS1JCNX6W65XFBYTB7ZG0F",
+      "startedAt": "2026-07-24T19:18:41.803Z",
+      "status": "failed",
+      "durationMs": 40888,
+      "route": {
+        "routeId": "01KYAS20JFSGWTHG11XTQFRE3A",
+        "createdAt": "2026-07-24T19:18:56.335Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3369,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.74,
+            "context": 0.9674,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7489
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-haiku",
+            "provider": "claude",
+            "model": "haiku",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["fast", "economy", "triage"],
+            "capabilities": {
+              "planning": 0.68,
+              "architecture": 0.64,
+              "coding": 0.74,
+              "review": 0.72,
+              "repair": 0.73,
+              "structuredOutput": 0.92,
+              "speed": 0.96,
+              "costEfficiency": 0.95,
+              "reliability": 0.84
+            }
+          },
+          "score": {
+            "capability": 0.74,
+            "context": 0.9674,
+            "speed": 0.96,
+            "cost": 0.95,
+            "reliability": 0.67,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7489
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-haiku"],
+        "override": {
+          "modelId": "claude-haiku",
+          "provider": "claude",
+          "model": "haiku",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"security-redaction-google-api-key\" (security-sensitive)",
+          "estimatedImpact": "Measures claude-haiku performance on the security-sensitive corpus kind",
+          "createdAt": "2026-07-24T19:18:56.113Z",
+          "source": "run",
+          "overrideId": "01KYAS20BHP9DT56NRSHDAEANG"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/haiku",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/security-redaction-google-api-key--claude-haiku-attempt01-request.md",
+      "diff": {
+        "checkpoint": "371402de84f053006f24eefa3babf5cce6c877f1",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 653,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 54,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 20,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYAS1JCNX6W65XFBYTB7ZG0F reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "security-redaction-google-api-key",
+      "caseKind": "security-sensitive",
+      "modelId": "claude-haiku"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYARZ2BF3G1B79G14AV4WFFJ",
+      "runId": "01KYARZ2BFV4XR4A91QX7C6V32",
+      "startedAt": "2026-07-24T19:17:19.849Z",
+      "status": "failed",
+      "durationMs": 39050,
+      "route": {
+        "routeId": "01KYARZEDRXRWHYNC4W4WY90C4",
+        "createdAt": "2026-07-24T19:17:32.216Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3369,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.9749,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7182
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-opus",
+            "provider": "claude",
+            "model": "opus",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["reasoning", "planning", "architecture", "review", "quality"],
+            "capabilities": {
+              "planning": 0.96,
+              "architecture": 0.97,
+              "coding": 0.9,
+              "review": 0.96,
+              "repair": 0.91,
+              "structuredOutput": 0.95,
+              "speed": 0.4,
+              "costEfficiency": 0.28,
+              "reliability": 0.93
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.9749,
+            "speed": 0.4,
+            "cost": 0.28,
+            "reliability": 0.715,
+            "historical": 0.5,
+            "tagAffinity": 0,
+            "estimatedCostUsd": null,
+            "total": 0.7182
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-opus"],
+        "override": {
+          "modelId": "claude-opus",
+          "provider": "claude",
+          "model": "opus",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"security-redaction-google-api-key\" (security-sensitive)",
+          "estimatedImpact": "Measures claude-opus performance on the security-sensitive corpus kind",
+          "createdAt": "2026-07-24T19:17:32.000Z",
+          "source": "run",
+          "overrideId": "01KYARZE70F1V1G4230H1HZGVH"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/opus",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/security-redaction-google-api-key--claude-opus-attempt01-request.md",
+      "diff": {
+        "checkpoint": "853953574427cd8053c5af966352028e6d5ebd5c",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 628,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 51,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 21,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYARZ2BFV4XR4A91QX7C6V32 reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "security-redaction-google-api-key",
+      "caseKind": "security-sensitive",
+      "modelId": "claude-opus"
+    },
+    {
+      "schemaVersion": "1",
+      "attempt": 1,
+      "baselineRef": "56568a3",
+      "projectId": "01KYAS08HZBVB1318DAJY4F5QZ",
+      "runId": "01KYAS08HZENX45XJRM7N17BJ2",
+      "startedAt": "2026-07-24T19:17:58.950Z",
+      "status": "failed",
+      "durationMs": 42823,
+      "route": {
+        "routeId": "01KYAS0QT2CCKPCQAWNBAC49P5",
+        "createdAt": "2026-07-24T19:18:14.594Z",
+        "profile": {
+          "role": "developer",
+          "taskKind": "implementation",
+          "taxonomyVersion": "2",
+          "category": "implementation/database",
+          "features": ["database", "frontend", "tests"],
+          "complexity": 3,
+          "risk": 3,
+          "estimatedContextTokens": 3369,
+          "estimatedOutputTokens": 12000,
+          "mutatesWorkspace": true,
+          "toolPolicy": "workspace-write",
+          "priorities": {
+            "quality": 0.58,
+            "speed": 0.12,
+            "cost": 0.06,
+            "reliability": 0.24
+          },
+          "preferredTags": ["coding", "tool-use", "workspace-write", "repository", "typescript"]
+        },
+        "selected": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.9749,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.2,
+            "estimatedCostUsd": null,
+            "total": 0.78
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "fallbacks": [],
+        "executed": {
+          "model": {
+            "id": "claude-sonnet",
+            "provider": "claude",
+            "model": "sonnet",
+            "billingMode": "subscription",
+            "enabled": true,
+            "requireExplicitModel": false,
+            "maxContextTokens": 100000,
+            "canWriteWorkspace": true,
+            "tags": ["balanced", "planning", "coding", "review"],
+            "capabilities": {
+              "planning": 0.9,
+              "architecture": 0.91,
+              "coding": 0.9,
+              "review": 0.91,
+              "repair": 0.9,
+              "structuredOutput": 0.95,
+              "speed": 0.69,
+              "costEfficiency": 0.62,
+              "reliability": 0.91
+            }
+          },
+          "score": {
+            "capability": 0.9,
+            "context": 0.9749,
+            "speed": 0.69,
+            "cost": 0.62,
+            "reliability": 0.705,
+            "historical": 0.5,
+            "tagAffinity": 0.2,
+            "estimatedCostUsd": null,
+            "total": 0.78
+          },
+          "confidence": {
+            "value": 0,
+            "sampleSize": 0,
+            "interval": {
+              "lower": 0,
+              "upper": 1
+            },
+            "coldStart": true,
+            "rationale": "0 observations; prior weight 100% (cold start — conservative)"
+          }
+        },
+        "attemptedModelIds": ["claude-sonnet"],
+        "override": {
+          "modelId": "claude-sonnet",
+          "provider": "claude",
+          "model": "sonnet",
+          "actor": {
+            "kind": "system",
+            "id": "benchmark-runner"
+          },
+          "reason": "Benchmark run of case \"security-redaction-google-api-key\" (security-sensitive)",
+          "estimatedImpact": "Measures claude-sonnet performance on the security-sensitive corpus kind",
+          "createdAt": "2026-07-24T19:18:14.372Z",
+          "source": "run",
+          "overrideId": "01KYAS0QK4CNVWGT65EN9QQK2X"
+        },
+        "rejected": []
+      },
+      "executedModel": "mock:claude/sonnet",
+      "usage": {
+        "inputTokens": 100,
+        "outputTokens": 100,
+        "estimatedCostUsd": 0
+      },
+      "promptArtifact": "dogfood/security-redaction-google-api-key--claude-sonnet-attempt01-request.md",
+      "diff": {
+        "checkpoint": "7b3e0d40a41a26b60b632b45e52e41ed148e4788",
+        "stat": "",
+        "filesChanged": []
+      },
+      "checks": [
+        {
+          "name": "dogfood:verify",
+          "exitCode": 1,
+          "durationMs": 634,
+          "skipped": false
+        },
+        {
+          "name": "policy-dependency-check",
+          "exitCode": 0,
+          "durationMs": 0,
+          "skipped": false
+        },
+        {
+          "name": "git-committed-tree-check",
+          "exitCode": 2,
+          "durationMs": 55,
+          "skipped": false
+        },
+        {
+          "name": "git-working-tree-check",
+          "exitCode": 0,
+          "durationMs": 25,
+          "skipped": false
+        }
+      ],
+      "repairs": {
+        "iterations": 10,
+        "repairEvents": 10
+      },
+      "failure": {
+        "kind": "EmergencyCeilingError",
+        "message": "Workflow run 01KYAS08HZENX45XJRM7N17BJ2 reached the consecutive-repairs emergency ceiling."
+      },
+      "caseId": "security-redaction-google-api-key",
+      "caseKind": "security-sensitive",
+      "modelId": "claude-sonnet"
+    }
+  ],
+  "limitations": [
+    "Each case runs through the real product pipeline with a run-scoped model override; results depend on provider CLI availability and authentication on the host that ran it.",
+    "Failures are frozen alongside passes so the baseline reflects true per-model reliability, not a green wall.",
+    "expectedSignals on each case are documentation for reviewers; this runner does not automatically grade output against them.",
+    "The refactor and review corpus kinds are behavior-preserving by design; a passed verifyScript on those kinds does not by itself confirm the requested change was made — expectedSignals is the human-graded signal for those two kinds."
+  ]
+}

@@ -13,3 +13,5 @@ data/
 .turbo/
 test-results/
 graphify-out/
+.eslintcache
+.claude/

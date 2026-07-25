@@ -12,6 +12,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/.next/**',
       '**/coverage/**',
+      '.claude/**',
       'data/**',
       'apps/web/next-env.d.ts',
       'planning/ROADMAP.md',

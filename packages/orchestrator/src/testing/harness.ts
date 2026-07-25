@@ -40,6 +40,7 @@ import {
 import {
   ExecutionError,
   NotFoundError,
+  ProviderAuthenticationError,
   RunCancelledError,
   SystemClock,
   ValidationError,
@@ -904,6 +905,14 @@ export function invalidOutputError(): ExecutionError {
   });
 }
 
+/** Mirrors base-cli-executor.ts — the CLI never authenticated, so nothing was asked of the model. */
+export function authenticationError(): ProviderAuthenticationError {
+  return new ProviderAuthenticationError(
+    'claude CLI exited with code 1: Not logged in · Please run /login',
+    { provider: 'claude', exitCode: 1 },
+  );
+}
+
 /** Simulates a transport-level failure between control plane and execution plane — not a CLI/domain error. */
 export function disconnectError(): Error {
   return new Error('ECONNRESET: execution plane disconnected before the run completed');
@@ -1338,6 +1347,7 @@ export function makeHarness(
     undefined,
     undefined,
     opts.decisionLog,
+    opts.generatedProjectRuntime,
   );
   const service = new ProjectService(
     stores.projects,
@@ -1359,7 +1369,6 @@ export function makeHarness(
     ids,
     stores.modelOverrides,
     undefined,
-    opts.generatedProjectRuntime,
   );
   return {
     ...stores,

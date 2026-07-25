@@ -232,6 +232,43 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+  # ponytail: mock-executor-mode fresh run only, ~20-25 min — this repo has
+  # no CI-available real provider credentials, so it can only ever compare
+  # against a mock-mode baseline. See docs/OPERATIONS.md "Regression gate de
+  # promoção" for what that does and doesn't catch.
+  regression-gate:
+    name: regression-gate
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The promotion-sensitive-path diff below needs real history to
+          # diff against, not just the shallow default checkout of the PR tip.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Decide whether this change touches a promotion-sensitive path
+        id: gate-check
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            RUN=$(git diff --name-only "$BASE_SHA" HEAD | npx tsx scripts/promotion-gate-check.ts)
+            echo "run=$RUN" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Generate fresh benchmark results (mock executor)
+        if: steps.gate-check.outputs.run == 'true'
+        run: npx tsx scripts/benchmark.ts --all --executor-mode mock
+      - name: Compare against the frozen v0.9 baseline
+        if: steps.gate-check.outputs.run == 'true'
+        run: npx tsx scripts/benchmark.ts --gate
+
   sandbox-sbom:
     name: sandbox-sbom
     needs: preflight

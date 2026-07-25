@@ -17,6 +17,12 @@ describe('pickSafeEnvironment', () => {
   it('omits allowlisted keys that are simply absent from the source', () => {
     expect(pickSafeEnvironment({ PATH: '/usr/bin' })).toEqual({ PATH: '/usr/bin' });
   });
+
+  it('keeps the POSIX identity variables the Claude CLI needs to resolve its login', () => {
+    expect(
+      pickSafeEnvironment({ USER: 'agent', LOGNAME: 'agent', GITHUB_TOKEN: 'ghp-leak' }),
+    ).toEqual({ USER: 'agent', LOGNAME: 'agent' });
+  });
 });
 
 describe('safeSpawnEnv', () => {

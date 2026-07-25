@@ -331,6 +331,32 @@ test('treats an unparseable installed CLI version as incompatible', async (t) =>
   assert.equal(probe.message, 'Claude version could not be parsed.');
 });
 
+test('scopes the probe environment to the spawn allowlist execution uses', async (t) => {
+  const providers = structuredClone(readyFixtures);
+  providers.claude.auth = { fromEnv: true };
+  const fixture = await createFixture(t, providers);
+  const result = runDoctor(fixture, ['--json'], {
+    USER: 'doctor-probe-user',
+    DOCTOR_LEAK_CANARY: 'control-plane-only',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'claude');
+  assert.equal(probe.status, 'ready');
+});
+
+test('reports unauthenticated when the identity variable is withheld from the probe env', async (t) => {
+  const providers = structuredClone(readyFixtures);
+  providers.claude.auth = { fromEnv: true };
+  const fixture = await createFixture(t, providers);
+  const result = runDoctor(fixture, ['--json'], { USER: undefined, LOGNAME: undefined });
+
+  assert.equal(result.status, 1);
+  const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'claude');
+  assert.equal(probe.status, 'unauthenticated');
+  assert.equal(probe.message, 'Claude is not authenticated.');
+});
+
 function readyProbe(provider, version, message) {
   return {
     provider,
@@ -356,14 +382,15 @@ async function createFixture(t, providers) {
   await writeFile(join(root, 'harness', 'manifest.json'), '{}\n');
   await writeFile(join(root, 'models', 'catalog.yaml'), 'models: []\n');
 
-  const fixturePath = join(root, 'provider-fixtures.json');
-  await writeFile(fixturePath, JSON.stringify(providers));
+  await writeFile(join(root, 'provider-fixtures.json'), JSON.stringify(providers));
+  // Read from cwd, not an env var: the doctor scopes the probe env to the same
+  // spawn allowlist execution uses, so nothing bespoke survives into the child.
   const fakeCli = `#!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 const provider = basename(process.argv[1]);
 const args = process.argv.slice(2);
-const fixtures = JSON.parse(readFileSync(process.env.DOCTOR_FIXTURES, 'utf8'));
+const fixtures = JSON.parse(readFileSync('provider-fixtures.json', 'utf8'));
 const fixture = fixtures[provider];
 let command;
 if (args[0] === '--version') command = 'version';
@@ -375,6 +402,13 @@ else if (provider === 'agy' && args.join(' ') === '--help') command = 'help';
 else if (provider === 'agy' && args.join(' ') === 'models') command = 'auth';
 else process.exit(97);
 const response = fixture?.[command] ?? { status: 1 };
+if (response.fromEnv) {
+  // Logged in only when the allowlisted identity var arrived AND the parent's
+  // non-allowlisted canary did not — both observable through the probe status.
+  const loggedIn = Boolean(process.env.USER) && !process.env.DOCTOR_LEAK_CANARY;
+  process.stdout.write(JSON.stringify({ loggedIn }));
+  process.exit(0);
+}
 if (response.stdout) process.stdout.write(response.stdout);
 if (response.stderr) process.stderr.write(response.stderr);
 if (response.signal) {
@@ -389,20 +423,22 @@ else process.exit(response.status ?? 0);
     await chmod(path, 0o755);
   }
 
-  return { root, bin, fixturePath };
+  return { root, bin };
 }
 
 function runDoctor(fixture, args = [], extraEnv = {}) {
+  const env = {
+    ...process.env,
+    PATH: `${fixture.bin}:/usr/bin:/bin`,
+    EXECUTOR_MODE: 'real',
+    ...extraEnv,
+  };
+  // An explicit `undefined` withholds a variable the runner's own env may carry.
+  for (const [key, value] of Object.entries(env)) if (value === undefined) delete env[key];
   return spawnSync(process.execPath, [doctorPath, ...args], {
     cwd: fixture.root,
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      PATH: `${fixture.bin}:/usr/bin:/bin`,
-      EXECUTOR_MODE: 'real',
-      DOCTOR_FIXTURES: fixture.fixturePath,
-      ...extraEnv,
-    },
+    env,
   });
 }
 
