@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { test, expect } from '@playwright/test';
 import { parse as parseDotEnv } from 'dotenv';
@@ -11,7 +11,7 @@ import { reserveEphemeralPort, waitForHttp } from './support.js';
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
-const SCAFFOLD_DIR = resolve(REPO_ROOT, 'harness/scaffolds/nextjs');
+const SCAFFOLD_DIR = resolve(REPO_ROOT, 'harness/scaffolds/nextjs/apps/web');
 const PROJECT_ID = 'generated-app-auth-e2e';
 const STOP_TIMEOUT_MS = 60_000;
 const SETUP_TIMEOUT_MS = 10 * 60_000;
@@ -31,59 +31,18 @@ test.describe('generated app auth', () => {
       mkdtemp(join(tmpdir(), 'agent-foundry-auth-e2e-app-')),
     ]);
 
-    // Assembles a minimal, real Next.js app around the actual scaffold
-    // files (copied, not reimplemented) so this test catches drift between
-    // harness/scaffolds/nextjs and a runnable App Router project, instead
-    // of exercising a second copy of the same UI code.
-    await cp(SCAFFOLD_DIR, appDir, { recursive: true });
-    await writeFile(
-      join(appDir, 'package.json'),
-      JSON.stringify({
-        name: 'generated-app-auth-fixture',
-        private: true,
-        version: '0.0.0',
-        scripts: { build: 'next build' },
-        dependencies: {
-          next: '16.2.11',
-          react: '19.1.1',
-          'react-dom': '19.1.1',
-          '@supabase/ssr': '^0.12.3',
-          '@supabase/supabase-js': '^2.58.0',
-        },
-        devDependencies: {
-          typescript: '^5',
-          '@types/node': '^22',
-          '@types/react': '^19',
-        },
-      }),
-    );
-    await writeFile(
-      join(appDir, 'next.config.mjs'),
-      "/** @type {import('next').NextConfig} */\nexport default { output: 'standalone' };\n",
-    );
-    await writeFile(
-      join(appDir, 'tsconfig.json'),
-      JSON.stringify({
-        compilerOptions: {
-          target: 'ES2017',
-          lib: ['dom', 'dom.iterable', 'esnext'],
-          allowJs: true,
-          skipLibCheck: true,
-          strict: true,
-          noEmit: true,
-          esModuleInterop: true,
-          module: 'esnext',
-          moduleResolution: 'bundler',
-          resolveJsonModule: true,
-          isolatedModules: true,
-          jsx: 'preserve',
-          incremental: true,
-          paths: { '@/*': ['./*'] },
-        },
-        include: ['next-env.d.ts', '**/*.ts', '**/*.tsx', '.next/types/**/*.ts'],
-        exclude: ['node_modules'],
-      }),
-    );
+    // Runs the scaffold's own web tier verbatim — its package.json, tsconfig
+    // and next.config come from the scaffold now (#315), so this catches drift
+    // between harness/scaffolds/nextjs and a runnable App Router project
+    // instead of exercising a second, hand-written copy of that config.
+    // The filter matters when the scaffold has been installed and run in
+    // place: its node_modules symlinks into a pnpm store this copy does not
+    // carry, and its .next was built at a different absolute path.
+    const localOnly = new Set(['node_modules', '.next', 'dist']);
+    await cp(SCAFFOLD_DIR, appDir, {
+      recursive: true,
+      filter: (source) => !source.split(sep).some((segment) => localOnly.has(segment)),
+    });
     await execFileAsync('npm', ['install', '--no-audit', '--no-fund'], {
       cwd: appDir,
       timeout: 5 * 60_000,

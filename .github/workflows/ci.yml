@@ -28,10 +28,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Reject private registry URLs in package-lock.json
+      - name: Reject private registry URLs in the committed lockfiles
         run: |
-          if grep -nE 'applied-caas-gateway|internal\.api\.openai\.org|artifactory/api/npm/npm-public' package-lock.json; then
-            echo '::error::package-lock.json contains a private registry URL. Regenerate or normalize the lockfile before running CI.'
+          if grep -nE 'applied-caas-gateway|internal\.api\.openai\.org|artifactory/api/npm/npm-public' package-lock.json harness/scaffolds/nextjs/pnpm-lock.yaml; then
+            echo '::error::A lockfile contains a private registry URL. Regenerate or normalize it before running CI.'
             exit 1
           fi
 
@@ -105,6 +105,38 @@ jobs:
       - name: Build the packages the e2e fixture imports at runtime (composition and its dependency chain)
         run: npm run build:packages
       - run: npm run e2e --workspace @agent-foundry/api -- issue-radar-golden-journey.spec.ts issue-radar-cross-user-access.spec.ts
+
+  # No seam below the real thing can assert that `pnpm install && pnpm dev`
+  # boots both tiers of the generated-app scaffold, so this job copies it out
+  # of the repo into a clean directory and does exactly that (#315, ADR 0038
+  # "Validation and rollback").
+  scaffold-boot:
+    name: scaffold-boot
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      # Installed with npm rather than a third-party setup action: pnpm v10
+      # self-switches to the exact version in the scaffold's `packageManager`
+      # field, so this only has to bootstrap *a* pnpm.
+      - run: npm install --global pnpm@10
+      - name: Copy the scaffold into a clean directory outside the repo
+        run: cp -R harness/scaffolds/nextjs "$RUNNER_TEMP/scaffold"
+      - name: Install with a frozen lockfile
+        run: pnpm install --frozen-lockfile
+        working-directory: ${{ runner.temp }}/scaffold
+      # `next build` typechecks the web tier and `tsc -p` is the api tier's
+      # build, so this covers `pnpm typecheck` without compiling twice.
+      - name: Build both tiers
+        run: pnpm build
+        working-directory: ${{ runner.temp }}/scaffold
+      - name: Boot both tiers and assert they answer
+        run: pnpm smoke
+        working-directory: ${{ runner.temp }}/scaffold
 
   static:
     name: static

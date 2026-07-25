@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1",
-  "version": "2026.07.23-v4",
+  "version": "2026.07.25-v5",
   "fragments": [
     { "path": "global/operating-principles.md", "priority": 10, "always": true },
     { "path": "global/artifact-contract.md", "priority": 20, "always": true },

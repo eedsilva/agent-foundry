@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { dirname, resolve } from 'node:path';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VersionedHarnessRepository } from './versioned-harness.js';
 
@@ -43,18 +45,58 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
     const files = await repo.scaffoldFiles('nextjs');
 
     expect(files.map((file) => file.path).sort()).toEqual([
-      'app/actions.ts',
-      'app/layout.tsx',
-      'app/page.tsx',
-      'app/sign-in/page.tsx',
-      'app/sign-up/page.tsx',
-      'lib/supabase/client.ts',
-      'lib/supabase/server.ts',
-      'middleware.ts',
+      '.env.example',
+      'apps/api/package.json',
+      'apps/api/src/server.ts',
+      'apps/api/tsconfig.json',
+      'apps/web/app/actions.ts',
+      'apps/web/app/globals.css',
+      'apps/web/app/layout.tsx',
+      'apps/web/app/page.tsx',
+      'apps/web/app/sign-in/page.tsx',
+      'apps/web/app/sign-up/page.tsx',
+      'apps/web/lib/supabase/client.ts',
+      'apps/web/lib/supabase/server.ts',
+      'apps/web/middleware.ts',
+      'apps/web/next.config.ts',
+      'apps/web/package.json',
+      'apps/web/postcss.config.mjs',
+      'apps/web/tsconfig.json',
+      'package.json',
+      'pnpm-lock.yaml',
+      'pnpm-workspace.yaml',
+      'scripts/smoke.mjs',
       'supabase/migrations/00000000000001_rls_baseline_example.sql',
     ]);
-    const clientFile = files.find((file) => file.path === 'lib/supabase/client.ts');
+    const clientFile = files.find((file) => file.path === 'apps/web/lib/supabase/client.ts');
     expect(clientFile?.content).toContain('createBrowserClient');
+  });
+
+  it('leaves behind what a local install and run of the scaffold produces', async () => {
+    // A throwaway harness dir rather than the real one: the point is what a
+    // developer's `pnpm install && pnpm dev` leaves in the scaffold, and this
+    // test should not have to create and clean that up in the checkout.
+    const fakeHarness = await mkdtemp(join(tmpdir(), 'harness-scaffold-'));
+    const scaffoldRoot = join(fakeHarness, 'scaffolds/demo');
+    await mkdir(join(scaffoldRoot, 'apps/api'), { recursive: true });
+    await mkdir(join(scaffoldRoot, 'apps/web/node_modules/next'), { recursive: true });
+    await mkdir(join(scaffoldRoot, 'apps/web/.next/server'), { recursive: true });
+    await Promise.all([
+      writeFile(join(scaffoldRoot, 'package.json'), '{}\n'),
+      writeFile(join(scaffoldRoot, '.env.example'), 'NEXT_PUBLIC_SUPABASE_URL=\n'),
+      writeFile(join(scaffoldRoot, '.env'), 'SUPABASE_SERVICE_ROLE_KEY=real-secret\n'),
+      writeFile(join(scaffoldRoot, 'apps/api/tsconfig.tsbuildinfo'), '{}\n'),
+      writeFile(join(scaffoldRoot, 'apps/web/node_modules/next/index.js'), 'export {};\n'),
+      writeFile(join(scaffoldRoot, 'apps/web/.next/server/page.js'), 'export {};\n'),
+    ]);
+
+    try {
+      const files = await new VersionedHarnessRepository(fakeHarness).scaffoldFiles('demo');
+
+      expect(files.map((file) => file.path)).toEqual(['.env.example', 'package.json']);
+    } finally {
+      await rm(fakeHarness, { recursive: true, force: true });
+    }
   });
 
   it('returns an empty array for a stack with no scaffold directory', async () => {

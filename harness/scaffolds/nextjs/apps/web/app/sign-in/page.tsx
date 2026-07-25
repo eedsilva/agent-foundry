@@ -4,9 +4,8 @@ import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
-export default function SignUpPage() {
+export default function SignInPage() {
   const router = useRouter();
-  const supabase = createClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -17,14 +16,17 @@ export default function SignUpPage() {
     setLoading(true);
     setError(null);
 
-    // Local Supabase has no SMTP; email confirmation is disabled
-    // (packages/platform/src/supabase-auth.ts), so signup returns an
-    // active session immediately, same as sign-in.
-    const { error: signUpError } = await supabase.auth.signUp({ email, password });
+    // Built on submit, not on render: the Supabase keys are runtime values,
+    // and constructing the client while rendering makes `next build` fail
+    // when it prerenders this page somewhere those keys do not exist.
+    const { error: signInError } = await createClient().auth.signInWithPassword({
+      email,
+      password,
+    });
 
     setLoading(false);
-    if (signUpError) {
-      setError(signUpError.message);
+    if (signInError) {
+      setError(signInError.message);
       return;
     }
     router.push('/');
@@ -33,7 +35,7 @@ export default function SignUpPage() {
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto flex max-w-sm flex-col gap-4 p-6">
-      <h1 className="text-xl font-semibold">Create account</h1>
+      <h1 className="text-xl font-semibold">Sign in</h1>
       <input
         type="email"
         required
@@ -45,7 +47,6 @@ export default function SignUpPage() {
       <input
         type="password"
         required
-        minLength={8}
         placeholder="Password"
         value={password}
         onChange={(event) => setPassword(event.target.value)}
@@ -53,7 +54,7 @@ export default function SignUpPage() {
       />
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       <button type="submit" disabled={loading} className="rounded bg-black px-3 py-2 text-white">
-        {loading ? 'Creating account…' : 'Create account'}
+        {loading ? 'Signing in…' : 'Sign in'}
       </button>
     </form>
   );
