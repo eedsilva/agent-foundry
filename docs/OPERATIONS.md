@@ -641,8 +641,11 @@ exported bytes make recovery possible.
 Every generated project starts from `harness/scaffolds/nextjs`, an installable pnpm workspace with
 two tiers — `apps/web` (Next.js) and `apps/api` (Fastify) — a committed lockfile and a `pnpm smoke`
 check that boots both and asserts they answer (ADR 0038, #315). CI's `scaffold-boot` job runs that
-sequence from a clean copy on every commit, so the scaffold cannot stop booting silently. The
-scaffold ships email/password auth wired end to end (`apps/web`) against its own isolated local
+sequence from a clean copy on every commit, so the scaffold cannot stop booting silently. Its one
+`pnpm.overrides` entry lifts `postcss` off the exact `8.4.31` Next pins, which carries two
+high-severity `sourceMappingURL` path-traversal advisories (GHSA-6g55-p6wh-862q,
+GHSA-r28c-9q8g-f849) that `dependency-review` fails the build on; Tailwind already resolves 8.5.x.
+The scaffold ships email/password auth wired end to end (`apps/web`) against its own isolated local
 Supabase stack. `SupabaseGeneratedProjectRuntime#initialize`
 (`packages/platform/src/supabase-runtime.ts`) writes the stack's `NEXT_PUBLIC_SUPABASE_URL`,
 `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` into the same per-project `.env`

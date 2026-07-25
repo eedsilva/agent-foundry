@@ -8,5 +8,10 @@
     "build": "pnpm --recursive build",
     "typecheck": "pnpm --recursive typecheck",
     "smoke": "node scripts/smoke.mjs"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "^8.5.23"
+    }
   }
 }
