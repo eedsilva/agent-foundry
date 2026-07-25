@@ -146,12 +146,7 @@ describe('ProjectService.create', () => {
     const transactionError = new Error('project transaction failed');
     const stores = makeStores();
     stores.projects.create = () => Promise.reject(transactionError);
-    const cleanup = vi.fn(async () => undefined);
-    const runtime = {
-      initialize: vi.fn(async () => ENVIRONMENT),
-      cleanup,
-    } as unknown as GeneratedProjectRuntime;
-    const harness = makeHarness({}, stores, { generatedProjectRuntime: runtime });
+    const harness = makeHarness({}, stores);
 
     await expect(
       harness.service.create({
@@ -161,10 +156,6 @@ describe('ProjectService.create', () => {
       }),
     ).rejects.toBe(transactionError);
 
-    expect(cleanup).toHaveBeenCalledWith({
-      projectId: 'id-0001',
-      confirmation: { confirmed: true, backupCreatedAt: expect.any(String) },
-    });
     expect(harness.workspaces.cleanups).toEqual(['id-0001']);
   });
 });

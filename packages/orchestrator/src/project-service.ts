@@ -190,14 +190,6 @@ export class ProjectService {
         });
       });
     } catch (error) {
-      if (this.generatedProjectRuntime) {
-        await this.generatedProjectRuntime
-          .cleanup({
-            projectId: project.id,
-            confirmation: { confirmed: true, backupCreatedAt: this.clock.now().toISOString() },
-          })
-          .catch(() => undefined);
-      }
       await this.workspaces.cleanup(project.id).catch(() => undefined);
       throw error;
     }
