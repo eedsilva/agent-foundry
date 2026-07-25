@@ -2,8 +2,12 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Project, RuntimeInfoResponse } from '@agent-foundry/contracts';
-import { createProject, getRuntime, listProjects } from '../lib/api';
+import type { Project } from '@agent-foundry/contracts';
+import { createProject, listProjects } from '../lib/api';
+import { ProjectCard } from '@/components/project-card';
+import { EmptyState } from '@/components/empty-state';
+import { ERROR_BOX, FIELD, LABEL, PAGE, PANEL, PANEL_TITLE, PRIMARY_BTN, TEXTAREA } from '@/lib/ui';
+import { cn } from '@/lib/utils';
 
 const SAMPLE_PRD = `# PRD: Issue Radar
 
@@ -30,21 +34,25 @@ Engenheiros e product managers em equipes de 3 a 20 pessoas.
 ## Fora de escopo
 Login social, billing, colaboração em tempo real e aplicativo móvel.`;
 
+export const PIPELINE_NODES = [
+  { code: 'PLAN', title: 'Planejamento + revisão' },
+  { code: 'ARCH', title: 'Arquitetura + revisão' },
+  { code: 'BUILD', title: 'Implementação + code review' },
+  { code: 'VERIFY', title: 'Checks determinísticos + reparo' },
+  { code: 'RELEASE', title: 'Teste adversarial final' },
+] as const;
+
 export default function HomePage() {
   const router = useRouter();
   const [name, setName] = useState('Issue Radar');
   const [prd, setPrd] = useState(SAMPLE_PRD);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [runtime, setRuntime] = useState<RuntimeInfoResponse | null>(null);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    void Promise.all([listProjects(), getRuntime()])
-      .then(([nextProjects, nextRuntime]) => {
-        setProjects(nextProjects);
-        setRuntime(nextRuntime);
-      })
+    void listProjects()
+      .then(setProjects)
       .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
   }, []);
 
@@ -62,112 +70,88 @@ export default function HomePage() {
   }
 
   return (
-    <div className="shell">
-      <section className="hero">
-        <div>
-          <p className="eyebrow">ORQUESTRAÇÃO AUDITÁVEL</p>
-          <h1>Transforme um PRD em uma linha de montagem de agentes.</h1>
-          <p className="lede">
-            Planner, revisores, arquiteto, developer, fixer e tester. Cada passagem deixa artefatos,
-            decisões, métricas e checkpoints Git em vez de fumaça de contexto.
-          </p>
-        </div>
-        <div className="runtimeCard">
-          <span className={`statusDot ${runtime?.executorMode === 'real' ? 'live' : ''}`} />
-          <div>
-            <small>EXECUÇÃO</small>
-            <strong>{runtime?.executorMode ?? 'conectando…'}</strong>
-          </div>
-          <div>
-            <small>MODELOS ATIVOS</small>
-            <strong>{runtime?.models.length ?? '—'}</strong>
-          </div>
-        </div>
-      </section>
+    <div className={PAGE}>
+      <header className="mb-8 max-w-[62ch]">
+        <h1 className="text-ink text-[32px] leading-tight font-semibold tracking-[-0.02em]">
+          Transforme um PRD em uma linha de montagem de agentes.
+        </h1>
+        <p className="text-ink-muted mt-3 text-[15px] leading-relaxed">
+          Planner, revisores, arquiteto, developer, fixer e tester. Cada passagem deixa artefatos,
+          decisões, métricas e checkpoints Git.
+        </p>
+      </header>
 
-      <section className="grid">
-        <form className="panel composer" onSubmit={submit}>
-          <div className="panelHeader">
-            <div>
-              <span className="stepNumber">01</span>
-              <h2>Forneça o problema</h2>
-            </div>
-            <span className="hint">mínimo de 50 caracteres</span>
-          </div>
-          <label>
+      <section className="mb-10 grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,0.9fr)]">
+        <form onSubmit={submit} className={cn(PANEL, 'flex flex-col gap-4')}>
+          <h2 className={PANEL_TITLE}>Forneça o problema</h2>
+
+          <label className={LABEL}>
             Nome do projeto
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
               maxLength={120}
               required
+              className={FIELD}
             />
           </label>
-          <label>
-            PRD
+
+          <label className={LABEL}>
+            PRD <span className="text-ink-subtle font-normal">mínimo de 50 caracteres</span>
             <textarea
               value={prd}
               onChange={(event) => setPrd(event.target.value)}
               minLength={50}
               required
+              className={cn(TEXTAREA, 'min-h-[260px]')}
             />
           </label>
-          {error ? <p className="errorBox">{error}</p> : null}
-          <button className="primaryButton" disabled={submitting}>
-            {submitting ? 'Criando e enfileirando…' : 'Fundir projeto →'}
+
+          {error ? (
+            <p role="alert" className={ERROR_BOX}>
+              {error}
+            </p>
+          ) : null}
+
+          <button
+            type="submit"
+            disabled={submitting}
+            aria-busy={submitting}
+            className={`${PRIMARY_BTN} py-2.5`}
+          >
+            {submitting ? 'Criando e enfileirando…' : 'Fundir projeto'}
           </button>
         </form>
 
-        <aside className="panel pipelinePanel">
-          <div className="panelHeader">
-            <div>
-              <span className="stepNumber">02</span>
-              <h2>Pipeline</h2>
-            </div>
-          </div>
-          <ol className="pipeline">
-            {[
-              ['PLAN', 'Planejamento + revisão'],
-              ['ARCH', 'Arquitetura + revisão'],
-              ['BUILD', 'Implementação + code review'],
-              ['VERIFY', 'Checks determinísticos + reparo'],
-              ['RELEASE', 'Teste adversarial final'],
-            ].map(([code, title]) => (
-              <li key={code}>
-                <code>{code}</code>
-                <span>{title}</span>
+        <aside className={PANEL}>
+          <h2 className={cn(PANEL_TITLE, 'mb-4')}>Pipeline</h2>
+          <ol className="flex flex-col gap-3">
+            {PIPELINE_NODES.map((node) => (
+              <li key={node.code} className="flex items-baseline gap-3">
+                <code className="text-accent-strong w-[62px] shrink-0 font-mono text-[11px] font-bold">
+                  {node.code}
+                </code>
+                <span className="text-ink-muted text-[13px]">{node.title}</span>
               </li>
             ))}
           </ol>
-          <p className="finePrint">
-            O router escolhe modelo por tarefa, risco, contexto, custo, velocidade, confiabilidade e
-            histórico. Fallback sem rollback é só corrupção com boa publicidade, então cada
-            tentativa mutável usa Git.
-          </p>
         </aside>
       </section>
 
-      <section className="recent">
-        <div className="sectionTitle">
-          <p className="eyebrow">PROJETOS</p>
-          <h2>Execuções recentes</h2>
-        </div>
-        <div className="projectList">
-          {projects.length === 0 ? (
-            <p className="emptyState">Nenhuma execução ainda. A forja está fria.</p>
-          ) : (
-            projects.map((project) => (
-              <a className="projectRow" href={`/project/${project.id}`} key={project.id}>
-                <div>
-                  <strong>{project.name}</strong>
-                  <small>{project.id}</small>
-                </div>
-                <span className={`pill ${project.status}`}>{project.status}</span>
-                <time>{new Date(project.updatedAt).toLocaleString('pt-BR')}</time>
-              </a>
-            ))
-          )}
-        </div>
+      <section>
+        <h2 className="text-ink mb-4 text-[20px] font-semibold tracking-[-0.01em]">Projetos</h2>
+        {projects.length === 0 ? (
+          <EmptyState
+            title="Nenhuma execução ainda."
+            hint="Descreva o problema acima e funda o primeiro projeto."
+          />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {projects.map((project) => (
+              <ProjectCard key={project.id} project={project} />
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

@@ -42,6 +42,7 @@ test.describe('generated app auth', () => {
         name: 'generated-app-auth-fixture',
         private: true,
         version: '0.0.0',
+        scripts: { build: 'next build' },
         dependencies: {
           next: '16.2.11',
           react: '19.1.1',
@@ -58,7 +59,7 @@ test.describe('generated app auth', () => {
     );
     await writeFile(
       join(appDir, 'next.config.mjs'),
-      "/** @type {import('next').NextConfig} */\nexport default {};\n",
+      "/** @type {import('next').NextConfig} */\nexport default { output: 'standalone' };\n",
     );
     await writeFile(
       join(appDir, 'tsconfig.json'),
@@ -118,13 +119,30 @@ test.describe('generated app auth', () => {
 
     const port = await reserveEphemeralPort();
     appBaseUrl = `http://127.0.0.1:${port}`;
-    appProcess = spawn('npx', ['next', 'dev', '-p', String(port)], {
+    const appEnv = {
+      ...process.env,
+      NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: anonKey,
+    };
+
+    // Boot a production build via the standalone server, not `next dev` —
+    // same reason issue-radar-fixture.ts does: `next dev`'s client bundle
+    // never completes hydration here (its HMR WebSocket upgrade never
+    // succeeds), so the scaffold's 'use client' sign-up form never attaches
+    // its onSubmit handler and the click falls through to a native GET
+    // submit, landing on /sign-up? instead of /.
+    await execFileAsync('npm', ['run', 'build'], {
       cwd: appDir,
-      env: {
-        ...process.env,
-        NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: anonKey,
-      },
+      env: appEnv,
+      timeout: 5 * 60_000,
+    });
+    const standaloneDir = join(appDir, '.next', 'standalone');
+    await cp(join(appDir, '.next', 'static'), join(standaloneDir, '.next', 'static'), {
+      recursive: true,
+    });
+    appProcess = spawn('node', ['server.js'], {
+      cwd: standaloneDir,
+      env: { ...appEnv, PORT: String(port), HOSTNAME: '127.0.0.1' },
       stdio: 'pipe',
     });
     await waitForHttp(`${appBaseUrl}/sign-up`, 60_000);

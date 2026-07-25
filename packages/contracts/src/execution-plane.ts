@@ -1,8 +1,11 @@
 import { z } from 'zod';
 import { AgentExecutionRequestSchema, AgentExecutionResultSchema } from './agent.js';
+import { ExecutionSecretRefSchema } from './execution-secret-ref.js';
 import { ExecutionNetworkPolicySchema } from './network-policy.js';
 
 export * from './network-policy.js';
+export { ExecutionSecretRefSchema } from './execution-secret-ref.js';
+export type { ExecutionSecretRef } from './execution-secret-ref.js';
 
 export const EXECUTION_PROTOCOL_VERSION = '1' as const;
 
@@ -20,14 +23,6 @@ export const ExecutionLimitsSchema = z
   })
   .strict();
 export type ExecutionLimits = z.infer<typeof ExecutionLimitsSchema>;
-
-export const ExecutionSecretRefSchema = z
-  .object({
-    name: z.string().min(1),
-    ref: z.string().min(1),
-  })
-  .strict();
-export type ExecutionSecretRef = z.infer<typeof ExecutionSecretRefSchema>;
 
 export const ExecutionAgentRequestSchema = AgentExecutionRequestSchema.omit({ cwd: true });
 export type ExecutionAgentRequest = z.infer<typeof ExecutionAgentRequestSchema>;

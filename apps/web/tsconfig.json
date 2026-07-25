@@ -4,13 +4,22 @@
     "allowJs": false,
     "incremental": true,
     "jsx": "preserve",
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
+    "plugins": [{ "name": "next" }],
     "noEmit": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"],
+      "@agent-foundry/contracts": ["../../packages/contracts/src/index.ts"],
+      "@agent-foundry/domain": ["../../packages/domain/src/index.ts"],
+      "@agent-foundry/persistence": ["../../packages/persistence/src/index.ts"],
+      "@agent-foundry/harness": ["../../packages/harness/src/index.ts"],
+      "@agent-foundry/model-router": ["../../packages/model-router/src/index.ts"],
+      "@agent-foundry/executors": ["../../packages/executors/src/index.ts"],
+      "@agent-foundry/platform": ["../../packages/platform/src/index.ts"],
+      "@agent-foundry/orchestrator": ["../../packages/orchestrator/src/index.ts"],
+      "@agent-foundry/composition": ["../../packages/composition/src/index.ts"]
+    }
   },
   "include": ["next-env.d.ts", ".next/types/**/*.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]

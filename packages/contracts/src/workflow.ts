@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AgentRoleSchema, PathSegmentSchema, TaskKindSchema } from './primitives.js';
+import { ExecutionSecretRefSchema } from './execution-secret-ref.js';
 import { RoutingPrioritiesSchema } from './model.js';
 import { isTaskCategoryCompatible, TaskCategorySchema } from './task-taxonomy.js';
 
@@ -20,6 +21,7 @@ const AgentStepSchema = z
     instructions: z.string().min(1),
     inputArtifacts: z.array(PathSegmentSchema).default([]),
     outputArtifact: PathSegmentSchema,
+    secretRefs: z.array(ExecutionSecretRefSchema).default([]),
     mutatesWorkspace: z.boolean().default(false),
     harnessTags: z.array(z.string()).default([]),
     profile: z

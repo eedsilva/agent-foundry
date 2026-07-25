@@ -1,0 +1,176 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-bg: #f4f6f8;
+  --color-ink: #10151a;
+  --color-ink-muted: #5c6b7a;
+  /*
+   * DESIGN.md §7 names `--ink-subtle` on `--surface-sunken` as the tightest
+   * pair. The v1 value #8A97A3 measured 2.63:1 there (2.98:1 on `--surface`),
+   * both under the 4.5:1 §7 requires. #656E77 is the lightest value on the
+   * same hue ramp that clears it on both: 4.57:1 sunken, 5.19:1 surface.
+   */
+  --color-ink-subtle: #656e77;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #eef1f4;
+  --color-hairline: rgba(16, 21, 26, 0.08);
+  --color-accent: #0fa3a3;
+  --color-accent-strong: #0c8080;
+  --color-accent-wash: rgba(15, 163, 163, 0.08);
+  --color-ok: #1fa971;
+  --color-warn: #e8a33d;
+  --color-err: #e5484d;
+  --color-info: #3e7bfa;
+
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-panel: 16px;
+  --radius-sheet: 20px;
+
+  --shadow-card: 0 1px 2px rgba(16, 21, 26, 0.06);
+  --shadow-pop: 0 8px 24px rgba(16, 21, 26, 0.08);
+  --shadow-modal: 0 24px 64px rgba(16, 21, 26, 0.16);
+
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --ease-glass: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+:root {
+  --glass: rgba(255, 255, 255, 0.6);
+  --glass-stroke: rgba(255, 255, 255, 0.72);
+  --glass-blur: 24px;
+}
+
+@layer base {
+  html {
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(60rem 40rem at 12% -10%, rgba(15, 163, 163, 0.14), transparent 60%),
+      radial-gradient(50rem 36rem at 92% 8%, rgba(62, 123, 250, 0.1), transparent 62%),
+      radial-gradient(44rem 30rem at 50% 108%, rgba(15, 163, 163, 0.08), transparent 60%),
+      var(--color-bg);
+    background-attachment: fixed;
+  }
+
+  /* Tailwind v4's preflight sets `cursor: default` on buttons; the legacy
+     stylesheet Task 7 deleted was the only thing restoring the pointer. */
+  button:not(:disabled),
+  [role='button']:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes status-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.9);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+/* State changes get a small spatial cue; page loads stay still. */
+.motion-state-enter {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 220ms var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.overlay-surface {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 240ms var(--ease-glass);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+.overlay-surface[data-placement='right'] {
+  @starting-style {
+    transform: translateX(12px);
+  }
+}
+
+.status-dot-live {
+  animation: status-breathe 1.8s ease-in-out infinite;
+}
+
+.project-card-interactive {
+  transition:
+    border-color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .project-card-interactive:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+    box-shadow: var(--shadow-pop);
+    transform: translateY(-2px);
+  }
+}
+
+.project-card-interactive:active {
+  transform: translateY(1px) scale(0.995);
+}
+
+/*
+ * DESIGN.md §7: all motion behind `prefers-reduced-motion`.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .status-dot-live {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility glass {
+  background: var(--glass);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  border: 1px solid var(--glass-stroke);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 8px 32px rgba(16, 21, 26, 0.06);
+}

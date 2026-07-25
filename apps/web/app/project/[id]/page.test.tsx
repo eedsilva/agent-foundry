@@ -1,7 +1,10 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { ProjectProvisioningError, ProjectTimeline } from './page';
+// Task 4 split page.tsx into panes; these two live with the pane that renders
+// them now. The assertions below are unchanged.
+import { ProjectProvisioningError } from './run-alert-strip';
+import { ProjectTimeline } from './inspector';
 
 describe('ProjectPage provisioning failure', () => {
   it('renders a concise provisioning error with a timeline link', () => {

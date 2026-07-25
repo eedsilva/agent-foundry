@@ -6,6 +6,7 @@ import {
   ExecutionRequestSchema,
   ExecutionResultSchema,
   NetworkPolicyEventSchema,
+  WorkflowDefinitionSchema,
 } from './index.js';
 
 const AGENT_REQUEST = {
@@ -74,6 +75,53 @@ describe('ExecutionRequestSchema', () => {
   it('never carries a local cwd — the field does not exist on the embedded agent request', () => {
     const parsed = ExecutionAgentRequestSchema.parse({ ...AGENT_REQUEST, cwd: '/Users/x/project' });
     expect(parsed).not.toHaveProperty('cwd');
+  });
+
+  it('accepts declared refs but rejects a request carrying a value', () => {
+    const agentNode = {
+      id: 'agent-step',
+      type: 'agent',
+      role: 'developer',
+      taskKind: 'implementation',
+      title: 'Run agent',
+      instructions: 'Run agent with declared secret refs.',
+      outputArtifact: 'result',
+      secretRefs: [{ name: 'GITHUB_TOKEN', ref: 'GITHUB_TOKEN' }],
+    } as const;
+    const definition = {
+      schemaVersion: '1',
+      id: 'secret-workflow',
+      name: 'Secret workflow',
+      description: 'Uses a declared secret reference.',
+      stack: 'node',
+      nodes: [agentNode],
+    } as const;
+    const workflow = WorkflowDefinitionSchema.parse(definition);
+
+    expect(workflow.nodes[0]).toMatchObject({
+      secretRefs: [{ name: 'GITHUB_TOKEN', ref: 'GITHUB_TOKEN' }],
+    });
+    const { secretRefs: _secretRefs, ...nodeWithoutSecretRefs } = agentNode;
+    expect(
+      WorkflowDefinitionSchema.parse({ ...definition, nodes: [nodeWithoutSecretRefs] }).nodes[0],
+    ).toMatchObject({ secretRefs: [] });
+    expect(
+      WorkflowDefinitionSchema.safeParse({
+        ...definition,
+        nodes: [
+          {
+            ...agentNode,
+            secretRefs: [{ name: 'GITHUB_TOKEN', ref: 'GITHUB_TOKEN', value: 'canary-secret' }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      ExecutionRequestSchema.safeParse({
+        ...request(),
+        secrets: [{ name: 'GITHUB_TOKEN', ref: 'GITHUB_TOKEN', value: 'canary-secret' }],
+      }).success,
+    ).toBe(false);
   });
 });
 

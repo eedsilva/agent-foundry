@@ -115,7 +115,7 @@ async function seedDomSourceMapFixture(projectId: string): Promise<string> {
 async function startPreviewAndSelect(page: Page, projectId: string) {
   await page.goto(`${webBaseUrl}/project/${projectId}`);
   await page.getByText('Iniciar preview').click();
-  const iframeHandle = await page.waitForSelector('.previewFrameWrap iframe');
+  const iframeHandle = await page.waitForSelector('[data-testid="preview-frame"]');
 
   // PreviewPanel sets the iframe's initial src to the proxied session root
   // (e.g. /preview/<sessionId>/?token=...), which the fixture dev server
@@ -133,7 +133,7 @@ async function startPreviewAndSelect(page: Page, projectId: string) {
   await frame.goto(fixtureUrl.toString());
 
   await page.getByText('Selecionar elemento').click();
-  return page.frameLocator('.previewFrameWrap iframe').locator('body');
+  return page.frameLocator('[data-testid="preview-frame"]').locator('body');
 }
 
 interface WorkspaceState {

@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import type { AgentExecutor } from '@agent-foundry/domain';
@@ -27,6 +27,33 @@ const FIRST_BUILD_DIFF_SCREENSHOT = resolve(
   REPO_ROOT,
   'test-results/issue-173-first-build-diff.png',
 );
+const ROUTER_SCREENSHOT = resolve(REPO_ROOT, 'test-results/router-dashboard-desktop.png');
+const HOME_SCREENSHOT = resolve(REPO_ROOT, 'test-results/home-desktop.png');
+const VERSIONS_SCREENSHOT = resolve(REPO_ROOT, 'test-results/project-versions-desktop.png');
+
+/**
+ * Whole-page axe scan. Until Task 7 this was scoped to
+ * `[data-testid="preview-panel"]`, which never saw the chat pane, the alert
+ * strip, the inspector, the home page or the router dashboard — four AA
+ * violations shipped past it. The only standing exclusion is the previewed
+ * `<iframe>`: it renders the fixture dev server's bare-text stand-in page
+ * (packages/executors/src/fixtures/preview-dev-server.mjs), not app markup, so
+ * it has no landmarks or `h1` by design.
+ */
+async function expectNoAxeViolations(page: Page, surface: string): Promise<void> {
+  const results = await new AxeBuilder({ page })
+    .exclude('[data-testid="preview-frame"]')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze();
+  expect(
+    results.violations.map((violation) => ({
+      surface,
+      id: violation.id,
+      impact: violation.impact,
+      nodes: violation.nodes.map((node) => node.target.join(' ')),
+    })),
+  ).toEqual([]);
+}
 const BROWSER_TEST_PLAN = {
   schemaVersion: '1' as const,
   status: 'completed' as const,
@@ -46,6 +73,12 @@ const BROWSER_TEST_PLAN = {
     ],
   },
 };
+
+/** Inspector panels stay mounted but hidden; open the tab before asserting on it. */
+async function openInspectorTab(page: Page, label: string) {
+  await page.getByRole('tab', { name: label }).click();
+  await expect(page.getByRole('tab', { name: label })).toHaveAttribute('aria-selected', 'true');
+}
 
 let runtime: Runtime;
 let apiClose: () => Promise<void>;
@@ -461,11 +494,12 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   // First visit to this route triggers Next dev's on-demand compile of the
   // project page (on top of the client-side data fetch); default 5s
   // assertion timeout is too tight for a cold compile.
-  await expect(page.getByRole('heading', { name: 'Aprovações' })).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(page.getByRole('tab', { name: 'Mudanças' })).toBeVisible({ timeout: 30_000 });
+  await openInspectorTab(page, 'Mudanças');
+  await expect(page.getByRole('heading', { name: 'Aprovações' })).toBeVisible();
 
-  const routesPanel = page.locator('.routesPanel');
+  await openInspectorTab(page, 'Router');
+  const routesPanel = page.getByTestId('router-decisions');
   const implementationRoutes = routesPanel
     .getByRole('heading', { name: 'implementation', exact: true })
     .locator('..');
@@ -476,10 +510,10 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     .getByRole('heading', { name: 'repair', exact: true })
     .locator('..');
   await expect(repairRoutes).toContainText('repair/integration · taxonomy v2');
-  await expect(routesPanel.locator('.routeGrid article h4')).toHaveCount(3);
+  await expect(routesPanel.getByTestId('route-card').locator('h4')).toHaveCount(3);
 
   await page.getByRole('button', { name: 'Iniciar preview' }).click();
-  const iframe = page.locator('.previewFrameWrap iframe');
+  const iframe = page.getByTestId('preview-frame');
   await expect(iframe).toBeVisible({ timeout: 30_000 });
   await expect(iframe).toHaveAttribute('width', '1280');
 
@@ -492,37 +526,71 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   await expect(
     page.getByRole('region', { name: 'Preview' }).getByText('Load the root page'),
   ).toBeVisible();
-  await expect(page.locator('.screenshotFilmstrip img').first()).toBeVisible();
+  await expect(page.getByTestId('screenshot-thumb').first()).toBeVisible();
 
-  // Exclude the previewed iframe's own document: it's the fixture dev
-  // server's bare-text stand-in page (packages/executors/src/fixtures/
-  // preview-dev-server.mjs), not real app markup, so it has no landmarks/h1
-  // by design. This scan targets the PreviewPanel chrome itself (Task 4's
-  // deliverable — buttons, tabs, labels), not arbitrary previewed content.
-  const axeResults = await new AxeBuilder({ page })
-    .include('.previewPanel')
-    .exclude('.previewFrameWrap iframe')
-    .analyze();
-  expect(axeResults.violations).toEqual([]);
+  // Whole builder page: header, alert strip, chat pane, preview panel and the
+  // inspector, with the preview panel's console/network/test tabs open.
+  await expectNoAxeViolations(page, 'builder');
 
+  await openInspectorTab(page, 'Artefatos');
   const screenshotArtifactButton = page
-    .locator('.artifactList button')
+    .getByTestId('artifact-item')
     .filter({ hasText: 'browser-screenshot' })
     .first();
   await screenshotArtifactButton.click();
-  await expect(page.locator('.artifactModal img')).toBeVisible();
-  await page.getByRole('button', { name: '×' }).click();
+  await expect(page.getByTestId('artifact-modal').getByTestId('artifact-image')).toBeVisible();
+
+  // Keyboard pass, dialogs (DESIGN.md §7). Every dialog is a native <dialog>
+  // opened with showModal(), so Escape dismisses it and focus returns to the
+  // control that opened it — assert both rather than trusting the platform.
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('artifact-modal')).toHaveCount(0);
+  await expect(screenshotArtifactButton).toBeFocused();
+
+  await screenshotArtifactButton.click();
+  await expect(page.getByTestId('artifact-modal').getByTestId('artifact-image')).toBeVisible();
+  // The close control is `aria-label="Fechar"` now; "×" was its accessible
+  // name, which is not one. This path unmounts the dialog instead of letting
+  // the UA close it, so focus return is the shell's unmount cleanup doing its
+  // job, not the platform's — assert it here too.
+  await page.getByRole('button', { name: 'Fechar' }).click();
+  await expect(page.getByTestId('artifact-modal')).toHaveCount(0);
+  await expect(screenshotArtifactButton).toBeFocused();
+
+  // Keyboard pass, tablist (ARIA tabs pattern): arrows step and wrap, Home and
+  // End jump to the ends.
+  await page.getByRole('tab', { name: 'Atividade' }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Execução' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await page.keyboard.press('End');
+  await expect(page.getByRole('tab', { name: 'Versões' })).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Atividade' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await page.keyboard.press('Home');
+  await expect(page.getByRole('tab', { name: 'Atividade' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
 
   // Scoped to the decide-modal's own heading: the live timeline ("Linha do
   // tempo") also renders an event whose message equals the node title
   // ("Human diff approval"), as a plain <p>, which collides with a bare
   // getByText match.
+  await openInspectorTab(page, 'Mudanças');
   const decideModalHeading = page.getByRole('heading', { name: /Human diff approval/ });
   await page.getByRole('button', { name: 'approve' }).first().click();
   await expect(decideModalHeading).toBeVisible();
-  await expect(page.locator('.artifactModal .diffPane')).toContainText('diff --git');
+  await expect(page.getByTestId('artifact-modal').getByTestId('artifact-diff')).toContainText(
+    'diff --git',
+  );
   await expect(page.getByText('Nenhuma versão anterior para comparar.')).not.toBeVisible();
-  await page.locator('.artifactModal').screenshot({ path: FIRST_BUILD_DIFF_SCREENSHOT });
+  await page.getByTestId('artifact-modal').screenshot({ path: FIRST_BUILD_DIFF_SCREENSHOT });
   await page.getByLabel('Decidido por').fill('e2e-reviewer');
   await page.getByRole('button', { name: /Confirmar approve/ }).click();
   await expect(decideModalHeading).not.toBeVisible();
@@ -530,6 +598,38 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   expect(await runtime.worker.runOnce()).toBe(true);
   const finalRun = await getRun(projectId);
   expect(finalRun.status).toBe('completed');
+
+  // Replaces builder-shell-css.test.ts, which grepped globals.css for the grid
+  // rules Task 5 deleted: below the lg breakpoint the three panes stack, and
+  // long lines scroll inside their pane instead of widening the document.
+  await page.setViewportSize({ width: 900, height: 900 });
+  const chatBox = await page.getByTestId('pane-chat').boundingBox();
+  const centerBox = await page.getByTestId('pane-center').boundingBox();
+  expect(chatBox).not.toBeNull();
+  expect(centerBox).not.toBeNull();
+  expect(centerBox!.y).toBeGreaterThan(chatBox!.y + chatBox!.height - 1);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // Second builder scan with the inspector on Mudanças: sibling tab panels are
+  // `hidden`, so one scan only ever covers the panel that is open.
+  await expectNoAxeViolations(page, 'builder/mudancas');
+
+  // `/project/:id/versions` was the last surface still on the deleted
+  // globals.css; it renders real versions here because the run above recorded
+  // one.
+  await page.goto(`${webBaseUrl}/project/${projectId}/versions`);
+  await expect(page.getByRole('heading', { name: 'Histórico de versões' })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId('version-item').first()).toBeVisible();
+  await mkdir(resolve(VERSIONS_SCREENSHOT, '..'), { recursive: true });
+  await page.screenshot({ path: VERSIONS_SCREENSHOT, fullPage: true });
+  await expectNoAxeViolations(page, 'versions');
 });
 
 test('golden flow: attach reference, plan, build, visual edit, revert, rebuild', async ({
@@ -551,6 +651,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await expect(regions.chat).toBeVisible({ timeout: 30_000 });
   await expect(regions.preview).toBeVisible();
   await expect(regions.changes).toBeVisible();
+  await openInspectorTab(page, 'Mudanças');
   const decideModalHeading = page.getByRole('heading', { name: /Human diff approval/ });
   await page.getByRole('button', { name: 'approve' }).first().click();
   await page.getByLabel('Decidido por').fill('golden-flow-reviewer');
@@ -561,7 +662,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   const knowledgeReads = installGoldenFixtureExecutor();
 
   await page.getByLabel('Adicionar knowledge file').setInputFiles(REFERENCE_IMAGE);
-  let knowledge = page.locator('.knowledgeFileList article').filter({
+  let knowledge = page.getByTestId('knowledge-file').filter({
     hasText: 'design-reference.png',
   });
   await expect(knowledge).toContainText('design-reference · v1 · fixado');
@@ -593,7 +694,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   ]);
   await runConversationJob();
   await expect(
-    regions.chat.locator('.operationBadge').filter({ hasText: 'plan, pending' }),
+    regions.chat.getByTestId('operation-badge').filter({ hasText: 'plan, pending' }),
   ).toBeVisible();
   await regions.chat.getByRole('button', { name: 'Editar proposta' }).click();
   await regions.chat.getByLabel('Proposta editável').fill(
@@ -626,7 +727,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     regions.chat.getByRole('button', { name: 'Aprovar' }).click(),
   ]);
   await expect(
-    regions.chat.locator('.operationBadge').filter({ hasText: 'plan, approved' }),
+    regions.chat.getByTestId('operation-badge').filter({ hasText: 'plan, approved' }),
   ).toBeVisible();
   await expect(latestOperationRequest(projectId, 'plan')).resolves.toContain(
     expectedKnowledgeContext,
@@ -646,7 +747,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   ]);
   await runConversationJob();
   await expect(
-    regions.chat.locator('.operationBadge').filter({ hasText: 'build' }).last(),
+    regions.chat.getByTestId('operation-badge').filter({ hasText: 'build' }).last(),
   ).toBeVisible();
   const buildRequest = await latestOperationRequest(projectId, 'build');
   expect(buildRequest).toContain('- Workflow: conversation-build');
@@ -655,18 +756,18 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
 
   await expect(page.getByRole('region', { name: 'Preview' })).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Iniciar preview' }).click();
-  const iframe = page.locator('.previewFrameWrap iframe');
+  const iframe = page.getByTestId('preview-frame');
   await expect(iframe).toBeVisible({ timeout: 30_000 });
   const src = await iframe.getAttribute('src');
   if (!src) throw new Error('preview iframe has no src');
   const fixtureUrl = new URL(src);
   fixtureUrl.pathname = `${fixtureUrl.pathname.replace(/\/$/, '')}/dom-source-map-fixture`;
-  const iframeHandle = await page.waitForSelector('.previewFrameWrap iframe');
+  const iframeHandle = await page.waitForSelector('[data-testid="preview-frame"]');
   const frame = await iframeHandle.contentFrame();
   if (!frame) throw new Error('preview iframe has no content frame');
   await frame.goto(fixtureUrl.toString());
   await page.getByRole('button', { name: 'Selecionar elemento' }).click();
-  const selected = page.frameLocator('.previewFrameWrap iframe').locator('#simple');
+  const selected = page.frameLocator('[data-testid="preview-frame"]').locator('#simple');
   await selected.click();
   await expect(page.getByText('src/Greeting.tsx')).toBeVisible();
   await page.getByLabel('Propriedade').selectOption('backgroundColor');
@@ -697,15 +798,25 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   if (!visualVersion || !baselineVersion) throw new Error('golden versions were not recorded');
   const versionArticle = (commit: string, kind = 'run') =>
     page
-      .locator('.versionList article')
+      .getByTestId('version-item')
       .filter({ hasText: commit.slice(0, 7) })
       .filter({ has: page.getByText(kind, { exact: true }) });
+  await openInspectorTab(page, 'Versões');
   await expect(versionArticle(baselineVersion.commit)).toBeVisible({ timeout: 30_000 });
   await expect(versionArticle(visualVersion.commit)).toBeVisible();
   await versionArticle(baselineVersion.commit).getByRole('checkbox').check();
   await versionArticle(visualVersion.commit).getByRole('checkbox').check();
   await page.getByRole('button', { name: 'Comparar selecionadas' }).click();
-  await expect(page.locator('.diffPane')).toContainText("'#ddd'");
+  await expect(page.getByTestId('version-diff')).toContainText("'#ddd'");
+  // Second half of the deleted builder-shell-css.test.ts: the diff pane's own
+  // `max-w-full overflow-x-auto`. Asserted here, with the Versões panel actually
+  // visible — from the Mudanças tab the diff sits in a `hidden` panel and
+  // contributes nothing to scrollWidth, so the check would be vacuous.
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
 
   page.once('dialog', (dialog) => dialog.accept('golden-flow'));
   await Promise.all([
@@ -768,6 +879,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await expect.poll(() => runtime.projectVersionService.list(projectId, 50)).toHaveLength(5);
   const [rebuiltVersion] = await runtime.projectVersionService.list(projectId, 50);
   await expect(versionArticle(rebuiltVersion!.commit)).toBeVisible({ timeout: 30_000 });
+  await openInspectorTab(page, 'Mudanças');
   const changes = page.getByRole('region', { name: 'Changes' });
   await expect(changes).toContainText('Checks');
   await expect(changes).toContainText('passed');
@@ -779,6 +891,17 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
 
   await mkdir(resolve(BUILDER_SCREENSHOT, '..'), { recursive: true });
   await page.setViewportSize({ width: 1440, height: 1200 });
+  // The lg shell is exactly one viewport tall, so the builder document must
+  // not scroll — anything taller paints bare mesh below the panes. It regressed
+  // once via the knowledge-file `sr-only` inputs: `position: absolute` with no
+  // positioned ancestor resolves against the initial containing block, which
+  // escapes both the chat scroller's and the pane's clip.
+  expect(
+    await page.evaluate(() => ({
+      scrollHeight: document.documentElement.scrollHeight,
+      clientHeight: document.documentElement.clientHeight,
+    })),
+  ).toMatchObject({ scrollHeight: 1200, clientHeight: 1200 });
   await page.screenshot({ path: BUILDER_SCREENSHOT, fullPage: true });
   expect((await stat(BUILDER_SCREENSHOT)).size).toBeGreaterThan(0);
   await test.info().attach('knowledge builder desktop', {
@@ -797,7 +920,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   expect(boxes[0]!.y).toBeLessThan(boxes[1]!.y);
   expect(boxes[1]!.y).toBeLessThan(boxes[2]!.y);
 
-  knowledge = page.locator('.knowledgeFileList article').filter({
+  knowledge = page.getByTestId('knowledge-file').filter({
     hasText: 'design-reference.png',
   });
   await knowledge.getByRole('button', { name: 'Remover design-reference.png' }).click();
@@ -833,8 +956,13 @@ test('router dashboard shows decisions and filters, an experiment can be registe
   // instrumentation branch) actually renders in the UI, not just in the API
   // response.
   await expect(page.getByText('2 reparo(s)')).toBeVisible();
+  await page.screenshot({ path: ROUTER_SCREENSHOT, fullPage: true });
+  await expectNoAxeViolations(page, 'router');
 
   const hypothesis = `E2E hypothesis ${Date.now()}`;
+  // Experiment creation lives in a dialog now (DESIGN.md §5.4).
+  await page.getByRole('button', { name: 'Novo experimento' }).click();
+  await expect(page.getByTestId('new-experiment')).toBeVisible();
   await page.getByLabel('Hipótese').fill(hypothesis);
   await page.getByLabel('Limite').fill('0.65');
   await page.getByLabel('Amostras mínimas').fill('12');
@@ -869,6 +997,17 @@ test('router dashboard shows decisions and filters, an experiment can be registe
     expect(row).not.toHaveProperty('projectId');
     expect(row).not.toHaveProperty('runId');
   }
+
+  // Home page: the project list is non-empty by now, so the scan sees the
+  // create form, the pipeline card and the ProjectCard grid.
+  await page.goto(`${webBaseUrl}/`);
+  await expect(page.getByRole('button', { name: 'Fundir projeto' })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId('project-card').first()).toBeVisible();
+  await mkdir(resolve(HOME_SCREENSHOT, '..'), { recursive: true });
+  await page.screenshot({ path: HOME_SCREENSHOT, fullPage: true });
+  await expectNoAxeViolations(page, 'home');
 });
 
 test('regression gate passes an unchanged report and fails one missing a baseline case', async () => {

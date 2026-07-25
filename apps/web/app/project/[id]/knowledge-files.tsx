@@ -9,6 +9,7 @@ import {
   setKnowledgeFilePinned,
   uploadKnowledgeFile,
 } from '../../../lib/api';
+import { BTN, ERROR_BOX, FIELD, HINT, LABEL, PANEL_HEADER, SECTION_TITLE } from '@/lib/ui';
 
 export const MAX_KNOWLEDGE_FILE_BYTES = 4 * 1024 * 1024;
 
@@ -127,69 +128,91 @@ export function KnowledgeFiles({
   }
 
   return (
-    <div className="knowledgeFiles">
-      <div className="panelHeader">
-        <h3>Knowledge files</h3>
-        <span className="hint">{knowledgeFiles.length} ativo(s)</span>
+    <div className="border-hairline border-t pt-3">
+      <div className={PANEL_HEADER}>
+        <h3 className={SECTION_TITLE}>Knowledge files</h3>
+        <span className={HINT}>{knowledgeFiles.length} ativo(s)</span>
       </div>
-      <label>
-        Uso
-        <select
-          aria-label="Uso do knowledge file"
-          value={purpose}
-          onChange={(event) => setPurpose(event.target.value as KnowledgeFilePurpose)}
-        >
-          <option value="reference">reference</option>
-          <option value="design-reference">design-reference</option>
-          <option value="bug-evidence">bug-evidence</option>
-        </select>
-      </label>
-      <label>
-        Adicionar knowledge file
-        <input type="file" disabled={busy !== null} onChange={(event) => void upload(event)} />
-      </label>
-      {error ? <p className="errorBox">{error}</p> : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className={LABEL}>
+          Uso
+          <select
+            className={FIELD}
+            aria-label="Uso do knowledge file"
+            value={purpose}
+            onChange={(event) => setPurpose(event.target.value as KnowledgeFilePurpose)}
+          >
+            <option value="reference">reference</option>
+            <option value="design-reference">design-reference</option>
+            <option value="bug-evidence">bug-evidence</option>
+          </select>
+        </label>
+        <label className={LABEL}>
+          Adicionar knowledge file
+          <input
+            type="file"
+            className="text-ink-muted text-[12px]"
+            disabled={busy !== null}
+            onChange={(event) => void upload(event)}
+          />
+        </label>
+      </div>
+      {error ? (
+        <p role="alert" className={`${ERROR_BOX} mt-3`}>
+          {error}
+        </p>
+      ) : null}
       {knowledgeFiles.length === 0 ? (
-        <p className="emptyState">Nenhum knowledge file ativo.</p>
+        <p className="text-ink-subtle mt-3 text-[13px]">Nenhum knowledge file ativo.</p>
       ) : (
-        <div className="knowledgeFileList">
+        <div className="mt-3 flex flex-col gap-2">
           {knowledgeFiles.map((file) => {
             const revision = file.revisions.at(-1)!;
             return (
-              <article key={file.id}>
-                <div>
-                  <strong>{file.name}</strong>
-                  <p className="hint">
+              <article
+                key={file.id}
+                data-testid="knowledge-file"
+                className="border-hairline rounded-card flex flex-col gap-2 border p-3"
+              >
+                <div className="min-w-0">
+                  <strong className="text-ink block truncate text-[13px] font-semibold">
+                    {file.name}
+                  </strong>
+                  <p className={HINT}>
                     {file.purpose} · v{file.currentVersion}
                     {file.pinned ? ' · fixado' : ''}
                   </p>
                 </div>
                 {file.mediaType.startsWith('image/') ? (
                   <img
+                    className="rounded-control max-h-[180px] max-w-full"
                     src={getArtifactBlobUrl(projectId, revision.artifact.name, revision.version)}
                     alt={file.name}
                   />
                 ) : null}
-                <div className="knowledgeFileActions">
+                <div className="flex flex-wrap gap-2">
                   <button
-                    className="secondaryButton"
+                    type="button"
+                    className={BTN}
                     aria-label={`${file.pinned ? 'Desafixar' : 'Fixar'} ${file.name}`}
                     disabled={busy !== null}
                     onClick={() => void togglePinned(file)}
                   >
                     {file.pinned ? 'Desafixar' : 'Fixar'}
                   </button>
-                  <label className="secondaryButton fileButton">
+                  <label className={`${BTN} inline-flex cursor-pointer`}>
                     Substituir
                     <input
                       type="file"
+                      className="sr-only"
                       aria-label={`Substituir ${file.name}`}
                       disabled={busy !== null}
                       onChange={(event) => void replace(file, event)}
                     />
                   </label>
                   <button
-                    className="secondaryButton"
+                    type="button"
+                    className={BTN}
                     aria-label={`Remover ${file.name}`}
                     disabled={busy !== null}
                     onClick={() => void remove(file)}

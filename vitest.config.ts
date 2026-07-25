@@ -15,6 +15,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@': `${root}apps/web`,
       '@agent-foundry/contracts': `${root}packages/contracts/src/index.ts`,
       '@agent-foundry/domain': `${root}packages/domain/src/index.ts`,
       '@agent-foundry/persistence': `${root}packages/persistence/src/index.ts`,
