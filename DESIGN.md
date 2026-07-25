@@ -35,22 +35,22 @@ a defined home, reachable in at most one click.
 
 Cool neutral base, teal accent.
 
-| Token | Value | Use |
-| --- | --- | --- |
-| `--bg` | `#F4F6F8` | Page base beneath the mesh |
-| `--ink` | `#10151A` | Primary text |
-| `--ink-muted` | `#5C6B7A` | Secondary text, labels |
-| `--ink-subtle` | `#8A97A3` | Metadata, timestamps, placeholders |
-| `--surface` | `#FFFFFF` | Content cards |
-| `--surface-sunken` | `#EEF1F4` | Inset areas: code, logs, empty states |
-| `--hairline` | `rgba(16, 21, 26, 0.08)` | All borders and dividers |
-| `--accent` | `#0FA3A3` | Primary action, active state, focus ring |
-| `--accent-strong` | `#0C8080` | Accent hover/pressed |
-| `--accent-wash` | `rgba(15, 163, 163, 0.08)` | Selected row, active tab background |
-| `--ok` | `#1FA971` | Succeeded, approved, passing |
-| `--warn` | `#E8A33D` | Paused, awaiting approval, degraded |
-| `--err` | `#E5484D` | Failed, rejected, error |
-| `--info` | `#3E7BFA` | Running, in-progress, neutral notice |
+| Token              | Value                      | Use                                      |
+| ------------------ | -------------------------- | ---------------------------------------- |
+| `--bg`             | `#F4F6F8`                  | Page base beneath the mesh               |
+| `--ink`            | `#10151A`                  | Primary text                             |
+| `--ink-muted`      | `#5C6B7A`                  | Secondary text, labels                   |
+| `--ink-subtle`     | `#8A97A3`                  | Metadata, timestamps, placeholders       |
+| `--surface`        | `#FFFFFF`                  | Content cards                            |
+| `--surface-sunken` | `#EEF1F4`                  | Inset areas: code, logs, empty states    |
+| `--hairline`       | `rgba(16, 21, 26, 0.08)`   | All borders and dividers                 |
+| `--accent`         | `#0FA3A3`                  | Primary action, active state, focus ring |
+| `--accent-strong`  | `#0C8080`                  | Accent hover/pressed                     |
+| `--accent-wash`    | `rgba(15, 163, 163, 0.08)` | Selected row, active tab background      |
+| `--ok`             | `#1FA971`                  | Succeeded, approved, passing             |
+| `--warn`           | `#E8A33D`                  | Paused, awaiting approval, degraded      |
+| `--err`            | `#E5484D`                  | Failed, rejected, error                  |
+| `--info`           | `#3E7BFA`                  | Running, in-progress, neutral notice     |
 
 Status colors are used as a `color` + a 10%-alpha `background` on pills, never as large fills.
 
@@ -62,9 +62,8 @@ The current `.noise` SVG layer is deleted.
 ```css
 background:
   radial-gradient(60rem 40rem at 12% -10%, rgba(15, 163, 163, 0.14), transparent 60%),
-  radial-gradient(50rem 36rem at 92% 8%, rgba(62, 123, 250, 0.10), transparent 62%),
-  radial-gradient(44rem 30rem at 50% 108%, rgba(15, 163, 163, 0.08), transparent 60%),
-  var(--bg);
+  radial-gradient(50rem 36rem at 92% 8%, rgba(62, 123, 250, 0.1), transparent 62%),
+  radial-gradient(44rem 30rem at 50% 108%, rgba(15, 163, 163, 0.08), transparent 60%), var(--bg);
 ```
 
 ### 3.3 Glass
@@ -77,7 +76,9 @@ background:
 background: var(--glass);
 backdrop-filter: blur(var(--glass-blur)) saturate(180%);
 border: 1px solid var(--glass-stroke);
-box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 8px 32px rgba(16, 21, 26, 0.06);
+box-shadow:
+  0 1px 0 rgba(255, 255, 255, 0.6) inset,
+  0 8px 32px rgba(16, 21, 26, 0.06);
 ```
 
 **Glass is allowed on:** top bar, inspector tab strip, slide-over sheets, dialogs, popovers,
@@ -91,12 +92,12 @@ unpredictably and costs GPU per layer. Apple applies it to chrome, not to docume
 
 ### 3.4 Elevation
 
-| Level | Shadow | Use |
-| --- | --- | --- |
-| 0 | none | Inline, flush content |
-| 1 | `0 1px 2px rgba(16,21,26,.06)` | Content cards |
-| 2 | `0 8px 24px rgba(16,21,26,.08)` | Popovers, dropdowns |
-| 3 | `0 24px 64px rgba(16,21,26,.16)` | Dialogs, sheets |
+| Level | Shadow                           | Use                   |
+| ----- | -------------------------------- | --------------------- |
+| 0     | none                             | Inline, flush content |
+| 1     | `0 1px 2px rgba(16,21,26,.06)`   | Content cards         |
+| 2     | `0 8px 24px rgba(16,21,26,.08)`  | Popovers, dropdowns   |
+| 3     | `0 24px 64px rgba(16,21,26,.16)` | Dialogs, sheets       |
 
 ### 3.5 Radius and spacing
 
@@ -109,15 +110,15 @@ section gap `24px`.
 
 Inter for UI, `ui-monospace` for ids, diffs, logs, model names.
 
-| Role | Size / weight / tracking |
-| --- | --- |
-| Display (home hero) | 32px / 600 / -0.02em |
-| Section title | 20px / 600 / -0.01em |
-| Panel title | 15px / 600 |
-| Body | 14px / 400 / 1.55 |
-| Meta | 13px / 400 |
-| Label | 12px / 600 / 0.04em uppercase |
-| Mono | 12.5px / 400 |
+| Role                | Size / weight / tracking      |
+| ------------------- | ----------------------------- |
+| Display (home hero) | 32px / 600 / -0.02em          |
+| Section title       | 20px / 600 / -0.01em          |
+| Panel title         | 15px / 600                    |
+| Body                | 14px / 400 / 1.55             |
+| Meta                | 13px / 400                    |
+| Label               | 12px / 600 / 0.04em uppercase |
+| Mono                | 12.5px / 400                  |
 
 The current `clamp(42px, 6vw, 78px)` hero and the uppercase mono eyebrows are dropped.
 
@@ -141,14 +142,14 @@ Primitives from shadcn: `Button`, `Card`, `Tabs`, `Dialog`, `Sheet`, `Popover`,
 
 Custom, in `apps/web/components/`:
 
-| Component | Purpose |
-| --- | --- |
-| `GlassBar` | The glass chrome surface. Top bar, tab strip, run controls. |
+| Component    | Purpose                                                                        |
+| ------------ | ------------------------------------------------------------------------------ |
+| `GlassBar`   | The glass chrome surface. Top bar, tab strip, run controls.                    |
 | `StatusPill` | Maps a domain status string to a color + label. Single source of status color. |
-| `Timeline` | Event list with dot rail, grouping, and live/polling indicator. |
-| `DiffPane` | Unified diff renderer. Horizontal scroll bounded to its container. |
-| `StatTile` | KPI tile for the router dashboard. |
-| `EmptyState` | Icon + one line + optional action. |
+| `Timeline`   | Event list with dot rail, grouping, and live/polling indicator.                |
+| `DiffPane`   | Unified diff renderer. Horizontal scroll bounded to its container.             |
+| `StatTile`   | KPI tile for the router dashboard.                                             |
+| `EmptyState` | Icon + one line + optional action.                                             |
 
 No component gets built until a second caller exists, except the six above.
 
@@ -208,20 +209,20 @@ Three panes under a glass header. This is the core of the redesign.
 
 Panel relocation — every existing section keeps a home:
 
-| Today (stacked panel) | New location |
-| --- | --- |
-| Conversa, operações, agent stream | Left pane |
-| Knowledge files | Left pane, collapsible section |
-| Preview | Center, `Preview` view |
-| Draft diff, artifact diff | Center, `Diff` view |
-| Artefato selecionado | Center, `Artefato` view (fullscreen dialog only for images/blobs) |
-| Linha do tempo | Inspector → **Atividade** |
-| Steps da execução | Inspector → **Execução** |
-| Changes, checks, aprovações, browser checks, draft preservado | Inspector → **Mudanças** |
-| Artefatos (lista) | Inspector → **Artefatos** |
-| Decisões do model router, limite de emergência, modelo fixado | Inspector → **Router** |
-| Versões, comparação, revert, branch, proteger | Inspector → **Versões** |
-| Execução pausada, erro do projeto, resume bloqueado | Alert strip |
+| Today (stacked panel)                                         | New location                                                      |
+| ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Conversa, operações, agent stream                             | Left pane                                                         |
+| Knowledge files                                               | Left pane, collapsible section                                    |
+| Preview                                                       | Center, `Preview` view                                            |
+| Draft diff, artifact diff                                     | Center, `Diff` view                                               |
+| Artefato selecionado                                          | Center, `Artefato` view (fullscreen dialog only for images/blobs) |
+| Linha do tempo                                                | Inspector → **Atividade**                                         |
+| Steps da execução                                             | Inspector → **Execução**                                          |
+| Changes, checks, aprovações, browser checks, draft preservado | Inspector → **Mudanças**                                          |
+| Artefatos (lista)                                             | Inspector → **Artefatos**                                         |
+| Decisões do model router, limite de emergência, modelo fixado | Inspector → **Router**                                            |
+| Versões, comparação, revert, branch, proteger                 | Inspector → **Versões**                                           |
+| Execução pausada, erro do projeto, resume bloqueado           | Alert strip                                                       |
 
 Rules:
 
@@ -254,22 +255,22 @@ with sortable columns and a slide-over detail sheet per row.
 
 `apps/web/app/project/[id]/page.tsx` splits. Target: no file over ~300 lines.
 
-| File | Responsibility |
-| --- | --- |
-| `page.tsx` | Data fetching, streams, state, handlers. Renders `BuilderShell`. |
-| `builder-shell.tsx` | Three-pane layout, resize, responsive collapse |
-| `builder-header.tsx` | Glass header, status, run controls |
-| `run-alert-strip.tsx` | Paused / error / resume-blocked / gate notices |
-| `chat-pane.tsx` | Conversation, operations, agent stream, composer |
-| `center-pane.tsx` | Preview / Diff / Artefato view switcher |
-| `inspector/index.tsx` | Tab strip, URL sync, badges |
-| `inspector/activity-tab.tsx` | Timeline |
-| `inspector/run-tab.tsx` | Steps, retry entry point |
-| `inspector/changes-tab.tsx` | Changes, checks, approvals, draft |
-| `inspector/artifacts-tab.tsx` | Artifact list |
-| `inspector/router-tab.tsx` | Router decisions, model pin, emergency limit |
-| `inspector/versions-tab.tsx` | Version history, compare, revert |
-| `dialogs/*.tsx` | Retry plan, approval decision, artifact viewer, proposal editor |
+| File                          | Responsibility                                                   |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `page.tsx`                    | Data fetching, streams, state, handlers. Renders `BuilderShell`. |
+| `builder-shell.tsx`           | Three-pane layout, resize, responsive collapse                   |
+| `builder-header.tsx`          | Glass header, status, run controls                               |
+| `run-alert-strip.tsx`         | Paused / error / resume-blocked / gate notices                   |
+| `chat-pane.tsx`               | Conversation, operations, agent stream, composer                 |
+| `center-pane.tsx`             | Preview / Diff / Artefato view switcher                          |
+| `inspector/index.tsx`         | Tab strip, URL sync, badges                                      |
+| `inspector/activity-tab.tsx`  | Timeline                                                         |
+| `inspector/run-tab.tsx`       | Steps, retry entry point                                         |
+| `inspector/changes-tab.tsx`   | Changes, checks, approvals, draft                                |
+| `inspector/artifacts-tab.tsx` | Artifact list                                                    |
+| `inspector/router-tab.tsx`    | Router decisions, model pin, emergency limit                     |
+| `inspector/versions-tab.tsx`  | Version history, compare, revert                                 |
+| `dialogs/*.tsx`               | Retry plan, approval decision, artifact viewer, proposal editor  |
 
 Existing `preview-panel.tsx`, `knowledge-files.tsx`, `version-history.tsx`, `changes-panel.tsx`
 are restyled in place and mounted into their new slots, not rewritten.
@@ -310,15 +311,15 @@ UI copy stays pt-BR. No i18n layer.
 Parallel stylesheets, surface by surface. Tailwind and `globals.css` coexist; each surface's PR
 deletes the CSS blocks it made dead. The app is shippable at every commit.
 
-| # | Task | Done when |
-| --- | --- | --- |
-| 1 | Tailwind v4 + shadcn install, `@theme` tokens, mesh background | Build green, tokens resolve, both CSS systems coexist |
-| 2 | Custom primitives + app shell, nav, runtime pill | New chrome on all three routes |
-| 3 | Home redesign | `/` uses zero `globals.css` classes; its CSS deleted |
-| 4 | Builder: split `page.tsx`, three-pane shell, `data-testid` pass | Behavior identical, e2e green on testids, no file > 300 lines |
-| 5 | Builder: inspector tabs, alert strip, restyle | `/project/[id]` uses zero `globals.css` classes |
-| 6 | Router dashboard | `/router` uses zero `globals.css` classes |
-| 7 | Delete `globals.css`, a11y and responsive pass | File gone, contrast AA verified, ≤1000px collapse tested |
+| #   | Task                                                            | Done when                                                     |
+| --- | --------------------------------------------------------------- | ------------------------------------------------------------- |
+| 1   | Tailwind v4 + shadcn install, `@theme` tokens, mesh background  | Build green, tokens resolve, both CSS systems coexist         |
+| 2   | Custom primitives + app shell, nav, runtime pill                | New chrome on all three routes                                |
+| 3   | Home redesign                                                   | `/` uses zero `globals.css` classes; its CSS deleted          |
+| 4   | Builder: split `page.tsx`, three-pane shell, `data-testid` pass | Behavior identical, e2e green on testids, no file > 300 lines |
+| 5   | Builder: inspector tabs, alert strip, restyle                   | `/project/[id]` uses zero `globals.css` classes               |
+| 6   | Router dashboard                                                | `/router` uses zero `globals.css` classes                     |
+| 7   | Delete `globals.css`, a11y and responsive pass                  | File gone, contrast AA verified, ≤1000px collapse tested      |
 
 Dependencies: 3, 4, 6 depend on 2. 5 depends on 4. 7 depends on all. 6 can run parallel to 3–5.
 
