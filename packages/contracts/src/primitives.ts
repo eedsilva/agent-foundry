@@ -61,6 +61,13 @@ export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
 export const RiskLevelSchema = z.number().int().min(1).max(5);
 export const ComplexityLevelSchema = z.number().int().min(1).max(5);
 
+/** One-line rendering of Zod issues for error messages; `fallback` names root-level issues. */
+export function formatZodIssues(error: z.ZodError, fallback = 'value'): string {
+  return error.issues
+    .map((issue) => `${issue.path.join('.') || fallback}: ${issue.message}`)
+    .join('; ');
+}
+
 export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
     z.string(),

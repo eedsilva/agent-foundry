@@ -4,6 +4,7 @@ import {
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
   PreviewSessionReferenceSchema,
+  formatZodIssues,
   type ArtifactMetadata,
   type ArtifactReference,
   type BrowserEvidencePolicy,
@@ -78,9 +79,7 @@ export class BrowserVerificationCoordinator {
           summary: 'Browser test plan validation failed.',
           planArtifact,
           previewSession: publicSession,
-          planValidationError: parsed.error.issues
-            .map((issue) => `${issue.path.join('.') || 'plan'}: ${issue.message}`)
-            .join('; '),
+          planValidationError: formatZodIssues(parsed.error, 'plan'),
           steps: [],
         });
       }

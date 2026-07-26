@@ -5,6 +5,7 @@ import {
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
   MAX_NETWORK_POLICY_EVENTS,
+  formatZodIssues,
   isSafeBrowserPath,
   type BrowserEvidencePolicy,
   type BrowserLocator,
@@ -151,14 +152,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
     });
     const parsed = BrowserTestPlanArtifactSchema.safeParse(input.planContent);
     if (!parsed.success) {
-      return planValidationFailure(
-        redact(
-          parsed.error.issues
-            .map((issue) => `${issue.path.join('.') || 'plan'}: ${issue.message}`)
-            .join('; '),
-          previewToken,
-        ),
-      );
+      return planValidationFailure(redact(formatZodIssues(parsed.error, 'plan'), previewToken));
     }
     if (!input.session.url) {
       return planValidationFailure('Preview session URL is required.');

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   RouteDecisionSchema,
+  TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   WorkflowDefinitionSchema,
+  type AgentExecutionRequest,
+  type AgentExecutionResult,
   type ExecutorHealth,
   type Project,
   type WorkflowDefinition,
@@ -74,7 +77,13 @@ function makeOrchestrator(
   versions?: ProjectVersionService,
   executorHealth?: ExecutorHealth[],
   secretStore?: SecretStore,
+  opts?: {
+    workflow?: WorkflowDefinition;
+    output?: (request: AgentExecutionRequest) => AgentExecutionResult['output'];
+    routeFallback?: boolean;
+  },
 ) {
+  const workflow = opts?.workflow ?? WORKFLOW;
   const power = { on: true };
   const clock = new SystemClock();
   const ids = new SequentialIds();
@@ -88,11 +97,11 @@ function makeOrchestrator(
   const events = new InMemoryEvents(power);
   const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces(power);
-  const executor = new ControllableExecutor({}, workspaces);
+  const executor = new ControllableExecutor({}, workspaces, opts?.output);
 
   const workflows: WorkflowRepository = {
-    get: () => Promise.resolve(WORKFLOW),
-    list: () => Promise.resolve([WORKFLOW]),
+    get: () => Promise.resolve(workflow),
+    list: () => Promise.resolve([workflow]),
   };
   const harnessRepo: HarnessRepository = {
     select: () => Promise.resolve({ version: '1', files: [], combined: '' }),
@@ -119,7 +128,24 @@ function makeOrchestrator(
             total: 3,
           },
         },
-        fallbacks: [],
+        fallbacks: opts?.routeFallback
+          ? [
+              {
+                model: MODELS[1],
+                score: {
+                  capability: 0.5,
+                  context: 0.5,
+                  speed: 0.5,
+                  cost: 0.5,
+                  reliability: 0.5,
+                  historical: 0.5,
+                  tagAffinity: 0,
+                  estimatedCostUsd: null,
+                  total: 2,
+                },
+              },
+            ]
+          : [],
         rejected: [],
       }),
     ),
@@ -183,6 +209,7 @@ function makeOrchestrator(
     projects,
     runs,
     stepRuns,
+    stepAttempts,
     artifacts,
     events,
     workspaces,
@@ -193,12 +220,15 @@ function makeOrchestrator(
   };
 }
 
-async function seedRun(stores: ReturnType<typeof makeOrchestrator>): Promise<void> {
+async function seedRun(
+  stores: ReturnType<typeof makeOrchestrator>,
+  workflowId = WORKFLOW.id,
+): Promise<void> {
   const now = stores.clock.now().toISOString();
   await stores.projects.create({
     id: 'project-1',
     name: 'Version hook fixture',
-    workflowId: WORKFLOW.id,
+    workflowId,
     policyId: 'default',
     status: 'queued',
     version: 1,
@@ -209,7 +239,7 @@ async function seedRun(stores: ReturnType<typeof makeOrchestrator>): Promise<voi
   await stores.runs.create({
     id: 'run-1',
     projectId: 'project-1',
-    workflowId: WORKFLOW.id,
+    workflowId,
     status: 'queued',
     version: 1,
     createdAt: now,
@@ -285,5 +315,113 @@ describe('ProjectVersion recording hook (#40)', () => {
     const submitted = stores.executor.submittedExecutionRequests.at(-1);
     expect(submitted?.secrets).toEqual([{ name: 'STRIPE_SECRET_KEY', ref: 'STRIPE_SECRET_KEY' }]);
     expect(JSON.stringify(submitted)).not.toContain('sk-should-never-appear');
+  });
+});
+
+const TASK_GRAPH_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'task-graph-v1',
+  name: 'Task graph fixture',
+  description: 'A single planning step constrained to emit a task graph.',
+  stack: 'node',
+  nodes: [
+    {
+      id: 'plan',
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: 'Plan',
+      instructions: 'Plan the work.',
+      outputArtifact: 'plan.current',
+      outputContract: 'task-graph',
+      maxAttempts: 1,
+    },
+  ],
+});
+
+const VALID_GRAPH = {
+  schemaVersion: '1',
+  goal: 'Ship it',
+  tasks: [
+    {
+      id: 'T1',
+      title: 'Do the thing',
+      dependsOn: [],
+      deliverables: ['src/index.ts'],
+      acceptanceCheck: 'The thing works',
+    },
+  ],
+};
+
+describe('task-graph output contract (#321)', () => {
+  it('requests the task-graph JSON schema and stores a conforming plan', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: TASK_GRAPH_WORKFLOW,
+      output: () => ({
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned.',
+        data: VALID_GRAPH,
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        nextActions: [],
+      }),
+    });
+    await seedRun(stores, TASK_GRAPH_WORKFLOW.id);
+
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await stores.runs.get('run-1'))?.status).toBe('completed');
+    expect(stores.executor.requests[0]?.outputSchema?.$id).toBe(
+      TASK_GRAPH_ARTIFACT_JSON_SCHEMA.$id,
+    );
+    const artifact = await stores.artifacts.getLatest('project-1', 'plan.current');
+    expect(artifact?.content).toMatchObject({ data: { tasks: [{ id: 'T1' }] } });
+  });
+
+  it('consumes one attempt on a non-conforming output and recovers on the fallback candidate', async () => {
+    let calls = 0;
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: TASK_GRAPH_WORKFLOW,
+      routeFallback: true,
+      output: () => ({
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned.',
+        // First attempt: prose. Second attempt: a conforming graph.
+        data: ++calls === 1 ? { note: 'prose' } : VALID_GRAPH,
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        nextActions: [],
+      }),
+    });
+    await seedRun(stores, TASK_GRAPH_WORKFLOW.id);
+
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await stores.runs.get('run-1'))?.status).toBe('completed');
+    const stepRun = (await stores.stepRuns.list('run-1')).find((step) => step.stepId === 'plan');
+    if (!stepRun) throw new Error('Expected a persisted plan step');
+    const attempts = await stores.stepAttempts.list('run-1', stepRun.id);
+    expect(attempts.map((attempt) => attempt.status)).toEqual(['failed', 'succeeded']);
+    const artifact = await stores.artifacts.getLatest('project-1', 'plan.current');
+    expect(artifact?.metadata.revision).toBe(1);
+    expect(artifact?.content).toMatchObject({ data: { tasks: [{ id: 'T1' }] } });
+  });
+
+  it('fails the step instead of passing prose through as plan.current', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: TASK_GRAPH_WORKFLOW,
+      // Default ControllableExecutor output: data is {}. Prose, not a graph.
+    });
+    await seedRun(stores, TASK_GRAPH_WORKFLOW.id);
+
+    await expect(stores.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /must emit a task graph/,
+    );
+    expect((await stores.runs.get('run-1'))?.status).toBe('failed');
+    expect(await stores.artifacts.getLatest('project-1', 'plan.current')).toBeNull();
   });
 });

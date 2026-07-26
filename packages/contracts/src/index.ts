@@ -6,6 +6,7 @@ export * from './experiment.js';
 export * from './model.js';
 export * from './task-taxonomy.js';
 export * from './policy.js';
+export * from './plan.js';
 export * from './workflow.js';
 export * from './project.js';
 export * from './conversation.js';
