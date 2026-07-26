@@ -291,6 +291,15 @@ O campo `data` é flexível; o envelope não é. Isso permite que o orquestrador
 
 Cada revisão é imutável. Uma reparação grava `plan.current` revisão 2 em vez de sobrescrever revisão 1.
 
+Passos de agente podem declarar `outputContract: task-graph` (ADR 0039). Nesse caso o `data` do
+artefato deve conter um grafo de tarefas validado (`TaskGraphSchema` em `packages/contracts`): cada
+tarefa carrega id estável, título, dependências, entregáveis e um critério de aceite. IDs únicos,
+dependências existentes e aciclicidade são impostos pelo parser Zod autoritativo no orquestrador — uma
+saída fora do contrato falha o attempt em vez de virar revisão de `plan.current`; o provider recebe o
+espelho JSON Schema com o marcador de validação runtime, como no plano de teste de browser. Os passos
+`plan` e `repair-plan` de `web-app-v1` declaram o contrato; `dogfood-plan-v1` fica de fora por
+produzir artefatos de análise arbitrários.
+
 ## Quality loop
 
 Um `quality-loop` possui:

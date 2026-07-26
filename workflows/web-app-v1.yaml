@@ -20,6 +20,7 @@ nodes:
         Optimize for a small shippable first version rather than an imaginary perfect platform.
       inputArtifacts: [prd]
       outputArtifact: plan.current
+      outputContract: task-graph
       mutatesWorkspace: false
       harnessTags: [planning, web]
       profile:
@@ -57,6 +58,7 @@ nodes:
         explicitly resolve contradictions, and produce a complete replacement plan.
       inputArtifacts: [prd, plan.current, plan.review]
       outputArtifact: plan.current
+      outputContract: task-graph
       mutatesWorkspace: false
       harnessTags: [planning, repair]
       profile:

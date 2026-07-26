@@ -3,8 +3,10 @@
 import React from 'react';
 import { diffLines } from 'diff';
 import {
+  TaskGraphArtifactSchema,
   VerificationReportSchema,
   type StoredArtifact,
+  type TaskGraph,
   type VerificationReport,
 } from '@agent-foundry/contracts';
 import { getArtifact, getArtifactBlobUrl } from '../../../../lib/api';
@@ -21,6 +23,30 @@ function artifactText(content: unknown): string {
 
 function isVerificationReport(content: unknown): content is VerificationReport {
   return VerificationReportSchema.safeParse(content).success;
+}
+
+function parseTaskGraph(content: unknown): TaskGraph | null {
+  const parsed = TaskGraphArtifactSchema.safeParse(content);
+  return parsed.success ? parsed.data.data : null;
+}
+
+function TaskGraphView({ graph }: { graph: TaskGraph }) {
+  return (
+    <div className="flex flex-col gap-2" data-testid="task-graph-view">
+      {graph.tasks.map((task) => (
+        <div key={task.id} className="border-hairline rounded-card border px-3 py-2 text-[13px]">
+          <p className="text-ink font-medium">
+            {task.id} · {task.title}
+          </p>
+          {task.dependsOn.length > 0 ? (
+            <p className={HINT}>Depende de: {task.dependsOn.join(', ')}</p>
+          ) : null}
+          <p className={HINT}>Entrega: {task.deliverables.join(', ')}</p>
+          <p className={HINT}>Aceite: {task.acceptanceCheck}</p>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function BlobArtifactPreview({
@@ -88,6 +114,7 @@ export function ArtifactViewerDialog({
   }
 
   if (!selected) return null;
+  const taskGraph = parseTaskGraph(selected.content);
 
   return (
     <Overlay
@@ -117,6 +144,8 @@ export function ArtifactViewerDialog({
           ) : (
             <p className={HINT}>Carregando revisão anterior…</p>
           )
+        ) : taskGraph ? (
+          <TaskGraphView graph={taskGraph} />
         ) : isVerificationReport(selected.content) ? (
           <div className="flex flex-col gap-2">
             <p className="text-ink text-[13px]">{selected.content.summary}</p>

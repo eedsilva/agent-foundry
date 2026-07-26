@@ -20,6 +20,8 @@ nodes:
         Inspect the repository files named in the PRD, then produce exactly the planning artifact
         the PRD asks for. This task is analysis only; do not modify any files.
       inputArtifacts: [prd]
+      # No outputContract here: dogfood PRDs ask for arbitrary analysis artifacts,
+      # not the task graph web-app-v1 requires (ADR 0039).
       outputArtifact: plan.current
       mutatesWorkspace: false
       harnessTags: [planning]

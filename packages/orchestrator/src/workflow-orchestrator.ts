@@ -33,7 +33,10 @@ import {
   BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
   DEFAULT_BROWSER_EVIDENCE_POLICY,
   EXECUTION_PROTOCOL_VERSION,
+  formatZodIssues,
   isWorkflowRunStatusTerminal,
+  TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  TaskGraphArtifactSchema,
 } from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
@@ -1972,9 +1975,12 @@ export class WorkflowOrchestrator {
       tags: step.harnessTags,
     });
     const profile = buildTaskProfile({ step, harness, artifacts: inputArtifacts, policy });
-    const outputSchema = workflowUsesBrowserPlan(workflow, step.outputArtifact)
-      ? BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA
-      : AGENT_ARTIFACT_JSON_SCHEMA;
+    const outputSchema =
+      step.outputContract === 'task-graph'
+        ? TASK_GRAPH_ARTIFACT_JSON_SCHEMA
+        : workflowUsesBrowserPlan(workflow, step.outputArtifact)
+          ? BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA
+          : AGENT_ARTIFACT_JSON_SCHEMA;
     const explicit = await this.resolveModelPin(
       runId,
       stepRun.nodeId,
@@ -2179,6 +2185,14 @@ export class WorkflowOrchestrator {
         workspaceRef,
       );
       await this.assertExecutionMayContinue(runId, signal);
+      if (step.outputContract === 'task-graph') {
+        const graph = TaskGraphArtifactSchema.safeParse(result.output);
+        if (!graph.success) {
+          throw new Error(
+            `Step ${step.id} must emit a task graph in data; output failed validation: ${formatZodIssues(graph.error, 'plan')}`,
+          );
+        }
+      }
       const executionRoute: RouteDecision = {
         ...route,
         executed: candidate,

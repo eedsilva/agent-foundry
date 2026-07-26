@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0038 Generated applications are two-tier (Next.js + Fastify) and reach Supabase with the caller's JWT](0038-two-tier-generated-app-with-jwt-forwarded-supabase.md).
+Latest: [0039 plan.current carries a schema-validated task graph, opted in per step via outputContract](0039-task-graph-contract-for-plan-current.md).
