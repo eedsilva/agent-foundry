@@ -238,8 +238,14 @@ jobs:
             RUN=$(git diff --name-only "$BASE_SHA" HEAD | npx tsx scripts/promotion-gate-check.ts)
             echo "run=$RUN" >> "$GITHUB_OUTPUT"
           fi
+      # benchmark.ts exits 1 whenever any case fails, and under --executor-mode
+      # mock nearly every case is *expected* to fail (see docs/OPERATIONS.md
+      # "Regression gate de promoção"). Generation is not the verdict — the
+      # comparison below is, and it is what catches a case that regressed from
+      # passing to failing. Without this the job dies here and never compares.
       - name: Generate fresh benchmark results (mock executor)
         if: steps.gate-check.outputs.run == 'true'
+        continue-on-error: true
         run: npx tsx scripts/benchmark.ts --all --executor-mode mock
       - name: Compare against the frozen v0.9 baseline
         if: steps.gate-check.outputs.run == 'true'
