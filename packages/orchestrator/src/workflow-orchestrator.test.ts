@@ -80,6 +80,7 @@ function makeOrchestrator(
   opts?: {
     workflow?: WorkflowDefinition;
     output?: (request: AgentExecutionRequest) => AgentExecutionResult['output'];
+    routeFallback?: boolean;
   },
 ) {
   const workflow = opts?.workflow ?? WORKFLOW;
@@ -127,7 +128,24 @@ function makeOrchestrator(
             total: 3,
           },
         },
-        fallbacks: [],
+        fallbacks: opts?.routeFallback
+          ? [
+              {
+                model: MODELS[1],
+                score: {
+                  capability: 0.5,
+                  context: 0.5,
+                  speed: 0.5,
+                  cost: 0.5,
+                  reliability: 0.5,
+                  historical: 0.5,
+                  tagAffinity: 0,
+                  estimatedCostUsd: null,
+                  total: 2,
+                },
+              },
+            ]
+          : [],
         rejected: [],
       }),
     ),
@@ -191,6 +209,7 @@ function makeOrchestrator(
     projects,
     runs,
     stepRuns,
+    stepAttempts,
     artifacts,
     events,
     workspaces,
@@ -358,6 +377,37 @@ describe('task-graph output contract (#321)', () => {
       TASK_GRAPH_ARTIFACT_JSON_SCHEMA.$id,
     );
     const artifact = await stores.artifacts.getLatest('project-1', 'plan.current');
+    expect(artifact?.content).toMatchObject({ data: { tasks: [{ id: 'T1' }] } });
+  });
+
+  it('consumes one attempt on a non-conforming output and recovers on the fallback candidate', async () => {
+    let calls = 0;
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: TASK_GRAPH_WORKFLOW,
+      routeFallback: true,
+      output: () => ({
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned.',
+        // First attempt: prose. Second attempt: a conforming graph.
+        data: ++calls === 1 ? { note: 'prose' } : VALID_GRAPH,
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        nextActions: [],
+      }),
+    });
+    await seedRun(stores, TASK_GRAPH_WORKFLOW.id);
+
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await stores.runs.get('run-1'))?.status).toBe('completed');
+    const stepRun = (await stores.stepRuns.list('run-1')).find((step) => step.stepId === 'plan');
+    if (!stepRun) throw new Error('Expected a persisted plan step');
+    const attempts = await stores.stepAttempts.list('run-1', stepRun.id);
+    expect(attempts.map((attempt) => attempt.status)).toEqual(['failed', 'succeeded']);
+    const artifact = await stores.artifacts.getLatest('project-1', 'plan.current');
+    expect(artifact?.metadata.revision).toBe(1);
     expect(artifact?.content).toMatchObject({ data: { tasks: [{ id: 'T1' }] } });
   });
 

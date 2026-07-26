@@ -10,6 +10,7 @@ import type {
   PreviewSession,
   QueueJob,
 } from '@agent-foundry/contracts';
+import { TaskGraphArtifactSchema } from '@agent-foundry/contracts';
 import { SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor, PlaywrightBrowserVerifier } from '@agent-foundry/executors';
 import { BrowserVerificationCoordinator, ConversationService } from '@agent-foundry/orchestrator';
@@ -517,6 +518,12 @@ describe('runtime composition', () => {
     ]) {
       expect(names.has(name), `missing artifact ${name}`).toBe(true);
     }
+
+    const planArtifact = detail.artifacts.find(
+      (artifact) => artifact.metadata.name === 'plan.current',
+    );
+    const taskGraph = TaskGraphArtifactSchema.parse(planArtifact?.content);
+    expect(taskGraph.data.tasks.length).toBeGreaterThan(0);
 
     const verification = detail.artifacts.find(
       (artifact) => artifact.metadata.name === 'verification.report',

@@ -110,3 +110,31 @@ describe('verify workflow node', () => {
     ).toThrow();
   });
 });
+
+const BASE_AGENT_STEP = {
+  id: 'plan',
+  type: 'agent' as const,
+  role: 'planner' as const,
+  taskKind: 'planning' as const,
+  title: 'Plan',
+  instructions: 'Plan the work.',
+  outputArtifact: 'plan.current',
+};
+
+describe('agent step outputContract', () => {
+  it('is optional and accepts task-graph', () => {
+    const bare = WorkflowNodeSchema.parse(BASE_AGENT_STEP);
+    if (bare.type !== 'agent') throw new Error('expected agent step');
+    expect(bare.outputContract).toBeUndefined();
+
+    const declared = WorkflowNodeSchema.parse({ ...BASE_AGENT_STEP, outputContract: 'task-graph' });
+    if (declared.type !== 'agent') throw new Error('expected agent step');
+    expect(declared.outputContract).toBe('task-graph');
+  });
+
+  it('rejects unknown contract names', () => {
+    expect(() =>
+      WorkflowNodeSchema.parse({ ...BASE_AGENT_STEP, outputContract: 'browser-plan' }),
+    ).toThrow();
+  });
+});

@@ -75,4 +75,30 @@ describe('ArtifactViewerDialog task graph rendering', () => {
     expect(markup).not.toContain('data-testid="task-graph-view"');
     expect(markup).toContain('prose plan');
   });
+
+  it('falls back to raw JSON for a graph that fails validation instead of crashing', () => {
+    const markup = render({
+      schemaVersion: '1',
+      status: 'completed',
+      summary: 'Planned.',
+      data: {
+        schemaVersion: '1',
+        tasks: [
+          {
+            id: 'T1',
+            title: 'Depends on a missing task',
+            dependsOn: ['T9'],
+            deliverables: ['x.ts'],
+            acceptanceCheck: 'never',
+          },
+        ],
+      },
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      nextActions: [],
+    });
+    expect(markup).not.toContain('data-testid="task-graph-view"');
+    expect(markup).toContain('Depends on a missing task');
+  });
 });

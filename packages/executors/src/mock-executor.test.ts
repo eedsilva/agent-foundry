@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentExecutionRequest, ExecutorStreamEvent } from '@agent-foundry/contracts';
+import { TASK_GRAPH_ARTIFACT_JSON_SCHEMA, TaskGraphArtifactSchema } from '@agent-foundry/contracts';
 import { MockAgentExecutor } from './mock-executor.js';
 
 let cwd: string;
@@ -82,5 +83,27 @@ describe('MockAgentExecutor stream events', () => {
     } else {
       throw new Error('expected tool_start/tool_end events at indices 2 and 3');
     }
+  });
+});
+
+describe('MockAgentExecutor output contracts', () => {
+  it('emits a valid task graph when the task-graph schema is requested', async () => {
+    const result = await new MockAgentExecutor().execute({
+      ...request,
+      stepId: 'plan',
+      role: 'planner',
+      taskKind: 'planning',
+      outputSchema: TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+    });
+
+    const graph = TaskGraphArtifactSchema.parse(result.output);
+    expect(graph.data.tasks.length).toBeGreaterThan(0);
+    expect(graph.data.tasks.every((task) => task.deliverables.length > 0)).toBe(true);
+  });
+
+  it('keeps the prose data shape when no contract schema is requested', async () => {
+    const result = await new MockAgentExecutor().execute({ ...request, stepId: 'plan' });
+    expect(result.output.data).toMatchObject({ stepId: 'plan' });
+    expect(TaskGraphArtifactSchema.safeParse(result.output).success).toBe(false);
   });
 });
