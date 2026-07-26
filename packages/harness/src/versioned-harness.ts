@@ -20,6 +20,22 @@ const ManifestSchema = z.object({
   fragments: z.array(FragmentSchema),
 });
 
+const LOCAL_ONLY_DIRS = ['node_modules', '.next', 'dist'];
+
+/**
+ * The scaffold is an installable workspace, so running `pnpm install && pnpm dev`
+ * inside it is a normal thing for a developer to do. Everything that produces —
+ * dependencies, build output, and a real `.env` written by the credential bridge —
+ * would otherwise be copied verbatim into every generated project.
+ */
+function isLocalOnly(path: string): boolean {
+  return path.split('/').some((segment) => {
+    if (LOCAL_ONLY_DIRS.includes(segment)) return true;
+    if (segment.endsWith('.tsbuildinfo')) return true;
+    return segment.startsWith('.env') && segment !== '.env.example';
+  });
+}
+
 export class VersionedHarnessRepository implements HarnessRepository {
   constructor(private readonly harnessDir: string) {}
 
@@ -87,6 +103,7 @@ export class VersionedHarnessRepository implements HarnessRepository {
         const fullPath = join(entry.parentPath, entry.name);
         return { fullPath, path: relative(scaffoldRoot, fullPath).split(sep).join('/') };
       })
+      .filter(({ path }) => !isLocalOnly(path))
       .sort((left, right) => left.path.localeCompare(right.path));
     return Promise.all(
       files.map(async ({ fullPath, path }) => ({

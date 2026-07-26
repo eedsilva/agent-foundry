@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -39,6 +39,26 @@ describe('MockAgentExecutor stream events', () => {
     await expect(readFile(join(cwd, 'package.json'), 'utf8')).resolves.toContain(
       '"packageManager": "npm@10"',
     );
+  });
+
+  it('overrides the scaffold verification scripts it finds in the workspace', async () => {
+    // The scaffold ships real scripts that need an installed workspace; a mock
+    // run never installs one, so deferring to them would send every mock run
+    // into repair over missing dependencies.
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        packageManager: 'pnpm@10.30.1',
+        scripts: { build: 'pnpm --recursive build', dev: 'pnpm --recursive --parallel dev' },
+      }),
+    );
+
+    await new MockAgentExecutor().execute({ ...request, cwd, mutatesWorkspace: true });
+
+    const packageJson = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8'));
+    expect(packageJson.packageManager).toBe('npm@10');
+    expect(packageJson.scripts.build).toBe('node --check src/index.js');
+    expect(packageJson.scripts.dev).toBe('pnpm --recursive --parallel dev');
   });
 
   it('emits a deterministic status/delta/tool sequence when onEvent is provided', async () => {

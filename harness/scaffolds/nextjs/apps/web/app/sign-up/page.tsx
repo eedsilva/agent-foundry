@@ -4,9 +4,8 @@ import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
-export default function SignInPage() {
+export default function SignUpPage() {
   const router = useRouter();
-  const supabase = createClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -17,11 +16,16 @@ export default function SignInPage() {
     setLoading(true);
     setError(null);
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    // Local Supabase has no SMTP; email confirmation is disabled
+    // (packages/platform/src/supabase-auth.ts), so signup returns an
+    // active session immediately, same as sign-in. The client is built on
+    // submit, not on render, so `next build` can prerender this page in an
+    // environment that has no Supabase keys.
+    const { error: signUpError } = await createClient().auth.signUp({ email, password });
 
     setLoading(false);
-    if (signInError) {
-      setError(signInError.message);
+    if (signUpError) {
+      setError(signUpError.message);
       return;
     }
     router.push('/');
@@ -30,7 +34,7 @@ export default function SignInPage() {
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto flex max-w-sm flex-col gap-4 p-6">
-      <h1 className="text-xl font-semibold">Sign in</h1>
+      <h1 className="text-xl font-semibold">Create account</h1>
       <input
         type="email"
         required
@@ -42,6 +46,7 @@ export default function SignInPage() {
       <input
         type="password"
         required
+        minLength={8}
         placeholder="Password"
         value={password}
         onChange={(event) => setPassword(event.target.value)}
@@ -49,7 +54,7 @@ export default function SignInPage() {
       />
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       <button type="submit" disabled={loading} className="rounded bg-black px-3 py-2 text-white">
-        {loading ? 'Signing in…' : 'Sign in'}
+        {loading ? 'Creating account…' : 'Create account'}
       </button>
     </form>
   );

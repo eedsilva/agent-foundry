@@ -2,7 +2,7 @@
 // email/password only, no external services in v1), so signup must not wait
 // on an email confirmation link nobody can deliver. This forces the local
 // stack's [auth.email] section to enable_confirmations = false, matching the
-// scaffold's sign-up flow (harness/scaffolds/nextjs/app/sign-up/page.tsx),
+// scaffold's sign-up flow (harness/scaffolds/nextjs/apps/web/app/sign-up/page.tsx),
 // which logs the user straight in.
 const SECTION_HEADER_RE =
   /^[ \t]*\[[ \t]*(?:auth\.email|'auth\.email'|"auth\.email")[ \t]*\][ \t]*(?:#.*)?\r?$/m;
