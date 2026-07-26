@@ -62,6 +62,8 @@ export class FileWorkspaceManager implements WorkspaceManager {
           '!.env.example',
           '.orchestrator/',
           '*.log',
+          // The Supabase CLI's state for the project's own local stack.
+          'supabase/.temp/',
           '',
         ].join('\n'),
       );

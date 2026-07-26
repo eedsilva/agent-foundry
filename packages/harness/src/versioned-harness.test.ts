@@ -46,7 +46,10 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
 
     expect(files.map((file) => file.path).sort()).toEqual([
       '.env.example',
+      'README.md',
       'apps/api/package.json',
+      'apps/api/src/database.types.ts',
+      'apps/api/src/env.ts',
       'apps/api/src/server.ts',
       'apps/api/tsconfig.json',
       'apps/web/app/actions.ts',
@@ -65,8 +68,11 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
       'package.json',
       'pnpm-lock.yaml',
       'pnpm-workspace.yaml',
+      'scripts/db.mjs',
       'scripts/smoke.mjs',
-      'supabase/migrations/00000000000001_rls_baseline_example.sql',
+      'supabase/config.toml',
+      'supabase/migrations/20260726000000_rls_baseline.sql',
+      'supabase/seed.sql',
     ]);
     const clientFile = files.find((file) => file.path === 'apps/web/lib/supabase/client.ts');
     expect(clientFile?.content).toContain('createBrowserClient');
@@ -81,6 +87,7 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
     await mkdir(join(scaffoldRoot, 'apps/api'), { recursive: true });
     await mkdir(join(scaffoldRoot, 'apps/web/node_modules/next'), { recursive: true });
     await mkdir(join(scaffoldRoot, 'apps/web/.next/server'), { recursive: true });
+    await mkdir(join(scaffoldRoot, 'supabase/.temp'), { recursive: true });
     await Promise.all([
       writeFile(join(scaffoldRoot, 'package.json'), '{}\n'),
       writeFile(join(scaffoldRoot, '.env.example'), 'NEXT_PUBLIC_SUPABASE_URL=\n'),
@@ -88,6 +95,7 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
       writeFile(join(scaffoldRoot, 'apps/api/tsconfig.tsbuildinfo'), '{}\n'),
       writeFile(join(scaffoldRoot, 'apps/web/node_modules/next/index.js'), 'export {};\n'),
       writeFile(join(scaffoldRoot, 'apps/web/.next/server/page.js'), 'export {};\n'),
+      writeFile(join(scaffoldRoot, 'supabase/.temp/cli-latest'), 'v2.62.5\n'),
     ]);
 
     try {

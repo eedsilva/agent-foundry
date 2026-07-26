@@ -1,0 +1,50 @@
+# The project's own local Supabase stack (ADR 0007). The Supabase CLI turns
+# this file into a Docker Compose project named after `project_id`, so both the
+# container names and the host ports below have to be unique per project —
+# `pnpm db:start` allocates them once, into .env, on first boot.
+#
+# Everything the CLI already defaults to is left out; run `supabase init` in a
+# scratch directory to see the annotated full set.
+project_id = "env(SUPABASE_PROJECT_ID)"
+
+[api]
+port = "env(SUPABASE_API_PORT)"
+
+[db]
+port = "env(SUPABASE_DB_PORT)"
+shadow_port = "env(SUPABASE_DB_SHADOW_PORT)"
+major_version = 17
+
+# Both on by default; stated here because turn zero depends on them: `supabase
+# start` applies supabase/migrations in order and then runs supabase/seed.sql.
+[db.migrations]
+enabled = true
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[studio]
+port = "env(SUPABASE_STUDIO_PORT)"
+
+[auth]
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["http://127.0.0.1:3000"]
+
+# Disabled to keep each project's container count down (#292): analytics is two
+# containers nothing here reads, inbucket a mail catcher with no SMTP to catch
+# (ADR 0007), realtime a subscription service nothing subscribes to, and edge
+# functions are not how this stack runs server code — apps/api is (ADR 0038),
+# and the edge runtime's inspector port is fixed at 8083, so it would collide
+# the moment a second project started.
+[analytics]
+enabled = false
+
+[inbucket]
+enabled = false
+
+[realtime]
+enabled = false
+
+[edge_runtime]
+enabled = false

@@ -8,6 +8,8 @@ Applies whenever the golden stack's backend is the project's isolated local Supa
 - One file per change under `supabase/migrations/<timestamp>_<name>.sql`, timestamp `YYYYMMDDHHMMSS`.
 - Postgres DDL is transactional by default; only wrap a migration in explicit `begin;`/`commit;` when the statement set specifically requires it.
 - Never generate a `down` migration. Rollback is a new forward migration that reverses the change.
+- `supabase start` applies every migration and then `supabase/seed.sql`; `pnpm db:reset` replays both from scratch.
+- After any schema change, regenerate the committed types with `pnpm db:types` (`supabase gen types typescript --local` into `apps/api/src/database.types.ts`). CI fails when they drift.
 
 ## Row Level Security
 
@@ -15,7 +17,8 @@ Applies whenever the golden stack's backend is the project's isolated local Supa
 - Default-deny: no table is queryable until a policy exists. Write explicit `select`/`insert`/`update`/`delete` policies scoped to `auth.uid()`.
 - Name policies `<table>_<operation>_<scope>` (e.g. `tasks_select_owner`) so intent is legible in `supabase db diff`.
 - Never grant `anon` write access to a user-data table.
-- `supabase/migrations/00000000000001_rls_baseline_example.sql` is a commented-out template of this pattern (table, RLS, four owner policies) — copy it into a new, real migration for each table you add.
+- `supabase/migrations/20260726000000_rls_baseline.sql` applies this pattern (table, owner column, RLS, four owner policies) to the scaffold's `items` table — copy it into a new migration for each table you add.
+- Index the owner column every policy filters on, as the baseline does.
 
 ## Auth
 
@@ -34,6 +37,8 @@ Every app ships with Supabase auth wired end to end: sign-in flow, protected rou
 
 ## Environment and secrets
 
-- Local Supabase URL and keys live in `.env.local`, git-ignored; ship `.env.example` with variable names only, never values.
+- Local Supabase URL and keys live in `.env`, git-ignored, written by `pnpm db:start` or by the platform's credential bridge (ADR 0034); ship `.env.example` with variable names only, never values.
+- `.env` also carries `SUPABASE_PROJECT_ID` and the project's `SUPABASE_*_PORT` block, allocated on first start so two projects can run at once. Never hard-code 54321.
+- Every variable a tier reads is checked at that tier's boot (`apps/api/src/env.ts`), so a missing value fails on start, naming itself, rather than surfacing later inside a client call.
 - The service-role key never leaves server-only code paths (route handlers, server actions); it must not be imported into any file reachable from a client bundle.
 - Reference `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` for the browser client; the service-role key uses a non-`NEXT_PUBLIC_` name.
