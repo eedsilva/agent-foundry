@@ -243,6 +243,34 @@ describe('FileWorkspaceManager applyScaffold', () => {
     );
   });
 
+  // A scaffold that ships its own .gitignore silently replaces this one, and
+  // the workspace stops ignoring orchestrator run context — which `checkpoint`
+  // (`git add -A`) would then commit into the generated app's history.
+  it('keeps the workspace .gitignore it owns when a scaffold is applied', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+
+    await manager.applyScaffold('project-1', [{ path: 'package.json', content: '{}\n' }]);
+
+    const gitignore = await readFile(
+      join(manager.workspacePath('project-1'), '.gitignore'),
+      'utf8',
+    );
+    expect(gitignore.split('\n')).toEqual(
+      expect.arrayContaining([
+        'node_modules/',
+        '.env*',
+        '!.env.example',
+        '.orchestrator/',
+        '*.log',
+        'supabase/.temp/',
+      ]),
+    );
+  });
+
   it('rejects an absolute scaffold path', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
     const manager = new FileWorkspaceManager(dataDir, {
