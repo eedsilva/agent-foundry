@@ -107,14 +107,14 @@ jobs:
       - run: npm run e2e --workspace @agent-foundry/api -- issue-radar-golden-journey.spec.ts issue-radar-cross-user-access.spec.ts
 
   # No seam below the real thing can assert that `pnpm install && pnpm dev`
-  # boots both tiers of the generated-app scaffold, so this job copies it out
-  # of the repo into a clean directory and does exactly that (#315, ADR 0038
-  # "Validation and rollback").
+  # boots both tiers of the generated-app scaffold against its own Supabase
+  # stack, so this job copies it out of the repo into a clean directory and
+  # does exactly that (#315, #316, ADR 0038 "Validation and rollback").
   scaffold-boot:
     name: scaffold-boot
     needs: preflight
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -124,18 +124,49 @@ jobs:
       # self-switches to the exact version in the scaffold's `packageManager`
       # field, so this only has to bootstrap *a* pnpm.
       - run: npm install --global pnpm@10
+      - uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
+        with:
+          version: 2.62.5
       - name: Copy the scaffold into a clean directory outside the repo
         run: cp -R harness/scaffolds/nextjs "$RUNNER_TEMP/scaffold"
       - name: Install with a frozen lockfile
         run: pnpm install --frozen-lockfile
+        working-directory: ${{ runner.temp }}/scaffold
+      # Also writes .env, so everything after this runs on exactly the values a
+      # fresh project gets — the failure mode #293 recorded was a shipped
+      # example the shipped config schema rejected.
+      - name: Start Supabase, applying the migrations and the seed
+        run: pnpm db:start
+        working-directory: ${{ runner.temp }}/scaffold
+      # A schema change that never reached the committed types would otherwise
+      # only surface when a generated app failed to compile.
+      - name: Assert the committed types match the schema
+        run: |
+          pnpm db:types
+          diff -u "$GITHUB_WORKSPACE/harness/scaffolds/nextjs/apps/api/src/database.types.ts" \
+            apps/api/src/database.types.ts \
+            || { echo '::error::apps/api/src/database.types.ts is stale — run `pnpm db:types` and commit it.'; exit 1; }
         working-directory: ${{ runner.temp }}/scaffold
       # `next build` typechecks the web tier and `tsc -p` is the api tier's
       # build, so this covers `pnpm typecheck` without compiling twice.
       - name: Build both tiers
         run: pnpm build
         working-directory: ${{ runner.temp }}/scaffold
-      - name: Boot both tiers and assert they answer
+      - name: Assert the database and both tiers answer
         run: pnpm smoke
+        working-directory: ${{ runner.temp }}/scaffold
+      # Every project that starts a stack has to be able to give it back
+      # (#292): a normal stop leaves no container of its own behind.
+      - name: Stop the stack and assert nothing is left running
+        run: |
+          pnpm db:stop
+          # The runner starts nothing else, so every container here is one the
+          # stack left behind — no label filter to get wrong.
+          if [ -n "$(docker ps -aq)" ]; then
+            docker ps -a
+            echo '::error::The stack left containers behind after `pnpm db:stop`.'
+            exit 1
+          fi
         working-directory: ${{ runner.temp }}/scaffold
 
   static:

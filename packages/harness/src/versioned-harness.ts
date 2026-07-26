@@ -20,13 +20,15 @@ const ManifestSchema = z.object({
   fragments: z.array(FragmentSchema),
 });
 
-const LOCAL_ONLY_DIRS = ['node_modules', '.next', 'dist'];
+// `.temp` is the Supabase CLI's state for a stack started in place.
+const LOCAL_ONLY_DIRS = ['node_modules', '.next', 'dist', '.temp'];
 
 /**
  * The scaffold is an installable workspace, so running `pnpm install && pnpm dev`
  * inside it is a normal thing for a developer to do. Everything that produces —
- * dependencies, build output, and a real `.env` written by the credential bridge —
- * would otherwise be copied verbatim into every generated project.
+ * dependencies, build output, a running Supabase stack, and a real `.env` written
+ * by the credential bridge — would otherwise be copied verbatim into every
+ * generated project.
  */
 function isLocalOnly(path: string): boolean {
   return path.split('/').some((segment) => {

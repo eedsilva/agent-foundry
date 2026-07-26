@@ -24,8 +24,8 @@ const PROJECT_ID = 'project-rls';
 const STOP_TIMEOUT_MS = 60_000;
 
 // A real table exercising the owner-RLS baseline documented in
-// harness/stacks/supabase.md and templated in
-// harness/scaffolds/nextjs/supabase/migrations/00000000000001_rls_baseline_example.sql
+// harness/stacks/supabase.md and applied by
+// harness/scaffolds/nextjs/supabase/migrations/20260726000000_rls_baseline.sql
 // — same shape as supabase-auth.e2e.test.ts's RLS_MIGRATION, duplicated here
 // (not shared) so this file stays self-contained like its sibling.
 //

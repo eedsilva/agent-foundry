@@ -26,10 +26,10 @@ const PROJECT_ID = 'project-a';
 const STOP_TIMEOUT_MS = 60_000;
 
 // A real table exercising the owner-RLS baseline documented in
-// harness/stacks/supabase.md and templated in
-// harness/scaffolds/nextjs/supabase/migrations/00000000000001_rls_baseline_example.sql
-// — that scaffold file is a commented-out template, so the "access denied"
-// case here applies the same pattern for real against a live table.
+// harness/stacks/supabase.md and applied by
+// harness/scaffolds/nextjs/supabase/migrations/20260726000000_rls_baseline.sql
+// — the same pattern, applied here against this test's own stack rather than a
+// generated project's.
 const RLS_MIGRATION = `create table public.items (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) default auth.uid(),

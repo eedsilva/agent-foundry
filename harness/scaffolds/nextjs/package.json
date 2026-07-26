@@ -7,7 +7,11 @@
     "dev": "pnpm --recursive --parallel dev",
     "build": "pnpm --recursive build",
     "typecheck": "pnpm --recursive typecheck",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "db:start": "node scripts/db.mjs start",
+    "db:stop": "node scripts/db.mjs stop",
+    "db:reset": "node scripts/db.mjs db reset",
+    "db:types": "node scripts/db.mjs gen types typescript --local"
   },
   "pnpm": {
     "overrides": {
