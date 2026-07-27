@@ -10,6 +10,7 @@ import type {
   ArtifactReference,
   ExecutableStep,
   ExecutorStreamEvent,
+  PreviewSession,
   Project,
   ProjectEvent,
   ProjectPolicy,
@@ -90,6 +91,7 @@ import {
   VersionConflictError,
   withSpan,
 } from '@agent-foundry/domain';
+import type { PreviewService } from './preview-service.js';
 import type { ProjectVersionService } from './project-version-service.js';
 import { buildTaskProfile } from './task-profiler.js';
 import {
@@ -142,6 +144,25 @@ class ProjectProvisioningError extends Error {
   }
 }
 
+/** The slice of PreviewService that provisioning needs to boot a workspace. */
+export type WorkspacePreviewBooter = Pick<PreviewService, 'start' | 'activeForProject'>;
+
+/** Timeline evidence for a provisioning boot: which session, and what installed it. */
+function provisionedPreviewData(session: PreviewSession): Record<string, unknown> {
+  return {
+    previewSessionId: session.id,
+    ...(session.commandPlan?.install.ok
+      ? {
+          install: {
+            command: session.commandPlan.install.command,
+            args: session.commandPlan.install.args,
+            ...(session.commandPlan.versions ? { versions: session.commandPlan.versions } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 export class WorkflowOrchestrator {
   constructor(
     private readonly projects: ProjectRepository,
@@ -173,7 +194,33 @@ export class WorkflowOrchestrator {
     private readonly secretStore?: SecretStore,
     private readonly decisionLog?: RouterDecisionLogRepository,
     private readonly generatedProjectRuntime?: GeneratedProjectRuntime,
+    private readonly previews?: WorkspacePreviewBooter,
   ) {}
+
+  /**
+   * Installs and boots the freshly scaffolded workspace by starting a durable
+   * preview session, so a new project reaches a green preview before any agent
+   * step runs (#318). Skips when the project already has a live session.
+   * Returns the started session, or undefined when nothing was started.
+   */
+  private async bootWorkspacePreview(
+    projectId: string,
+    runId: string,
+  ): Promise<PreviewSession | undefined> {
+    if (!this.previews) return undefined;
+    if (await this.previews.activeForProject(projectId)) return undefined;
+    const { session } = await this.previews.start({
+      workspaceRef: { projectId, workspacePath: this.workspaces.workspacePath(projectId) },
+      runId,
+    });
+    if (session.status !== 'running') {
+      throw new Error(
+        session.error?.message ??
+          `Preview session ${session.id} reached '${session.status}' instead of 'running' while booting the workspace.`,
+      );
+    }
+    return session;
+  }
 
   async runProject(
     projectId: string,
@@ -234,7 +281,7 @@ export class WorkflowOrchestrator {
         await this.finalizePause(run.id, projectId, workflow);
         return;
       }
-      if (this.generatedProjectRuntime) {
+      if (this.generatedProjectRuntime || this.previews) {
         if (run.status !== 'running') {
           run = await this.runs.update(
             transitionWorkflowRun(run, 'running', this.clock.now()),
@@ -251,8 +298,10 @@ export class WorkflowOrchestrator {
             dedupeKey: `${run.id}:project.provisioning_started`,
           },
         );
+        let bootedPreview: PreviewSession | undefined;
         try {
-          await this.generatedProjectRuntime.initialize({ projectId });
+          await this.generatedProjectRuntime?.initialize({ projectId });
+          bootedPreview = await this.bootWorkspacePreview(projectId, run.id);
         } catch (error) {
           await this.emit(projectId, 'project.provisioning_failed', PROVISIONING_FAILURE_MESSAGE, {
             runId: run.id,
@@ -264,6 +313,7 @@ export class WorkflowOrchestrator {
         await this.emit(projectId, 'project.provisioned', 'Project provisioning completed.', {
           runId: run.id,
           dedupeKey: `${run.id}:project.provisioned`,
+          ...(bootedPreview ? { data: provisionedPreviewData(bootedPreview) } : {}),
         });
       }
       await this.workspaces.ensureGit(projectId);

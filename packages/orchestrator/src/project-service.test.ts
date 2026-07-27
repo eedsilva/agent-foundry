@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AppEnvironment } from '@agent-foundry/contracts';
+import type { AppEnvironment, PreviewSession, PreviewWorkspaceRef } from '@agent-foundry/contracts';
 import type { GeneratedProjectRuntime } from '@agent-foundry/domain';
 import { makeHarness, makeStores, seedRun } from './testing/harness.js';
 import { WorkerLoop } from './worker-loop.js';
@@ -157,6 +157,141 @@ describe('ProjectService.create', () => {
     ).rejects.toBe(transactionError);
 
     expect(harness.workspaces.cleanups).toEqual(['id-0001']);
+  });
+});
+
+describe('ProjectService.create workspace boot', () => {
+  const NOW = '2026-07-22T12:00:00.000Z';
+  const previewSession = (overrides: Partial<PreviewSession> = {}): PreviewSession => ({
+    id: 'preview-1',
+    workspaceRef: { projectId: 'id-0001', workspacePath: '/tmp/ws' },
+    status: 'running',
+    url: 'http://127.0.0.1/preview/preview-1/?token=t',
+    version: 1,
+    health: { state: 'healthy', checkedAt: NOW, consecutiveFailures: 0 },
+    ttl: { seconds: 1_800 },
+    restartCount: 0,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  });
+  const runWorker = async (harness: ReturnType<typeof makeHarness>) => {
+    harness.queueForWorker(harness.enqueued[0]!);
+    const worker = new WorkerLoop(harness.queue, harness.orchestrator, {} as never, {
+      workerId: 'worker-1',
+      pollIntervalMs: 1_000,
+    });
+    await worker.runOnce();
+  };
+
+  it('installs and boots the scaffolded workspace into a preview during provisioning', async () => {
+    const start = vi.fn(async (input: { workspaceRef: PreviewWorkspaceRef; runId?: string }) => ({
+      session: previewSession({
+        workspaceRef: input.workspaceRef,
+        ...(input.runId ? { runId: input.runId } : {}),
+        commandPlan: {
+          packageManager: 'pnpm',
+          install: { ok: true, command: 'pnpm', args: ['install', '--frozen-lockfile'] },
+          build: { ok: true, command: 'pnpm', args: ['run', 'build'] },
+          dev: { ok: true, command: 'pnpm', args: ['run', 'dev'] },
+          versions: { node: 'v22.22.3', packageManager: '10.30.1' },
+          detectedAt: NOW,
+        },
+      }),
+      url: 'http://127.0.0.1/preview/preview-1/?token=t',
+    }));
+    const harness = makeHarness({}, makeStores(), {
+      previews: { start, activeForProject: async () => undefined },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    await runWorker(harness);
+
+    expect(start).toHaveBeenCalledWith({
+      workspaceRef: {
+        projectId: 'id-0001',
+        workspacePath: harness.workspaces.workspacePath('id-0001'),
+      },
+      runId: 'id-0002',
+    });
+    expect(await harness.events.list('id-0001')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'project.provisioned',
+          data: {
+            previewSessionId: 'preview-1',
+            install: {
+              command: 'pnpm',
+              args: ['install', '--frozen-lockfile'],
+              versions: { node: 'v22.22.3', packageManager: '10.30.1' },
+            },
+          },
+        }),
+      ]),
+    );
+  });
+
+  it('fails provisioning loudly when the workspace does not install or boot', async () => {
+    const stderr = 'ERR_PNPM_NO_PKG_MANIFEST  No package.json found';
+    const start = vi.fn(async () => ({
+      session: previewSession({
+        status: 'failed',
+        completedAt: NOW,
+        error: { name: 'PreviewInstallError', code: 'PREVIEW_INSTALL_FAILED', message: stderr },
+      }),
+      url: '',
+    }));
+    const stores = makeStores();
+    const harness = makeHarness({}, stores, {
+      previews: { start, activeForProject: async () => undefined },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    await runWorker(harness);
+
+    expect(await stores.projects.get('id-0001')).toMatchObject({
+      status: 'failed',
+      error: 'Project provisioning failed. Review the project event timeline for details.',
+    });
+    expect(await stores.runs.get('id-0002')).toMatchObject({
+      status: 'failed',
+      error: { code: 'PROJECT_PROVISIONING_FAILED', message: stderr },
+    });
+    expect(await harness.events.list('id-0001')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'project.provisioning_failed',
+          data: { diagnostic: stderr },
+        }),
+      ]),
+    );
+  });
+
+  it('does not boot a second preview when the project already has a live session', async () => {
+    const start = vi.fn();
+    const harness = makeHarness({}, makeStores(), {
+      previews: { start, activeForProject: async () => previewSession() },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    await runWorker(harness);
+
+    expect(start).not.toHaveBeenCalled();
+    expect(
+      (await harness.events.list('id-0001')).some((event) => event.type === 'project.provisioned'),
+    ).toBe(true);
   });
 });
 

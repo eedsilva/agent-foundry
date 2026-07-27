@@ -338,6 +338,9 @@ export async function createRuntime(
     secretStore,
     decisionLog,
     generatedProjectRuntime,
+    // Provisioning boots the scaffolded workspace only in real mode; the mock
+    // executor never installs anything (#318).
+    config.executorMode === 'real' ? previewService : undefined,
   );
   const projectService = new ProjectService(
     projects,

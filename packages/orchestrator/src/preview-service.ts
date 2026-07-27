@@ -170,6 +170,17 @@ export class PreviewService {
     });
   }
 
+  /** The project's live preview session, if one exists. 'failing' does not
+   * count: it is already condemned, and a caller that treated it as live
+   * would skip a boot the project is about to lose. */
+  async activeForProject(projectId: string): Promise<PreviewSession | undefined> {
+    const records = await this.sessions.listActive();
+    return records.find(
+      (record) =>
+        record.session.workspaceRef.projectId === projectId && record.session.status !== 'failing',
+    )?.session;
+  }
+
   async stop(sessionId: string): Promise<PreviewSession> {
     return this.lifecycleLock.withSessionLock(sessionId, async () => {
       const record = await this.requireSession(sessionId);

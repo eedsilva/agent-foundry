@@ -270,6 +270,17 @@ async function start(service: PreviewService, runId?: string) {
 }
 
 describe('PreviewService durable lifecycle', () => {
+  it('activeForProject returns the live session for that project only', async () => {
+    const { service } = await buildService();
+    const started = await start(service);
+
+    expect((await service.activeForProject('project-1'))?.id).toBe(started.session.id);
+    expect(await service.activeForProject('project-2')).toBeUndefined();
+
+    await service.stop(started.session.id);
+    expect(await service.activeForProject('project-1')).toBeUndefined();
+  });
+
   it('waits through a slow startup and stores only the token digest while returning the tokenized shape', async () => {
     const runner = new FakePreviewRunner();
     runner.healthResponses = [

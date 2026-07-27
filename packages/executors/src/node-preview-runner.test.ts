@@ -349,6 +349,35 @@ describe('NodePreviewRunner', () => {
     await runner.stop(session);
   }, 10_000);
 
+  it('keeps the health probe on the browsable tier when the api tier announces its own port', async () => {
+    const webPort = await reservePreviewPort();
+    let apiPort = webPort;
+    for (let attempt = 0; attempt < 10 && apiPort === webPort; attempt += 1) {
+      apiPort = await reservePreviewPort();
+    }
+    expect(apiPort).not.toBe(webPort);
+    const ports = [webPort, apiPort];
+    const runner = new NodePreviewRunner({
+      startupTimeoutMs: 5_000,
+      reservePort: async () => ports.shift()!,
+      logRepository: new InMemoryPreviewLogRepository(),
+    });
+    let session = await newSession('sess-api-announce');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT, '--announce-api'] },
+      },
+    };
+    session = await startTracked(runner, session);
+
+    expect(session.process!.port).toBe(webPort);
+    await expect(runner.health(session)).resolves.toMatchObject({ state: 'healthy' });
+    await runner.stop(session);
+  });
+
   it('uses a port detected after startup when checking health', async () => {
     const reservedPort = await reservePreviewPort();
     let fixedPort = reservedPort;
