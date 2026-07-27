@@ -1,4 +1,4 @@
-# ADR 0040: Scaffold auth flows through web-tier server actions, so the browser only talks to the web origin
+# ADR 0041: Scaffold auth flows through web-tier server actions, so the browser only talks to the web origin
 
 - Status: Accepted
 - Date: 2026-07-27

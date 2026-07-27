@@ -221,6 +221,34 @@ describe('NodePreviewRunner', () => {
     expect(prepared.commandPlan?.installNetworkEvents).toHaveLength(1);
     expect(prepared.commandPlan?.installNetworkEvents?.[0]).not.toHaveProperty('url');
   });
+
+  it('preserves installer evidence on a failed preparation', async () => {
+    const install = vi.fn<PreviewInstaller['install']>(async () => ({
+      ok: false,
+      exitCode: 42,
+      stdout: 'dependency output',
+      stderr: 'dependency failure',
+    }));
+    const runner = new NodePreviewRunner({ installer: { install } });
+    const session = await newSession('sess-policy-install-failure');
+    await writeFile(join(session.workspaceRef.workspacePath, 'package.json'), '{"scripts":{}}');
+    await writeFile(
+      join(session.workspaceRef.workspacePath, 'package-lock.json'),
+      '{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{}}',
+    );
+
+    const prepared = await runner.prepare(session);
+
+    expect(prepared).toMatchObject({
+      status: 'failed',
+      failureEvidence: {
+        command: { command: 'npm', args: ['ci'] },
+        exitCode: 42,
+        stdout: 'dependency output',
+        stderr: 'dependency failure',
+      },
+    });
+  });
   it('common cleanup stops a fixture when the test omits runner.stop', async () => {
     const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
     let session = await newSession('sess-after-each-cleanup');

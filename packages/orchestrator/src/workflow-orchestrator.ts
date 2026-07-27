@@ -2210,6 +2210,15 @@ export class WorkflowOrchestrator {
         step,
         harness,
         artifacts: inputArtifacts,
+        ...(step.taskKind === 'repair'
+          ? {
+              previewFailureEvents: [
+                [...(await this.events.list(project.id))]
+                  .reverse()
+                  .find((event) => event.type === 'preview.failed'),
+              ].filter((event): event is ProjectEvent => event !== undefined),
+            }
+          : {}),
         workspacePath: this.workspaces.workspacePath(project.id),
         toolPolicy: profile.toolPolicy,
       });

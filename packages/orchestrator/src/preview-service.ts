@@ -3,6 +3,7 @@ import {
   PreviewFailureDiagnosticSchema,
   PreviewSessionSchema,
   type PreviewFailurePhase,
+  type PreviewFailureDiagnostic,
   type PreviewHealth,
   type PreviewLogPage,
   type PreviewSession,
@@ -380,12 +381,17 @@ export class PreviewService {
     }
     await this.runner.stop(session);
     const failedAt = new Date(session.updatedAt);
-    await this.writeFailureDiagnostic(session, session.failurePhase!, failedAt);
+    const diagnostic = await this.loadOrBuildFailureDiagnostic(
+      session,
+      session.failurePhase!,
+      failedAt,
+    );
     await this.emit(
       session,
       'preview.failed',
-      session.error?.message ?? 'preview failed',
+      redactString(session.error?.message ?? 'preview failed'),
       'terminal',
+      diagnostic,
     );
     return this.persist(transitionPreviewSession(session, 'failed', failedAt));
   }
@@ -417,19 +423,44 @@ export class PreviewService {
     }
   }
 
-  private async writeFailureDiagnostic(
+  private async loadOrBuildFailureDiagnostic(
     session: PreviewSession,
     phase: PreviewFailurePhase,
     failedAt: Date,
-  ): Promise<void> {
+  ): Promise<PreviewFailureDiagnostic> {
     const name = `preview-failure-${session.id}`;
-    if (await this.artifacts.getLatest(session.workspaceRef.projectId, name)) return;
+    const legacyArtifact = await this.artifacts.getLatest(session.workspaceRef.projectId, name);
+    if (legacyArtifact) return PreviewFailureDiagnosticSchema.parse(legacyArtifact.content);
     const logs = await this.readDiagnosticLogTail(session);
     const redactedLogs: PreviewLogPage = {
       ...logs,
       entries: logs.entries.map((entry) => ({ ...entry, message: redactString(entry.message) })),
     };
-    const diagnostic = PreviewFailureDiagnosticSchema.parse({
+    const output = session.failureEvidence
+      ? {
+          stdout: redactString(session.failureEvidence.stdout),
+          stderr: redactString(session.failureEvidence.stderr),
+        }
+      : {
+          stdout: redactedLogs.entries
+            .filter((entry) => entry.stream === 'stdout')
+            .map((entry) => entry.message)
+            .join('\n'),
+          stderr: redactedLogs.entries
+            .filter((entry) => entry.stream === 'stderr')
+            .map((entry) => entry.message)
+            .join('\n'),
+        };
+    let command = session.failureEvidence?.command;
+    if (!command && session.process) {
+      command = { command: session.process.command, args: session.process.args };
+    } else if (!command && phase === 'prepare' && session.commandPlan?.install.ok) {
+      command = session.commandPlan.install;
+    } else if (!command && session.commandPlan?.dev.ok) {
+      command = session.commandPlan.dev;
+    }
+    const exitCode = session.failureEvidence?.exitCode ?? session.error?.exitCode;
+    return PreviewFailureDiagnosticSchema.parse({
       schemaVersion: '1',
       sessionId: session.id,
       projectId: session.workspaceRef.projectId,
@@ -439,15 +470,10 @@ export class PreviewService {
       restartCount: session.restartCount,
       error: redactUnknown(session.error),
       logs: redactedLogs,
+      ...(command ? { command: redactUnknown(command) } : {}),
+      ...(exitCode !== undefined ? { exitCode } : {}),
+      output,
       failedAt: failedAt.toISOString(),
-    });
-    await this.artifacts.put({
-      projectId: session.workspaceRef.projectId,
-      name,
-      content: diagnostic,
-      createdBy: 'preview-service',
-      ...(session.runId ? { runId: session.runId } : {}),
-      idempotencyKey: createHash('sha256').update(name).digest('hex'),
     });
   }
 
@@ -480,6 +506,7 @@ export class PreviewService {
     type: Extract<ProjectEvent['type'], `preview.${string}`>,
     message: string,
     occurrence: string,
+    diagnostic?: PreviewFailureDiagnostic,
   ): Promise<void> {
     await this.events.append({
       id: this.ids.next(),
@@ -489,7 +516,12 @@ export class PreviewService {
       ...(session.runId ? { runId: session.runId } : {}),
       message,
       dedupeKey: `${session.id}:${type}:${occurrence}`,
-      data: { sessionId: session.id, status: session.status, restartCount: session.restartCount },
+      data: {
+        sessionId: session.id,
+        status: session.status,
+        restartCount: session.restartCount,
+        ...(diagnostic ? { diagnostic } : {}),
+      },
     });
   }
 

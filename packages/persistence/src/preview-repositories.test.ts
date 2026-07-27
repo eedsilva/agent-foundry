@@ -256,6 +256,12 @@ describe('FilePreviewSessionRepository', () => {
         code: secretPattern,
         message: `Authorization: Bearer ${secretPattern}`,
       },
+      failureEvidence: {
+        command: { command: secretPattern, args: [secretPattern] },
+        exitCode: 42,
+        stdout: `stdout=${secretPattern}`,
+        stderr: `stderr=${secretPattern}`,
+      },
       commandPlan: {
         packageManager: 'npm',
         install: { ok: true, command: secretPattern, args: [secretPattern] },
@@ -283,6 +289,12 @@ describe('FilePreviewSessionRepository', () => {
       url: input.url,
       process: input.process,
       error: { name: secretPattern, code: secretPattern, message: 'Authorization: [REDACTED]' },
+      failureEvidence: {
+        command: { command: secretPattern, args: [secretPattern] },
+        exitCode: 42,
+        stdout: 'stdout=[REDACTED]',
+        stderr: 'stderr=[REDACTED]',
+      },
       commandPlan: {
         install: { ok: true, command: secretPattern, args: [secretPattern] },
         build: { ok: false, reason: 'token=[REDACTED]' },
@@ -293,6 +305,7 @@ describe('FilePreviewSessionRepository', () => {
     expect(stored.session.health.detail).toBe('password=[REDACTED]');
     expect(input.health.detail).toContain(secretPattern);
     expect(input.error?.message).toContain(secretPattern);
+    expect(input.failureEvidence?.stdout).toContain(secretPattern);
     expect(input.commandPlan?.build).toEqual({ ok: false, reason: `token=${secretPattern}` });
   });
 
