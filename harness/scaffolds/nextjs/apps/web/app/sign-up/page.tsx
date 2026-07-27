@@ -1,61 +1,32 @@
-'use client';
+import { signUp } from '../actions';
+import { SubmitButton } from '../submit-button';
 
-import { useState, type FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-
-export default function SignUpPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    // Local Supabase has no SMTP; email confirmation is disabled
-    // (packages/platform/src/supabase-auth.ts), so signup returns an
-    // active session immediately, same as sign-in. The client is built on
-    // submit, not on render, so `next build` can prerender this page in an
-    // environment that has no Supabase keys.
-    const { error: signUpError } = await createClient().auth.signUp({ email, password });
-
-    setLoading(false);
-    if (signUpError) {
-      setError(signUpError.message);
-      return;
-    }
-    router.push('/');
-    router.refresh();
-  }
+export default async function SignUpPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto flex max-w-sm flex-col gap-4 p-6">
+    <form action={signUp} className="mx-auto flex max-w-sm flex-col gap-4 p-6">
       <h1 className="text-xl font-semibold">Create account</h1>
-      <input
-        type="email"
-        required
-        placeholder="Email"
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-        className="rounded border px-3 py-2"
-      />
-      <input
-        type="password"
-        required
-        minLength={8}
-        placeholder="Password"
-        value={password}
-        onChange={(event) => setPassword(event.target.value)}
-        className="rounded border px-3 py-2"
-      />
+      <label className="flex flex-col gap-1 text-sm">
+        Email
+        <input type="email" name="email" required className="rounded border px-3 py-2" />
+      </label>
+      <label className="flex flex-col gap-1 text-sm">
+        Password
+        <input
+          type="password"
+          name="password"
+          required
+          minLength={8}
+          className="rounded border px-3 py-2"
+        />
+      </label>
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      <button type="submit" disabled={loading} className="rounded bg-black px-3 py-2 text-white">
-        {loading ? 'Creating account…' : 'Create account'}
-      </button>
+      <SubmitButton label="Create account" pending="Creating account…" />
     </form>
   );
 }

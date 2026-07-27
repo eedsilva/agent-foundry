@@ -51,6 +51,7 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
       'apps/api/src/database.types.ts',
       'apps/api/src/env.ts',
       'apps/api/src/server.ts',
+      'apps/api/src/supabase.ts',
       'apps/api/tsconfig.json',
       'apps/web/app/actions.ts',
       'apps/web/app/globals.css',
@@ -58,24 +59,26 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
       'apps/web/app/page.tsx',
       'apps/web/app/sign-in/page.tsx',
       'apps/web/app/sign-up/page.tsx',
-      'apps/web/lib/supabase/client.ts',
+      'apps/web/app/submit-button.tsx',
       'apps/web/lib/supabase/server.ts',
       'apps/web/middleware.ts',
       'apps/web/next.config.ts',
       'apps/web/package.json',
       'apps/web/postcss.config.mjs',
       'apps/web/tsconfig.json',
+      'browser-tests/cross-tenant-denial.json',
       'package.json',
       'pnpm-lock.yaml',
       'pnpm-workspace.yaml',
+      'scripts/check-service-role.mjs',
       'scripts/db.mjs',
       'scripts/smoke.mjs',
       'supabase/config.toml',
       'supabase/migrations/20260726000000_rls_baseline.sql',
       'supabase/seed.sql',
     ]);
-    const clientFile = files.find((file) => file.path === 'apps/web/lib/supabase/client.ts');
-    expect(clientFile?.content).toContain('createBrowserClient');
+    const serverClient = files.find((file) => file.path === 'apps/web/lib/supabase/server.ts');
+    expect(serverClient?.content).toContain('createServerClient');
   });
 
   it('leaves behind what a local install and run of the scaffold produces', async () => {

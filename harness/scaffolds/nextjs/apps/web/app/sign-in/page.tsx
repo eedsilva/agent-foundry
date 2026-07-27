@@ -1,61 +1,26 @@
-'use client';
+import { signIn } from '../actions';
+import { SubmitButton } from '../submit-button';
 
-import { useState, type FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-
-export default function SignInPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    // Built on submit, not on render: the Supabase keys are runtime values,
-    // and constructing the client while rendering makes `next build` fail
-    // when it prerenders this page somewhere those keys do not exist.
-    const { error: signInError } = await createClient().auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    setLoading(false);
-    if (signInError) {
-      setError(signInError.message);
-      return;
-    }
-    router.push('/');
-    router.refresh();
-  }
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto flex max-w-sm flex-col gap-4 p-6">
+    <form action={signIn} className="mx-auto flex max-w-sm flex-col gap-4 p-6">
       <h1 className="text-xl font-semibold">Sign in</h1>
-      <input
-        type="email"
-        required
-        placeholder="Email"
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-        className="rounded border px-3 py-2"
-      />
-      <input
-        type="password"
-        required
-        placeholder="Password"
-        value={password}
-        onChange={(event) => setPassword(event.target.value)}
-        className="rounded border px-3 py-2"
-      />
+      <label className="flex flex-col gap-1 text-sm">
+        Email
+        <input type="email" name="email" required className="rounded border px-3 py-2" />
+      </label>
+      <label className="flex flex-col gap-1 text-sm">
+        Password
+        <input type="password" name="password" required className="rounded border px-3 py-2" />
+      </label>
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      <button type="submit" disabled={loading} className="rounded bg-black px-3 py-2 text-white">
-        {loading ? 'Signing in…' : 'Sign in'}
-      </button>
+      <SubmitButton label="Sign in" pending="Signing in…" />
     </form>
   );
 }
