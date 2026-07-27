@@ -8,6 +8,17 @@ describe('formatObservedUsage', () => {
     ).toBe('in 10 · out 5 · fonte provider-reported');
   });
 
+  it('labels computed and provider-reported costs as estimates', () => {
+    expect(
+      formatObservedUsage({
+        cacheReadInputTokens: 20,
+        cacheWriteInputTokens: 30,
+        estimatedCostUsd: 0.12,
+        providerReportedCostUsd: 1.14,
+      }),
+    ).toBe('cache read 20 · cache write 30 · estimado $0.12 · estimativa CLI $1.14');
+  });
+
   it('renders desconhecido for absent usage', () => {
     expect(formatObservedUsage(undefined)).toBe('observado: desconhecido');
   });

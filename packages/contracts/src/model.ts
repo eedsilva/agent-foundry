@@ -34,6 +34,11 @@ export const ModelPricingSchema = z.object({
   inputUsdPerMillionTokens: z.number().nonnegative(),
   outputUsdPerMillionTokens: z.number().nonnegative(),
   cachedInputUsdPerMillionTokens: z.number().nonnegative().optional(),
+  cacheReadInputUsdPerMillionTokens: z.number().nonnegative().optional(),
+  cacheWriteInputUsdPerMillionTokens: z.number().nonnegative().optional(),
+  cacheWrite1hInputUsdPerMillionTokens: z.number().nonnegative().optional(),
+  rateTableVersion: z.string().min(1).optional(),
+  rateTableSource: z.string().url().optional(),
 });
 export type ModelPricing = z.infer<typeof ModelPricingSchema>;
 

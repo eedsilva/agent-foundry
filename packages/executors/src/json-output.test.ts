@@ -123,8 +123,33 @@ describe('extractUsage', () => {
     ).toEqual({
       inputTokens: 120,
       outputTokens: 45,
-      cachedInputTokens: 70,
-      estimatedCostUsd: 0.018,
+      cacheReadInputTokens: 70,
+      providerReportedCostUsd: 0.018,
+      sourceQuality: 'provider-reported',
+    });
+  });
+
+  it('keeps Claude cache reads and writes separate', () => {
+    expect(
+      extractUsage(
+        'claude',
+        JSON.stringify({
+          type: 'result',
+          usage: {
+            input_tokens: 10,
+            cache_read_input_tokens: 20,
+            cache_creation_input_tokens: 30,
+            cache_write_ttl: '5m',
+            output_tokens: 40,
+          },
+        }),
+      ),
+    ).toEqual({
+      inputTokens: 10,
+      cacheReadInputTokens: 20,
+      cacheWriteInputTokens: 30,
+      cacheWriteInputTtl: '5m',
+      outputTokens: 40,
       sourceQuality: 'provider-reported',
     });
   });
@@ -142,7 +167,7 @@ describe('extractUsage', () => {
     expect(extractUsage('codex', raw)).toEqual({
       inputTokens: 180,
       outputTokens: 42,
-      cachedInputTokens: 80,
+      cacheReadInputTokens: 80,
       sourceQuality: 'provider-reported',
     });
   });
@@ -177,7 +202,7 @@ describe('extractUsage', () => {
       {
         inputTokens: 180,
         outputTokens: 42,
-        cachedInputTokens: 80,
+        cacheReadInputTokens: 80,
         sourceQuality: 'provider-reported',
       },
     ],
@@ -186,8 +211,8 @@ describe('extractUsage', () => {
       {
         inputTokens: 120,
         outputTokens: 45,
-        cachedInputTokens: 70,
-        estimatedCostUsd: 0.018,
+        cacheReadInputTokens: 70,
+        providerReportedCostUsd: 0.018,
         sourceQuality: 'provider-reported',
       },
     ],
@@ -200,8 +225,8 @@ describe('extractUsage', () => {
       {
         inputTokens: 120,
         outputTokens: 45,
-        cachedInputTokens: 70,
-        estimatedCostUsd: 0.018,
+        cacheReadInputTokens: 70,
+        providerReportedCostUsd: 0.018,
         sourceQuality: 'provider-reported',
       },
     ],
@@ -224,7 +249,7 @@ describe('extractUsage partial (issue #62)', () => {
       sourceQuality: 'provider-reported',
     });
     expect(usage?.inputTokens).toBeUndefined();
-    expect(usage?.estimatedCostUsd).toBeUndefined();
+    expect(usage?.providerReportedCostUsd).toBeUndefined();
   });
 
   it('codex: input tokens only', () => {
@@ -236,7 +261,7 @@ describe('extractUsage partial (issue #62)', () => {
 
   it('agy: cost only', () => {
     expect(extractUsage('agy', fixture('agy.partial-usage.stdout.json'))).toEqual({
-      estimatedCostUsd: 0.01,
+      providerReportedCostUsd: 0.01,
       sourceQuality: 'provider-reported',
     });
   });

@@ -48,6 +48,14 @@ models:
     requireExplicitModel: false
     maxContextTokens: 100000
     canWriteWorkspace: true
+    pricing:
+      inputUsdPerMillionTokens: 5
+      outputUsdPerMillionTokens: 25
+      cacheReadInputUsdPerMillionTokens: 0.5
+      cacheWriteInputUsdPerMillionTokens: 6.25
+      cacheWrite1hInputUsdPerMillionTokens: 10
+      rateTableVersion: anthropic-2026-07-27
+      rateTableSource: https://platform.claude.com/docs/en/about-claude/pricing
     tags: [reasoning, planning, architecture, review, quality]
     capabilities:
       planning: 0.96
@@ -67,6 +75,14 @@ models:
     requireExplicitModel: false
     maxContextTokens: 100000
     canWriteWorkspace: true
+    pricing:
+      inputUsdPerMillionTokens: 2
+      outputUsdPerMillionTokens: 10
+      cacheReadInputUsdPerMillionTokens: 0.2
+      cacheWriteInputUsdPerMillionTokens: 2.5
+      cacheWrite1hInputUsdPerMillionTokens: 4
+      rateTableVersion: anthropic-2026-07-27
+      rateTableSource: https://platform.claude.com/docs/en/about-claude/pricing
     tags: [balanced, planning, coding, review]
     capabilities:
       planning: 0.90
@@ -86,6 +102,14 @@ models:
     requireExplicitModel: false
     maxContextTokens: 100000
     canWriteWorkspace: true
+    pricing:
+      inputUsdPerMillionTokens: 1
+      outputUsdPerMillionTokens: 5
+      cacheReadInputUsdPerMillionTokens: 0.1
+      cacheWriteInputUsdPerMillionTokens: 1.25
+      cacheWrite1hInputUsdPerMillionTokens: 2
+      rateTableVersion: anthropic-2026-07-27
+      rateTableSource: https://platform.claude.com/docs/en/about-claude/pricing
     tags: [fast, economy, triage]
     capabilities:
       planning: 0.68

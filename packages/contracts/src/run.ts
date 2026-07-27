@@ -67,8 +67,12 @@ export const ExecutionUsageSchema = z
     inputTokens: z.number().nonnegative().optional(),
     outputTokens: z.number().nonnegative().optional(),
     cachedInputTokens: z.number().nonnegative().optional(),
+    cacheReadInputTokens: z.number().nonnegative().optional(),
+    cacheWriteInputTokens: z.number().nonnegative().optional(),
+    cacheWriteInputTtl: z.enum(['5m', '1h']).optional(),
     quotaUnits: z.number().nonnegative().optional(),
     estimatedCostUsd: z.number().nonnegative().optional(),
+    providerReportedCostUsd: z.number().nonnegative().optional(),
     sourceQuality: UsageSourceQualitySchema.optional(),
   })
   .strict();

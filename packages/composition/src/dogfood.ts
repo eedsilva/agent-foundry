@@ -570,8 +570,13 @@ function formatUsage(usage: ExecutionUsage | undefined): string {
   const parts: string[] = [];
   if (usage.inputTokens !== undefined) parts.push(`in ${usage.inputTokens}`);
   if (usage.outputTokens !== undefined) parts.push(`out ${usage.outputTokens}`);
-  if (usage.cachedInputTokens !== undefined) parts.push(`cached ${usage.cachedInputTokens}`);
-  if (usage.estimatedCostUsd !== undefined) parts.push(`USD ${usage.estimatedCostUsd}`);
+  const cacheReadInputTokens = usage.cacheReadInputTokens ?? usage.cachedInputTokens;
+  if (cacheReadInputTokens !== undefined) parts.push(`cache read ${cacheReadInputTokens}`);
+  if (usage.cacheWriteInputTokens !== undefined)
+    parts.push(`cache write ${usage.cacheWriteInputTokens}`);
+  if (usage.providerReportedCostUsd !== undefined)
+    parts.push(`CLI estimate USD ${usage.providerReportedCostUsd}`);
+  if (usage.estimatedCostUsd !== undefined) parts.push(`computed USD ${usage.estimatedCostUsd}`);
   return parts.join(', ') || 'Not reported';
 }
 
