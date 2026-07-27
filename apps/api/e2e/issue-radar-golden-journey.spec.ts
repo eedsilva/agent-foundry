@@ -14,7 +14,7 @@ const FIXTURE_IMAGE = resolve(import.meta.dirname, 'fixtures/design-reference.pn
 test.describe('issue radar golden journey', () => {
   test.describe.configure({ timeout: SETUP_TIMEOUT_MS });
 
-  let fixture: IssueRadarFixture;
+  let fixture!: IssueRadarFixture;
 
   test.beforeAll(async () => {
     test.setTimeout(SETUP_TIMEOUT_MS);

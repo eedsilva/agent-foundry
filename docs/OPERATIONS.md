@@ -36,7 +36,7 @@ A verificação compara diretamente os arquivos com o fixture imutável e també
 ```bash
 CODEX_CANARY_MODEL="gpt-5.6-sol" \
 CLAUDE_CANARY_MODEL="sonnet" \
-AGY_CANARY_MODEL="Gemini 3.1 Pro (Low)" \
+AGY_CANARY_MODEL="gemini-3.1-pro-low" \
 EXECUTOR_MODE=real \
 RUN_REAL_PROVIDER_CANARIES=true \
 npm run canary:providers -- --freeze

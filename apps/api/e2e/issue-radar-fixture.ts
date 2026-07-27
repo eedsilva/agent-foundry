@@ -153,6 +153,7 @@ export async function bootIssueRadarApp(projectId: string): Promise<IssueRadarFi
 
 export async function teardownIssueRadarApp(fixture: IssueRadarFixture | undefined): Promise<void> {
   if (!fixture) return;
+
   fixture.appProcess.kill();
   try {
     await execFileAsync(
