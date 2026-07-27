@@ -220,6 +220,7 @@ export class ApprovalRejectedError extends Error {
     readonly runId: string,
     readonly nodeId: string,
     readonly decidedBy: string,
+    readonly note?: string,
   ) {
     super(`Workflow run ${runId} was rejected at ${nodeId} by ${decidedBy}.`);
   }

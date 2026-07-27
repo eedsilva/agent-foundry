@@ -101,7 +101,7 @@ import {
   stepIdempotencyKey,
   workflowHash,
 } from './idempotency.js';
-import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
+import { compileCliPrompt, compileRequestMarkdown, isReviewerRole } from './prompt-compiler.js';
 import {
   validateBrowserVerificationReportBinding,
   type BrowserVerificationCoordinator,
@@ -381,7 +381,7 @@ export class WorkflowOrchestrator {
         return;
       }
       if (error instanceof ApprovalRejectedError) {
-        await this.finalizeRejection(run.id, projectId, error.nodeId, error.decidedBy);
+        await this.finalizeRejection(run.id, projectId, error.nodeId, error.decidedBy, error.note);
         return;
       }
       if (isCancellation(error, signal)) {
@@ -799,6 +799,7 @@ export class WorkflowOrchestrator {
     projectId: string,
     nodeId: string,
     decidedBy: string,
+    note?: string,
   ): Promise<void> {
     let run = await this.stopActiveExecution(runId);
     if (run.status === 'running') {
@@ -808,10 +809,14 @@ export class WorkflowOrchestrator {
       );
     }
     await this.syncProjectSummary(run, nodeId);
-    await this.emit(projectId, 'run.rejected', `Rejected at ${nodeId} by ${decidedBy}.`, {
-      runId,
-      nodeId,
-    });
+    // The operator's reason rides the terminal event: a rejected run has no
+    // later step to carry it, and the timeline is where the operator looks.
+    await this.emit(
+      projectId,
+      'run.rejected',
+      `Rejected at ${nodeId} by ${decidedBy}.${note ? ` Reason: ${note}` : ''}`,
+      { runId, nodeId, ...(note ? { data: { reason: note } } : {}) },
+    );
   }
 
   /**
@@ -1058,7 +1063,7 @@ export class WorkflowOrchestrator {
     if (!decision) throw new ApprovalRequiredError(runId, node.id);
 
     if (decision.action === 'reject') {
-      throw new ApprovalRejectedError(runId, node.id, decision.decidedBy);
+      throw new ApprovalRejectedError(runId, node.id, decision.decidedBy, decision.note);
     }
     if (decision.action === 'request-changes') {
       throw new ExecutionError(
@@ -2997,10 +3002,6 @@ function workflowUsesBrowserPlan(workflow: WorkflowDefinition, artifactName: str
       (step) => step?.type === 'verify' && step.browserTestPlanArtifact === artifactName,
     );
   });
-}
-
-function isReviewerRole(role: AgentStep['role']): boolean {
-  return role === 'plan-reviewer' || role === 'architecture-reviewer' || role === 'code-reviewer';
 }
 
 function throwIfCancelled(signal: AbortSignal, runId: string): void {

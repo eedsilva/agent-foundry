@@ -7,7 +7,14 @@ import type {
 import type { HarnessSelection } from '@agent-foundry/domain';
 import { stableJson } from '@agent-foundry/domain';
 
-const REVIEWER_ROLES = new Set(['plan-reviewer', 'architecture-reviewer', 'code-reviewer']);
+/**
+ * Roles whose artifact is a verdict on another role's work. Shared with the
+ * orchestrator's quality attribution so the two cannot drift when a reviewer
+ * role is added or, as in ADR 0042, deleted.
+ */
+export function isReviewerRole(role: AgentStep['role']): boolean {
+  return role === 'plan-reviewer' || role === 'code-reviewer';
+}
 
 export function compileRequestMarkdown(input: {
   projectId: string;
@@ -25,7 +32,7 @@ export function compileRequestMarkdown(input: {
 }): string {
   const toolPolicy =
     input.toolPolicy ?? (input.step.mutatesWorkspace ? 'workspace-write' : 'read-only');
-  const blindReview = REVIEWER_ROLES.has(input.step.role);
+  const blindReview = isReviewerRole(input.step.role);
   const artifactSections = input.artifacts.length
     ? input.artifacts
         .map(
@@ -102,7 +109,7 @@ Return an object with:
 - status: completed, needs-revision, or blocked
 - summary: a factual completion summary
 - approved: required for reviewer roles
-- data: the actual plan, architecture, review findings, implementation report, or repair report
+- data: the actual plan, review findings, implementation report, or repair report
 - decisions: important choices with rationale, alternatives, and consequences
 - assumptions, risks, nextActions: arrays of strings
 

@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { scanForSecrets } from '@agent-foundry/domain';
 import { createRuntime } from './runtime.js';
-import { approveDiffGate } from './testing-helpers.js';
+import { approveAllGates } from './testing-helpers.js';
 
 const run = promisify(execFile);
 const FAKE_SECRET = 'leak-canary-9f2b7c1a';
@@ -44,8 +44,7 @@ describe('secret leak scan', () => {
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
     const runId = project.currentRunId;
     expect(await runtime.worker.runOnce()).toBe(true);
-    await approveDiffGate(runtime, runId);
-    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, runId);
     const detail = await runtime.projectService.get(project.id);
     expect(detail.project.status).toBe('completed');
 

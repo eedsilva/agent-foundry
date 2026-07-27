@@ -338,10 +338,11 @@ function taskCapability(scores: CapabilityScores, taskKind: TaskKind): number {
       return scores.planning;
     case 'plan-review':
       return 0.65 * scores.review + 0.35 * scores.planning;
+    // Retired by ADR 0042: no workflow can declare these, so routing never sees
+    // them. Present only because persisted route decisions still carry them.
     case 'architecture':
-      return 0.7 * scores.architecture + 0.3 * scores.planning;
     case 'architecture-review':
-      return 0.65 * scores.review + 0.35 * scores.architecture;
+      return scores.review;
     case 'implementation':
       return scores.coding;
     case 'code-review':
@@ -356,12 +357,7 @@ function taskCapability(scores: CapabilityScores, taskKind: TaskKind): number {
 function observedSpeedScore(metric: ModelMetric | null, taskKind: TaskKind): number | null {
   if (!metric || metric.attempts === 0 || metric.totalDurationMs <= 0) return null;
   const averageDurationMs = metric.totalDurationMs / metric.attempts;
-  const targetMs =
-    taskKind === 'implementation' || taskKind === 'repair'
-      ? 8 * 60_000
-      : taskKind === 'architecture'
-        ? 4 * 60_000
-        : 2 * 60_000;
+  const targetMs = taskKind === 'implementation' || taskKind === 'repair' ? 8 * 60_000 : 2 * 60_000;
   return clamp(1 / (1 + averageDurationMs / targetMs));
 }
 

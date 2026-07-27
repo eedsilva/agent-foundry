@@ -10,19 +10,27 @@ import type { Runtime } from './runtime.js';
 // test run, double-registering the suite -- see runtime.postgres.test.ts /
 // runtime.integration.test.ts, which both need this and previously kept
 // byte-identical copies.
-export async function approveDiffGate(
+/**
+ * Drives a mock `web-app-v1` run to completion through every operator gate it
+ * parks at. Kept here rather than in each suite because the gate list is a
+ * property of the workflow, not of any one test.
+ */
+export async function approveAllGates(
   runtime: Runtime,
   runId: string,
   decidedBy = 'integration-test',
 ): Promise<void> {
-  const [diffApproval] = (await runtime.projectService.listApprovals(runId)).filter(
-    (entry) => entry.request.nodeId === 'diff-approval',
-  );
-  if (!diffApproval) throw new Error('Expected a pending diff-approval request');
-  await runtime.projectService.decideApproval(runId, diffApproval.request.id, {
-    action: 'approve',
-    decidedBy,
-  });
+  for (;;) {
+    const pending = (await runtime.projectService.listApprovals(runId)).find(
+      (entry) => !entry.decision,
+    );
+    if (!pending) return;
+    await runtime.projectService.decideApproval(runId, pending.request.id, {
+      action: 'approve',
+      decidedBy,
+    });
+    if (!(await runtime.worker.runOnce())) return;
+  }
 }
 
 export const MINI_PACKAGE = `${JSON.stringify({ name: 'mini', private: true, version: '0.0.0' }, null, 2)}\n`;

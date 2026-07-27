@@ -25,7 +25,7 @@
       "promise": "Transformar uma ideia em um app web greenfield, autenticado, full-stack, verificado e publicado no VPS do próprio operador, sem depender de uma plataforma SaaS.",
       "definition": [
         "Começar por chat e imagem de referência opcional; PRD é artifact, não pré-requisito.",
-        "Executar planner, reviewers, architect, developer, verifiers e repair loops em todo build.",
+        "Executar planner com aprovação do operador, developer, reviewers, verifiers e repair loops em todo build.",
         "Gerar Next.js, TypeScript, Tailwind e shadcn/ui com Supabase Docker isolado.",
         "Incluir auth email/senha, RLS, database, storage, functions e secrets em .env.",
         "Iterar por conversa, seleção visual, controles diretos, preview, history e diff.",

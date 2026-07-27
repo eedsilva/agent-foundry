@@ -18,8 +18,8 @@ describe('YamlWorkflowRepository', () => {
     );
     const workflow = await repository.get('web-app-v1');
     expect(workflow.nodes.map((node) => node.id)).toEqual([
-      'plan-gate',
-      'architecture-gate',
+      'plan',
+      'plan-approval',
       'implementation-gate',
       'deterministic-verification',
       'browser-verification',
@@ -53,6 +53,35 @@ nodes:
 
     const repository = new YamlWorkflowRepository(directory);
     await expect(repository.get('bad')).rejects.toThrow('unavailable artifact');
+  });
+
+  // The values survive in AgentRoleSchema/TaskKindSchema so pre-ADR-0042 metrics
+  // still parse; this is the seam that must still refuse them, because it is the
+  // one an operator hits when authoring a workflow.
+  it('rejects a step declaring a role retired with the architecture gate', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-foundry-workflow-'));
+    temporaryDirectories.push(directory);
+    await writeFile(
+      join(directory, 'retired.yaml'),
+      `schemaVersion: "1"
+id: retired
+name: Retired role workflow
+description: Declares a role the harness has no fragment for
+stack: nextjs
+nodes:
+  - id: architecture
+    type: agent
+    role: architect
+    taskKind: architecture
+    title: Design
+    instructions: Design it
+    inputArtifacts: []
+    outputArtifact: architecture.current
+`,
+    );
+
+    const repository = new YamlWorkflowRepository(directory);
+    await expect(repository.get('retired')).rejects.toThrow();
   });
 
   it('rejects a browser verifier whose plan is not guaranteed upstream', async () => {

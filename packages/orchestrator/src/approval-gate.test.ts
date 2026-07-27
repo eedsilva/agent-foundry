@@ -65,6 +65,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     const decided = await harness.service.decideApproval('run-1', request.id, {
       action: 'approve',
       decidedBy: 'ed',
+      note: 'Scope matches the PRD.',
     });
     expect(decided.run.status).toBe('queued');
     expect(harness.enqueued).toHaveLength(1);
@@ -77,6 +78,11 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     expect(harness.artifacts.named('gate-decision')).toHaveLength(1);
     expect(harness.events.types()).toContain('run.approval_requested');
     expect(harness.events.types()).toContain('run.approval_decided');
+    // The operator's comment reaches the timeline for every action, not just
+    // reject — it is mandatory for request-changes and was previously dropped.
+    expect(
+      harness.events.events.find((event) => event.type === 'run.approval_decided')?.data,
+    ).toMatchObject({ action: 'approve', decidedBy: 'ed', note: 'Scope matches the PRD.' });
   });
 
   it('rejects and ends the run when no return step is configured', async () => {
