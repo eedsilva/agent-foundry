@@ -64,6 +64,21 @@ describe('check-service-role build gate', () => {
     expect(result.stderr).toContain('apps/web/lib/db.ts');
   });
 
+  it('ignores installed and built directories', async () => {
+    // Load-bearing in CI: the scaffold is checked after `pnpm install` and
+    // `pnpm build`, so dependency and build output must never count as a
+    // request-path reference.
+    const workspace = await workspaceWith({
+      'apps/api/node_modules/@supabase/supabase-js/index.js':
+        'const key = "SUPABASE_SERVICE_ROLE_KEY";',
+      'apps/api/dist/server.js': 'const key = process.env.SUPABASE_SERVICE_ROLE_KEY;',
+      'apps/web/.next/server/page.js': 'const key = process.env.SUPABASE_SERVICE_ROLE_KEY;',
+    });
+    const result = runCheck(workspace);
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(0);
+  });
+
   it('allows admin, cron and webhook paths, which have no caller to forward', async () => {
     const workspace = await workspaceWith({
       'apps/api/src/admin/rotate-keys.ts': 'const key = process.env.SUPABASE_SERVICE_ROLE_KEY;',

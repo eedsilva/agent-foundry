@@ -75,6 +75,13 @@ async function checkAuthPath() {
     );
   }
 
+  const forged = await fetch(itemsUrl, { headers: { authorization: 'Bearer not-a-jwt' } });
+  if (forged.status !== 401) {
+    throw new Error(
+      `smoke: /items with a forged token answered HTTP ${forged.status}, expected 401.`,
+    );
+  }
+
   const signIn = await fetch(`${url}/auth/v1/token?grant_type=password`, {
     method: 'POST',
     headers: { apikey: anonKey, 'content-type': 'application/json' },
@@ -105,7 +112,9 @@ async function checkAuthPath() {
       `smoke: owner@example.com sees ${items.length} item(s) through the API, expected exactly its own 2.`,
     );
   }
-  console.log('smoke: auth path ok — 401 without a token, owner sees exactly its own 2 items');
+  console.log(
+    'smoke: auth path ok — 401 without or with a forged token, owner sees exactly its own 2 items',
+  );
 }
 
 const dev = spawn('pnpm', ['dev'], { stdio: 'inherit', detached: true });
