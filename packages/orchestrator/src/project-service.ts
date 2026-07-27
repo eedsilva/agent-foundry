@@ -26,6 +26,7 @@ import type {
   RunRetryDirective,
   StepRun,
   WorkflowDefinition,
+  WorkflowNode,
   WorkflowRun,
 } from '@agent-foundry/contracts';
 import { FeedbackArtifactSchema } from '@agent-foundry/contracts';
@@ -53,6 +54,7 @@ import type {
 } from '@agent-foundry/domain';
 import {
   ApprovalConflictError,
+  latestArtifactsByName,
   NotFoundError,
   ResumeBlockedError,
   ValidationError,
@@ -978,16 +980,17 @@ export class ProjectService {
         actual: head ?? 'none',
       });
     }
-    const metadata = await this.artifacts.listMetadata(run.projectId);
-    const latest = new Map<string, { revision: number; sha256: string }>();
-    for (const item of metadata) {
-      const current = latest.get(item.name);
-      if (!current || current.revision < item.revision) {
-        latest.set(item.name, { revision: item.revision, sha256: item.sha256 });
-      }
-    }
-    const names = new Set([...Object.keys(snapshot.artifactHashes), ...latest.keys()]);
-    for (const name of [...names].sort()) {
+    // Only the resuming node's declared inputs are the world it resumes into;
+    // artifacts written by sibling services while paused are not drift (#319).
+    // A pause acked before the graph walk has no resumeNodeId — any node may
+    // execute next, so fall back to every node's declared inputs.
+    const resumeNode = workflow.nodes.find((node) => node.id === snapshot.resumeNodeId);
+    const inputNames = resumeNode
+      ? nodeInputArtifactNames(resumeNode)
+      : workflow.nodes.flatMap(nodeInputArtifactNames);
+    if (inputNames.length === 0) return diagnostics;
+    const latest = latestArtifactsByName(await this.artifacts.listMetadata(run.projectId));
+    for (const name of [...new Set(inputNames)].sort()) {
       const expected = snapshot.artifactHashes[name] ?? 'absent';
       const actual = latest.get(name)?.sha256 ?? 'absent';
       if (expected !== actual) {
@@ -1111,6 +1114,27 @@ export class ProjectService {
       },
       tx,
     );
+  }
+}
+
+/** Artifact names a node reads when it executes — the inputs resume must prove unchanged. */
+function nodeInputArtifactNames(node: WorkflowNode): string[] {
+  switch (node.type) {
+    case 'agent':
+      return node.inputArtifacts;
+    case 'verify':
+      return node.browserTestPlanArtifact ? [node.browserTestPlanArtifact] : [];
+    case 'approval-gate':
+      return [node.artifact];
+    case 'quality-loop':
+      return [
+        ...(node.setup ? nodeInputArtifactNames(node.setup) : []),
+        ...nodeInputArtifactNames(node.check),
+        ...node.repair.inputArtifacts,
+        node.approval.artifact,
+      ];
+    default:
+      return node satisfies never;
   }
 }
 

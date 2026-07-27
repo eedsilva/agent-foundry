@@ -288,7 +288,7 @@ Não há migração. Ausência real de `conversation/` (`ENOENT`) ativa a deriva
 ## Controles de execução (pause, resume, retry de step)
 
 - `POST /runs/:runId/pause` — solicita pausa; o run pausa na próxima fronteira de step (um step em andamento sempre termina). Ao pausar, grava snapshot de compatibilidade: hash do workflow, versão do harness, HEAD do workspace e hash da última revisão de cada artifact.
-- `POST /runs/:runId/resume` — valida o snapshot contra o estado atual. Qualquer divergência responde `409` com diagnósticos por campo e a opção explícita de restart (`POST /projects/:id/retry`). Validação ok re-enfileira o run; steps concluídos não são reexecutados.
+- `POST /runs/:runId/resume` — valida o snapshot contra o estado atual. Divergência de workflow, harness, policy ou HEAD do workspace responde `409` com diagnósticos por campo e a opção explícita de restart (`POST /projects/:id/retry`); artifacts só bloqueiam quando são inputs declarados do nó a retomar (ADR 0043) — escritas de serviços vizinhos durante a pausa não contam como drift. Validação ok re-enfileira o run; steps concluídos não são reexecutados.
 - `GET /runs/:runId` — trilha consultável run -> step -> attempt -> artifact -> commit.
 - `GET /runs/:runId/steps/:stepRunId/retry-plan` — mostra quais steps e artifacts um retry invalidaria.
 - `POST /runs/:runId/steps/:stepRunId/retry` — reexecuta só o step alvo (`preserve`) ou também os descendentes (`invalidate`). O histórico anterior nunca é sobrescrito: step runs antigos ganham `invalidatedAt`. Steps que mutam o workspace voltam ao checkpoint registrado no attempt original antes de reexecutar. Um pin opcional exige provider, modelo, ator, motivo e impacto estimado:

@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-14
 - Owners: Core and Persistence
+- Amended by: ADR 0043 — resume validates only the resuming node's declared input artifacts, not every artifact in the project
 
 ## Context
 

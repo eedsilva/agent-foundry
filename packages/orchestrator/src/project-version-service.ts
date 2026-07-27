@@ -4,6 +4,7 @@ import {
   type ProjectVersion,
 } from '@agent-foundry/contracts';
 import {
+  latestArtifactsByName,
   NotFoundError,
   type ArtifactStore,
   type Clock,
@@ -160,14 +161,7 @@ export class ProjectVersionService {
   }
 
   private async artifactSnapshot(projectId: string): Promise<ArtifactReference[]> {
-    const metadata = await this.artifacts.listMetadata(projectId);
-    const latest = new Map<string, ArtifactReference>();
-    for (const item of metadata) {
-      const current = latest.get(item.name);
-      if (!current || current.revision < item.revision) {
-        latest.set(item.name, { name: item.name, revision: item.revision, sha256: item.sha256 });
-      }
-    }
-    return [...latest.values()];
+    const latest = latestArtifactsByName(await this.artifacts.listMetadata(projectId));
+    return [...latest.values()].map(({ name, revision, sha256 }) => ({ name, revision, sha256 }));
   }
 }

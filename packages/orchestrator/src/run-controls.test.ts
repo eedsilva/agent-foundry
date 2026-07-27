@@ -4,6 +4,20 @@ import type { ProjectVersionService } from './project-version-service.js';
 import { completeRun, liveStepRun, makeHarness, makeStores, seedRun } from './testing/harness.js';
 
 describe('pause and resume at step boundaries (#7)', () => {
+  /** Runs a project to a mid-graph pause: 'plan' completed, parked before 'implement'. */
+  async function pausedAfterPlan() {
+    const harness = makeHarness({ plan: 'gated' });
+    await seedRun(harness);
+    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await vi.waitFor(() => {
+      expect(harness.executor.started('plan')).toBe(1);
+    });
+    await harness.service.pauseRun('run-1');
+    harness.executor.release('plan');
+    await running;
+    return harness;
+  }
+
   it('pauses between steps, records the snapshot, and never starts the next step', async () => {
     const harness = makeHarness({ plan: 'gated' });
     await seedRun(harness);
@@ -68,16 +82,53 @@ describe('pause and resume at step boundaries (#7)', () => {
     expect((await stores.projects.get('project-1'))?.status).toBe('completed');
   });
 
-  it('blocks resume with actionable diagnostics when workspace or inputs drifted', async () => {
-    const harness = makeHarness({ plan: 'gated' });
-    await seedRun(harness);
-    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
-    await vi.waitFor(() => {
-      expect(harness.executor.started('plan')).toBe(1);
+  it('resumes when a sibling service wrote an unrelated artifact while paused (#319)', async () => {
+    const harness = await pausedAfterPlan();
+
+    // Mid-graph pause: 'plan' completed, 'implement' and 'review' still ahead.
+    expect((await harness.runs.get('run-1'))?.pause?.resumeNodeId).toBe('implement');
+    // A sibling service records a preview failure while the run is paused —
+    // not an input of 'implement', so it must not read as drift.
+    await harness.artifacts.put({
+      projectId: 'project-1',
+      name: 'preview-failure-01KYCWC6FWSZTTQ2X1N6WEYSX3',
+      content: 'No supported lockfile or packageManager field found',
+      createdBy: 'preview',
     });
-    await harness.service.pauseRun('run-1');
-    harness.executor.release('plan');
-    await running;
+
+    const resumed = await harness.service.resumeRun('run-1');
+    expect(resumed.status).toBe('queued');
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(harness.events.types()).not.toContain('run.resume_blocked');
+  });
+
+  it('still guards declared inputs when the pause snapshot has no resumeNodeId', async () => {
+    const harness = await pausedAfterPlan();
+
+    // A pause acked before the graph walk (crash-redelivered job) records no
+    // resumeNodeId; simulate that persisted state by stripping it.
+    const paused = (await harness.runs.get('run-1'))!;
+    const snapshot = { ...paused.pause! };
+    delete snapshot.resumeNodeId;
+    await harness.runs.update({ ...paused, pause: snapshot }, paused.version);
+
+    // 'plan' is a declared input of 'implement'; editing it while paused is drift.
+    await harness.artifacts.put({
+      projectId: 'project-1',
+      name: 'plan',
+      content: 'edited while paused',
+      createdBy: 'user',
+    });
+
+    const rejection = harness.service.resumeRun('run-1');
+    await expect(rejection).rejects.toThrow(ResumeBlockedError);
+    const error = (await rejection.catch((cause: unknown) => cause)) as ResumeBlockedError;
+    expect(error.diagnostics.map((item) => item.field)).toContain('artifact:plan');
+  });
+
+  it('blocks resume with actionable diagnostics when workspace or inputs drifted', async () => {
+    const harness = await pausedAfterPlan();
 
     // Drift: workspace HEAD moved and the plan artifact was edited.
     harness.workspaces.current = 'tampered-head';
