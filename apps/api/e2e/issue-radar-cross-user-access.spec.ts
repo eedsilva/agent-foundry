@@ -21,9 +21,10 @@ async function signUp(page: import('@playwright/test').Page, baseUrl: string) {
 test.describe('issue radar cross-user access', () => {
   test.describe.configure({ timeout: SETUP_TIMEOUT_MS });
 
-  let fixture: IssueRadarFixture;
+  let fixture!: IssueRadarFixture;
 
   test.beforeAll(async () => {
+    test.setTimeout(SETUP_TIMEOUT_MS);
     fixture = await bootIssueRadarApp('issue-radar-cross-user-e2e');
   });
 
