@@ -1,8 +1,56 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentStep, StoredArtifact } from '@agent-foundry/contracts';
+import type { AgentStep, ProjectEvent, StoredArtifact } from '@agent-foundry/contracts';
 import { compileRequestMarkdown } from './prompt-compiler.js';
 
 describe('compileRequestMarkdown feedback provenance', () => {
+  it('includes preview failure events for repair context without an artifact reference', () => {
+    const failureEvent: ProjectEvent = {
+      id: 'event-1',
+      projectId: 'project-1',
+      type: 'preview.failed',
+      createdAt: '2026-07-18T12:00:00.000Z',
+      message: 'Dev server exited.',
+      data: {
+        diagnostic: {
+          command: { command: 'pnpm', args: ['dev'] },
+          exitCode: 1,
+          output: { stdout: '', stderr: 'Cannot find module' },
+        },
+      },
+    };
+    const output = compileRequestMarkdown({
+      projectId: 'project-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      attemptId: 'attempt-1',
+      workflowId: 'workflow-1',
+      stack: 'node',
+      step: {
+        id: 'repair',
+        type: 'agent',
+        role: 'fixer',
+        taskKind: 'repair',
+        title: 'Repair',
+        instructions: 'Repair.',
+        inputArtifacts: [],
+        secretRefs: [],
+        outputArtifact: 'repair',
+        mutatesWorkspace: true,
+        harnessTags: [],
+        profile: {},
+        maxAttempts: 1,
+      },
+      harness: { version: '1', files: [], combined: '' },
+      artifacts: [],
+      previewFailureEvents: [failureEvent],
+      workspacePath: '/tmp/workspace',
+    });
+
+    expect(output).toContain('## Preview failure diagnostics');
+    expect(output).toContain('Cannot find module');
+    expect(output).toContain('"exitCode": 1');
+  });
+
   it('states the explicit tool policy', () => {
     const step: AgentStep = {
       id: 'plan',

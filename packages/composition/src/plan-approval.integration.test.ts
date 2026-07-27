@@ -8,7 +8,7 @@ import { createRuntime, type Runtime } from './runtime.js';
 // explicitly exclude auth. Under the old `plan-gate` quality loop a
 // plan-reviewer invented an access-control requirement (NFR-09), rejected four
 // plans in 23 minutes, and was still looping past `maxIterations: 3` when the
-// run was killed. ADR 0040 deleted that reviewer; this file is what stops it
+// run was killed. ADR 0042 deleted that reviewer; this file is what stops it
 // coming back.
 const STATUS_APP_PRD = [
   '# Status App',

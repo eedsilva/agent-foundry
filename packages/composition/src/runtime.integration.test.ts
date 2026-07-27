@@ -81,7 +81,7 @@ class BrowserPlanExecutor implements AgentExecutor {
 }
 
 // Fails the first `implement` attempt specifically: quality attribution needs a
-// step whose artifact a reviewer still grades, and since ADR 0040 `plan` has no
+// step whose artifact a reviewer still grades, and since ADR 0042 `plan` has no
 // reviewer — the operator approves it.
 class FailFirstImplementExecutor implements AgentExecutor {
   readonly provider = 'mock';
@@ -554,7 +554,7 @@ describe('runtime composition', () => {
       artifact.metadata.name.startsWith('run-'),
     );
     expect(runArtifact?.content).toMatchObject({
-      harness: { version: '2026.07.27-v7' },
+      harness: { version: '2026.07.27-v8' },
     });
 
     const generatedPackage = JSON.parse(

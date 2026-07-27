@@ -5,7 +5,7 @@ description: Plans, waits for operator approval, implements, reviews, repairs, v
 stack: nextjs
 nodes:
   # One model call, then the operator decides. No model grades another model's
-  # plan as a blocking gate (ADR 0040).
+  # plan as a blocking gate (ADR 0042).
   - id: plan
     type: agent
     role: planner

@@ -304,7 +304,7 @@ análise arbitrários.
 
 `web-app-v1` chega ao plano com **uma** chamada de modelo: o nó `plan` grava `plan.current` e o nó
 `plan-approval` (`approval-gate`, `actions: [approve, reject]`, `onReject: end`) para a execução até o
-operador decidir. Nenhum modelo avalia a prosa de outro modelo como gate bloqueante — ADR 0040 removeu
+operador decidir. Nenhum modelo avalia a prosa de outro modelo como gate bloqueante — ADR 0042 removeu
 `review-plan`, `repair-plan` e o `architecture-gate` inteiro, com os artefatos `plan.review`,
 `architecture.current` e `architecture.review`. Rejeitar encerra o run como `rejected` e grava a
 justificativa do operador no evento `run.rejected` e na `ApprovalDecision` imutável.

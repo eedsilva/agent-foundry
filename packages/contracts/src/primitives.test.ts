@@ -4,10 +4,10 @@ import * as contracts from './index.js';
 import { ModelMetricSchema } from './model.js';
 import { formatZodIssues, WorkflowAgentRoleSchema, WorkflowTaskKindSchema } from './primitives.js';
 
-// ADR 0040 retired these, but records written before it still carry them, and
+// ADR 0042 retired these, but records written before it still carry them, and
 // the metrics/observation read paths parse a whole file at once — dropping the
 // values from the persisted enums would make one legacy row unreadable data.
-describe('roles retired by ADR 0040', () => {
+describe('roles retired by ADR 0042', () => {
   it.each([
     ['architect', WorkflowAgentRoleSchema],
     ['architecture-reviewer', WorkflowAgentRoleSchema],

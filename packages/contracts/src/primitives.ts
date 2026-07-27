@@ -23,10 +23,10 @@ export const ActorRefSchema = z
 export type ActorRef = z.infer<typeof ActorRefSchema>;
 
 // `architect`, `architecture-reviewer`, `architecture` and `architecture-review`
-// are retired: ADR 0040 deleted the architecture gate, and `WorkflowAgentRoleSchema`
+// are retired: ADR 0042 deleted the architecture gate, and `WorkflowAgentRoleSchema`
 // / `WorkflowTaskKindSchema` below stop any workflow from declaring them. They stay
 // in these enums because persisted metrics, quality observations and route
-// decisions written before ADR 0040 carry them, and those read paths parse a whole
+// decisions written before ADR 0042 carry them, and those read paths parse a whole
 // file at once (`MetricsFileSchema.parse`, `QualityObservationFileSchema.parse`) --
 // one legacy row would otherwise make the entire store unreadable.
 export const AgentRoleSchema = z.enum([

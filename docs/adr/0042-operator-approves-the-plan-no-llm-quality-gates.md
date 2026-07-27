@@ -1,4 +1,4 @@
-# ADR 0040: the operator approves the plan; no model grades another model's prose
+# ADR 0042: the operator approves the plan; no model grades another model's prose
 
 - Status: Accepted
 - Date: 2026-07-27

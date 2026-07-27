@@ -19,7 +19,7 @@ import { QualitySignalSummarySchema } from './quality.js';
 
 export const CapabilityScoresSchema = z.object({
   planning: z.number().min(0).max(1),
-  // No router arm reads `architecture` since ADR 0040 removed the task kind. Kept
+  // No router arm reads `architecture` since ADR 0042 removed the task kind. Kept
   // because it is operator-editable catalog data a future scored router may score on.
   architecture: z.number().min(0).max(1),
   coding: z.number().min(0).max(1),

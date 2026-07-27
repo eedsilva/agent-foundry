@@ -22,6 +22,11 @@ function eventBadges(event: ProjectEvent): string[] {
   return badges;
 }
 
+function previewFailureDiagnostic(event: ProjectEvent): string | null {
+  if (event.type !== 'preview.failed' || !event.data.diagnostic) return null;
+  return JSON.stringify(event.data.diagnostic, null, 2);
+}
+
 export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: boolean }) {
   return (
     <div className={PANEL}>
@@ -38,6 +43,7 @@ export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: bo
         <div aria-live="polite" className="border-hairline flex flex-col gap-4 border-l pl-4">
           {[...events].reverse().map((event) => {
             const badges = eventBadges(event);
+            const diagnostic = previewFailureDiagnostic(event);
             return (
               <article key={event.id} className="relative">
                 <span
@@ -59,6 +65,16 @@ export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: bo
                   </time>
                 </div>
                 <p className="text-ink mt-1 text-[13px] leading-snug">{event.message}</p>
+                {diagnostic ? (
+                  <details className="mt-2">
+                    <summary className="text-ink-subtle cursor-pointer text-[11px]">
+                      Diagnóstico do preview
+                    </summary>
+                    <pre className="bg-surface-muted text-ink-subtle mt-2 max-h-64 overflow-auto rounded p-2 font-mono text-[10px] whitespace-pre-wrap">
+                      {diagnostic}
+                    </pre>
+                  </details>
+                ) : null}
                 {event.nodeId ? (
                   <small className="text-ink-subtle font-mono text-[10px]">
                     {event.nodeId}

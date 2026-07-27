@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1",
+  "id": "cross-tenant-denial",
+  "title": "A signed-in user sees their own rows and never another account's",
+  "viewport": { "width": 1280, "height": 720 },
+  "steps": [
+    {
+      "id": "open-sign-in",
+      "title": "Open the sign-in page",
+      "action": { "kind": "goto", "path": "/sign-in" },
+      "assertions": [
+        { "kind": "visible", "locator": { "by": "role", "role": "button", "name": "Sign in" } }
+      ]
+    },
+    {
+      "id": "fill-email",
+      "title": "Enter the first account's email",
+      "action": {
+        "kind": "fill",
+        "locator": { "by": "label", "label": "Email" },
+        "value": "owner@example.com"
+      },
+      "assertions": []
+    },
+    {
+      "id": "fill-password",
+      "title": "Enter the first account's password",
+      "action": {
+        "kind": "fill",
+        "locator": { "by": "label", "label": "Password" },
+        "value": "password123"
+      },
+      "assertions": []
+    },
+    {
+      "id": "submit-and-assert-tenancy",
+      "title": "Sign in, see own rows, and never the other account's row",
+      "action": {
+        "kind": "click",
+        "locator": { "by": "role", "role": "button", "name": "Sign in" }
+      },
+      "assertions": [
+        { "kind": "visible", "locator": { "by": "text", "text": "First item" } },
+        { "kind": "visible", "locator": { "by": "text", "text": "Second item" } },
+        { "kind": "hidden", "locator": { "by": "text", "text": "Another account's item" } }
+      ]
+    }
+  ]
+}

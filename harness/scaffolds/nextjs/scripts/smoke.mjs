@@ -19,7 +19,8 @@ process.loadEnvFile(envPath);
 
 // `||`, not `??`: an exported-but-empty variable is as unusable as none, and
 // the API tier falls back to the same port for the same reason.
-const API_URL = `http://127.0.0.1:${process.env.API_PORT || 3001}/health`;
+const API_BASE = `http://127.0.0.1:${process.env.API_PORT || 3001}`;
+const API_URL = `${API_BASE}/health`;
 const WEB_URL = 'http://127.0.0.1:3000/sign-in';
 const TIMEOUT_MS = 180_000;
 
@@ -58,6 +59,64 @@ async function checkDatabase() {
   console.log(`smoke: database ok — ${seeded.length} seeded item(s), none readable by anon`);
 }
 
+// The authenticated request path, end to end (ADR 0038): no token is
+// rejected, and a real session from GoTrue reaches the API tier, which reads
+// as that user under RLS — so the caller sees exactly its own rows and never
+// the other seeded account's.
+async function checkAuthPath() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const itemsUrl = `${API_BASE}/items`;
+
+  const unauthenticated = await fetch(itemsUrl);
+  if (unauthenticated.status !== 401) {
+    throw new Error(
+      `smoke: /items without a token answered HTTP ${unauthenticated.status}, expected 401.`,
+    );
+  }
+
+  const forged = await fetch(itemsUrl, { headers: { authorization: 'Bearer not-a-jwt' } });
+  if (forged.status !== 401) {
+    throw new Error(
+      `smoke: /items with a forged token answered HTTP ${forged.status}, expected 401.`,
+    );
+  }
+
+  const signIn = await fetch(`${url}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: { apikey: anonKey, 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'owner@example.com', password: 'password123' }),
+  });
+  if (!signIn.ok) {
+    throw new Error(
+      `smoke: signing in as owner@example.com failed — HTTP ${signIn.status}: ${await signIn.text()}`,
+    );
+  }
+  const { access_token: accessToken } = await signIn.json();
+
+  const response = await fetch(itemsUrl, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    throw new Error(
+      `smoke: /items with a valid token failed — HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+  const { items } = await response.json();
+  const titles = items.map((item) => item.title);
+  if (titles.includes("Another account's item")) {
+    throw new Error("smoke: cross-tenant read — the API returned another account's row.");
+  }
+  if (items.length !== 2) {
+    throw new Error(
+      `smoke: owner@example.com sees ${items.length} item(s) through the API, expected exactly its own 2.`,
+    );
+  }
+  console.log(
+    'smoke: auth path ok — 401 without or with a forged token, owner sees exactly its own 2 items',
+  );
+}
+
 const dev = spawn('pnpm', ['dev'], { stdio: 'inherit', detached: true });
 
 let devExit = null;
@@ -94,10 +153,10 @@ try {
   // boots, and the database check needs neither tier to be up.
   await Promise.all([
     checkDatabase(),
-    waitFor('api', API_URL, (body) => JSON.parse(body).status === 'ok'),
+    waitFor('api', API_URL, (body) => JSON.parse(body).status === 'ok').then(checkAuthPath),
     waitFor('web', WEB_URL, (body) => body.includes('Sign in')),
   ]);
-  console.log('smoke: database and both tiers ok');
+  console.log('smoke: database, both tiers, and the auth path ok');
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;

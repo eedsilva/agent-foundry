@@ -107,6 +107,23 @@ export const PreviewCommandPlanSchema = z
   .strict();
 export type PreviewCommandPlan = z.infer<typeof PreviewCommandPlanSchema>;
 
+const PreviewCommandInvocationSchema = z
+  .object({
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+  })
+  .strict();
+
+export const PreviewFailureEvidenceSchema = z
+  .object({
+    command: PreviewCommandInvocationSchema.optional(),
+    exitCode: z.number().int().optional(),
+    stdout: z.string(),
+    stderr: z.string(),
+  })
+  .strict();
+export type PreviewFailureEvidence = z.infer<typeof PreviewFailureEvidenceSchema>;
+
 export const PreviewSessionSchema = z
   .object({
     id: PathSegmentSchema,
@@ -125,6 +142,7 @@ export const PreviewSessionSchema = z
     completedAt: z.string().datetime().optional(),
     error: RunErrorSchema.optional(),
     failurePhase: PreviewFailurePhaseSchema.optional(),
+    failureEvidence: PreviewFailureEvidenceSchema.optional(),
     commandPlan: PreviewCommandPlanSchema.optional(),
   })
   .strict()
@@ -284,6 +302,9 @@ export const PreviewFailureDiagnosticSchema = z
     restartCount: z.number().int().nonnegative(),
     error: RunErrorSchema,
     logs: PreviewLogPageSchema,
+    command: PreviewCommandInvocationSchema.optional(),
+    exitCode: z.number().int().optional(),
+    output: z.object({ stdout: z.string(), stderr: z.string() }).strict().optional(),
     failedAt: z.string().datetime(),
   })
   .strict();

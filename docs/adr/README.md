@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0040 the operator approves the plan; no model grades another model's prose](0040-operator-approves-the-plan-no-llm-quality-gates.md).
+Latest: [0042 the operator approves the plan; no model grades another model's prose](0042-operator-approves-the-plan-no-llm-quality-gates.md).

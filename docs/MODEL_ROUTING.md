@@ -36,7 +36,7 @@ interface TaskProfile {
 `TaskKind` continua sendo a chave de compatibilidade v1 e o campo enviado ao plano de execução. A
 taxonomia v2 acrescenta estas categorias:
 
-- `planning` (e `architecture`, hoje inalcançável: ADR 0040 removeu o `TaskKind` correspondente,
+- `planning` (e `architecture`, hoje inalcançável: ADR 0042 removeu o `TaskKind` correspondente,
   mas a categoria permanece no enum para que observações e métricas antigas continuem parseando);
 - `implementation/general`, `implementation/frontend`, `implementation/backend`,
   `implementation/database`, `implementation/integration` e `implementation/tests`;

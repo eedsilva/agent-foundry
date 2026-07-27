@@ -1047,6 +1047,9 @@ export class ProjectService {
           requestId,
           action: decision.action,
           decidedBy: decision.decidedBy,
+          // The operator's comment is mandatory for request-changes and the
+          // recorded reason for reject; the timeline is where it is read.
+          ...(decision.note ? { note: decision.note } : {}),
           ...(decision.actor ? { actor: decision.actor } : {}),
         },
         dedupeKey: `approval-decision:${decision.id}`,

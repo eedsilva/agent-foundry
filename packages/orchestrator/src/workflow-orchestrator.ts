@@ -1090,11 +1090,7 @@ export class WorkflowOrchestrator {
     await this.emit(project.id, 'run.approval_decided', `${node.title} approved.`, {
       nodeId: node.id,
       runId,
-      data: {
-        action: decision.action,
-        decidedBy: decision.decidedBy,
-        ...(decision.note ? { note: decision.note } : {}),
-      },
+      data: { action: decision.action, decidedBy: decision.decidedBy },
     });
     throwIfCancelled(signal, runId);
     await this.emitArtifactCreated(project.id, artifact, node.id, runId);
@@ -2219,6 +2215,15 @@ export class WorkflowOrchestrator {
         step,
         harness,
         artifacts: inputArtifacts,
+        ...(step.taskKind === 'repair'
+          ? {
+              previewFailureEvents: [
+                [...(await this.events.list(project.id))]
+                  .reverse()
+                  .find((event) => event.type === 'preview.failed'),
+              ].filter((event): event is ProjectEvent => event !== undefined),
+            }
+          : {}),
         workspacePath: this.workspaces.workspacePath(project.id),
         toolPolicy: profile.toolPolicy,
       });
