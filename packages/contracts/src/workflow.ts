@@ -85,6 +85,32 @@ const QualityLoopStepSchema = z.object({
 });
 export type QualityLoopStep = z.infer<typeof QualityLoopStepSchema>;
 
+/**
+ * Fans out over the task graph an earlier node wrote (#321's `plan.current`),
+ * running `implement` once per task in dependency order and committing each
+ * task on its own. `quality-loop` cannot express this: its steps are fixed at
+ * authoring time, and this list only exists once the run reads the artifact.
+ *
+ * `implement.maxAttempts` is honoured here — it bounds how many times a single
+ * task is attempted before the node fails, and every attempt is a timeline
+ * event (see #211, which records the engine ignoring it elsewhere).
+ */
+const ForEachTaskStepSchema = z
+  .object({
+    id: PathSegmentSchema,
+    type: z.literal('for-each-task'),
+    title: z.string().min(1),
+    /** Artifact carrying the `TaskGraph` to walk, e.g. `plan.current`. */
+    taskGraphArtifact: PathSegmentSchema,
+    implement: AgentStepSchema,
+  })
+  .strict()
+  .refine((node) => node.implement.mutatesWorkspace, {
+    message: 'for-each-task implement step must set mutatesWorkspace: true',
+    path: ['implement', 'mutatesWorkspace'],
+  });
+export type ForEachTaskStep = z.infer<typeof ForEachTaskStepSchema>;
+
 export const ApprovalActionSchema = z.enum(['approve', 'reject', 'request-changes']);
 export type ApprovalAction = z.infer<typeof ApprovalActionSchema>;
 
@@ -143,6 +169,7 @@ export const WorkflowNodeSchema = z.discriminatedUnion('type', [
   AgentStepSchema,
   VerifyStepSchema,
   QualityLoopStepSchema,
+  ForEachTaskStepSchema,
   ApprovalGateStepSchema,
 ]);
 export type WorkflowNode = z.infer<typeof WorkflowNodeSchema>;

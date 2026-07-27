@@ -57,6 +57,18 @@ function validateWorkflow(workflow: WorkflowDefinition): void {
       continue;
     }
 
+    if (node.type === 'for-each-task') {
+      if (!availableArtifacts.has(node.taskGraphArtifact)) {
+        throw new Error(
+          `Workflow ${workflow.id} node ${node.id} walks unavailable artifact ${node.taskGraphArtifact}`,
+        );
+      }
+      registerIdentifier(identifiers, node.implement.id, workflow.id);
+      validateStepInputs(node.implement, availableArtifacts, workflow.id);
+      availableArtifacts.add(node.implement.outputArtifact);
+      continue;
+    }
+
     if (node.type === 'approval-gate') {
       if (!availableArtifacts.has(node.artifact)) {
         throw new Error(

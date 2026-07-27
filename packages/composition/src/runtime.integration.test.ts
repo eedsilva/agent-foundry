@@ -80,17 +80,19 @@ class BrowserPlanExecutor implements AgentExecutor {
   }
 }
 
-// Fails the first `implement` attempt specifically: quality attribution needs a
-// step whose artifact a reviewer still grades, and since ADR 0042 `plan` has no
-// reviewer — the operator approves it.
+// Fails the first candidate of every per-task `implement.<taskId>` step:
+// quality attribution needs a step whose artifact a reviewer still grades, and
+// since ADR 0042 `plan` has no reviewer — the operator approves it. Failing
+// every task keeps the latest `implementation.report` (the one the reviewer
+// grades) on the fallback that actually executed.
 class FailFirstImplementExecutor implements AgentExecutor {
   readonly provider = 'mock';
-  private failed = false;
+  private readonly failed = new Set<string>();
   private readonly delegate = new BrowserPlanExecutor();
 
   async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
-    if (request.stepId === 'implement' && !this.failed) {
-      this.failed = true;
+    if (request.stepId.startsWith('implement.') && !this.failed.has(request.stepId)) {
+      this.failed.add(request.stepId);
       throw new Error('synthetic first-candidate failure');
     }
     return this.delegate.execute(request);
@@ -526,6 +528,12 @@ describe('runtime composition', () => {
     );
     const taskGraph = TaskGraphArtifactSchema.parse(planArtifact?.content);
     expect(taskGraph.data.tasks.length).toBeGreaterThan(0);
+    // The bundled workflow executes that graph task by task, not as one build.
+    expect(
+      detail.events
+        .filter((event) => event.type === 'task.completed')
+        .map((event) => event.data.taskId),
+    ).toEqual(taskGraph.data.tasks.map((task) => task.id));
 
     const verification = detail.artifacts.find(
       (artifact) => artifact.metadata.name === 'verification.report',
@@ -603,9 +611,9 @@ describe('runtime composition', () => {
 
     const detail = await runtime.projectService.get(project.id);
     expect(detail.project.status).toBe('completed');
-    const implementStep = (await runtime.stepRuns.list(project.currentRunId)).find(
-      (step) => step.stepId === 'implement',
-    );
+    const implementStep = (await runtime.stepRuns.list(project.currentRunId))
+      .filter((step) => step.stepId.startsWith('implement.'))
+      .at(-1);
     if (!implementStep) throw new Error('Expected a persisted implement step');
     const implementAttempts = await runtime.stepAttempts.list(
       project.currentRunId,

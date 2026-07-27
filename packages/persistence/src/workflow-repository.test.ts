@@ -20,6 +20,7 @@ describe('YamlWorkflowRepository', () => {
     expect(workflow.nodes.map((node) => node.id)).toEqual([
       'plan',
       'plan-approval',
+      'task-execution',
       'implementation-gate',
       'deterministic-verification',
       'browser-verification',
@@ -53,6 +54,38 @@ nodes:
 
     const repository = new YamlWorkflowRepository(directory);
     await expect(repository.get('bad')).rejects.toThrow('unavailable artifact');
+  });
+
+  it('rejects a for-each-task node whose task graph is not guaranteed upstream', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-foundry-workflow-'));
+    temporaryDirectories.push(directory);
+    await writeFile(
+      join(directory, 'bad-tasks.yaml'),
+      `schemaVersion: "1"
+id: bad-tasks
+name: Bad task loop
+description: Walks a task graph nothing produced
+stack: nextjs
+nodes:
+  - id: task-execution
+    type: for-each-task
+    title: Implement the task graph
+    taskGraphArtifact: plan.current
+    implement:
+      id: implement
+      type: agent
+      role: developer
+      taskKind: implementation
+      title: Implement one task
+      instructions: Implement it
+      inputArtifacts: [prd]
+      outputArtifact: implementation.report
+      mutatesWorkspace: true
+`,
+    );
+
+    const repository = new YamlWorkflowRepository(directory);
+    await expect(repository.get('bad-tasks')).rejects.toThrow('unavailable artifact plan.current');
   });
 
   // The values survive in AgentRoleSchema/TaskKindSchema so pre-ADR-0042 metrics

@@ -138,3 +138,48 @@ describe('agent step outputContract', () => {
     ).toThrow();
   });
 });
+
+describe('for-each-task workflow node', () => {
+  const BASE_IMPLEMENT = {
+    id: 'implement',
+    type: 'agent' as const,
+    role: 'developer' as const,
+    taskKind: 'implementation' as const,
+    title: 'Implement one planned task',
+    instructions: 'Implement the task.',
+    inputArtifacts: ['prd', 'plan.current'],
+    outputArtifact: 'implementation.report',
+    mutatesWorkspace: true,
+  };
+  const BASE_NODE = {
+    id: 'task-execution',
+    type: 'for-each-task' as const,
+    title: 'Implement the approved task graph',
+    taskGraphArtifact: 'plan.current',
+    implement: BASE_IMPLEMENT,
+  };
+
+  it('carries the implement step and its attempt bound', () => {
+    const node = WorkflowNodeSchema.parse({
+      ...BASE_NODE,
+      implement: { ...BASE_IMPLEMENT, maxAttempts: 3 },
+    });
+    if (node.type !== 'for-each-task') throw new Error('expected for-each-task');
+    expect(node.taskGraphArtifact).toBe('plan.current');
+    expect(node.implement.id).toBe('implement');
+    expect(node.implement.maxAttempts).toBe(3);
+  });
+
+  it('rejects an implement step that does not mutate the workspace', () => {
+    expect(() =>
+      WorkflowNodeSchema.parse({
+        ...BASE_NODE,
+        implement: { ...BASE_IMPLEMENT, mutatesWorkspace: false },
+      }),
+    ).toThrow(/mutatesWorkspace/);
+  });
+
+  it('rejects unknown fields', () => {
+    expect(() => WorkflowNodeSchema.parse({ ...BASE_NODE, maxIterations: 3 })).toThrow();
+  });
+});
