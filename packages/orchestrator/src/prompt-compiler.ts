@@ -2,7 +2,7 @@ import type { AgentStep, StoredArtifact, TaskProfile } from '@agent-foundry/cont
 import type { HarnessSelection } from '@agent-foundry/domain';
 import { stableJson } from '@agent-foundry/domain';
 
-const REVIEWER_ROLES = new Set(['plan-reviewer', 'architecture-reviewer', 'code-reviewer']);
+const REVIEWER_ROLES = new Set(['plan-reviewer', 'code-reviewer']);
 
 export function compileRequestMarkdown(input: {
   projectId: string;
@@ -83,7 +83,7 @@ Return an object with:
 - status: completed, needs-revision, or blocked
 - summary: a factual completion summary
 - approved: required for reviewer roles
-- data: the actual plan, architecture, review findings, implementation report, or repair report
+- data: the actual plan, review findings, implementation report, or repair report
 - decisions: important choices with rationale, alternatives, and consequences
 - assumptions, risks, nextActions: arrays of strings
 

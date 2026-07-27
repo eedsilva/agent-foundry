@@ -3,7 +3,7 @@ import type { Project } from '@agent-foundry/contracts';
 import { StatusPill } from './status-pill';
 import { cn } from '@/lib/utils';
 
-const STAGES = ['plan', 'architecture', 'build', 'verify', 'release'] as const;
+const STAGES = ['plan', 'build', 'verify', 'release'] as const;
 
 export function ProjectCard({ project }: { project: Project }) {
   const reachedIndex = STAGES.findIndex((stage) =>

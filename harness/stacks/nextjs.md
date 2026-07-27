@@ -1,6 +1,6 @@
 # Stack: Next.js web application
 
-Unless the approved architecture says otherwise:
+Unless the approved plan says otherwise:
 
 - Use current Next.js App Router conventions and React server/client boundaries deliberately.
 - Use TypeScript with strict mode.
@@ -13,7 +13,7 @@ Unless the approved architecture says otherwise:
 
 ## Owner defaults
 
-Standing choices for generated apps. The PRD or approved architecture may override them; record any override as a decision.
+Standing choices for generated apps. The PRD or approved plan may override them; record any override as a decision.
 
 - Package manager: pnpm 9 or newer.
 - Framework versions: Next.js 15+ on the App Router only (no Pages Router); Tailwind CSS v4 (CSS-first `@theme` config, no `tailwind.config.js` unless the app needs JS-driven theming); shadcn/ui components added via its CLI, kept at whatever version the CLI installs.

@@ -22,11 +22,14 @@ export const ActorRefSchema = z
   .strict();
 export type ActorRef = z.infer<typeof ActorRefSchema>;
 
+// No architect / architecture-reviewer: ADR 0040 deleted the architecture gate,
+// and no workflow may declare a role the harness has no fragment for.
+// `plan-reviewer` survives only because `dogfood-plan-v1` benchmarks review
+// quality with it; `web-app-v1` no longer runs any blocking model reviewer of
+// another model's prose.
 export const AgentRoleSchema = z.enum([
   'planner',
   'plan-reviewer',
-  'architect',
-  'architecture-reviewer',
   'developer',
   'code-reviewer',
   'fixer',
@@ -37,8 +40,6 @@ export type AgentRole = z.infer<typeof AgentRoleSchema>;
 export const TaskKindSchema = z.enum([
   'planning',
   'plan-review',
-  'architecture',
-  'architecture-review',
   'implementation',
   'code-review',
   'repair',

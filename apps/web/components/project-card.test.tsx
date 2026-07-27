@@ -16,7 +16,7 @@ const project = {
 } as unknown as Project;
 
 // Reads the fill state of each `data-stage` segment in document order, e.g.
-// ['plan:filled', 'architecture:filled', 'build:unfilled', ...].
+// ['plan:filled', 'build:unfilled', ...].
 function stageFillStates(markup: string): string[] {
   return [...markup.matchAll(/data-stage="([a-z]+)" class="([^"]*)"/g)].map(
     ([, stage, className]) =>
@@ -30,8 +30,8 @@ describe('ProjectCard', () => {
     expect(markup).toContain('href="/project/project-1"');
     expect(markup).toContain('Issue Radar');
     expect(markup).toContain('data-status="running"');
-    // 'deploy-attempt-3' does not collide with any STAGES literal (plan/architecture/build/
-    // verify/release), so this only passes if the current-node element itself renders it.
+    // 'deploy-attempt-3' does not collide with any STAGES literal (plan/build/verify/
+    // release), so this only passes if the current-node element itself renders it.
     expect(markup).toContain('deploy-attempt-3');
   });
 
@@ -43,7 +43,7 @@ describe('ProjectCard', () => {
 
   it('renders one segment per pipeline stage', () => {
     const markup = renderToStaticMarkup(<ProjectCard project={project} />);
-    expect([...markup.matchAll(/data-stage="/g)]).toHaveLength(5);
+    expect([...markup.matchAll(/data-stage="/g)]).toHaveLength(4);
   });
 
   it('fills the stages up to and including the current node', () => {
@@ -51,7 +51,6 @@ describe('ProjectCard', () => {
     const markup = renderToStaticMarkup(<ProjectCard project={atBuild} />);
     expect(stageFillStates(markup)).toEqual([
       'plan:filled',
-      'architecture:filled',
       'build:filled',
       'verify:unfilled',
       'release:unfilled',
@@ -63,7 +62,6 @@ describe('ProjectCard', () => {
     const markup = renderToStaticMarkup(<ProjectCard project={unknown} />);
     expect(stageFillStates(markup)).toEqual([
       'plan:unfilled',
-      'architecture:unfilled',
       'build:unfilled',
       'verify:unfilled',
       'release:unfilled',
@@ -75,7 +73,6 @@ describe('ProjectCard', () => {
     const markup = renderToStaticMarkup(<ProjectCard project={noNode} />);
     expect(stageFillStates(markup)).toEqual([
       'plan:unfilled',
-      'architecture:unfilled',
       'build:unfilled',
       'verify:unfilled',
       'release:unfilled',

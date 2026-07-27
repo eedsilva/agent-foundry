@@ -6,15 +6,14 @@ import type { FastifyInstance } from 'fastify';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 
-// Self-contained fixture: an architecture-review gate and a release-review
-// gate, standing in for the "architecture and release approval" E2E coverage
-// issue #14 requires, without touching the real workflows/web-app-v1.yaml
-// (which stays fully automated).
+// Self-contained fixture: a mid-pipeline design gate and a release gate,
+// standing in for the "mid-pipeline and release approval" E2E coverage issue
+// #14 requires, without touching the real workflows/web-app-v1.yaml.
 const FIXTURE_WORKFLOW = `
 schemaVersion: '1'
 id: approval-e2e-v1
 name: Approval E2E fixture
-description: Minimal architecture + release approval-gate pipeline for issue #14 E2E coverage.
+description: Minimal design + release approval-gate pipeline for issue #14 E2E coverage.
 stack: nextjs
 nodes:
   - id: plan
@@ -25,32 +24,32 @@ nodes:
     instructions: Draft a short plan from the PRD.
     outputArtifact: plan.current
 
-  - id: architecture
+  - id: design
     type: agent
-    role: architect
-    taskKind: architecture
-    title: Draft architecture
-    instructions: Draft architecture notes from the plan.
+    role: planner
+    taskKind: planning
+    title: Draft the design
+    instructions: Draft design notes from the plan.
     inputArtifacts: [plan.current]
-    outputArtifact: architecture.current
+    outputArtifact: design.current
 
-  - id: architecture-approval
+  - id: design-approval
     type: approval-gate
-    title: Architecture approval
-    artifact: architecture.current
-    outputArtifact: architecture.approval
+    title: Design approval
+    artifact: design.current
+    outputArtifact: design.approval
     actions: [approve, reject, request-changes]
     onReject: return-to-step
-    returnToStepId: architecture
-    repairArtifact: architecture.repair-notes
+    returnToStepId: design
+    repairArtifact: design.repair-notes
 
   - id: build
     type: agent
     role: developer
     taskKind: implementation
     title: Implement
-    instructions: Implement a small vertical slice from the approved architecture.
-    inputArtifacts: [architecture.current]
+    instructions: Implement a small vertical slice from the approved design.
+    inputArtifacts: [design.current]
     outputArtifact: implementation.report
 
   - id: release-approval
@@ -148,7 +147,7 @@ afterEach(async () => {
 });
 
 describe('approval review API (#14)', () => {
-  it('approves through the architecture and release gates to completion', async () => {
+  it('approves through the design and release gates to completion', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
     expect(await runtime.worker.runOnce()).toBe(true);
@@ -157,7 +156,7 @@ describe('approval review API (#14)', () => {
     expect((await getRun(baseUrl, runId)).status).toBe('awaiting_approval');
 
     const [archEntry] = await listApprovals(baseUrl, runId);
-    expect(archEntry!.request.nodeId).toBe('architecture-approval');
+    expect(archEntry!.request.nodeId).toBe('design-approval');
     expect(
       (await decide(baseUrl, runId, archEntry!.request.id, { action: 'approve', decidedBy: 'ed' }))
         .status,
@@ -232,7 +231,7 @@ describe('approval review API (#14)', () => {
     expect(response.status).toBe(400);
   });
 
-  it('request-changes rewinds to the architecture step, writes a repair artifact, and re-halts', async () => {
+  it('request-changes rewinds to the design step, writes a repair artifact, and re-halts', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
     expect(await runtime.worker.runOnce()).toBe(true);
@@ -258,10 +257,10 @@ describe('approval review API (#14)', () => {
     expect(approvals).toHaveLength(2);
     const fresh = approvals.find((item) => item.request.id !== entry!.request.id);
     expect(fresh?.decision).toBeNull();
-    expect(fresh?.request.nodeId).toBe('architecture-approval');
+    expect(fresh?.request.nodeId).toBe('design-approval');
 
     const artifactResponse = await fetch(
-      `${baseUrl}/projects/${projectId}/artifacts/architecture.repair-notes`,
+      `${baseUrl}/projects/${projectId}/artifacts/design.repair-notes`,
     );
     expect(artifactResponse.status).toBe(200);
     const { content, metadata } = (await artifactResponse.json()) as {

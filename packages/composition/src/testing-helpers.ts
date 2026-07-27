@@ -10,16 +10,17 @@ import type { Runtime } from './runtime.js';
 // test run, double-registering the suite -- see runtime.postgres.test.ts /
 // runtime.integration.test.ts, which both need this and previously kept
 // byte-identical copies.
-export async function approveDiffGate(
+export async function approveGate(
   runtime: Runtime,
   runId: string,
+  nodeId: string,
   decidedBy = 'integration-test',
 ): Promise<void> {
-  const [diffApproval] = (await runtime.projectService.listApprovals(runId)).filter(
-    (entry) => entry.request.nodeId === 'diff-approval',
+  const [pending] = (await runtime.projectService.listApprovals(runId)).filter(
+    (entry) => entry.request.nodeId === nodeId && !entry.decision,
   );
-  if (!diffApproval) throw new Error('Expected a pending diff-approval request');
-  await runtime.projectService.decideApproval(runId, diffApproval.request.id, {
+  if (!pending) throw new Error(`Expected a pending ${nodeId} request`);
+  await runtime.projectService.decideApproval(runId, pending.request.id, {
     action: 'approve',
     decidedBy,
   });

@@ -10,7 +10,7 @@ import {
   type PostgresDb,
 } from '@agent-foundry/persistence';
 import { createRuntime } from './runtime.js';
-import { approveDiffGate } from './testing-helpers.js';
+import { approveGate } from './testing-helpers.js';
 
 // ponytail: duplicates the Docker-skip guard from persistence/src/postgres/testing.ts instead of
 // exporting `describePostgres` through the package barrel. Exporting it would pull
@@ -119,7 +119,9 @@ maybeDescribe('Postgres-backed runtime', () => {
     const runId = project.currentRunId;
 
     expect(await runtime.worker.runOnce()).toBe(true);
-    await approveDiffGate(runtime, runId, 'postgres-composition-test');
+    await approveGate(runtime, runId, 'plan-approval', 'postgres-composition-test');
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveGate(runtime, runId, 'diff-approval', 'postgres-composition-test');
     expect(await runtime.worker.runOnce()).toBe(true);
 
     const detail = await runtime.projectService.get(project.id);

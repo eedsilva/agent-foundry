@@ -296,9 +296,22 @@ artefato deve conter um grafo de tarefas validado (`TaskGraphSchema` em `package
 tarefa carrega id estável, título, dependências, entregáveis e um critério de aceite. IDs únicos,
 dependências existentes e aciclicidade são impostos pelo parser Zod autoritativo no orquestrador — uma
 saída fora do contrato falha o attempt em vez de virar revisão de `plan.current`; o provider recebe o
-espelho JSON Schema com o marcador de validação runtime, como no plano de teste de browser. Os passos
-`plan` e `repair-plan` de `web-app-v1` declaram o contrato; `dogfood-plan-v1` fica de fora por
-produzir artefatos de análise arbitrários.
+espelho JSON Schema com o marcador de validação runtime, como no plano de teste de browser. O passo
+`plan` de `web-app-v1` declara o contrato; `dogfood-plan-v1` fica de fora por produzir artefatos de
+análise arbitrários.
+
+## Gate de plano
+
+`web-app-v1` chega ao plano com **uma** chamada de modelo: o nó `plan` grava `plan.current` e o nó
+`plan-approval` (`approval-gate`, `actions: [approve, reject]`, `onReject: end`) para a execução até o
+operador decidir. Nenhum modelo avalia a prosa de outro modelo como gate bloqueante — ADR 0040 removeu
+`review-plan`, `repair-plan` e o `architecture-gate` inteiro, com os artefatos `plan.review`,
+`architecture.current` e `architecture.review`. Rejeitar encerra o run como `rejected` e grava a
+justificativa do operador no evento `run.rejected` e na `ApprovalDecision` imutável.
+
+Os papéis `architect` e `architecture-reviewer` e as tarefas `architecture` e `architecture-review`
+não existem mais no contrato. `plan-reviewer` sobrevive apenas para `dogfood-plan-v1`, que é o harness
+de benchmark que pontua capacidade de revisão.
 
 ## Quality loop
 

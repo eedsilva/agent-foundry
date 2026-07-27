@@ -26,18 +26,6 @@ const DEFAULTS: Record<
     priorities: { quality: 0.58, speed: 0.07, cost: 0.05, reliability: 0.3 },
     preferredTags: ['review', 'reasoning', 'structured-output'],
   },
-  architecture: {
-    complexity: 5,
-    risk: 5,
-    priorities: { quality: 0.65, speed: 0.05, cost: 0.05, reliability: 0.25 },
-    preferredTags: ['architecture', 'reasoning', 'long-context'],
-  },
-  'architecture-review': {
-    complexity: 5,
-    risk: 5,
-    priorities: { quality: 0.65, speed: 0.04, cost: 0.03, reliability: 0.28 },
-    preferredTags: ['review', 'architecture', 'reasoning'],
-  },
   implementation: {
     complexity: 5,
     risk: 4,
@@ -139,10 +127,6 @@ function classifyTaskCategory(
       return 'planning';
     case 'plan-review':
       return 'review/plan';
-    case 'architecture':
-      return 'architecture';
-    case 'architecture-review':
-      return 'review/architecture';
     case 'code-review':
       return 'review/code';
     case 'verification':
@@ -156,14 +140,12 @@ function classifyTaskCategory(
 function estimatedOutputTokens(taskKind: AgentStep['taskKind']): number {
   switch (taskKind) {
     case 'planning':
-    case 'architecture':
       return 8_000;
     case 'implementation':
       return 12_000;
     case 'repair':
       return 8_000;
     case 'plan-review':
-    case 'architecture-review':
     case 'code-review':
     case 'verification':
       return 5_000;

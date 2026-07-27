@@ -20,7 +20,7 @@ import {
   FileQualityObservationRepository,
 } from '@agent-foundry/persistence';
 import { createRuntime, type Runtime } from './runtime.js';
-import { approveDiffGate } from './testing-helpers.js';
+import { approveGate } from './testing-helpers.js';
 
 const RESTART_APPROVAL_WORKFLOW = `
 schemaVersion: '1'
@@ -80,14 +80,19 @@ class BrowserPlanExecutor implements AgentExecutor {
   }
 }
 
-class FailFirstExecutor implements AgentExecutor {
+// Fails the first `implement` attempt specifically: quality attribution needs a
+// step whose artifact a reviewer still grades, and since ADR 0040 `plan` has no
+// reviewer — the operator approves it.
+class FailFirstImplementExecutor implements AgentExecutor {
   readonly provider = 'mock';
-  private calls = 0;
+  private failed = false;
   private readonly delegate = new BrowserPlanExecutor();
 
   async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
-    this.calls += 1;
-    if (this.calls === 1) throw new Error('synthetic first-candidate failure');
+    if (request.stepId === 'implement' && !this.failed) {
+      this.failed = true;
+      throw new Error('synthetic first-candidate failure');
+    }
     return this.delegate.execute(request);
   }
 
@@ -439,7 +444,9 @@ describe('runtime composition', () => {
     const runId = project.currentRunId;
 
     expect(await runtime.worker.runOnce()).toBe(true);
-    await approveDiffGate(runtime, runId);
+    await approveGate(runtime, runId, 'plan-approval');
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveGate(runtime, runId, 'diff-approval');
     expect(await runtime.worker.runOnce()).toBe(true);
 
     const detail = await runtime.projectService.get(project.id);
@@ -505,9 +512,7 @@ describe('runtime composition', () => {
     for (const name of [
       'prd',
       'plan.current',
-      'plan.review',
-      'architecture.current',
-      'architecture.review',
+      'plan.approval',
       'implementation.report',
       'code.review',
       'verification.report',
@@ -552,7 +557,7 @@ describe('runtime composition', () => {
       artifact.metadata.name.startsWith('run-'),
     );
     expect(runArtifact?.content).toMatchObject({
-      harness: { version: '2026.07.26-v6' },
+      harness: { version: '2026.07.27-v7' },
     });
 
     const generatedPackage = JSON.parse(
@@ -583,7 +588,9 @@ describe('runtime composition', () => {
       WORKER_ID: 'fallback-worker',
     });
     configureMockBrowserRuntime(runtime);
-    Object.defineProperty(runtime.executors, 'executor', { value: new FailFirstExecutor() });
+    Object.defineProperty(runtime.executors, 'executor', {
+      value: new FailFirstImplementExecutor(),
+    });
 
     const project = await runtime.projectService.create({
       name: 'Fallback sample',
@@ -595,20 +602,27 @@ describe('runtime composition', () => {
     const runId = project.currentRunId;
 
     expect(await runtime.worker.runOnce()).toBe(true);
-    await approveDiffGate(runtime, runId);
+    await approveGate(runtime, runId, 'plan-approval');
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveGate(runtime, runId, 'diff-approval');
     expect(await runtime.worker.runOnce()).toBe(true);
 
     const detail = await runtime.projectService.get(project.id);
     expect(detail.project.status).toBe('completed');
-    const planStep = (await runtime.stepRuns.list(project.currentRunId)).find(
-      (step) => step.stepId === 'plan',
+    const implementStep = (await runtime.stepRuns.list(project.currentRunId)).find(
+      (step) => step.stepId === 'implement',
     );
-    if (!planStep) throw new Error('Expected a persisted plan step');
-    const planAttempts = await runtime.stepAttempts.list(project.currentRunId, planStep.id);
-    expect(planAttempts.map((attempt) => attempt.status)).toEqual(['failed', 'succeeded']);
+    if (!implementStep) throw new Error('Expected a persisted implement step');
+    const implementAttempts = await runtime.stepAttempts.list(
+      project.currentRunId,
+      implementStep.id,
+    );
+    expect(implementAttempts.map((attempt) => attempt.status)).toEqual(['failed', 'succeeded']);
 
-    const plan = detail.artifacts.find((artifact) => artifact.metadata.name === 'plan.current');
-    const route = plan?.metadata.routeDecision;
+    const report = detail.artifacts.find(
+      (artifact) => artifact.metadata.name === 'implementation.report',
+    );
+    const route = report?.metadata.routeDecision;
     expect(route?.attemptedModelIds).toHaveLength(2);
     expect(route?.executed?.model.id).not.toBe(route?.selected.model.id);
 
@@ -719,7 +733,9 @@ describe('runtime composition', () => {
     const afterFirstRun = await runtime.projects.get('legacy-project');
     if (!afterFirstRun?.currentRunId) throw new Error('Expected a persisted workflow run');
     const runId = afterFirstRun.currentRunId;
-    await approveDiffGate(runtime, runId);
+    await approveGate(runtime, runId, 'plan-approval');
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveGate(runtime, runId, 'diff-approval');
     expect(await runtime.worker.runOnce()).toBe(true);
 
     const project = await runtime.projects.get('legacy-project');

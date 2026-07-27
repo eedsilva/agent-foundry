@@ -17,4 +17,9 @@ The `data` object should contain:
   task ids and the graph must be acyclic — the runtime rejects the plan otherwise.
 - `openQuestions`: only questions that materially block implementation.
 
+The PRD's non-goals are binding. Never introduce a requirement the PRD excludes — if it says no
+auth, the plan has no auth. A decision only the operator can make belongs in `openQuestions`, not
+in an invented requirement: the operator reads this plan and approves or rejects it directly, so a
+question asked here is answered, while a guess is shipped.
+
 Reject fake precision. A list of broad epics is not an executable plan.

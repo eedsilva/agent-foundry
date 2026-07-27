@@ -29,8 +29,8 @@ hard-keying validation to the artifact *name* would break those runs.
   then sends the task-graph JSON schema to the provider and hard-fails the attempt when the returned
   output does not parse — a non-conforming plan never becomes a `plan.current` revision; the normal
   retry/repair ladder handles it with the Zod issues attached.
-- `web-app-v1`'s `plan` and `repair-plan` steps declare the contract; `dogfood-plan-v1` does not, on
-  purpose.
+- `web-app-v1`'s `plan` step declares the contract; `dogfood-plan-v1` does not, on purpose.
+  (`repair-plan` also declared it until ADR 0040 deleted the plan repair loop.)
 - The project page renders any artifact whose content parses as a task-graph envelope as a readable
   task list (id, title, dependencies, deliverables, acceptance check), matching the existing
   shape-based rendering precedent (`isVerificationReport`).

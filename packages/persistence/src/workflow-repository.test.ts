@@ -18,8 +18,8 @@ describe('YamlWorkflowRepository', () => {
     );
     const workflow = await repository.get('web-app-v1');
     expect(workflow.nodes.map((node) => node.id)).toEqual([
-      'plan-gate',
-      'architecture-gate',
+      'plan',
+      'plan-approval',
       'implementation-gate',
       'deterministic-verification',
       'browser-verification',

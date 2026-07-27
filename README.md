@@ -2,7 +2,7 @@
 
 Um monorepo TypeScript para construir uma alternativa pessoal e self-hosted ao Lovable: ideia em chat, pipeline multiagente auditável, app full-stack local, preview verificado e publicação no VPS do operador.
 
-O baseline atual recebe um PRD pela interface web, persiste um projeto, enfileira uma execução e conduz uma sequência declarativa de planejamento, revisão, arquitetura, implementação, reparo e verificação. A evolução até Personal Builder v1 troca a entrada principal por chat e fecha o ciclo com Next.js, Tailwind, shadcn/ui, Supabase Docker isolado, edição visual, Git local e deploy SSH/Compose/Caddy em VPS existente.
+O baseline atual recebe um PRD pela interface web, persiste um projeto, enfileira uma execução e conduz uma sequência declarativa de planejamento, aprovação do operador, implementação, revisão, reparo e verificação. A evolução até Personal Builder v1 troca a entrada principal por chat e fecha o ciclo com Next.js, Tailwind, shadcn/ui, Supabase Docker isolado, edição visual, Git local e deploy SSH/Compose/Caddy em VPS existente.
 
 > **Estado:** MVP executável. O modo `mock` roda o fluxo inteiro sem CLIs externas. O modo `real` usa suas sessões autenticadas das três CLIs.
 
@@ -174,15 +174,14 @@ Os registros são append-only: um rerun adiciona uma nova tentativa e nunca sobr
 9. `ModelRouter` ranqueia os modelos, diversifica os primeiros fallbacks por provider e grava a decisão completa no artefato.
 10. O executor recebe prompt, schema de saída e caminho do workspace.
 11. A resposta é validada por Zod e persistida como nova revisão.
-12. Reviewers aprovam ou acionam reparos, com limite explícito de iterações.
+12. O plano vai para aprovação do operador; nos gates seguintes, reviewers e checks determinísticos acionam reparos com limite explícito de iterações.
 13. Etapas mutáveis usam checkpoint Git. Uma tentativa falha é revertida antes do fallback.
 14. Métricas de execução e aprovação alimentam decisões futuras do router.
 
 O workflow padrão produz, entre outros:
 
 - `prd`
-- `plan.current` e `plan.review`
-- `architecture.current` e `architecture.review`
+- `plan.current` e `plan.approval`
 - `implementation.report` e `code.review`
 - `verification.report`
 - `release.review`
@@ -258,6 +257,7 @@ Cada run grava a versão do harness, os arquivos selecionados e o prompt compila
 - `agent`: executa uma tarefa e produz um artefato.
 - `verify`: roda checks determinísticos no workspace.
 - `quality-loop`: combina setup, reviewer, reparo, condição de aprovação e limite de iterações.
+- `approval-gate`: para a execução até uma decisão humana; `onReject: end` encerra o run.
 
 Criar um novo fluxo não exige alterar o orquestrador. Copie o YAML, mude o ID e defina entradas, saídas e gates.
 
