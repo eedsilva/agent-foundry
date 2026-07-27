@@ -3,6 +3,7 @@ import {
   type PreviewCommandPlan,
   type PreviewHealth,
   type PreviewFailurePhase,
+  type PreviewFailureEvidence,
   type PreviewProcess,
   type PreviewSession,
   type PreviewSessionStatus,
@@ -37,6 +38,7 @@ export function transitionPreviewSession(
     health?: PreviewHealth;
     error?: RunError;
     failurePhase?: PreviewFailurePhase;
+    failureEvidence?: PreviewFailureEvidence;
   } = {},
 ): PreviewSession {
   if (!previewSessionTransitions[session.status].includes(status)) {

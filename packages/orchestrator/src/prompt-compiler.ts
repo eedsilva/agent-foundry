@@ -1,4 +1,9 @@
-import type { AgentStep, StoredArtifact, TaskProfile } from '@agent-foundry/contracts';
+import type {
+  AgentStep,
+  ProjectEvent,
+  StoredArtifact,
+  TaskProfile,
+} from '@agent-foundry/contracts';
 import type { HarnessSelection } from '@agent-foundry/domain';
 import { stableJson } from '@agent-foundry/domain';
 
@@ -14,6 +19,7 @@ export function compileRequestMarkdown(input: {
   step: AgentStep;
   harness: HarnessSelection;
   artifacts: StoredArtifact[];
+  previewFailureEvents?: ProjectEvent[];
   workspacePath: string;
   toolPolicy?: TaskProfile['toolPolicy'];
 }): string {
@@ -33,6 +39,15 @@ export function compileRequestMarkdown(input: {
         )
         .join('\n\n')
     : '_No input artifacts were requested for this step._';
+  const previewFailureSections = input.previewFailureEvents?.length
+    ? input.previewFailureEvents
+        .map(
+          (event) =>
+            `### ${event.type} · ${event.createdAt}\n\n` +
+            `${stableJson(event.data.diagnostic ?? event.data)}`,
+        )
+        .join('\n\n')
+    : '_No preview failure diagnostics were recorded for this run._';
 
   return `# Agent execution request
 
@@ -74,6 +89,10 @@ ${input.harness.combined}
 ## Input artifacts
 
 ${artifactSections}
+
+## Preview failure diagnostics
+
+${previewFailureSections}
 
 ## Required output
 
