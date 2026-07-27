@@ -58,6 +58,8 @@ interface ProcessEntry {
   port: number;
   logWrites: Promise<void>;
   exited: boolean;
+  exitCode?: number;
+  output: { stdout: string; stderr: string };
 }
 
 // Half of PreviewService's own health-poll timeout, so the combined worst case
@@ -122,7 +124,15 @@ export class NodePreviewRunner implements PreviewRunner {
       error: {
         name: 'PreviewInstallError',
         code: 'PREVIEW_INSTALL_FAILED',
-        message: outcome.stderr || 'Install failed.',
+        message: outcome.stderr.slice(-this.maxOutputBytes) || 'Install failed.',
+      },
+      failureEvidence: {
+        command: plan.install.ok
+          ? { command: plan.install.command, args: plan.install.args }
+          : undefined,
+        exitCode: outcome.exitCode,
+        stdout: outcome.stdout.slice(-this.maxOutputBytes),
+        stderr: outcome.stderr.slice(-this.maxOutputBytes),
       },
     });
   }
@@ -198,6 +208,11 @@ export class NodePreviewRunner implements PreviewRunner {
           code: 'PREVIEW_NO_DEV_COMMAND',
           message: dev?.reason ?? 'No dev command resolved.',
         },
+        failureEvidence: {
+          exitCode: 1,
+          stdout: '',
+          stderr: dev?.reason ?? 'No dev command resolved.',
+        },
       });
     }
     let attempt = await this.attemptSpawn(session, dev);
@@ -213,6 +228,12 @@ export class NodePreviewRunner implements PreviewRunner {
           code: 'PREVIEW_START_FAILED',
           message: 'Dev server exited immediately twice.',
         },
+        failureEvidence: {
+          command: { command: dev.command, args: dev.args },
+          ...(attempt.exitCode !== undefined ? { exitCode: attempt.exitCode } : {}),
+          stdout: attempt.stdout,
+          stderr: attempt.stderr,
+        },
       });
     }
     const process: PreviewProcess = {
@@ -227,7 +248,14 @@ export class NodePreviewRunner implements PreviewRunner {
   private async attemptSpawn(
     session: PreviewSession,
     dev: { command: string; args: string[] },
-  ): Promise<{ port: number; pid: number | undefined; crashedImmediately: boolean }> {
+  ): Promise<{
+    port: number;
+    pid: number | undefined;
+    crashedImmediately: boolean;
+    exitCode?: number;
+    stdout: string;
+    stderr: string;
+  }> {
     const reservedPort = await this.reservePort();
     // The scaffold's api tier reads API_PORT (the single PORT belongs to the
     // browsable tier); without its own reservation, concurrent projects would
@@ -257,10 +285,15 @@ export class NodePreviewRunner implements PreviewRunner {
       port: reservedPort,
       logWrites: Promise.resolve(),
       exited: false,
+      output: { stdout: '', stderr: '' },
     };
     this.processes.set(session.id, entry);
-    const markExited = (): void => {
+    const markExited = (result: unknown): void => {
       entry.exited = true;
+      if (typeof result === 'object' && result !== null && 'exitCode' in result) {
+        const exitCode = (result as { exitCode?: unknown }).exitCode;
+        if (typeof exitCode === 'number') entry.exitCode = exitCode;
+      }
     };
     void child.then(markExited, markExited);
     let detectedPort: number | undefined;
@@ -268,6 +301,7 @@ export class NodePreviewRunner implements PreviewRunner {
       (stream: PreviewLogEntry['stream']) =>
       (data: Buffer): void => {
         const text = data.toString('utf8');
+        entry.output[stream] = `${entry.output[stream]}${text}`.slice(-this.maxOutputBytes);
         const port = detectPortFromOutput(text);
         // The api tier announces its own listen URL; only the browsable
         // tier's port may steer the health probe.
@@ -294,15 +328,29 @@ export class NodePreviewRunner implements PreviewRunner {
 
     const deadline = Date.now() + this.startupTimeoutMs;
     while (Date.now() < deadline) {
-      if (entry.exited) return { port: reservedPort, pid: undefined, crashedImmediately: true };
+      if (entry.exited) {
+        return {
+          port: reservedPort,
+          pid: undefined,
+          crashedImmediately: true,
+          ...(entry.exitCode !== undefined ? { exitCode: entry.exitCode } : {}),
+          ...entry.output,
+        };
+      }
       const candidate = detectedPort ?? reservedPort;
       if (await httpProbe(candidate, this.healthPath)) {
         entry.port = candidate;
-        return { port: candidate, pid: child.pid, crashedImmediately: false };
+        return { port: candidate, pid: child.pid, crashedImmediately: false, ...entry.output };
       }
       await new Promise((resolveTick) => setTimeout(resolveTick, POLL_INTERVAL_MS));
     }
-    return { port: detectedPort ?? reservedPort, pid: child.pid, crashedImmediately: entry.exited };
+    return {
+      port: detectedPort ?? reservedPort,
+      pid: child.pid,
+      crashedImmediately: entry.exited,
+      ...(entry.exitCode !== undefined ? { exitCode: entry.exitCode } : {}),
+      ...entry.output,
+    };
   }
 }
 

@@ -235,12 +235,20 @@ function sanitizeSession(session: PreviewSession): PreviewSession {
         dev: sanitizeCommandResult(session.commandPlan.dev),
       }
     : undefined;
+  const failureEvidence = session.failureEvidence
+    ? {
+        ...session.failureEvidence,
+        stdout: redactString(session.failureEvidence.stdout),
+        stderr: redactString(session.failureEvidence.stderr),
+      }
+    : undefined;
   return PreviewSessionSchema.parse({
     ...session,
     ...(url ? { url } : {}),
     health,
     ...(error ? { error } : {}),
     ...(commandPlan ? { commandPlan } : {}),
+    ...(failureEvidence ? { failureEvidence } : {}),
   });
 }
 

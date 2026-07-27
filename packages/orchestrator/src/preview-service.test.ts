@@ -7,6 +7,7 @@ import {
   ProjectEventSchema,
   type PreviewHealth,
   type PreviewLogPage,
+  type PreviewFailureDiagnostic,
   type PreviewSession,
   type ProjectEvent,
 } from '@agent-foundry/contracts';
@@ -57,6 +58,12 @@ class InMemoryEventStore implements EventStore {
   async list(projectId: string): Promise<ProjectEvent[]> {
     return this.events.filter((event) => event.projectId === projectId);
   }
+}
+
+function failureDiagnostic(events: InMemoryEventStore): PreviewFailureDiagnostic {
+  return PreviewFailureDiagnosticSchema.parse(
+    events.events.find((event) => event.type === 'preview.failed')?.data.diagnostic,
+  );
 }
 
 class InMemoryPreviewSessions implements PreviewSessionRepository {
@@ -367,25 +374,26 @@ describe('PreviewService durable lifecycle', () => {
       ],
       nextCursor: 1,
     };
-    const { service, sessions, artifacts } = await buildService({
+    const { service, sessions, artifacts, events } = await buildService({
       runner,
       config: { startupTimeoutMs: 0 },
     });
 
     const { session, url } = await start(service, 'run-1');
-    const diagnostic = (await artifacts.getLatest('project-1', `preview-failure-${session.id}`))!;
 
     expect(session.status).toBe('failed');
     expect(url).toBe('');
     expect(runner.stopCount).toBe(1);
     expect((await sessions.get(session.id))?.session.status).toBe('failed');
-    expect(diagnostic.metadata.runId).toBe('run-1');
-    expect(PreviewFailureDiagnosticSchema.parse(diagnostic.content)).toMatchObject({
+    expect(await artifacts.listMetadata('project-1')).toHaveLength(0);
+    expect(failureDiagnostic(events)).toMatchObject({
       sessionId: session.id,
       projectId: 'project-1',
       runId: 'run-1',
       phase: 'health',
       logs: runner.logsPage,
+      command: { command: 'node', args: [] },
+      output: { stdout: '', stderr: 'port never opened' },
     });
   });
 
@@ -421,7 +429,7 @@ describe('PreviewService durable lifecycle', () => {
     ]);
     expect(new Set(events.events.map((event) => event.dedupeKey)).size).toBe(6);
     expect(await artifacts.listMetadata('project-1', `preview-failure-${session.id}`)).toHaveLength(
-      1,
+      0,
     );
   });
 
@@ -515,7 +523,7 @@ describe('PreviewService durable lifecycle', () => {
     ]);
     expect(
       await first.artifacts.listMetadata('project-1', `preview-failure-${session.id}`),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect((await first.sessions.get(session.id))?.session.status).toBe('failed');
   });
 
@@ -558,10 +566,10 @@ describe('PreviewService durable lifecycle', () => {
     });
     expect(
       await built.artifacts.listMetadata('project-1', `preview-failure-${session.id}`),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 
-  it.each(['event', 'logs', 'artifact'] as const)(
+  it.each(['event', 'logs'] as const)(
     'replays incomplete %s evidence before making failure terminal',
     async (failure) => {
       const runner = new FakePreviewRunner();
@@ -569,12 +577,6 @@ describe('PreviewService durable lifecycle', () => {
       const built = await buildService({ runner, config: { startupTimeoutMs: 0 } });
       if (failure === 'event') built.events.failPreviewFailedOnce = true;
       if (failure === 'logs') runner.logsThrows = 1;
-      if (failure === 'artifact') {
-        built.artifacts.onAfterPut = () => {
-          built.artifacts.onAfterPut = undefined;
-          throw new Error('artifact store interrupted after put');
-        };
-      }
 
       await expect(start(built.service)).rejects.toThrow();
       expect((await built.sessions.get('id-1'))?.session.status).toBe('failing');
@@ -595,13 +597,13 @@ describe('PreviewService durable lifecycle', () => {
         1,
       );
       expect(await built.artifacts.listMetadata('project-1', 'preview-failure-id-1')).toHaveLength(
-        1,
+        0,
       );
     },
   );
 
   it.each(['install', 'runtime'] as const)(
-    'redacts secrets from %s failure diagnostics at the artifact boundary',
+    'redacts secrets from %s failure diagnostics at the event boundary',
     async (phase) => {
       const secret = `ghp_${'a'.repeat(24)}`;
       const runner = new FakePreviewRunner();
@@ -628,14 +630,11 @@ describe('PreviewService durable lifecycle', () => {
         runner,
         config: { healthFailureThreshold: 1 },
       });
-      const result = await start(built.service);
+      await start(built.service);
       if (phase === 'runtime') await built.service.reap();
 
-      const artifact = await built.artifacts.getLatest(
-        'project-1',
-        `preview-failure-${result.session.id}`,
-      );
-      const serialized = JSON.stringify(artifact);
+      const event = built.events.events.find((candidate) => candidate.type === 'preview.failed');
+      const serialized = JSON.stringify(event);
       expect(serialized).not.toContain(secret);
       expect(serialized).toContain('[REDACTED]');
     },
@@ -652,12 +651,9 @@ describe('PreviewService durable lifecycle', () => {
     }));
     const built = await buildService({ runner });
 
-    const result = await start(built.service);
+    await start(built.service);
 
-    const diagnostic = PreviewFailureDiagnosticSchema.parse(
-      (await built.artifacts.getLatest('project-1', `preview-failure-${result.session.id}`))
-        ?.content,
-    );
+    const diagnostic = failureDiagnostic(built.events);
     expect(diagnostic.logs.entries).toHaveLength(200);
     expect(diagnostic.logs.entries[0]?.cursor).toBe(51);
     expect(diagnostic.logs.entries.at(-1)?.cursor).toBe(250);
@@ -672,12 +668,9 @@ describe('PreviewService durable lifecycle', () => {
       if (phase === 'prepare') runner.prepareThrows = 1;
       else runner.startThrows = 1;
       const built = await buildService({ runner });
-      built.artifacts.onAfterPut = () => {
-        built.artifacts.onAfterPut = undefined;
-        throw new Error('interrupt after diagnostic');
-      };
+      built.events.failPreviewFailedOnce = true;
 
-      await expect(start(built.service)).rejects.toThrow('interrupt after diagnostic');
+      await expect(start(built.service)).rejects.toThrow('event store unavailable');
       expect((await built.sessions.get('id-1'))?.session).toMatchObject({
         status: 'failing',
         failurePhase: phase,
@@ -696,11 +689,7 @@ describe('PreviewService durable lifecycle', () => {
 
       expect((await built.sessions.get('id-1'))?.session.status).toBe('failed');
       expect(built.events.events.some((event) => event.type === 'preview.reaped')).toBe(false);
-      expect(
-        PreviewFailureDiagnosticSchema.parse(
-          (await built.artifacts.getLatest('project-1', 'preview-failure-id-1'))?.content,
-        ).phase,
-      ).toBe(phase);
+      expect(failureDiagnostic(built.events).phase).toBe(phase);
     },
   );
 
@@ -708,20 +697,13 @@ describe('PreviewService durable lifecycle', () => {
     const runner = new FakePreviewRunner();
     runner.startFailureCode = 'PREVIEW_NO_DEV_COMMAND';
     const built = await buildService({ runner });
-    built.artifacts.onAfterPut = () => {
-      built.artifacts.onAfterPut = undefined;
-      throw new Error('interrupt start evidence');
-    };
+    built.events.failPreviewFailedOnce = true;
 
-    await expect(start(built.service)).rejects.toThrow('interrupt start evidence');
+    await expect(start(built.service)).rejects.toThrow('event store unavailable');
     expect((await built.sessions.get('id-1'))?.session.failurePhase).toBe('start');
     await built.service.reap();
 
-    expect(
-      PreviewFailureDiagnosticSchema.parse(
-        (await built.artifacts.getLatest('project-1', 'preview-failure-id-1'))?.content,
-      ).phase,
-    ).toBe('start');
+    expect(failureDiagnostic(built.events).phase).toBe('start');
   });
 
   it('preserves runtime phase for PREVIEW_START_FAILED across artifact interruption', async () => {
@@ -734,20 +716,13 @@ describe('PreviewService durable lifecycle', () => {
     ];
     const built = await buildService({ runner, config: { healthFailureThreshold: 1 } });
     const { session } = await start(built.service);
-    built.artifacts.onAfterPut = () => {
-      built.artifacts.onAfterPut = undefined;
-      throw new Error('interrupt runtime evidence');
-    };
+    built.events.failPreviewFailedOnce = true;
 
     await expect(built.service.reap()).rejects.toBeInstanceOf(AggregateError);
     expect((await built.sessions.get(session.id))?.session.failurePhase).toBe('runtime');
     await built.service.reap();
 
-    expect(
-      PreviewFailureDiagnosticSchema.parse(
-        (await built.artifacts.getLatest('project-1', `preview-failure-${session.id}`))?.content,
-      ).phase,
-    ).toBe('runtime');
+    expect(failureDiagnostic(built.events).phase).toBe('runtime');
   });
 });
 
