@@ -275,6 +275,83 @@ describe('ProjectService.create workspace boot', () => {
     );
   });
 
+  it('fails provisioning loudly when the preview service itself throws', async () => {
+    const stores = makeStores();
+    const start = vi.fn(async () => {
+      throw new Error('docker daemon unreachable');
+    });
+    const harness = makeHarness({}, stores, {
+      previews: { start, activeForProject: async () => undefined },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    await runWorker(harness);
+
+    expect(await stores.runs.get('id-0002')).toMatchObject({
+      status: 'failed',
+      error: { code: 'PROJECT_PROVISIONING_FAILED', message: 'docker daemon unreachable' },
+    });
+    expect(await harness.events.list('id-0001')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'project.provisioning_failed',
+          data: { diagnostic: 'docker daemon unreachable' },
+        }),
+      ]),
+    );
+  });
+
+  it('boots the workspace only after the generated runtime has provisioned its environment', async () => {
+    const initialize = vi.fn(async () => ENVIRONMENT);
+    const unused = () => Promise.reject(new Error('unused test runtime operation'));
+    const start = vi.fn(async (input: { workspaceRef: PreviewWorkspaceRef; runId?: string }) => ({
+      session: previewSession({
+        workspaceRef: input.workspaceRef,
+        ...(input.runId ? { runId: input.runId } : {}),
+      }),
+      url: 'http://127.0.0.1/preview/preview-1/?token=t',
+    }));
+    const harness = makeHarness({}, makeStores(), {
+      generatedProjectRuntime: {
+        initialize,
+        start: unused,
+        stop: unused,
+        inspect: unused,
+        previewMigration: unused,
+        backupMigration: unused,
+        migrate: unused,
+        seed: unused,
+        health: unused,
+        reset: unused,
+        cleanup: unused,
+        deployFunction: unused,
+        listFunctionVersions: unused,
+        rollbackFunction: unused,
+        invokeFunction: unused,
+      } satisfies GeneratedProjectRuntime,
+      previews: { start, activeForProject: async () => undefined },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    await runWorker(harness);
+
+    // The scaffold's middleware reads the Supabase env that initialize()
+    // writes; booting first would start the app without its credentials.
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(initialize.mock.invocationCallOrder[0]!).toBeLessThan(
+      start.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it('does not boot a second preview when the project already has a live session', async () => {
     const start = vi.fn();
     const harness = makeHarness({}, makeStores(), {

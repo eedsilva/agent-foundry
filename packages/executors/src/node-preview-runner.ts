@@ -140,6 +140,13 @@ export class NodePreviewRunner implements PreviewRunner {
     const entry = this.processes.get(session.id);
     const now = this.clock.now().toISOString();
     if (!entry || entry.exited) {
+      // No local entry ≠ dead: a session booted by another process on this
+      // host (worker-booted, API-reaped) is only reachable through its
+      // persisted port. Probe it before declaring the preview down.
+      const persistedPort = entry ? undefined : session.process?.port;
+      if (persistedPort !== undefined && (await httpProbe(persistedPort, this.healthPath))) {
+        return { state: 'healthy', checkedAt: now, consecutiveFailures: 0 };
+      }
       return {
         state: 'unhealthy',
         checkedAt: now,

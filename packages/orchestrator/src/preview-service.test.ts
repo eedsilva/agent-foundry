@@ -281,6 +281,24 @@ describe('PreviewService durable lifecycle', () => {
     expect(await service.activeForProject('project-1')).toBeUndefined();
   });
 
+  it('activeForProject does not treat a failing session as live', async () => {
+    const { service, sessions } = await buildService();
+    const started = await start(service);
+
+    const record = sessions.records.get(started.session.id)!;
+    sessions.records.set(started.session.id, {
+      ...record,
+      session: {
+        ...record.session,
+        status: 'failing',
+        failurePhase: 'runtime',
+        error: { name: 'PreviewCrashLoopError', code: 'PREVIEW_RESTART_LIMIT', message: 'dying' },
+      },
+    });
+
+    expect(await service.activeForProject('project-1')).toBeUndefined();
+  });
+
   it('waits through a slow startup and stores only the token digest while returning the tokenized shape', async () => {
     const runner = new FakePreviewRunner();
     runner.healthResponses = [
