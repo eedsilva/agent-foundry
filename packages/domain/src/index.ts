@@ -11,3 +11,4 @@ export * from './sandbox-runner.js';
 export * from './workspace-paths.js';
 export * from './tracing.js';
 export * from './telemetry-metrics.js';
+export * from './usage-cost.js';

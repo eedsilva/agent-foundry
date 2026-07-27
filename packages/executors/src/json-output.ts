@@ -81,9 +81,11 @@ export function extractUsage(
   | {
       inputTokens?: number;
       outputTokens?: number;
-      cachedInputTokens?: number;
+      cacheReadInputTokens?: number;
+      cacheWriteInputTokens?: number;
+      cacheWriteInputTtl?: '5m' | '1h';
       quotaUnits?: number;
-      estimatedCostUsd?: number;
+      providerReportedCostUsd?: number;
       sourceQuality?: 'provider-reported';
     }
   | undefined {
@@ -110,18 +112,22 @@ export function extractUsage(
   const output: {
     inputTokens?: number;
     outputTokens?: number;
-    cachedInputTokens?: number;
+    cacheReadInputTokens?: number;
+    cacheWriteInputTokens?: number;
+    cacheWriteInputTtl?: '5m' | '1h';
     quotaUnits?: number;
-    estimatedCostUsd?: number;
+    providerReportedCostUsd?: number;
   } = {};
   if (accumulator.inputTokens !== undefined) output.inputTokens = accumulator.inputTokens;
   if (accumulator.outputTokens !== undefined) output.outputTokens = accumulator.outputTokens;
-  if (accumulator.cachedInputTokens !== undefined) {
-    output.cachedInputTokens = accumulator.cachedInputTokens;
-  }
-  if (accumulator.estimatedCostUsd !== undefined) {
-    output.estimatedCostUsd = accumulator.estimatedCostUsd;
-  }
+  if (accumulator.cacheReadInputTokens !== undefined)
+    output.cacheReadInputTokens = accumulator.cacheReadInputTokens;
+  if (accumulator.cacheWriteInputTokens !== undefined)
+    output.cacheWriteInputTokens = accumulator.cacheWriteInputTokens;
+  if (accumulator.cacheWriteInputTtl !== undefined)
+    output.cacheWriteInputTtl = accumulator.cacheWriteInputTtl;
+  if (accumulator.providerReportedCostUsd !== undefined)
+    output.providerReportedCostUsd = accumulator.providerReportedCostUsd;
   if (accumulator.quotaUnits !== undefined) output.quotaUnits = accumulator.quotaUnits;
   if (Object.keys(output).length === 0) return undefined;
   return { ...output, sourceQuality: 'provider-reported' };
@@ -238,9 +244,11 @@ function extractSingletonClaudeModel(documents: unknown[]): string | undefined {
 interface UsageAccumulator {
   inputTokens?: number;
   outputTokens?: number;
-  cachedInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
+  cacheWriteInputTtl?: '5m' | '1h';
   quotaUnits?: number;
-  estimatedCostUsd?: number;
+  providerReportedCostUsd?: number;
 }
 
 function collectProviderUsage(
@@ -284,6 +292,13 @@ function collectUsage(record: Record<string, unknown>, accumulator: UsageAccumul
     'cachedInputTokens',
     'cached_tokens',
   ]);
+  const cacheWrite = numberFrom(record, [
+    'cache_creation_input_tokens',
+    'cacheCreationInputTokens',
+    'cache_write_input_tokens',
+    'cacheWriteInputTokens',
+  ]);
+  const cacheWriteTtl = stringFrom(record, ['cache_write_ttl', 'cacheWriteTtl']);
   const cost = numberFrom(record, [
     'total_cost_usd',
     'totalCostUsd',
@@ -297,10 +312,16 @@ function collectUsage(record: Record<string, unknown>, accumulator: UsageAccumul
   if (input !== undefined) accumulator.inputTokens = maxDefined(accumulator.inputTokens, input);
   if (output !== undefined) accumulator.outputTokens = maxDefined(accumulator.outputTokens, output);
   if (cached !== undefined) {
-    accumulator.cachedInputTokens = maxDefined(accumulator.cachedInputTokens, cached);
+    accumulator.cacheReadInputTokens = maxDefined(accumulator.cacheReadInputTokens, cached);
+  }
+  if (cacheWrite !== undefined) {
+    accumulator.cacheWriteInputTokens = maxDefined(accumulator.cacheWriteInputTokens, cacheWrite);
+  }
+  if (cacheWriteTtl === '5m' || cacheWriteTtl === '1h') {
+    accumulator.cacheWriteInputTtl = cacheWriteTtl;
   }
   if (cost !== undefined) {
-    accumulator.estimatedCostUsd = maxDefined(accumulator.estimatedCostUsd, cost);
+    accumulator.providerReportedCostUsd = maxDefined(accumulator.providerReportedCostUsd, cost);
   }
 
   const quota = numberFrom(record, ['quota_units', 'quotaUnits', 'quota', 'message_units']);

@@ -90,6 +90,7 @@ import {
   transitionWorkflowRun,
   VersionConflictError,
   withSpan,
+  calculateUsageCostUsd,
 } from '@agent-foundry/domain';
 import type { PreviewService } from './preview-service.js';
 import type { ProjectVersionService } from './project-version-service.js';
@@ -2549,6 +2550,18 @@ export class WorkflowOrchestrator {
       });
     }
     const result = executionResult.agent;
+    const estimatedCostUsd =
+      result.usage && candidate.model.pricing
+        ? calculateUsageCostUsd(result.usage, candidate.model.pricing)
+        : undefined;
+    const usage = result.usage
+      ? {
+          ...result.usage,
+          ...(estimatedCostUsd !== undefined
+            ? { estimatedCostUsd, sourceQuality: 'computed' as const }
+            : {}),
+        }
+      : undefined;
     await this.metrics.record({
       modelId: candidate.model.id,
       taskKind: step.taskKind,
@@ -2561,26 +2574,22 @@ export class WorkflowOrchestrator {
       ...(result.usage?.outputTokens !== undefined
         ? { outputTokens: result.usage.outputTokens }
         : {}),
-      ...(result.usage?.estimatedCostUsd !== undefined
-        ? { estimatedCostUsd: result.usage.estimatedCostUsd }
+      ...(usage?.estimatedCostUsd !== undefined
+        ? { estimatedCostUsd: usage.estimatedCostUsd }
         : {}),
-      ...(result.usage?.cachedInputTokens !== undefined
-        ? { cachedInputTokens: result.usage.cachedInputTokens }
+      ...(usage?.cacheReadInputTokens !== undefined
+        ? { cachedInputTokens: usage.cacheReadInputTokens }
         : {}),
-      ...(result.usage?.quotaUnits !== undefined ? { quotaUnits: result.usage.quotaUnits } : {}),
+      ...(usage?.quotaUnits !== undefined ? { quotaUnits: usage.quotaUnits } : {}),
     });
-    if (result.usage?.inputTokens !== undefined || result.usage?.outputTokens !== undefined) {
+    if (usage?.inputTokens !== undefined || usage?.outputTokens !== undefined) {
       recordTokenUsage({
         modelId: candidate.model.id,
-        ...(result.usage?.inputTokens !== undefined
-          ? { inputTokens: result.usage.inputTokens }
-          : {}),
-        ...(result.usage?.outputTokens !== undefined
-          ? { outputTokens: result.usage.outputTokens }
-          : {}),
+        ...(usage?.inputTokens !== undefined ? { inputTokens: usage.inputTokens } : {}),
+        ...(usage?.outputTokens !== undefined ? { outputTokens: usage.outputTokens } : {}),
       });
     }
-    return result;
+    return { ...result, ...(usage ? { usage } : {}) };
   }
 
   private async loadInputArtifacts(

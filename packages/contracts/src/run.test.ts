@@ -595,6 +595,22 @@ describe('ExecutionUsageSchema (usage report)', () => {
     expect(usage.sourceQuality).toBe('provider-reported');
   });
 
+  it('accepts separate cache read/write usage and provider cost estimates', () => {
+    expect(
+      ExecutionUsageSchema.parse({
+        cacheReadInputTokens: 20,
+        cacheWriteInputTokens: 30,
+        cacheWriteInputTtl: '5m',
+        providerReportedCostUsd: 0.12,
+      }),
+    ).toMatchObject({
+      cacheReadInputTokens: 20,
+      cacheWriteInputTokens: 30,
+      cacheWriteInputTtl: '5m',
+      providerReportedCostUsd: 0.12,
+    });
+  });
+
   it('leaves missing signals undefined, never zero', () => {
     const usage = ExecutionUsageSchema.parse({ inputTokens: 10 });
     expect(usage.outputTokens).toBeUndefined();
