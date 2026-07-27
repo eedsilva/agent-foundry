@@ -552,7 +552,7 @@ describe('runtime composition', () => {
       artifact.metadata.name.startsWith('run-'),
     );
     expect(runArtifact?.content).toMatchObject({
-      harness: { version: '2026.07.26-v6' },
+      harness: { version: '2026.07.27-v7' },
     });
 
     const generatedPackage = JSON.parse(

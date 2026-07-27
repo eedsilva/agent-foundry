@@ -4,6 +4,7 @@
 - Date: 2026-07-25
 - Owners: Core, Integrations
 - Supersedes: ADR 0007's generated-application stack clause only; ADR 0007's local-Supabase-per-project decision remains in force
+- Amended by: ADR 0041 — sign-in/sign-up run as web-tier server actions, so the browser no longer calls Supabase Auth directly and no `browserAllowedOrigins` entry is needed
 
 ## Context
 

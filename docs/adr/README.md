@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0040 preview failures are diagnostic events](0040-preview-failure-events.md).
+Latest: [0041 scaffold auth flows through web-tier server actions](0041-scaffold-auth-flows-through-web-tier-server-actions.md).
