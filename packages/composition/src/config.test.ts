@@ -1,12 +1,23 @@
-import { mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { parse } from 'dotenv';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isLoopbackHost, loadRuntimeConfig } from './config.js';
 
 const root = resolve(import.meta.dirname, '../../..');
 const base = { REPO_ROOT: root, NODE_ENV: 'test' } satisfies NodeJS.ProcessEnv;
+
+it('loads the shipped environment example', () => {
+  const config = loadRuntimeConfig({
+    ...parse(readFileSync(resolve(root, '.env.example'))),
+    ...base,
+    BLOB_SIGNING_SECRET: 'x'.repeat(32),
+  });
+
+  expect(config.gitAuthorEmail).toBe('agent-foundry@localhost');
+});
 
 describe('runtime exposure policy', () => {
   it('binds to loopback by default', () => {

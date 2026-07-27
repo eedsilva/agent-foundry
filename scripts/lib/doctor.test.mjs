@@ -31,11 +31,11 @@ const readyFixtures = {
     },
   },
   agy: {
-    version: { stdout: '1.1.1\n' },
+    version: { stdout: '1.1.6\n' },
     help: {
       stderr: '--new-project --print --print-timeout --log-file --model --sandbox --mode\n',
     },
-    auth: { stdout: 'Gemini 2.5 Pro (pro)\nGemini 2.5 Flash (flash)\n' },
+    auth: { stdout: 'gemini-3.6-flash-high\ngemini-3.1-pro-low\n' },
   },
 };
 
@@ -49,7 +49,7 @@ test('prints ready provider probes as contract-shaped JSON without raw authentic
   assert.deepEqual(output.probes, [
     readyProbe('codex', '0.144.2', 'Codex is ready.'),
     readyProbe('claude', '2.1.207', 'Claude is ready.'),
-    readyProbe('agy', '1.1.1', 'AGY is ready.'),
+    readyProbe('agy', '1.1.6', 'AGY is ready.'),
   ]);
   assert.deepEqual(Object.keys(output.probes[0]).sort(), [
     'capabilities',
@@ -84,6 +84,19 @@ test('classifies missing provider CLIs as unavailable', async (t) => {
         sandbox: false,
       },
     })),
+  );
+});
+
+test('accepts the legacy AGY display-name model list', async (t) => {
+  const providers = structuredClone(readyFixtures);
+  providers.agy.auth = { stdout: 'Gemini 2.5 Pro (pro)\nGemini 2.5 Flash (flash)\n' };
+  const fixture = await createFixture(t, providers);
+  const result = runDoctor(fixture, ['--json']);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'agy').status,
+    'ready',
   );
 });
 

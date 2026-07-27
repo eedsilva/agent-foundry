@@ -221,8 +221,10 @@ function isAgyModelList(output) {
   const lines = output.split(/\r?\n/).map((line) => line.trim());
   return (
     lines.length > 0 &&
-    lines.every((line) =>
-      /^(?=[^()]*\d)[0-9A-Za-z][0-9A-Za-z ._+:/-]* \([0-9A-Za-z][0-9A-Za-z._-]*\)$/.test(line),
+    lines.every(
+      (line) =>
+        /^(?=[^()]*\d)[0-9A-Za-z][0-9A-Za-z ._+:/-]* \([0-9A-Za-z][0-9A-Za-z._-]*\)$/.test(line) ||
+        /^[0-9A-Za-z][0-9A-Za-z._-]*$/.test(line),
     )
   );
 }

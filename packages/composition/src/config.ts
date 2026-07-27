@@ -38,7 +38,8 @@ const ConfigSchema = z
     QUEUE_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
     QUEUE_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
     GIT_AUTHOR_NAME: z.string().default('Agent Foundry'),
-    GIT_AUTHOR_EMAIL: z.string().email().default('agent-foundry@localhost'),
+    // Git accepts host-only identities; this value is passed to git config, not used as an email address.
+    GIT_AUTHOR_EMAIL: z.string().min(1).default('agent-foundry@localhost'),
     PREVIEW_TTL_SECONDS: z.coerce.number().int().positive().default(1_800),
     PREVIEW_STARTUP_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
     PREVIEW_HEALTH_PATH: z.string().startsWith('/').default('/'),
