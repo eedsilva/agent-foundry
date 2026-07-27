@@ -85,6 +85,7 @@ import {
   getValueAtPath,
   isRunControlFlowError,
   isTaskStepId,
+  latestArtifactsByName,
   nextReadyTask,
   normalizeApprovalDecision,
   recordRunDuration,
@@ -886,14 +887,7 @@ export class WorkflowOrchestrator {
     workflow: WorkflowDefinition,
     resumeNodeId?: string,
   ): Promise<RunPauseSnapshot> {
-    const metadata = await this.artifacts.listMetadata(projectId);
-    const latest = new Map<string, { revision: number; sha256: string }>();
-    for (const item of metadata) {
-      const current = latest.get(item.name);
-      if (!current || current.revision < item.revision) {
-        latest.set(item.name, { revision: item.revision, sha256: item.sha256 });
-      }
-    }
+    const latest = latestArtifactsByName(await this.artifacts.listMetadata(projectId));
     return {
       workflowHash: workflowHash(workflow),
       harnessVersion: await this.harness.version(),

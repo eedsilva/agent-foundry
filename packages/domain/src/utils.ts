@@ -1,4 +1,8 @@
-import { EXECUTION_PROTOCOL_VERSION, type ExecutionResult } from '@agent-foundry/contracts';
+import {
+  EXECUTION_PROTOCOL_VERSION,
+  type ArtifactMetadata,
+  type ExecutionResult,
+} from '@agent-foundry/contracts';
 import {
   EmergencyCeilingError,
   ExecutionError,
@@ -22,6 +26,19 @@ export function getValueAtPath(value: unknown, path: string): unknown {
   }
 
   return current;
+}
+
+/**
+ * The newest revision of each artifact name. The pause snapshot and the
+ * resume guard both derive from this; they must agree or resume misfires.
+ */
+export function latestArtifactsByName(metadata: ArtifactMetadata[]): Map<string, ArtifactMetadata> {
+  const latest = new Map<string, ArtifactMetadata>();
+  for (const item of metadata) {
+    const current = latest.get(item.name);
+    if (!current || current.revision < item.revision) latest.set(item.name, item);
+  }
+  return latest;
 }
 
 export function estimateTokens(text: string): number {

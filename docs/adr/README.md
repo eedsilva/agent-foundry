@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0043 `for-each-task` executes the plan's task graph, one commit per task](0043-for-each-task-executes-the-task-graph.md).
+Latest: [0044 the resume guard checks the resuming node's declared inputs, not every artifact](0044-resume-guard-scoped-to-declared-inputs.md).
