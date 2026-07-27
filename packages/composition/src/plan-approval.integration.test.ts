@@ -92,8 +92,10 @@ describe('#297: a minimal no-auth PRD reaches operator approval without a repair
     expect(run.status).toBe('queued');
     expect(await runtime.worker.runOnce()).toBe(true);
 
+    // Past the gate means into the task loop: the implement step now runs once
+    // per planned task, under `implement.<taskId>`.
     const stepIds = (await runtime.stepRuns.list(runId)).map((step) => step.stepId);
-    expect(stepIds).toContain('implement');
+    expect(stepIds.some((stepId) => stepId.startsWith('implement.'))).toBe(true);
   }, 30_000);
 
   it('reject ends the run with the operator reason recorded', async () => {

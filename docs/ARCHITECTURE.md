@@ -313,6 +313,31 @@ Os papéis `architect` e `architecture-reviewer` e as tarefas `architecture` e `
 não existem mais no contrato. `plan-reviewer` sobrevive apenas para `dogfood-plan-v1`, que é o harness
 de benchmark que pontua capacidade de revisão.
 
+## Execução por tarefa (`for-each-task`)
+
+Depois da aprovação do plano, `web-app-v1` executa o grafo de tarefas em vez de construir a aplicação
+inteira num nó só. O nó `task-execution` (`for-each-task`, ADR 0043) declara `taskGraphArtifact`
+(`plan.current`) e um único passo `implement` com `mutatesWorkspace: true`.
+
+- A caminhada é sequencial e respeita as arestas: a próxima tarefa é a primeira, na ordem declarada,
+  cujos bloqueadores já concluíram (`nextReadyTask`, em `packages/domain`). Ordem de declaração não é
+  ordem de execução.
+- Cada tarefa roda sob o id derivado `<implement>.<taskId>`, com título, entregáveis, critério de
+  aceite e dependências anexados às instruções. Isso dá a cada tarefa seu próprio `StepRun`, pasta de
+  request, eventos e commit (`agent(developer): <taskId>: <título>`).
+- `implement.maxAttempts` **é honrado**: cada tentativa é um `StepRun` com `iteration` próprio, cada
+  falha emite `task.failed` com `attempt` e `maxAttempts`, e esgotar o limite falha a tarefa com
+  `Task <id> failed after N attempt(s)` (#211).
+- Uma tentativa falha volta apenas ao checkpoint daquela tentativa: as tarefas já commitadas
+  sobrevivem. Falhar interrompe a caminhada, então dependentes da tarefa falha não rodam.
+- A revisão do grafo lida no início é pinada nas entradas de cada tarefa, então um replay depois de
+  pausa reaproveita as tarefas concluídas e retoma na primeira incompleta.
+- Eventos `task.started` / `task.completed` / `task.failed` carregam `taskId`, `stepId`, `attempt` e o
+  commit, que é o que torna um grafo de 20 tarefas legível na timeline.
+
+Verificação determinística por tarefa (#324) e a asserção de browser por tarefa (#325) ainda não
+entraram no laço.
+
 ## Quality loop
 
 Um `quality-loop` possui:

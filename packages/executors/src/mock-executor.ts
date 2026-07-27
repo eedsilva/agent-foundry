@@ -115,6 +115,10 @@ export class MockAgentExecutor implements AgentExecutor {
         "  if (!input?.name || !input?.prd) throw new Error('name and prd are required');",
         "  return { ...input, status: 'queued' };",
         '}',
+        // Marks which step wrote this file. Without something step-specific, a
+        // second mutating step leaves an identical tree, git finds nothing to
+        // commit, and a per-task commit silently disappears.
+        `export const lastStep = ${JSON.stringify(request.stepId)};`,
         '',
       ].join('\n'),
       'utf8',
