@@ -17,6 +17,7 @@ test.describe('issue radar golden journey', () => {
   let fixture: IssueRadarFixture;
 
   test.beforeAll(async () => {
+    test.setTimeout(SETUP_TIMEOUT_MS);
     fixture = await bootIssueRadarApp('issue-radar-golden-journey-e2e');
   });
 

@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0043 the resume guard checks the resuming node's declared inputs, not every artifact](0043-resume-guard-scoped-to-declared-inputs.md).
+Latest: [0044 the resume guard checks the resuming node's declared inputs, not every artifact](0044-resume-guard-scoped-to-declared-inputs.md).

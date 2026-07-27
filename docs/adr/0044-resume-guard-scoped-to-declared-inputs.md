@@ -1,4 +1,4 @@
-# ADR 0043: the resume guard checks the resuming node's declared inputs, not every artifact
+# ADR 0044: the resume guard checks the resuming node's declared inputs, not every artifact
 
 - Status: Accepted
 - Date: 2026-07-27

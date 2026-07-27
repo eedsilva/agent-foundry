@@ -226,6 +226,24 @@ export class ApprovalRejectedError extends Error {
   }
 }
 
+/**
+ * Errors that are the run's control flow rather than a step's failure: they
+ * park, end or abort the whole run and must reach the run loop unchanged. A
+ * retry loop inside a node has to let them through instead of counting them
+ * as an attempt.
+ */
+export function isRunControlFlowError(error: unknown): boolean {
+  return (
+    error instanceof RunCancelledError ||
+    error instanceof RunPausedError ||
+    error instanceof ApprovalRequiredError ||
+    error instanceof ApprovalRejectedError ||
+    error instanceof EmergencyCeilingError ||
+    error instanceof LeaseLostError ||
+    error instanceof PolicyViolationError
+  );
+}
+
 /** Two different decisions were made for the same approval request. */
 export class ApprovalConflictError extends Error {
   override readonly name = 'ApprovalConflictError';

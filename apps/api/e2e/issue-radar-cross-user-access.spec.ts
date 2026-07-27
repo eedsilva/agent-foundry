@@ -24,6 +24,7 @@ test.describe('issue radar cross-user access', () => {
   let fixture: IssueRadarFixture;
 
   test.beforeAll(async () => {
+    test.setTimeout(SETUP_TIMEOUT_MS);
     fixture = await bootIssueRadarApp('issue-radar-cross-user-e2e');
   });
 

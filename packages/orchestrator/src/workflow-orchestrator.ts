@@ -10,6 +10,8 @@ import type {
   ArtifactReference,
   ExecutableStep,
   ExecutorStreamEvent,
+  ForEachTaskStep,
+  PlanTask,
   PreviewSession,
   Project,
   ProjectEvent,
@@ -81,11 +83,15 @@ import {
   RunPausedError,
   errorMessage,
   getValueAtPath,
+  isRunControlFlowError,
+  isTaskStepId,
   latestArtifactsByName,
+  nextReadyTask,
   normalizeApprovalDecision,
   recordRunDuration,
   recordStepRetry,
   recordTokenUsage,
+  taskStepId,
   transitionStepAttempt,
   transitionStepRun,
   transitionWorkflowRun,
@@ -902,6 +908,8 @@ export class WorkflowOrchestrator {
   ): Promise<StoredArtifact> {
     if (node.type === 'quality-loop')
       return this.executeQualityLoop(project, workflow, node, runId, signal);
+    if (node.type === 'for-each-task')
+      return this.executeForEachTask(project, workflow, node, runId, signal);
     if (node.type === 'approval-gate')
       return this.executeApprovalGate(project, node, runId, signal);
     return this.executeStep(project, workflow, node, runId, node.id, signal);
@@ -1163,6 +1171,8 @@ export class WorkflowOrchestrator {
       }
     }
     if (!qualitySubject && node.check.type === 'agent' && isReviewerRole(node.check.role)) {
+      // The reviewed artifact is the first input carrying a route decision, so
+      // a workflow lists the artifact under review first.
       // ponytail: quality loops normally have few inputs; add a route-decision
       // lookup to ArtifactStore if workflows begin reviewing large artifact sets.
       qualitySubject =
@@ -1238,6 +1248,183 @@ export class WorkflowOrchestrator {
   private conditionApproved(artifact: StoredArtifact, node: QualityLoopStep): boolean {
     if (artifact.metadata.name !== node.approval.artifact) return false;
     return getValueAtPath(artifact.content, node.approval.path) === node.approval.equals;
+  }
+
+  private async executeForEachTask(
+    project: Project,
+    workflow: WorkflowDefinition,
+    node: ForEachTaskStep,
+    runId: string,
+    signal: AbortSignal,
+  ): Promise<StoredArtifact> {
+    return withSpan(
+      'foundry.step',
+      {
+        'foundry.step.node_id': node.id,
+        'foundry.step.id': node.id,
+        'foundry.step.type': 'for-each-task',
+      },
+      () => this.executeForEachTaskTraced(project, workflow, node, runId, signal),
+    );
+  }
+
+  /**
+   * Walks the task graph one task at a time, in dependency order, running the
+   * node's implement step per task. The graph revision read here is pinned
+   * into every task's inputs, so a replay after a pause reuses the exact same
+   * step identities and resumes at the first task that has not completed.
+   */
+  private async executeForEachTaskTraced(
+    project: Project,
+    workflow: WorkflowDefinition,
+    node: ForEachTaskStep,
+    runId: string,
+    signal: AbortSignal,
+  ): Promise<StoredArtifact> {
+    const graphArtifact = await this.artifacts.getLatest(project.id, node.taskGraphArtifact);
+    if (!graphArtifact) {
+      throw new NotFoundError(`Missing input artifact(s): ${node.taskGraphArtifact}`);
+    }
+    const parsed = TaskGraphArtifactSchema.safeParse(graphArtifact.content);
+    if (!parsed.success) {
+      throw new ExecutionError(
+        `Node ${node.id} cannot walk ${node.taskGraphArtifact}: ${formatZodIssues(parsed.error, node.taskGraphArtifact)}`,
+      );
+    }
+    const tasks = parsed.data.data.tasks;
+    // Every task reads the same input revisions — resolved once, before the
+    // first task runs. Re-reading them per task would let a sibling write
+    // change a later task's inputs, and with them its step identity.
+    const pinnedInputs = (
+      await this.loadInputArtifacts(project.id, node.implement.inputArtifacts, [
+        artifactReference(graphArtifact),
+      ])
+    ).map(artifactReference);
+    const completed = new Set<string>();
+    let latest: StoredArtifact | null = null;
+    while (completed.size < tasks.length) {
+      const task = nextReadyTask(tasks, completed);
+      if (!task) {
+        throw new ExecutionError(
+          `Node ${node.id} has no runnable task left in ${node.taskGraphArtifact} with ${completed.size}/${tasks.length} complete`,
+        );
+      }
+      latest = await this.executeTask(project, workflow, node, task, runId, signal, pinnedInputs);
+      completed.add(task.id);
+    }
+    if (!latest) throw new ExecutionError(`Node ${node.id} walked an empty task graph`);
+    return latest;
+  }
+
+  /**
+   * One task: bounded attempts of the implement step, then its own commit.
+   * A failing attempt only rolls back to the checkpoint that attempt took, so
+   * every task committed before it survives — which is what makes a failed run
+   * cost one task instead of the whole graph.
+   */
+  private async executeTask(
+    project: Project,
+    workflow: WorkflowDefinition,
+    node: ForEachTaskStep,
+    task: PlanTask,
+    runId: string,
+    signal: AbortSignal,
+    pinnedInputs: ArtifactReference[],
+  ): Promise<StoredArtifact> {
+    const step = taskImplementStep(node.implement, task);
+    const maxAttempts = node.implement.maxAttempts;
+    await this.emit(project.id, 'task.started', `${task.id}: ${task.title}`, {
+      nodeId: node.id,
+      runId,
+      dedupeKey: `${runId}:task:${node.id}:${task.id}:started`,
+      data: {
+        taskId: task.id,
+        title: task.title,
+        stepId: step.id,
+        dependsOn: task.dependsOn,
+        maxAttempts,
+      },
+    });
+    const startAttempt = await this.firstTaskAttempt(runId, node.id, step.id);
+    let lastError: unknown;
+    for (let attempt = startAttempt; attempt <= maxAttempts; attempt += 1) {
+      await this.assertExecutionMayContinue(runId, signal);
+      try {
+        const artifact = await this.executeStep(
+          project,
+          workflow,
+          step,
+          runId,
+          node.id,
+          signal,
+          attempt,
+          pinnedInputs,
+        );
+        // The attempt that produced the artifact is the authority on what this
+        // task committed; a task that changed nothing has no commit at all.
+        const commit = await this.commitForArtifact(runId, artifact);
+        const outcome = attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : '';
+        await this.emit(project.id, 'task.completed', `${task.id}: ${task.title}${outcome}`, {
+          nodeId: node.id,
+          runId,
+          dedupeKey: `${runId}:task:${node.id}:${task.id}:completed`,
+          data: {
+            taskId: task.id,
+            stepId: step.id,
+            attempt,
+            maxAttempts,
+            ...(commit ? { commit } : {}),
+            artifact: artifact.metadata.name,
+            revision: artifact.metadata.revision,
+          },
+        });
+        return artifact;
+      } catch (error) {
+        if (!isTaskAttemptFailure(error, signal)) throw error;
+        lastError = error;
+        await this.emit(
+          project.id,
+          'task.failed',
+          `${task.id} attempt ${attempt}/${maxAttempts} failed: ${errorMessage(error)}`,
+          {
+            nodeId: node.id,
+            runId,
+            dedupeKey: `${runId}:task:${node.id}:${task.id}:${attempt}:failed`,
+            data: { taskId: task.id, stepId: step.id, attempt, maxAttempts },
+          },
+        );
+      }
+    }
+    throw new ExecutionError(
+      `Task ${task.id} failed after ${maxAttempts} attempt(s): ${errorMessage(lastError)}`,
+    );
+  }
+
+  /** The commit the attempt behind this artifact recorded, if it made one. */
+  private async commitForArtifact(
+    runId: string,
+    artifact: StoredArtifact,
+  ): Promise<string | undefined> {
+    const { stepRunId, attemptId } = artifact.metadata;
+    if (!stepRunId || !attemptId) return undefined;
+    return (await this.stepAttempts.get(runId, stepRunId, attemptId))?.commit;
+  }
+
+  /**
+   * Which attempt a replayed walk starts this task on. A completed attempt is
+   * replayed at its own number so `executeStep` reuses it instead of
+   * implementing and committing the task a second time; otherwise the walk
+   * carries on after the attempts that already failed, so a pause never
+   * refunds the bound.
+   */
+  private async firstTaskAttempt(runId: string, nodeId: string, stepId: string): Promise<number> {
+    const previous = (await this.stepRuns.list(runId)).filter(
+      (candidate) =>
+        candidate.nodeId === nodeId && candidate.stepId === stepId && !candidate.invalidatedAt,
+    );
+    const completed = previous.find((candidate) => candidate.status === 'completed');
+    if (completed) return completed.iteration ?? 1;
+    return Math.max(0, ...previous.map((candidate) => candidate.iteration ?? 0)) + 1;
   }
 
   private async executeStep(
@@ -2456,7 +2643,9 @@ export class WorkflowOrchestrator {
         (item) =>
           item.scope.kind === 'step' &&
           item.scope.nodeId === nodeId &&
-          item.scope.stepId === stepId,
+          // A pin on a for-each-task node's implement step covers the per-task
+          // ids it runs under; the operator pins the id the workflow declares.
+          isTaskStepId(stepId, item.scope.stepId),
       ) ?? overrides.find((item) => item.scope.kind === 'run');
     if (!match) return undefined;
     return {
@@ -2996,6 +3185,37 @@ function workflowUsesBrowserPlan(workflow: WorkflowDefinition, artifactName: str
       (step) => step?.type === 'verify' && step.browserTestPlanArtifact === artifactName,
     );
   });
+}
+
+/**
+ * The implement step specialised to one task. The per-task id gives each task
+ * its own StepRun, commit message, request folder and timeline entries; the
+ * task's contract is appended to the instructions the workflow author wrote.
+ */
+function taskImplementStep(implement: AgentStep, task: PlanTask): AgentStep {
+  return {
+    ...implement,
+    id: taskStepId(implement.id, task.id),
+    title: `${task.id}: ${task.title}`,
+    instructions: [
+      implement.instructions,
+      '',
+      `Task ${task.id}: ${task.title}`,
+      `Deliverables: ${task.deliverables.join(', ')}`,
+      `Acceptance check: ${task.acceptanceCheck}`,
+      ...(task.dependsOn.length > 0 ? [`Depends on: ${task.dependsOn.join(', ')}`] : []),
+      'Implement only this task. Earlier tasks are already implemented and committed in the workspace.',
+    ].join('\n'),
+  };
+}
+
+/**
+ * Whether a task attempt may be retried: anything that is not the run's own
+ * control flow (`isRunControlFlowError`, which lists those classes next to
+ * their definitions) and not a cancellation the signal reports on its own.
+ */
+function isTaskAttemptFailure(error: unknown, signal: AbortSignal): boolean {
+  return !isCancellation(error, signal) && !isRunControlFlowError(error);
 }
 
 function throwIfCancelled(signal: AbortSignal, runId: string): void {

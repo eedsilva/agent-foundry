@@ -59,6 +59,7 @@ import {
   ResumeBlockedError,
   ValidationError,
   VersionConflictError,
+  isTaskStepId,
   normalizeApprovalDecision,
   redactString,
   traceContextField,
@@ -1133,6 +1134,8 @@ function nodeInputArtifactNames(node: WorkflowNode): string[] {
         ...node.repair.inputArtifacts,
         node.approval.artifact,
       ];
+    case 'for-each-task':
+      return [node.taskGraphArtifact, ...node.implement.inputArtifacts];
     default:
       return node satisfies never;
   }
@@ -1145,7 +1148,10 @@ function isAgentStep(workflow: WorkflowDefinition, nodeId: string, stepId: strin
     (node?.type === 'quality-loop' &&
       [node.setup, node.check, node.repair].some(
         (step) => step?.type === 'agent' && step.id === stepId,
-      ))
+      )) ||
+    // A for-each-task node runs its implement step once per task under the
+    // per-task id `<implement>.<taskId>`, so both forms are pinnable.
+    (node?.type === 'for-each-task' && isTaskStepId(stepId, node.implement.id))
   );
 }
 

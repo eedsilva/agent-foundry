@@ -67,6 +67,17 @@ export const retryMode = (value: unknown): RetryStepRequest['mode'] =>
 export function agentStepTargets(workflow: WorkflowDefinition) {
   return workflow.nodes.flatMap((node) => {
     if (node.type === 'agent') return [{ nodeId: node.id, stepId: node.id, label: node.title }];
+    // The pin targets the declared implement step; the engine applies it to
+    // every per-task run of it.
+    if (node.type === 'for-each-task') {
+      return [
+        {
+          nodeId: node.id,
+          stepId: node.implement.id,
+          label: `${node.title} / ${node.implement.title}`,
+        },
+      ];
+    }
     if (node.type !== 'quality-loop') return [];
     return [node.setup, node.check, node.repair]
       .filter((step) => step?.type === 'agent')

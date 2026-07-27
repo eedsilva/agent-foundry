@@ -34,18 +34,20 @@ nodes:
     actions: [approve, reject]
     onReject: end
 
-  - id: implementation-gate
-    type: quality-loop
-    title: Implementation quality gate
-    maxIterations: 3
-    setup:
+  # One task at a time, in dependency order, each with its own commit. A failing
+  # task costs that task; the tasks committed before it survive.
+  - id: task-execution
+    type: for-each-task
+    title: Implement the approved task graph
+    taskGraphArtifact: plan.current
+    implement:
       id: implement
       type: agent
       role: developer
       taskKind: implementation
-      title: Implement the approved plan
+      title: Implement one planned task
       instructions: >-
-        Inspect the workspace, then implement a coherent working vertical slice. Include configuration,
+        Inspect the workspace, then implement exactly the task described below. Include configuration,
         migrations or schemas when needed, meaningful tests, error handling, and developer documentation.
         Run the relevant checks. Do not replace real behavior with placeholders merely to make tests green.
       inputArtifacts: [prd, plan.current]
@@ -56,7 +58,13 @@ nodes:
         complexity: 5
         risk: 4
         preferredTags: [coding, repository, tool-use]
-      maxAttempts: 3
+      # Honoured: attempts per task before the task — and the run — fails.
+      maxAttempts: 2
+
+  - id: implementation-gate
+    type: quality-loop
+    title: Implementation quality gate
+    maxIterations: 3
     check:
       id: review-code
       type: agent
@@ -67,7 +75,9 @@ nodes:
         Inspect the actual diff and repository, not only the implementation report. Check correctness,
         completeness, security, maintainability, data integrity, tests, failure behavior, and divergence from
         the approved plan. Approve only if no material defect remains. Put the verdict in approved.
-      inputArtifacts: [prd, plan.current, implementation.report]
+      # The artifact under review comes first: the quality loop attributes its
+      # verdict to the first input carrying a route decision.
+      inputArtifacts: [implementation.report, prd, plan.current]
       outputArtifact: code.review
       mutatesWorkspace: false
       harnessTags: [review, coding, security]
