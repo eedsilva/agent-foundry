@@ -222,10 +222,7 @@ export class ApprovalRejectedError extends Error {
     readonly decidedBy: string,
     readonly note?: string,
   ) {
-    super(
-      `Workflow run ${runId} was rejected at ${nodeId} by ${decidedBy}.` +
-        (note ? ` Reason: ${note}` : ''),
-    );
+    super(`Workflow run ${runId} was rejected at ${nodeId} by ${decidedBy}.`);
   }
 }
 

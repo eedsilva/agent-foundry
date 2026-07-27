@@ -15,9 +15,6 @@ nodes:
       Analyze the PRD, identify missing or contradictory requirements, define scope boundaries,
       user journeys, acceptance criteria, dependencies, milestones, and a dependency-aware task graph.
       Optimize for a small shippable first version rather than an imaginary perfect platform.
-      The PRD's non-goals are binding: never add a requirement it excludes. When a decision is the
-      operator's to make, record it as an open question in the plan and keep planning around it —
-      the operator reads this plan before approving it.
     inputArtifacts: [prd]
     outputArtifact: plan.current
     outputContract: task-graph

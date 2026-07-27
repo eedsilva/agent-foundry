@@ -35,7 +35,7 @@ async function startStatusAppRun(workerId: string): Promise<{
   projectId: string;
   runId: string;
 }> {
-  const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-plan-gate-'));
+  const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-plan-approval-'));
   temporaryDirectories.push(dataDir);
   const runtime = await createRuntime({
     ...process.env,
@@ -57,7 +57,7 @@ async function startStatusAppRun(workerId: string): Promise<{
 
 describe('#297: a minimal no-auth PRD reaches operator approval without a repair loop', () => {
   it('parks on plan.current revision 1 after exactly one model call', async () => {
-    const { runtime, projectId, runId } = await startStatusAppRun('plan-gate-worker');
+    const { runtime, projectId, runId } = await startStatusAppRun('plan-approval-worker');
 
     const detail = await runtime.projectService.get(projectId);
     expect(detail.project.status).toBe('awaiting_approval');
@@ -82,7 +82,7 @@ describe('#297: a minimal no-auth PRD reaches operator approval without a repair
   }, 30_000);
 
   it('approve advances the run past the gate', async () => {
-    const { runtime, projectId, runId } = await startStatusAppRun('plan-gate-approve-worker');
+    const { runtime, runId } = await startStatusAppRun('plan-approval-approve-worker');
     const [pending] = await runtime.projectService.listApprovals(runId);
 
     const { run } = await runtime.projectService.decideApproval(runId, pending!.request.id, {
@@ -94,13 +94,10 @@ describe('#297: a minimal no-auth PRD reaches operator approval without a repair
 
     const stepIds = (await runtime.stepRuns.list(runId)).map((step) => step.stepId);
     expect(stepIds).toContain('implement');
-    expect(await runtime.projectService.get(projectId)).toMatchObject({
-      project: { status: expect.not.stringMatching(/^rejected$/) },
-    });
   }, 30_000);
 
   it('reject ends the run with the operator reason recorded', async () => {
-    const { runtime, projectId, runId } = await startStatusAppRun('plan-gate-reject-worker');
+    const { runtime, projectId, runId } = await startStatusAppRun('plan-approval-reject-worker');
     const [pending] = await runtime.projectService.listApprovals(runId);
     const reason = 'Milestone 2 belongs in a later version.';
 

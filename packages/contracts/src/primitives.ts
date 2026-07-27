@@ -22,14 +22,18 @@ export const ActorRefSchema = z
   .strict();
 export type ActorRef = z.infer<typeof ActorRefSchema>;
 
-// No architect / architecture-reviewer: ADR 0040 deleted the architecture gate,
-// and no workflow may declare a role the harness has no fragment for.
-// `plan-reviewer` survives only because `dogfood-plan-v1` benchmarks review
-// quality with it; `web-app-v1` no longer runs any blocking model reviewer of
-// another model's prose.
+// `architect`, `architecture-reviewer`, `architecture` and `architecture-review`
+// are retired: ADR 0040 deleted the architecture gate, and `WorkflowAgentRoleSchema`
+// / `WorkflowTaskKindSchema` below stop any workflow from declaring them. They stay
+// in these enums because persisted metrics, quality observations and route
+// decisions written before ADR 0040 carry them, and those read paths parse a whole
+// file at once (`MetricsFileSchema.parse`, `QualityObservationFileSchema.parse`) --
+// one legacy row would otherwise make the entire store unreadable.
 export const AgentRoleSchema = z.enum([
   'planner',
   'plan-reviewer',
+  'architect',
+  'architecture-reviewer',
   'developer',
   'code-reviewer',
   'fixer',
@@ -40,12 +44,31 @@ export type AgentRole = z.infer<typeof AgentRoleSchema>;
 export const TaskKindSchema = z.enum([
   'planning',
   'plan-review',
+  'architecture',
+  'architecture-review',
   'implementation',
   'code-review',
   'repair',
   'verification',
 ]);
 export type TaskKind = z.infer<typeof TaskKindSchema>;
+
+/**
+ * What a workflow step may declare today. `plan-reviewer` survives only because
+ * `dogfood-plan-v1` benchmarks review quality with it; no product workflow runs a
+ * blocking model reviewer of another model's prose.
+ */
+export const WorkflowAgentRoleSchema = AgentRoleSchema.exclude([
+  'architect',
+  'architecture-reviewer',
+]);
+export type WorkflowAgentRole = z.infer<typeof WorkflowAgentRoleSchema>;
+
+export const WorkflowTaskKindSchema = TaskKindSchema.exclude([
+  'architecture',
+  'architecture-review',
+]);
+export type WorkflowTaskKind = z.infer<typeof WorkflowTaskKindSchema>;
 
 export const ProjectStatusSchema = z.enum([
   'queued',

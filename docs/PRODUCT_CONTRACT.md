@@ -11,7 +11,7 @@
 ```text
 idea / prompt / optional reference image
 -> clarification
--> full multi-agent plan, architecture, build, review, repair and verification
+-> multi-agent plan, operator approval, build, review, repair and verification
 -> local Next.js + Supabase application
 -> conversational and visual iteration
 -> immutable local Git version
@@ -30,7 +30,7 @@ Supporting metrics include time to accepted version, human intervention minutes,
 V1 ships only when the Issue Radar golden application proves, end to end:
 
 - chat-first creation from a short idea;
-- the full planner/reviewer/architect/developer/reviewer/verifier/release pipeline;
+- the planner / operator-approval / developer / reviewer / verifier / release pipeline;
 - evidence-based model routing across Codex, Claude and AGY (the existing router; learned adaptive routing remains exploratory v0.9);
 - a generated Next.js, TypeScript, Tailwind CSS and shadcn/ui repository;
 - an isolated local Supabase Docker stack;

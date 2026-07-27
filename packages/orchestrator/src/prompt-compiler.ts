@@ -2,7 +2,14 @@ import type { AgentStep, StoredArtifact, TaskProfile } from '@agent-foundry/cont
 import type { HarnessSelection } from '@agent-foundry/domain';
 import { stableJson } from '@agent-foundry/domain';
 
-const REVIEWER_ROLES = new Set(['plan-reviewer', 'code-reviewer']);
+/**
+ * Roles whose artifact is a verdict on another role's work. Shared with the
+ * orchestrator's quality attribution so the two cannot drift when a reviewer
+ * role is added or, as in ADR 0040, deleted.
+ */
+export function isReviewerRole(role: AgentStep['role']): boolean {
+  return role === 'plan-reviewer' || role === 'code-reviewer';
+}
 
 export function compileRequestMarkdown(input: {
   projectId: string;
@@ -19,7 +26,7 @@ export function compileRequestMarkdown(input: {
 }): string {
   const toolPolicy =
     input.toolPolicy ?? (input.step.mutatesWorkspace ? 'workspace-write' : 'read-only');
-  const blindReview = REVIEWER_ROLES.has(input.step.role);
+  const blindReview = isReviewerRole(input.step.role);
   const artifactSections = input.artifacts.length
     ? input.artifacts
         .map(

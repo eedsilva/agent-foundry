@@ -15,9 +15,9 @@ export const TaskFeatureSchema = z.enum([
 ]);
 export type TaskFeature = z.infer<typeof TaskFeatureSchema>;
 
-// `architecture` and `review/architecture` are no longer reachable from any
-// TaskKind (ADR 0040) but stay in the enum: persisted quality observations and
-// router metrics from earlier runs carry them and must keep parsing.
+// `architecture` and `review/architecture` are unreachable from any workflow
+// (ADR 0040) but stay in the enum: persisted quality observations and router
+// metrics from earlier runs carry them and must keep parsing.
 export const TaskCategorySchema = z.enum([
   'planning',
   'architecture',
@@ -46,6 +46,11 @@ export function legacyTaskCategory(taskKind: TaskKind): TaskCategory {
       return 'planning';
     case 'plan-review':
       return 'review/plan';
+    // Retired by ADR 0040; reachable only from records written before it.
+    case 'architecture':
+      return 'architecture';
+    case 'architecture-review':
+      return 'review/architecture';
     case 'implementation':
       return 'implementation/general';
     case 'code-review':

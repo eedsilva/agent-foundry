@@ -100,7 +100,7 @@ import {
   stepIdempotencyKey,
   workflowHash,
 } from './idempotency.js';
-import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
+import { compileCliPrompt, compileRequestMarkdown, isReviewerRole } from './prompt-compiler.js';
 import {
   validateBrowserVerificationReportBinding,
   type BrowserVerificationCoordinator,
@@ -1090,7 +1090,11 @@ export class WorkflowOrchestrator {
     await this.emit(project.id, 'run.approval_decided', `${node.title} approved.`, {
       nodeId: node.id,
       runId,
-      data: { action: decision.action, decidedBy: decision.decidedBy },
+      data: {
+        action: decision.action,
+        decidedBy: decision.decidedBy,
+        ...(decision.note ? { note: decision.note } : {}),
+      },
     });
     throwIfCancelled(signal, runId);
     await this.emitArtifactCreated(project.id, artifact, node.id, runId);
@@ -2984,10 +2988,6 @@ function workflowUsesBrowserPlan(workflow: WorkflowDefinition, artifactName: str
       (step) => step?.type === 'verify' && step.browserTestPlanArtifact === artifactName,
     );
   });
-}
-
-function isReviewerRole(role: AgentStep['role']): boolean {
-  return role === 'plan-reviewer' || role === 'code-reviewer';
 }
 
 function throwIfCancelled(signal: AbortSignal, runId: string): void {

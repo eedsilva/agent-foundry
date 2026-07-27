@@ -338,6 +338,11 @@ function taskCapability(scores: CapabilityScores, taskKind: TaskKind): number {
       return scores.planning;
     case 'plan-review':
       return 0.65 * scores.review + 0.35 * scores.planning;
+    // Retired by ADR 0040: no workflow can declare these, so routing never sees
+    // them. Present only because persisted route decisions still carry them.
+    case 'architecture':
+    case 'architecture-review':
+      return scores.review;
     case 'implementation':
       return scores.coding;
     case 'code-review':

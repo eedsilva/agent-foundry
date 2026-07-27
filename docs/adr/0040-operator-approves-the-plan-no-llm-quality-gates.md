@@ -43,9 +43,13 @@ only genuinely per-project design work is the data model, which belongs in tasks
 - `plan-approval` declares `actions: [approve, reject]` and `onReject: end`. Reject terminates the run
   as `rejected`; the operator's note is carried on the terminal `run.rejected` event as well as on the
   immutable `ApprovalDecision`, because a rejected run has no later step to hold it.
-- The `architect` and `architecture-reviewer` roles and the `architecture` and `architecture-review`
-  task kinds are removed from the contracts, and their harness fragments are deleted. A workflow can no
-  longer declare a role the harness has no prompt for.
+- `WorkflowAgentRoleSchema` / `WorkflowTaskKindSchema` exclude `architect`, `architecture-reviewer`,
+  `architecture` and `architecture-review`, so a workflow step can no longer declare a role the
+  harness has no prompt for, and their harness fragments are deleted. The values stay in
+  `AgentRoleSchema` / `TaskKindSchema` (as `architecture` stays in `TaskCategorySchema`) because
+  metrics, quality observations and route decisions written before this ADR carry them, and those
+  read paths parse a whole file at once — dropping the values would make one legacy row turn the
+  entire store unreadable.
 - `plan-reviewer` / `plan-review` survive **only** for `dogfood-plan-v1`, which is the benchmark
   harness that scores a model's review ability and gates on it (`benchmarks/cases/review-score-router.json`).
   No product workflow runs a blocking model reviewer of another model's prose.
@@ -55,15 +59,14 @@ only genuinely per-project design work is the data model, which belongs in tasks
 
 ## Consequences
 
-- #297 is closed. `packages/composition/src/plan-gate.integration.test.ts` drives its exact PRD shape
+- #297 is closed. `packages/composition/src/plan-approval.integration.test.ts` drives its exact PRD shape
   through the real runtime and asserts: two step runs (`plan`, `plan-approval`), one agent attempt,
   `plan.current` at revision 1, approve advancing to `implement`, and reject ending the run with the
-  reason recorded. The failure mode is now a test, not a manual check.
-- `TaskCategorySchema` keeps `architecture` and `review/architecture` even though no `TaskKind` can
-  reach them: persisted quality observations and router metrics from earlier runs carry those values
-  and must keep parsing.
+  reason recorded. `packages/contracts/src/primitives.test.ts` pins the retired-value split in both
+  directions. The failure mode is now a test, not a manual check.
 - Every mock-mode run through `web-app-v1` now passes two operator gates rather than one, so
-  `approveDiffGate` generalised to `approveGate(runtime, runId, nodeId)`.
+  `approveDiffGate` became `approveAllGates(runtime, runId)`, which drives whatever gates the
+  workflow declares.
 - An **advisory, non-blocking** plan review may return later, once the loop has run often enough to
   show what the operator consistently misses. It is deliberately not in this change: a smaller version
   of the deleted gate is still the deleted gate.

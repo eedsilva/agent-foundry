@@ -20,7 +20,7 @@ import {
   FileQualityObservationRepository,
 } from '@agent-foundry/persistence';
 import { createRuntime, type Runtime } from './runtime.js';
-import { approveGate } from './testing-helpers.js';
+import { approveAllGates } from './testing-helpers.js';
 
 const RESTART_APPROVAL_WORKFLOW = `
 schemaVersion: '1'
@@ -444,10 +444,7 @@ describe('runtime composition', () => {
     const runId = project.currentRunId;
 
     expect(await runtime.worker.runOnce()).toBe(true);
-    await approveGate(runtime, runId, 'plan-approval');
-    expect(await runtime.worker.runOnce()).toBe(true);
-    await approveGate(runtime, runId, 'diff-approval');
-    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, runId);
 
     const detail = await runtime.projectService.get(project.id);
     expect(detail.project.status).toBe('completed');
@@ -602,10 +599,7 @@ describe('runtime composition', () => {
     const runId = project.currentRunId;
 
     expect(await runtime.worker.runOnce()).toBe(true);
-    await approveGate(runtime, runId, 'plan-approval');
-    expect(await runtime.worker.runOnce()).toBe(true);
-    await approveGate(runtime, runId, 'diff-approval');
-    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, runId);
 
     const detail = await runtime.projectService.get(project.id);
     expect(detail.project.status).toBe('completed');
@@ -733,10 +727,7 @@ describe('runtime composition', () => {
     const afterFirstRun = await runtime.projects.get('legacy-project');
     if (!afterFirstRun?.currentRunId) throw new Error('Expected a persisted workflow run');
     const runId = afterFirstRun.currentRunId;
-    await approveGate(runtime, runId, 'plan-approval');
-    expect(await runtime.worker.runOnce()).toBe(true);
-    await approveGate(runtime, runId, 'diff-approval');
-    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, runId);
 
     const project = await runtime.projects.get('legacy-project');
     expect(project).toMatchObject({ status: 'completed' });
