@@ -82,7 +82,7 @@ import { ProjectService } from '../project-service.js';
 import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
 import type { ProjectVersionService } from '../project-version-service.js';
 import type { QualityObservationService } from '../quality-observation-service.js';
-import { WorkflowOrchestrator } from '../workflow-orchestrator.js';
+import { WorkflowOrchestrator, type WorkspacePreviewBooter } from '../workflow-orchestrator.js';
 
 const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   schemaVersion: '1',
@@ -1169,6 +1169,7 @@ export function makeHarness(
     qualityObservationService?: QualityObservationService;
     decisionLog?: RouterDecisionLogRepository;
     generatedProjectRuntime?: GeneratedProjectRuntime;
+    previews?: WorkspacePreviewBooter;
     versions?: ProjectVersionService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
   } = {},
@@ -1353,6 +1354,7 @@ export function makeHarness(
     undefined,
     opts.decisionLog,
     opts.generatedProjectRuntime,
+    opts.previews,
   );
   const service = new ProjectService(
     stores.projects,

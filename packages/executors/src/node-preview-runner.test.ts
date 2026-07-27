@@ -1,6 +1,7 @@
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createServer as createHttpServer } from 'node:http';
 import { connect, createServer } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -267,6 +268,9 @@ describe('NodePreviewRunner', () => {
       expect(env.STRIPE_SECRET_KEY).toBe('sk-injected-for-test');
       expect(env.DATABASE_URL).toBeUndefined();
       expect(env.PORT).toBe(String(port));
+      // The api tier's own reservation: always present, never the web port.
+      expect(env.API_PORT).toMatch(/^\d+$/);
+      expect(env.API_PORT).not.toBe(env.PORT);
     } finally {
       if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = originalDatabaseUrl;
@@ -348,6 +352,64 @@ describe('NodePreviewRunner', () => {
     await expect(runner.health(session)).resolves.toMatchObject({ state: 'unhealthy' });
     await runner.stop(session);
   }, 10_000);
+
+  it('keeps the health probe on the browsable tier when the api tier announces its own port', async () => {
+    const webPort = await reservePreviewPort();
+    let apiPort = webPort;
+    for (let attempt = 0; attempt < 10 && apiPort === webPort; attempt += 1) {
+      apiPort = await reservePreviewPort();
+    }
+    expect(apiPort).not.toBe(webPort);
+    const ports = [webPort, apiPort];
+    const runner = new NodePreviewRunner({
+      startupTimeoutMs: 5_000,
+      reservePort: async () => ports.shift()!,
+      logRepository: new InMemoryPreviewLogRepository(),
+    });
+    let session = await newSession('sess-api-announce');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT, '--announce-api'] },
+      },
+    };
+    session = await startTracked(runner, session);
+
+    expect(session.process!.port).toBe(webPort);
+    await expect(runner.health(session)).resolves.toMatchObject({ state: 'healthy' });
+    await runner.stop(session);
+  });
+
+  it('probes the persisted port for a session this process never spawned', async () => {
+    // A worker-booted session health-checked from the API process: no
+    // in-memory entry, only the persisted port. Alive upstream must not be
+    // reported as 'process not running' (that verdict restart-churns it).
+    const upstream = createHttpServer((_request, response) => response.end('ok'));
+    const port = await new Promise<number>((resolvePort) => {
+      upstream.listen(0, '127.0.0.1', () => {
+        resolvePort((upstream.address() as { port: number }).port);
+      });
+    });
+    try {
+      const runner = new NodePreviewRunner({});
+      const session: PreviewSession = {
+        ...(await newSession('sess-cross-process')),
+        process: { command: 'pnpm', args: ['run', 'dev'], pid: 999_999, port },
+      };
+
+      await expect(runner.health(session)).resolves.toMatchObject({ state: 'healthy' });
+
+      await new Promise((resolveClose) => upstream.close(resolveClose));
+      await expect(runner.health(session)).resolves.toMatchObject({
+        state: 'unhealthy',
+        detail: 'process not running',
+      });
+    } finally {
+      upstream.close();
+    }
+  });
 
   it('uses a port detected after startup when checking health', async () => {
     const reservedPort = await reservePreviewPort();

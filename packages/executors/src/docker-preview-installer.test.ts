@@ -71,6 +71,36 @@ describe('DockerPreviewInstaller', () => {
     expect(runner.destroy).toHaveBeenCalledWith({ id: 'sandbox-1' });
   });
 
+  it('runs pnpm through corepack with a writable HOME — the image ships no pnpm binary', async () => {
+    const runner = fakeRunner();
+    const installer = new DockerPreviewInstaller({ runner });
+
+    const outcome = await installer.install({
+      plan: {
+        packageManager: 'pnpm',
+        install: { ok: true, command: 'pnpm', args: ['install', '--frozen-lockfile'] },
+        build: { ok: false, reason: 'not needed' },
+        dev: { ok: false, reason: 'not needed' },
+        detectedAt: '2026-07-22T12:00:00.000Z',
+      },
+      workspacePath: '/host/project',
+    });
+
+    expect(runner.requests[0]).toMatchObject({
+      command: 'env',
+      args: [
+        'HOME=/workspace',
+        'COREPACK_ENABLE_DOWNLOAD_PROMPT=0',
+        'corepack',
+        'pnpm',
+        'install',
+        '--frozen-lockfile',
+      ],
+      cwd: '/project',
+    });
+    expect(outcome).toMatchObject({ ok: true });
+  });
+
   it('destroys the sandbox when install execution fails', async () => {
     const runner = fakeRunner(1);
     const installer = new DockerPreviewInstaller({ runner });

@@ -106,6 +106,11 @@ server.on('upgrade', (req, socket) => {
 server.listen(port, '127.0.0.1', () => {
   const bound = server.address();
   const reportReady = () => {
+    // Mimics a second workspace tier (the api) announcing its own listen URL
+    // before the browsable tier's banner, like the scaffold's Fastify app does.
+    if (args.has('--announce-api')) {
+      console.log(`api: Server listening at http://127.0.0.1:${process.env.API_PORT}`);
+    }
     console.log(`  VITE fixture  ready\n\n  ➜  Local:   http://127.0.0.1:${bound.port}/\n`);
     if (args.has('--exit-after-ready')) setTimeout(() => process.exit(1), 100);
   };

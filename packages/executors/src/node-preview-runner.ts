@@ -140,6 +140,13 @@ export class NodePreviewRunner implements PreviewRunner {
     const entry = this.processes.get(session.id);
     const now = this.clock.now().toISOString();
     if (!entry || entry.exited) {
+      // No local entry ≠ dead: a session booted by another process on this
+      // host (worker-booted, API-reaped) is only reachable through its
+      // persisted port. Probe it before declaring the preview down.
+      const persistedPort = entry ? undefined : session.process?.port;
+      if (persistedPort !== undefined && (await httpProbe(persistedPort, this.healthPath))) {
+        return { state: 'healthy', checkedAt: now, consecutiveFailures: 0 };
+      }
       return {
         state: 'unhealthy',
         checkedAt: now,
@@ -222,12 +229,26 @@ export class NodePreviewRunner implements PreviewRunner {
     dev: { command: string; args: string[] },
   ): Promise<{ port: number; pid: number | undefined; crashedImmediately: boolean }> {
     const reservedPort = await this.reservePort();
+    // The scaffold's api tier reads API_PORT (the single PORT belongs to the
+    // browsable tier); without its own reservation, concurrent projects would
+    // all bind the api tier's default port and kill each other's `pnpm dev`.
+    // Reservation releases the port before returning, so the OS can hand the
+    // same one back — retry until the two tiers get distinct ports.
+    let apiPort = reservedPort;
+    for (let attempt = 0; attempt < 10 && apiPort === reservedPort; attempt += 1) {
+      apiPort = await this.reservePort();
+    }
     const secrets = this.secretStore
       ? await this.secretStore.resolveAll(session.workspaceRef.projectId)
       : {};
     const child = execa(dev.command, dev.args, {
       cwd: session.workspaceRef.workspacePath,
-      ...safeSpawnEnv(process.env, { ...secrets, PORT: String(reservedPort), HOST: '127.0.0.1' }),
+      ...safeSpawnEnv(process.env, {
+        ...secrets,
+        PORT: String(reservedPort),
+        API_PORT: String(apiPort),
+        HOST: '127.0.0.1',
+      }),
       reject: false,
       detached: process.platform !== 'win32',
     }) as unknown as DevServerProcess;
@@ -248,7 +269,9 @@ export class NodePreviewRunner implements PreviewRunner {
       (data: Buffer): void => {
         const text = data.toString('utf8');
         const port = detectPortFromOutput(text);
-        if (port !== undefined) {
+        // The api tier announces its own listen URL; only the browsable
+        // tier's port may steer the health probe.
+        if (port !== undefined && port !== apiPort) {
           detectedPort = port;
           entry.port = port;
         }
@@ -286,10 +309,12 @@ export class NodePreviewRunner implements PreviewRunner {
 async function httpProbe(port: number, path: string): Promise<boolean> {
   return new Promise((resolvePromise) => {
     const request = get({ port, host: '127.0.0.1', path }, (response) => {
+      // 3xx counts as booted: an auth-gated app answers its root with a
+      // redirect to the sign-in page, which is a live server, not a failure.
       const healthy =
         response.statusCode !== undefined &&
         response.statusCode >= 200 &&
-        response.statusCode < 300;
+        response.statusCode < 400;
       response.destroy();
       resolvePromise(healthy);
     });

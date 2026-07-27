@@ -1,6 +1,6 @@
-import type { NetworkPolicyEvent, SandboxSpec } from '@agent-foundry/contracts';
+import type { NetworkPolicyEvent, SandboxExec, SandboxSpec } from '@agent-foundry/contracts';
 import type { SandboxHandle, SandboxRunner } from '@agent-foundry/domain';
-import { DEFAULT_POLICY_PROXY_IMAGE } from './docker-sandbox-runner.js';
+import { DEFAULT_POLICY_PROXY_IMAGE, SANDBOX_WORKSPACE_PATH } from './docker-sandbox-runner.js';
 import type { PreviewInstaller, PreviewInstallOutcome } from './preview-command-plan.js';
 
 export interface NetworkPolicySandboxRunner extends SandboxRunner {
@@ -43,20 +43,36 @@ export class DockerPreviewInstaller implements PreviewInstaller {
       ttlMs: this.timeoutMs + 30_000,
       user: `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
     };
+    // The pinned node image ships corepack but not pnpm or yarn; corepack
+    // runs the exact version the workspace's `packageManager` field pins.
+    // env(1) hands it a writable HOME — the container's rootfs is read-only
+    // and its --user has no home directory.
+    const install = input.plan.install;
+    const viaCorepack = install.command === 'pnpm' || install.command === 'yarn';
+    const exec: SandboxExec = viaCorepack
+      ? {
+          command: 'env',
+          args: [
+            `HOME=${SANDBOX_WORKSPACE_PATH}`,
+            'COREPACK_ENABLE_DOWNLOAD_PROMPT=0',
+            'corepack',
+            install.command,
+            ...install.args,
+          ],
+          timeoutMs: this.timeoutMs,
+          cwd: '/project',
+        }
+      : {
+          command: install.command,
+          args: install.args,
+          timeoutMs: this.timeoutMs,
+          cwd: '/project',
+        };
     const sandbox = await this.runner.create(spec);
     try {
       let result: Awaited<ReturnType<NetworkPolicySandboxRunner['exec']>>;
       try {
-        result = await this.runner.exec(
-          sandbox,
-          {
-            command: input.plan.install.command,
-            args: input.plan.install.args,
-            timeoutMs: this.timeoutMs,
-            cwd: '/project',
-          },
-          input.signal,
-        );
+        result = await this.runner.exec(sandbox, exec, input.signal);
       } catch (error) {
         const evidence = await this.runner
           .networkEvidence(sandbox)
