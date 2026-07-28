@@ -80,11 +80,14 @@ class BrowserPlanExecutor implements AgentExecutor {
   }
 }
 
-// Fails the first candidate of every per-task `implement.<taskId>` step:
-// quality attribution needs a step whose artifact a reviewer still grades, and
-// since ADR 0042 `plan` has no reviewer — the operator approves it. Failing
-// every task keeps the latest `implementation.report` (the one the reviewer
-// grades) on the fallback that actually executed.
+// Fails the first candidate of the per-task `implement.<taskId>` step, so the
+// implementation the deterministic gate grades was produced by the fallback
+// rather than by the model the router first selected.
+//
+// The plan is narrowed to a single task on purpose: the router re-ranks after
+// a failure, so with two tasks the model that failed the first would be
+// *selected* for the second and legitimately execute it — which would make
+// "the model that only failed was never graded" untestable rather than untrue.
 class FailFirstImplementExecutor implements AgentExecutor {
   readonly provider = 'mock';
   private readonly failed = new Set<string>();
@@ -95,7 +98,11 @@ class FailFirstImplementExecutor implements AgentExecutor {
       this.failed.add(request.stepId);
       throw new Error('synthetic first-candidate failure');
     }
-    return this.delegate.execute(request);
+    const result = await this.delegate.execute(request);
+    if (request.stepId !== 'plan') return result;
+    const graph = TaskGraphArtifactSchema.parse(result.output).data;
+    const output = { ...result.output, data: { ...graph, tasks: graph.tasks.slice(0, 1) } };
+    return { ...result, output, stdout: JSON.stringify(output) };
   }
 
   health(): Promise<ExecutorHealth> {
@@ -513,7 +520,6 @@ describe('runtime composition', () => {
       'plan.current',
       'plan.approval',
       'implementation.report',
-      'code.review',
       'verification.report',
       'browser-test.plan',
       'browser-verification.report',
