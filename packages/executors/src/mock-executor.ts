@@ -97,15 +97,19 @@ export class MockAgentExecutor implements AgentExecutor {
     packageJson.packageManager = 'npm@10';
     // These override whatever the scaffold ships rather than deferring to it.
     // The scaffold's real scripts (`next build`, `tsc -p`) need an install this
-    // executor never performs, so leaving them in place would send every mock
-    // run into repair over missing dependencies instead of exercising the
-    // workflow. Installing the scaffold for real belongs to provisioning (#318).
+    // executor never performs, and `db:reset`/`smoke` need its Docker Supabase
+    // stack and both tiers running, so leaving any of them in place would send
+    // every mock run into repair over a missing dependency instead of
+    // exercising the workflow. Installing and booting the scaffold for real
+    // belongs to provisioning (#318).
     packageJson.scripts = {
       ...((packageJson.scripts as Record<string, string> | undefined) ?? {}),
       typecheck: 'node --check src/index.js',
       lint: 'node --check src/index.js',
       test: 'node --test',
       build: 'node --check src/index.js',
+      'db:reset': 'node -e ""',
+      smoke: 'node -e ""',
     };
     await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
     await writeFile(

@@ -49,6 +49,107 @@ describe('WorkspaceVerifier', () => {
     });
   });
 
+  it('skips an optional script the project has not defined yet', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager: 'npm@10',
+        scripts: { typecheck: 'node -e ""' },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 30_000,
+      maxOutputBytes: 1_000_000,
+    }).verify({
+      workspacePath: cwd,
+      scripts: ['typecheck'],
+      optionalScripts: ['lint', 'test'],
+      includeGitDiffCheck: false,
+    });
+
+    expect(report.approved).toBe(true);
+    for (const name of ['lint', 'test']) {
+      expect(report.commands.find((command) => command.name === name)).toMatchObject({
+        skipped: true,
+        skipReason: expect.stringContaining('not defined'),
+      });
+    }
+  });
+
+  it('gates on an optional script once the project defines it', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager: 'npm@10',
+        scripts: { lint: 'node -e "process.exit(1)"' },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 30_000,
+      maxOutputBytes: 1_000_000,
+    }).verify({
+      workspacePath: cwd,
+      scripts: [],
+      optionalScripts: ['lint'],
+      includeGitDiffCheck: false,
+    });
+
+    expect(report.approved).toBe(false);
+    expect(report.commands.find((command) => command.name === 'lint')).toMatchObject({
+      skipped: false,
+      exitCode: 1,
+    });
+  });
+
+  it('runs the auto-fix pre-pass before the checks without letting it gate', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager: 'npm@10',
+        scripts: {
+          format: "node -e \"require('fs').writeFileSync('formatted', '')\"",
+          'lint:fix': 'node -e "process.exit(1)"',
+          // Red unless the formatter ran first: the check reads what it wrote.
+          typecheck: "node -e \"require('fs').readFileSync('formatted')\"",
+        },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 30_000,
+      maxOutputBytes: 1_000_000,
+    }).verify({
+      workspacePath: cwd,
+      scripts: ['typecheck'],
+      autofixScripts: ['format', 'lint:fix'],
+      includeGitDiffCheck: false,
+    });
+
+    // `lint:fix` exited non-zero and the report is still green: an auto-fix
+    // pass is not a check, so a machine-unfixable failure is the only thing
+    // that reaches repair.
+    expect(report.approved).toBe(true);
+    expect(report.commands.find((command) => command.name === 'lint:fix')).toMatchObject({
+      advisory: true,
+      exitCode: 1,
+    });
+    expect(report.commands.find((command) => command.name === 'typecheck')).toMatchObject({
+      advisory: false,
+      exitCode: 0,
+    });
+  });
+
   it('does not choose npm when the package manager is unknown', async () => {
     const cwd = await workspace();
     await writeFile(

@@ -166,6 +166,12 @@ export const VerificationCommandResultSchema = z.object({
   stderr: z.string(),
   skipped: z.boolean().default(false),
   skipReason: z.string().optional(),
+  /**
+   * Ran, but never gates: the auto-fix pre-pass repairs what a machine can
+   * before the checks, and a formatter that exits non-zero is not a defect
+   * for an agent to fix (#324).
+   */
+  advisory: z.boolean().default(false),
 });
 export type VerificationCommandResult = z.infer<typeof VerificationCommandResultSchema>;
 
