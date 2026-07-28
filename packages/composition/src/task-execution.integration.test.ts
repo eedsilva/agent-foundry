@@ -69,8 +69,8 @@ const GATED_TASK_LOOP_WORKFLOW = `${TASK_LOOP_WORKFLOW}    verify:
       title: Run the task's deterministic checks
       outputArtifact: verification.report
       scripts: [typecheck]
-      optionalScripts: [lint, test]
-      includeGitDiffCheck: false
+      optionalScripts: [lint, test, 'db:reset']
+      includeGitDiffCheck: true
     repair:
       id: repair-task
       type: agent
@@ -184,15 +184,19 @@ async function startProject(
   return { id: project.id, runId: project.currentRunId };
 }
 
-/** Commit subjects the implement step produced, oldest first. */
-async function taskCommits(runtime: Runtime, projectId: string): Promise<string[]> {
+/** Every commit subject in the workspace, oldest first. */
+async function allCommits(runtime: Runtime, projectId: string): Promise<string[]> {
   const log = await execa('git', ['log', '--format=%s'], {
     cwd: runtime.workspaces.workspacePath(projectId),
   });
-  return log.stdout
-    .split('\n')
-    .filter((subject) => subject.startsWith('agent(developer):'))
-    .reverse();
+  return log.stdout.split('\n').reverse();
+}
+
+/** Commit subjects the implement step produced, oldest first. */
+async function taskCommits(runtime: Runtime, projectId: string): Promise<string[]> {
+  return (await allCommits(runtime, projectId)).filter((subject) =>
+    subject.startsWith('agent(developer):'),
+  );
 }
 
 function taskEvents(events: ProjectEvent[], type: ProjectEvent['type']): unknown[] {
@@ -411,6 +415,9 @@ describe('per-task deterministic verification', () => {
     ]);
     expect(executor.executedSteps.filter((step) => step === 'repair-task.T1')).toHaveLength(1);
     expect(executor.executedSteps.filter((step) => step === 'repair-task.T2')).toHaveLength(0);
+    // Repair is what cleared the failure, not a second run of the
+    // implementation: T1 was implemented exactly once.
+    expect(executor.executedSteps.filter((step) => step === 'implement.T1')).toHaveLength(1);
 
     // Repair is handed the failing command and its output, not a summary.
     const repairStep = (await runtime.stepRuns.list(project.runId)).find(
@@ -436,6 +443,16 @@ describe('per-task deterministic verification', () => {
       'agent(developer): T1: T1 work',
       'agent(developer): T2: T2 work',
     ]);
+    // A repaired task ends on the repair's commit, and `task.completed` says so
+    // rather than pointing at the implementation the repair corrected.
+    const repairCommit = (await runtime.stepAttempts.list(project.runId, repairStep!.id))[0]
+      ?.commit;
+    expect(repairCommit).toBeDefined();
+    expect(
+      detail.events.find((event) => event.type === 'task.completed' && event.data.taskId === 'T1')
+        ?.data.commit,
+    ).toBe(repairCommit);
+    expect(await allCommits(runtime, project.id)).toContain('agent(fixer): T1: repair T1 work');
   }, 120_000);
 
   it('fails the task when the checks stay red, keeping earlier tasks committed', async () => {

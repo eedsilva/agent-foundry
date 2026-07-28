@@ -71,11 +71,13 @@ nodes:
       # for what a machine cannot fix.
       autofixScripts: [format, 'lint:fix']
       scripts: [typecheck]
-      # Gating from the moment the generated project defines them. The
-      # scaffold ships `db:reset` (migrations against its own local Supabase)
-      # and `smoke` (both tiers answering), and grows a lint and a test script
-      # as the tasks that need them land.
-      optionalScripts: [lint, test, 'db:reset', smoke]
+      # Gating from the moment the generated project defines them, in order.
+      # The scaffold ships the last three: `db:start` is idempotent and brings
+      # up this project's own Supabase stack (writing .env), `db:reset`
+      # re-applies every migration and the seed against it, and `smoke` boots
+      # both tiers and asserts they answer. A generated project grows a lint
+      # and a test script as the tasks that need them land.
+      optionalScripts: [lint, test, 'db:start', 'db:reset', smoke]
       includeGitDiffCheck: true
     repair:
       id: repair-task

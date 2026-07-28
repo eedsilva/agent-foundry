@@ -1361,10 +1361,21 @@ export class WorkflowOrchestrator {
         signal,
         pinnedInputs,
       );
-      await this.verifyTask(project, workflow, node, task, artifact, runId, signal, pinnedInputs);
-      // The attempt that produced the artifact is the authority on what this
-      // task committed; a task that changed nothing has no commit at all.
-      const commit = await this.commitForArtifact(runId, artifact);
+      const repaired = await this.verifyTask(
+        project,
+        workflow,
+        node,
+        task,
+        artifact,
+        runId,
+        signal,
+        pinnedInputs,
+      );
+      // The attempt behind the last artifact that changed the workspace is the
+      // authority on what this task committed — the repair's, when one ran, not
+      // the implementation it corrected. A task that changed nothing has no
+      // commit at all.
+      const commit = await this.commitForArtifact(runId, repaired ?? artifact);
       const outcome = attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : '';
       await this.emit(project.id, 'task.completed', `${task.id}: ${task.title}${outcome}`, {
         nodeId: node.id,
@@ -1446,6 +1457,9 @@ export class WorkflowOrchestrator {
    * is what invokes repair, and the report it carries holds the failing command
    * and its output. Exhausting `repair.maxAttempts` fails the task with the
    * checks still red, so nothing completes on a red check.
+   *
+   * Returns the last repair artifact, or null when the checks passed without
+   * one — the caller needs it to report the commit the task actually ended on.
    */
   private async verifyTask(
     project: Project,
@@ -1456,12 +1470,14 @@ export class WorkflowOrchestrator {
     runId: string,
     signal: AbortSignal,
     pinnedInputs: ArtifactReference[],
-  ): Promise<void> {
+  ): Promise<StoredArtifact | null> {
     const { verify, repair } = node;
-    if (!verify || !repair) return;
+    if (!verify || !repair) return null;
     const verifyStep = taskVerifyStep(verify, task);
     const repairStep = taskRepairStep(repair, task);
     const maxRepairAttempts = repair.maxAttempts;
+    const startedAt = this.clock.now().getTime();
+    let repaired: StoredArtifact | null = null;
     for (let iteration = 1; ; iteration += 1) {
       await this.assertExecutionMayContinue(runId, signal);
       const report = await this.executeStep(
@@ -1479,6 +1495,16 @@ export class WorkflowOrchestrator {
       // what replaces the reviewer this node used to depend on.
       await this.recordQualityOutcome(implementation, approved);
       await this.qualityObservations?.recordDeterministic(implementation, report, approved);
+      await this.appendDecisionLog(
+        project.id,
+        workflow.id,
+        node.id,
+        runId,
+        implementation,
+        approved,
+        iteration,
+        this.clock.now().getTime() - startedAt,
+      );
       if (approved) {
         await this.resetConsecutiveRepairs(runId);
         await this.emit(project.id, 'quality.approved', `${task.id}: ${parsed.data.summary}`, {
@@ -1487,7 +1513,7 @@ export class WorkflowOrchestrator {
           dedupeKey: `${runId}:task:${node.id}:${task.id}:${iteration}:approved`,
           data: { taskId: task.id, stepId: verifyStep.id, iteration },
         });
-        return;
+        return repaired;
       }
       const summary = parsed.success
         ? parsed.data.summary
@@ -1511,10 +1537,16 @@ export class WorkflowOrchestrator {
       });
       // The report is pinned alongside the walk's own inputs, so repair reads
       // the exact revision that failed rather than whatever is latest.
-      await this.executeStep(project, workflow, repairStep, runId, node.id, signal, iteration, [
-        ...pinnedInputs,
-        artifactReference(report),
-      ]);
+      repaired = await this.executeStep(
+        project,
+        workflow,
+        repairStep,
+        runId,
+        node.id,
+        signal,
+        iteration,
+        [...pinnedInputs, artifactReference(report)],
+      );
       await this.recordCompletedRepair(runId, node.id, repairStep.id, iteration, signal);
     }
   }
@@ -3344,7 +3376,10 @@ function taskRepairStep(repair: AgentStep, task: PlanTask): AgentStep {
   return {
     ...repair,
     id: taskStepId(repair.id, task.id),
-    title: `${task.id}: ${task.title}`,
+    // Distinct from the implement step's title: it becomes the commit subject
+    // (`agent(fixer): <taskId>: repair …`), and a repaired task therefore reads
+    // as two commits that say what each of them did.
+    title: `${task.id}: repair ${task.title}`,
     instructions: [
       repair.instructions,
       '',

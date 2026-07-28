@@ -50,9 +50,16 @@ Nothing in the pipeline ran the checks that can actually fail until every task w
   - **`optionalScripts`** run only when the project defines them, and are recorded `skipped` with a
     reason when it does not. `scripts` keeps its existing strict meaning — a missing required script
     is still a red report — so the tail node and the dogfood harness are unchanged.
-- `web-app-v1`'s per-task gate is therefore `typecheck` (required), plus `lint`, `test`, `db:reset`
-  (the migrations against the project's own local Supabase) and `smoke` (both tiers answering) as
-  optional, plus the git whitespace check, with `format` and `lint:fix` as the auto-fix pre-pass.
+- `web-app-v1`'s per-task gate is therefore `typecheck` (required), plus — in order, and only when
+  the project defines them — `lint`, `test`, `db:start` (idempotent; brings up this project's own
+  Supabase stack and writes its `.env`), `db:reset` (re-applies every migration and the seed against
+  it) and `smoke` (boots both tiers and asserts they answer), plus the git whitespace check, with
+  `format` and `lint:fix` as the auto-fix pre-pass. `db:start` earns its place in the list because
+  nothing else starts the *workspace's* stack: `SupabaseGeneratedProjectRuntime` runs a separate one
+  under `DATA_DIR`, and `smoke` refuses to run without the `.env` only `db:start` writes.
+- A repaired task therefore ends on **two** commits — `agent(developer): <taskId>: <title>` and
+  `agent(fixer): <taskId>: repair <title>` — which qualifies ADR 0043's "one commit per task".
+  `task.completed.commit` reports the last one, so it names the tree the checks actually passed.
 - The deterministic verdict is what now records quality against the model that wrote the code
   (`metrics.recordQuality`, `QualityObservationService.recordDeterministic`). The blind-review
   observation source survives in the contract for `dogfood-plan-v1`, which scores review capability
@@ -70,9 +77,11 @@ Nothing in the pipeline ran the checks that can actually fail until every task w
   script is not gated on tests. The scaffold ships a data plane and two tiers, not a lint config, and
   the alternative — failing every task until an agent invents one — is the failure mode #348
   recorded. The gate names all five checks and enforces each from the moment the project defines it.
-- Per-task `db:reset` and `smoke` are slow, and deliberately so: they are what makes "the migrations
-  apply and the preview boots" a fact rather than a claim. `MockAgentExecutor` neutralises both for
-  the same reason it already neutralises `next build` — a mock run has no Docker and no install.
+- Per-task `db:start` / `db:reset` / `smoke` are slow, and deliberately so: they are what makes "the
+  migrations apply and the preview boots" a fact rather than a claim. They also make Docker and the
+  Supabase CLI a hard requirement for a real run, which ADR 0008 and #316 already assume.
+  `MockAgentExecutor` neutralises all three for the same reason it already neutralises `next build`
+  — a mock run has neither.
 - The standalone `deterministic-verification` and `browser-verification` nodes still run at the tail.
   Collapsing them into one full-suite run is #329; the per-task browser assertion is #325. Neither is
   stubbed here.
