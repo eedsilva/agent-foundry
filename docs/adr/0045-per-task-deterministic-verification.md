@@ -82,9 +82,9 @@ Nothing in the pipeline ran the checks that can actually fail until every task w
   Supabase CLI a hard requirement for a real run, which ADR 0008 and #316 already assume.
   `MockAgentExecutor` neutralises all three for the same reason it already neutralises `next build`
   — a mock run has neither.
-- The standalone `deterministic-verification` and `browser-verification` nodes still run at the tail.
-  Collapsing them into one full-suite run is #329; the per-task browser assertion is #325. Neither is
-  stubbed here.
+- The standalone `deterministic-verification` and `browser-verification` nodes were removed from
+  `web-app-v1` by #329. Its tail is one blocking full-suite `verify`, one advisory release assessment,
+  and final diff approval; the per-task browser assertion from #325 remains inside `for-each-task`.
 - Replaying the walk after a pause re-records the deterministic quality observation for tasks whose
   steps are reused. That double-count predates this change (the quality loop did the same) and is not
   fixed here.

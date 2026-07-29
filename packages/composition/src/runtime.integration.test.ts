@@ -9,6 +9,7 @@ import type {
   ExecutorHealth,
   PreviewSession,
   QueueJob,
+  VerificationReport,
 } from '@agent-foundry/contracts';
 import { TaskGraphArtifactSchema } from '@agent-foundry/contracts';
 import { SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
@@ -71,6 +72,32 @@ class BrowserPlanExecutor implements AgentExecutor {
           },
         ],
       },
+    };
+    return { ...result, output, stdout: JSON.stringify(output) };
+  }
+
+  health(): Promise<ExecutorHealth> {
+    return this.delegate.health();
+  }
+}
+
+class ReleaseAssessmentExecutor implements AgentExecutor {
+  readonly provider = 'mock';
+  readonly requests: AgentExecutionRequest[] = [];
+  private readonly delegate = new BrowserPlanExecutor();
+
+  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    this.requests.push(request);
+    const result = await this.delegate.execute(request);
+    if (request.stepId !== 'release-assessment') return result;
+    const output = {
+      ...result.output,
+      status: 'needs-revision' as const,
+      approved: false,
+      summary: 'Advisory release findings.',
+      risks: ['Manual protected-route pass remains useful.'],
+      decisions: [],
+      nextActions: ['Review the protected route in the browser.'],
     };
     return { ...result, output, stdout: JSON.stringify(output) };
   }
@@ -451,6 +478,11 @@ describe('runtime composition', () => {
 
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
     const runId = project.currentRunId;
+    const releaseExecutor = new ReleaseAssessmentExecutor();
+    Object.defineProperty(runtime.executors, 'executor', {
+      configurable: true,
+      value: releaseExecutor,
+    });
 
     expect(await runtime.worker.runOnce()).toBe(true);
     await approveAllGates(runtime, runId);
@@ -461,6 +493,29 @@ describe('runtime composition', () => {
     const workflowRun = await runtime.runs.get(project.currentRunId);
     expect(workflowRun).toMatchObject({ status: 'completed', projectId: project.id });
     const stepRuns = await runtime.stepRuns.list(project.currentRunId);
+    expect(stepRuns.some((step) => step.nodeId === 'deterministic-verification')).toBe(false);
+    expect(stepRuns.some((step) => step.nodeId === 'browser-verification')).toBe(false);
+    expect(stepRuns.filter((step) => step.nodeId === 'full-suite-verification')).toHaveLength(1);
+    expect(stepRuns.filter((step) => step.nodeId === 'release-assessment')).toHaveLength(1);
+    expect(stepRuns.filter((step) => step.nodeId === 'diff-approval')).toHaveLength(1);
+    const workflow = await runtime.workflows.get('web-app-v1');
+    expect(workflow.nodes.slice(-4).map((node) => node.id)).toEqual([
+      'task-execution',
+      'full-suite-verification',
+      'release-assessment',
+      'diff-approval',
+    ]);
+    const releaseRequests = releaseExecutor.requests.filter(
+      (request) => request.stepId === 'release-assessment',
+    );
+    expect(releaseRequests).toHaveLength(1);
+    expect(releaseRequests[0]?.mutatesWorkspace).toBe(false);
+    expect(
+      detail.artifacts.find((artifact) => artifact.metadata.name === 'release.review')?.content,
+    ).toMatchObject({
+      approved: false,
+      risks: ['Manual protected-route pass remains useful.'],
+    });
     expect(stepRuns.length).toBeGreaterThan(0);
     expect(stepRuns.every((step) => step.status === 'completed')).toBe(true);
     const attempts = (
@@ -584,6 +639,54 @@ describe('runtime composition', () => {
     ).toMatchObject({
       status: 'queued',
     });
+  }, 30_000);
+
+  it('blocks before diff approval when the full suite is red', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-full-suite-failed-'));
+    temporaryDirectories.push(dataDir);
+    const rootDir = resolve(import.meta.dirname, '../../..');
+    const runtime = await createRuntime({
+      ...process.env,
+      REPO_ROOT: rootDir,
+      DATA_DIR: dataDir,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+      WORKER_ID: 'full-suite-failed-worker',
+    });
+    Object.defineProperty(runtime.verifier, 'verify', {
+      configurable: true,
+      value: async (): Promise<VerificationReport> => ({
+        schemaVersion: '1',
+        approved: false,
+        packageManager: 'npm',
+        summary: 'full suite failed',
+        commands: [],
+        createdAt: new Date().toISOString(),
+      }),
+    });
+    const project = await runtime.projectService.create({
+      name: 'Full suite failure sample',
+      workflowId: 'web-app-v1',
+      prd: 'Build a small issue tracker with deterministic verification and release review.',
+    });
+
+    if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.currentRunId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('failed');
+    expect(
+      detail.artifacts.some((artifact) => artifact.metadata.name === 'verification.report'),
+    ).toBe(true);
+    expect(detail.artifacts.some((artifact) => artifact.metadata.name === 'release.review')).toBe(
+      false,
+    );
+    expect(
+      (await runtime.approvalRequests.list(project.currentRunId)).some(
+        (request) => request.nodeId === 'diff-approval',
+      ),
+    ).toBe(false);
   }, 30_000);
 
   it('attributes review quality to the fallback that actually executed', async () => {

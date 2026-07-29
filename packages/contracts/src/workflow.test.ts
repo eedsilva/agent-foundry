@@ -69,8 +69,15 @@ describe('verify workflow node', () => {
     expect(node.scripts).toEqual(['typecheck', 'lint', 'test', 'build']);
     expect(node.includeGitDiffCheck).toBe(true);
     expect(node.browserTestPlanArtifact).toBeUndefined();
+    expect(node.blocksOnFailure).toBe(false);
     expect(node.autofixScripts).toEqual([]);
     expect(node.optionalScripts).toEqual([]);
+  });
+
+  it('accepts an explicitly blocking verification', () => {
+    const node = WorkflowNodeSchema.parse({ ...BASE_VERIFY, blocksOnFailure: true });
+    if (node.type !== 'verify') throw new Error('expected verify');
+    expect(node.blocksOnFailure).toBe(true);
   });
 
   it('carries the auto-fix pre-pass and the run-if-defined checks', () => {

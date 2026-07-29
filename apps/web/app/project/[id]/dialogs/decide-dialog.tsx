@@ -5,6 +5,7 @@ import type {
   ApprovalAction,
   ApprovalGateStep,
   ApprovalRequest,
+  AgentArtifact,
   BrowserVerificationReport,
   RetryPlanResponse,
   WorkflowRun,
@@ -12,6 +13,7 @@ import type {
 import { decideApproval } from '../../../../lib/api';
 import { DiffView, unifiedDiffToSpans } from '../diff-view';
 import { VerificationReportView } from '../preview-panel';
+import { AgentArtifactView } from '../agent-artifact-view';
 import { Overlay } from '@/components/overlay';
 import { BTN, ERROR_BOX, FIELD, HINT, LABEL, TEXTAREA } from '@/lib/ui';
 
@@ -28,6 +30,7 @@ export function DecideDialog({
   setDecideTarget,
   decidePreview,
   decideReport,
+  decideArtifact,
   decideDiff,
   decideNote,
   setDecideNote,
@@ -45,6 +48,7 @@ export function DecideDialog({
   setDecideTarget: (target: DecideTarget | null) => void;
   decidePreview: RetryPlanResponse | null;
   decideReport: BrowserVerificationReport | null;
+  decideArtifact: AgentArtifact | null;
   decideDiff: string | null;
   decideNote: string;
   setDecideNote: (note: string) => void;
@@ -137,7 +141,10 @@ export function DecideDialog({
           <p className={HINT}>Calculando consequências…</p>
         )}
 
-        {decideTarget.request.artifact.name === 'browser-verification.report' ? (
+        {decideArtifact ? <AgentArtifactView artifact={decideArtifact} /> : null}
+
+        {decideTarget.node.id === 'diff-approval' ||
+        decideTarget.request.artifact.name === 'browser-verification.report' ? (
           <div className="mt-3 flex flex-col gap-2">
             {decideReport ? (
               <VerificationReportView report={decideReport} projectId={projectId} />

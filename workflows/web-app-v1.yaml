@@ -1,7 +1,7 @@
 schemaVersion: '1'
 id: web-app-v1
 name: Web application delivery pipeline
-description: Plans, waits for operator approval, then implements the task graph one task at a time — each gated on deterministic checks and repaired only on a real failure — before verifying and performing a final release assessment for a web application.
+description: Plans, waits for operator approval, then implements the task graph one task at a time — each gated on deterministic checks and repaired only on a real failure — before one blocking full-suite verification, an advisory release assessment, and final diff approval.
 stack: nextjs
 # Which executor runs which kind of task, head of the list first (ADR 0046).
 # A table an operator can read before the run starts, rather than a six-dimension
@@ -144,130 +144,36 @@ nodes:
         scripts: []
         includeGitDiffCheck: false
 
-  - id: deterministic-verification
-    type: quality-loop
-    title: Deterministic verification gate
-    maxIterations: 3
-    check:
-      id: verify-workspace
-      type: verify
-      title: Run configured deterministic repository checks
-      outputArtifact: verification.report
-      scripts: [typecheck, lint, test, build]
-      includeGitDiffCheck: true
-    repair:
-      id: repair-verification
-      type: agent
-      role: fixer
-      taskKind: repair
-      title: Repair deterministic verification failures
-      instructions: >-
-        Read the failed command outputs, reproduce the failures, fix their root causes, and rerun the relevant
-        commands. Never remove a meaningful check, reduce test coverage, or paper over a type error.
-      inputArtifacts: [prd, plan.current, verification.report]
-      outputArtifact: verification.fix
-      mutatesWorkspace: true
-      harnessTags: [repair, testing, coding]
-      profile:
-        complexity: 4
-        risk: 5
-        preferredTags: [repair, coding, tool-use]
-      maxAttempts: 3
-    approval:
-      artifact: verification.report
-      path: approved
-      equals: true
+  - id: full-suite-verification
+    type: verify
+    title: Run the full repository verification suite
+    outputArtifact: verification.report
+    scripts: [typecheck, lint, test, build]
+    includeGitDiffCheck: true
+    blocksOnFailure: true
 
-  - id: browser-verification
-    type: quality-loop
-    title: Browser verification gate
-    maxIterations: 3
-    setup:
-      id: plan-browser-test
-      type: agent
-      role: tester
-      taskKind: verification
-      title: Define the reproducible browser test plan
-      instructions: Produce a schemaVersion 1 declarative browser test plan for the critical CRUD journey. Use only relative app paths, supported semantic locators, actions, and assertions.
-      inputArtifacts: [prd, plan.current, verification.report]
-      outputArtifact: browser-test.plan
-      mutatesWorkspace: false
-      harnessTags: [testing, browser]
-      maxAttempts: 3
-    check:
-      id: verify-browser
-      type: verify
-      title: Run the declarative browser test plan
-      outputArtifact: browser-verification.report
-      browserTestPlanArtifact: browser-test.plan
-      scripts: []
-      includeGitDiffCheck: false
-    repair:
-      id: repair-browser
-      type: agent
-      role: fixer
-      taskKind: repair
-      title: Repair browser verification failures
-      instructions: Reproduce each failed step from the exact browser plan and report, repair the root cause, and retain the plan unchanged for the rerun.
-      inputArtifacts: [prd, plan.current, browser-test.plan, browser-verification.report]
-      outputArtifact: browser-verification.fix
-      mutatesWorkspace: true
-      harnessTags: [repair, browser, testing]
-      maxAttempts: 3
-    approval:
-      artifact: browser-verification.report
-      path: approved
-      equals: true
+  - id: release-assessment
+    type: agent
+    role: tester
+    taskKind: verification
+    title: Perform a final advisory release assessment
+    instructions: >-
+      Inspect the actual repository, running application when available, PRD, plan, and full-suite report.
+      Exercise critical paths and failure paths that static checks may miss. Record concrete findings,
+      decisions, risks, and next actions. This assessment is advisory: do not modify the workspace and do not
+      treat approved as a workflow gate.
+    inputArtifacts: [prd, plan.current, verification.report]
+    outputArtifact: release.review
+    mutatesWorkspace: false
+    harnessTags: [testing, release, review]
+    profile:
+      complexity: 4
+      risk: 5
+      preferredTags: [testing, review, reasoning]
+    maxAttempts: 1
 
   - id: diff-approval
     type: approval-gate
     title: Human diff approval
-    artifact: browser-verification.report
+    artifact: release.review
     outputArtifact: diff.approval
-
-  - id: release-assessment
-    type: quality-loop
-    title: Final release-readiness assessment
-    maxIterations: 2
-    check:
-      id: assess-release
-      type: agent
-      role: tester
-      taskKind: verification
-      title: Perform a final adversarial release assessment
-      instructions: >-
-        Inspect the actual repository and deterministic verification report. Exercise critical paths and failure
-        paths that static checks may miss. Confirm the implementation satisfies the PRD and acceptance criteria.
-        Put the final release verdict in approved and provide concrete evidence for it.
-      inputArtifacts:
-        [prd, plan.current, verification.report, browser-test.plan, browser-verification.report]
-      outputArtifact: release.review
-      mutatesWorkspace: false
-      harnessTags: [testing, release, review]
-      profile:
-        complexity: 4
-        risk: 5
-        preferredTags: [testing, review, reasoning]
-      maxAttempts: 3
-    repair:
-      id: repair-release
-      type: agent
-      role: fixer
-      taskKind: repair
-      title: Repair defects from the final release assessment
-      instructions: >-
-        Fix every reproducible release blocker, add regression coverage, and run the affected deterministic
-        checks. Do not reinterpret requirements merely to avoid the defect.
-      inputArtifacts: [prd, plan.current, verification.report, release.review]
-      outputArtifact: release.fix
-      mutatesWorkspace: true
-      harnessTags: [repair, testing, release]
-      profile:
-        complexity: 4
-        risk: 5
-        preferredTags: [repair, coding, tool-use]
-      maxAttempts: 3
-    approval:
-      artifact: release.review
-      path: approved
-      equals: true

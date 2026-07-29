@@ -63,8 +63,8 @@ The task graph already carries the claim to assert: #321 gave every task an `acc
   agent gets the browser-plan output schema the pipeline-tail one already got.
 - The per-task plan and the browser repair are pinnable per task, like `implement` and `repair`.
 - Every task in a graph now boots a preview and drives a browser. That is slow and deliberately so:
-  it is what makes "the feature works" a fact rather than a claim. The pipeline-tail
-  `browser-verification` node still runs; collapsing it is #329.
+  it is what makes "the feature works" a fact rather than a claim. The standalone pipeline-tail
+  `browser-verification` node was removed by #329; this per-task assertion remains.
 - `MockAgentExecutor` already emits a valid browser plan for any step given the browser-plan schema,
   so mock runs exercise the loop. The composition seam stubs the **coordinator**, not the Playwright
   verifier — mock mode swaps in an auto-approving coordinator, so stubbing the verifier under it

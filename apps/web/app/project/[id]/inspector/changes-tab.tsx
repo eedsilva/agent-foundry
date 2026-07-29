@@ -7,16 +7,20 @@ import type {
   ApprovalListResponse,
   ApprovalRequest,
   BrowserVerificationReport,
+  StoredArtifact,
 } from '@agent-foundry/contracts';
+import { AgentArtifactSchema } from '@agent-foundry/contracts';
 import { EmptyState } from '@/components/empty-state';
 import { ChangesPanel } from '../changes-panel';
 import { VerificationReportView } from '../preview-panel';
+import { AgentArtifactView } from '../agent-artifact-view';
 import { BTN, HINT, ROW } from '@/lib/ui';
 
 export function ChangesTab({
   projectId,
   workspacePath,
   changesReport,
+  artifacts,
   approvals,
   nodeForRequest,
   onOpenDecide,
@@ -25,6 +29,7 @@ export function ChangesTab({
   projectId: string;
   workspacePath: string;
   changesReport: BrowserVerificationReport | null;
+  artifacts: StoredArtifact[];
   approvals: ApprovalListResponse['approvals'];
   nodeForRequest: (request: ApprovalRequest) => ApprovalGateStep | null;
   onOpenDecide: (request: ApprovalRequest, node: ApprovalGateStep, action: ApprovalAction) => void;
@@ -49,6 +54,12 @@ export function ChangesTab({
             <div className="mt-2 flex flex-col gap-3">
               {approvals.map((entry) => {
                 const node = nodeForRequest(entry.request);
+                const stored = artifacts.find(
+                  (artifact) =>
+                    artifact.metadata.name === entry.request.artifact.name &&
+                    artifact.metadata.revision === entry.request.artifact.revision,
+                );
+                const assessment = stored ? AgentArtifactSchema.safeParse(stored.content) : null;
                 return (
                   <div key={entry.request.id} className="border-hairline rounded-card border p-3">
                     <div className={ROW}>
@@ -73,6 +84,7 @@ export function ChangesTab({
                         Ver artefato
                       </button>
                     </div>
+                    {assessment?.success ? <AgentArtifactView artifact={assessment.data} /> : null}
                     {entry.decision ? (
                       <p className="text-ink-muted mt-2 text-[12px]">
                         {entry.decision.action} por {entry.decision.decidedBy} em{' '}

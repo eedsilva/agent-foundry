@@ -107,6 +107,23 @@ const POLICY: ProjectPolicy = ProjectPolicySchema.parse({
   forbiddenDependencies: ['left-pad'],
 });
 
+const BLOCKING_VERIFY_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'blocking-verify-v1',
+  name: 'Blocking verify fixture',
+  description: 'Direct verification can explicitly block the workflow.',
+  stack: 'node',
+  nodes: [
+    {
+      id: 'full-suite-verification',
+      type: 'verify',
+      title: 'Run the full suite',
+      outputArtifact: 'verification.report',
+      blocksOnFailure: true,
+    },
+  ],
+});
+
 const BROWSER_PLAN_ARTIFACT = 'critical-journey.contract';
 
 const BROWSER_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
@@ -330,6 +347,41 @@ describe('policy-gated release blocks despite an approved review, and the emerge
 
     expect(harness.executor.started('repair-verification')).toBe(0);
     expect(harness.events.types().filter((type) => type === 'quality.approved')).toHaveLength(2);
+  });
+});
+
+describe('explicitly blocking verification', () => {
+  it('persists a failed report and stops before the workflow completes', async () => {
+    const harness = makeHarness({}, undefined, {
+      workflow: BLOCKING_VERIFY_WORKFLOW,
+      verification: failingVerificationReport,
+    });
+    await seedRun(harness);
+
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toMatchObject({
+      name: 'QualityGateError',
+    });
+
+    expect(harness.artifacts.named('verification.report')).toHaveLength(1);
+    expect(harness.artifacts.named('verification.report')[0]?.content).toMatchObject({
+      approved: false,
+    });
+    expect((await harness.runs.get('run-1'))?.status).toBe('failed');
+  });
+
+  it('keeps the default direct verification advisory', async () => {
+    const harness = makeHarness({}, undefined, {
+      workflow: WorkflowDefinitionSchema.parse({
+        ...BLOCKING_VERIFY_WORKFLOW,
+        nodes: [{ ...BLOCKING_VERIFY_WORKFLOW.nodes[0], blocksOnFailure: false }],
+      }),
+      verification: failingVerificationReport,
+    });
+    await completeRun(harness);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
   });
 });
 
