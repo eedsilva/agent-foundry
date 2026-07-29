@@ -8,12 +8,35 @@ import { isFallback } from './shared';
 
 export type RouteEntry = { artifact: string; route: RouteDecision };
 
-function Score({ label, value }: { label: string; value: string }) {
+/**
+ * The ordered executors the table offered, with the one that ran marked. The
+ * ordering *is* the decision since #326, so the list is the whole story — there
+ * are no dimension scores behind it to explain.
+ */
+function ExecutorLadder({
+  executors,
+  ran,
+}: {
+  executors: readonly string[];
+  ran: string | undefined;
+}) {
   return (
-    <div className="border-hairline flex justify-between gap-2 border-t pt-1.5">
-      <dt className="text-ink-subtle text-[11px]">{label}</dt>
-      <dd className="text-ink m-0 font-mono text-[11px]">{value}</dd>
-    </div>
+    <ol className="mt-2 flex list-none flex-wrap gap-1.5 p-0">
+      {executors.map((executor, index) => {
+        const used = executor === ran;
+        return (
+          <li
+            key={executor}
+            className={`rounded-full px-2 py-0.5 font-mono text-[11px] ${
+              used ? 'bg-accent/15 text-ink font-bold' : 'bg-surface-raised text-ink-subtle'
+            }`}
+          >
+            <span className="text-ink-subtle">{index + 1}.</span> {executor}
+            {used ? <span className="sr-only"> (executor que rodou)</span> : null}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -33,7 +56,7 @@ export function RouterTab({ routes }: { routes: RouteEntry[] }) {
     <section className={PANEL} data-testid="router-decisions">
       <div className={PANEL_HEADER}>
         <h2 className={PANEL_TITLE}>Decisões do model router</h2>
-        <span className={HINT}>score auditável</span>
+        <span className={HINT}>tabela auditável</span>
       </div>
       <div className="flex flex-col gap-4">
         {Array.from(routeGroups, ([category, groupedRoutes]) => (
@@ -43,6 +66,7 @@ export function RouterTab({ routes }: { routes: RouteEntry[] }) {
               {groupedRoutes.map(({ artifact, route }) => {
                 const executed = route.executed ?? route.selected;
                 const usedFallback = isFallback(route);
+                const table = route.routingTable;
                 return (
                   <article
                     key={`${artifact}-${route.routeId}`}
@@ -69,23 +93,23 @@ export function RouterTab({ routes }: { routes: RouteEntry[] }) {
                         fallback de {route.selected.model.id}
                       </p>
                     ) : null}
-                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5">
-                      <Score label="total" value={executed.score.total.toFixed(3)} />
-                      <Score label="capability" value={executed.score.capability.toFixed(3)} />
-                      <Score label="reliability" value={executed.score.reliability.toFixed(3)} />
-                      <Score label="context" value={executed.score.context.toFixed(3)} />
-                      <Score label="speed" value={executed.score.speed.toFixed(3)} />
-                      <Score label="cost score" value={executed.score.cost.toFixed(3)} />
-                      <Score
-                        label="custo estimado"
-                        value={
-                          executed.score.estimatedCostUsd === null
-                            ? 'quota'
-                            : `$${executed.score.estimatedCostUsd.toFixed(4)}`
-                        }
-                      />
-                      <Score label="billing" value={executed.model.billingMode} />
-                    </dl>
+                    {table ? (
+                      <>
+                        <p className="text-ink-muted mt-3 text-[12px]">
+                          tabela <span className="text-ink font-mono">{table.source}</span> ·{' '}
+                          {table.taskKind} · entrada {table.selectedIndex + 1}/
+                          {table.executors.length}
+                        </p>
+                        <ExecutorLadder executors={table.executors} ran={executed.model.provider} />
+                      </>
+                    ) : (
+                      // Decisions persisted under the scored router that #326
+                      // replaced; their dimension scores are not shown because
+                      // nothing computes them any more.
+                      <p className="text-ink-muted mt-3 text-[12px]">
+                        rota sem tabela (anterior ao roteamento por tabela)
+                      </p>
+                    )}
                   </article>
                 );
               })}
