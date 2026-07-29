@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type {
   AgentExecutionRequest,
   AgentExecutionResult,
+  BrowserVerificationReport,
   ExecutorHealth,
   PlanTask,
   ProjectEvent,
@@ -84,6 +85,28 @@ const GATED_TASK_LOOP_WORKFLOW = `${TASK_LOOP_WORKFLOW}    verify:
       maxAttempts: 1
 `;
 
+/** The gated fixture plus the per-task browser assertion (#325). */
+const ASSERTED_TASK_LOOP_WORKFLOW = `${GATED_TASK_LOOP_WORKFLOW}    browser:
+      plan:
+        id: plan-task-browser-test
+        type: agent
+        role: tester
+        taskKind: verification
+        title: Turn the acceptance check into a browser plan
+        instructions: Produce a declarative browser test plan for this task's acceptance check.
+        inputArtifacts: [prd]
+        outputArtifact: browser-test.plan
+        mutatesWorkspace: false
+      check:
+        id: assert-task
+        type: verify
+        title: Assert the acceptance check in a browser
+        outputArtifact: browser-verification.report
+        browserTestPlanArtifact: browser-test.plan
+        scripts: []
+        includeGitDiffCheck: false
+`;
+
 function task(id: string, dependsOn: string[] = []): PlanTask {
   return {
     id,
@@ -103,6 +126,10 @@ interface TaskGraphExecutorOptions {
   onStep?: (request: AgentExecutionRequest) => Promise<void>;
   /** Steps that leave the workspace failing `typecheck` rather than passing it. */
   corrupt?: (request: AgentExecutionRequest) => boolean;
+  /** Tasks whose browser-plan step reports no user-visible surface to assert. */
+  noBrowserSurface?: (request: AgentExecutionRequest) => boolean;
+  /** Plan steps that return neither a valid plan nor a "blocked" answer. */
+  malformedPlan?: (request: AgentExecutionRequest) => boolean;
 }
 
 /** Mock executor with the knobs the loop's tests need. No model is called. */
@@ -129,6 +156,20 @@ class TaskGraphExecutor implements AgentExecutor {
       await appendFile(join(request.cwd, 'src', 'index.js'), 'export function broken( {\n');
     }
     await this.options.onStep?.(request);
+    if (this.options.malformedPlan?.(request)) {
+      const output = { ...result.output, data: { nonsense: true } };
+      return { ...result, output, stdout: JSON.stringify(output) };
+    }
+    if (this.options.noBrowserSurface?.(request)) {
+      // How a task declares it has nothing a browser can assert.
+      const output = {
+        ...result.output,
+        status: 'blocked' as const,
+        summary: 'No user-visible surface for this task.',
+        data: {},
+      };
+      return { ...result, output, stdout: JSON.stringify(output) };
+    }
     if (request.stepId !== 'plan') return result;
     const output = {
       ...result.output,
@@ -197,6 +238,60 @@ async function taskCommits(runtime: Runtime, projectId: string): Promise<string[
   return (await allCommits(runtime, projectId)).filter((subject) =>
     subject.startsWith('agent(developer):'),
   );
+}
+
+/**
+ * A preview that always starts and a browser verifier that answers from a
+ * script, so the loop's logic is tested without a real browser (#325).
+ * `verdicts` is consumed per assertion attempt; anything past its end passes.
+ */
+function stubBrowser(runtime: Runtime, verdicts: boolean[] = []): { attempts: number } {
+  const state = { attempts: 0 };
+  // The coordinator, not the Playwright verifier under it: mock mode already
+  // swaps in an auto-approving coordinator, so stubbing the verifier would
+  // never be consulted and every assertion would silently pass.
+  Object.defineProperty(runtime.browserVerification, 'verify', {
+    configurable: true,
+    value: async (
+      input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
+      _signal: AbortSignal,
+      onSessionStarted?: (sessionId: string) => Promise<void>,
+    ) => {
+      const passed = verdicts[state.attempts] ?? true;
+      state.attempts += 1;
+      // The orchestrator binds the report to the session the coordinator
+      // announced; without this it rejects the report as unsourced.
+      const sessionId = `preview-${state.attempts}`;
+      await onSessionStarted?.(sessionId);
+      return {
+        schemaVersion: '1',
+        approved: passed,
+        summary: passed ? 'Assertion passed.' : 'Assertion failed on the first step.',
+        planArtifact: {
+          name: input.plan.metadata.name,
+          revision: input.plan.metadata.revision,
+          sha256: input.plan.metadata.sha256,
+        },
+        previewSession: {
+          sessionId,
+          status: 'running',
+          url: 'http://127.0.0.1:4000/preview/preview-1/',
+          evidence: { screenshots: [] },
+        },
+        steps: [
+          {
+            stepId: 'open-root',
+            title: 'Open the app',
+            status: passed ? 'passed' : 'failed',
+            durationMs: 12,
+            observations: [],
+            ...(passed ? {} : { error: 'expected the dashboard, got the sign-in page' }),
+          },
+        ],
+      } satisfies BrowserVerificationReport;
+    },
+  });
+  return state;
 }
 
 function taskEvents(events: ProjectEvent[], type: ProjectEvent['type']): unknown[] {
@@ -515,5 +610,142 @@ describe('per-task deterministic verification', () => {
     expect(await taskCommits(runtime, project.id)).toEqual(['agent(developer): T1: T1 work']);
     expect(taskEvents(detail.events, 'task.completed')).toEqual(['T1']);
     expect(executor.executedSteps.filter((step) => step === 'implement.T3')).toHaveLength(0);
+  }, 120_000);
+});
+
+describe('per-task browser assertion', () => {
+  it('asserts each task in a browser after its deterministic checks pass', async () => {
+    const executor = new TaskGraphExecutor({ tasks: [task('T1'), task('T2', ['T1'])] });
+    const runtime = await createTaskLoopRuntime(
+      'task-assert',
+      executor,
+      ASSERTED_TASK_LOOP_WORKFLOW,
+    );
+    const browser = stubBrowser(runtime);
+    const project = await startProject(runtime, 'Task assertion');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('completed');
+    // One plan and one assertion per task, each under its own per-task step id.
+    expect(
+      executor.executedSteps.filter((step) => step.startsWith('plan-task-browser-test.')),
+    ).toEqual(['plan-task-browser-test.T1', 'plan-task-browser-test.T2']);
+    expect(browser.attempts).toBe(2);
+
+    // The assertion runs after the checks are green and before the task completes.
+    expect(taskTimeline(detail.events, 'T1')).toEqual([
+      'task.started',
+      'quality.approved',
+      'quality.approved',
+      'task.completed',
+    ]);
+    expect(
+      detail.events.filter(
+        (event) => event.type === 'quality.approved' && event.data.asserted === true,
+      ),
+    ).toHaveLength(2);
+    expect(await taskCommits(runtime, project.id)).toEqual([
+      'agent(developer): T1: T1 work',
+      'agent(developer): T2: T2 work',
+    ]);
+  }, 120_000);
+
+  it('repairs a failed assertion once and completes the task only when it passes', async () => {
+    const executor = new TaskGraphExecutor({ tasks: [task('T1')] });
+    const runtime = await createTaskLoopRuntime(
+      'task-assert-repair',
+      executor,
+      ASSERTED_TASK_LOOP_WORKFLOW,
+    );
+    // T1's first assertion fails; the rerun after repair passes.
+    const browser = stubBrowser(runtime, [false, true]);
+    const project = await startProject(runtime, 'Task assertion repair');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('completed');
+    expect(browser.attempts).toBe(2);
+    // Repair for a failed assertion is its own step, so the timeline says which
+    // of the two loops fired.
+    expect(executor.executedSteps.filter((step) => step === 'repair-task-browser.T1')).toHaveLength(
+      1,
+    );
+    expect(executor.executedSteps.filter((step) => step === 'repair-task.T1')).toHaveLength(0);
+
+    const requested = detail.events.find(
+      (event) => event.type === 'quality.repair_requested' && event.data.taskId === 'T1',
+    );
+    expect(requested?.data.stepId).toBe('repair-task-browser.T1');
+    // The failing step reaches repair, not just a summary.
+    expect(requested?.data.failedStepId).toBe('open-root');
+
+    // Repair is handed the plan and the report that failed against it.
+    const repairStep = (await runtime.stepRuns.list(project.runId)).find(
+      (step) => step.stepId === 'repair-task-browser.T1',
+    );
+    const [attempt] = await runtime.stepAttempts.list(project.runId, repairStep!.id);
+    expect(attempt?.inputArtifacts.map((artifact) => artifact.name)).toEqual(
+      expect.arrayContaining(['browser-test.plan', 'browser-verification.report']),
+    );
+  }, 120_000);
+
+  it('lets a task with no user-visible surface complete without asserting', async () => {
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1')],
+      noBrowserSurface: (request) => request.stepId === 'plan-task-browser-test.T1',
+    });
+    const runtime = await createTaskLoopRuntime(
+      'task-assert-skip',
+      executor,
+      ASSERTED_TASK_LOOP_WORKFLOW,
+    );
+    const browser = stubBrowser(runtime);
+    const project = await startProject(runtime, 'Task assertion skipped');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('completed');
+    // No browser ran, and the task still completed and committed.
+    expect(browser.attempts).toBe(0);
+    expect(
+      detail.events.find(
+        (event) => event.type === 'quality.approved' && event.data.asserted === false,
+      )?.message,
+    ).toContain('no browser assertion');
+    expect(await taskCommits(runtime, project.id)).toEqual(['agent(developer): T1: T1 work']);
+  }, 120_000);
+
+  it('fails the task when the plan step returns neither a plan nor a refusal', async () => {
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1')],
+      malformedPlan: (request) => request.stepId === 'plan-task-browser-test.T1',
+    });
+    const runtime = await createTaskLoopRuntime(
+      'task-assert-garbage',
+      executor,
+      ASSERTED_TASK_LOOP_WORKFLOW,
+    );
+    const browser = stubBrowser(runtime, [false]);
+    const project = await startProject(runtime, 'Task assertion garbage plan');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('failed');
+    expect(detail.project.error).toContain('neither a valid browser test plan');
+    // Repairing the code cannot fix a malformed plan, and the plan is pinned
+    // unchanged for every rerun — so the repair budget is never spent on it.
+    expect(browser.attempts).toBe(0);
+    expect(executor.executedSteps.filter((step) => step === 'repair-task-browser.T1')).toHaveLength(
+      0,
+    );
   }, 120_000);
 });

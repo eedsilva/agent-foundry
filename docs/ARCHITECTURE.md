@@ -361,8 +361,27 @@ realmente falhar no workspace do projeto. Nenhum modelo julga o trabalho de outr
 - `task.completed` só é emitido depois de um relatório verde; `quality.approved` e
   `quality.repair_requested` carregam `taskId`.
 
-A asserção de browser por tarefa (#325) e a colapsação da cauda do pipeline (#329) ainda não
-entraram no laço.
+### Asserção de browser por tarefa (ADR 0047)
+
+Passar no typecheck não significa que a funcionalidade funciona. Depois — e só depois — de os checks
+determinísticos ficarem verdes, o `acceptanceCheck` da própria tarefa vira uma asserção de browser
+contra o preview vivo.
+
+- `browser.plan` transforma o `acceptanceCheck` num `browser-test.plan` declarativo; `browser.check`
+  é o runner Playwright que já existia, movido para dentro do laço em vez de reimplementado.
+- `browser` exige o gate determinístico: um preview de código que não compila não prova nada.
+- Asserção reprovada dispara `repair` com o plano **e** o relatório pinados: passo que falhou, erro e
+  referências de screenshot/trace. O plano vai pinado sem alteração para a reexecução.
+- O reparo da asserção é um passo próprio, `<repair>-browser.<taskId>` — os dois laços rodam para a
+  mesma tarefa e colidiriam na identidade do passo, e a timeline separa "os checks estavam vermelhos"
+  de "a funcionalidade não funcionou".
+- Tarefa sem superfície visível responde `status: blocked` no passo de plano, emite
+  `quality.approved` com `asserted: false` e conclui normalmente. É uma resposta, não uma falha.
+- Negação cross-tenant não precisa de máquina nova: a tarefa cujo acceptance check cita dados de
+  outro usuário ganha um plano que entra com uma conta e afirma que as linhas da outra não aparecem,
+  contra RLS real.
+
+A colapsação da cauda do pipeline (#329) ainda não entrou no laço.
 
 ## Quality loop
 

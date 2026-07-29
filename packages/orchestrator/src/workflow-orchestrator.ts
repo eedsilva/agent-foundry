@@ -12,6 +12,7 @@ import type {
   ExecutorStreamEvent,
   ForEachTaskStep,
   PlanTask,
+  TaskBrowserAssertion,
   PreviewSession,
   Project,
   ProjectEvent,
@@ -33,7 +34,10 @@ import type {
 } from '@agent-foundry/contracts';
 import {
   AGENT_ARTIFACT_JSON_SCHEMA,
+  AgentArtifactSchema,
   BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
+  BrowserTestPlanArtifactSchema,
+  BrowserVerificationReportSchema,
   DEFAULT_BROWSER_EVIDENCE_POLICY,
   EXECUTION_PROTOCOL_VERSION,
   formatZodIssues,
@@ -93,6 +97,7 @@ import {
   recordRunDuration,
   recordStepRetry,
   recordTokenUsage,
+  browserRepairId,
   taskStepId,
   transitionStepAttempt,
   transitionStepRun,
@@ -1372,11 +1377,42 @@ export class WorkflowOrchestrator {
         signal,
         pinnedInputs,
       );
+      // Only once the checks are green: the assertion boots a preview, and a
+      // preview of code that does not compile tells you nothing (#325).
+      const asserted = await this.assertTask(
+        project,
+        workflow,
+        node,
+        task,
+        runId,
+        signal,
+        pinnedInputs,
+      );
+      // A browser repair edited the workspace after the checks went green, so
+      // they are no longer known to be. Re-run them, or a task could complete on
+      // a red typecheck — the one thing ADR 0045 promises cannot happen. The
+      // offset keeps this pass's step identities distinct from the first's.
+      const reverified = asserted
+        ? await this.verifyTask(
+            project,
+            workflow,
+            node,
+            task,
+            asserted,
+            runId,
+            signal,
+            pinnedInputs,
+            (node.repair?.maxAttempts ?? 0) + 1,
+          )
+        : null;
       // The attempt behind the last artifact that changed the workspace is the
       // authority on what this task committed — the repair's, when one ran, not
       // the implementation it corrected. A task that changed nothing has no
       // commit at all.
-      const commit = await this.commitForArtifact(runId, repaired ?? artifact);
+      const commit = await this.commitForArtifact(
+        runId,
+        reverified ?? asserted ?? repaired ?? artifact,
+      );
       const outcome = attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : '';
       await this.emit(project.id, 'task.completed', `${task.id}: ${task.title}${outcome}`, {
         nodeId: node.id,
@@ -1510,6 +1546,7 @@ export class WorkflowOrchestrator {
     runId: string,
     signal: AbortSignal,
     pinnedInputs: ArtifactReference[],
+    iterationBase = 0,
   ): Promise<StoredArtifact | null> {
     const { verify, repair } = node;
     if (!verify || !repair) return null;
@@ -1518,7 +1555,10 @@ export class WorkflowOrchestrator {
     const maxRepairAttempts = repair.maxAttempts;
     const startedAt = this.clock.now().getTime();
     let repaired: StoredArtifact | null = null;
-    for (let iteration = 1; ; iteration += 1) {
+    // A second pass over the same task needs its own iteration numbers, or it
+    // would reuse the first pass's completed steps and read a stale report.
+    for (let round = 1; ; round += 1) {
+      const iteration = iterationBase + round;
       await this.assertExecutionMayContinue(runId, signal);
       const report = await this.executeStep(
         project,
@@ -1586,6 +1626,154 @@ export class WorkflowOrchestrator {
         signal,
         iteration,
         [...pinnedInputs, artifactReference(report)],
+      );
+      await this.recordCompletedRepair(runId, node.id, repairStep.id, iteration, signal);
+    }
+  }
+
+  /**
+   * The task's browser assertion (#325). Typecheck passing does not mean the
+   * feature works: the task's acceptance check becomes a declarative plan, the
+   * existing Playwright runner asserts it against a live preview, and a failed
+   * assertion reaches repair with the failing step and its captured evidence.
+   *
+   * Runs only once the deterministic checks are green, so the preview it boots
+   * is built from code that already compiles. Returns the last repair artifact,
+   * or null when nothing repaired — the caller needs it for the task's commit.
+   */
+  private async assertTask(
+    project: Project,
+    workflow: WorkflowDefinition,
+    node: ForEachTaskStep,
+    task: PlanTask,
+    runId: string,
+    signal: AbortSignal,
+    pinnedInputs: ArtifactReference[],
+  ): Promise<StoredArtifact | null> {
+    const { browser, repair } = node;
+    if (!browser || !repair) return null;
+    const planStep = taskBrowserPlanStep(browser.plan, task);
+    const checkStep = taskBrowserCheckStep(browser.check, task);
+    const repairStep = taskBrowserRepairStep(repair, browser, task);
+    const maxRepairAttempts = repair.maxAttempts;
+
+    await this.assertExecutionMayContinue(runId, signal);
+    const plan = await this.executeStep(
+      project,
+      workflow,
+      planStep,
+      runId,
+      node.id,
+      signal,
+      1,
+      pinnedInputs,
+    );
+    // A task with no user-visible surface says so rather than inventing a
+    // journey to assert. That is an answer, not a failure.
+    const declared = AgentArtifactSchema.safeParse(plan.content);
+    if (declared.success && declared.data.status === 'blocked') {
+      await this.emit(
+        project.id,
+        'quality.approved',
+        `${task.id}: no browser assertion — ${declared.data.summary}`,
+        {
+          nodeId: node.id,
+          runId,
+          dedupeKey: `${runId}:task:${node.id}:${task.id}:browser:skipped`,
+          data: { taskId: task.id, stepId: planStep.id, asserted: false },
+        },
+      );
+      return null;
+    }
+
+    if (!BrowserTestPlanArtifactSchema.safeParse(plan.content).success) {
+      // Repairing the *code* cannot fix a malformed plan, and the plan is pinned
+      // unchanged for every rerun — so retrying here would burn the whole repair
+      // budget on something unfixable by construction.
+      throw new ExecutionError(
+        `Task ${task.id}: ${planStep.id} produced neither a valid browser test plan nor a "blocked" answer`,
+      );
+    }
+    const planReference = artifactReference(plan);
+    let repaired: StoredArtifact | null = null;
+    for (let iteration = 1; ; iteration += 1) {
+      await this.assertExecutionMayContinue(runId, signal);
+      const report = await this.executeStep(
+        project,
+        workflow,
+        checkStep,
+        runId,
+        node.id,
+        signal,
+        iteration,
+        [planReference],
+      );
+      const parsed = BrowserVerificationReportSchema.safeParse(report.content);
+      const approved = parsed.success && parsed.data.approved;
+      if (approved) {
+        // Same as the deterministic gate: a green result ends the streak, or
+        // one browser repair per task would march the run into the
+        // consecutive-repairs ceiling.
+        await this.resetConsecutiveRepairs(runId);
+        await this.emit(project.id, 'quality.approved', `${task.id}: ${parsed.data.summary}`, {
+          nodeId: node.id,
+          runId,
+          dedupeKey: `${runId}:task:${node.id}:${task.id}:browser:${iteration}:approved`,
+          data: { taskId: task.id, stepId: checkStep.id, iteration, asserted: true },
+        });
+        return repaired;
+      }
+      const failedStep = parsed.success
+        ? parsed.data.steps.find((step) => step.status !== 'passed')
+        : undefined;
+      const summary = parsed.success
+        ? parsed.data.summary
+        : `${checkStep.id} did not produce a browser verification report`;
+      if (iteration > maxRepairAttempts) {
+        await this.emit(
+          project.id,
+          'task.failed',
+          `${task.id} failed its browser assertion: ${summary}`,
+          {
+            nodeId: node.id,
+            runId,
+            dedupeKey: `${runId}:task:${node.id}:${task.id}:browser:failed`,
+            data: {
+              taskId: task.id,
+              stepId: checkStep.id,
+              iteration,
+              maxRepairAttempts,
+              ...(failedStep ? { failedStepId: failedStep.stepId } : {}),
+            },
+          },
+        );
+        throw new ExecutionError(
+          `Task ${task.id} failed its browser assertion after ${maxRepairAttempts} repair attempt(s): ${summary}`,
+        );
+      }
+      await this.emit(project.id, 'quality.repair_requested', `${task.id}: ${summary}`, {
+        nodeId: node.id,
+        runId,
+        dedupeKey: `${runId}:task:${node.id}:${task.id}:browser:${iteration}:repair_requested`,
+        data: {
+          taskId: task.id,
+          stepId: repairStep.id,
+          iteration,
+          maxRepairAttempts,
+          ...(failedStep ? { failedStepId: failedStep.stepId } : {}),
+        },
+      });
+      // The plan is pinned unchanged for the rerun, and the report carries the
+      // failing step plus its screenshot/trace references.
+      repaired = await this.executeStep(
+        project,
+        workflow,
+        repairStep,
+        runId,
+        node.id,
+        signal,
+        iteration,
+        [...pinnedInputs, planReference, artifactReference(report)],
       );
       await this.recordCompletedRepair(runId, node.id, repairStep.id, iteration, signal);
     }
@@ -3381,6 +3569,11 @@ export function artifactReference(artifact: StoredArtifact) {
 function workflowUsesBrowserPlan(workflow: WorkflowDefinition, artifactName: string): boolean {
   return workflow.nodes.some((node) => {
     if (node.type === 'verify') return node.browserTestPlanArtifact === artifactName;
+    // A per-task assertion writes its plan through the node's browser step, so
+    // that plan agent needs the same output schema (#325).
+    if (node.type === 'for-each-task') {
+      return node.browser?.check.browserTestPlanArtifact === artifactName;
+    }
     if (node.type !== 'quality-loop') return false;
     return [node.setup, node.check].some(
       (step) => step?.type === 'verify' && step.browserTestPlanArtifact === artifactName,
@@ -3446,6 +3639,67 @@ function taskRepairStep(repair: AgentStep, task: PlanTask): AgentStep {
       `Task ${task.id}: ${task.title}`,
       `Acceptance check: ${task.acceptanceCheck}`,
       'Fix the root cause of every failing command in the verification report. Do not weaken or remove a check to make it pass.',
+    ].join('\n'),
+  };
+}
+
+/**
+ * The step that turns one task's acceptance check into a browser plan (#325).
+ * The check is prose the planner wrote; this is where it becomes a claim a
+ * browser can settle.
+ */
+function taskBrowserPlanStep(plan: AgentStep, task: PlanTask): AgentStep {
+  return {
+    ...plan,
+    id: taskStepId(plan.id, task.id),
+    title: `${task.id}: ${plan.title}`,
+    instructions: [
+      plan.instructions,
+      '',
+      `Task ${task.id}: ${task.title}`,
+      `Acceptance check to assert: ${task.acceptanceCheck}`,
+      `Deliverables: ${task.deliverables.join(', ')}`,
+      'If this task has no user-visible surface to assert — a migration, a config change, a pure refactor — return status "blocked" with a one-line reason and no plan. That is a valid answer and does not fail the task.',
+    ].join('\n'),
+  };
+}
+
+/** The task's browser assertion, under the same per-task id rule. */
+function taskBrowserCheckStep(check: VerifyStep, task: PlanTask): VerifyStep {
+  return { ...check, id: taskStepId(check.id, task.id), title: `${task.id}: ${check.title}` };
+}
+
+/**
+ * Repair for a failed browser assertion. It carries its own step id rather than
+ * reusing the deterministic gate's, because both loops run for the same task and
+ * would otherwise collide on step identity — and because a timeline that
+ * distinguishes "the checks were red" from "the feature did not work" is worth
+ * more than one that does not.
+ */
+function taskBrowserRepairStep(
+  repair: AgentStep,
+  browser: TaskBrowserAssertion,
+  task: PlanTask,
+): AgentStep {
+  return {
+    ...repair,
+    id: taskStepId(browserRepairId(repair.id), task.id),
+    // It reads what failed — the plan and the browser report — where the
+    // declared repair step lists the deterministic gate's inputs instead.
+    inputArtifacts: [
+      ...new Set([
+        ...repair.inputArtifacts,
+        browser.plan.outputArtifact,
+        browser.check.outputArtifact,
+      ]),
+    ],
+    title: `${task.id}: repair browser assertion for ${task.title}`,
+    instructions: [
+      repair.instructions,
+      '',
+      `Task ${task.id}: ${task.title}`,
+      `Acceptance check: ${task.acceptanceCheck}`,
+      'The deterministic checks already pass; what failed is the browser assertion. Reproduce the failing step from the report and its evidence, fix the behaviour, and leave the plan unchanged for the rerun.',
     ].join('\n'),
   };
 }

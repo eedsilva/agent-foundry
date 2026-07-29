@@ -115,6 +115,34 @@ nodes:
       # Bounded: exhausting this fails the task with the checks still red, and
       # the tasks committed before it survive.
       maxAttempts: 2
+    # Typecheck passing does not mean the feature works. The task's own
+    # acceptance check becomes a browser assertion against the live preview,
+    # run only once the deterministic checks are green (ADR 0047).
+    browser:
+      plan:
+        id: plan-task-browser-test
+        type: agent
+        role: tester
+        taskKind: verification
+        title: Turn the task's acceptance check into a browser plan
+        instructions: >-
+          Produce a schemaVersion 1 declarative browser test plan that asserts this task's acceptance
+          check against the running application. Use only relative app paths, supported semantic
+          locators, actions and assertions. Where the task concerns another user's data, assert the
+          denial itself: sign in as one account and confirm the other account's rows are not visible.
+        inputArtifacts: [prd, plan.current, verification.report]
+        outputArtifact: browser-test.plan
+        mutatesWorkspace: false
+        harnessTags: [testing, browser]
+        maxAttempts: 3
+      check:
+        id: assert-task
+        type: verify
+        title: Assert the task's acceptance check in a browser
+        outputArtifact: browser-verification.report
+        browserTestPlanArtifact: browser-test.plan
+        scripts: []
+        includeGitDiffCheck: false
 
   - id: deterministic-verification
     type: quality-loop

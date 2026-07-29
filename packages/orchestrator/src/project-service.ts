@@ -59,6 +59,7 @@ import {
   ResumeBlockedError,
   ValidationError,
   VersionConflictError,
+  browserRepairId,
   isTaskStepId,
   normalizeApprovalDecision,
   redactString,
@@ -1152,9 +1153,13 @@ function isAgentStep(workflow: WorkflowDefinition, nodeId: string, stepId: strin
     // A for-each-task node runs its implement and repair steps once per task
     // under the per-task id `<step>.<taskId>`, so both forms are pinnable.
     (node?.type === 'for-each-task' &&
-      [node.implement, node.repair].some(
+      [node.implement, node.repair, node.browser?.plan].some(
         (step) => step !== undefined && isTaskStepId(stepId, step.id),
-      ))
+      )) ||
+    // The browser loop runs repair under its own declared id (#325).
+    (node?.type === 'for-each-task' &&
+      node.repair !== undefined &&
+      isTaskStepId(stepId, browserRepairId(node.repair.id)))
   );
 }
 

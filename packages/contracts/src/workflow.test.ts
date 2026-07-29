@@ -260,6 +260,76 @@ describe('for-each-task workflow node', () => {
       }),
     ).toThrow(/mutatesWorkspace/);
   });
+
+  const BASE_BROWSER = {
+    plan: {
+      id: 'plan-task-browser-test',
+      type: 'agent' as const,
+      role: 'tester' as const,
+      taskKind: 'verification' as const,
+      title: "Turn the task's acceptance check into a browser plan",
+      instructions: 'Produce a declarative browser test plan.',
+      inputArtifacts: ['prd'],
+      outputArtifact: 'browser-test.plan',
+      mutatesWorkspace: false,
+    },
+    check: {
+      id: 'assert-task',
+      type: 'verify' as const,
+      title: "Assert the task's acceptance check in a browser",
+      outputArtifact: 'browser-verification.report',
+      browserTestPlanArtifact: 'browser-test.plan',
+      scripts: [],
+      includeGitDiffCheck: false,
+    },
+  };
+
+  it('carries the per-task browser assertion', () => {
+    const node = WorkflowNodeSchema.parse({
+      ...BASE_NODE,
+      verify: BASE_VERIFY,
+      repair: BASE_REPAIR,
+      browser: BASE_BROWSER,
+    });
+    if (node.type !== 'for-each-task') throw new Error('expected for-each-task');
+    expect(node.browser?.check.browserTestPlanArtifact).toBe('browser-test.plan');
+  });
+
+  it('rejects a browser assertion without the deterministic gate before it', () => {
+    expect(() => WorkflowNodeSchema.parse({ ...BASE_NODE, browser: BASE_BROWSER })).toThrow(
+      /deterministic gate/,
+    );
+    // And transitively without a repair: browser needs verify, verify needs
+    // repair, so a browser assertion always has something to invoke on failure.
+    expect(() =>
+      WorkflowNodeSchema.parse({ ...BASE_NODE, verify: BASE_VERIFY, browser: BASE_BROWSER }),
+    ).toThrow(/repair/);
+  });
+
+  it('rejects a browser check reading an artifact its plan step does not write', () => {
+    expect(() =>
+      WorkflowNodeSchema.parse({
+        ...BASE_NODE,
+        verify: BASE_VERIFY,
+        repair: BASE_REPAIR,
+        browser: {
+          ...BASE_BROWSER,
+          check: { ...BASE_BROWSER.check, browserTestPlanArtifact: 'somewhere-else' },
+        },
+      }),
+    ).toThrow(/writes/);
+  });
+
+  it('rejects a browser plan step that mutates the workspace', () => {
+    expect(() =>
+      WorkflowNodeSchema.parse({
+        ...BASE_NODE,
+        verify: BASE_VERIFY,
+        repair: BASE_REPAIR,
+        browser: { ...BASE_BROWSER, plan: { ...BASE_BROWSER.plan, mutatesWorkspace: true } },
+      }),
+    ).toThrow(/mutate/);
+  });
 });
 
 describe('workflow routing table', () => {
