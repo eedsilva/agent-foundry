@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import {
   PathSegmentSchema,
+  ProviderSchema,
   WorkflowAgentRoleSchema,
   WorkflowTaskKindSchema,
+  type TaskKind,
 } from './primitives.js';
 import { ExecutionSecretRefSchema } from './execution-secret-ref.js';
 import { RoutingPrioritiesSchema } from './model.js';
@@ -266,6 +268,62 @@ export const WorkflowNodeSchema = z.discriminatedUnion('type', [
 ]);
 export type WorkflowNode = z.infer<typeof WorkflowNodeSchema>;
 
+/**
+ * Which executors run a task kind, head of the list first (#326). A table an
+ * operator can read beats a six-dimension score they cannot predict — and with
+ * no task outcome recorded yet, there is nothing to fit a score against.
+ * `mock` is excluded: it is a test double, not a vendor.
+ */
+const RoutingTableEntrySchema = z
+  .object({
+    taskKind: WorkflowTaskKindSchema,
+    executors: z.array(ProviderSchema.exclude(['mock'])).min(1),
+  })
+  .strict();
+export type RoutingTableEntry = z.infer<typeof RoutingTableEntrySchema>;
+
+export const RoutingTableSchema = z
+  .array(RoutingTableEntrySchema)
+  .min(1)
+  .refine((entries) => new Set(entries.map((entry) => entry.taskKind)).size === entries.length, {
+    message: 'Each task kind may appear at most once in a routing table',
+  });
+export type RoutingTable = z.infer<typeof RoutingTableSchema>;
+
+/**
+ * What runs when a workflow declares no table of its own. All three executors
+ * appear in every list because three subscriptions are three quota pools, and a
+ * different vendor is a genuinely different attempt (#326); the head differs by
+ * task kind only where the ordering is a decision worth writing down.
+ */
+export const DEFAULT_ROUTING_TABLE: RoutingTable = [
+  { taskKind: 'planning', executors: ['claude', 'codex', 'agy'] },
+  { taskKind: 'plan-review', executors: ['claude', 'codex', 'agy'] },
+  { taskKind: 'implementation', executors: ['claude', 'codex', 'agy'] },
+  { taskKind: 'code-review', executors: ['codex', 'claude', 'agy'] },
+  { taskKind: 'repair', executors: ['codex', 'claude', 'agy'] },
+  { taskKind: 'verification', executors: ['codex', 'claude', 'agy'] },
+];
+
+/**
+ * The table entry that governs a task kind, and which table it came from.
+ * A workflow's own table wins; anything it leaves out falls through to the
+ * engine's, and the audit says which one answered.
+ */
+export function resolveRoutingEntry(
+  routing: RoutingTable | undefined,
+  workflowId: string,
+  // Takes the wider `TaskKind` on purpose: a retired kind simply matches
+  // nothing, and the caller falls back to catalog order rather than being
+  // handed a cast that hides the gap.
+  taskKind: TaskKind,
+): { source: string; executors: RoutingTableEntry['executors'] } | undefined {
+  const declared = routing?.find((entry) => entry.taskKind === taskKind);
+  if (declared) return { source: workflowId, executors: declared.executors };
+  const fallback = DEFAULT_ROUTING_TABLE.find((entry) => entry.taskKind === taskKind);
+  return fallback ? { source: 'default', executors: fallback.executors } : undefined;
+}
+
 export const WorkflowDefinitionSchema = z.object({
   schemaVersion: z.literal('1'),
   id: PathSegmentSchema,
@@ -273,5 +331,7 @@ export const WorkflowDefinitionSchema = z.object({
   description: z.string().min(1),
   stack: PathSegmentSchema,
   nodes: z.array(WorkflowNodeSchema).min(1),
+  /** Omitted means the engine's default table; the route audit records which one ran. */
+  routing: RoutingTableSchema.optional(),
 });
 export type WorkflowDefinition = z.infer<typeof WorkflowDefinitionSchema>;

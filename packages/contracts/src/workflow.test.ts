@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WorkflowNodeSchema } from './workflow.js';
+import { WorkflowDefinitionSchema, WorkflowNodeSchema } from './workflow.js';
 
 const BASE_GATE = {
   id: 'review-gate',
@@ -329,5 +329,65 @@ describe('for-each-task workflow node', () => {
         browser: { ...BASE_BROWSER, plan: { ...BASE_BROWSER.plan, mutatesWorkspace: true } },
       }),
     ).toThrow(/mutate/);
+  });
+});
+
+describe('workflow routing table', () => {
+  const BASE_WORKFLOW = {
+    schemaVersion: '1' as const,
+    id: 'routed',
+    name: 'Routed workflow',
+    description: 'Declares which executor runs each task kind',
+    stack: 'nextjs',
+    nodes: [BASE_AGENT_STEP],
+  };
+
+  it('is optional, and carries an ordered executor list per task kind', () => {
+    expect(WorkflowDefinitionSchema.parse(BASE_WORKFLOW).routing).toBeUndefined();
+
+    const workflow = WorkflowDefinitionSchema.parse({
+      ...BASE_WORKFLOW,
+      routing: [
+        { taskKind: 'implementation', executors: ['claude', 'codex', 'agy'] },
+        { taskKind: 'repair', executors: ['codex', 'claude'] },
+      ],
+    });
+    expect(workflow.routing?.[0]).toEqual({
+      taskKind: 'implementation',
+      executors: ['claude', 'codex', 'agy'],
+    });
+  });
+
+  it('rejects an empty executor list, a duplicated task kind, and a retired one', () => {
+    expect(() =>
+      WorkflowDefinitionSchema.parse({
+        ...BASE_WORKFLOW,
+        routing: [{ taskKind: 'implementation', executors: [] }],
+      }),
+    ).toThrow();
+    expect(() =>
+      WorkflowDefinitionSchema.parse({
+        ...BASE_WORKFLOW,
+        routing: [
+          { taskKind: 'implementation', executors: ['claude'] },
+          { taskKind: 'implementation', executors: ['codex'] },
+        ],
+      }),
+    ).toThrow(/once/);
+    expect(() =>
+      WorkflowDefinitionSchema.parse({
+        ...BASE_WORKFLOW,
+        routing: [{ taskKind: 'architecture', executors: ['claude'] }],
+      }),
+    ).toThrow();
+  });
+
+  it('rejects the mock executor, which is a test double rather than a vendor', () => {
+    expect(() =>
+      WorkflowDefinitionSchema.parse({
+        ...BASE_WORKFLOW,
+        routing: [{ taskKind: 'implementation', executors: ['mock'] }],
+      }),
+    ).toThrow();
   });
 });

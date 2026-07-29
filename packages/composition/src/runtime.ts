@@ -14,7 +14,7 @@ import {
   type PreviewInstaller,
 } from '@agent-foundry/executors';
 import { VersionedHarnessRepository } from '@agent-foundry/harness';
-import { ScoreBasedModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
+import { TableModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
 import {
   FileApprovalDecisionRepository,
   FileApprovalRequestRepository,
@@ -123,7 +123,7 @@ export interface Runtime {
   harness: VersionedHarnessRepository;
   workspaces: FileWorkspaceManager;
   secretStore: FileSecretStore;
-  router: ScoreBasedModelRouter;
+  router: TableModelRouter;
   executors: StaticExecutorRegistry | MockExecutorRegistry;
   executionPlane: LocalExecutionPlane;
   verifier: WorkspaceVerifier;
@@ -230,7 +230,7 @@ export async function createRuntime(
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
   // The circuit breaker is on by default (DEFAULT_BREAKER_CONFIG merges in the
   // router's constructor); no options are needed to enable it here.
-  const router = new ScoreBasedModelRouter(catalog, metrics, qualityObservations);
+  const router = new TableModelRouter(catalog, metrics);
   const executors =
     config.executorMode === 'mock'
       ? new MockExecutorRegistry(new MockAgentExecutor())

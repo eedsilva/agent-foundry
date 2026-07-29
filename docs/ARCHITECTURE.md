@@ -56,7 +56,7 @@ Lê `manifest.json`, aplica seleção por papel, tarefa, stack e tags, ordena po
 
 ### `packages/model-router`
 
-Aplica hard constraints, calcula score, produz candidatos de fallback e usa métricas observadas. O router nunca executa a CLI.
+Aplica hard constraints (policy, allowlist de provider, escrita no workspace, contexto, circuit breaker) e depois ordena os elegíveis pela **tabela de executores** do workflow — task kind → lista ordenada, cabeça primeiro (ADR 0046). Nenhum score é calculado: a tabela escolhe o executor e a ordem do catálogo escolhe o modelo dele. O router nunca executa a CLI.
 
 ### `packages/executors`
 
@@ -170,7 +170,7 @@ sequenceDiagram
       O->>A: load input artifacts
       O->>H: select(role, task, stack, tags)
       O->>R: route(TaskProfile)
-      R-->>O: selected + fallbacks + scores
+      R-->>O: selected + fallbacks (na ordem da tabela)
       opt workspace mutation
         O->>G: checkpoint
       end
@@ -221,7 +221,7 @@ Além do pipeline de projeto inteiro, o orquestrador suporta uma via de execuç�
 
 `ConversationOperationRunner` (packages/orchestrator) consome esse job type na `WorkerLoop`, executando:
 
-1. Roteador: `buildTaskProfile` → `scoreRouter` → seleciona modelo.
+1. Roteador: `buildTaskProfile` → `TableModelRouter` → seleciona o executor da cabeça da tabela.
 2. Compilação: `compileRequestMarkdown` + `compileCliPrompt` (mesmo contrato para `mutatesWorkspace`).
 3. Execução: `ExecutorRegistry.get(provider).execute()` — mesmo request shape que execuções em nó de workflow.
 4. Persistência: `ArtifactStore.put()` do resultado (artefato chamado `operation-{operationId}`), marca `StepRun`/`WorkflowRun` como completado.
@@ -460,5 +460,4 @@ Fallback sem rollback permite que o segundo modelo trabalhe sobre um workspace p
 - Adicionar novos tipos de nó ao workflow.
 - Criar seleção semântica de harness.
 - Adicionar executor por API além de CLI.
-- Incluir benchmark e exploração controlada no router.
 - Separar verifier em sandbox dedicado.
