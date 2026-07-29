@@ -73,13 +73,13 @@ export class TableModelRouter implements ModelRouter {
     const routing = explicit
       ? undefined
       : (constraints?.routing ?? resolveRoutingEntry(undefined, 'default', profile.taskKind));
-    const routingStartIndex = routing ? Math.max(0, constraints?.routingStartIndex ?? 0) : 0;
-    const eligibleExecutors = routing?.executors.slice(routingStartIndex);
+    const routingStartIndex = Math.max(0, constraints?.routingStartIndex ?? 0);
+    const eligibleExecutors = routing?.executors.slice(routingStartIndex) ?? [];
 
     const eligible: ModelDefinition[] = [];
     for (const model of this.models) {
       if (explicit && model.id !== explicit.modelId) continue;
-      if (routing && !eligibleExecutors?.includes(model.provider)) {
+      if (routing && !eligibleExecutors.includes(model.provider)) {
         rejected.push({
           modelId: model.id,
           reason: routing.executors.includes(model.provider)
@@ -101,8 +101,7 @@ export class TableModelRouter implements ModelRouter {
     // With no table entry — a pin, or a task kind no table covers — the catalog's
     // own order stands in, because throwing while eligible models exist would be
     // a worse answer than an unordered one.
-    const ordered =
-      explicit || !routing ? eligible : orderByTable(eligible, eligibleExecutors ?? []);
+    const ordered = explicit || !routing ? eligible : orderByTable(eligible, eligibleExecutors);
     const selected = ordered[0];
     if (!selected) {
       throw new Error(

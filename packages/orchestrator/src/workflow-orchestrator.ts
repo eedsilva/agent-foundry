@@ -1465,7 +1465,7 @@ export class WorkflowOrchestrator {
               },
             },
           );
-          if (!isTaskEscalationFailure(error)) throw error;
+          if (!(error instanceof QualityGateError)) throw error;
           if (attempt >= maxAttempts) throw error;
           const nextRoutingStartIndex = nextTaskExecutorIndex(
             routing,
@@ -3699,10 +3699,6 @@ function taskBrowserRepairStep(
  */
 function isTaskAttemptFailure(error: unknown, signal: AbortSignal): boolean {
   return !isCancellation(error, signal) && !isRunControlFlowError(error);
-}
-
-function isTaskEscalationFailure(error: unknown): error is QualityGateError {
-  return error instanceof QualityGateError;
 }
 
 function nextTaskExecutorIndex(
