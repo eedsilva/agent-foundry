@@ -1353,14 +1353,25 @@ export class WorkflowOrchestrator {
         maxAttempts,
       },
     });
-    const taskCheckpoint = await this.workspaces.checkpoint(
-      project.id,
-      `${node.id}-${task.id}-${runId}`,
-    );
-    const startAttempt = await this.firstTaskAttempt(runId, node.id, step.id);
     const qualityAttemptStride = (node.browser ? 2 : 1) * ((node.repair?.maxAttempts ?? 0) + 1);
     const routing = resolveRoutingEntry(workflow.routing, workflow.id, step.taskKind);
-    let routingStartIndex = 0;
+    const resumedFailure = await this.resumedTaskFailure(
+      project.id,
+      runId,
+      node.id,
+      task.id,
+      step.id,
+      routing,
+    );
+    const taskCheckpoint =
+      resumedFailure?.checkpoint ??
+      (await this.workspaces.checkpoint(project.id, `${node.id}-${task.id}-${runId}`));
+    const startAttempt =
+      resumedFailure?.attempt ?? (await this.firstTaskAttempt(runId, node.id, step.id));
+    let routingStartIndex = resumedFailure?.routingStartIndex ?? 0;
+    if (resumedFailure?.checkpoint) {
+      await this.workspaces.rollback(project.id, resumedFailure.checkpoint);
+    }
     let lastError: unknown;
     try {
       for (let attempt = startAttempt; attempt <= maxAttempts; attempt += 1) {
@@ -1493,6 +1504,64 @@ export class WorkflowOrchestrator {
       }
       throw error;
     }
+  }
+
+  /** Resume a paused quality retry from the durable failed-attempt cursor. */
+  private async resumedTaskFailure(
+    projectId: string,
+    runId: string,
+    nodeId: string,
+    taskId: string,
+    stepId: string,
+    routing: ReturnType<typeof resolveRoutingEntry>,
+  ): Promise<{ attempt: number; routingStartIndex: number; checkpoint?: string } | undefined> {
+    const terminal = (await this.events.list(projectId))
+      .filter(
+        (event) =>
+          event.runId === runId &&
+          event.nodeId === nodeId &&
+          (event.type === 'task.failed' || event.type === 'task.completed') &&
+          event.data.taskId === taskId &&
+          event.data.stepId === stepId,
+      )
+      .at(-1);
+    if (!terminal || terminal.type !== 'task.failed') return undefined;
+    const failure = terminal;
+    const failedAttempt = failure.data.attempt;
+    if (typeof failedAttempt !== 'number') return undefined;
+
+    const stepRun = (await this.stepRuns.list(runId))
+      .filter(
+        (candidate) =>
+          candidate.nodeId === nodeId &&
+          candidate.stepId === stepId &&
+          candidate.iteration === failedAttempt &&
+          !candidate.invalidatedAt,
+      )
+      .at(-1);
+    if (!stepRun || stepRun.status !== 'completed') return undefined;
+
+    const attempt = (await this.stepAttempts.list(runId, stepRun.id)).at(-1);
+    if (!attempt || attempt.status !== 'succeeded') return undefined;
+
+    const route = attempt.routeDecision?.routingTable;
+    const consumedIndex = route
+      ? route.executors.findIndex(
+          (provider, index) => index >= route.selectedIndex && provider === attempt.provider,
+        )
+      : -1;
+    let nextRoutingStartIndex = 0;
+    if (route) {
+      nextRoutingStartIndex = (consumedIndex >= 0 ? consumedIndex : route.selectedIndex) + 1;
+    } else if (routing) {
+      nextRoutingStartIndex =
+        nextTaskExecutorIndex(routing, attempt.provider, 0) ?? routing.executors.length;
+    }
+    return {
+      attempt: failedAttempt + 1,
+      routingStartIndex: nextRoutingStartIndex,
+      ...(attempt.checkpoint ? { checkpoint: attempt.checkpoint } : {}),
+    };
   }
 
   /**

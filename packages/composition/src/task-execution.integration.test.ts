@@ -634,6 +634,59 @@ describe('per-task deterministic verification', () => {
     ).toBe('codex');
   }, 120_000);
 
+  it('resumes a failed task on the next executor after pausing before retry', async () => {
+    let firstAttempt = true;
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1')],
+      corrupt: (request) => {
+        if (request.stepId === 'implement.T1') return firstAttempt;
+        if (request.stepId === 'repair-task.T1') {
+          firstAttempt = false;
+          return true;
+        }
+        return false;
+      },
+    });
+    const runtime = await createTaskLoopRuntime(
+      'task-verify-escalation-resume',
+      executor,
+      GATED_TASK_LOOP_WORKFLOW,
+    );
+    const project = await startProject(runtime, 'Task verification escalation resume');
+    let pausedAfterFailure = false;
+    const append = runtime.events.append.bind(runtime.events);
+    runtime.events.append = async (event, transaction) => {
+      if (!pausedAfterFailure && event.type === 'task.failed' && event.data.taskId === 'T1') {
+        pausedAfterFailure = true;
+        await runtime.projectService.pauseRun(project.runId);
+      }
+      await append(event, transaction);
+    };
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    expect(pausedAfterFailure).toBe(true);
+    expect((await runtime.projectService.get(project.id)).project.status).toBe('paused');
+
+    await runtime.projectService.resumeRun(project.runId);
+    expect(await runtime.worker.runOnce()).toBe(true);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('completed');
+    const routes = detail.events.filter(
+      (event) => event.type === 'agent.routed' && event.nodeId === 'implement.T1',
+    );
+    expect(routes.map((event) => event.data.selectedIndex)).toEqual([0, 1]);
+    expect(routes.map((event) => event.data.provider)).toEqual(['claude', 'codex']);
+    expect(executor.executedSteps.filter((step) => step === 'implement.T1')).toHaveLength(2);
+    expect(
+      detail.events.filter(
+        (event) => event.type === 'step.reused' && event.data.artifact === 'implementation.report',
+      ),
+    ).toHaveLength(0);
+  }, 120_000);
+
   it('fails cleanly when a red gate exhausts the executor ladder', async () => {
     const executor = new TaskGraphExecutor({
       tasks: [task('T1')],
