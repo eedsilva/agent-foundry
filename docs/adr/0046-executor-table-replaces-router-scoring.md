@@ -52,6 +52,13 @@ hand-tuned numbers presented as measurement.
 - Per-task, per-executor outcome is recorded on the timeline: `task.completed` carries the executor
   and model that produced it, and `task.failed` carries the executors the attempt walked, in order,
   plus the one it gave up on. That is the record a scored router could later be fitted to.
+- A `for-each-task` vendor escalation is verification-gated: the task must first produce a recorded
+  red deterministic check or browser assertion after its repair budget is exhausted. Only then does
+  the next task attempt start at the next executor entry, with the task checkpoint rolled back;
+  provider/CLI failures exhaust the step's own fallback candidates without speculative task retries.
+- `maxAttempts` and the emergency ceiling remain hard bounds. If the ordered executor list is
+  exhausted, the task fails cleanly and the route audit retains every selected entry and red gate
+  that led there.
 
 ## Consequences
 
@@ -71,6 +78,6 @@ hand-tuned numbers presented as measurement.
   its circuit breaker stands, its epsilon-greedy exploration does not.
 - Pinned models and the emergency ceiling are untouched. A pin overrules the table, and no table
   entry is claimed for a decision the operator made.
-- Escalating to the next entry after a real failure is **#327**, not this change. The orchestrator
-  already walks `fallbacks` when a candidate fails, and those fallbacks are now in table order, but
-  nothing here ties escalation to a verification failure.
+- Issue **#327** ties task-level escalation to a recorded verification failure. The orchestrator still
+  walks `fallbacks` when a candidate fails inside one step; that lower-level recovery is distinct
+  from moving the task to the next executor entry.

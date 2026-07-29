@@ -85,6 +85,12 @@ const GATED_TASK_LOOP_WORKFLOW = `${TASK_LOOP_WORKFLOW}    verify:
       maxAttempts: 1
 `;
 
+/** A ladder longer than the three configured vendors, for exhaustion coverage. */
+const EXHAUSTING_GATED_TASK_LOOP_WORKFLOW = GATED_TASK_LOOP_WORKFLOW.replace(
+  'maxAttempts: 2',
+  'maxAttempts: 4',
+);
+
 /** The gated fixture plus the per-task browser assertion (#325). */
 const ASSERTED_TASK_LOOP_WORKFLOW = `${GATED_TASK_LOOP_WORKFLOW}    browser:
       plan:
@@ -350,7 +356,7 @@ describe('for-each-task execution', () => {
     expect(new Set(completions.map((event) => event.data.commit)).size).toBe(3);
   }, 60_000);
 
-  it('keeps completed tasks committed when a later task exhausts its attempts', async () => {
+  it('keeps completed tasks committed when a later task exhausts its executor fallbacks', async () => {
     const executor = new TaskGraphExecutor({
       tasks: [task('T1'), task('T2', ['T1']), task('T3', ['T2'])],
       fail: (request) => request.stepId === 'implement.T2',
@@ -363,7 +369,7 @@ describe('for-each-task execution', () => {
 
     const detail = await runtime.projectService.get(project.id);
     expect(detail.project.status).toBe('failed');
-    expect(detail.project.error).toContain('Task T2 failed after 2 attempt(s)');
+    expect(detail.project.error).toContain('synthetic failure in implement.T2');
 
     // Convergence: T1's commit survives its successor's failure, and T3 — which
     // depends on T2 — never starts.
@@ -371,14 +377,15 @@ describe('for-each-task execution', () => {
     expect(taskEvents(detail.events, 'task.completed')).toEqual(['T1']);
     expect(taskEvents(detail.events, 'task.started')).toEqual(['T1', 'T2']);
 
-    // maxAttempts: 2 is honoured and observable — two attempts, two events.
+    // Provider/CLI failure exhausts the step's own fallback list. The task-level
+    // ladder does not speculate before a red quality report exists.
     const failures = detail.events.filter((event) => event.type === 'task.failed');
-    expect(failures.map((event) => event.data.attempt)).toEqual([1, 2]);
+    expect(failures.map((event) => event.data.attempt)).toEqual([1]);
     expect(failures.every((event) => event.data.maxAttempts === 2)).toBe(true);
     const attempts = (await runtime.stepRuns.list(project.runId)).filter(
       (step) => step.stepId === 'implement.T2',
     );
-    expect(attempts.map((step) => step.iteration)).toEqual([1, 2]);
+    expect(attempts.map((step) => step.iteration)).toEqual([1]);
     expect(attempts.every((step) => step.status === 'failed')).toBe(true);
     expect(executor.executedSteps.filter((step) => step === 'implement.T3')).toHaveLength(0);
 
@@ -391,13 +398,10 @@ describe('for-each-task execution', () => {
       detail.events.find((event) => event.type === 'task.completed' && event.data.taskId === 'T1')
         ?.data.executor,
     ).toBe('claude');
-    // A failed task records the executors it walked, head of the table first,
-    // and the one it gave up on — "after which failures", in order.
-    expect(failures.map((event) => (event.data.attemptedExecutors as string[])[0])).toEqual([
-      'claude',
-      'claude',
-    ]);
-    expect(failures.every((event) => typeof event.data.executor === 'string')).toBe(true);
+    // A failed task records the executor candidates walked within that one
+    // implementation step; the task ladder is reserved for red quality gates.
+    expect(failures[0]?.data.attemptedExecutors).toEqual(['claude', 'codex', 'agy']);
+    expect(failures[0]?.data.executor).toBe('agy');
     expect(detail.events.find((event) => event.type === 'agent.routed')?.data).toMatchObject({
       table: 'default',
       selectedIndex: 0,
@@ -443,20 +447,26 @@ describe('for-each-task execution', () => {
 
   it('does not re-implement a task that a pause caught after a retried attempt', async () => {
     let pause: () => Promise<void> = async () => {};
-    // Fails every candidate of T1's first attempt (one StepRun), then succeeds.
-    let firstAttemptStepRunId: string | undefined;
+    let firstAttempt = true;
     const executor = new TaskGraphExecutor({
       tasks: [task('T1'), task('T2', ['T1'])],
-      fail: (request) => {
-        if (request.stepId !== 'implement.T1') return false;
-        firstAttemptStepRunId ??= request.stepRunId;
-        return request.stepRunId === firstAttemptStepRunId;
+      corrupt: (request) => {
+        if (request.stepId === 'implement.T1') return firstAttempt;
+        if (request.stepId === 'repair-task.T1') {
+          firstAttempt = false;
+          return true;
+        }
+        return false;
       },
       onStep: async (request) => {
-        if (request.stepId === 'implement.T1') await pause();
+        if (request.stepId === 'implement.T2') await pause();
       },
     });
-    const runtime = await createTaskLoopRuntime('task-pause-retry', executor);
+    const runtime = await createTaskLoopRuntime(
+      'task-pause-retry',
+      executor,
+      GATED_TASK_LOOP_WORKFLOW,
+    );
     const project = await startProject(runtime, 'Task pause after retry');
     pause = async () => {
       await runtime.projectService.pauseRun(project.runId);
@@ -466,12 +476,16 @@ describe('for-each-task execution', () => {
     await approveAllGates(runtime, project.runId);
     expect((await runtime.runs.get(project.runId))?.status).toBe('paused');
 
-    // T1 failed attempt 1, succeeded on attempt 2, and committed once.
+    // T1 failed its red quality gate on attempt 1, succeeded on attempt 2, and
+    // the pause did not cause a third implementation.
     const completedT1 = (await runtime.projectService.get(project.id)).events.find(
       (event) => event.type === 'task.completed' && event.data.taskId === 'T1',
     );
     expect(completedT1?.data.attempt).toBe(2);
-    expect(await taskCommits(runtime, project.id)).toEqual(['agent(developer): T1: T1 work']);
+    expect(await taskCommits(runtime, project.id)).toEqual([
+      'agent(developer): T1: T1 work',
+      'agent(developer): T2: T2 work',
+    ]);
     const executionsBeforeResume = executor.executedSteps.filter(
       (step) => step === 'implement.T1',
     ).length;
@@ -490,7 +504,7 @@ describe('for-each-task execution', () => {
       (step) => step.stepId === 'implement.T1',
     );
     expect(t1Steps.map((step) => [step.iteration, step.status])).toEqual([
-      [1, 'failed'],
+      [1, 'completed'],
       [2, 'completed'],
     ]);
     expect(await taskCommits(runtime, project.id)).toEqual([
@@ -571,6 +585,85 @@ describe('per-task deterministic verification', () => {
     expect(await allCommits(runtime, project.id)).toContain('agent(fixer): T1: repair T1 work');
   }, 120_000);
 
+  it('escalates to the next executor after verification exhausts repair', async () => {
+    let firstAttempt = true;
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1')],
+      corrupt: (request) => {
+        if (request.stepId === 'implement.T1') return firstAttempt;
+        if (request.stepId === 'repair-task.T1') {
+          firstAttempt = false;
+          return true;
+        }
+        return false;
+      },
+    });
+    const runtime = await createTaskLoopRuntime(
+      'task-verify-escalation',
+      executor,
+      GATED_TASK_LOOP_WORKFLOW,
+    );
+    const project = await startProject(runtime, 'Task verification escalation');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('completed');
+    expect(executor.executedSteps.filter((step) => step === 'implement.T1')).toHaveLength(2);
+    expect(executor.executedSteps.filter((step) => step === 'repair-task.T1')).toHaveLength(1);
+
+    const routes = detail.events.filter(
+      (event) => event.type === 'agent.routed' && event.nodeId === 'implement.T1',
+    );
+    expect(routes.map((event) => event.data.selectedIndex)).toEqual([0, 1]);
+    expect(routes.map((event) => event.data.provider)).toEqual(['claude', 'codex']);
+
+    const failure = detail.events.find(
+      (event) => event.type === 'task.failed' && event.data.taskId === 'T1',
+    );
+    expect(failure?.data).toMatchObject({
+      attempt: 1,
+      maxAttempts: 2,
+      executor: 'claude',
+      attemptedExecutors: ['claude'],
+    });
+    expect(
+      detail.events.find((event) => event.type === 'task.completed' && event.data.taskId === 'T1')
+        ?.data.executor,
+    ).toBe('codex');
+  }, 120_000);
+
+  it('fails cleanly when a red gate exhausts the executor ladder', async () => {
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1')],
+      corrupt: (request) => request.stepId.endsWith('.T1'),
+    });
+    const runtime = await createTaskLoopRuntime(
+      'task-verify-ladder-exhausted',
+      executor,
+      EXHAUSTING_GATED_TASK_LOOP_WORKFLOW,
+    );
+    const project = await startProject(runtime, 'Task verification ladder exhausted');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('failed');
+    expect(detail.project.error).toContain('exhausted its executor ladder');
+    expect(detail.project.error).toContain('typecheck');
+
+    const routes = detail.events.filter(
+      (event) => event.type === 'agent.routed' && event.nodeId === 'implement.T1',
+    );
+    expect(routes.map((event) => event.data.selectedIndex)).toEqual([0, 1, 2]);
+    expect(routes.map((event) => event.data.provider)).toEqual(['claude', 'codex', 'agy']);
+    expect(detail.events.filter((event) => event.type === 'task.failed')).toHaveLength(3);
+    expect(executor.executedSteps.filter((step) => step === 'implement.T1')).toHaveLength(3);
+    expect(executor.executedSteps.filter((step) => step === 'repair-task.T1')).toHaveLength(3);
+  }, 120_000);
+
   it('fails the task when the checks stay red, keeping earlier tasks committed', async () => {
     // T2 is broken by its implementation *and* by its repair, so the bound of
     // one repair attempt is exhausted with the checks still red.
@@ -597,15 +690,17 @@ describe('per-task deterministic verification', () => {
       'task.started',
       'quality.repair_requested',
       'task.failed',
+      'quality.repair_requested',
+      'task.failed',
     ]);
-    // Repair is bounded: one attempt, not a loop — and the checks ran on both
-    // sides of it, so the failure is the checks' verdict rather than a cap.
-    expect(executor.executedSteps.filter((step) => step === 'repair-task.T2')).toHaveLength(1);
+    // Each task attempt keeps the repair bound, then the red verdict escalates
+    // the task to the next implementation vendor.
+    expect(executor.executedSteps.filter((step) => step === 'repair-task.T2')).toHaveLength(2);
     expect(
       (await runtime.stepRuns.list(project.runId))
         .filter((step) => step.stepId === 'verify-task.T2')
         .map((step) => step.iteration),
-    ).toEqual([1, 2]);
+    ).toEqual([1, 2, 3, 4]);
     // T1 survives, T2 leaves nothing behind, and T3 never starts.
     expect(await taskCommits(runtime, project.id)).toEqual(['agent(developer): T1: T1 work']);
     expect(taskEvents(detail.events, 'task.completed')).toEqual(['T1']);

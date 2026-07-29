@@ -326,9 +326,13 @@ forma o gate determinístico da tarefa (ADR 0045).
 - Cada tarefa roda sob o id derivado `<implement>.<taskId>`, com título, entregáveis, critério de
   aceite e dependências anexados às instruções. Isso dá a cada tarefa seu próprio `StepRun`, pasta de
   request, eventos e commit (`agent(developer): <taskId>: <título>`).
-- `implement.maxAttempts` **é honrado**: cada tentativa é um `StepRun` com `iteration` próprio, cada
-  falha emite `task.failed` com `attempt` e `maxAttempts`, e esgotar o limite falha a tarefa com
-  `Task <id> failed after N attempt(s)` (#211).
+- `implement.maxAttempts` **é honrado** para a escada de qualidade: depois de um relatório vermelho
+  real e do reparo esgotado, cada tentativa usa o próximo executor da tabela, com `StepRun` e
+  `iteration` próprios. Falhas do provider/CLI consomem os fallbacks do próprio step e não iniciam
+  uma escada especulativa.
+- Cada avanço emite `task.failed` com `attempt`, `maxAttempts`, `executor` e
+  `attemptedExecutors`; `agent.routed` registra a tabela e `selectedIndex`. Se a lista de executores
+  terminar, a tarefa falha sem uma rota vazia e o checkpoint da tarefa é restaurado (#327).
 - Uma tentativa falha volta apenas ao checkpoint daquela tentativa: as tarefas já commitadas
   sobrevivem. Falhar interrompe a caminhada, então dependentes da tarefa falha não rodam.
 - A revisão do grafo lida no início é pinada nas entradas de cada tarefa, então um replay depois de
