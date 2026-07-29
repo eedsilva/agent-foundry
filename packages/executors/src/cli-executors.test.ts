@@ -6,6 +6,7 @@ import { AgyCliExecutor } from './agy-executor.js';
 import type { CliInvocation } from './base-cli-executor.js';
 import { ClaudeCliExecutor } from './claude-executor.js';
 import { CodexCliExecutor } from './codex-executor.js';
+import { OpenCodeCliExecutor } from './opencode-executor.js';
 
 class InspectableCodexExecutor extends CodexCliExecutor {
   inspect(request: AgentExecutionRequest): Promise<CliInvocation> {
@@ -20,6 +21,12 @@ class InspectableClaudeExecutor extends ClaudeCliExecutor {
 }
 
 class InspectableAgyExecutor extends AgyCliExecutor {
+  inspect(request: AgentExecutionRequest): Promise<CliInvocation> {
+    return this.invocation(request);
+  }
+}
+
+class InspectableOpenCodeExecutor extends OpenCodeCliExecutor {
   inspect(request: AgentExecutionRequest): Promise<CliInvocation> {
     return this.invocation(request);
   }
@@ -126,6 +133,37 @@ describe('CLI executor contracts', () => {
     expect(invocation.args.at(-1)).toBe(
       'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
     );
+  });
+
+  it('uses Ollama through OpenCode with plan/build permissions', async () => {
+    const invocation = await new InspectableOpenCodeExecutor(1_000_000).inspect(
+      request({ provider: 'opencode', model: 'qwen2.5-coder:7b' }),
+    );
+
+    expect(invocation).toEqual({
+      command: 'opencode',
+      args: [
+        'run',
+        '--format',
+        'json',
+        '--dir',
+        '/tmp/workspace',
+        '--model',
+        'ollama/qwen2.5-coder:7b',
+        '--agent',
+        'build',
+        '--auto',
+        'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
+      ],
+    });
+
+    await expect(
+      new InspectableOpenCodeExecutor(1_000_000).inspect(
+        request({ provider: 'opencode', model: 'ollama/llama3.2', mutatesWorkspace: false }),
+      ),
+    ).resolves.toMatchObject({
+      args: expect.arrayContaining(['--model', 'ollama/llama3.2', '--agent', 'plan']),
+    });
   });
 
   it('creates an isolated AGY project only for explicit canary evidence runs', async () => {

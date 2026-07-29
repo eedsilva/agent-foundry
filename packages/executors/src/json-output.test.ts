@@ -13,7 +13,7 @@ function fixture(name: string): string {
 }
 
 function executedModel(
-  provider: 'codex' | 'claude' | 'agy',
+  provider: 'codex' | 'claude' | 'agy' | 'opencode',
   raw: string,
   source: 'stdout' | 'stderr' | 'metadata',
 ): string | undefined {
@@ -73,6 +73,37 @@ describe('parseAgentArtifact', () => {
 
   it('accepts a direct AGY artifact as authoritative print output', () => {
     expect(parseAgentArtifact('agy', JSON.stringify(artifact))).toEqual(artifact);
+  });
+
+  it('joins OpenCode text events before parsing the agent artifact', () => {
+    const raw = [
+      { type: 'text', part: { type: 'text', text: '{"schemaVersion":"1",' } },
+      { type: 'text', part: { type: 'text', text: '"status":"completed","summary":"Done.",' } },
+      {
+        type: 'text',
+        part: {
+          type: 'text',
+          text: '"data":{"files":["src/index.ts"]},"decisions":[],"assumptions":[],"risks":[],"nextActions":[]}',
+        },
+      },
+    ]
+      .map((item) => JSON.stringify(item))
+      .join('\n');
+
+    expect(parseAgentArtifact('opencode', raw)).toEqual(artifact);
+  });
+
+  it('reports the model from an OpenCode message event', () => {
+    expect(
+      executedModel(
+        'opencode',
+        JSON.stringify({
+          type: 'message.updated',
+          properties: { info: { providerID: 'ollama', modelID: 'qwen2.5-coder:7b' } },
+        }),
+        'stdout',
+      ),
+    ).toBe('ollama/qwen2.5-coder:7b');
   });
 
   it.each([

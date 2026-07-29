@@ -58,6 +58,19 @@ function catalog(): ModelDefinition[] {
   ];
 }
 
+function localModel(): ModelDefinition {
+  return model('opencode-ollama', {
+    provider: 'opencode',
+    model: 'qwen2.5-coder:7b',
+    billingMode: 'metered',
+    pricing: {
+      inputUsdPerMillionTokens: 0,
+      outputUsdPerMillionTokens: 0,
+    },
+    tags: ['local', 'mechanical'],
+  });
+}
+
 const profile: TaskProfile = {
   role: 'developer',
   taskKind: 'implementation',
@@ -79,6 +92,20 @@ function router(models = catalog()): TableModelRouter {
 }
 
 describe('TableModelRouter', () => {
+  it('can place OpenCode on the verification rung while keeping the table deterministic', async () => {
+    const router = new TableModelRouter([localModel(), ...catalog()], new MemoryMetrics());
+    const decision = await router.route({ ...profile, taskKind: 'verification' }, undefined, {
+      routing: { source: 'web-app-v1', executors: ['opencode', 'codex'] },
+    });
+
+    expect(decision.selected.model.provider).toBe('opencode');
+    expect(decision.routingTable).toMatchObject({
+      source: 'web-app-v1',
+      taskKind: 'verification',
+      executors: ['opencode', 'codex'],
+      selectedIndex: 0,
+    });
+  });
   it('selects the head of the table, not the head of the catalog', async () => {
     const decision = await router().route(profile, undefined, {
       routing: { source: 'web-app-v1', executors: ['codex', 'claude', 'agy'] },

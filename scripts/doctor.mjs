@@ -31,7 +31,7 @@ const checks = [
     root,
   ),
 ];
-const probes = [
+const probes = await Promise.all([
   providerProbe({
     provider: 'codex',
     label: 'Codex',
@@ -108,7 +108,23 @@ const probes = [
       return null;
     },
   }),
-];
+  providerProbe({
+    provider: 'opencode',
+    label: 'OpenCode',
+    versionArgs: ['--version'],
+    helpArgs: ['run', '--help'],
+    authArgs: ['--version'],
+    flags: {
+      nonInteractive: ['--format', '--dir'],
+      modelSelection: ['--model'],
+      sandbox: ['--agent', '--auto'],
+    },
+    endpoint: true,
+    authenticationStatus(result) {
+      return result.status === 0 ? true : null;
+    },
+  }),
+]);
 
 const providerFailures = realMode ? probes.filter((probe) => probe.status !== 'ready') : [];
 const failures = [...checks.filter((check) => check.required && !check.ok), ...providerFailures];
@@ -138,7 +154,7 @@ if (process.argv.slice(2).includes('--json')) {
 
 if (failures.length > 0) process.exitCode = 1;
 
-function providerProbe(definition) {
+async function providerProbe(definition) {
   const versionResult = run(definition.provider, definition.versionArgs);
   if (versionResult.status !== 0) {
     return probeResult(definition, {
@@ -201,6 +217,25 @@ function providerProbe(definition) {
     });
   }
 
+  if (definition.endpoint) {
+    const endpoint = await probeOllamaEndpoint();
+    const endpointCapabilities = { ...capabilities, endpointReachable: endpoint.ok };
+    if (!endpoint.ok) {
+      return probeResult(definition, {
+        status: 'unavailable',
+        version,
+        capabilities: endpointCapabilities,
+        message: `${definition.label} is installed, but the Ollama endpoint is unreachable.`,
+      });
+    }
+    return probeResult(definition, {
+      status: 'ready',
+      version,
+      capabilities: endpointCapabilities,
+      message: `${definition.label} and the Ollama endpoint are ready.`,
+    });
+  }
+
   return probeResult(definition, {
     status: 'ready',
     version,
@@ -215,6 +250,22 @@ function probeResult(definition, result) {
 
 function emptyCapabilities() {
   return { nonInteractive: false, modelSelection: false, sandbox: false };
+}
+
+async function probeOllamaEndpoint() {
+  try {
+    const response = await fetch(`${ollamaHost()}/api/tags`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    return { ok: response.ok };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function ollamaHost() {
+  const host = env.OLLAMA_HOST?.trim() || 'http://127.0.0.1:11434';
+  return host.includes('://') ? host.replace(/\/+$/, '') : `http://${host}`;
 }
 
 function isAgyModelList(output) {

@@ -14,5 +14,6 @@
   "SystemRoot",
   "ComSpec",
   "USERPROFILE",
-  "APPDATA"
+  "APPDATA",
+  "OLLAMA_HOST"
 ]

@@ -37,7 +37,7 @@ const AgentStepSchema = z
         risk: z.number().int().min(1).max(5).optional(),
         category: TaskCategorySchema.optional(),
         priorities: RoutingPrioritiesSchema.partial().optional(),
-        allowedProviders: z.array(z.enum(['codex', 'claude', 'agy'])).optional(),
+        allowedProviders: z.array(ProviderSchema.exclude(['mock'])).optional(),
         preferredTags: z.array(z.string()).optional(),
       })
       .default({}),
@@ -303,7 +303,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = [
   { taskKind: 'implementation', executors: ['claude', 'codex', 'agy'] },
   { taskKind: 'code-review', executors: ['codex', 'claude', 'agy'] },
   { taskKind: 'repair', executors: ['codex', 'claude', 'agy'] },
-  { taskKind: 'verification', executors: ['codex', 'claude', 'agy'] },
+  { taskKind: 'verification', executors: ['opencode', 'codex', 'claude', 'agy'] },
 ];
 
 /**
