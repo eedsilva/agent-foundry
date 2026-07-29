@@ -313,7 +313,32 @@ function collectProviderUsage(
     if (properties !== null && typeof properties === 'object' && !Array.isArray(properties)) {
       const info = (properties as Record<string, unknown>).info;
       if (info !== null && typeof info === 'object' && !Array.isArray(info)) {
-        collectUsage(info as Record<string, unknown>, accumulator);
+        const infoRecord = info as Record<string, unknown>;
+        const tokens = infoRecord.tokens;
+        if (tokens !== null && typeof tokens === 'object' && !Array.isArray(tokens)) {
+          const tokenRecord = tokens as Record<string, unknown>;
+          const cache = tokenRecord.cache;
+          const cacheRecord =
+            cache !== null && typeof cache === 'object' && !Array.isArray(cache)
+              ? (cache as Record<string, unknown>)
+              : undefined;
+          collectUsage(
+            {
+              inputTokens: tokenRecord.input,
+              outputTokens: tokenRecord.output,
+              ...(cacheRecord
+                ? {
+                    cacheReadInputTokens: cacheRecord.read,
+                    cacheWriteInputTokens: cacheRecord.write,
+                  }
+                : {}),
+              costUsd: infoRecord.cost,
+            },
+            accumulator,
+          );
+        } else {
+          collectUsage(infoRecord, accumulator);
+        }
       }
     }
   }

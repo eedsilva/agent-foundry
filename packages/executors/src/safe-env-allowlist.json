@@ -15,5 +15,6 @@
   "ComSpec",
   "USERPROFILE",
   "APPDATA",
-  "OLLAMA_HOST"
+  "OLLAMA_HOST",
+  "OPENCODE_CONFIG"
 ]

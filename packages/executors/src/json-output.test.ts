@@ -106,6 +106,30 @@ describe('parseAgentArtifact', () => {
     ).toBe('ollama/qwen2.5-coder:7b');
   });
 
+  it('reads OpenCode nested token telemetry and zero local cost', () => {
+    expect(
+      extractUsage(
+        'opencode',
+        JSON.stringify({
+          type: 'message.updated',
+          properties: {
+            info: {
+              tokens: { input: 12, output: 5, cache: { read: 2, write: 1 } },
+              cost: 0,
+            },
+          },
+        }),
+      ),
+    ).toEqual({
+      inputTokens: 12,
+      outputTokens: 5,
+      cacheReadInputTokens: 2,
+      cacheWriteInputTokens: 1,
+      providerReportedCostUsd: 0,
+      sourceQuality: 'provider-reported',
+    });
+  });
+
   it.each([
     ['codex.success.stdout.jsonl', 'codex', 'Codex fixture completed.'],
     ['claude.success.stdout.json', 'claude', 'Claude fixture completed.'],

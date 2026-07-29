@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AgentExecutionRequest, ExecutorHealth } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
 import { promptWithOutputSchema } from './output-schema-prompt.js';
@@ -11,7 +14,39 @@ export class OpenCodeCliExecutor extends BaseCliExecutor {
   protected readonly command = 'opencode';
 
   protected async invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
-    const model = request.model.includes('/') ? request.model : `ollama/${request.model}`;
+    const localModel = request.model.replace(/^ollama\//, '');
+    const model = `ollama/${localModel}`;
+    const configDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-opencode-'));
+    const configPath = join(configDirectory, 'opencode.json');
+    const permission = {
+      '*': 'deny',
+      read: 'allow',
+      glob: 'allow',
+      grep: 'allow',
+      ...(request.mutatesWorkspace ? { edit: 'allow' } : {}),
+    };
+
+    try {
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          $schema: 'https://opencode.ai/config.json',
+          provider: {
+            ollama: {
+              npm: '@ai-sdk/openai-compatible',
+              name: 'Ollama (local)',
+              options: { baseURL: `${ollamaHost()}/v1` },
+              models: { [localModel]: { name: localModel } },
+            },
+          },
+          permission,
+        }),
+      );
+    } catch (error) {
+      await rm(configDirectory, { force: true, recursive: true });
+      throw error;
+    }
+
     const args = [
       'run',
       '--format',
@@ -26,7 +61,12 @@ export class OpenCodeCliExecutor extends BaseCliExecutor {
       promptWithOutputSchema(request, 'OpenCode'),
     ];
 
-    return { command: this.command, args };
+    return {
+      command: this.command,
+      args,
+      environment: { OPENCODE_CONFIG: configPath },
+      outputDirectory: configDirectory,
+    };
   }
 
   override async health(): Promise<ExecutorHealth> {
@@ -57,5 +97,5 @@ export class OpenCodeCliExecutor extends BaseCliExecutor {
 
 export function ollamaHost(value = process.env.OLLAMA_HOST): string {
   const host = value?.trim() || 'http://127.0.0.1:11434';
-  return host.includes('://') ? host.replace(/\/+$/, '') : `http://${host}`;
+  return (host.includes('://') ? host : `http://${host}`).replace(/\/+$/, '').replace(/\/v1$/, '');
 }

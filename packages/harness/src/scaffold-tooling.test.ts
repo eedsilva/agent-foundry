@@ -11,10 +11,11 @@ describe('generated Next.js scaffold tooling', () => {
     ) as { scripts?: Record<string, string> };
 
     expect(packageJson.scripts).toMatchObject({
-      lint: expect.any(String),
-      test: expect.any(String),
-      format: expect.any(String),
-      'lint:fix': expect.any(String),
+      lint: 'eslint . --max-warnings=0',
+      'lint:fix': 'eslint . --fix',
+      format: 'prettier --write .',
+      'format:check': 'prettier --check .',
+      test: 'node --test',
     });
   });
 

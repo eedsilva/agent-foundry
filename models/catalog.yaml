@@ -13,7 +13,7 @@ models:
       rateTableVersion: local-ollama-1
     enabled: true
     requireExplicitModel: false
-    maxContextTokens: 32768
+    maxContextTokens: 65536
     canWriteWorkspace: true
     tags: [local, mechanical, verification]
     capabilities:

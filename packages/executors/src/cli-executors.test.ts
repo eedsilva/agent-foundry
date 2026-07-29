@@ -1,4 +1,4 @@
-import { readdir, rm } from 'node:fs/promises';
+import { readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
@@ -140,30 +140,59 @@ describe('CLI executor contracts', () => {
       request({ provider: 'opencode', model: 'qwen2.5-coder:7b' }),
     );
 
-    expect(invocation).toEqual({
-      command: 'opencode',
-      args: [
-        'run',
-        '--format',
-        'json',
-        '--dir',
-        '/tmp/workspace',
-        '--model',
-        'ollama/qwen2.5-coder:7b',
-        '--agent',
-        'build',
-        '--auto',
-        'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
-      ],
-    });
+    try {
+      expect(invocation).toMatchObject({
+        command: 'opencode',
+        args: [
+          'run',
+          '--format',
+          'json',
+          '--dir',
+          '/tmp/workspace',
+          '--model',
+          'ollama/qwen2.5-coder:7b',
+          '--agent',
+          'build',
+          '--auto',
+          'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
+        ],
+      });
+      const config = JSON.parse(
+        await readFile(invocation.environment?.OPENCODE_CONFIG ?? '', 'utf8'),
+      ) as {
+        provider: { ollama: { options: { baseURL: string } } };
+        permission: Record<string, string>;
+      };
+      expect(config.provider.ollama.options.baseURL).toBe('http://127.0.0.1:11434/v1');
+      expect(config.permission).toMatchObject({
+        '*': 'deny',
+        read: 'allow',
+        glob: 'allow',
+        grep: 'allow',
+        edit: 'allow',
+      });
+    } finally {
+      if (invocation.outputDirectory) {
+        await rm(invocation.outputDirectory, { force: true, recursive: true });
+      }
+    }
 
-    await expect(
-      new InspectableOpenCodeExecutor(1_000_000).inspect(
-        request({ provider: 'opencode', model: 'ollama/llama3.2', mutatesWorkspace: false }),
-      ),
-    ).resolves.toMatchObject({
-      args: expect.arrayContaining(['--model', 'ollama/llama3.2', '--agent', 'plan']),
-    });
+    const readOnly = await new InspectableOpenCodeExecutor(1_000_000).inspect(
+      request({ provider: 'opencode', model: 'ollama/llama3.2', mutatesWorkspace: false }),
+    );
+    try {
+      expect(readOnly.args).toEqual(
+        expect.arrayContaining(['--model', 'ollama/llama3.2', '--agent', 'plan']),
+      );
+      const config = JSON.parse(
+        await readFile(readOnly.environment?.OPENCODE_CONFIG ?? '', 'utf8'),
+      ) as { permission: Record<string, string> };
+      expect(config.permission).not.toHaveProperty('edit');
+    } finally {
+      if (readOnly.outputDirectory) {
+        await rm(readOnly.outputDirectory, { force: true, recursive: true });
+      }
+    }
   });
 
   it('creates an isolated AGY project only for explicit canary evidence runs', async () => {
