@@ -286,6 +286,27 @@ describe('for-each-task execution', () => {
     expect(attempts.map((step) => step.iteration)).toEqual([1, 2]);
     expect(attempts.every((step) => step.status === 'failed')).toBe(true);
     expect(executor.executedSteps.filter((step) => step === 'implement.T3')).toHaveLength(0);
+
+    // Per-task, per-executor outcome (#326): which executor ran the task and
+    // whether it succeeded or failed is on the event, not only inferable from
+    // the attempt chain. This is the data a scored router could be fitted to.
+    // `claude` because it heads the default table for `implementation` — the
+    // fixture declares no table of its own, and attempt one takes the head.
+    expect(
+      detail.events.find((event) => event.type === 'task.completed' && event.data.taskId === 'T1')
+        ?.data.executor,
+    ).toBe('claude');
+    // A failed task records the executors it walked, head of the table first,
+    // and the one it gave up on — "after which failures", in order.
+    expect(failures.map((event) => (event.data.attemptedExecutors as string[])[0])).toEqual([
+      'claude',
+      'claude',
+    ]);
+    expect(failures.every((event) => typeof event.data.executor === 'string')).toBe(true);
+    expect(detail.events.find((event) => event.type === 'agent.routed')?.data).toMatchObject({
+      table: 'default',
+      selectedIndex: 0,
+    });
   }, 60_000);
 
   it('resumes a paused graph at the first incomplete task', async () => {

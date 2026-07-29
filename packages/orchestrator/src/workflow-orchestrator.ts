@@ -38,6 +38,7 @@ import {
   EXECUTION_PROTOCOL_VERSION,
   formatZodIssues,
   isWorkflowRunStatusTerminal,
+  resolveRoutingEntry,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   TaskGraphArtifactSchema,
   VerificationReportSchema,
@@ -1387,6 +1388,7 @@ export class WorkflowOrchestrator {
           attempt,
           maxAttempts,
           ...(commit ? { commit } : {}),
+          ...executorOutcome(artifact),
           artifact: artifact.metadata.name,
           revision: artifact.metadata.revision,
         },
@@ -1441,7 +1443,13 @@ export class WorkflowOrchestrator {
             nodeId: node.id,
             runId,
             dedupeKey: `${runId}:task:${node.id}:${task.id}:${attempt}:failed`,
-            data: { taskId: task.id, stepId: step.id, attempt, maxAttempts },
+            data: {
+              taskId: task.id,
+              stepId: step.id,
+              attempt,
+              maxAttempts,
+              ...(await this.failedTaskExecutor(runId, node.id, step.id, attempt)),
+            },
           },
         );
       }
@@ -1449,6 +1457,38 @@ export class WorkflowOrchestrator {
     throw new ExecutionError(
       `Task ${task.id} failed after ${maxAttempts} attempt(s): ${errorMessage(lastError)}`,
     );
+  }
+
+  /**
+   * Every executor the failed attempt walked, in order, and the one it gave up
+   * on (#326). Read back from the attempt records rather than threaded down,
+   * because a step walks its whole candidate list before failing — "which
+   * executors, after which failures" is exactly the record the ticket asks for,
+   * and a failure is rare enough to afford the two reads.
+   */
+  private async failedTaskExecutor(
+    runId: string,
+    nodeId: string,
+    stepId: string,
+    iteration: number,
+  ): Promise<{ executor?: string; modelId?: string; attemptedExecutors?: string[] }> {
+    const stepRun = (await this.stepRuns.list(runId))
+      .filter(
+        (candidate) =>
+          candidate.nodeId === nodeId &&
+          candidate.stepId === stepId &&
+          (candidate.iteration ?? 1) === iteration,
+      )
+      .at(-1);
+    if (!stepRun) return {};
+    const attempts = await this.stepAttempts.list(runId, stepRun.id);
+    const last = attempts.at(-1);
+    if (!last) return {};
+    return {
+      executor: last.provider,
+      ...(last.modelId ? { modelId: last.modelId } : {}),
+      attemptedExecutors: attempts.map((attempt) => attempt.provider),
+    };
   }
 
   /**
@@ -2381,11 +2421,13 @@ export class WorkflowOrchestrator {
     const providerHealth = this.executors
       ? new Map((await this.executors.health()).map((health) => [health.provider, health]))
       : undefined;
-    const route = await this.router.route(
-      profile,
-      explicit,
-      providerHealth ? { providerHealth } : undefined,
-    );
+    // Only this layer knows which workflow is running, so it resolves the table
+    // entry and the router just consumes it (#326).
+    const routing = resolveRoutingEntry(workflow.routing, workflow.id, step.taskKind);
+    const route = await this.router.route(profile, explicit, {
+      ...(providerHealth ? { providerHealth } : {}),
+      ...(routing ? { routing } : {}),
+    });
     await this.emit(
       project.id,
       'agent.routed',
@@ -2397,15 +2439,21 @@ export class WorkflowOrchestrator {
         data: {
           selected: route.selected.model.id,
           provider: route.selected.model.provider,
-          score: route.selected.score.total,
           fallbacks: route.fallbacks.map((candidate) => candidate.model.id),
+          ...(route.routingTable
+            ? {
+                table: route.routingTable.source,
+                executors: route.routingTable.executors,
+                selectedIndex: route.routingTable.selectedIndex,
+              }
+            : {}),
           ...(route.override ? { override: route.override } : {}),
           ...(loopIteration ? { loopIteration } : {}),
         },
       },
     );
 
-    // Explicit pins are already validated and scored by the router.
+    // Explicit pins are already validated by the router.
     const candidates = explicit ? [route.selected] : [route.selected, ...route.fallbacks];
     const checkpoint = step.mutatesWorkspace
       ? await this.workspaces.checkpoint(project.id, `${step.id}-${runId}`)
@@ -3360,6 +3408,18 @@ function taskImplementStep(implement: AgentStep, task: PlanTask): AgentStep {
       'Implement only this task. Earlier tasks are already implemented and committed in the workspace.',
     ].join('\n'),
   };
+}
+
+/**
+ * The executor that produced this artifact, for the per-task outcome record
+ * (#326). Reads the route decision the artifact already carries rather than
+ * re-deriving it.
+ */
+function executorOutcome(artifact: StoredArtifact): { executor?: string; modelId?: string } {
+  const route = artifact.metadata.routeDecision;
+  if (!route) return {};
+  const ran = route.executed ?? route.selected;
+  return { executor: ran.model.provider, modelId: ran.model.id };
 }
 
 /** The task's deterministic gate, under the same per-task id rule. */

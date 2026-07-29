@@ -262,6 +262,9 @@ describe('ProjectVersion recording hook (#40)', () => {
 
     expect(stores.route).toHaveBeenCalledWith(expect.anything(), undefined, {
       providerHealth: new Map([['codex', health]]),
+      // The fixture declares no table of its own, so the engine's table answers
+      // and the constraint records that it did (#326).
+      routing: { source: 'default', executors: ['claude', 'codex', 'agy'] },
     });
   });
 
