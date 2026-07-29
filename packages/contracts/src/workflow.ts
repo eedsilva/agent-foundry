@@ -57,6 +57,7 @@ const VerifyStepSchema = z
     type: z.literal('verify'),
     title: z.string().min(1),
     outputArtifact: PathSegmentSchema,
+    blocksOnFailure: z.boolean().default(false),
     scripts: z.array(z.string()).default(['typecheck', 'lint', 'test', 'build']),
     /**
      * Run before the checks and never gating: a formatter and `lint --fix`

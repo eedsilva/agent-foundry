@@ -21,10 +21,9 @@ describe('YamlWorkflowRepository', () => {
       'plan',
       'plan-approval',
       'task-execution',
-      'deterministic-verification',
-      'browser-verification',
-      'diff-approval',
+      'full-suite-verification',
       'release-assessment',
+      'diff-approval',
     ]);
   });
 

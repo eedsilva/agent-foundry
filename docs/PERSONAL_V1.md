@@ -12,7 +12,7 @@ The builder has three primary surfaces:
 2. **Preview:** the running app, viewport controls, element selection, browser logs and verification evidence.
 3. **Changes:** plan, diff, checks, versions, draft failures, deployment and rollback actions.
 
-Every Build operation invokes planner, operator plan approval, developer, code reviewer, deterministic verifier, browser verifier, repair loops and final release assessment. The router may select a different provider for every role. No model grades another model's plan as a blocking gate (ADR 0042).
+Every Build operation invokes planner, operator plan approval, developer task gates, one full-suite verifier, one advisory release assessment and final diff approval. The router may select a different provider for every role. No model grades another model's plan as a blocking gate (ADR 0042).
 
 ## Visual editing
 

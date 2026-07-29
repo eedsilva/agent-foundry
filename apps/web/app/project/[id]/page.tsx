@@ -2,6 +2,8 @@
 
 import { use, useMemo, useRef, useState, useEffect } from 'react';
 import {
+  AgentArtifactSchema,
+  BrowserVerificationReportSchema,
   EMPTY_TREE_HASH,
   type ApprovalAction,
   type ApprovalGateStep,
@@ -10,6 +12,7 @@ import {
   type RetryPlanResponse,
   type StepRun,
   type StoredArtifact,
+  isWorkflowRunStatusTerminal,
 } from '@agent-foundry/contracts';
 import {
   cancelRun,
@@ -24,10 +27,6 @@ import {
 import { agentStepTargets, executionEvidence } from '../../../lib/model-overrides';
 import { findDiffApprovalVersions } from '../../../lib/diff-approval';
 import { latestBrowserVerificationReport } from '../../../lib/browser-verification';
-import {
-  BrowserVerificationReportSchema,
-  isWorkflowRunStatusTerminal,
-} from '@agent-foundry/contracts';
 import { BuilderShell } from './builder-shell';
 import { BuilderHeader } from './builder-header';
 import { RunAlertStrip } from './run-alert-strip';
@@ -152,7 +151,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     if (
       !decideTarget ||
       !run ||
-      decideTarget.request.artifact.name !== 'browser-verification.report'
+      (decideTarget.node.id !== 'diff-approval' &&
+        decideTarget.request.artifact.name !== 'browser-verification.report')
     ) {
       return;
     }
@@ -200,6 +200,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     );
     if (!match) return null;
     const parsed = BrowserVerificationReportSchema.safeParse(match.content);
+    return parsed.success ? parsed.data : null;
+  }, [decideTarget, detail]);
+  const decideArtifact = useMemo(() => {
+    if (!decideTarget || decideTarget.request.artifact.name === 'browser-verification.report') {
+      return null;
+    }
+    const match = detail?.artifacts.find(
+      (artifact) =>
+        artifact.metadata.name === decideTarget.request.artifact.name &&
+        artifact.metadata.revision === decideTarget.request.artifact.revision,
+    );
+    if (!match) return null;
+    const parsed = AgentArtifactSchema.safeParse(match.content);
     return parsed.success ? parsed.data : null;
   }, [decideTarget, detail]);
 
@@ -350,6 +363,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           projectId={projectId}
           workspacePath={detail.workspacePath}
           changesReport={changesReport}
+          artifacts={detail.artifacts}
           approvals={approvals}
           nodeForRequest={nodeForRequest}
           onOpenDecide={(request, node, action) => void openDecide(request, node, action)}
@@ -434,6 +448,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             setDecideTarget={setDecideTarget}
             decidePreview={decidePreview}
             decideReport={decideReport}
+            decideArtifact={decideArtifact}
             decideDiff={decideDiff}
             decideNote={decideNote}
             setDecideNote={setDecideNote}

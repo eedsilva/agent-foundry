@@ -385,7 +385,19 @@ contra o preview vivo.
   outro usuário ganha um plano que entra com uma conta e afirma que as linhas da outra não aparecem,
   contra RLS real.
 
-A colapsação da cauda do pipeline (#329) ainda não entrou no laço.
+### Cauda do pipeline (#329)
+
+Depois de `task-execution`, `web-app-v1` executa uma única verificação completa no workspace:
+`full-suite-verification` roda `typecheck`, `lint`, `test`, `build` e `git diff --check`. `VerifyStep`
+continua advisory por padrão, mas `blocksOnFailure: true` torna esse relatório bloqueante: o relatório
+vermelho é persistido e o `StepRun` falha, impedindo qualquer aprovação de diff.
+
+Se a suíte passar, `release-assessment` roda uma vez como agente advisory, com `mutatesWorkspace: false`.
+Ele registra o `AgentArtifact` `release.review` — resumo, status, riscos, decisões e próximas ações —
+sem transformar seu campo `approved` em gate. Por fim, `diff-approval` é o gate humano final e consome
+esse artefato. Assim a cauda é `task-execution → full-suite-verification → release-assessment →
+diff-approval`; os nós standalone `deterministic-verification`, `browser-verification` e
+`repair-release` não pertencem mais a `web-app-v1`.
 
 ## Quality loop
 
@@ -399,7 +411,8 @@ Um `quality-loop` possui:
 
 A aprovação do reviewer também vira feedback de qualidade para o modelo que produziu o artefato revisado. Isso é melhor que medir apenas exit code, porque uma CLI pode terminar com sucesso e entregar lixo impecavelmente formatado.
 
-O loop `browser-verification` é uma variante declarativa: `setup` produz `browser-test.plan`; o
+Um loop declarativo de `browser-verification` ainda é suportado por workflows que o declararem:
+`setup` produz `browser-test.plan`; o
 `check` `verify-browser` referencia esse artifact e não pode misturar scripts de workspace nem
 `git diff --check`; `repair-browser` recebe o report falho e a referência pinada ao plano. A referência
 inicial (`name`, `revision`, `sha256`) é preservada entre iterações, então falha -> reparo -> rerun

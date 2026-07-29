@@ -179,6 +179,15 @@ POST /projects/:projectId/versions/:versionId/protect
 
 Não existe hoje nenhum job de limpeza/retenção no codebase — `protected` fica gravado para um job futuro consultar, mas nada ainda apaga versões antigas. Sequências (`sequence`) assumem um único escritor por projeto, a mesma premissa já usada por `StepAttempt.sequence`; não há arbitragem de reserva para múltiplos escritores concorrentes no mesmo projeto.
 
+### Cauda do pipeline
+
+O `web-app-v1` termina a execução das tarefas com `full-suite-verification`, que roda uma vez
+`typecheck`, `lint`, `test`, `build` e `git diff --check` como gate bloqueante. Em seguida,
+`release-assessment` roda uma vez sem mutar o workspace e grava o `AgentArtifact` advisory
+`release.review`; seu campo `approved` não bloqueia o run. `diff-approval` é o gate humano final e
+consome esse artefato. Os nós standalone `deterministic-verification`, `browser-verification` e
+`repair-release` não fazem parte dessa cauda.
+
 ### Verificação no navegador
 
 O quality loop `browser-verification` cria `browser-test.plan` (um `AgentArtifact` versionado) e
@@ -223,9 +232,9 @@ deve ser HTTP(S) e idêntica a `URL.origin`; paths, query, fragmentos e wildcard
 não relaxa o proxy: o preview continua acessível somente em loopback conforme ADR 0017.
 
 Migração é somente de leitura: policies sem `browserAllowedOrigins` e steps sem
-`browserTestPlanArtifact` continuam como antes, usando verificação de workspace. Para rollback,
-remova o nó `browser-verification` do workflow e o wiring de runtime/coordinator; a qualidade de
-workspace continua. Preserve reports e attempts existentes para investigação, sem backfill.
+`browserTestPlanArtifact` continuam como antes, usando verificação de workspace. A verificação de
+browser por tarefa continua disponível em `for-each-task`; não há wiring standalone para remover na
+cauda atual. Preserve reports e attempts existentes para investigação, sem backfill.
 
 ## Recovery manual da fila
 

@@ -2001,7 +2001,10 @@ export class WorkflowOrchestrator {
         outputIdempotencyKey,
         preserve: directive?.mode === 'preserve',
       });
-      if (reused) return reused;
+      if (reused) {
+        this.assertBlockingVerification(step, reused);
+        return reused;
+      }
     } else if (directive.checkpoint && step.type === 'agent' && step.mutatesWorkspace) {
       // A retried mutable step starts from the checkpoint its original
       // attempt recorded, not from whatever the workspace drifted to.
@@ -2054,6 +2057,7 @@ export class WorkflowOrchestrator {
               iteration,
               browserPlan ?? undefined,
             );
+      this.assertBlockingVerification(step, artifact);
       stepRun = await this.stepRuns.update(
         transitionStepRun(stepRun, 'completed', this.clock.now()),
         stepRun.version,
@@ -2139,6 +2143,7 @@ export class WorkflowOrchestrator {
           ? await this.findArtifactByKey(project.id, step.outputArtifact, outputIdempotencyKey)
           : null;
       if (orphan) {
+        this.assertBlockingVerification(step, orphan);
         const last = running.at(-1);
         if (last) {
           const commit =
@@ -2185,6 +2190,19 @@ export class WorkflowOrchestrator {
       }
     }
     return adopted;
+  }
+
+  private assertBlockingVerification(step: ExecutableStep, artifact: StoredArtifact): void {
+    if (step.type !== 'verify' || !step.blocksOnFailure) return;
+    const report = step.browserTestPlanArtifact
+      ? BrowserVerificationReportSchema.parse(artifact.content)
+      : VerificationReportSchema.parse(artifact.content);
+    if (!report.approved) {
+      throw new QualityGateError(
+        `${step.id} failed blocking verification: ${report.summary}`,
+        step.id,
+      );
+    }
   }
 
   private async commitAgentWorkspace(
