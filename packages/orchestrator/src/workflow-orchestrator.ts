@@ -36,6 +36,7 @@ import {
   AGENT_ARTIFACT_JSON_SCHEMA,
   AgentArtifactSchema,
   BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
+  BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
   DEFAULT_BROWSER_EVIDENCE_POLICY,
   EXECUTION_PROTOCOL_VERSION,
@@ -95,6 +96,7 @@ import {
   recordRunDuration,
   recordStepRetry,
   recordTokenUsage,
+  browserRepairId,
   taskStepId,
   transitionStepAttempt,
   transitionStepRun,
@@ -1385,11 +1387,31 @@ export class WorkflowOrchestrator {
         signal,
         pinnedInputs,
       );
+      // A browser repair edited the workspace after the checks went green, so
+      // they are no longer known to be. Re-run them, or a task could complete on
+      // a red typecheck — the one thing ADR 0045 promises cannot happen. The
+      // offset keeps this pass's step identities distinct from the first's.
+      const reverified = asserted
+        ? await this.verifyTask(
+            project,
+            workflow,
+            node,
+            task,
+            asserted,
+            runId,
+            signal,
+            pinnedInputs,
+            (node.repair?.maxAttempts ?? 0) + 1,
+          )
+        : null;
       // The attempt behind the last artifact that changed the workspace is the
       // authority on what this task committed — the repair's, when one ran, not
       // the implementation it corrected. A task that changed nothing has no
       // commit at all.
-      const commit = await this.commitForArtifact(runId, asserted ?? repaired ?? artifact);
+      const commit = await this.commitForArtifact(
+        runId,
+        reverified ?? asserted ?? repaired ?? artifact,
+      );
       const outcome = attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : '';
       await this.emit(project.id, 'task.completed', `${task.id}: ${task.title}${outcome}`, {
         nodeId: node.id,
@@ -1484,6 +1506,7 @@ export class WorkflowOrchestrator {
     runId: string,
     signal: AbortSignal,
     pinnedInputs: ArtifactReference[],
+    iterationBase = 0,
   ): Promise<StoredArtifact | null> {
     const { verify, repair } = node;
     if (!verify || !repair) return null;
@@ -1492,7 +1515,10 @@ export class WorkflowOrchestrator {
     const maxRepairAttempts = repair.maxAttempts;
     const startedAt = this.clock.now().getTime();
     let repaired: StoredArtifact | null = null;
-    for (let iteration = 1; ; iteration += 1) {
+    // A second pass over the same task needs its own iteration numbers, or it
+    // would reuse the first pass's completed steps and read a stale report.
+    for (let round = 1; ; round += 1) {
+      const iteration = iterationBase + round;
       await this.assertExecutionMayContinue(runId, signal);
       const report = await this.executeStep(
         project,
@@ -1620,6 +1646,14 @@ export class WorkflowOrchestrator {
       return null;
     }
 
+    if (!BrowserTestPlanArtifactSchema.safeParse(plan.content).success) {
+      // Repairing the *code* cannot fix a malformed plan, and the plan is pinned
+      // unchanged for every rerun — so retrying here would burn the whole repair
+      // budget on something unfixable by construction.
+      throw new ExecutionError(
+        `Task ${task.id}: ${planStep.id} produced neither a valid browser test plan nor a "blocked" answer`,
+      );
+    }
     const planReference = artifactReference(plan);
     let repaired: StoredArtifact | null = null;
     for (let iteration = 1; ; iteration += 1) {
@@ -1637,6 +1671,10 @@ export class WorkflowOrchestrator {
       const parsed = BrowserVerificationReportSchema.safeParse(report.content);
       const approved = parsed.success && parsed.data.approved;
       if (approved) {
+        // Same as the deterministic gate: a green result ends the streak, or
+        // one browser repair per task would march the run into the
+        // consecutive-repairs ceiling.
+        await this.resetConsecutiveRepairs(runId);
         await this.emit(project.id, 'quality.approved', `${task.id}: ${parsed.data.summary}`, {
           nodeId: node.id,
           runId,
@@ -3604,11 +3642,6 @@ function taskBrowserRepairStep(
       'The deterministic checks already pass; what failed is the browser assertion. Reproduce the failing step from the report and its evidence, fix the behaviour, and leave the plan unchanged for the rerun.',
     ].join('\n'),
   };
-}
-
-/** The declared repair id the browser loop runs under. */
-export function browserRepairId(repairStepId: string): string {
-  return `${repairStepId}-browser`;
 }
 
 /**

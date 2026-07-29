@@ -128,6 +128,8 @@ interface TaskGraphExecutorOptions {
   corrupt?: (request: AgentExecutionRequest) => boolean;
   /** Tasks whose browser-plan step reports no user-visible surface to assert. */
   noBrowserSurface?: (request: AgentExecutionRequest) => boolean;
+  /** Plan steps that return neither a valid plan nor a "blocked" answer. */
+  malformedPlan?: (request: AgentExecutionRequest) => boolean;
 }
 
 /** Mock executor with the knobs the loop's tests need. No model is called. */
@@ -154,6 +156,10 @@ class TaskGraphExecutor implements AgentExecutor {
       await appendFile(join(request.cwd, 'src', 'index.js'), 'export function broken( {\n');
     }
     await this.options.onStep?.(request);
+    if (this.options.malformedPlan?.(request)) {
+      const output = { ...result.output, data: { nonsense: true } };
+      return { ...result, output, stdout: JSON.stringify(output) };
+    }
     if (this.options.noBrowserSurface?.(request)) {
       // How a task declares it has nothing a browser can assert.
       const output = {
@@ -687,12 +693,38 @@ describe('per-task browser assertion', () => {
     expect(detail.project.status).toBe('completed');
     // No browser ran, and the task still completed and committed.
     expect(browser.attempts).toBe(0);
-    expect(executor.executedSteps.filter((step) => step === 'assert-task.T1')).toHaveLength(0);
     expect(
       detail.events.find(
         (event) => event.type === 'quality.approved' && event.data.asserted === false,
       )?.message,
     ).toContain('no browser assertion');
     expect(await taskCommits(runtime, project.id)).toEqual(['agent(developer): T1: T1 work']);
+  }, 120_000);
+
+  it('fails the task when the plan step returns neither a plan nor a refusal', async () => {
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1')],
+      malformedPlan: (request) => request.stepId === 'plan-task-browser-test.T1',
+    });
+    const runtime = await createTaskLoopRuntime(
+      'task-assert-garbage',
+      executor,
+      ASSERTED_TASK_LOOP_WORKFLOW,
+    );
+    const browser = stubBrowser(runtime, [false]);
+    const project = await startProject(runtime, 'Task assertion garbage plan');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('failed');
+    expect(detail.project.error).toContain('neither a valid browser test plan');
+    // Repairing the code cannot fix a malformed plan, and the plan is pinned
+    // unchanged for every rerun — so the repair budget is never spent on it.
+    expect(browser.attempts).toBe(0);
+    expect(executor.executedSteps.filter((step) => step === 'repair-task-browser.T1')).toHaveLength(
+      0,
+    );
   }, 120_000);
 });

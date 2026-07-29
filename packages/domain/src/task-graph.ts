@@ -28,3 +28,12 @@ export function taskStepId(implementStepId: string, taskId: string): string {
 export function isTaskStepId(stepId: string, implementStepId: string): boolean {
   return stepId === implementStepId || stepId.startsWith(`${implementStepId}.`);
 }
+
+/**
+ * The declared repair id the per-task browser loop runs under (#325). Distinct
+ * from the deterministic gate's repair id because both loops run for the same
+ * task and would otherwise collide on step identity.
+ */
+export function browserRepairId(repairStepId: string): string {
+  return `${repairStepId}-browser`;
+}

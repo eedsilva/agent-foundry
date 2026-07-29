@@ -299,6 +299,11 @@ describe('for-each-task workflow node', () => {
     expect(() => WorkflowNodeSchema.parse({ ...BASE_NODE, browser: BASE_BROWSER })).toThrow(
       /deterministic gate/,
     );
+    // And transitively without a repair: browser needs verify, verify needs
+    // repair, so a browser assertion always has something to invoke on failure.
+    expect(() =>
+      WorkflowNodeSchema.parse({ ...BASE_NODE, verify: BASE_VERIFY, browser: BASE_BROWSER }),
+    ).toThrow(/repair/);
   });
 
   it('rejects a browser check reading an artifact its plan step does not write', () => {

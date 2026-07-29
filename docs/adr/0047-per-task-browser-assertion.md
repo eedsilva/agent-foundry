@@ -37,6 +37,17 @@ The task graph already carries the claim to assert: #321 gave every task an `acc
   same task and would share iteration numbers — and a timeline that distinguishes "the checks were
   red" from "the feature did not work" is worth more than one that does not. Its `inputArtifacts`
   are the declared repair's plus the plan and the report.
+- **A plan that is neither a valid plan nor a refusal fails the task outright.** Repairing the code
+  cannot fix a malformed plan, and the plan is pinned unchanged for every rerun — retrying would
+  burn the whole repair budget, with workspace-mutating steps, on something unfixable by
+  construction.
+- **A browser repair re-runs the deterministic gate.** It edited the workspace after the checks went
+  green, so they are no longer known to be; without this a task could complete on a red typecheck,
+  which is the one thing ADR 0045 promises cannot happen. The second pass carries an iteration
+  offset so its step identities stay distinct from the first's.
+- **A green assertion resets the consecutive-repair counter**, exactly as the deterministic gate
+  does. Without it, one browser repair per task marches a long graph into the consecutive-repairs
+  emergency ceiling even though no streak ever occurred.
 - **A task with no user-visible surface says so.** The plan step is instructed to return
   `status: "blocked"` with a one-line reason when there is nothing to assert — a migration, a config
   change, a pure refactor. That emits `quality.approved` with `asserted: false` and the task
@@ -60,3 +71,15 @@ The task graph already carries the claim to assert: #321 gave every task an `acc
   would never be consulted and every assertion would silently pass.
 - A stubbed report must announce its preview session through the coordinator's `onSessionStarted`
   callback; the orchestrator binds the report to that session and rejects an unsourced one.
+- `browserRepairId` lives in `packages/domain/task-graph.ts` beside `taskStepId`/`isTaskStepId`: it
+  is the same per-task step-id vocabulary, and both the orchestrator and `ProjectService` read it.
+- Browser verdicts do **not** feed `recordQualityOutcome` / `recordDeterministic` / the decision log.
+  Those stay the deterministic gate's telemetry, so a model's score is not moved by a journey a
+  different step planned. Revisit if per-task routing data ever needs the browser outcome.
+- **Not covered by a test:** cross-tenant denial passing end to end. It is expressible today — the
+  `hidden` assertion and the JWT-forwarding path both pre-date this change — but proving it needs a
+  fixture seeding a second tenant's rows, and `BrowserActionSchema` has no sign-out or context
+  switch, so one plan runs in one session. Worth a follow-up.
+- Evidence reaches repair as artifact references (name/revision/sha), not as openable paths, so a
+  fixer cannot actually view a screenshot. That limitation pre-dates this change and applies equally
+  to the pipeline-tail node.
