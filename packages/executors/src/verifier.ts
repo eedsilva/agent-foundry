@@ -33,6 +33,8 @@ export class WorkspaceVerifier implements VerificationService {
       workspacePath: string;
       scripts: string[];
       includeGitDiffCheck: boolean;
+      autofixScripts?: string[] | undefined;
+      optionalScripts?: string[] | undefined;
       policy?: ProjectPolicy | undefined;
     },
     signal?: AbortSignal,
@@ -61,29 +63,22 @@ export class WorkspaceVerifier implements VerificationService {
     }
 
     const scripts = isRecord(packageJson.scripts) ? packageJson.scripts : {};
+    // The auto-fix pre-pass runs first and never gates, so repair is only
+    // asked for what a machine could not fix (#324).
+    for (const script of input.autofixScripts ?? []) {
+      if (signal?.aborted) throw new RunCancelledError();
+      const result = await this.runConfigured(script, packageManager, scripts, input, true, signal);
+      commands.push({ ...result, advisory: true });
+    }
     for (const script of input.scripts) {
       if (signal?.aborted) throw new RunCancelledError();
-      if (input.policy?.allowedCommands && !input.policy.allowedCommands.includes(script)) {
-        commands.push(
-          syntheticResult(
-            script,
-            'policy',
-            `Script '${script}' is not allowed by policy ${input.policy.id}@v${input.policy.version}.`,
-          ),
-        );
-        continue;
-      }
-      if (typeof scripts[script] !== 'string') {
-        commands.push(
-          syntheticResult(
-            script,
-            packageManager,
-            `Required package.json script is missing: ${script}`,
-          ),
-        );
-        continue;
-      }
-      commands.push(await this.runScript(packageManager, script, input.workspacePath, signal));
+      commands.push(
+        await this.runConfigured(script, packageManager, scripts, input, false, signal),
+      );
+    }
+    for (const script of input.optionalScripts ?? []) {
+      if (signal?.aborted) throw new RunCancelledError();
+      commands.push(await this.runConfigured(script, packageManager, scripts, input, true, signal));
     }
 
     if (input.policy) commands.push(dependencyPolicyCheck(input.policy, packageJson));
@@ -112,7 +107,9 @@ export class WorkspaceVerifier implements VerificationService {
 
     if (signal?.aborted) throw new RunCancelledError();
 
-    const failed = commands.filter((command) => !command.skipped && command.exitCode !== 0);
+    const failed = commands.filter(
+      (command) => !command.skipped && !command.advisory && command.exitCode !== 0,
+    );
     return VerificationReportSchema.parse({
       schemaVersion: '1',
       approved: failed.length === 0,
@@ -124,6 +121,43 @@ export class WorkspaceVerifier implements VerificationService {
       commands,
       createdAt: new Date().toISOString(),
     });
+  }
+
+  /**
+   * One configured script. `optional` decides what an undefined script means:
+   * a required check the project never defined is a red report, an optional
+   * one is simply a check this project does not have yet.
+   */
+  private async runConfigured(
+    script: string,
+    packageManager: PackageManager,
+    scripts: Record<string, unknown>,
+    input: { workspacePath: string; policy?: ProjectPolicy | undefined },
+    optional: boolean,
+    signal?: AbortSignal,
+  ): Promise<VerificationCommandResult> {
+    if (input.policy?.allowedCommands && !input.policy.allowedCommands.includes(script)) {
+      return syntheticResult(
+        script,
+        'policy',
+        `Script '${script}' is not allowed by policy ${input.policy.id}@v${input.policy.version}.`,
+      );
+    }
+    if (typeof scripts[script] !== 'string') {
+      if (!optional) {
+        return syntheticResult(
+          script,
+          packageManager,
+          `Required package.json script is missing: ${script}`,
+        );
+      }
+      return {
+        ...syntheticResult(script, packageManager, '', 0),
+        skipped: true,
+        skipReason: `Script '${script}' is not defined in package.json.`,
+      };
+    }
+    return this.runScript(packageManager, script, input.workspacePath, signal);
   }
 
   private async runInstall(
@@ -191,6 +225,7 @@ export class WorkspaceVerifier implements VerificationService {
         stdout: result.stdout ?? '',
         stderr: result.stderr ?? '',
         skipped: false,
+        advisory: false,
       };
     } catch (error) {
       return {
@@ -202,6 +237,7 @@ export class WorkspaceVerifier implements VerificationService {
         stdout: '',
         stderr: error instanceof Error ? error.message : String(error),
         skipped: false,
+        advisory: false,
       };
     }
   }
@@ -223,6 +259,7 @@ function syntheticResult(
     stdout: '',
     stderr,
     skipped: false,
+    advisory: false,
   };
 }
 

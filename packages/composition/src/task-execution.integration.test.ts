@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
@@ -9,6 +9,7 @@ import type {
   ExecutorHealth,
   PlanTask,
   ProjectEvent,
+  VerificationCommandResult,
 } from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor } from '@agent-foundry/executors';
@@ -17,8 +18,8 @@ import { approveAllGates } from './testing-helpers.js';
 
 /**
  * PRD → plan → operator approval → per-task execution. Deliberately stops
- * there: deterministic verification (#324) and the browser assertion (#325)
- * arrive later, and this fixture is the seam that proves the loop itself.
+ * short of the browser assertion (#325); the deterministic gate below is the
+ * seam that proves the loop itself.
  */
 const TASK_LOOP_WORKFLOW = `
 schemaVersion: '1'
@@ -61,6 +62,28 @@ nodes:
       maxAttempts: 2
 `;
 
+/** The same fixture with the per-task deterministic gate wired in (#324). */
+const GATED_TASK_LOOP_WORKFLOW = `${TASK_LOOP_WORKFLOW}    verify:
+      id: verify-task
+      type: verify
+      title: Run the task's deterministic checks
+      outputArtifact: verification.report
+      scripts: [typecheck]
+      optionalScripts: [lint, test, 'db:reset']
+      includeGitDiffCheck: true
+    repair:
+      id: repair-task
+      type: agent
+      role: fixer
+      taskKind: repair
+      title: Repair the failing checks
+      instructions: Read the failed command output and fix its root cause.
+      inputArtifacts: [verification.report]
+      outputArtifact: verification.fix
+      mutatesWorkspace: true
+      maxAttempts: 1
+`;
+
 function task(id: string, dependsOn: string[] = []): PlanTask {
   return {
     id,
@@ -78,6 +101,8 @@ interface TaskGraphExecutorOptions {
   fail?: (request: AgentExecutionRequest) => boolean;
   /** Runs after a successful step — where a test pauses the run mid-graph. */
   onStep?: (request: AgentExecutionRequest) => Promise<void>;
+  /** Steps that leave the workspace failing `typecheck` rather than passing it. */
+  corrupt?: (request: AgentExecutionRequest) => boolean;
 }
 
 /** Mock executor with the knobs the loop's tests need. No model is called. */
@@ -97,6 +122,12 @@ class TaskGraphExecutor implements AgentExecutor {
       throw new Error(`synthetic failure in ${request.stepId}`);
     }
     const result = await this.delegate.execute(request, signal);
+    // The mock rewrites src/index.js on every mutating step, so appending
+    // after it is what leaves a real, reproducible `node --check` failure for
+    // the deterministic gate to catch — and the next mutating step to clear.
+    if (this.options.corrupt?.(request)) {
+      await appendFile(join(request.cwd, 'src', 'index.js'), 'export function broken( {\n');
+    }
     await this.options.onStep?.(request);
     if (request.stepId !== 'plan') return result;
     const output = {
@@ -118,11 +149,15 @@ afterEach(async () => {
   );
 });
 
-async function createTaskLoopRuntime(name: string, executor: AgentExecutor): Promise<Runtime> {
+async function createTaskLoopRuntime(
+  name: string,
+  executor: AgentExecutor,
+  workflow: string = TASK_LOOP_WORKFLOW,
+): Promise<Runtime> {
   const dataDir = await mkdtemp(join(tmpdir(), `agent-foundry-${name}-data-`));
   const workflowsDir = await mkdtemp(join(tmpdir(), `agent-foundry-${name}-workflows-`));
   temporaryDirectories.push(dataDir, workflowsDir);
-  await writeFile(join(workflowsDir, 'task-loop-v1.yaml'), TASK_LOOP_WORKFLOW, 'utf8');
+  await writeFile(join(workflowsDir, 'task-loop-v1.yaml'), workflow, 'utf8');
   const runtime = await createRuntime({
     ...process.env,
     REPO_ROOT: resolve(import.meta.dirname, '../../..'),
@@ -149,19 +184,37 @@ async function startProject(
   return { id: project.id, runId: project.currentRunId };
 }
 
-/** Commit subjects the implement step produced, oldest first. */
-async function taskCommits(runtime: Runtime, projectId: string): Promise<string[]> {
+/** Every commit subject in the workspace, oldest first. */
+async function allCommits(runtime: Runtime, projectId: string): Promise<string[]> {
   const log = await execa('git', ['log', '--format=%s'], {
     cwd: runtime.workspaces.workspacePath(projectId),
   });
-  return log.stdout
-    .split('\n')
-    .filter((subject) => subject.startsWith('agent(developer):'))
-    .reverse();
+  return log.stdout.split('\n').reverse();
+}
+
+/** Commit subjects the implement step produced, oldest first. */
+async function taskCommits(runtime: Runtime, projectId: string): Promise<string[]> {
+  return (await allCommits(runtime, projectId)).filter((subject) =>
+    subject.startsWith('agent(developer):'),
+  );
 }
 
 function taskEvents(events: ProjectEvent[], type: ProjectEvent['type']): unknown[] {
   return events.filter((event) => event.type === type).map((event) => event.data.taskId);
+}
+
+/** The loop's own events for one task, in order. */
+function taskTimeline(events: ProjectEvent[], taskId: string): string[] {
+  const loop = [
+    'task.started',
+    'task.completed',
+    'task.failed',
+    'quality.approved',
+    'quality.repair_requested',
+  ];
+  return events
+    .filter((event) => event.data.taskId === taskId && loop.includes(event.type))
+    .map((event) => event.type);
 }
 
 describe('for-each-task execution', () => {
@@ -329,4 +382,117 @@ describe('for-each-task execution', () => {
       'agent(developer): T2: T2 work',
     ]);
   }, 60_000);
+});
+
+describe('per-task deterministic verification', () => {
+  it('repairs once on a real failure and completes the task only when green', async () => {
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1'), task('T2', ['T1'])],
+      corrupt: (request) => request.stepId === 'implement.T1',
+    });
+    const runtime = await createTaskLoopRuntime('task-verify', executor, GATED_TASK_LOOP_WORKFLOW);
+    const project = await startProject(runtime, 'Task verification');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('completed');
+
+    // The whole contract of the gate, in order: the checks run, the red one
+    // invokes repair, and the task is not complete until they come back green.
+    expect(taskTimeline(detail.events, 'T1')).toEqual([
+      'task.started',
+      'quality.repair_requested',
+      'quality.approved',
+      'task.completed',
+    ]);
+    // T2's implementation was never broken, so nothing repaired it.
+    expect(taskTimeline(detail.events, 'T2')).toEqual([
+      'task.started',
+      'quality.approved',
+      'task.completed',
+    ]);
+    expect(executor.executedSteps.filter((step) => step === 'repair-task.T1')).toHaveLength(1);
+    expect(executor.executedSteps.filter((step) => step === 'repair-task.T2')).toHaveLength(0);
+    // Repair is what cleared the failure, not a second run of the
+    // implementation: T1 was implemented exactly once.
+    expect(executor.executedSteps.filter((step) => step === 'implement.T1')).toHaveLength(1);
+
+    // Repair is handed the failing command and its output, not a summary.
+    const repairStep = (await runtime.stepRuns.list(project.runId)).find(
+      (step) => step.stepId === 'repair-task.T1',
+    );
+    const [repairAttempt] = await runtime.stepAttempts.list(project.runId, repairStep!.id);
+    const reportRef = repairAttempt?.inputArtifacts.find(
+      (artifact) => artifact.name === 'verification.report',
+    );
+    expect(reportRef).toBeDefined();
+    const report = await runtime.artifacts.getRevision(
+      project.id,
+      'verification.report',
+      reportRef!.revision,
+    );
+    const failed = (report?.content as { commands: VerificationCommandResult[] }).commands.find(
+      (command) => command.name === 'typecheck',
+    );
+    expect(failed?.exitCode).not.toBe(0);
+    expect(`${failed?.stdout}${failed?.stderr}`).toContain('SyntaxError');
+
+    expect(await taskCommits(runtime, project.id)).toEqual([
+      'agent(developer): T1: T1 work',
+      'agent(developer): T2: T2 work',
+    ]);
+    // A repaired task ends on the repair's commit, and `task.completed` says so
+    // rather than pointing at the implementation the repair corrected.
+    const repairCommit = (await runtime.stepAttempts.list(project.runId, repairStep!.id))[0]
+      ?.commit;
+    expect(repairCommit).toBeDefined();
+    expect(
+      detail.events.find((event) => event.type === 'task.completed' && event.data.taskId === 'T1')
+        ?.data.commit,
+    ).toBe(repairCommit);
+    expect(await allCommits(runtime, project.id)).toContain('agent(fixer): T1: repair T1 work');
+  }, 120_000);
+
+  it('fails the task when the checks stay red, keeping earlier tasks committed', async () => {
+    // T2 is broken by its implementation *and* by its repair, so the bound of
+    // one repair attempt is exhausted with the checks still red.
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1'), task('T2', ['T1']), task('T3', ['T2'])],
+      corrupt: (request) => request.stepId.endsWith('.T2'),
+    });
+    const runtime = await createTaskLoopRuntime(
+      'task-verify-exhausted',
+      executor,
+      GATED_TASK_LOOP_WORKFLOW,
+    );
+    const project = await startProject(runtime, 'Task verification exhausted');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('failed');
+    expect(detail.project.error).toContain('T2');
+    expect(detail.project.error).toContain('typecheck');
+
+    expect(taskTimeline(detail.events, 'T2')).toEqual([
+      'task.started',
+      'quality.repair_requested',
+      'task.failed',
+    ]);
+    // Repair is bounded: one attempt, not a loop — and the checks ran on both
+    // sides of it, so the failure is the checks' verdict rather than a cap.
+    expect(executor.executedSteps.filter((step) => step === 'repair-task.T2')).toHaveLength(1);
+    expect(
+      (await runtime.stepRuns.list(project.runId))
+        .filter((step) => step.stepId === 'verify-task.T2')
+        .map((step) => step.iteration),
+    ).toEqual([1, 2]);
+    // T1 survives, T2 leaves nothing behind, and T3 never starts.
+    expect(await taskCommits(runtime, project.id)).toEqual(['agent(developer): T1: T1 work']);
+    expect(taskEvents(detail.events, 'task.completed')).toEqual(['T1']);
+    expect(executor.executedSteps.filter((step) => step === 'implement.T3')).toHaveLength(0);
+  }, 120_000);
 });

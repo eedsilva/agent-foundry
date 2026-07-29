@@ -480,6 +480,8 @@ export interface VerificationService {
       workspacePath: string;
       scripts: string[];
       includeGitDiffCheck: boolean;
+      autofixScripts?: string[] | undefined;
+      optionalScripts?: string[] | undefined;
       policy?: ProjectPolicy | undefined;
     },
     signal?: AbortSignal,

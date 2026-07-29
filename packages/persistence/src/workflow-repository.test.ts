@@ -21,7 +21,6 @@ describe('YamlWorkflowRepository', () => {
       'plan',
       'plan-approval',
       'task-execution',
-      'implementation-gate',
       'deterministic-verification',
       'browser-verification',
       'diff-approval',
@@ -86,6 +85,66 @@ nodes:
 
     const repository = new YamlWorkflowRepository(directory);
     await expect(repository.get('bad-tasks')).rejects.toThrow('unavailable artifact plan.current');
+  });
+
+  it("rejects a for-each-task repair reading an artifact the node's gate never writes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'agent-foundry-workflow-'));
+    temporaryDirectories.push(directory);
+    await writeFile(
+      join(directory, 'bad-repair.yaml'),
+      `schemaVersion: "1"
+id: bad-repair
+name: Bad task repair
+description: Repairs from an artifact nothing produces
+stack: nextjs
+nodes:
+  - id: plan
+    type: agent
+    role: planner
+    taskKind: planning
+    title: Plan
+    instructions: Plan it
+    inputArtifacts: [prd]
+    outputArtifact: plan.current
+    outputContract: task-graph
+
+  - id: task-execution
+    type: for-each-task
+    title: Implement the task graph
+    taskGraphArtifact: plan.current
+    implement:
+      id: implement
+      type: agent
+      role: developer
+      taskKind: implementation
+      title: Implement one task
+      instructions: Implement it
+      inputArtifacts: [prd]
+      outputArtifact: implementation.report
+      mutatesWorkspace: true
+    verify:
+      id: verify-task
+      type: verify
+      title: Check the task
+      outputArtifact: verification.report
+      scripts: [typecheck]
+    repair:
+      id: repair-task
+      type: agent
+      role: fixer
+      taskKind: repair
+      title: Repair the task
+      instructions: Fix it
+      inputArtifacts: [code.review]
+      outputArtifact: verification.fix
+      mutatesWorkspace: true
+`,
+    );
+
+    const repository = new YamlWorkflowRepository(directory);
+    await expect(repository.get('bad-repair')).rejects.toThrow(
+      'step repair-task references unavailable artifact(s): code.review',
+    );
   });
 
   // The values survive in AgentRoleSchema/TaskKindSchema so pre-ADR-0042 metrics

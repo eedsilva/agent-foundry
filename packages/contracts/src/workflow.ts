@@ -56,13 +56,29 @@ const VerifyStepSchema = z
     title: z.string().min(1),
     outputArtifact: PathSegmentSchema,
     scripts: z.array(z.string()).default(['typecheck', 'lint', 'test', 'build']),
+    /**
+     * Run before the checks and never gating: a formatter and `lint --fix`
+     * repair what a machine can, so the agent is only asked for what it
+     * cannot (#324).
+     */
+    autofixScripts: z.array(z.string()).default([]),
+    /**
+     * Checks that gate only once the project defines them. A generated app
+     * starts without a lint or test script and grows both; naming them here
+     * gates on them from the moment they exist, without failing the tasks
+     * that come before.
+     */
+    optionalScripts: z.array(z.string()).default([]),
     includeGitDiffCheck: z.boolean().default(true),
     browserTestPlanArtifact: PathSegmentSchema.optional(),
   })
   .refine(
     (step) =>
       !step.browserTestPlanArtifact ||
-      (step.scripts.length === 0 && step.includeGitDiffCheck === false),
+      (step.scripts.length === 0 &&
+        step.autofixScripts.length === 0 &&
+        step.optionalScripts.length === 0 &&
+        step.includeGitDiffCheck === false),
     { message: 'Browser verification cannot include workspace checks' },
   );
 export type VerifyStep = z.infer<typeof VerifyStepSchema>;
@@ -94,6 +110,12 @@ export type QualityLoopStep = z.infer<typeof QualityLoopStepSchema>;
  * `implement.maxAttempts` is honoured here — it bounds how many times a single
  * task is attempted before the node fails, and every attempt is a timeline
  * event (see #211, which records the engine ignoring it elsewhere).
+ *
+ * `verify` and `repair` are the task's deterministic gate (#324): the checks
+ * run after the implementation, a red report is what invokes `repair`, and
+ * `repair.maxAttempts` bounds how many times it may try before the task fails.
+ * They arrive as a pair — a gate with nothing to call is a dead end, and a
+ * repairer with nothing to trigger it never runs.
  */
 const ForEachTaskStepSchema = z
   .object({
@@ -103,11 +125,39 @@ const ForEachTaskStepSchema = z
     /** Artifact carrying the `TaskGraph` to walk, e.g. `plan.current`. */
     taskGraphArtifact: PathSegmentSchema,
     implement: AgentStepSchema,
+    verify: VerifyStepSchema.optional(),
+    repair: AgentStepSchema.optional(),
   })
   .strict()
-  .refine((node) => node.implement.mutatesWorkspace, {
-    message: 'for-each-task implement step must set mutatesWorkspace: true',
-    path: ['implement', 'mutatesWorkspace'],
+  .superRefine((node, ctx) => {
+    if (!node.implement.mutatesWorkspace) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['implement', 'mutatesWorkspace'],
+        message: 'for-each-task implement step must set mutatesWorkspace: true',
+      });
+    }
+    if (node.verify && !node.repair) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['repair'],
+        message: 'for-each-task verify requires a repair step to invoke on a failure',
+      });
+    }
+    if (node.repair && !node.verify) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['verify'],
+        message: 'for-each-task repair requires a verify step to trigger it',
+      });
+    }
+    if (node.repair && !node.repair.mutatesWorkspace) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['repair', 'mutatesWorkspace'],
+        message: 'for-each-task repair step must set mutatesWorkspace: true',
+      });
+    }
   });
 export type ForEachTaskStep = z.infer<typeof ForEachTaskStepSchema>;
 

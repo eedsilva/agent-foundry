@@ -69,6 +69,20 @@ describe('verify workflow node', () => {
     expect(node.scripts).toEqual(['typecheck', 'lint', 'test', 'build']);
     expect(node.includeGitDiffCheck).toBe(true);
     expect(node.browserTestPlanArtifact).toBeUndefined();
+    expect(node.autofixScripts).toEqual([]);
+    expect(node.optionalScripts).toEqual([]);
+  });
+
+  it('carries the auto-fix pre-pass and the run-if-defined checks', () => {
+    const node = WorkflowNodeSchema.parse({
+      ...BASE_VERIFY,
+      scripts: ['typecheck'],
+      autofixScripts: ['format', 'lint:fix'],
+      optionalScripts: ['lint', 'test'],
+    });
+    if (node.type !== 'verify') throw new Error('expected verify');
+    expect(node.autofixScripts).toEqual(['format', 'lint:fix']);
+    expect(node.optionalScripts).toEqual(['lint', 'test']);
   });
 
   it('accepts browser verification only with workspace checks disabled', () => {
@@ -106,6 +120,24 @@ describe('verify workflow node', () => {
         browserTestPlanArtifact: 'browser-test.plan',
         scripts: ['test'],
         includeGitDiffCheck: false,
+      }),
+    ).toThrow();
+    expect(() =>
+      WorkflowNodeSchema.parse({
+        ...BASE_VERIFY,
+        browserTestPlanArtifact: 'browser-test.plan',
+        scripts: [],
+        includeGitDiffCheck: false,
+        optionalScripts: ['test'],
+      }),
+    ).toThrow();
+    expect(() =>
+      WorkflowNodeSchema.parse({
+        ...BASE_VERIFY,
+        browserTestPlanArtifact: 'browser-test.plan',
+        scripts: [],
+        includeGitDiffCheck: false,
+        autofixScripts: ['format'],
       }),
     ).toThrow();
   });
@@ -181,5 +213,51 @@ describe('for-each-task workflow node', () => {
 
   it('rejects unknown fields', () => {
     expect(() => WorkflowNodeSchema.parse({ ...BASE_NODE, maxIterations: 3 })).toThrow();
+  });
+
+  const BASE_VERIFY = {
+    id: 'verify-task',
+    type: 'verify' as const,
+    title: "Run the task's deterministic checks",
+    outputArtifact: 'verification.report',
+    scripts: ['typecheck'],
+  };
+  const BASE_REPAIR = {
+    id: 'repair-task',
+    type: 'agent' as const,
+    role: 'fixer' as const,
+    taskKind: 'repair' as const,
+    title: 'Repair the failing checks',
+    instructions: 'Fix the failing commands.',
+    inputArtifacts: ['verification.report'],
+    outputArtifact: 'verification.fix',
+    mutatesWorkspace: true,
+    maxAttempts: 1,
+  };
+
+  it('carries the deterministic gate and its bounded repair', () => {
+    const node = WorkflowNodeSchema.parse({
+      ...BASE_NODE,
+      verify: BASE_VERIFY,
+      repair: BASE_REPAIR,
+    });
+    if (node.type !== 'for-each-task') throw new Error('expected for-each-task');
+    expect(node.verify?.scripts).toEqual(['typecheck']);
+    expect(node.repair?.maxAttempts).toBe(1);
+  });
+
+  it('rejects a gate without a repair, and a repair without a gate', () => {
+    expect(() => WorkflowNodeSchema.parse({ ...BASE_NODE, verify: BASE_VERIFY })).toThrow(/repair/);
+    expect(() => WorkflowNodeSchema.parse({ ...BASE_NODE, repair: BASE_REPAIR })).toThrow(/verify/);
+  });
+
+  it('rejects a repair step that cannot change the workspace', () => {
+    expect(() =>
+      WorkflowNodeSchema.parse({
+        ...BASE_NODE,
+        verify: BASE_VERIFY,
+        repair: { ...BASE_REPAIR, mutatesWorkspace: false },
+      }),
+    ).toThrow(/mutatesWorkspace/);
   });
 });

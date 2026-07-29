@@ -40,6 +40,7 @@ import {
   isWorkflowRunStatusTerminal,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   TaskGraphArtifactSchema,
+  VerificationReportSchema,
 } from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
@@ -1317,10 +1318,10 @@ export class WorkflowOrchestrator {
   }
 
   /**
-   * One task: bounded attempts of the implement step, then its own commit.
-   * A failing attempt only rolls back to the checkpoint that attempt took, so
-   * every task committed before it survives — which is what makes a failed run
-   * cost one task instead of the whole graph.
+   * One task: bounded attempts of the implement step, the task's deterministic
+   * gate, then its own commit. The checkpoint taken before the first attempt is
+   * what a task that never goes green is rolled back to, so a failed task
+   * leaves nothing behind while every task committed before it survives.
    */
   private async executeTask(
     project: Project,
@@ -1345,6 +1346,74 @@ export class WorkflowOrchestrator {
         maxAttempts,
       },
     });
+    const taskCheckpoint = await this.workspaces.checkpoint(
+      project.id,
+      `${node.id}-${task.id}-${runId}`,
+    );
+    try {
+      const { artifact, attempt } = await this.implementTask(
+        project,
+        workflow,
+        node,
+        task,
+        step,
+        runId,
+        signal,
+        pinnedInputs,
+      );
+      const repaired = await this.verifyTask(
+        project,
+        workflow,
+        node,
+        task,
+        artifact,
+        runId,
+        signal,
+        pinnedInputs,
+      );
+      // The attempt behind the last artifact that changed the workspace is the
+      // authority on what this task committed — the repair's, when one ran, not
+      // the implementation it corrected. A task that changed nothing has no
+      // commit at all.
+      const commit = await this.commitForArtifact(runId, repaired ?? artifact);
+      const outcome = attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : '';
+      await this.emit(project.id, 'task.completed', `${task.id}: ${task.title}${outcome}`, {
+        nodeId: node.id,
+        runId,
+        dedupeKey: `${runId}:task:${node.id}:${task.id}:completed`,
+        data: {
+          taskId: task.id,
+          stepId: step.id,
+          attempt,
+          maxAttempts,
+          ...(commit ? { commit } : {}),
+          artifact: artifact.metadata.name,
+          revision: artifact.metadata.revision,
+        },
+      });
+      return artifact;
+    } catch (error) {
+      // Control flow — a pause, a cancellation — must keep what the task has
+      // done so far; only a real failure discards it.
+      if (isTaskAttemptFailure(error, signal)) {
+        await this.workspaces.rollback(project.id, taskCheckpoint);
+      }
+      throw error;
+    }
+  }
+
+  /** Bounded attempts of one task's implement step. */
+  private async implementTask(
+    project: Project,
+    workflow: WorkflowDefinition,
+    node: ForEachTaskStep,
+    task: PlanTask,
+    step: AgentStep,
+    runId: string,
+    signal: AbortSignal,
+    pinnedInputs: ArtifactReference[],
+  ): Promise<{ artifact: StoredArtifact; attempt: number }> {
+    const maxAttempts = node.implement.maxAttempts;
     const startAttempt = await this.firstTaskAttempt(runId, node.id, step.id);
     let lastError: unknown;
     for (let attempt = startAttempt; attempt <= maxAttempts; attempt += 1) {
@@ -1360,25 +1429,7 @@ export class WorkflowOrchestrator {
           attempt,
           pinnedInputs,
         );
-        // The attempt that produced the artifact is the authority on what this
-        // task committed; a task that changed nothing has no commit at all.
-        const commit = await this.commitForArtifact(runId, artifact);
-        const outcome = attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : '';
-        await this.emit(project.id, 'task.completed', `${task.id}: ${task.title}${outcome}`, {
-          nodeId: node.id,
-          runId,
-          dedupeKey: `${runId}:task:${node.id}:${task.id}:completed`,
-          data: {
-            taskId: task.id,
-            stepId: step.id,
-            attempt,
-            maxAttempts,
-            ...(commit ? { commit } : {}),
-            artifact: artifact.metadata.name,
-            revision: artifact.metadata.revision,
-          },
-        });
-        return artifact;
+        return { artifact, attempt };
       } catch (error) {
         if (!isTaskAttemptFailure(error, signal)) throw error;
         lastError = error;
@@ -1398,6 +1449,106 @@ export class WorkflowOrchestrator {
     throw new ExecutionError(
       `Task ${task.id} failed after ${maxAttempts} attempt(s): ${errorMessage(lastError)}`,
     );
+  }
+
+  /**
+   * The task's deterministic gate (#324). The checks run against the workspace
+   * the implementation just left; a red report — never a reviewer's opinion —
+   * is what invokes repair, and the report it carries holds the failing command
+   * and its output. Exhausting `repair.maxAttempts` fails the task with the
+   * checks still red, so nothing completes on a red check.
+   *
+   * Returns the last repair artifact, or null when the checks passed without
+   * one — the caller needs it to report the commit the task actually ended on.
+   */
+  private async verifyTask(
+    project: Project,
+    workflow: WorkflowDefinition,
+    node: ForEachTaskStep,
+    task: PlanTask,
+    implementation: StoredArtifact,
+    runId: string,
+    signal: AbortSignal,
+    pinnedInputs: ArtifactReference[],
+  ): Promise<StoredArtifact | null> {
+    const { verify, repair } = node;
+    if (!verify || !repair) return null;
+    const verifyStep = taskVerifyStep(verify, task);
+    const repairStep = taskRepairStep(repair, task);
+    const maxRepairAttempts = repair.maxAttempts;
+    const startedAt = this.clock.now().getTime();
+    let repaired: StoredArtifact | null = null;
+    for (let iteration = 1; ; iteration += 1) {
+      await this.assertExecutionMayContinue(runId, signal);
+      const report = await this.executeStep(
+        project,
+        workflow,
+        verifyStep,
+        runId,
+        node.id,
+        signal,
+        iteration,
+      );
+      const parsed = VerificationReportSchema.safeParse(report.content);
+      const approved = parsed.success && parsed.data.approved;
+      // A deterministic verdict on the model that wrote the code, which is
+      // what replaces the reviewer this node used to depend on.
+      await this.recordQualityOutcome(implementation, approved);
+      await this.qualityObservations?.recordDeterministic(implementation, report, approved);
+      await this.appendDecisionLog(
+        project.id,
+        workflow.id,
+        node.id,
+        runId,
+        implementation,
+        approved,
+        iteration,
+        this.clock.now().getTime() - startedAt,
+      );
+      if (approved) {
+        await this.resetConsecutiveRepairs(runId);
+        await this.emit(project.id, 'quality.approved', `${task.id}: ${parsed.data.summary}`, {
+          nodeId: node.id,
+          runId,
+          dedupeKey: `${runId}:task:${node.id}:${task.id}:${iteration}:approved`,
+          data: { taskId: task.id, stepId: verifyStep.id, iteration },
+        });
+        return repaired;
+      }
+      const summary = parsed.success
+        ? parsed.data.summary
+        : `${verifyStep.id} did not produce a verification report`;
+      if (iteration > maxRepairAttempts) {
+        await this.emit(project.id, 'task.failed', `${task.id} failed verification: ${summary}`, {
+          nodeId: node.id,
+          runId,
+          dedupeKey: `${runId}:task:${node.id}:${task.id}:verification:failed`,
+          data: { taskId: task.id, stepId: verifyStep.id, iteration, maxRepairAttempts },
+        });
+        throw new ExecutionError(
+          `Task ${task.id} failed verification after ${maxRepairAttempts} repair attempt(s): ${summary}`,
+        );
+      }
+      await this.emit(project.id, 'quality.repair_requested', `${task.id}: ${summary}`, {
+        nodeId: node.id,
+        runId,
+        dedupeKey: `${runId}:task:${node.id}:${task.id}:${iteration}:repair_requested`,
+        data: { taskId: task.id, stepId: repairStep.id, iteration, maxRepairAttempts },
+      });
+      // The report is pinned alongside the walk's own inputs, so repair reads
+      // the exact revision that failed rather than whatever is latest.
+      repaired = await this.executeStep(
+        project,
+        workflow,
+        repairStep,
+        runId,
+        node.id,
+        signal,
+        iteration,
+        [...pinnedInputs, artifactReference(report)],
+      );
+      await this.recordCompletedRepair(runId, node.id, repairStep.id, iteration, signal);
+    }
   }
 
   /** The commit the attempt behind this artifact recorded, if it made one. */
@@ -1927,6 +2078,8 @@ export class WorkflowOrchestrator {
         {
           workspacePath: this.workspaces.workspacePath(project.id),
           scripts: step.scripts,
+          autofixScripts: step.autofixScripts,
+          optionalScripts: step.optionalScripts,
           includeGitDiffCheck: step.includeGitDiffCheck,
           policy,
         },
@@ -3205,6 +3358,34 @@ function taskImplementStep(implement: AgentStep, task: PlanTask): AgentStep {
       `Acceptance check: ${task.acceptanceCheck}`,
       ...(task.dependsOn.length > 0 ? [`Depends on: ${task.dependsOn.join(', ')}`] : []),
       'Implement only this task. Earlier tasks are already implemented and committed in the workspace.',
+    ].join('\n'),
+  };
+}
+
+/** The task's deterministic gate, under the same per-task id rule. */
+function taskVerifyStep(verify: VerifyStep, task: PlanTask): VerifyStep {
+  return { ...verify, id: taskStepId(verify.id, task.id), title: `${task.id}: ${verify.title}` };
+}
+
+/**
+ * The repair step specialised to one task. It is invoked only with a red
+ * verification report in hand, so its instructions point at the failing
+ * commands rather than at an opinion about the code.
+ */
+function taskRepairStep(repair: AgentStep, task: PlanTask): AgentStep {
+  return {
+    ...repair,
+    id: taskStepId(repair.id, task.id),
+    // Distinct from the implement step's title: it becomes the commit subject
+    // (`agent(fixer): <taskId>: repair …`), and a repaired task therefore reads
+    // as two commits that say what each of them did.
+    title: `${task.id}: repair ${task.title}`,
+    instructions: [
+      repair.instructions,
+      '',
+      `Task ${task.id}: ${task.title}`,
+      `Acceptance check: ${task.acceptanceCheck}`,
+      'Fix the root cause of every failing command in the verification report. Do not weaken or remove a check to make it pass.',
     ].join('\n'),
   };
 }

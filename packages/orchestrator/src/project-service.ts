@@ -1149,9 +1149,12 @@ function isAgentStep(workflow: WorkflowDefinition, nodeId: string, stepId: strin
       [node.setup, node.check, node.repair].some(
         (step) => step?.type === 'agent' && step.id === stepId,
       )) ||
-    // A for-each-task node runs its implement step once per task under the
-    // per-task id `<implement>.<taskId>`, so both forms are pinnable.
-    (node?.type === 'for-each-task' && isTaskStepId(stepId, node.implement.id))
+    // A for-each-task node runs its implement and repair steps once per task
+    // under the per-task id `<step>.<taskId>`, so both forms are pinnable.
+    (node?.type === 'for-each-task' &&
+      [node.implement, node.repair].some(
+        (step) => step !== undefined && isTaskStepId(stepId, step.id),
+      ))
   );
 }
 

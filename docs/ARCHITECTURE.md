@@ -317,7 +317,8 @@ de benchmark que pontua capacidade de revisão.
 
 Depois da aprovação do plano, `web-app-v1` executa o grafo de tarefas em vez de construir a aplicação
 inteira num nó só. O nó `task-execution` (`for-each-task`, ADR 0043) declara `taskGraphArtifact`
-(`plan.current`) e um único passo `implement` com `mutatesWorkspace: true`.
+(`plan.current`), um passo `implement` com `mutatesWorkspace: true` e o par `verify`/`repair` que
+forma o gate determinístico da tarefa (ADR 0045).
 
 - A caminhada é sequencial e respeita as arestas: a próxima tarefa é a primeira, na ordem declarada,
   cujos bloqueadores já concluíram (`nextReadyTask`, em `packages/domain`). Ordem de declaração não é
@@ -335,7 +336,32 @@ inteira num nó só. O nó `task-execution` (`for-each-task`, ADR 0043) declara 
 - Eventos `task.started` / `task.completed` / `task.failed` carregam `taskId`, `stepId`, `attempt` e o
   commit, que é o que torna um grafo de 20 tarefas legível na timeline.
 
-Verificação determinística por tarefa (#324) e a asserção de browser por tarefa (#325) ainda não
+### Gate determinístico por tarefa (ADR 0045)
+
+Depois da implementação e **antes** de a tarefa concluir, `verify` roda os comandos que podem
+realmente falhar no workspace do projeto. Nenhum modelo julga o trabalho de outro modelo.
+
+- `autofixScripts` (`format`, `lint:fix`) rodam primeiro e nunca reprovam — ficam no relatório como
+  `advisory: true`. O que uma máquina conserta sozinha jamais chega ao agente.
+- `scripts` continua estrito (`typecheck`): script exigido e ausente é relatório vermelho.
+  `optionalScripts` (`lint`, `test`, `db:start`, `db:reset`, `smoke`) só rodam quando o projeto os
+  define, nessa ordem; quando não define, entram como `skipped` com motivo. `db:start` sobe o stack
+  Supabase do próprio workspace e escreve o `.env`, `db:reset` reaplica todas as migrations e o seed
+  nele, e `smoke` prova que os dois tiers sobem e respondem.
+- Relatório vermelho — e só ele — dispara `repair`, com a revisão exata de `verification.report`
+  pinada nas entradas: comando, exit status e stdout/stderr capturados.
+- `repair.maxAttempts` limita o laço. Esgotar falha a tarefa com
+  `Task <id> failed verification after N repair attempt(s)`, sem re-executar a implementação.
+- A tarefa faz checkpoint antes da primeira tentativa e volta a ele ao falhar: uma tarefa que nunca
+  fica verde não deixa commit, e as tarefas commitadas antes dela sobrevivem. Erros de controle de
+  fluxo (pausa, cancelamento) preservam o trabalho.
+- Uma tarefa reparada termina em **dois** commits — `agent(developer): <taskId>: <título>` e
+  `agent(fixer): <taskId>: repair <título>`. `task.completed.commit` reporta o último, que é a árvore
+  que passou nos checks.
+- `task.completed` só é emitido depois de um relatório verde; `quality.approved` e
+  `quality.repair_requested` carregam `taskId`.
+
+A asserção de browser por tarefa (#325) e a colapsação da cauda do pipeline (#329) ainda não
 entraram no laço.
 
 ## Quality loop

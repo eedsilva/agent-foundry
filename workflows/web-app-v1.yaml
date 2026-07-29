@@ -1,7 +1,7 @@
 schemaVersion: '1'
 id: web-app-v1
 name: Web application delivery pipeline
-description: Plans, waits for operator approval, implements, reviews, repairs, verifies, and performs a final release assessment for a web application.
+description: Plans, waits for operator approval, then implements the task graph one task at a time — each gated on deterministic checks and repaired only on a real failure — before verifying and performing a final release assessment for a web application.
 stack: nextjs
 nodes:
   # One model call, then the operator decides. No model grades another model's
@@ -60,54 +60,45 @@ nodes:
         preferredTags: [coding, repository, tool-use]
       # Honoured: attempts per task before the task — and the run — fails.
       maxAttempts: 2
-
-  - id: implementation-gate
-    type: quality-loop
-    title: Implementation quality gate
-    maxIterations: 3
-    check:
-      id: review-code
-      type: agent
-      role: code-reviewer
-      taskKind: code-review
-      title: Review the implementation against the approved artifacts
-      instructions: >-
-        Inspect the actual diff and repository, not only the implementation report. Check correctness,
-        completeness, security, maintainability, data integrity, tests, failure behavior, and divergence from
-        the approved plan. Approve only if no material defect remains. Put the verdict in approved.
-      # The artifact under review comes first: the quality loop attributes its
-      # verdict to the first input carrying a route decision.
-      inputArtifacts: [implementation.report, prd, plan.current]
-      outputArtifact: code.review
-      mutatesWorkspace: false
-      harnessTags: [review, coding, security]
-      profile:
-        complexity: 5
-        risk: 5
-        preferredTags: [review, coding, reasoning]
-      maxAttempts: 3
+    # The task's gate is the compiler, the linter, the tests, an applied
+    # migration and a booting preview — not a model's opinion (ADR 0045).
+    verify:
+      id: verify-task
+      type: verify
+      title: Run the task's deterministic checks
+      outputArtifact: verification.report
+      # Fixed silently before anything is judged, so repair is only invoked
+      # for what a machine cannot fix.
+      autofixScripts: [format, 'lint:fix']
+      scripts: [typecheck]
+      # Gating from the moment the generated project defines them, in order.
+      # The scaffold ships the last three: `db:start` is idempotent and brings
+      # up this project's own Supabase stack (writing .env), `db:reset`
+      # re-applies every migration and the seed against it, and `smoke` boots
+      # both tiers and asserts they answer. A generated project grows a lint
+      # and a test script as the tasks that need them land.
+      optionalScripts: [lint, test, 'db:start', 'db:reset', smoke]
+      includeGitDiffCheck: true
     repair:
-      id: repair-code
+      id: repair-task
       type: agent
       role: fixer
       taskKind: repair
-      title: Repair implementation defects found in code review
+      title: Repair the task's failing checks
       instructions: >-
-        Inspect the code and review findings. Fix every material issue, add regression tests where practical,
-        run relevant checks, and report exactly what changed. Do not silence tests or weaken validation.
-      inputArtifacts: [prd, plan.current, implementation.report, code.review]
-      outputArtifact: implementation.report
+        Read the failed command output in the verification report, reproduce the failure, and fix its root
+        cause. Never remove a meaningful check, reduce test coverage, or paper over a type error.
+      inputArtifacts: [prd, plan.current, verification.report]
+      outputArtifact: verification.fix
       mutatesWorkspace: true
       harnessTags: [repair, coding, testing]
       profile:
-        complexity: 5
+        complexity: 4
         risk: 5
         preferredTags: [repair, coding, tool-use]
-      maxAttempts: 3
-    approval:
-      artifact: code.review
-      path: approved
-      equals: true
+      # Bounded: exhausting this fails the task with the checks still red, and
+      # the tasks committed before it survive.
+      maxAttempts: 2
 
   - id: deterministic-verification
     type: quality-loop
@@ -129,7 +120,7 @@ nodes:
       instructions: >-
         Read the failed command outputs, reproduce the failures, fix their root causes, and rerun the relevant
         commands. Never remove a meaningful check, reduce test coverage, or paper over a type error.
-      inputArtifacts: [prd, plan.current, code.review, verification.report]
+      inputArtifacts: [prd, plan.current, verification.report]
       outputArtifact: verification.fix
       mutatesWorkspace: true
       harnessTags: [repair, testing, coding]
@@ -154,7 +145,7 @@ nodes:
       taskKind: verification
       title: Define the reproducible browser test plan
       instructions: Produce a schemaVersion 1 declarative browser test plan for the critical CRUD journey. Use only relative app paths, supported semantic locators, actions, and assertions.
-      inputArtifacts: [prd, plan.current, code.review, verification.report]
+      inputArtifacts: [prd, plan.current, verification.report]
       outputArtifact: browser-test.plan
       mutatesWorkspace: false
       harnessTags: [testing, browser]
@@ -205,14 +196,7 @@ nodes:
         paths that static checks may miss. Confirm the implementation satisfies the PRD and acceptance criteria.
         Put the final release verdict in approved and provide concrete evidence for it.
       inputArtifacts:
-        [
-          prd,
-          plan.current,
-          code.review,
-          verification.report,
-          browser-test.plan,
-          browser-verification.report,
-        ]
+        [prd, plan.current, verification.report, browser-test.plan, browser-verification.report]
       outputArtifact: release.review
       mutatesWorkspace: false
       harnessTags: [testing, release, review]

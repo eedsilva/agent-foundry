@@ -66,6 +66,19 @@ function validateWorkflow(workflow: WorkflowDefinition): void {
       registerIdentifier(identifiers, node.implement.id, workflow.id);
       validateStepInputs(node.implement, availableArtifacts, workflow.id);
       availableArtifacts.add(node.implement.outputArtifact);
+
+      // The gate runs after the implementation, so its report is available to
+      // the repair step the same way a quality loop's check is.
+      if (node.verify) {
+        registerIdentifier(identifiers, node.verify.id, workflow.id);
+        validateStepInputs(node.verify, availableArtifacts, workflow.id);
+        availableArtifacts.add(node.verify.outputArtifact);
+      }
+      if (node.repair) {
+        registerIdentifier(identifiers, node.repair.id, workflow.id);
+        validateStepInputs(node.repair, availableArtifacts, workflow.id);
+        availableArtifacts.add(node.repair.outputArtifact);
+      }
       continue;
     }
 
