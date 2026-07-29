@@ -116,7 +116,39 @@ export type QualityLoopStep = z.infer<typeof QualityLoopStepSchema>;
  * `repair.maxAttempts` bounds how many times it may try before the task fails.
  * They arrive as a pair — a gate with nothing to call is a dead end, and a
  * repairer with nothing to trigger it never runs.
+ *
+ * `browser` is the task's assertion that the feature actually works (#325):
+ * typecheck passing does not mean a user can sign in. `plan` turns the task's
+ * acceptance check into a declarative `browser-test.plan`, `check` runs it
+ * against the live preview once the deterministic checks are green, and a
+ * failed assertion reaches the same bounded `repair`.
  */
+const TaskBrowserAssertionSchema = z
+  .object({
+    /** Turns the task's `acceptanceCheck` into a declarative browser plan. */
+    plan: AgentStepSchema,
+    /** Runs that plan against the live preview. */
+    check: VerifyStepSchema,
+  })
+  .strict()
+  .superRefine((browser, ctx) => {
+    if (browser.check.browserTestPlanArtifact !== browser.plan.outputArtifact) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['check', 'browserTestPlanArtifact'],
+        message: 'browser check must read the artifact its plan step writes',
+      });
+    }
+    if (browser.plan.mutatesWorkspace) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['plan', 'mutatesWorkspace'],
+        message: 'browser plan step must not mutate the workspace',
+      });
+    }
+  });
+export type TaskBrowserAssertion = z.infer<typeof TaskBrowserAssertionSchema>;
+
 const ForEachTaskStepSchema = z
   .object({
     id: PathSegmentSchema,
@@ -127,6 +159,7 @@ const ForEachTaskStepSchema = z
     implement: AgentStepSchema,
     verify: VerifyStepSchema.optional(),
     repair: AgentStepSchema.optional(),
+    browser: TaskBrowserAssertionSchema.optional(),
   })
   .strict()
   .superRefine((node, ctx) => {
@@ -149,6 +182,15 @@ const ForEachTaskStepSchema = z
         code: 'custom',
         path: ['verify'],
         message: 'for-each-task repair requires a verify step to trigger it',
+      });
+    }
+    if (node.browser && !node.verify) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['verify'],
+        // The assertion runs against a preview built from code the deterministic
+        // checks already passed, and it reuses that gate's repair step.
+        message: 'for-each-task browser assertion requires the deterministic gate to run first',
       });
     }
     if (node.repair && !node.repair.mutatesWorkspace) {

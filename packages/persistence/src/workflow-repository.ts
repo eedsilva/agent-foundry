@@ -79,6 +79,16 @@ function validateWorkflow(workflow: WorkflowDefinition): void {
         validateStepInputs(node.repair, availableArtifacts, workflow.id);
         availableArtifacts.add(node.repair.outputArtifact);
       }
+      // The assertion runs after the gate, so its plan may read anything the
+      // gate could, and its check reads the plan that step writes (#325).
+      if (node.browser) {
+        registerIdentifier(identifiers, node.browser.plan.id, workflow.id);
+        validateStepInputs(node.browser.plan, availableArtifacts, workflow.id);
+        availableArtifacts.add(node.browser.plan.outputArtifact);
+        registerIdentifier(identifiers, node.browser.check.id, workflow.id);
+        validateStepInputs(node.browser.check, availableArtifacts, workflow.id);
+        availableArtifacts.add(node.browser.check.outputArtifact);
+      }
       continue;
     }
 
