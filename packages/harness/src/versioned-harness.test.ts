@@ -46,6 +46,7 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
 
     expect(files.map((file) => file.path).sort()).toEqual([
       '.env.example',
+      '.prettierignore',
       'README.md',
       'apps/api/package.json',
       'apps/api/src/database.types.ts',
@@ -67,6 +68,7 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
       'apps/web/postcss.config.mjs',
       'apps/web/tsconfig.json',
       'browser-tests/cross-tenant-denial.json',
+      'eslint.config.mjs',
       'package.json',
       'pnpm-lock.yaml',
       'pnpm-workspace.yaml',
