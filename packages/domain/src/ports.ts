@@ -35,6 +35,7 @@ import type {
   ProjectPolicy,
   ProjectEvent,
   ProjectVersion,
+  Provider,
   QualityObservation,
   QualityObservationQuery,
   QueueJob,
@@ -304,6 +305,12 @@ export interface RouteConstraints {
   providerHealth?: ReadonlyMap<string, ExecutorHealth>;
   /** Remaining budget by unit. metered→maxCostUsd, subscription→maxQuotaUnits. */
   budget?: { maxCostUsd?: number; maxQuotaUnits?: number };
+  /**
+   * The table entry governing this task kind, resolved by the caller that knows
+   * the workflow (#326). `source` names the table so the audit can say which one
+   * answered; `executors` is ordered, head first.
+   */
+  routing?: { source: string; executors: readonly Exclude<Provider, 'mock'>[] };
 }
 
 export interface ModelRouter {

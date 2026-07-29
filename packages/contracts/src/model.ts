@@ -157,7 +157,9 @@ export type RouteConfidence = z.infer<typeof RouteConfidenceSchema>;
 
 export const RankedModelSchema = z.object({
   model: ModelDefinitionSchema,
-  score: RouteScoreBreakdownSchema,
+  // Optional since #326 replaced scored selection with a readable executor
+  // table. Route decisions persisted before that still carry a breakdown.
+  score: RouteScoreBreakdownSchema.optional(),
   quality: QualitySignalSummarySchema.optional(),
   confidence: RouteConfidenceSchema.optional(),
 });
@@ -267,6 +269,21 @@ export const RouteDecisionSchema = z.object({
       explored: z.boolean(),
       rate: z.number().min(0).max(1),
       reason: z.string().trim().min(1),
+    })
+    .strict()
+    .optional(),
+  /**
+   * Which table and which of its entries produced this decision (#326). Optional
+   * because decisions persisted under the scored router carry no table.
+   */
+  routingTable: z
+    .object({
+      /** The workflow that declared the table, or `default` for the engine's. */
+      source: z.string().trim().min(1),
+      taskKind: TaskKindSchema,
+      executors: z.array(ProviderSchema.exclude(['mock'])).min(1),
+      /** Index into `executors` of the entry that selection landed on. */
+      selectedIndex: z.number().int().nonnegative(),
     })
     .strict()
     .optional(),
