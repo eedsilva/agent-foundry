@@ -4,7 +4,7 @@ import {
   ProviderSchema,
   WorkflowAgentRoleSchema,
   WorkflowTaskKindSchema,
-  type WorkflowTaskKind,
+  type TaskKind,
 } from './primitives.js';
 import { ExecutionSecretRefSchema } from './execution-secret-ref.js';
 import { RoutingPrioritiesSchema } from './model.js';
@@ -271,7 +271,10 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = [
 export function resolveRoutingEntry(
   routing: RoutingTable | undefined,
   workflowId: string,
-  taskKind: WorkflowTaskKind,
+  // Takes the wider `TaskKind` on purpose: a retired kind simply matches
+  // nothing, and the caller falls back to catalog order rather than being
+  // handed a cast that hides the gap.
+  taskKind: TaskKind,
 ): { source: string; executors: RoutingTableEntry['executors'] } | undefined {
   const declared = routing?.find((entry) => entry.taskKind === taskKind);
   if (declared) return { source: workflowId, executors: declared.executors };

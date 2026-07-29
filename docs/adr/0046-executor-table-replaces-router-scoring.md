@@ -40,9 +40,15 @@ hand-tuned numbers presented as measurement.
   re-reading your own work is the weakest check there is.
 - Selection computes no scores at all, so `RankedModel.score` becomes optional and the Router tab
   shows the table, its ordered executors and which one ran, instead of a grid of dimensions.
-- Eligibility is unchanged and still hard-gates ahead of the table: policy and profile provider
-  allowlists, workspace-write capability, context size, and the circuit breaker. An open breaker
-  bounces an executor however high the table ranks it.
+- Eligibility still hard-gates ahead of the table: policy and profile provider allowlists,
+  workspace-write capability, context size, the circuit breaker, and a subscription model whose
+  average known quota appetite exceeds the provider's `rateLimit.remaining`. An open breaker bounces
+  an executor however high the table ranks it. **Only the ordering is predictable from the config
+  alone** — availability can still remove an executor, and `RouteDecision.rejected` records why.
+- The scored router's `budget` gate (`maxCostUsd` for metered models, `maxQuotaUnits` for
+  subscription ones) is **not** carried over, and `RouteConstraints.budget` is deleted with it. No
+  caller ever populated it, so the metered half never ran; the live-quota half did, and is kept
+  above without the unused budget knob.
 - Per-task, per-executor outcome is recorded on the timeline: `task.completed` carries the executor
   and model that produced it, and `task.failed` carries the executors the attempt walked, in order,
   plus the one it gave up on. That is the record a scored router could later be fitted to.
@@ -57,7 +63,12 @@ hand-tuned numbers presented as measurement.
   the list.
 - `RouteScoreBreakdown` survives in `packages/contracts` because route decisions persisted under the
   scored router still carry one. The Router tab renders those as "rota sem tabela" rather than
-  reviving the dimension grid.
+  reviving the dimension grid. `RankedModel.quality`, `RankedModel.confidence`,
+  `RouteDecision.exploration` and `TaskProfile.priorities` are in the same position: still parsed for
+  old records, no longer written by anything. `priorities` is the awkward one — it is still required
+  on `TaskProfile` and still declarable per step — and it should be retired once nothing persists it.
+- `docs/MODEL_ROUTING.md` is rewritten around the table, and ADR 0035 is marked partially superseded:
+  its circuit breaker stands, its epsilon-greedy exploration does not.
 - Pinned models and the emergency ceiling are untouched. A pin overrules the table, and no table
   entry is claimed for a decision the operator made.
 - Escalating to the next entry after a real failure is **#327**, not this change. The orchestrator

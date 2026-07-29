@@ -303,8 +303,6 @@ export interface ExplicitModelRoute {
 export interface RouteConstraints {
   /** Provider health keyed by provider id (e.g. 'claude'); rate-limited providers are excluded. */
   providerHealth?: ReadonlyMap<string, ExecutorHealth>;
-  /** Remaining budget by unit. metered→maxCostUsd, subscription→maxQuotaUnits. */
-  budget?: { maxCostUsd?: number; maxQuotaUnits?: number };
   /**
    * The table entry governing this task kind, resolved by the caller that knows
    * the workflow (#326). `source` names the table so the audit can say which one

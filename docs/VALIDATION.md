@@ -582,7 +582,7 @@ Focused evidence commands:
 ```bash
 npx vitest run packages/contracts/src/task-taxonomy.test.ts packages/contracts/src/run.test.ts packages/persistence/src/workflow-repository.test.ts --pool=threads --maxWorkers=1
 npx vitest run packages/orchestrator/src/task-profiler.test.ts packages/orchestrator/src/prompt-compiler.test.ts --pool=threads --maxWorkers=1
-npx vitest run packages/persistence/src/metrics-repository.test.ts packages/model-router/src/score-router.test.ts packages/orchestrator/src/workflow-orchestrator.test.ts packages/orchestrator/src/failure-injection.test.ts packages/composition/src/runtime.integration.test.ts --pool=threads --maxWorkers=1
+npx vitest run packages/persistence/src/metrics-repository.test.ts packages/model-router/src/table-router.test.ts packages/orchestrator/src/workflow-orchestrator.test.ts packages/orchestrator/src/failure-injection.test.ts packages/composition/src/runtime.integration.test.ts --pool=threads --maxWorkers=1
 npm run e2e --workspace @agent-foundry/api
 ```
 

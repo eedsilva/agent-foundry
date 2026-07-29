@@ -1,12 +1,13 @@
 import { ulid } from 'ulid';
 import {
   resolveRoutingEntry,
+  type ExecutorHealth,
   type ModelDefinition,
+  type ModelMetric,
   type Provider,
   type RankedModel,
   type RouteDecision,
   type TaskProfile,
-  type WorkflowTaskKind,
 } from '@agent-foundry/contracts';
 import type {
   ExplicitModelRoute,
@@ -71,8 +72,7 @@ export class TableModelRouter implements ModelRouter {
     // A pin is the operator overruling the table, so no entry is claimed for it.
     const routing = explicit
       ? undefined
-      : (constraints?.routing ??
-        resolveRoutingEntry(undefined, 'default', profile.taskKind as WorkflowTaskKind));
+      : (constraints?.routing ?? resolveRoutingEntry(undefined, 'default', profile.taskKind));
 
     const eligible: ModelDefinition[] = [];
     for (const model of this.models) {
@@ -94,7 +94,10 @@ export class TableModelRouter implements ModelRouter {
 
     // One model per executor, walked in table order: the table decides which
     // vendor runs, and the catalog decides which of that vendor's models does.
-    const ordered = explicit ? eligible : orderByTable(eligible, routing?.executors ?? []);
+    // With no table entry — a pin, or a task kind no table covers — the catalog's
+    // own order stands in, because throwing while eligible models exist would be
+    // a worse answer than an unordered one.
+    const ordered = explicit || !routing ? eligible : orderByTable(eligible, routing.executors);
     const selected = ordered[0];
     if (!selected) {
       throw new Error(
@@ -153,8 +156,38 @@ export class TableModelRouter implements ModelRouter {
     );
     const health = constraints?.providerHealth?.get(model.provider);
     const breaker = evaluateBreaker(metric, health, this.breakerConfig, new Date());
-    return breaker.state === 'open' ? `circuit-open: ${breaker.reason}` : null;
+    if (breaker.state === 'open') return `circuit-open: ${breaker.reason}`;
+    return quotaRejection(model, metric, health);
   }
+}
+
+/**
+ * A subscription model whose average run costs more quota than the provider has
+ * left. The breaker only opens at zero remaining, so without this a task with a
+ * known appetite is dispatched into a quota it cannot finish in.
+ */
+function quotaRejection(
+  model: ModelDefinition,
+  metric: ModelMetric | null,
+  health: ExecutorHealth | undefined,
+): string | null {
+  if (model.billingMode !== 'subscription') return null;
+  const rateLimit = health?.rateLimit;
+  // An expired window is not a limit any more.
+  if (!rateLimit?.resetAt || new Date(rateLimit.resetAt).getTime() > Date.now()) {
+    const remaining = rateLimit?.remaining;
+    if (remaining === undefined) return null;
+    const knownCount = metric?.quotaUnitsKnownCount ?? 0;
+    const estimate =
+      metric?.quotaUnitsTotal !== undefined && knownCount > 0
+        ? metric.quotaUnitsTotal / knownCount
+        : null;
+    if (estimate !== null && estimate > remaining) {
+      return `over-quota: est ${estimate} quota units > ${remaining} remaining`;
+    }
+    if (estimate === null && remaining <= 0) return 'over-quota: no quota units remaining';
+  }
+  return null;
 }
 
 function orderByTable(

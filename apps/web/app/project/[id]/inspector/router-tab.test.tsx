@@ -97,6 +97,10 @@ describe('RouterTab', () => {
 
     expect(markup).toContain('codex-default');
     expect(markup).toContain('claude-opus');
+    // The position beside the ladder describes the executor that ran, not the
+    // one selection first landed on and that then failed.
+    expect(markup).toContain('2/3');
+    expect(markup).not.toContain('1/3');
   });
 
   it('still renders a decision persisted before the table existed', () => {

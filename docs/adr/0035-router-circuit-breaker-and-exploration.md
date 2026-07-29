@@ -1,6 +1,6 @@
 # ADR 0035: Derived circuit breaker and opt-in epsilon-greedy exploration in the model router
 
-- Status: Accepted
+- Status: Partially superseded by ADR 0046 (the exploration half; the circuit breaker stands)
 - Date: 2026-07-23
 - Owners: model-router
 

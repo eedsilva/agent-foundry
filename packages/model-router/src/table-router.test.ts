@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { ModelDefinition, ModelMetric, TaskProfile } from '@agent-foundry/contracts';
+import type {
+  ExecutorHealth,
+  ModelDefinition,
+  ModelMetric,
+  TaskProfile,
+} from '@agent-foundry/contracts';
 import type { MetricsRepository } from '@agent-foundry/domain';
 import { TableModelRouter } from './table-router.js';
 
@@ -149,6 +154,65 @@ describe('TableModelRouter', () => {
     expect(decision.fallbacks).toEqual([]);
     // The pin is what decided, so no table entry is claimed for it.
     expect(decision.routingTable).toBeUndefined();
+  });
+
+  it('falls back to catalog order for a task kind no table covers', async () => {
+    // `architecture` is retired, so no table names it. Throwing while eligible
+    // models exist would be a worse answer than an unordered one.
+    const decision = await router().route({ ...profile, taskKind: 'architecture' });
+
+    expect(decision.selected.model.id).toBe('agy-default');
+    expect(decision.routingTable).toBeUndefined();
+  });
+
+  it('rejects a subscription model that would outrun the quota left', async () => {
+    const metrics = new MemoryMetrics(
+      new Map([
+        [
+          'codex-default:implementation:developer',
+          {
+            modelId: 'codex-default',
+            taskKind: 'implementation',
+            role: 'developer',
+            taxonomyVersion: '2',
+            category: 'implementation/frontend',
+            attempts: 4,
+            successes: 4,
+            consecutiveFailures: 0,
+            totalDurationMs: 1_000,
+            totalEstimatedCostUsd: 0,
+            costKnownCount: 0,
+            inputTokensKnownCount: 0,
+            outputTokensKnownCount: 0,
+            totalInputTokens: 0,
+            totalOutputTokens: 0,
+            qualityEvaluations: 0,
+            qualityApprovals: 0,
+            quotaUnitsTotal: 40,
+            quotaUnitsKnownCount: 4,
+            updatedAt: '2026-07-29T10:00:00.000Z',
+          } as ModelMetric,
+        ],
+      ]),
+    );
+    const decision = await new TableModelRouter(catalog(), metrics).route(profile, undefined, {
+      routing: { source: 'web-app-v1', executors: ['codex', 'claude'] },
+      // 10 units per run on average, 3 left: the breaker stays shut at
+      // non-zero remaining, so only this gate catches it.
+      providerHealth: new Map<string, ExecutorHealth>([
+        [
+          'codex',
+          { provider: 'codex', available: true, message: 'ok', rateLimit: { remaining: 3 } },
+        ],
+      ]),
+    });
+
+    expect(decision.selected.model.provider).toBe('claude');
+    expect(decision.rejected).toEqual(
+      expect.arrayContaining([
+        { modelId: 'codex-default', reason: expect.stringContaining('over-quota') },
+      ]),
+    );
   });
 
   it('fails with the table in the message when nothing is eligible', async () => {

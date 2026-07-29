@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { taskCategoryLevels, type RouteDecision } from '@agent-foundry/contracts';
+import { taskCategoryLevels, type Provider, type RouteDecision } from '@agent-foundry/contracts';
 import { EmptyState } from '@/components/empty-state';
 import { HINT, PANEL, PANEL_HEADER, PANEL_TITLE, SECTION_TITLE } from '@/lib/ui';
 import { isFallback } from './shared';
@@ -17,8 +17,8 @@ function ExecutorLadder({
   executors,
   ran,
 }: {
-  executors: readonly string[];
-  ran: string | undefined;
+  executors: readonly Provider[];
+  ran: Provider | undefined;
 }) {
   return (
     <ol className="mt-2 flex list-none flex-wrap gap-1.5 p-0">
@@ -28,7 +28,7 @@ function ExecutorLadder({
           <li
             key={executor}
             className={`rounded-full px-2 py-0.5 font-mono text-[11px] ${
-              used ? 'bg-accent/15 text-ink font-bold' : 'bg-surface-raised text-ink-subtle'
+              used ? 'bg-accent-wash text-ink font-bold' : 'bg-surface text-ink-subtle'
             }`}
           >
             <span className="text-ink-subtle">{index + 1}.</span> {executor}
@@ -38,6 +38,16 @@ function ExecutorLadder({
       })}
     </ol>
   );
+}
+
+/**
+ * Which entry actually ran. The ladder marks the executed executor, so the
+ * position beside it has to describe the same one — on a fallback, `selectedIndex`
+ * still points at the entry that was chosen and then failed.
+ */
+function ranEntry(table: NonNullable<RouteDecision['routingTable']>, ran: Provider): number {
+  const index = table.executors.indexOf(ran);
+  return index >= 0 ? index : table.selectedIndex;
 }
 
 export function RouterTab({ routes }: { routes: RouteEntry[] }) {
@@ -97,7 +107,7 @@ export function RouterTab({ routes }: { routes: RouteEntry[] }) {
                       <>
                         <p className="text-ink-muted mt-3 text-[12px]">
                           tabela <span className="text-ink font-mono">{table.source}</span> ·{' '}
-                          {table.taskKind} · entrada {table.selectedIndex + 1}/
+                          {table.taskKind} · entrada {ranEntry(table, executed.model.provider) + 1}/
                           {table.executors.length}
                         </p>
                         <ExecutorLadder executors={table.executors} ran={executed.model.provider} />
