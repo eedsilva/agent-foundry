@@ -309,6 +309,8 @@ export interface RouteConstraints {
    * answered; `executors` is ordered, head first.
    */
   routing?: { source: string; executors: readonly Exclude<Provider, 'mock'>[] };
+  /** Skip executors already consumed by earlier attempts of the same task. */
+  routingStartIndex?: number;
 }
 
 export interface ModelRouter {

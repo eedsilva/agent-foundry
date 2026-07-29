@@ -207,6 +207,19 @@ Para tarefas mutáveis:
 
 A rota não é recalculada no meio do step. Isso preserva a explicabilidade da decisão original. O artefato distingue `selected`, `attemptedModelIds` e `executed`; sem essa separação, uma aprovação poderia alimentar métricas do modelo errado.
 
+### Escada de tarefa condicionada à verificação
+
+Em `for-each-task`, a falha de um candidato dentro do próprio step consome apenas os fallbacks
+daquele step. A tarefa não escolhe outro fornecedor por especulação: a escada de tarefa só avança
+depois de um relatório vermelho real de `verify` ou de uma asserção de navegador, com o orçamento de
+reparo esgotado. Nesse ponto o checkpoint da tarefa volta ao estado anterior e a próxima tentativa
+começa na próxima entrada da tabela — nunca no mesmo fornecedor. `maxAttempts` e o emergency ceiling
+continuam limitando gasto e duração; se a lista terminar, a tarefa falha sem iniciar uma rota vazia.
+
+Cada passo da escada fica auditável em `agent.routed` (`executors`, `selectedIndex`), no relatório
+vermelho e em `task.failed` (`attempt`, `executor`, `attemptedExecutors`). Tarefas já commitadas
+continuam preservadas quando uma tarefa posterior esgota a escada.
+
 ## Exploração
 
 Removida junto com o score (ADR 0046). Ela existia para coletar dados para um router pontuado; a

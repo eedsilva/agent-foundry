@@ -95,6 +95,26 @@ describe('TableModelRouter', () => {
     expect(decision.selected.score).toBeUndefined();
   });
 
+  it('starts at the next table entry for a task retry', async () => {
+    const decision = await router().route(profile, undefined, {
+      routing: { source: 'web-app-v1', executors: ['claude', 'codex', 'agy'] },
+      routingStartIndex: 1,
+    });
+
+    expect(decision.selected.model.provider).toBe('codex');
+    expect(decision.fallbacks.map((candidate) => candidate.model.provider)).toEqual(['agy']);
+    expect(decision.routingTable).toMatchObject({
+      executors: ['claude', 'codex', 'agy'],
+      selectedIndex: 1,
+    });
+    expect(decision.rejected).toEqual(
+      expect.arrayContaining([
+        { modelId: 'claude-opus', reason: expect.stringContaining('already used') },
+        { modelId: 'claude-sonnet', reason: expect.stringContaining('already used') },
+      ]),
+    );
+  });
+
   it('orders fallbacks by the table and takes one model per executor', async () => {
     const decision = await router().route(profile, undefined, {
       routing: { source: 'web-app-v1', executors: ['agy', 'claude', 'codex'] },
