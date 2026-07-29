@@ -4,7 +4,7 @@
 
 Escolher “Claude para planejar e Codex para programar” é uma regra inicial aceitável, mas não é uma política adaptativa. Tarefas mudam de tamanho, risco, contexto e urgência. Modelos, quotas e versões também mudam.
 
-O router deste projeto transforma cada etapa em um perfil e ranqueia um catálogo configurável. A decisão completa é anexada ao artefato, portanto pode ser auditada depois.
+O router deste projeto transforma cada etapa em um perfil, aplica hard constraints e depois ordena os elegíveis pela tabela de executores do workflow (ADR 0046). A decisão completa — inclusive qual tabela e qual entrada dela — é anexada ao artefato, portanto pode ser auditada depois.
 
 ## Entrada: `TaskProfile`
 
@@ -94,13 +94,17 @@ Não copie preços antigos da internet e trate como verdade eterna. Mantenha o c
 
 ## Hard constraints
 
-Antes do score, um candidato é rejeitado quando:
+Antes da tabela, um candidato é rejeitado quando:
 
-- o provider não está permitido;
+- o provider não está permitido (policy do projeto ou allowlist do perfil);
 - a tarefa altera o workspace e o modelo não pode escrever;
-- a janela de contexto declarada é menor que o contexto estimado.
+- a janela de contexto declarada é menor que o contexto estimado;
+- o circuit breaker do provider está aberto (ADR 0035);
+- é um modelo de assinatura cuja média de quota conhecida excede o `rateLimit.remaining` do provider.
 
-Restrições duras não devem virar penalidades suaves. Um modelo incapaz não fica adequado por ganhar pontos em velocidade.
+Restrições duras não viram penalidades suaves, e a tabela não as contorna: um executor inelegível é
+pulado por mais alto que a tabela o coloque. Por isso a **ordem** é previsível pela config, mas a
+**disponibilidade** não — a rejeição fica registrada em `RouteDecision.rejected` com o motivo.
 
 ## Pins explícitos auditados
 
@@ -114,53 +118,32 @@ duras em preferências: modelo desabilitado, drift de `modelId/provider/model`, 
 por ProjectPolicy ou pelo step, contexto insuficiente e falta de capacidade de escrita continuam
 rejeitando a rota antes da execução.
 
-## Score
+## Tabela de executores
 
-O score final normaliza os pesos da tarefa:
+Desde ADR 0046 não existe score. `WorkflowDefinition.routing` mapeia task kind para uma **lista
+ordenada de executores**, e a tentativa 1 pega a cabeça da lista:
 
-```text
-total =
-  qualityWeight     * qualityComposite +
-  speedWeight       * speed +
-  costWeight        * costEfficiency +
-  reliabilityWeight * reliability
+```yaml
+routing:
+  - taskKind: implementation
+    executors: [claude, codex, agy]
+  - taskKind: repair
+    executors: [codex, claude, agy]
 ```
 
-### Capacidade
+- A tabela escolhe o **executor**; a ordem do `models/catalog.yaml` escolhe o **modelo** daquele
+  executor. Os dois são arquivos que o operador edita, então a decisão é previsível antes do run.
+- Um workflow sem `routing` — ou sem entrada para aquele task kind — cai na `DEFAULT_ROUTING_TABLE`
+  de `packages/contracts`. A auditoria registra qual tabela respondeu.
+- `RouteDecision.routingTable` guarda `source`, `taskKind`, `executors` e `selectedIndex`.
+- Os três executores aparecem em todas as listas por duas razões simples: três assinaturas são três
+  pools de quota, e um fornecedor diferente é uma tentativa genuinamente diferente.
+- `mock` é proibido na tabela: é um dublê de teste, não um fornecedor.
 
-A capacidade depende do tipo de tarefa. Revisão de arquitetura, por exemplo, combina `review` e `architecture`; reparo combina `repair` e `coding`.
+O que **não** existe mais: as seis dimensões, os pesos por prioridade e a exploração epsilon-greedy.
+Eram um modelo ajustado a dados que nunca existiram — nenhuma tarefa havia sido concluída — e a
+dimensão de custo usava um prior estático por modelo que não enxerga o tamanho do contexto do step.
 
-### Contexto
-
-Combina headroom da janela com capacidade de structured output. Uma janela quase cheia recebe score menor, mesmo que ainda passe pela restrição dura.
-
-### Velocidade
-
-Começa com o prior do catálogo. Quando há histórico, mistura a duração média observada para aquele modelo, papel e tipo de tarefa.
-
-### Confiabilidade
-
-Combina:
-
-- prior de confiabilidade;
-- taxa de sucesso operacional suavizada;
-- taxa de aprovação em quality gates;
-- penalidade por falhas consecutivas.
-
-Suavização evita declarar um modelo perfeito após uma única execução boa.
-
-### Custo
-
-Há dois casos diferentes:
-
-1. **Assinatura:** normalmente não existe preço marginal confiável por chamada. O prior `costEfficiency` representa pressão sobre quota, latência e custo de oportunidade.
-2. **Metered:** se houver pricing ou custo reportado pela CLI, o router estima USD e usa isso com peso maior.
-
-Misturar esses casos em um único “preço” inventado seria precisão teatral.
-
-### Afinidade de tags
-
-Tags permitem preferências específicas, como `architecture`, `fast`, `review` ou `workspace-write`. Elas influenciam a qualidade composta, mas não substituem métricas.
 
 ## Métricas coletadas
 
@@ -212,7 +195,7 @@ a versão da taxonomia e os features quando existirem.
 
 ## Fallback
 
-A rota automática contém o selecionado e até três fallbacks. Os primeiros fallbacks priorizam providers ainda não usados, para reduzir falhas correlacionadas de uma única CLI. Todos os candidatos dessa lista finita podem ser tentados uma vez; `maxAttempts` permanece legível em workflows antigos, mas não corta essa lista. Uma rota com pin explícito não tem fallback.
+A rota automática contém o selecionado e os demais executores elegíveis **na ordem da tabela**, um modelo por executor — o que já reduz falhas correlacionadas de uma única CLI. Todos os candidatos dessa lista finita podem ser tentados uma vez; `maxAttempts` permanece legível em workflows antigos, mas não corta essa lista. Uma rota com pin explícito não tem fallback.
 
 Para tarefas mutáveis:
 
@@ -224,16 +207,15 @@ Para tarefas mutáveis:
 
 A rota não é recalculada no meio do step. Isso preserva a explicabilidade da decisão original. O artefato distingue `selected`, `attemptedModelIds` e `executed`; sem essa separação, uma aprovação poderia alimentar métricas do modelo errado.
 
-## Exploração versus exploração cega
+## Exploração
 
-O MVP é majoritariamente exploit: escolhe o melhor score conhecido. Em produção, isso pode congelar crenças iniciais ruins. Uma evolução responsável é usar exploração pequena e controlada:
+Removida junto com o score (ADR 0046). Ela existia para coletar dados para um router pontuado; a
+tabela coleta os mesmos dados registrando o resultado por tarefa e por executor
+(`task.completed.executor`, `task.failed.attemptedExecutors`) sem desviar runs reais da cabeça da
+lista.
 
-- apenas em tarefas de baixo risco;
-- com orçamento explícito;
-- comparando resultado por avaliação cega;
-- sem permitir que um modelo mais fraco altere produção diretamente.
+Se um router pontuado voltar, é a esses registros que ele deve ser ajustado.
 
-Não use roleta aleatória em migração de banco e chame isso de aprendizado.
 
 ## Calibração recomendada
 

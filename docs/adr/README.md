@@ -6,4 +6,4 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0045 each task is gated on deterministic checks; repair fires only on a real failure](0045-per-task-deterministic-verification.md).
+Latest: [0046 a readable executor table replaces router scoring](0046-executor-table-replaces-router-scoring.md).
