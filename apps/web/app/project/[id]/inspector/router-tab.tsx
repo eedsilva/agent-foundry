@@ -1,12 +1,19 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { taskCategoryLevels, type Provider, type RouteDecision } from '@agent-foundry/contracts';
+import {
+  taskCategoryLevels,
+  type ModelDefinition,
+  type RouteDecision,
+} from '@agent-foundry/contracts';
 import { EmptyState } from '@/components/empty-state';
 import { HINT, PANEL, PANEL_HEADER, PANEL_TITLE, SECTION_TITLE } from '@/lib/ui';
 import { isFallback } from './shared';
 
 export type RouteEntry = { artifact: string; route: RouteDecision };
+
+/** The vendors a table can name — `Provider` minus the `mock` test double. */
+type Executor = ModelDefinition['provider'];
 
 /**
  * The ordered executors the table offered, with the one that ran marked. The
@@ -17,8 +24,8 @@ function ExecutorLadder({
   executors,
   ran,
 }: {
-  executors: readonly Provider[];
-  ran: Provider | undefined;
+  executors: readonly Executor[];
+  ran: Executor | undefined;
 }) {
   return (
     <ol className="mt-2 flex list-none flex-wrap gap-1.5 p-0">
@@ -45,7 +52,7 @@ function ExecutorLadder({
  * position beside it has to describe the same one — on a fallback, `selectedIndex`
  * still points at the entry that was chosen and then failed.
  */
-function ranEntry(table: NonNullable<RouteDecision['routingTable']>, ran: Provider): number {
+function ranEntry(table: NonNullable<RouteDecision['routingTable']>, ran: Executor): number {
   const index = table.executors.indexOf(ran);
   return index >= 0 ? index : table.selectedIndex;
 }
