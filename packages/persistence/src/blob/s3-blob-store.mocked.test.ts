@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { CopyObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { BlobIntegrityError } from '@agent-foundry/domain';
+import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { S3BlobStore } from './s3-blob-store.js';
 
@@ -59,7 +58,7 @@ async function drainUploadBody(): Promise<void> {
   }
 }
 
-describe('S3BlobStore mocked temp-object finalization', () => {
+describe('S3BlobStore mocked metadata sidecar finalization', () => {
   beforeEach(() => {
     mockedAws.sendMock.mockReset();
     mockedAws.uploadAbortMock.mockReset();
@@ -67,16 +66,18 @@ describe('S3BlobStore mocked temp-object finalization', () => {
     mockedAws.uploadParams = undefined;
   });
 
-  it('uploads to a temporary key, copies into the requested final key with sha256 metadata, then deletes the temp object', async () => {
+  it('uploads bytes directly and persists the sha256 sidecar without CopyObject', async () => {
     mockedAws.uploadDoneMock.mockImplementationOnce(drainUploadBody);
     mockedAws.sendMock.mockImplementation(async (command: unknown) => {
-      if (command instanceof CopyObjectCommand) {
+      if (command instanceof HeadObjectCommand) {
         return {
-          CopyObjectResult: { LastModified: new Date('2026-07-30T12:34:56.000Z') },
+          ContentLength: 32,
+          ContentType: 'application/octet-stream',
+          LastModified: new Date('2026-07-30T12:34:56.000Z'),
           ServerSideEncryption: 'AES256',
         };
       }
-      if (command instanceof DeleteObjectCommand) return {};
+      if (command instanceof PutObjectCommand) return {};
       throw new Error(
         `unexpected command ${String((command as { constructor?: { name?: string } }).constructor?.name)}`,
       );
@@ -96,30 +97,34 @@ describe('S3BlobStore mocked temp-object finalization', () => {
       streamOf(content),
     );
 
-    const tempKey = mockedAws.uploadParams?.Key;
-    expect(tempKey).toBeTruthy();
-    expect(tempKey).not.toBe('artifacts/final.bin');
+    expect(mockedAws.uploadParams?.Key).toBe('artifacts/final.bin');
     expect(mockedAws.uploadParams).toMatchObject({
       Bucket: 'blob-bucket',
       ContentType: 'application/octet-stream',
     });
 
     expect(mockedAws.sendMock).toHaveBeenCalledTimes(2);
-    const copyCommand = mockedAws.sendMock.mock.calls[0]![0] as CopyObjectCommand;
-    const deleteCommand = mockedAws.sendMock.mock.calls[1]![0] as DeleteObjectCommand;
-    expect(copyCommand).toBeInstanceOf(CopyObjectCommand);
-    expect(copyCommand.input).toMatchObject({
+    const headCommand = mockedAws.sendMock.mock.calls[0]![0] as HeadObjectCommand;
+    const metadataCommand = mockedAws.sendMock.mock.calls[1]![0] as PutObjectCommand;
+    expect(headCommand).toBeInstanceOf(HeadObjectCommand);
+    expect(headCommand.input).toMatchObject({
       Bucket: 'blob-bucket',
       Key: 'artifacts/final.bin',
-      ContentType: 'application/octet-stream',
-      Metadata: { sha256 },
-      MetadataDirective: 'REPLACE',
-      CopySource: `blob-bucket/${tempKey!.split('/').map(encodeURIComponent).join('/')}`,
     });
-    expect(deleteCommand).toBeInstanceOf(DeleteObjectCommand);
-    expect(deleteCommand.input).toMatchObject({
+    expect(metadataCommand).toBeInstanceOf(PutObjectCommand);
+    expect(metadataCommand.input).toMatchObject({
       Bucket: 'blob-bucket',
-      Key: tempKey,
+      Key: 'artifacts/final.bin.agent-foundry-meta.json',
+      ContentType: 'application/json',
+    });
+    expect(JSON.parse(String(metadataCommand.input.Body))).toEqual({
+      sha256,
+      createdAt: '2026-07-30T12:34:56.000Z',
+    });
+
+    expect(metadataCommand.input).not.toMatchObject({
+      Bucket: 'blob-bucket',
+      Key: 'artifacts/final.bin',
     });
 
     expect(stat).toEqual({
@@ -132,14 +137,50 @@ describe('S3BlobStore mocked temp-object finalization', () => {
     });
   });
 
-  it('fails visibly when temporary-object cleanup fails after a successful copy', async () => {
+  it('preserves BlobIntegrityError semantics when final-object cleanup fails', async () => {
     mockedAws.uploadDoneMock.mockImplementationOnce(drainUploadBody);
     mockedAws.sendMock.mockImplementation(async (command: unknown) => {
-      if (command instanceof CopyObjectCommand) {
-        return { CopyObjectResult: { LastModified: new Date('2026-07-30T12:34:56.000Z') } };
-      }
       if (command instanceof DeleteObjectCommand) {
-        throw new Error('temp delete failed');
+        throw new Error('final delete failed');
+      }
+      throw new Error('unexpected command');
+    });
+
+    const store = new S3BlobStore({
+      bucket: 'blob-bucket',
+      region: 'us-east-1',
+      accessKeyId: 'key',
+      secretAccessKey: 'secret',
+    });
+
+    await expect(
+      store.put(
+        {
+          key: 'artifacts/final.bin',
+          contentType: 'application/octet-stream',
+          maxBytes: 4096,
+          expectedSha256: 'deadbeef',
+        },
+        streamOf(Buffer.from('cleanup must stay visible')),
+      ),
+    ).rejects.toMatchObject({
+      name: 'BlobIntegrityError',
+      cause: expect.any(AggregateError),
+    });
+  });
+
+  it('leaves a metadata-less object invisible when metadata persistence fails', async () => {
+    mockedAws.uploadDoneMock.mockImplementationOnce(drainUploadBody);
+    mockedAws.sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof HeadObjectCommand) {
+        return {
+          ContentLength: 12,
+          ContentType: 'application/octet-stream',
+          LastModified: new Date('2026-07-30T12:34:56.000Z'),
+        };
+      }
+      if (command instanceof PutObjectCommand) {
+        throw new Error('metadata persistence failed');
       }
       throw new Error('unexpected command');
     });
@@ -154,48 +195,8 @@ describe('S3BlobStore mocked temp-object finalization', () => {
     await expect(
       store.put(
         { key: 'artifacts/final.bin', contentType: 'application/octet-stream', maxBytes: 4096 },
-        streamOf(Buffer.from('cleanup must stay visible')),
+        streamOf(Buffer.from('metadata body')),
       ),
-    ).rejects.toThrow(/temporary-object cleanup failed/i);
-  });
-
-  it('preserves BlobIntegrityError semantics while attaching temporary-object cleanup failure details as cause', async () => {
-    mockedAws.uploadDoneMock.mockImplementationOnce(drainUploadBody);
-    mockedAws.sendMock.mockImplementation(async (command: unknown) => {
-      if (command instanceof DeleteObjectCommand) {
-        throw new Error('temp delete failed');
-      }
-      throw new Error('unexpected command');
-    });
-
-    const store = new S3BlobStore({
-      bucket: 'blob-bucket',
-      region: 'us-east-1',
-      accessKeyId: 'key',
-      secretAccessKey: 'secret',
-    });
-
-    let thrown: unknown;
-    try {
-      await store.put(
-        {
-          key: 'artifacts/final.bin',
-          contentType: 'application/octet-stream',
-          maxBytes: 4096,
-          expectedSha256: 'deadbeef',
-        },
-        streamOf(Buffer.from('hash mismatch')),
-      );
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBeInstanceOf(BlobIntegrityError);
-    expect((thrown as Error & { cause?: unknown }).cause).toBeInstanceOf(AggregateError);
-    expect(
-      ((thrown as Error & { cause?: AggregateError }).cause?.errors ?? []).map((error) =>
-        error instanceof Error ? error.message : String(error),
-      ),
-    ).toContain('temp delete failed');
+    ).rejects.toThrow('metadata persistence failed');
   });
 });

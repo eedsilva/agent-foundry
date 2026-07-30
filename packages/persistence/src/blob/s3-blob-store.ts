@@ -1,12 +1,12 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { Transform } from 'node:stream';
 import {
-  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
@@ -23,10 +23,7 @@ export interface S3BlobStoreOptions {
   forcePathStyle?: boolean;
 }
 
-/** Percent-encodes each key segment while preserving '/' as the path separator, per CopySource's requirements. */
-function encodeKeySegments(key: string): string {
-  return key.split('/').map(encodeURIComponent).join('/');
-}
+const METADATA_SUFFIX = '.agent-foundry-meta.json';
 
 function isNotFoundError(error: unknown): boolean {
   const meta = (error as { $metadata?: { httpStatusCode?: number } } | undefined)?.$metadata;
@@ -37,15 +34,15 @@ function normalizeError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-function temporaryUploadKey(key: string): string {
-  return `${key}.tmp-${randomUUID()}`;
+function metadataKey(key: string): string {
+  return `${key}${METADATA_SUFFIX}`;
 }
 
 function withCleanupFailureCause(error: unknown, cleanupError: AggregateError): unknown {
   if (!(error instanceof Error)) {
     return new AggregateError(
       [normalizeError(error), cleanupError],
-      'S3BlobStore put failed and temporary-object cleanup also failed.',
+      'S3BlobStore put failed and final-object cleanup also failed.',
     );
   }
 
@@ -66,6 +63,11 @@ interface MeteredStream {
   transform: Transform;
   /** Call only after the transform has finished (e.g. once the sink awaits completion). */
   digest(): { sha256: string; sizeBytes: number };
+}
+
+interface BlobMetadata {
+  sha256: string;
+  createdAt: string;
 }
 
 /**
@@ -114,7 +116,6 @@ export class S3BlobStore implements BlobStore {
 
   async put(input: BlobPutInput, source: Readable): Promise<BlobStat> {
     const { transform, digest } = meteredStream(input.maxBytes);
-    const tempKey = temporaryUploadKey(input.key);
     // .pipe() doesn't forward source errors to the destination; without this
     // a broken upstream read would leave Upload waiting forever instead of
     // failing (and being aborted) like a maxBytes/integrity violation does.
@@ -125,76 +126,60 @@ export class S3BlobStore implements BlobStore {
       client: this.client,
       params: {
         Bucket: this.bucket,
-        Key: tempKey,
+        Key: input.key,
         Body: body,
         ContentType: input.contentType,
       },
     });
 
-    let operationError: unknown;
-    let result: BlobStat | undefined;
-
     try {
-      try {
-        await upload.done();
-      } catch (error) {
-        await upload.abort().catch(() => undefined);
-        throw error;
-      }
-
-      const { sha256, sizeBytes } = digest();
-
-      if (input.expectedSha256 && input.expectedSha256 !== sha256) {
-        throw new BlobIntegrityError(input.key, input.expectedSha256, sha256);
-      }
-
-      // sha256 is only known once the stream has fully drained, so it can't
-      // be set at upload time; copy from a temporary object into the final
-      // key to attach metadata without re-streaming the uploaded bytes.
-      const copyResult = await this.client.send(
-        new CopyObjectCommand({
-          Bucket: this.bucket,
-          Key: input.key,
-          CopySource: `${this.bucket}/${encodeKeySegments(tempKey)}`,
-          ContentType: input.contentType,
-          Metadata: { sha256 },
-          MetadataDirective: 'REPLACE',
-        }),
-      );
-
-      result = {
-        key: input.key,
-        sha256,
-        sizeBytes,
-        contentType: input.contentType,
-        createdAt: (copyResult.CopyObjectResult?.LastModified ?? new Date()).toISOString(),
-        ...(copyResult.ServerSideEncryption
-          ? { encryption: { algorithm: copyResult.ServerSideEncryption } }
-          : {}),
-      };
+      await upload.done();
     } catch (error) {
-      operationError = error;
-    } finally {
-      const cleanupFailures: Error[] = [];
-      await this.client
-        .send(new DeleteObjectCommand({ Bucket: this.bucket, Key: tempKey }))
-        .catch((error) => cleanupFailures.push(normalizeError(error)));
-
-      if (cleanupFailures.length > 0) {
-        const cleanupError = new AggregateError(
-          cleanupFailures,
-          'S3BlobStore temporary-object cleanup failed.',
-        );
-        if (operationError !== undefined) {
-          operationError = withCleanupFailureCause(operationError, cleanupError);
-        } else {
-          throw cleanupError;
-        }
-      }
+      await upload.abort().catch(() => undefined);
+      throw error;
     }
 
-    if (operationError !== undefined) throw operationError;
-    return result!;
+    const { sha256, sizeBytes } = digest();
+
+    if (input.expectedSha256 && input.expectedSha256 !== sha256) {
+      const integrityError = new BlobIntegrityError(input.key, input.expectedSha256, sha256);
+      try {
+        await this.delete(input.key);
+      } catch (cleanupError) {
+        withCleanupFailureCause(
+          integrityError,
+          new AggregateError(
+            [normalizeError(cleanupError)],
+            'S3BlobStore final-object cleanup failed.',
+          ),
+        );
+      }
+      throw integrityError;
+    }
+
+    const head = await this.client.send(
+      new HeadObjectCommand({ Bucket: this.bucket, Key: input.key }),
+    );
+    const createdAt = (head.LastModified ?? new Date()).toISOString();
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: metadataKey(input.key),
+        Body: JSON.stringify({ sha256, createdAt } satisfies BlobMetadata),
+        ContentType: 'application/json',
+      }),
+    );
+
+    return {
+      key: input.key,
+      sha256,
+      sizeBytes,
+      contentType: input.contentType,
+      createdAt,
+      ...(head.ServerSideEncryption
+        ? { encryption: { algorithm: head.ServerSideEncryption } }
+        : {}),
+    };
   }
 
   async getStream(key: string): Promise<Readable | null> {
@@ -212,17 +197,14 @@ export class S3BlobStore implements BlobStore {
   async stat(key: string): Promise<BlobStat | null> {
     try {
       const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
-      // put() finalizes in two phases (multipart Upload, then a CopyObjectCommand that
-      // attaches sha256); a process death or Copy failure between them leaves an object
-      // with no sha256 metadata. Treat that as an incomplete write, not a valid blob, so
-      // it stays invisible to readers and eligible for GC as unreferenced.
-      if (!head.Metadata?.sha256) return null;
+      const metadata = await this.readMetadata(key);
+      if (!metadata) return null;
       return {
         key,
-        sha256: head.Metadata.sha256,
+        sha256: metadata.sha256,
         sizeBytes: head.ContentLength ?? 0,
         contentType: head.ContentType ?? 'application/octet-stream',
-        createdAt: (head.LastModified ?? new Date()).toISOString(),
+        createdAt: metadata.createdAt,
         ...(head.ServerSideEncryption
           ? { encryption: { algorithm: head.ServerSideEncryption } }
           : {}),
@@ -234,7 +216,7 @@ export class S3BlobStore implements BlobStore {
   }
 
   async delete(key: string): Promise<void> {
-    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+    await Promise.all([this.deleteObject(key), this.deleteObject(metadataKey(key))]);
   }
 
   async list(prefix: string): Promise<BlobListEntry[]> {
@@ -249,7 +231,7 @@ export class S3BlobStore implements BlobStore {
         }),
       );
       for (const object of page.Contents ?? []) {
-        if (!object.Key) continue;
+        if (!object.Key || object.Key.endsWith(METADATA_SUFFIX)) continue;
         results.push({
           key: object.Key,
           createdAt: (object.LastModified ?? new Date()).toISOString(),
@@ -263,5 +245,33 @@ export class S3BlobStore implements BlobStore {
   async createSignedDownloadUrl(key: string, expiresInSeconds: number): Promise<string> {
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+  }
+
+  private async deleteObject(key: string): Promise<void> {
+    await this.client
+      .send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }))
+      .catch((error) => {
+        if (!isNotFoundError(error)) throw error;
+      });
+  }
+
+  private async readMetadata(key: string): Promise<BlobMetadata | null> {
+    try {
+      const result = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: metadataKey(key) }),
+      );
+      if (!result.Body) return null;
+      const body = result.Body as unknown as AsyncIterable<Uint8Array | string>;
+      const chunks: Buffer[] = [];
+      for await (const chunk of body) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Partial<BlobMetadata>;
+      if (typeof parsed.sha256 !== 'string' || typeof parsed.createdAt !== 'string') return null;
+      return { sha256: parsed.sha256, createdAt: parsed.createdAt };
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw error;
+    }
   }
 }
