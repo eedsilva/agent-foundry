@@ -43,6 +43,10 @@ sidecar is missing or invalid. An incomplete write is therefore invisible to rea
 unreferenced, naturally eligible for the GC sweep below, instead of appearing as a valid blob with an
 empty hash.
 
+For backwards compatibility, S3 reads fall back to the legacy final-object `Metadata.sha256` when
+the sidecar is absent or invalid; new writes always use the sidecar, so this fallback does not make a
+metadata-less object visible.
+
 Downloads always go through a signed URL scoped to the caller's project authorization
 (`GET /projects/:projectId/artifacts/:name/blob-url`, 300s TTL), but the two modes split how that URL is
 served, since only one of them needs the API in the download path:

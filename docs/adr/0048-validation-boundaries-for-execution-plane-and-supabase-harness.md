@@ -11,7 +11,11 @@ This branch adds two validation-facing changes that outlive a pull request:
 
 1. Issue #210 hardens the **local execution-plane boundary**. `LocalExecutionPlane.submit(...)`
    now validates its request/result contract at the boundary and supports observable local
-   `status(...)` / `cancel(...)` behavior for in-flight work.
+   `status(...)` / `cancel(...)` behavior for in-flight work. Requests that ask for tools,
+   non-empty network policy fail closed because this local fallback cannot enforce those
+   capabilities; the local v1 placeholder secret refs must remain names-only (`ref === name`) and
+   any broker-style ref fails closed because this fallback cannot resolve it. The real sandbox
+   enforcement remains the separate #47 follow-up.
 2. Issue #232 adds an **opt-in Supabase Postgres + S3 acceptance harness**. It creates a disposable
    local Supabase project or accepts explicit hosted `DATABASE_URL` + `S3_*` inputs, runs the
    repository migrations, boots the production composition in `PERSISTENCE_MODE=postgres` +
@@ -35,6 +39,11 @@ The branch also has explicit non-goals that must stay true:
 - The local execution plane treats malformed execution-plane requests/results as boundary violations,
   not normal failed executions. They are rejected at the schema boundary instead of being flattened
   into provider-style failure payloads.
+- The local execution plane fails closed for non-empty `tools` and non-`none` `networkPolicy`
+  requests rather than silently ignoring capabilities it cannot enforce. Secret refs remain
+  names-only metadata at this boundary; broker-style refs fail closed, resolution is reserved for
+  the preview path, and no secret value is passed to the agent executor. Sandbox-backed enforcement
+  remains outside this local fallback.
 - Local execution-plane observability is explicit and in-memory only: `status(executionId)` reports
   running/completed/failed/cancelled for in-flight local work, and `cancel(executionId)` is
   best-effort for that same local scope.

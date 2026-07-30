@@ -258,6 +258,7 @@ suite('Supabase Postgres + Storage data plane', () => {
       AUTO_INSTALL_DEPENDENCIES: 'false',
     };
 
+    await resetDatabase(dataPlaneConfig.databaseUrl);
     await runAcceptanceCommand(
       'golden-flow e2e',
       'npx',
@@ -265,6 +266,7 @@ suite('Supabase Postgres + Storage data plane', () => {
       sharedEnv,
       join(rootDir, 'apps/api'),
     );
+    await resetDatabase(dataPlaneConfig.databaseUrl);
     await runAcceptanceCommand(
       'Postgres persistence suites',
       'npx',
@@ -272,6 +274,22 @@ suite('Supabase Postgres + Storage data plane', () => {
       { ...sharedEnv, SUPABASE_TEST_DATABASE_URL: dataPlaneConfig.databaseUrl },
       rootDir,
     );
+  }
+
+  async function resetDatabase(databaseUrl: string): Promise<void> {
+    const sql = createPostgresClient(databaseUrl);
+    try {
+      const tables = await sql<{ table_name: string }[]>`
+        select table_name from information_schema.tables
+        where table_schema = 'public' and table_name <> 'schema_migrations'`;
+      if (tables.length > 0) {
+        await sql.unsafe(
+          `truncate table ${tables.map((table) => `"${table.table_name}"`).join(', ')} cascade`,
+        );
+      }
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
   }
 
   async function runAcceptanceCommand(

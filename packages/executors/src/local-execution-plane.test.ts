@@ -208,6 +208,51 @@ describe('LocalExecutionPlane', () => {
     expect(calls).toBe(0);
   });
 
+  it('fails closed when a request asks the local plane for unenforced capabilities', async () => {
+    let calls = 0;
+    const baseExecutor = makeExecutor('succeed');
+    const executor: AgentExecutor = {
+      provider: 'codex',
+      health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
+      execute: async (agentRequest, signal?) => {
+        calls += 1;
+        return baseExecutor.execute(agentRequest, signal);
+      },
+    };
+    const plane = new LocalExecutionPlane(registryFor(executor), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+    const unsupportedRequests: ExecutionRequest[] = [
+      { ...request(), executionId: 'tools', tools: ['shell'] },
+      {
+        ...request(),
+        executionId: 'network',
+        networkPolicy: { mode: 'allowlist', allowedHosts: ['example.com'], purpose: 'execution' },
+      },
+      {
+        ...request(),
+        executionId: 'secrets',
+        secrets: [{ name: 'TOKEN', ref: 'secret://TOKEN' }],
+      },
+    ];
+
+    for (const unsupportedRequest of unsupportedRequests) {
+      const result = await plane.submit(unsupportedRequest);
+      expect(result).toMatchObject({
+        executionId: unsupportedRequest.executionId,
+        state: 'failed',
+        error: { message: expect.stringContaining('cannot enforce requested capabilities') },
+      });
+      expect(await plane.status(unsupportedRequest.executionId)).toEqual({
+        executionId: unsupportedRequest.executionId,
+        state: 'failed',
+        result,
+      });
+    }
+
+    expect(calls).toBe(0);
+  });
+
   it('rejects malformed executor results at execution-plane boundary', async () => {
     const executor: AgentExecutor = {
       provider: 'codex',

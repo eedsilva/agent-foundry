@@ -222,4 +222,43 @@ describe('S3BlobStore mocked metadata sidecar finalization', () => {
     await expect(store.stat('artifacts/final.bin')).resolves.toBeNull();
     await expect(store.getStream('artifacts/final.bin')).resolves.toBeNull();
   });
+
+  it('reads legacy object metadata while an S3 sidecar is absent', async () => {
+    const content = Buffer.from('legacy object');
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    mockedAws.sendMock.mockImplementation(async (command: unknown) => {
+      const key = (command as { input?: { Key?: string } }).input?.Key;
+      if (command instanceof HeadObjectCommand && key === 'artifacts/legacy.bin') {
+        return {
+          ContentLength: content.byteLength,
+          ContentType: 'text/plain',
+          LastModified: new Date('2026-07-30T12:34:56.000Z'),
+          Metadata: { sha256 },
+        };
+      }
+      if (command instanceof GetObjectCommand && key?.endsWith('.agent-foundry-meta.json')) {
+        throw { $metadata: { httpStatusCode: 404 } };
+      }
+      if (command instanceof GetObjectCommand && key === 'artifacts/legacy.bin') {
+        return { Body: Readable.from([content]) };
+      }
+      throw new Error(`unexpected command ${String(key)}`);
+    });
+
+    const store = new S3BlobStore({
+      bucket: 'blob-bucket',
+      region: 'us-east-1',
+      accessKeyId: 'key',
+      secretAccessKey: 'secret',
+    });
+
+    await expect(store.stat('artifacts/legacy.bin')).resolves.toMatchObject({
+      key: 'artifacts/legacy.bin',
+      sha256,
+      contentType: 'text/plain',
+      createdAt: '2026-07-30T12:34:56.000Z',
+    });
+    const stream = await store.getStream('artifacts/legacy.bin');
+    await expect(stream?.toArray()).resolves.toEqual([content]);
+  });
 });

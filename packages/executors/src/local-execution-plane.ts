@@ -41,6 +41,25 @@ export class LocalExecutionPlane implements ExecutionPlane {
     onEvent?: (event: ExecutorStreamEvent) => void,
   ): Promise<ExecutionResult> {
     const parsedRequest = ExecutionRequestSchema.parse(request);
+    const unsupportedCapabilities = getUnsupportedLocalCapabilities(parsedRequest);
+    if (unsupportedCapabilities.length > 0) {
+      const executionResult = ExecutionResultSchema.parse({
+        protocolVersion: EXECUTION_PROTOCOL_VERSION,
+        executionId: parsedRequest.executionId,
+        state: 'failed',
+        error: {
+          message: `Local execution plane cannot enforce requested capabilities: ${unsupportedCapabilities.join(', ')}`,
+        },
+      });
+      this.executions.set(parsedRequest.executionId, {
+        status: {
+          executionId: parsedRequest.executionId,
+          state: 'failed',
+          result: executionResult,
+        },
+      });
+      return executionResult;
+    }
     const executor = this.executors.get(parsedRequest.agent.provider);
     const cwd = this.workspaces.workspacePath(parsedRequest.workspace.projectId);
     const abort = new AbortController();
@@ -113,4 +132,12 @@ export class LocalExecutionPlane implements ExecutionPlane {
     signal.addEventListener('abort', relay, { once: true });
     return () => signal.removeEventListener('abort', relay);
   }
+}
+
+function getUnsupportedLocalCapabilities(request: ExecutionRequest): string[] {
+  return [
+    request.tools.length > 0 ? 'tools' : undefined,
+    request.networkPolicy.mode !== 'none' ? 'networkPolicy' : undefined,
+    request.secrets.some(({ name, ref }) => ref !== name) ? 'secrets' : undefined,
+  ].filter((capability): capability is string => capability !== undefined);
 }

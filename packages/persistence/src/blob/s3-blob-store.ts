@@ -184,7 +184,9 @@ export class S3BlobStore implements BlobStore {
 
   async getStream(key: string): Promise<Readable | null> {
     try {
-      if (!(await this.readMetadata(key))) return null;
+      const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      const metadata = await this.readMetadata(key, legacyMetadataFromHead(head));
+      if (!metadata) return null;
       const result = await this.client.send(
         new GetObjectCommand({ Bucket: this.bucket, Key: key }),
       );
@@ -198,7 +200,7 @@ export class S3BlobStore implements BlobStore {
   async stat(key: string): Promise<BlobStat | null> {
     try {
       const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
-      const metadata = await this.readMetadata(key);
+      const metadata = await this.readMetadata(key, legacyMetadataFromHead(head));
       if (!metadata) return null;
       return {
         key,
@@ -256,12 +258,15 @@ export class S3BlobStore implements BlobStore {
       });
   }
 
-  private async readMetadata(key: string): Promise<BlobMetadata | null> {
+  private async readMetadata(
+    key: string,
+    legacyMetadata?: BlobMetadata | null,
+  ): Promise<BlobMetadata | null> {
     try {
       const result = await this.client.send(
         new GetObjectCommand({ Bucket: this.bucket, Key: metadataKey(key) }),
       );
-      if (!result.Body) return null;
+      if (!result.Body) return legacyMetadata ?? null;
       const body = result.Body as unknown as AsyncIterable<Uint8Array | string>;
       const chunks: Buffer[] = [];
       for await (const chunk of body) {
@@ -271,13 +276,23 @@ export class S3BlobStore implements BlobStore {
       try {
         parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Partial<BlobMetadata>;
       } catch {
-        return null;
+        return legacyMetadata ?? null;
       }
-      if (typeof parsed.sha256 !== 'string' || typeof parsed.createdAt !== 'string') return null;
+      if (typeof parsed.sha256 !== 'string' || typeof parsed.createdAt !== 'string') {
+        return legacyMetadata ?? null;
+      }
       return { sha256: parsed.sha256, createdAt: parsed.createdAt };
     } catch (error) {
-      if (isNotFoundError(error)) return null;
+      if (isNotFoundError(error)) return legacyMetadata ?? null;
       throw error;
     }
   }
+}
+
+function legacyMetadataFromHead(head: {
+  LastModified?: Date | undefined;
+  Metadata?: Record<string, string> | undefined;
+}): BlobMetadata | null {
+  const sha256 = head.Metadata?.sha256;
+  return sha256 ? { sha256, createdAt: (head.LastModified ?? new Date()).toISOString() } : null;
 }
