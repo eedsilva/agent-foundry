@@ -8,7 +8,7 @@ export const PathSegmentSchema = z
   .refine((value) => value !== '.' && value !== '..', 'Reserved path segment');
 export type PathSegment = z.infer<typeof PathSegmentSchema>;
 
-export const ProviderSchema = z.enum(['codex', 'claude', 'agy', 'opencode', 'mock']);
+export const ProviderSchema = z.enum(['codex', 'claude', 'glm', 'agy', 'opencode', 'mock']);
 export type Provider = z.infer<typeof ProviderSchema>;
 
 export const PackageManagerSchema = z.enum(['npm', 'pnpm', 'yarn', 'bun', 'unknown']);

@@ -49,6 +49,10 @@ describe('providers', () => {
   it('accepts OpenCode as the local Ollama executor', () => {
     expect(ProviderSchema.parse('opencode')).toBe('opencode');
   });
+
+  it('accepts GLM as the hosted Anthropic-compatible executor', () => {
+    expect(ProviderSchema.parse('glm')).toBe('glm');
+  });
 });
 
 describe('formatZodIssues', () => {

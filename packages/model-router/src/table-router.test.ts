@@ -106,6 +106,28 @@ describe('TableModelRouter', () => {
       selectedIndex: 0,
     });
   });
+
+  it('selects GLM and records the constrained tier table in the route audit', async () => {
+    const decision = await router([
+      model('glm-fast', {
+        provider: 'glm',
+        model: 'GLM-4.5-Air',
+        billingMode: 'metered',
+        pricing: { inputUsdPerMillionTokens: 0.2, outputUsdPerMillionTokens: 1.1 },
+      }),
+    ]).route(profile, undefined, {
+      routing: { source: 'cheap-tier', executors: ['glm'] },
+    });
+
+    expect(decision.selected.model.provider).toBe('glm');
+    expect(decision.routingTable).toEqual({
+      source: 'cheap-tier',
+      taskKind: 'implementation',
+      executors: ['glm'],
+      selectedIndex: 0,
+    });
+  });
+
   it('selects the head of the table, not the head of the catalog', async () => {
     const decision = await router().route(profile, undefined, {
       routing: { source: 'web-app-v1', executors: ['codex', 'claude', 'agy'] },

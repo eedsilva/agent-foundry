@@ -13,7 +13,7 @@ function fixture(name: string): string {
 }
 
 function executedModel(
-  provider: 'codex' | 'claude' | 'agy' | 'opencode',
+  provider: 'codex' | 'claude' | 'glm' | 'agy' | 'opencode',
   raw: string,
   source: 'stdout' | 'stderr' | 'metadata',
 ): string | undefined {
@@ -69,6 +69,19 @@ describe('parseAgentArtifact', () => {
       }),
     );
     expect(parsed.summary).toBe('Done.');
+  });
+
+  it('reuses Claude-compatible output parsing for GLM', () => {
+    expect(
+      parseAgentArtifact(
+        'glm',
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          result: JSON.stringify(artifact),
+        }),
+      ).summary,
+    ).toBe('Done.');
   });
 
   it('accepts a direct AGY artifact as authoritative print output', () => {
@@ -182,6 +195,18 @@ describe('extractUsage', () => {
       providerReportedCostUsd: 0.018,
       sourceQuality: 'provider-reported',
     });
+  });
+
+  it('reads Claude-style usage for GLM', () => {
+    expect(
+      extractUsage(
+        'glm',
+        JSON.stringify({
+          type: 'result',
+          usage: { input_tokens: 120, output_tokens: 45 },
+        }),
+      ),
+    ).toMatchObject({ inputTokens: 120, outputTokens: 45 });
   });
 
   it('keeps Claude cache reads and writes separate', () => {

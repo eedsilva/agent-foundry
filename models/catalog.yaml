@@ -146,6 +146,32 @@ models:
       costEfficiency: 0.95
       reliability: 0.84
 
+  - id: glm-fast
+    provider: glm
+    model: '${GLM_FAST_MODEL:-GLM-4.5-Air}'
+    billingMode: metered
+    pricing:
+      inputUsdPerMillionTokens: 0.2
+      outputUsdPerMillionTokens: 1.1
+      cacheReadInputUsdPerMillionTokens: 0.03
+      rateTableVersion: zai-2026-07-30
+      rateTableSource: https://docs.z.ai/guides/overview/pricing
+    enabled: true
+    requireExplicitModel: false
+    maxContextTokens: 128000
+    canWriteWorkspace: true
+    tags: [hosted, fast, economy, coding, mechanical]
+    capabilities:
+      planning: 0.55
+      architecture: 0.50
+      coding: 0.76
+      review: 0.62
+      repair: 0.70
+      structuredOutput: 0.92
+      speed: 0.88
+      costEfficiency: 0.96
+      reliability: 0.72
+
   - id: agy-default
     provider: agy
     model: '${AGY_DEFAULT_MODEL:-}'

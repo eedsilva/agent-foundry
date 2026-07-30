@@ -85,10 +85,10 @@ const GATED_TASK_LOOP_WORKFLOW = `${TASK_LOOP_WORKFLOW}    verify:
       maxAttempts: 1
 `;
 
-/** A ladder longer than the three configured vendors, for exhaustion coverage. */
+/** A ladder longer than the four configured hosted vendors, for exhaustion coverage. */
 const EXHAUSTING_GATED_TASK_LOOP_WORKFLOW = GATED_TASK_LOOP_WORKFLOW.replace(
   'maxAttempts: 2',
-  'maxAttempts: 4',
+  'maxAttempts: 5',
 );
 
 /** The gated fixture plus the per-task browser assertion (#325). */
@@ -400,7 +400,7 @@ describe('for-each-task execution', () => {
     ).toBe('claude');
     // A failed task records the executor candidates walked within that one
     // implementation step; the task ladder is reserved for red quality gates.
-    expect(failures[0]?.data.attemptedExecutors).toEqual(['claude', 'codex', 'agy']);
+    expect(failures[0]?.data.attemptedExecutors).toEqual(['claude', 'glm', 'codex', 'agy']);
     expect(failures[0]?.data.executor).toBe('agy');
     expect(detail.events.find((event) => event.type === 'agent.routed')?.data).toMatchObject({
       table: 'default',
@@ -617,7 +617,7 @@ describe('per-task deterministic verification', () => {
       (event) => event.type === 'agent.routed' && event.nodeId === 'implement.T1',
     );
     expect(routes.map((event) => event.data.selectedIndex)).toEqual([0, 1]);
-    expect(routes.map((event) => event.data.provider)).toEqual(['claude', 'codex']);
+    expect(routes.map((event) => event.data.provider)).toEqual(['claude', 'glm']);
 
     const failure = detail.events.find(
       (event) => event.type === 'task.failed' && event.data.taskId === 'T1',
@@ -631,7 +631,7 @@ describe('per-task deterministic verification', () => {
     expect(
       detail.events.find((event) => event.type === 'task.completed' && event.data.taskId === 'T1')
         ?.data.executor,
-    ).toBe('codex');
+    ).toBe('glm');
   }, 120_000);
 
   it('resumes a failed task on the next executor after pausing before retry', async () => {
@@ -678,7 +678,7 @@ describe('per-task deterministic verification', () => {
       (event) => event.type === 'agent.routed' && event.nodeId === 'implement.T1',
     );
     expect(routes.map((event) => event.data.selectedIndex)).toEqual([0, 1]);
-    expect(routes.map((event) => event.data.provider)).toEqual(['claude', 'codex']);
+    expect(routes.map((event) => event.data.provider)).toEqual(['claude', 'glm']);
     expect(executor.executedSteps.filter((step) => step === 'implement.T1')).toHaveLength(2);
     expect(
       detail.events.filter(
@@ -710,11 +710,11 @@ describe('per-task deterministic verification', () => {
     const routes = detail.events.filter(
       (event) => event.type === 'agent.routed' && event.nodeId === 'implement.T1',
     );
-    expect(routes.map((event) => event.data.selectedIndex)).toEqual([0, 1, 2]);
-    expect(routes.map((event) => event.data.provider)).toEqual(['claude', 'codex', 'agy']);
-    expect(detail.events.filter((event) => event.type === 'task.failed')).toHaveLength(3);
-    expect(executor.executedSteps.filter((step) => step === 'implement.T1')).toHaveLength(3);
-    expect(executor.executedSteps.filter((step) => step === 'repair-task.T1')).toHaveLength(3);
+    expect(routes.map((event) => event.data.selectedIndex)).toEqual([0, 1, 2, 3]);
+    expect(routes.map((event) => event.data.provider)).toEqual(['claude', 'glm', 'codex', 'agy']);
+    expect(detail.events.filter((event) => event.type === 'task.failed')).toHaveLength(4);
+    expect(executor.executedSteps.filter((step) => step === 'implement.T1')).toHaveLength(4);
+    expect(executor.executedSteps.filter((step) => step === 'repair-task.T1')).toHaveLength(4);
   }, 120_000);
 
   it('fails the task when the checks stay red, keeping earlier tasks committed', async () => {

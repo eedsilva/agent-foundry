@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WorkflowDefinitionSchema, WorkflowNodeSchema } from './workflow.js';
+import { DEFAULT_ROUTING_TABLE, WorkflowDefinitionSchema, WorkflowNodeSchema } from './workflow.js';
 
 const BASE_GATE = {
   id: 'review-gate',
@@ -421,5 +421,9 @@ describe('workflow routing table', () => {
         routing: [{ taskKind: 'implementation', executors: ['mock'] }],
       }),
     ).toThrow();
+  });
+
+  it('includes the hosted cheap provider as a later routing rung', () => {
+    expect(DEFAULT_ROUTING_TABLE.every((entry) => entry.executors.includes('glm'))).toBe(true);
   });
 });

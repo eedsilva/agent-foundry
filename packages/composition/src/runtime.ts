@@ -4,6 +4,7 @@ import {
   StaticExecutorRegistry,
   CodexCliExecutor,
   ClaudeCliExecutor,
+  createGlmEnvironment,
   AgyCliExecutor,
   OpenCodeCliExecutor,
   WorkspaceVerifier,
@@ -238,6 +239,10 @@ export async function createRuntime(
       : new StaticExecutorRegistry([
           new CodexCliExecutor(config.maxCliOutputBytes),
           new ClaudeCliExecutor(config.maxCliOutputBytes),
+          new ClaudeCliExecutor(config.maxCliOutputBytes, {
+            provider: 'glm',
+            environment: createGlmEnvironment(env),
+          }),
           new AgyCliExecutor(config.maxCliOutputBytes),
           new OpenCodeCliExecutor(config.maxCliOutputBytes),
         ]);
