@@ -58,7 +58,11 @@ export class LocalExecutionPlane implements ExecutionPlane {
         agent: result,
       });
       this.executions.set(parsedRequest.executionId, {
-        status: { executionId: parsedRequest.executionId, state: 'completed', result: executionResult },
+        status: {
+          executionId: parsedRequest.executionId,
+          state: 'completed',
+          result: executionResult,
+        },
       });
       return executionResult;
     } catch (error) {
@@ -101,8 +105,7 @@ export class LocalExecutionPlane implements ExecutionPlane {
     runId: string,
   ): () => void {
     if (!signal) return () => {};
-    const relay = (): void =>
-      abort.abort(signal.reason ?? new RunCancelledError(runId));
+    const relay = (): void => abort.abort(signal.reason ?? new RunCancelledError(runId));
     if (signal.aborted) {
       relay();
       return () => {};

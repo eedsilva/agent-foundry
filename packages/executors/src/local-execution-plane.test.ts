@@ -130,7 +130,7 @@ describe('LocalExecutionPlane', () => {
     expect(result.error).toMatchObject({ exitCode: 1, stderr: '429 Too Many Requests' });
   });
 
-  it("preserves auth failure kind when executor throws ProviderAuthenticationError", async () => {
+  it('preserves auth failure kind when executor throws ProviderAuthenticationError', async () => {
     const executor: AgentExecutor = {
       provider: 'codex',
       health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
