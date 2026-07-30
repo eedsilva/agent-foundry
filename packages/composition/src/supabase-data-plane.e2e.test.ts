@@ -224,9 +224,10 @@ suite('Supabase Postgres + Storage data plane', () => {
       const stat = await runtime.blobStore.stat(blobKey);
       expect(stat).toMatchObject({
         key: blobKey,
-        contentType: 'text/plain',
         sizeBytes: payload.byteLength,
       });
+      // Supabase may normalize the media type with a UTF-8 charset parameter.
+      expect(stat?.contentType).toMatch(/^text\/plain(?:;|$)/);
 
       const signedUrl = await runtime.blobStore.createSignedDownloadUrl(blobKey, 60);
       const response = await fetch(signedUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
