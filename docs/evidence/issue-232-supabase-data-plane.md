@@ -4,7 +4,7 @@
 
 | Acceptance intent | Implementation | Evidence |
 | --- | --- | --- |
-| Opt-in real local Supabase data-plane harness | `packages/composition/src/supabase-data-plane.e2e.test.ts` starts a disposable local Supabase project, runs repository migrations, boots `createRuntime(...)` in `PERSISTENCE_MODE=postgres` + `BLOB_STORE_MODE=s3`, completes a representative workflow run, and round-trips direct `runtime.blobStore` bytes through the Supabase S3 endpoint | focused Vitest entrypoint + CI job |
+| Opt-in real local Supabase data-plane harness | `packages/composition/src/supabase-data-plane.e2e.test.ts` starts a disposable local Supabase project, runs repository migrations, boots `createRuntime(...)` in `PERSISTENCE_MODE=postgres` + `BLOB_STORE_MODE=s3`, completes a representative workflow run, round-trips direct `runtime.blobStore` bytes through the Supabase S3 endpoint, then runs the existing golden-flow Playwright suite and all `packages/persistence/src/postgres` suites against the same stack | focused Vitest entrypoint + CI job |
 | Hosted/manual smoke path uses the same seam | the same test accepts hosted `DATABASE_URL` + `S3_*` env vars when `SUPABASE_DATA_PLANE_USE_HOSTED=true` | exact hosted command below |
 | CI is fail-closed and cleanup-failure-visible | dedicated `supabase-data-plane-e2e` job pins Supabase CLI `2.62.5`, requires Docker up front, and the test attempts object deletion, bucket deletion, local Supabase stop, and temp-dir removal, then fails the suite if any cleanup step fails | `.github/workflows/ci.yml` + focused cleanup-support test |
 | Current architectural limit remains explicit | docs state that Postgres-mode artifact blobs still live in `bytea`; this harness proves Postgres-backed composition/migration behavior plus direct blob-store S3 I/O in one environment, not a new Postgres-artifact-to-S3 architecture | `docs/OPERATIONS.md` and concerns below |
@@ -34,6 +34,9 @@ npx vitest run packages/composition/src/supabase-data-plane.e2e.test.ts --pool=t
 ## Current result limits
 
 - This local workstation has no Docker daemon and no hosted throwaway Supabase credentials, so this issue's real-stack harness was not executed here; only the deterministic support tests and the skipped entrypoint load were run locally.
-- The new CI job is the authoritative automated path for the disposable local stack.
+- The new CI job is the authoritative automated path for the disposable local stack. It starts an
+  isolated Supabase project, runs the representative Postgres + S3 workflow, then runs the existing
+  golden-flow Playwright suite and all `packages/persistence/src/postgres` suites against that same
+  database and S3 endpoint.
 - Hosted smoke is still manual/opt-in. Do not claim hosted success unless the exact hosted command above is run against a real throwaway project.
 - The harness intentionally does **not** implement the separate architectural follow-up where Postgres-mode artifact bytes move out of `bytea` into object storage. Today, in `PERSISTENCE_MODE=postgres`, `PostgresArtifactStore` artifact blobs still live in Postgres; this test proves the production runtime can use Postgres metadata while also doing a direct `BlobStore` S3 round-trip in the same validated environment.

@@ -10,6 +10,7 @@ import {
   CreateBucketCommand,
   DeleteBucketCommand,
   DeleteObjectCommand,
+  ListObjectsV2Command,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -32,6 +33,7 @@ const USE_HOSTED = process.env.SUPABASE_DATA_PLANE_USE_HOSTED === 'true';
 const START_TIMEOUT_MS = 5 * 60 * 1_000;
 const STOP_TIMEOUT_MS = 60_000;
 const FETCH_TIMEOUT_MS = 60_000;
+const FULL_SUITE_TIMEOUT_MS = 10 * 60_000;
 const rootDir = resolve(import.meta.dirname, '../../..');
 
 function probeDocker(): boolean {
@@ -114,10 +116,30 @@ suite('Supabase Postgres + Storage data plane', () => {
         ...Array.from(createdBlobKeys, (key) => ({
           label: `delete object ${key}`,
           run: async () => {
-            if (!s3 || !bucket) return;
-            await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+            if (!runtime) return;
+            await runtime.blobStore.delete(key);
           },
         })),
+        {
+          label: 'delete remaining Supabase S3 objects',
+          run: async () => {
+            if (!s3 || !bucket) return;
+            let continuationToken: string | undefined;
+            do {
+              const page = await s3.send(
+                new ListObjectsV2Command({
+                  Bucket: bucket,
+                  ContinuationToken: continuationToken,
+                }),
+              );
+              for (const object of page.Contents ?? []) {
+                if (!object.Key) continue;
+                await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: object.Key }));
+              }
+              continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+            } while (continuationToken);
+          },
+        },
         {
           label: `delete bucket ${bucket ?? '<none>'}`,
           run: async () => {
@@ -151,64 +173,131 @@ suite('Supabase Postgres + Storage data plane', () => {
     }
   }, STOP_TIMEOUT_MS + 10_000);
 
-  it('becomes ready, completes a representative Postgres-backed workflow run, and round-trips direct blob-store bytes through Supabase S3', async () => {
-    if (!runtime || !config || !bucket) {
-      throw new Error('Expected Supabase data-plane runtime to be initialized.');
-    }
+  it(
+    'becomes ready, completes a representative Postgres-backed workflow run, and round-trips direct blob-store bytes through Supabase S3',
+    async () => {
+      if (!runtime || !config || !bucket) {
+        throw new Error('Expected Supabase data-plane runtime to be initialized.');
+      }
 
-    expect(runtime.config.persistenceMode).toBe('postgres');
-    expect(runtime.config.blobStoreMode).toBe('s3');
-    expect(runtime.queue).toBeInstanceOf(PostgresJobQueue);
-    await expect(runtime.checkReadiness()).resolves.toBeUndefined();
+      expect(runtime.config.persistenceMode).toBe('postgres');
+      expect(runtime.config.blobStoreMode).toBe('s3');
+      expect(runtime.queue).toBeInstanceOf(PostgresJobQueue);
+      await expect(runtime.checkReadiness()).resolves.toBeUndefined();
 
-    const project = await runtime.projectService.create({
-      name: 'Supabase data-plane sample',
-      workflowId: 'web-app-v1',
-      prd: 'Build a small persistent issue tracker with deterministic tests.',
-    });
-    if (!project.currentRunId) {
-      throw new Error('Expected project to reference its workflow run.');
-    }
+      const project = await runtime.projectService.create({
+        name: 'Supabase data-plane sample',
+        workflowId: 'web-app-v1',
+        prd: 'Build a small persistent issue tracker with deterministic tests.',
+      });
+      if (!project.currentRunId) {
+        throw new Error('Expected project to reference its workflow run.');
+      }
 
-    expect(await runtime.worker.runOnce()).toBe(true);
-    await approveAllGates(runtime, project.currentRunId, 'supabase-data-plane-test');
+      expect(await runtime.worker.runOnce()).toBe(true);
+      await approveAllGates(runtime, project.currentRunId, 'supabase-data-plane-test');
 
-    const detail = await runtime.projectService.get(project.id);
-    expect(detail.project.status).toBe('completed');
-    expect(await runtime.runs.get(project.currentRunId)).toMatchObject({
-      status: 'completed',
-      projectId: project.id,
-    });
+      const detail = await runtime.projectService.get(project.id);
+      expect(detail.project.status).toBe('completed');
+      expect(await runtime.runs.get(project.currentRunId)).toMatchObject({
+        status: 'completed',
+        projectId: project.id,
+      });
 
-    const blobKey = `projects/${project.id}/validation/blob.txt`;
-    createdBlobKeys.add(blobKey);
-    const payload = Buffer.from('supabase data plane blob payload');
-    const stored = await runtime.blobStore.put(
-      {
+      const blobKey = `projects/${project.id}/validation/blob.txt`;
+      createdBlobKeys.add(blobKey);
+      const payload = Buffer.from('supabase data plane blob payload');
+      const stored = await runtime.blobStore.put(
+        {
+          key: blobKey,
+          contentType: 'text/plain',
+          maxBytes: 1_024,
+        },
+        Readable.from(payload),
+      );
+      expect(stored).toMatchObject({
         key: blobKey,
         contentType: 'text/plain',
-        maxBytes: 1_024,
-      },
-      Readable.from(payload),
+        sizeBytes: payload.byteLength,
+      });
+
+      const stat = await runtime.blobStore.stat(blobKey);
+      expect(stat).toMatchObject({
+        key: blobKey,
+        contentType: 'text/plain',
+        sizeBytes: payload.byteLength,
+      });
+
+      const signedUrl = await runtime.blobStore.createSignedDownloadUrl(blobKey, 60);
+      const response = await fetch(signedUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      expect(response.ok).toBe(true);
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(payload);
+
+      if (!USE_HOSTED) {
+        await runLocalSupabaseAcceptanceSuites(config, bucket);
+      }
+    },
+    FULL_SUITE_TIMEOUT_MS,
+  );
+
+  async function runLocalSupabaseAcceptanceSuites(
+    dataPlaneConfig: SupabaseDataPlaneConfig,
+    dataPlaneBucket: string,
+  ): Promise<void> {
+    const sharedEnv = {
+      ...process.env,
+      PERSISTENCE_MODE: 'postgres',
+      BLOB_STORE_MODE: 's3',
+      DATABASE_URL: dataPlaneConfig.databaseUrl,
+      S3_ENDPOINT: dataPlaneConfig.s3Endpoint,
+      S3_REGION: dataPlaneConfig.s3Region,
+      S3_BUCKET: dataPlaneBucket,
+      S3_ACCESS_KEY_ID: dataPlaneConfig.s3AccessKeyId,
+      S3_SECRET_ACCESS_KEY: dataPlaneConfig.s3SecretAccessKey,
+      S3_FORCE_PATH_STYLE: 'true',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+    };
+
+    await runAcceptanceCommand(
+      'golden-flow e2e',
+      'npx',
+      ['playwright', 'test', '--config', 'e2e/playwright.config.ts', 'e2e/golden-flow.spec.ts'],
+      sharedEnv,
+      join(rootDir, 'apps/api'),
     );
-    expect(stored).toMatchObject({
-      key: blobKey,
-      contentType: 'text/plain',
-      sizeBytes: payload.byteLength,
-    });
+    await runAcceptanceCommand(
+      'Postgres persistence suites',
+      'npx',
+      ['vitest', 'run', 'packages/persistence/src/postgres', '--pool=threads', '--maxWorkers=1'],
+      { ...sharedEnv, SUPABASE_TEST_DATABASE_URL: dataPlaneConfig.databaseUrl },
+      rootDir,
+    );
+  }
 
-    const stat = await runtime.blobStore.stat(blobKey);
-    expect(stat).toMatchObject({
-      key: blobKey,
-      contentType: 'text/plain',
-      sizeBytes: payload.byteLength,
-    });
-
-    const signedUrl = await runtime.blobStore.createSignedDownloadUrl(blobKey, 60);
-    const response = await fetch(signedUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    expect(response.ok).toBe(true);
-    expect(Buffer.from(await response.arrayBuffer())).toEqual(payload);
-  }, 120_000);
+  async function runAcceptanceCommand(
+    label: string,
+    command: string,
+    args: string[],
+    env: NodeJS.ProcessEnv,
+    cwd: string,
+  ): Promise<void> {
+    try {
+      const result = await execFileAsync(command, args, {
+        cwd,
+        env,
+        encoding: 'utf8',
+        timeout: FULL_SUITE_TIMEOUT_MS,
+        maxBuffer: 50 * 1024 * 1024,
+      });
+      if (result.stdout) process.stdout.write(result.stdout);
+      if (result.stderr) process.stderr.write(result.stderr);
+    } catch (error) {
+      const failed = error as { stdout?: string; stderr?: string };
+      throw new Error(`${label} failed.\n${failed.stdout ?? ''}\n${failed.stderr ?? ''}`, {
+        cause: error,
+      });
+    }
+  }
 
   async function startLocalSupabaseProject(): Promise<SupabaseDataPlaneConfig> {
     localSupabaseDir = await mkdtemp(join(tmpdir(), 'agent-foundry-supabase-project-'));

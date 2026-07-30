@@ -16,7 +16,8 @@ This branch adds two validation-facing changes that outlive a pull request:
    local Supabase project or accepts explicit hosted `DATABASE_URL` + `S3_*` inputs, runs the
    repository migrations, boots the production composition in `PERSISTENCE_MODE=postgres` +
    `BLOB_STORE_MODE=s3`, and proves a representative workflow run plus a direct `BlobStore`
-   round-trip against the same environment.
+   round-trip against the same environment. The CI path then runs the existing golden-flow
+   Playwright suite and all Postgres persistence suites against that same stack.
 
 Both changes touch architectural/public-contract territory under `CONTRIBUTING.md`'s "Before
 starting" rule 3: execution-plane boundary behavior is a runtime contract, and the Supabase harness
@@ -40,9 +41,11 @@ The branch also has explicit non-goals that must stay true:
 - The Supabase data-plane harness remains **opt-in** and env-gated. It is not part of the default
   local fast loop, and it lives in the slow bucket because it binds ports, starts/stops processes,
   and can require Docker/Supabase.
-- The harness is allowed to validate exactly two behaviors together:
+- The harness validates three complementary layers against one disposable data plane:
   - Postgres-backed composition boot/migration/readiness/workflow completion.
   - Direct `runtime.blobStore` S3-compatible round-trip in the same validated environment.
+  - The existing golden-flow e2e and Postgres persistence suites, invoked only after the stack is
+    ready and with the same `DATABASE_URL`/`S3_*` configuration.
 - The harness must not overstate that coverage. In `PERSISTENCE_MODE=postgres`, artifact bytes owned
   by `PostgresArtifactStore` still live in Postgres `bytea`; this ADR does not reinterpret the
   harness as proof of a Postgres-artifacts-to-S3 migration.

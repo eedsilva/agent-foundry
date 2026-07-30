@@ -90,6 +90,7 @@ describeMinio('S3BlobStore (MinIO)', ({ store, endpoint }) => {
     }
 
     await expect(blobStore.stat(key)).resolves.toBeNull();
+    await expect(blobStore.getStream(key)).resolves.toBeNull();
   });
 
   it('streams an 8MB blob (exceeding one 5MB multipart chunk) byte-identically', async () => {

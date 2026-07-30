@@ -103,6 +103,8 @@ jobs:
           version: 2.62.5
       - name: Fail closed if Docker is unavailable on the runner
         run: docker info
+      - name: Build packages used by the golden-flow subprocess
+        run: npm run build:packages
       - run: RUN_SUPABASE_DATA_PLANE_E2E=true npx vitest run packages/composition/src/supabase-data-plane.e2e.test.ts --pool=threads --maxWorkers=1
 
   issue-radar-e2e:

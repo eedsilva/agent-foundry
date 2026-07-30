@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+} from '@aws-sdk/client-s3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { S3BlobStore } from './s3-blob-store.js';
 
@@ -198,5 +203,23 @@ describe('S3BlobStore mocked metadata sidecar finalization', () => {
         streamOf(Buffer.from('metadata body')),
       ),
     ).rejects.toThrow('metadata persistence failed');
+  });
+
+  it('treats malformed metadata sidecars as incomplete blobs', async () => {
+    mockedAws.sendMock.mockImplementation(async (command: unknown) => {
+      if (command instanceof HeadObjectCommand) return { ContentLength: 12 };
+      if (command instanceof GetObjectCommand) return { Body: Readable.from(['not json']) };
+      throw new Error('unexpected command');
+    });
+
+    const store = new S3BlobStore({
+      bucket: 'blob-bucket',
+      region: 'us-east-1',
+      accessKeyId: 'key',
+      secretAccessKey: 'secret',
+    });
+
+    await expect(store.stat('artifacts/final.bin')).resolves.toBeNull();
+    await expect(store.getStream('artifacts/final.bin')).resolves.toBeNull();
   });
 });

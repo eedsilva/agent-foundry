@@ -184,6 +184,7 @@ export class S3BlobStore implements BlobStore {
 
   async getStream(key: string): Promise<Readable | null> {
     try {
+      if (!(await this.readMetadata(key))) return null;
       const result = await this.client.send(
         new GetObjectCommand({ Bucket: this.bucket, Key: key }),
       );
@@ -266,7 +267,12 @@ export class S3BlobStore implements BlobStore {
       for await (const chunk of body) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       }
-      const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Partial<BlobMetadata>;
+      let parsed: Partial<BlobMetadata>;
+      try {
+        parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Partial<BlobMetadata>;
+      } catch {
+        return null;
+      }
       if (typeof parsed.sha256 !== 'string' || typeof parsed.createdAt !== 'string') return null;
       return { sha256: parsed.sha256, createdAt: parsed.createdAt };
     } catch (error) {

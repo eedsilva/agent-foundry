@@ -828,9 +828,9 @@ A varredura periódica da API (mesmo intervalo do reaper de artifacts, `ARTIFACT
 
 ### Garantias de integridade
 
-O sha256 é calculado em streaming durante a escrita (via `atomicWriteStream` em modo `fs`, via o `Transform` `meteredStream` + multipart `Upload` em modo `s3`), nunca lido de volta do conteúdo depois. Quando o chamador informa `expectedSha256`, um mismatch apaga os bytes recém-escritos e lança `BlobIntegrityError`; estourar `maxBytes` aborta o upload/escrita (`ArtifactTooLargeError`) sem deixar bytes parciais para trás.
+O sha256 é calculado em streaming durante a escrita (via `atomicWriteStream` em modo `fs`, via o `Transform` `meteredStream` + multipart `Upload` em modo `s3`), nunca lido de volta do conteúdo depois. Em modo `s3`, o hash final é persistido no sidecar reservado `<key>.agent-foundry-meta.json` com `PutObject`; não dependemos de `CopyObject`, cuja reescrita de metadata não é portátil entre endpoints Supabase-compatíveis. Quando o chamador informa `expectedSha256`, um mismatch apaga os bytes recém-escritos e lança `BlobIntegrityError`; estourar `maxBytes` aborta o upload/escrita (`ArtifactTooLargeError`) sem deixar bytes parciais para trás.
 
-Os dois adapters falham seguro em `stat()`: `FsBlobStore` retorna `null` quando o sidecar `<path>.meta.json` está ausente, e `S3BlobStore` retorna `null` quando o metadata `sha256` do objeto está ausente — o que cobre a janela do `put()` em modo `s3` entre o multipart `Upload` terminar e o `CopyObjectCommand` subsequente (que anexa o `sha256` como metadata) completar. Nos dois casos, uma escrita incompleta fica invisível para leitores (em vez de aparentar um blob válido com hash vazio) e naturalmente elegível para o GC descrito acima, ao invés de ser servida corrompida.
+Os dois adapters falham seguro em `stat()` e `getStream()`: `FsBlobStore` retorna `null` quando o sidecar `<path>.meta.json` está ausente, e `S3BlobStore` retorna `null` quando o sidecar JSON está ausente, malformado ou sem os campos obrigatórios. Isso cobre a janela do `put()` em modo `s3` entre o multipart `Upload` terminar e o sidecar de metadata completar. Nos dois casos, uma escrita incompleta fica invisível para leitores (em vez de aparentar um blob válido com hash vazio) e naturalmente elegível para o GC descrito acima, ao invés de ser servida corrompida.
 
 ### Rollback
 
