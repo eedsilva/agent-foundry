@@ -266,7 +266,9 @@ async function probeOllamaEndpoint() {
 }
 
 function ollamaHost() {
-  const host = env.OLLAMA_HOST?.trim() || 'http://127.0.0.1:11434';
+  // Keep file-backed .env data out of the outbound endpoint request. The
+  // executor receives OLLAMA_HOST from the inherited process environment too.
+  const host = process.env.OLLAMA_HOST?.trim() || 'http://127.0.0.1:11434';
   let normalized = host.includes('://') ? host : `http://${host}`;
   while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
   return normalized;
