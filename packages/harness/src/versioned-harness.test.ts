@@ -72,6 +72,7 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
       'package.json',
       'pnpm-lock.yaml',
       'pnpm-workspace.yaml',
+      'prettier.config.mjs',
       'scripts/check-service-role.mjs',
       'scripts/db.mjs',
       'scripts/smoke.mjs',
