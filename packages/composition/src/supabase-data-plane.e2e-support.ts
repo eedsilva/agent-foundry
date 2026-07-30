@@ -30,6 +30,24 @@ const LOCAL_SUPABASE_PORT_SLOT_COUNT =
 
 export type CleanupStep = { label: string; run: () => Promise<void> | void };
 
+export function isMissingS3ResourceError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as {
+    name?: string;
+    code?: string;
+    Code?: string;
+    message?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  return (
+    candidate.name === 'NoSuchBucket' ||
+    candidate.code === 'NoSuchBucket' ||
+    candidate.Code === 'NoSuchBucket' ||
+    candidate.$metadata?.httpStatusCode === 404 ||
+    candidate.message === 'The related resource does not exist'
+  );
+}
+
 export function parseShellEnv(text: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const rawLine of text.split('\n')) {

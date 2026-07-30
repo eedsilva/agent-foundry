@@ -324,6 +324,11 @@ async function getRun(projectId: string): Promise<{ id: string; status: string }
   return run;
 }
 
+async function stopProvisionedPreview(projectId: string): Promise<void> {
+  const session = await runtime.previewService.activeForProject(projectId);
+  if (session) await runtime.previewService.stop(session.id);
+}
+
 async function runConversationJob(): Promise<void> {
   expect(await runtime.worker.runOnce()).toBe(true);
 }
@@ -472,6 +477,7 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   const projectId = await createProject();
   await seedWorkspaceAndPlan(projectId);
   expect(await runtime.worker.runOnce()).toBe(true);
+  await stopProvisionedPreview(projectId);
 
   const run = await getRun(projectId);
   expect(run.status).toBe('awaiting_approval');
@@ -641,6 +647,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   const greetingPath = join(runtime.workspaces.workspacePath(projectId), 'src', 'Greeting.tsx');
   await writeFile(greetingPath, "export const greetingBackground = '#eee';\n", { flag: 'wx' });
   expect(await runtime.worker.runOnce()).toBe(true);
+  await stopProvisionedPreview(projectId);
 
   await page.goto(`${webBaseUrl}/project/${projectId}`);
   const regions = {

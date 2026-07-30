@@ -5,6 +5,7 @@ import {
   assertMigrationCapableDatabaseUrl,
   buildLocalSupabaseConfig,
   hostedSupabaseDataPlaneConfigFromEnv,
+  isMissingS3ResourceError,
   localSupabaseDataPlaneConfigFromStatusEnv,
   parseShellEnv,
   runCleanupSteps,
@@ -144,5 +145,12 @@ S3_PROTOCOL_REGION="local"
     ).rejects.toThrow(/cleanup failed/i);
 
     expect(attempts).toEqual(['delete object', 'delete bucket', 'stop supabase']);
+  });
+
+  it('recognizes Supabase missing-resource errors as idempotent cleanup outcomes', () => {
+    expect(isMissingS3ResourceError({ name: 'NoSuchBucket' })).toBe(true);
+    expect(isMissingS3ResourceError({ message: 'The related resource does not exist' })).toBe(true);
+    expect(isMissingS3ResourceError({ $metadata: { httpStatusCode: 404 } })).toBe(true);
+    expect(isMissingS3ResourceError({ name: 'AccessDenied' })).toBe(false);
   });
 });

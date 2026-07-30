@@ -38,7 +38,7 @@ function ExecutorLadder({
               used ? 'bg-accent-wash text-ink font-bold' : 'bg-surface text-ink-subtle'
             }`}
           >
-            <span className="text-ink-subtle">{index + 1}.</span> {executor}
+            <span className={used ? 'text-ink' : 'text-ink-subtle'}>{index + 1}.</span> {executor}
             {used ? <span className="sr-only"> (executor que rodou)</span> : null}
           </li>
         );

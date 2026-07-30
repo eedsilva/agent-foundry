@@ -24,6 +24,7 @@ import {
   hostedSupabaseDataPlaneConfigFromEnv,
   localSupabaseDataPlaneConfigFromStatusEnv,
   runCleanupSteps,
+  isMissingS3ResourceError,
   type SupabaseDataPlaneConfig,
 } from './supabase-data-plane.e2e-support.js';
 
@@ -144,7 +145,11 @@ suite('Supabase Postgres + Storage data plane', () => {
           label: `delete bucket ${bucket ?? '<none>'}`,
           run: async () => {
             if (!s3 || !bucket) return;
-            await s3.send(new DeleteBucketCommand({ Bucket: bucket }));
+            try {
+              await s3.send(new DeleteBucketCommand({ Bucket: bucket }));
+            } catch (error) {
+              if (!isMissingS3ResourceError(error)) throw error;
+            }
           },
         },
         {

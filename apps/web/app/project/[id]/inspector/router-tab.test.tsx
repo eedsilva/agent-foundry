@@ -73,6 +73,7 @@ describe('RouterTab', () => {
     expect(markup).toContain('claude-opus');
     // The ordering is the decision, so its position has to be legible.
     expect(markup).toContain('1/3');
+    expect(markup).toContain('<span class="text-ink">1.</span>');
   });
 
   it('renders no dimension scores, because selection no longer computes any', () => {
