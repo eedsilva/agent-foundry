@@ -36,6 +36,8 @@ A verificação compara diretamente os arquivos com o fixture imutável e també
 ```bash
 CODEX_CANARY_MODEL="gpt-5.6-sol" \
 CLAUDE_CANARY_MODEL="sonnet" \
+GLM_API_KEY="<z-ai-key>" \
+GLM_CANARY_MODEL="GLM-4.5-Air" \
 AGY_CANARY_MODEL="gemini-3.1-pro-low" \
 EXECUTOR_MODE=real \
 RUN_REAL_PROVIDER_CANARIES=true \

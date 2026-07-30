@@ -291,18 +291,18 @@ export const RoutingTableSchema = z
 export type RoutingTable = z.infer<typeof RoutingTableSchema>;
 
 /**
- * What runs when a workflow declares no table of its own. All three executors
- * appear in every list because three subscriptions are three quota pools, and a
+ * What runs when a workflow declares no table of its own. All hosted executors
+ * appear in every list because each provider is an independent quota pool, and a
  * different vendor is a genuinely different attempt (#326); the head differs by
  * task kind only where the ordering is a decision worth writing down.
  */
 export const DEFAULT_ROUTING_TABLE: RoutingTable = [
-  { taskKind: 'planning', executors: ['claude', 'codex', 'agy'] },
-  { taskKind: 'plan-review', executors: ['claude', 'codex', 'agy'] },
-  { taskKind: 'implementation', executors: ['claude', 'codex', 'agy'] },
-  { taskKind: 'code-review', executors: ['codex', 'claude', 'agy'] },
-  { taskKind: 'repair', executors: ['codex', 'claude', 'agy'] },
-  { taskKind: 'verification', executors: ['opencode', 'codex', 'claude', 'agy'] },
+  { taskKind: 'planning', executors: ['claude', 'glm', 'codex', 'agy'] },
+  { taskKind: 'plan-review', executors: ['claude', 'glm', 'codex', 'agy'] },
+  { taskKind: 'implementation', executors: ['claude', 'glm', 'codex', 'agy'] },
+  { taskKind: 'code-review', executors: ['codex', 'claude', 'glm', 'agy'] },
+  { taskKind: 'repair', executors: ['codex', 'claude', 'glm', 'agy'] },
+  { taskKind: 'verification', executors: ['opencode', 'glm', 'codex', 'claude', 'agy'] },
 ];
 
 /**

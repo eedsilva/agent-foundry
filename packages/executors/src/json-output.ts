@@ -72,7 +72,9 @@ function authoritativeArtifactCandidates(provider: Provider, raw: string): unkno
 
   const terminal = terminalResult(documents);
   if (!terminal || isFailedResult(terminal)) return [];
-  if (provider === 'claude') return [terminal.structured_output ?? terminal.result];
+  if (provider === 'claude' || provider === 'glm') {
+    return [terminal.structured_output ?? terminal.result];
+  }
   return [terminal.output ?? terminal.result];
 }
 
@@ -183,7 +185,7 @@ export function extractCliFailure(
 ): { message: string; authFailure: boolean } | undefined {
   // ponytail: Claude only — codex and agy emit no structured terminal failure
   // record, so they keep the bare exit code. Add a branch when one gains it.
-  if (provider !== 'claude') return undefined;
+  if (provider !== 'claude' && provider !== 'glm') return undefined;
 
   const terminal = terminalResult(providerDocuments(stdout));
   if (!terminal || !isFailedResult(terminal)) return undefined;
@@ -199,7 +201,7 @@ export function extractExecutedModel(
   if (provider === 'codex') return extractSingletonCodexModel(sources.stderr);
   if (provider === 'agy') return extractSingletonAgyModel(sources.metadata);
   if (provider === 'opencode') return extractSingletonOpenCodeModel(sources.stdout);
-  if (provider !== 'claude') return undefined;
+  if (provider !== 'claude' && provider !== 'glm') return undefined;
 
   const documents = providerDocuments(sources.stdout);
   return extractSingletonClaudeModel(documents);
@@ -298,7 +300,7 @@ function collectProviderUsage(
   const type = typeof record.type === 'string' ? record.type : '';
   const recognized =
     (provider === 'codex' && (type === 'turn.completed' || type === 'token_count')) ||
-    (provider === 'claude' && type === 'result') ||
+    ((provider === 'claude' || provider === 'glm') && type === 'result') ||
     (provider === 'agy' && type === 'result') ||
     (provider === 'opencode' && type === 'message.updated');
   if (!recognized) return;
@@ -307,7 +309,7 @@ function collectProviderUsage(
   if (usage !== null && typeof usage === 'object' && !Array.isArray(usage)) {
     collectUsage(usage as Record<string, unknown>, accumulator);
   }
-  if (provider === 'claude') collectUsage(record, accumulator);
+  if (provider === 'claude' || provider === 'glm') collectUsage(record, accumulator);
   if (provider === 'opencode') {
     const properties = record.properties;
     if (properties !== null && typeof properties === 'object' && !Array.isArray(properties)) {

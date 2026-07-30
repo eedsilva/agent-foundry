@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { AgyCliExecutor } from './agy-executor.js';
 import type { CliInvocation } from './base-cli-executor.js';
-import { ClaudeCliExecutor } from './claude-executor.js';
+import { ClaudeCliExecutor, createGlmEnvironment } from './claude-executor.js';
 import { CodexCliExecutor } from './codex-executor.js';
 import { OpenCodeCliExecutor } from './opencode-executor.js';
 
@@ -15,6 +15,12 @@ class InspectableCodexExecutor extends CodexCliExecutor {
 }
 
 class InspectableClaudeExecutor extends ClaudeCliExecutor {
+  inspect(request: AgentExecutionRequest): Promise<CliInvocation> {
+    return this.invocation(request);
+  }
+}
+
+class InspectableGlmExecutor extends ClaudeCliExecutor {
   inspect(request: AgentExecutionRequest): Promise<CliInvocation> {
     return this.invocation(request);
   }
@@ -110,6 +116,20 @@ describe('CLI executor contracts', () => {
     expect(invocation.args).toContain('--json-schema');
     expect(invocation.args).toContain('sonnet');
     expect(invocation.args.at(-1)).toBe('Open the request file.');
+  });
+
+  it('reuses Claude invocation with GLM endpoint and auth overrides', async () => {
+    const invocation = await new InspectableGlmExecutor(1_000_000, {
+      provider: 'glm',
+      environment: createGlmEnvironment({ GLM_API_KEY: 'glm-test-token' }),
+    }).inspect(request({ provider: 'glm', model: 'GLM-4.5-Air', mutatesWorkspace: false }));
+
+    expect(invocation.command).toBe('claude');
+    expect(invocation.environment).toEqual({
+      ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+      ANTHROPIC_AUTH_TOKEN: 'glm-test-token',
+    });
+    expect(invocation.args).toEqual(expect.arrayContaining(['--model', 'GLM-4.5-Air', 'plan']));
   });
 
   it('uses sandbox, accept-edits, model, and bounded print mode for AGY', async () => {

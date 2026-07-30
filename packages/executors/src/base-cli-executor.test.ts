@@ -8,6 +8,7 @@ import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-tr
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import type { AgentExecutionRequest, Provider } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
+import { ClaudeCliExecutor } from './claude-executor.js';
 
 function fixture(name: string): string {
   return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -473,6 +474,21 @@ describe('BaseCliExecutor environment isolation', () => {
     expect(options.env).not.toHaveProperty('DATABASE_URL');
     expect(options.env.USER).toBe('control-plane-account');
     expect(options.extendEnv).toBe(false);
+  });
+
+  it('does not advertise GLM as available without its endpoint credential', async () => {
+    const callsBeforeHealthCheck = execaMock.mock.calls.length;
+    const health = await new ClaudeCliExecutor(1_000_000, {
+      provider: 'glm',
+      environment: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' },
+    }).health();
+
+    expect(health).toMatchObject({
+      provider: 'glm',
+      available: false,
+      message: 'GLM requires GLM_API_KEY for its Anthropic-compatible endpoint.',
+    });
+    expect(execaMock.mock.calls).toHaveLength(callsBeforeHealthCheck);
   });
 });
 

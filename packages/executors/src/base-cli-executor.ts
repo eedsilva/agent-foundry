@@ -63,6 +63,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
   constructor(
     private readonly maxOutputBytes: number,
     private readonly killGraceMs = HARD_TIMEOUT_GRACE_MS,
+    protected readonly environment: NodeJS.ProcessEnv = {},
   ) {}
 
   protected abstract invocation(request: AgentExecutionRequest): Promise<CliInvocation>;
@@ -227,7 +228,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         // CLI only reachable through a variable execute() strips. `--version`
         // never touches the credential store, so this still says nothing about
         // authentication — scripts/doctor.mjs is what probes that.
-        ...safeSpawnEnv(process.env),
+        ...safeSpawnEnv(process.env, this.environment),
       });
       const available = result.exitCode === 0;
       return {

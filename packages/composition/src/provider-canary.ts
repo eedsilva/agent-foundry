@@ -15,11 +15,16 @@ import {
   type ProviderCanaryRun,
   type ProviderProbe,
 } from '@agent-foundry/contracts';
-import { AgyCliExecutor, ClaudeCliExecutor, CodexCliExecutor } from '@agent-foundry/executors';
+import {
+  AgyCliExecutor,
+  ClaudeCliExecutor,
+  CodexCliExecutor,
+  createGlmEnvironment,
+} from '@agent-foundry/executors';
 import { markdownCell, publishBaselinePair } from './baseline-publish.js';
 import { PROVIDER_CANARY_FIXTURES } from './provider-canary-fixtures.js';
 
-const PROVIDERS = ['codex', 'claude', 'agy'] as const;
+const PROVIDERS = ['codex', 'claude', 'glm', 'agy'] as const;
 const SCENARIOS = ['planning', 'greenfield', 'repair'] as const;
 const DEFAULT_TIMEOUT_MS = 600_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
@@ -99,10 +104,12 @@ export async function runProviderCanaries(
         continue;
       }
 
+      const model = models[provider];
+      if (model === undefined) throw new Error(`Missing selected model for ${provider}.`);
       const run = await executeCanaryScenario({
         provider,
         scenario,
-        model: models[provider],
+        model,
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         dependencies,
       });
@@ -140,11 +147,11 @@ export async function freezeProviderCanaryReport(
   options: { rename?: typeof rename; rm?: typeof rm } = {},
 ): Promise<void> {
   const report = ProviderCanaryReportSchema.parse(input);
-  if (report.runs.length !== 9) {
-    throw new Error('Provider canary freeze requires exactly nine runs.');
+  if (report.runs.length !== 12) {
+    throw new Error('Provider canary freeze requires exactly twelve runs.');
   }
   if (!report.runs.every((run) => run.status === 'passed')) {
-    throw new Error('Provider canary freeze requires nine passing runs.');
+    throw new Error('Provider canary freeze requires twelve passing runs.');
   }
   if (!report.runs.every((run) => run.executedModel)) {
     throw new Error('Provider canary freeze requires a known executed model for every run.');
@@ -208,6 +215,7 @@ function renderProviderCanaryMarkdown(report: ProviderCanaryReport): string {
   const providerNames: Record<ProviderProbe['provider'], string> = {
     codex: 'Codex',
     claude: 'Claude',
+    glm: 'GLM (Claude-compatible)',
     agy: 'AGY',
     opencode: 'OpenCode',
   };
@@ -278,6 +286,7 @@ export function modelsFromEnvironment(
   return {
     codex: firstNonBlank(env.CODEX_CANARY_MODEL, env.CODEX_DEFAULT_MODEL) ?? 'gpt-5.3-codex',
     claude: firstNonBlank(env.CLAUDE_CANARY_MODEL, env.CLAUDE_BALANCED_MODEL) ?? 'sonnet',
+    glm: firstNonBlank(env.GLM_CANARY_MODEL, env.GLM_FAST_MODEL) ?? 'GLM-4.5-Air',
     agy: firstNonBlank(env.AGY_CANARY_MODEL, env.AGY_DEFAULT_MODEL) ?? 'pro',
   };
 }
@@ -286,9 +295,16 @@ function createProductionProviderCanaryDependencies(
   rootDir: string,
   env: NodeJS.ProcessEnv,
 ): ProviderCanaryDependencies {
-  const executors = {
+  const executors: Record<
+    ProviderCanaryProvider,
+    ClaudeCliExecutor | CodexCliExecutor | AgyCliExecutor
+  > = {
     codex: new CodexCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, true),
     claude: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
+    glm: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, {
+      provider: 'glm',
+      environment: createGlmEnvironment(env),
+    }),
     agy: new AgyCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, {
       reportConfiguredModel: true,
       newProject: true,
@@ -321,10 +337,49 @@ export async function loadDoctorProbes(
   try {
     const parsed = JSON.parse(result.stdout) as { probes?: unknown };
     if (!Array.isArray(parsed.probes)) throw new Error('missing probes');
-    return parsed.probes.map((probe) => ProviderProbeSchema.parse(probe));
+    const probes = parsed.probes.map((probe) => ProviderProbeSchema.parse(probe));
+    return [...probes, deriveGlmProbe(probes, env)];
   } catch {
     throw new Error('Provider doctor did not return valid probe JSON.');
   }
+}
+
+function deriveGlmProbe(probes: ProviderProbe[], env: NodeJS.ProcessEnv): ProviderProbe {
+  const claude = probes.find((probe) => probe.provider === 'claude');
+  if (!claude) return missingProbe('glm');
+  if (claude.status === 'unavailable') {
+    return {
+      provider: 'glm',
+      status: 'unavailable',
+      capabilities: claude.capabilities,
+      message: 'GLM Claude-compatible executor is unavailable because the Claude CLI is missing.',
+    };
+  }
+  if (!Object.values(claude.capabilities).every(Boolean)) {
+    return {
+      provider: 'glm',
+      status: 'incompatible',
+      ...(claude.version ? { version: claude.version } : {}),
+      capabilities: claude.capabilities,
+      message: 'Claude CLI is missing a capability required by the GLM executor.',
+    };
+  }
+  if (!env.GLM_API_KEY?.trim()) {
+    return {
+      provider: 'glm',
+      status: 'unauthenticated',
+      ...(claude.version ? { version: claude.version } : {}),
+      capabilities: claude.capabilities,
+      message: 'GLM requires GLM_API_KEY for its Anthropic-compatible endpoint.',
+    };
+  }
+  return {
+    provider: 'glm',
+    status: 'ready',
+    ...(claude.version ? { version: claude.version } : {}),
+    capabilities: claude.capabilities,
+    message: 'GLM is configured through the Claude-compatible endpoint.',
+  };
 }
 
 async function executeCanaryScenario(input: {
