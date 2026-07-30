@@ -7,6 +7,7 @@ import {
 import {
   EmergencyCeilingError,
   ExecutionError,
+  ProviderAuthenticationError,
   RunCancelledError,
   type AgentExecutor,
   type ExecutorRegistry,
@@ -127,6 +128,32 @@ describe('LocalExecutionPlane', () => {
     const result = await plane.submit(request());
     expect(result.state).toBe('failed');
     expect(result.error).toMatchObject({ exitCode: 1, stderr: '429 Too Many Requests' });
+  });
+
+  it("preserves auth failure kind when executor throws ProviderAuthenticationError", async () => {
+    const executor: AgentExecutor = {
+      provider: 'codex',
+      health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
+      execute: async () => {
+        throw new ProviderAuthenticationError('Provider API key rejected', {
+          stderr: '401 Unauthorized',
+        });
+      },
+    };
+    const plane = new LocalExecutionPlane(registryFor(executor), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+
+    const result = await plane.submit(request());
+
+    expect(result).toMatchObject({
+      state: 'failed',
+      error: {
+        message: 'Provider API key rejected',
+        stderr: '401 Unauthorized',
+        kind: 'auth',
+      },
+    });
   });
 
   it('maps a RunCancelledError to a cancelled result', async () => {

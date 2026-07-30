@@ -7,10 +7,8 @@ import {
   type ExecutorStreamEvent,
 } from '@agent-foundry/contracts';
 import {
-  EmergencyCeilingError,
-  ExecutionError,
   RunCancelledError,
-  errorMessage,
+  toExecutionResult,
   type ExecutionPlane,
   type ExecutionStatus,
   type ExecutorRegistry,
@@ -64,43 +62,19 @@ export class LocalExecutionPlane implements ExecutionPlane {
       });
       return executionResult;
     } catch (error) {
-      // A ceiling breach is an orchestrator-level circuit breaker, not a
-      // normal execution outcome — it must propagate as a rejection so the
-      // orchestrator's own `instanceof EmergencyCeilingError` handling still
-      // sees it, exactly as it does today via the aborted signal's `reason`.
-      if (error instanceof EmergencyCeilingError) {
-        this.executions.delete(parsedRequest.executionId);
-        throw error;
-      }
       if (error instanceof ZodError) {
         this.executions.delete(parsedRequest.executionId);
         throw error;
       }
-      if (error instanceof RunCancelledError) {
-        const executionResult = ExecutionResultSchema.parse({
-          protocolVersion: EXECUTION_PROTOCOL_VERSION,
-          executionId: parsedRequest.executionId,
-          state: 'cancelled',
-        });
-        this.executions.set(parsedRequest.executionId, {
-          status: { executionId: parsedRequest.executionId, state: 'cancelled', result: executionResult },
-        });
-        return executionResult;
-      }
-      const details = error instanceof ExecutionError ? error.details : {};
-      const executionResult = ExecutionResultSchema.parse({
-        protocolVersion: EXECUTION_PROTOCOL_VERSION,
-        executionId: parsedRequest.executionId,
-        state: 'failed',
-        error: {
-          message: errorMessage(error),
-          ...(details.exitCode !== undefined ? { exitCode: details.exitCode } : {}),
-          ...(details.stdout !== undefined ? { stdout: details.stdout } : {}),
-          ...(details.stderr !== undefined ? { stderr: details.stderr } : {}),
-        },
-      });
+      const executionResult = ExecutionResultSchema.parse(
+        toExecutionResult(parsedRequest.executionId, error),
+      );
       this.executions.set(parsedRequest.executionId, {
-        status: { executionId: parsedRequest.executionId, state: 'failed', result: executionResult },
+        status: {
+          executionId: parsedRequest.executionId,
+          state: executionResult.state,
+          result: executionResult,
+        },
       });
       return executionResult;
     } finally {
