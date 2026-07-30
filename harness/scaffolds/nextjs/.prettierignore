@@ -2,3 +2,4 @@
 **/dist/
 **/node_modules/
 apps/api/src/database.types.ts
+apps/web/next-env.d.ts

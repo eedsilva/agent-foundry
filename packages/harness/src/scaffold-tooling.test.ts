@@ -39,6 +39,15 @@ describe('generated Next.js scaffold tooling', () => {
     expect(await readFile(resolve(scaffoldRoot, 'eslint.config.mjs'), 'utf8')).toContain(
       'typescript-eslint',
     );
+    expect(await readFile(resolve(scaffoldRoot, 'eslint.config.mjs'), 'utf8')).toContain(
+      "'**/.next/**'",
+    );
+    expect(await readFile(resolve(scaffoldRoot, 'prettier.config.mjs'), 'utf8')).toContain(
+      'singleQuote: true',
+    );
+    expect(await readFile(resolve(scaffoldRoot, '.prettierignore'), 'utf8')).toContain(
+      'apps/web/next-env.d.ts',
+    );
     expect(packageJson.devDependencies).toMatchObject({
       eslint: expect.any(String),
       prettier: expect.any(String),

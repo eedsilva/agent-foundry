@@ -11,6 +11,7 @@ pnpm-lock.yaml
 # Written by `supabase gen types typescript`; CI diffs it against a fresh
 # generation, which formatting it would break.
 harness/scaffolds/nextjs/apps/api/src/database.types.ts
+harness/scaffolds/nextjs/apps/web/next-env.d.ts
 planning/ROADMAP.md
 *.tsbuildinfo
 .superpowers
