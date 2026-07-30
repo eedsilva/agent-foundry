@@ -776,6 +776,38 @@ S3_FORCE_PATH_STYLE=true
 
 Chaves de acesso locais saem de `supabase status -o env`.
 
+### Harness de validação Supabase Postgres + Storage (#232)
+
+O harness focado deste repositório cria sua própria workdir temporária do Supabase, sobe a stack local, aplica as migrations do repositório, sobe o runtime em `PERSISTENCE_MODE=postgres` + `BLOB_STORE_MODE=s3`, completa um workflow representativo e faz round-trip de bytes via `runtime.blobStore` pelo endpoint S3. Isso **não** muda o fato de que, hoje, artifacts do `PostgresArtifactStore` continuam em `bytea`; o follow-up para mover artifacts de modo Postgres para object storage continua fora de escopo. Comandos:
+
+```bash
+RUN_SUPABASE_DATA_PLANE_E2E=true \
+npx vitest run packages/composition/src/supabase-data-plane.e2e.test.ts --pool=threads --maxWorkers=1
+```
+
+Para um projeto hospedado throwaway, o mesmo teste aceita `DATABASE_URL` + `S3_*` explícitos quando `SUPABASE_DATA_PLANE_USE_HOSTED=true`:
+
+```bash
+DATABASE_URL='postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres' \
+S3_ENDPOINT='https://<project-ref>.storage.supabase.co/storage/v1/s3' \
+S3_REGION='<region>' \
+S3_ACCESS_KEY_ID='<storage-access-key-id>' \
+S3_SECRET_ACCESS_KEY='<storage-secret-access-key>' \
+SUPABASE_DATA_PLANE_USE_HOSTED=true \
+RUN_SUPABASE_DATA_PLANE_E2E=true \
+npx vitest run packages/composition/src/supabase-data-plane.e2e.test.ts --pool=threads --maxWorkers=1
+```
+
+Esse harness executa migrations antes do boot, então **exige conexão direta ou session pooler (`5432`)**. Se você apontar `DATABASE_URL` para o transaction pooler (`6543`), o teste falha cedo com erro claro, porque `npm run db:migrate` / `migrateUp(...)` dependem de lock `pg_advisory_lock` com escopo de sessão. Já os adapters de runtime continuam pooler-safe via `pg_advisory_xact_lock`, então a restrição é do caminho de migration/validação, não do boot normal da API/worker em produção.
+
+Credenciais/endpoint S3 exigidos pelo harness hospedado:
+
+- `S3_ENDPOINT=https://<project-ref>.storage.supabase.co/storage/v1/s3`
+- `S3_REGION=<região do projeto>`
+- `S3_ACCESS_KEY_ID` e `S3_SECRET_ACCESS_KEY` gerados em Project Settings → Storage → S3 Connection
+
+O bucket não precisa ser pré-criado manualmente para esse teste: o harness cria um bucket efêmero próprio. Cleanup não é “best effort silencioso”: o teste sempre tenta apagar objetos, bucket, stack local e diretórios temporários; se qualquer uma dessas etapas falhar, a suite falha com erro agregado para que vazamento de estado não passe como sucesso.
+
 `DATABASE_URL` para o Postgres do Supabase é configuração separada (persistência, não object storage) — ver a PR #53.
 
 ### MinIO local (quickstart, fallback neutro)
@@ -798,9 +830,9 @@ A varredura periódica da API (mesmo intervalo do reaper de artifacts, `ARTIFACT
 
 ### Garantias de integridade
 
-O sha256 é calculado em streaming durante a escrita (via `atomicWriteStream` em modo `fs`, via o `Transform` `meteredStream` + multipart `Upload` em modo `s3`), nunca lido de volta do conteúdo depois. Quando o chamador informa `expectedSha256`, um mismatch apaga os bytes recém-escritos e lança `BlobIntegrityError`; estourar `maxBytes` aborta o upload/escrita (`ArtifactTooLargeError`) sem deixar bytes parciais para trás.
+O sha256 é calculado em streaming durante a escrita (via `atomicWriteStream` em modo `fs`, via o `Transform` `meteredStream` + multipart `Upload` em modo `s3`), nunca lido de volta do conteúdo depois. Em modo `s3`, o hash final é persistido no sidecar reservado `<key>.agent-foundry-meta.json` com `PutObject`; não dependemos de `CopyObject`, cuja reescrita de metadata não é portátil entre endpoints Supabase-compatíveis. Leituras de objetos legados ainda usam `Metadata.sha256` do objeto final como fallback quando o sidecar não existe ou está inválido; novas escritas não dependem desse formato. Quando o chamador informa `expectedSha256`, um mismatch apaga os bytes recém-escritos e lança `BlobIntegrityError`; estourar `maxBytes` aborta o upload/escrita (`ArtifactTooLargeError`) sem deixar bytes parciais para trás.
 
-Os dois adapters falham seguro em `stat()`: `FsBlobStore` retorna `null` quando o sidecar `<path>.meta.json` está ausente, e `S3BlobStore` retorna `null` quando o metadata `sha256` do objeto está ausente — o que cobre a janela do `put()` em modo `s3` entre o multipart `Upload` terminar e o `CopyObjectCommand` subsequente (que anexa o `sha256` como metadata) completar. Nos dois casos, uma escrita incompleta fica invisível para leitores (em vez de aparentar um blob válido com hash vazio) e naturalmente elegível para o GC descrito acima, ao invés de ser servida corrompida.
+Os dois adapters falham seguro em `stat()` e `getStream()`: `FsBlobStore` retorna `null` quando o sidecar `<path>.meta.json` está ausente, e `S3BlobStore` retorna `null` quando o sidecar JSON está ausente, malformado ou sem os campos obrigatórios. Isso cobre a janela do `put()` em modo `s3` entre o multipart `Upload` terminar e o sidecar de metadata completar. Nos dois casos, uma escrita incompleta fica invisível para leitores (em vez de aparentar um blob válido com hash vazio) e naturalmente elegível para o GC descrito acima, ao invés de ser servida corrompida.
 
 ### Rollback
 
@@ -843,6 +875,8 @@ ela não é baseline versionado.
 Em uso local, faça snapshot de todo `DATA_DIR`, incluindo `runs/`. Para restore, preserve permissões e `.git` dos workspaces. O arquivo `artifacts/index.json` pode ser reconstruído a partir das revisões, mas o MVP não inclui ferramenta automática para isso.
 
 ## Operação do Personal Builder v1
+
+Para upgrade de um projeto local v0.x já existente, siga o runbook dedicado em [`docs/PERSONAL_V1_LOCAL_MIGRATION.md`](PERSONAL_V1_LOCAL_MIGRATION.md). Ele cobre preflight, inventário, backup de `DATA_DIR`/workspace, migração forward-only, verificação, rollback somente do app e restore explícito.
 
 ### Runtime local por projeto
 

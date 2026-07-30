@@ -53,12 +53,9 @@ describeMinio('S3BlobStore (MinIO)', ({ store, endpoint }) => {
     expect(stat.sizeBytes).toBe(content.byteLength);
     expect(stat.sha256).toBe(expectedSha256);
 
-    // put()'s createdAt comes from CopyObjectResult's LastModified (XML body,
-    // sub-second precision); stat()'s comes from HeadObject's Last-Modified
-    // (an HTTP date header, always truncated to whole seconds) — so the two
-    // legitimately differ by up to ~1s even though both name "now". Assert
-    // everything else byte-for-byte and only require createdAt to be a valid
-    // timestamp.
+    // put() and stat() use the final object's Last-Modified value from
+    // HeadObject. Assert everything else byte-for-byte and only require
+    // createdAt to be a valid timestamp.
     const restated = await blobStore.stat(key);
     expect(restated).toEqual({ ...stat, createdAt: expect.any(String) });
     expect(Number.isNaN(Date.parse(restated!.createdAt))).toBe(false);
@@ -68,12 +65,11 @@ describeMinio('S3BlobStore (MinIO)', ({ store, endpoint }) => {
     expectBytesEqual(await readAll(readBack), content);
   });
 
-  it('stat() returns null for an object written without sha256 metadata (simulated incomplete two-phase put)', async () => {
+  it('stat() returns null for an object written without its sha256 sidecar (simulated incomplete put)', async () => {
     const key = uniqueKey('no-metadata');
 
     // Bypass S3BlobStore.put() entirely: write straight through a raw client to
-    // simulate the process dying between the multipart Upload and the follow-up
-    // CopyObjectCommand that attaches sha256, so no sha256 metadata is ever set.
+    // simulate the process dying before the follow-up metadata sidecar is saved.
     const rawClient = new S3Client({
       endpoint: endpoint(),
       region: 'us-east-1',
@@ -94,6 +90,7 @@ describeMinio('S3BlobStore (MinIO)', ({ store, endpoint }) => {
     }
 
     await expect(blobStore.stat(key)).resolves.toBeNull();
+    await expect(blobStore.getStream(key)).resolves.toBeNull();
   });
 
   it('streams an 8MB blob (exceeding one 5MB multipart chunk) byte-identically', async () => {

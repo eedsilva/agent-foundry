@@ -9,6 +9,7 @@ import type { AgentExecutor } from '@agent-foundry/domain';
 import type {
   AgentExecutionRequest,
   AgentExecutionResult,
+  ExecutorHealth,
   OperationKind,
   RouterDecisionLogEntry,
   TaskProfile,
@@ -324,8 +325,27 @@ async function getRun(projectId: string): Promise<{ id: string; status: string }
   return run;
 }
 
-async function runConversationJob(): Promise<void> {
+async function stopProvisionedPreview(projectId: string): Promise<void> {
+  const session = await runtime.previewService.activeForProject(projectId);
+  if (session) await runtime.previewService.stop(session.id);
+}
+
+async function runConversationJob(
+  projectId: string,
+  kind: Extract<OperationKind, 'plan' | 'build' | 'visual-edit'>,
+): Promise<void> {
   expect(await runtime.worker.runOnce()).toBe(true);
+  const operation = (await runtime.conversations.listOperations(projectId))
+    .filter((candidate) => candidate.kind === kind)
+    .at(-1);
+  if (!operation?.runId) throw new Error(`latest ${kind} operation has no run`);
+  const run = await runtime.runs.get(operation.runId);
+  if (run?.status !== 'completed') {
+    throw new Error(
+      `${kind} operation ${operation.id} did not complete: ${run?.status ?? 'run missing'} ${JSON.stringify(run?.error ?? null)}`,
+    );
+  }
+  expect(operation.artifactReferences.length).toBeGreaterThan(0);
 }
 
 async function readKnowledgeThroughCliChild(path: string): Promise<Buffer> {
@@ -418,7 +438,12 @@ function installGoldenFixtureExecutor(): Array<'plan' | 'build'> {
       return goldenFixtureResult(request);
     },
   };
-  (runtime.executors as { get: () => AgentExecutor }).get = () => executor;
+  const registry = runtime.executors as {
+    get: () => AgentExecutor;
+    health: () => Promise<ExecutorHealth[]>;
+  };
+  registry.get = () => executor;
+  registry.health = () => executor.health().then((health) => [health]);
   return knowledgeReads;
 }
 
@@ -472,6 +497,7 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   const projectId = await createProject();
   await seedWorkspaceAndPlan(projectId);
   expect(await runtime.worker.runOnce()).toBe(true);
+  await stopProvisionedPreview(projectId);
 
   const run = await getRun(projectId);
   expect(run.status).toBe('awaiting_approval');
@@ -641,6 +667,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   const greetingPath = join(runtime.workspaces.workspacePath(projectId), 'src', 'Greeting.tsx');
   await writeFile(greetingPath, "export const greetingBackground = '#eee';\n", { flag: 'wx' });
   expect(await runtime.worker.runOnce()).toBe(true);
+  await stopProvisionedPreview(projectId);
 
   await page.goto(`${webBaseUrl}/project/${projectId}`);
   const regions = {
@@ -692,7 +719,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     ),
     regions.chat.getByRole('button', { name: 'Confirm plan' }).click(),
   ]);
-  await runConversationJob();
+  await runConversationJob(projectId, 'plan');
   await expect(
     regions.chat.getByTestId('operation-badge').filter({ hasText: 'plan, pending' }),
   ).toBeVisible();
@@ -745,7 +772,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     ),
     regions.chat.getByRole('button', { name: 'Confirm build' }).click(),
   ]);
-  await runConversationJob();
+  await runConversationJob(projectId, 'build');
   await expect(
     regions.chat.getByTestId('operation-badge').filter({ hasText: 'build' }).last(),
   ).toBeVisible();
@@ -783,7 +810,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     ),
     page.getByRole('button', { name: 'Aplicar alteração' }).click(),
   ]);
-  await runConversationJob();
+  await runConversationJob(projectId, 'visual-edit');
   await expect.poll(() => readFile(greetingPath, 'utf8')).toContain("'#ddd'");
   await Promise.all([
     page.waitForResponse(
@@ -870,7 +897,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     ),
     refreshedChat.getByRole('button', { name: 'Confirm build' }).click(),
   ]);
-  await runConversationJob();
+  await runConversationJob(projectId, 'build');
   const rebuiltGreeting = await readFile(greetingPath, 'utf8');
   expect(rebuiltGreeting).toContain("'#eee'");
   expect(rebuiltGreeting).not.toContain("'#ddd'");

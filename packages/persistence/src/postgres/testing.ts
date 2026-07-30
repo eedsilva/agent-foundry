@@ -13,18 +13,19 @@ export function probeDocker(): boolean {
 }
 
 const dockerAvailable = probeDocker();
-if (process.env.CI && !dockerAvailable) {
+const externalDatabaseUrl = process.env.SUPABASE_TEST_DATABASE_URL;
+if (process.env.CI && !dockerAvailable && !externalDatabaseUrl) {
   throw new Error('CI requires Docker for Postgres tests; refusing to skip.');
 }
 
 export function describePostgres(name: string, fn: (ctx: { db: () => PostgresDb }) => void): void {
-  const suite = dockerAvailable ? describe : describe.skip;
+  const suite = dockerAvailable || externalDatabaseUrl ? describe : describe.skip;
   suite(name, () => {
     let sql: PostgresDb | undefined;
     let stop: (() => Promise<unknown>) | undefined;
 
     beforeAll(async () => {
-      const sharedUri = inject('sharedPgUri');
+      const sharedUri = externalDatabaseUrl ?? inject('sharedPgUri');
       if (sharedUri) {
         sql = createPostgresClient(sharedUri);
         return;

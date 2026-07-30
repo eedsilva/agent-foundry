@@ -24,6 +24,11 @@ declare module 'vitest' {
 // suite. Only active with SHARED_PG=1 (the test:unit:slow script); suites fall
 // back to their own container otherwise, so single-file runs keep working.
 export default async function setup(project: TestProject): Promise<(() => Promise<void>) | void> {
+  const externalUri = process.env.SUPABASE_TEST_DATABASE_URL;
+  if (externalUri) {
+    project.provide('sharedPgUri', externalUri);
+    return;
+  }
   if (process.env.SHARED_PG !== '1' || !probeDocker()) return;
   const { PostgreSqlContainer } = await import('@testcontainers/postgresql');
   const container = await new PostgreSqlContainer('postgres:17-alpine').start();

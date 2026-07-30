@@ -28,6 +28,8 @@ One accepted operation creates one Git commit and one immutable project version.
 
 Every project owns its own Compose project and Supabase data volumes. Agent Foundry can initialize, start, stop, inspect, migrate, seed, health-check and clean up the environment. Destructive reset and migration actions require confirmation.
 
+Existing local v0.x projects upgrade through the forward-only operator runbook in [PERSONAL_V1_LOCAL_MIGRATION.md](PERSONAL_V1_LOCAL_MIGRATION.md). That guide covers inventory, `DATA_DIR` and workspace backup, migration execution, verification, explicit restore and the boundary between application rollback and database recovery.
+
 Authentication is enabled from project creation. V1 provides signup, login, logout, sessions, protected routes and baseline RLS. Password reset is an administrator operation; there is no production email-delivery promise.
 
 ## Deployment

@@ -7,6 +7,7 @@ import {
 import {
   EmergencyCeilingError,
   ExecutionError,
+  ProviderAuthenticationError,
   RunCancelledError,
   type AgentExecutor,
   type ExecutorRegistry,
@@ -50,6 +51,16 @@ function request(): ExecutionRequest {
     networkPolicy: { mode: 'none', allowedHosts: [], purpose: 'execution' },
     secrets: [],
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function makeExecutor(behavior: 'succeed' | 'fail' | 'cancel' | 'ceiling'): AgentExecutor {
@@ -119,6 +130,32 @@ describe('LocalExecutionPlane', () => {
     expect(result.error).toMatchObject({ exitCode: 1, stderr: '429 Too Many Requests' });
   });
 
+  it('preserves auth failure kind when executor throws ProviderAuthenticationError', async () => {
+    const executor: AgentExecutor = {
+      provider: 'codex',
+      health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
+      execute: async () => {
+        throw new ProviderAuthenticationError('Provider API key rejected', {
+          stderr: '401 Unauthorized',
+        });
+      },
+    };
+    const plane = new LocalExecutionPlane(registryFor(executor), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+
+    const result = await plane.submit(request());
+
+    expect(result).toMatchObject({
+      state: 'failed',
+      error: {
+        message: 'Provider API key rejected',
+        stderr: '401 Unauthorized',
+        kind: 'auth',
+      },
+    });
+  });
+
   it('maps a RunCancelledError to a cancelled result', async () => {
     const plane = new LocalExecutionPlane(registryFor(makeExecutor('cancel')), {
       workspacePath: () => '/data/projects/project-1/workspace',
@@ -138,11 +175,208 @@ describe('LocalExecutionPlane', () => {
     await expect(plane.submit(request())).rejects.toBeInstanceOf(EmergencyCeilingError);
   });
 
-  it('has no out-of-band cancel/status channel — local execution is synchronous', async () => {
-    const plane = new LocalExecutionPlane(registryFor(makeExecutor('succeed')), {
+  it('cleans up in-flight status when submit rejects with EmergencyCeilingError', async () => {
+    const plane = new LocalExecutionPlane(registryFor(makeExecutor('ceiling')), {
       workspacePath: () => '/data/projects/project-1/workspace',
     });
-    await expect(plane.status('attempt-1')).rejects.toThrow(/does not support/i);
+
+    await expect(plane.submit(request())).rejects.toBeInstanceOf(EmergencyCeilingError);
+    expect(await plane.status('attempt-1')).toEqual({
+      executionId: 'attempt-1',
+      state: 'pending',
+    });
+  });
+
+  it('rejects malformed execution requests before invoking executor', async () => {
+    let calls = 0;
+    const baseExecutor = makeExecutor('succeed');
+    const executor: AgentExecutor = {
+      provider: 'codex',
+      health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
+      execute: async (agentRequest, signal?) => {
+        calls += 1;
+        return baseExecutor.execute(agentRequest, signal);
+      },
+    };
+    const plane = new LocalExecutionPlane(registryFor(executor), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+
+    await expect(
+      plane.submit({ ...request(), protocolVersion: '2' } as unknown as ExecutionRequest),
+    ).rejects.toThrow(/protocolVersion/i);
+    expect(calls).toBe(0);
+  });
+
+  it('fails closed when a request asks the local plane for unenforced capabilities', async () => {
+    let calls = 0;
+    const baseExecutor = makeExecutor('succeed');
+    const executor: AgentExecutor = {
+      provider: 'codex',
+      health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
+      execute: async (agentRequest, signal?) => {
+        calls += 1;
+        return baseExecutor.execute(agentRequest, signal);
+      },
+    };
+    const plane = new LocalExecutionPlane(registryFor(executor), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+    const unsupportedRequests: ExecutionRequest[] = [
+      { ...request(), executionId: 'tools', tools: ['shell'] },
+      {
+        ...request(),
+        executionId: 'network',
+        networkPolicy: { mode: 'allowlist', allowedHosts: ['example.com'], purpose: 'execution' },
+      },
+      {
+        ...request(),
+        executionId: 'secrets',
+        secrets: [{ name: 'TOKEN', ref: 'secret://TOKEN' }],
+      },
+    ];
+
+    for (const unsupportedRequest of unsupportedRequests) {
+      const result = await plane.submit(unsupportedRequest);
+      expect(result).toMatchObject({
+        executionId: unsupportedRequest.executionId,
+        state: 'failed',
+        error: { message: expect.stringContaining('cannot enforce requested capabilities') },
+      });
+      expect(await plane.status(unsupportedRequest.executionId)).toEqual({
+        executionId: unsupportedRequest.executionId,
+        state: 'failed',
+        result,
+      });
+    }
+
+    expect(calls).toBe(0);
+  });
+
+  it('rejects malformed executor results at execution-plane boundary', async () => {
+    const executor: AgentExecutor = {
+      provider: 'codex',
+      health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
+      execute: async (agentRequest) =>
+        ({
+          runId: agentRequest.runId,
+          stepRunId: agentRequest.stepRunId,
+          attemptId: agentRequest.attemptId,
+          provider: 'codex',
+          model: agentRequest.model,
+          exitCode: 0,
+          durationMs: 5,
+          stdout: 123,
+          stderr: '',
+          output: completedArtifact,
+        }) as never,
+    };
+    const plane = new LocalExecutionPlane(registryFor(executor), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+
+    await expect(plane.submit(request())).rejects.toThrow(/stdout/i);
+  });
+
+  it('reports pending, running, and completed status for local executions', async () => {
+    const resultGate = deferred<Awaited<ReturnType<AgentExecutor['execute']>>>();
+    const started = deferred<void>();
+    const executor: AgentExecutor = {
+      provider: 'codex',
+      health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
+      execute: async () => {
+        started.resolve();
+        return resultGate.promise;
+      },
+    };
+    const plane = new LocalExecutionPlane(registryFor(executor), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+
+    expect(await plane.status('unknown-execution')).toEqual({
+      executionId: 'unknown-execution',
+      state: 'pending',
+    });
+
+    const submitPromise = plane.submit(request());
+    await started.promise;
+
+    expect(await plane.status('attempt-1')).toEqual({
+      executionId: 'attempt-1',
+      state: 'running',
+    });
+
+    resultGate.resolve({
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      attemptId: 'attempt-1',
+      provider: 'codex',
+      model: 'test-model',
+      exitCode: 0,
+      durationMs: 5,
+      stdout: '{}',
+      stderr: '',
+      output: completedArtifact,
+    });
+
+    const result = await submitPromise;
+    expect(await plane.status('attempt-1')).toEqual({
+      executionId: 'attempt-1',
+      state: 'completed',
+      result,
+    });
+  });
+
+  it('reports failed status after executor failure', async () => {
+    const failingPlane = new LocalExecutionPlane(registryFor(makeExecutor('fail')), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+    const result = await failingPlane.submit(request());
+
+    expect(await failingPlane.status('attempt-1')).toEqual({
+      executionId: 'attempt-1',
+      state: 'failed',
+      result,
+    });
+  });
+
+  it('supports explicit out-of-band cancel for in-flight local executions', async () => {
+    const started = deferred<void>();
+    const executor: AgentExecutor = {
+      provider: 'codex',
+      health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
+      execute: async (agentRequest, signal) => {
+        started.resolve();
+        return await new Promise((resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(signal.reason ?? new RunCancelledError(agentRequest.runId)),
+            { once: true },
+          );
+        });
+      },
+    };
+    const plane = new LocalExecutionPlane(registryFor(executor), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+
+    const submitPromise = plane.submit(request());
+    await started.promise;
+
+    expect(await plane.status('attempt-1')).toEqual({
+      executionId: 'attempt-1',
+      state: 'running',
+    });
+
+    await plane.cancel('attempt-1');
+
+    const result = await submitPromise;
+    expect(result.state).toBe('cancelled');
+    expect(await plane.status('attempt-1')).toEqual({
+      executionId: 'attempt-1',
+      state: 'cancelled',
+      result,
+    });
   });
 
   it('threads onEvent through to the executor', async () => {
