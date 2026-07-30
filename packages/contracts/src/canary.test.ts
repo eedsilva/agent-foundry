@@ -55,6 +55,14 @@ describe('provider canary contracts', () => {
 
   it('validates probes, usage, verification, sanitized errors, runs, and reports', () => {
     expect(ProviderProbeSchema.safeParse(report.probes[0]).success).toBe(true);
+    expect(
+      ProviderProbeSchema.safeParse({
+        ...report.probes[0],
+        provider: 'opencode',
+        message: 'OpenCode and the Ollama endpoint are ready.',
+        capabilities: { ...report.probes[0]!.capabilities, endpointReachable: true },
+      }).success,
+    ).toBe(true);
     expect(CanaryUsageSchema.safeParse(report.runs[0]?.usage).success).toBe(true);
     expect(CanaryVerificationResultSchema.safeParse(report.runs[0]?.verification[0]).success).toBe(
       true,

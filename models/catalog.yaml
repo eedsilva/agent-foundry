@@ -3,6 +3,30 @@ schemaVersion: '1'
 # These capability numbers are routing priors for this application, not vendor benchmarks.
 # Replace them with measurements from your own review/test outcomes.
 models:
+  - id: opencode-ollama
+    provider: opencode
+    model: '${OPENCODE_OLLAMA_MODEL:-qwen2.5-coder:7b}'
+    billingMode: metered
+    pricing:
+      inputUsdPerMillionTokens: 0
+      outputUsdPerMillionTokens: 0
+      rateTableVersion: local-ollama-1
+    enabled: true
+    requireExplicitModel: false
+    maxContextTokens: 65536
+    canWriteWorkspace: true
+    tags: [local, mechanical, verification]
+    capabilities:
+      planning: 0.35
+      architecture: 0.20
+      coding: 0.55
+      review: 0.45
+      repair: 0.35
+      structuredOutput: 0.45
+      speed: 0.80
+      costEfficiency: 1
+      reliability: 0.30
+
   - id: codex-default
     provider: codex
     model: '${CODEX_DEFAULT_MODEL:-}'

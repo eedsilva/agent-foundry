@@ -152,6 +152,9 @@ jobs:
       - name: Build both tiers
         run: pnpm build
         working-directory: ${{ runner.temp }}/scaffold
+      - name: Run scaffold quality gates
+        run: pnpm format:check && pnpm lint && pnpm test
+        working-directory: ${{ runner.temp }}/scaffold
       - name: Assert the database and both tiers answer
         run: pnpm smoke
         working-directory: ${{ runner.temp }}/scaffold

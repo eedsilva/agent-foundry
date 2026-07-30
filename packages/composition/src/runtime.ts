@@ -5,6 +5,7 @@ import {
   CodexCliExecutor,
   ClaudeCliExecutor,
   AgyCliExecutor,
+  OpenCodeCliExecutor,
   WorkspaceVerifier,
   PlaywrightBrowserVerifier,
   NodePreviewRunner,
@@ -238,6 +239,7 @@ export async function createRuntime(
           new CodexCliExecutor(config.maxCliOutputBytes),
           new ClaudeCliExecutor(config.maxCliOutputBytes),
           new AgyCliExecutor(config.maxCliOutputBytes),
+          new OpenCodeCliExecutor(config.maxCliOutputBytes),
         ]);
   const executionPlane = new LocalExecutionPlane(executors, workspaces);
   const verifier = new WorkspaceVerifier({

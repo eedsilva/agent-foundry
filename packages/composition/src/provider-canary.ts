@@ -205,10 +205,11 @@ export async function freezeProviderCanaryReport(
 }
 
 function renderProviderCanaryMarkdown(report: ProviderCanaryReport): string {
-  const providerNames: Record<ProviderCanaryProvider, string> = {
+  const providerNames: Record<ProviderProbe['provider'], string> = {
     codex: 'Codex',
     claude: 'Claude',
     agy: 'AGY',
+    opencode: 'OpenCode',
   };
   const lines = [
     '# v0.2 real provider canary baseline',

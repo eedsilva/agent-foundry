@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as contracts from './index.js';
 import { ModelMetricSchema } from './model.js';
-import { formatZodIssues, WorkflowAgentRoleSchema, WorkflowTaskKindSchema } from './primitives.js';
+import {
+  formatZodIssues,
+  ProviderSchema,
+  WorkflowAgentRoleSchema,
+  WorkflowTaskKindSchema,
+} from './primitives.js';
 
 // ADR 0042 retired these, but records written before it still carry them, and
 // the metrics/observation read paths parse a whole file at once — dropping the
@@ -37,6 +42,12 @@ describe('roles retired by ADR 0042', () => {
       role: 'architect',
       taskKind: 'architecture',
     });
+  });
+});
+
+describe('providers', () => {
+  it('accepts OpenCode as the local Ollama executor', () => {
+    expect(ProviderSchema.parse('opencode')).toBe('opencode');
   });
 });
 

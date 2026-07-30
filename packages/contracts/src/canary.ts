@@ -1,8 +1,12 @@
 import { z } from 'zod';
 import { ProviderSchema } from './primitives.js';
 
-export const ProviderCanaryProviderSchema = ProviderSchema.exclude(['mock']);
+// Local OpenCode/Ollama is opt-in and has no paid-provider canary contract.
+export const ProviderCanaryProviderSchema = ProviderSchema.exclude(['mock', 'opencode']);
 export type ProviderCanaryProvider = z.infer<typeof ProviderCanaryProviderSchema>;
+
+export const ProviderProbeProviderSchema = ProviderSchema.exclude(['mock']);
+export type ProviderProbeProvider = z.infer<typeof ProviderProbeProviderSchema>;
 
 export const ProviderProbeStatusSchema = z.enum([
   'ready',
@@ -17,13 +21,14 @@ export const ProviderCapabilitiesSchema = z
     nonInteractive: z.boolean(),
     modelSelection: z.boolean(),
     sandbox: z.boolean(),
+    endpointReachable: z.boolean().optional(),
   })
   .strict();
 export type ProviderCapabilities = z.infer<typeof ProviderCapabilitiesSchema>;
 
 export const ProviderProbeSchema = z
   .object({
-    provider: ProviderCanaryProviderSchema,
+    provider: ProviderProbeProviderSchema,
     status: ProviderProbeStatusSchema,
     version: z.string().min(1).optional(),
     capabilities: ProviderCapabilitiesSchema,

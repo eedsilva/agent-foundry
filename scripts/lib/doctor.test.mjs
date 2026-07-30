@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -37,19 +38,27 @@ const readyFixtures = {
     },
     auth: { stdout: 'gemini-3.6-flash-high\ngemini-3.1-pro-low\n' },
   },
+  opencode: {
+    version: { stdout: '1.0.0\n' },
+    help: { stdout: '--format --dir --model --agent --auto\n' },
+    auth: { status: 0 },
+  },
 };
 
 test('prints ready provider probes as contract-shaped JSON without raw authentication data', async (t) => {
   const fixture = await createFixture(t, readyFixtures);
   const result = runDoctor(fixture, ['--json']);
 
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 0, result.stderr + result.stdout);
   const output = JSON.parse(result.stdout);
   assert.equal(output.executorMode, 'real');
   assert.deepEqual(output.probes, [
     readyProbe('codex', '0.144.2', 'Codex is ready.'),
     readyProbe('claude', '2.1.207', 'Claude is ready.'),
     readyProbe('agy', '1.1.6', 'AGY is ready.'),
+    readyProbe('opencode', '1.0.0', 'OpenCode and the Ollama endpoint are ready.', {
+      endpointReachable: true,
+    }),
   ]);
   assert.deepEqual(Object.keys(output.probes[0]).sort(), [
     'capabilities',
@@ -75,7 +84,7 @@ test('classifies missing provider CLIs as unavailable', async (t) => {
   const { probes } = JSON.parse(result.stdout);
   assert.deepEqual(
     probes.map(({ provider, status, capabilities }) => ({ provider, status, capabilities })),
-    ['codex', 'claude', 'agy'].map((provider) => ({
+    ['codex', 'claude', 'agy', 'opencode'].map((provider) => ({
       provider,
       status: 'unavailable',
       capabilities: {
@@ -111,7 +120,7 @@ test('classifies providers with absent sessions as unauthenticated', async (t) =
   assert.equal(result.status, 1);
   assert.deepEqual(
     JSON.parse(result.stdout).probes.map(({ status }) => status),
-    ['unauthenticated', 'unauthenticated', 'unauthenticated'],
+    ['unauthenticated', 'unauthenticated', 'unauthenticated', 'ready'],
   );
   assert.doesNotMatch(result.stdout + result.stderr, /secret@test|private-user|Not logged in/);
 });
@@ -128,7 +137,7 @@ test('reports individual incompatible capabilities when required flags disappear
   const { probes } = JSON.parse(result.stdout);
   assert.deepEqual(
     probes.map(({ status }) => status),
-    ['incompatible', 'incompatible', 'incompatible'],
+    ['incompatible', 'incompatible', 'incompatible', 'ready'],
   );
   assert.deepEqual(probes[0].capabilities, {
     nonInteractive: false,
@@ -161,7 +170,7 @@ test('rejects providers missing execution flags outside the representative capab
   assert.equal(result.status, 1);
   assert.deepEqual(
     JSON.parse(result.stdout).probes.map(({ status }) => status),
-    ['incompatible', 'incompatible', 'incompatible'],
+    ['incompatible', 'incompatible', 'incompatible', 'ready'],
   );
 });
 
@@ -178,16 +187,30 @@ test('requires exact help option tokens instead of accepting longer prefix colli
   const { probes } = JSON.parse(result.stdout);
   assert.deepEqual(
     probes.map(({ status }) => status),
-    ['incompatible', 'incompatible', 'incompatible'],
+    ['incompatible', 'incompatible', 'incompatible', 'ready'],
   );
   assert.deepEqual(
     probes.map(({ capabilities }) => capabilities),
-    ['codex', 'claude', 'agy'].map(() => ({
-      nonInteractive: false,
-      modelSelection: false,
-      sandbox: false,
-    })),
+    [
+      ...['codex', 'claude', 'agy'].map(() => ({
+        nonInteractive: false,
+        modelSelection: false,
+        sandbox: false,
+      })),
+      {
+        nonInteractive: true,
+        modelSelection: true,
+        sandbox: true,
+        endpointReachable: true,
+      },
+    ],
   );
+  assert.deepEqual(probes[3].capabilities, {
+    nonInteractive: true,
+    modelSelection: true,
+    sandbox: true,
+    endpointReachable: true,
+  });
 });
 
 test('rejects AGY versions older than 1.1.1', async (t) => {
@@ -227,7 +250,7 @@ test('fails closed on successful but malformed authentication responses', async 
   assert.equal(result.status, 1);
   assert.deepEqual(
     JSON.parse(result.stdout).probes.map(({ status }) => status),
-    ['incompatible', 'incompatible', 'incompatible'],
+    ['incompatible', 'incompatible', 'incompatible', 'ready'],
   );
   assert.doesNotMatch(result.stdout + result.stderr, /codex-secret-user|claude-secret@test/);
 });
@@ -257,7 +280,7 @@ test('classifies unrecognized nonzero authentication failures as incompatible', 
   assert.equal(result.status, 1);
   assert.deepEqual(
     JSON.parse(result.stdout).probes.map(({ status }) => status),
-    ['incompatible', 'incompatible', 'incompatible'],
+    ['incompatible', 'incompatible', 'incompatible', 'ready'],
   );
   assert.doesNotMatch(result.stdout + result.stderr, /private-user|unknown subcommand/);
 });
@@ -325,6 +348,7 @@ test('prints sanitized human provider status without auth payloads or identities
   assert.match(result.stdout, /✓ codex\s+Codex is ready\./);
   assert.match(result.stdout, /✓ claude\s+Claude is ready\./);
   assert.match(result.stdout, /✓ agy\s+AGY is ready\./);
+  assert.match(result.stdout, /✓ opencode\s+OpenCode and the Ollama endpoint are ready\./);
   assert.doesNotMatch(
     result.stdout + result.stderr,
     /private@example\.test|private-org|Logged in using ChatGPT|Gemini 2\.5/,
@@ -370,7 +394,17 @@ test('reports unauthenticated when the identity variable is withheld from the pr
   assert.equal(probe.message, 'Claude is not authenticated.');
 });
 
-function readyProbe(provider, version, message) {
+test('fails closed when the Ollama endpoint is not an HTTP URL', async (t) => {
+  const fixture = await createFixture(t, readyFixtures);
+  const result = runDoctor(fixture, ['--json'], { OLLAMA_HOST: 'file:///etc/passwd' });
+
+  assert.equal(result.status, 1);
+  const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'opencode');
+  assert.equal(probe.status, 'unavailable');
+  assert.equal(probe.capabilities.endpointReachable, false);
+});
+
+function readyProbe(provider, version, message, extraCapabilities = {}) {
   return {
     provider,
     status: 'ready',
@@ -379,6 +413,7 @@ function readyProbe(provider, version, message) {
       nonInteractive: true,
       modelSelection: true,
       sandbox: true,
+      ...extraCapabilities,
     },
     message,
   };
@@ -394,6 +429,27 @@ async function createFixture(t, providers) {
   for (const path of ['harness', 'workflows', 'models']) await mkdir(join(root, path));
   await writeFile(join(root, 'harness', 'manifest.json'), '{}\n');
   await writeFile(join(root, 'models', 'catalog.yaml'), 'models: []\n');
+
+  const port = await freePort();
+  const endpoint = spawn(
+    process.execPath,
+    [
+      '-e',
+      "import('node:http').then(({createServer}) => createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('{\\\"models\\\":[]}'); }).listen(Number(process.argv[1]), '127.0.0.1'))",
+      String(port),
+    ],
+    { stdio: 'ignore' },
+  );
+  t.after(() => endpoint.kill());
+  const ollamaHost = `http://127.0.0.1:${port}`;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      await fetch(`${ollamaHost}/api/tags`);
+      break;
+    } catch {
+      await new Promise((resolveRetry) => setTimeout(resolveRetry, 10));
+    }
+  }
 
   await writeFile(join(root, 'provider-fixtures.json'), JSON.stringify(providers));
   // Read from cwd, not an env var: the doctor scopes the probe env to the same
@@ -413,6 +469,7 @@ else if (provider === 'claude' && args.join(' ') === '--help') command = 'help';
 else if (provider === 'claude' && args.join(' ') === 'auth status') command = 'auth';
 else if (provider === 'agy' && args.join(' ') === '--help') command = 'help';
 else if (provider === 'agy' && args.join(' ') === 'models') command = 'auth';
+else if (provider === 'opencode' && args.join(' ') === 'run --help') command = 'help';
 else process.exit(97);
 const response = fixture?.[command] ?? { status: 1 };
 if (response.fromEnv) {
@@ -436,7 +493,7 @@ else process.exit(response.status ?? 0);
     await chmod(path, 0o755);
   }
 
-  return { root, bin };
+  return { root, bin, ollamaHost };
 }
 
 function runDoctor(fixture, args = [], extraEnv = {}) {
@@ -444,6 +501,7 @@ function runDoctor(fixture, args = [], extraEnv = {}) {
     ...process.env,
     PATH: `${fixture.bin}:/usr/bin:/bin`,
     EXECUTOR_MODE: 'real',
+    OLLAMA_HOST: fixture.ollamaHost,
     ...extraEnv,
   };
   // An explicit `undefined` withholds a variable the runner's own env may carry.
@@ -457,4 +515,18 @@ function runDoctor(fixture, args = [], extraEnv = {}) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function freePort() {
+  const server = createServer();
+  await new Promise((resolveServer, rejectServer) => {
+    server.once('error', rejectServer);
+    server.listen(0, '127.0.0.1', resolveServer);
+  });
+  const address = server.address();
+  const port = address.port;
+  await new Promise((resolveServer, rejectServer) =>
+    server.close((error) => (error ? rejectServer(error) : resolveServer())),
+  );
+  return port;
 }
