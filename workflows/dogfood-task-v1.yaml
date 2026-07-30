@@ -9,7 +9,6 @@ nodes:
   - id: implementation-gate
     type: quality-loop
     title: Implementation quality gate
-    maxIterations: 2
     setup:
       id: implement
       type: agent
@@ -74,7 +73,6 @@ nodes:
   - id: deterministic-verification
     type: quality-loop
     title: Deterministic verification gate
-    maxIterations: 2
     check:
       id: verify-workspace
       type: verify

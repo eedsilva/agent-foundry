@@ -160,6 +160,31 @@ const BASE_AGENT_STEP = {
   outputArtifact: 'plan.current',
 };
 
+const BASE_QUALITY_LOOP = {
+  id: 'quality',
+  type: 'quality-loop' as const,
+  title: 'Quality check',
+  check: BASE_AGENT_STEP,
+  repair: {
+    ...BASE_AGENT_STEP,
+    id: 'repair',
+    role: 'fixer' as const,
+    taskKind: 'repair' as const,
+    title: 'Repair the work',
+    outputArtifact: 'repair.report',
+    mutatesWorkspace: true,
+  },
+  approval: { artifact: 'quality.report', path: 'approved', equals: true },
+};
+
+describe('quality-loop workflow node', () => {
+  it('does not expose the ignored maxIterations budget', () => {
+    const node = WorkflowNodeSchema.parse({ ...BASE_QUALITY_LOOP, maxIterations: 1 });
+    if (node.type !== 'quality-loop') throw new Error('expected quality-loop');
+    expect(node).not.toHaveProperty('maxIterations');
+  });
+});
+
 describe('agent step outputContract', () => {
   it('is optional and accepts task-graph', () => {
     const bare = WorkflowNodeSchema.parse(BASE_AGENT_STEP);

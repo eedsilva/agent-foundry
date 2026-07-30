@@ -291,7 +291,7 @@ describe('persisted run contracts', () => {
     ).toThrow(/provided together/);
   });
 
-  it('keeps legacy maxAttempts and maxIterations readable', () => {
+  it('keeps legacy maxAttempts readable without advertising maxIterations', () => {
     const agent = {
       id: 'review',
       type: 'agent' as const,
@@ -319,7 +319,7 @@ describe('persisted run contracts', () => {
       approval: { artifact: 'review', path: 'approved', equals: true },
       maxIterations: 10,
     });
-    expect(parsedLoop.type === 'quality-loop' && parsedLoop.maxIterations).toBe(10);
+    expect(parsedLoop).not.toHaveProperty('maxIterations');
   });
 
   it('accepts valid queued, pending, and running entity records', () => {

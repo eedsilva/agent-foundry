@@ -406,8 +406,11 @@ Um `quality-loop` possui:
 - `setup` opcional, que cria o artefato inicial;
 - `check`, geralmente um reviewer ou verifier;
 - `repair`, acionado quando a condição falha;
-- `approval`, com artefato, caminho e valor esperado;
-- `maxIterations`, para impedir loops infinitos.
+- `approval`, com artefato, caminho e valor esperado.
+
+`maxIterations` não faz parte do contrato atual: o engine não o usa para limitar loops e o schema
+não o anuncia. Workflows legados ainda podem ser lidos, mas o limite de segurança continua sendo o
+emergency ceiling do run.
 
 A aprovação do reviewer também vira feedback de qualidade para o modelo que produziu o artefato revisado. Isso é melhor que medir apenas exit code, porque uma CLI pode terminar com sucesso e entregar lixo impecavelmente formatado.
 

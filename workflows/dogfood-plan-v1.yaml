@@ -9,7 +9,6 @@ nodes:
   - id: plan-gate
     type: quality-loop
     title: Product plan quality gate
-    maxIterations: 2
     setup:
       id: plan
       type: agent
