@@ -66,9 +66,14 @@ export class LocalExecutionPlane implements ExecutionPlane {
         this.executions.delete(parsedRequest.executionId);
         throw error;
       }
-      const executionResult = ExecutionResultSchema.parse(
-        toExecutionResult(parsedRequest.executionId, error),
-      );
+      let mappedResult: ExecutionResult;
+      try {
+        mappedResult = toExecutionResult(parsedRequest.executionId, error);
+      } catch (mappedError) {
+        this.executions.delete(parsedRequest.executionId);
+        throw mappedError;
+      }
+      const executionResult = ExecutionResultSchema.parse(mappedResult);
       this.executions.set(parsedRequest.executionId, {
         status: {
           executionId: parsedRequest.executionId,

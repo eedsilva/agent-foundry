@@ -175,6 +175,18 @@ describe('LocalExecutionPlane', () => {
     await expect(plane.submit(request())).rejects.toBeInstanceOf(EmergencyCeilingError);
   });
 
+  it('cleans up in-flight status when submit rejects with EmergencyCeilingError', async () => {
+    const plane = new LocalExecutionPlane(registryFor(makeExecutor('ceiling')), {
+      workspacePath: () => '/data/projects/project-1/workspace',
+    });
+
+    await expect(plane.submit(request())).rejects.toBeInstanceOf(EmergencyCeilingError);
+    expect(await plane.status('attempt-1')).toEqual({
+      executionId: 'attempt-1',
+      state: 'pending',
+    });
+  });
+
   it('rejects malformed execution requests before invoking executor', async () => {
     let calls = 0;
     const baseExecutor = makeExecutor('succeed');
