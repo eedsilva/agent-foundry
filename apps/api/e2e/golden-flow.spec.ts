@@ -9,6 +9,7 @@ import type { AgentExecutor } from '@agent-foundry/domain';
 import type {
   AgentExecutionRequest,
   AgentExecutionResult,
+  ExecutorHealth,
   OperationKind,
   RouterDecisionLogEntry,
   TaskProfile,
@@ -437,7 +438,12 @@ function installGoldenFixtureExecutor(): Array<'plan' | 'build'> {
       return goldenFixtureResult(request);
     },
   };
-  (runtime.executors as { get: () => AgentExecutor }).get = () => executor;
+  const registry = runtime.executors as {
+    get: () => AgentExecutor;
+    health: () => Promise<ExecutorHealth[]>;
+  };
+  registry.get = () => executor;
+  registry.health = () => executor.health().then((health) => [health]);
   return knowledgeReads;
 }
 
