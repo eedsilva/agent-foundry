@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export interface SupabaseDataPlaneConfig {
   databaseUrl: string;
   s3Endpoint: string;
@@ -5,6 +7,28 @@ export interface SupabaseDataPlaneConfig {
   s3AccessKeyId: string;
   s3SecretAccessKey: string;
 }
+
+const LOCAL_SUPABASE_PORT_BASE = 20_000;
+const LOCAL_SUPABASE_PORT_BLOCK_SIZE = 8;
+export const LOCAL_SUPABASE_HOST_PORT_FIELDS = [
+  { envVar: 'SUPABASE_API_PORT', section: 'api', key: 'port' },
+  { envVar: 'SUPABASE_DB_PORT', section: 'db', key: 'port' },
+  { envVar: 'SUPABASE_DB_SHADOW_PORT', section: 'db', key: 'shadow_port' },
+  { envVar: 'SUPABASE_STUDIO_PORT', section: 'studio', key: 'port' },
+  { envVar: 'SUPABASE_INBUCKET_PORT', section: 'inbucket', key: 'port' },
+  {
+    envVar: 'SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT',
+    section: 'edge_runtime',
+    key: 'inspector_port',
+  },
+] as const;
+const LOCAL_SUPABASE_PORT_SLOT_COUNT =
+  Math.floor(
+    (65_535 - LOCAL_SUPABASE_PORT_BASE - (LOCAL_SUPABASE_HOST_PORT_FIELDS.length - 1)) /
+      LOCAL_SUPABASE_PORT_BLOCK_SIZE,
+  ) + 1;
+
+export type CleanupStep = { label: string; run: () => Promise<void> | void };
 
 export function parseShellEnv(text: string): Record<string, string> {
   const values: Record<string, string> = {};
@@ -55,6 +79,80 @@ export function assertMigrationCapableDatabaseUrl(databaseUrl: string): void {
   if (parsed.port === '6543') {
     throw new Error(
       'Supabase data-plane validation runs repository migrations and therefore requires a direct connection or the session pooler (5432), not the transaction pooler (6543).',
+    );
+  }
+}
+
+export function buildLocalSupabaseConfig(): string {
+  return `project_id = "env(SUPABASE_PROJECT_ID)"
+
+[api]
+port = "env(SUPABASE_API_PORT)"
+
+[db]
+port = "env(SUPABASE_DB_PORT)"
+shadow_port = "env(SUPABASE_DB_SHADOW_PORT)"
+major_version = 17
+
+[db.migrations]
+enabled = false
+
+[db.seed]
+enabled = false
+
+[studio]
+port = "env(SUPABASE_STUDIO_PORT)"
+
+[analytics]
+enabled = false
+
+[inbucket]
+enabled = false
+port = "env(SUPABASE_INBUCKET_PORT)"
+
+[realtime]
+enabled = false
+
+[edge_runtime]
+enabled = false
+inspector_port = "env(SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT)"
+`;
+}
+
+export async function allocateLocalSupabasePorts(
+  projectId: string,
+  isPortFree: (port: number) => Promise<boolean>,
+): Promise<Record<(typeof LOCAL_SUPABASE_HOST_PORT_FIELDS)[number]['envVar'], number>> {
+  const preferredSlot =
+    createHash('sha256').update(projectId).digest().readUInt32BE(0) %
+    LOCAL_SUPABASE_PORT_SLOT_COUNT;
+  for (let attempt = 0; attempt < LOCAL_SUPABASE_PORT_SLOT_COUNT; attempt += 1) {
+    const base =
+      LOCAL_SUPABASE_PORT_BASE +
+      ((preferredSlot + attempt) % LOCAL_SUPABASE_PORT_SLOT_COUNT) * LOCAL_SUPABASE_PORT_BLOCK_SIZE;
+    const ports = LOCAL_SUPABASE_HOST_PORT_FIELDS.map((_, offset) => base + offset);
+    if (!(await Promise.all(ports.map((port) => isPortFree(port)))).every(Boolean)) continue;
+    return Object.fromEntries(
+      LOCAL_SUPABASE_HOST_PORT_FIELDS.map((field, index) => [field.envVar, ports[index]]),
+    ) as Record<(typeof LOCAL_SUPABASE_HOST_PORT_FIELDS)[number]['envVar'], number>;
+  }
+  throw new Error('No isolated Supabase host port block is available.');
+}
+
+export async function runCleanupSteps(steps: CleanupStep[]): Promise<void> {
+  const failures: Error[] = [];
+  for (const step of steps) {
+    try {
+      await step.run();
+    } catch (error) {
+      const cause = error instanceof Error ? error : new Error(String(error));
+      failures.push(new Error(`Cleanup failed for ${step.label}: ${cause.message}`));
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `Supabase data-plane cleanup failed (${failures.length} step${failures.length === 1 ? '' : 's'}).`,
     );
   }
 }

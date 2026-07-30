@@ -17,9 +17,12 @@ import { PostgresJobQueue, createPostgresClient, migrateUp } from '@agent-foundr
 import { approveAllGates } from './testing-helpers.js';
 import { createRuntime, type Runtime } from './runtime.js';
 import {
+  allocateLocalSupabasePorts,
   assertMigrationCapableDatabaseUrl,
+  buildLocalSupabaseConfig,
   hostedSupabaseDataPlaneConfigFromEnv,
   localSupabaseDataPlaneConfigFromStatusEnv,
+  runCleanupSteps,
   type SupabaseDataPlaneConfig,
 } from './supabase-data-plane.e2e-support.js';
 
@@ -30,37 +33,6 @@ const START_TIMEOUT_MS = 5 * 60 * 1_000;
 const STOP_TIMEOUT_MS = 60_000;
 const FETCH_TIMEOUT_MS = 60_000;
 const rootDir = resolve(import.meta.dirname, '../../..');
-const TEMP_SUPABASE_CONFIG = `project_id = "env(SUPABASE_PROJECT_ID)"
-
-[api]
-port = "env(SUPABASE_API_PORT)"
-
-[db]
-port = "env(SUPABASE_DB_PORT)"
-shadow_port = "env(SUPABASE_DB_SHADOW_PORT)"
-major_version = 17
-
-[db.migrations]
-enabled = false
-
-[db.seed]
-enabled = false
-
-[studio]
-port = "env(SUPABASE_STUDIO_PORT)"
-
-[analytics]
-enabled = false
-
-[inbucket]
-enabled = false
-
-[realtime]
-enabled = false
-
-[edge_runtime]
-enabled = false
-`;
 
 function probeDocker(): boolean {
   try {
@@ -89,9 +61,11 @@ suite('Supabase Postgres + Storage data plane', () => {
   let bucket: string | undefined;
   let s3: S3Client | undefined;
   const createdBlobKeys = new Set<string>();
+  const cleanupPaths = new Set<string>();
 
   beforeAll(async () => {
     runtimeDataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-supabase-data-plane-'));
+    cleanupPaths.add(runtimeDataDir);
     config = USE_HOSTED
       ? hostedSupabaseDataPlaneConfigFromEnv(process.env)
       : await startLocalSupabaseProject();
@@ -135,31 +109,49 @@ suite('Supabase Postgres + Storage data plane', () => {
   }, START_TIMEOUT_MS);
 
   afterAll(async () => {
-    for (const key of createdBlobKeys) {
-      await s3?.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })).catch(() => undefined);
-    }
-    if (bucket) {
-      await s3?.send(new DeleteBucketCommand({ Bucket: bucket })).catch(() => undefined);
-    }
-    s3?.destroy();
-    if (localSupabaseDir) {
-      await execFileAsync(
-        'supabase',
-        ['stop', '--workdir', localSupabaseDir, '--no-backup', '--yes'],
+    try {
+      await runCleanupSteps([
+        ...Array.from(createdBlobKeys, (key) => ({
+          label: `delete object ${key}`,
+          run: async () => {
+            if (!s3 || !bucket) return;
+            await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+          },
+        })),
         {
-          encoding: 'utf8',
-          timeout: STOP_TIMEOUT_MS,
+          label: `delete bucket ${bucket ?? '<none>'}`,
+          run: async () => {
+            if (!s3 || !bucket) return;
+            await s3.send(new DeleteBucketCommand({ Bucket: bucket }));
+          },
         },
-      ).catch(() => undefined);
+        {
+          label: 'stop local supabase stack',
+          run: async () => {
+            if (!localSupabaseDir) return;
+            await execFileAsync(
+              'supabase',
+              ['stop', '--workdir', localSupabaseDir, '--no-backup', '--yes'],
+              {
+                encoding: 'utf8',
+                timeout: STOP_TIMEOUT_MS,
+              },
+            );
+          },
+        },
+        ...Array.from(cleanupPaths, (path) => ({
+          label: `remove temp path ${path}`,
+          run: async () => {
+            await rm(path, { recursive: true, force: true });
+          },
+        })),
+      ]);
+    } finally {
+      s3?.destroy();
     }
-    await Promise.all(
-      [runtimeDataDir, localSupabaseDir]
-        .filter((path): path is string => Boolean(path))
-        .map((path) => rm(path, { recursive: true, force: true })),
-    );
   }, STOP_TIMEOUT_MS + 10_000);
 
-  it('becomes ready, completes a representative Postgres-backed workflow run, and round-trips blob bytes through Supabase S3', async () => {
+  it('becomes ready, completes a representative Postgres-backed workflow run, and round-trips direct blob-store bytes through Supabase S3', async () => {
     if (!runtime || !config || !bucket) {
       throw new Error('Expected Supabase data-plane runtime to be initialized.');
     }
@@ -220,18 +212,16 @@ suite('Supabase Postgres + Storage data plane', () => {
 
   async function startLocalSupabaseProject(): Promise<SupabaseDataPlaneConfig> {
     localSupabaseDir = await mkdtemp(join(tmpdir(), 'agent-foundry-supabase-project-'));
-    const ports = await allocatePorts();
+    cleanupPaths.add(localSupabaseDir);
+    const projectId = `af232_${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+    const ports = await allocateLocalSupabasePorts(projectId, isPortFree);
     await mkdir(join(localSupabaseDir, 'supabase', 'migrations'), { recursive: true });
-    await writeFile(join(localSupabaseDir, 'supabase', 'config.toml'), TEMP_SUPABASE_CONFIG);
+    await writeFile(join(localSupabaseDir, 'supabase', 'config.toml'), buildLocalSupabaseConfig());
     await writeFile(
       join(localSupabaseDir, '.env'),
-      [
-        `SUPABASE_PROJECT_ID=af232_${randomUUID().replace(/-/g, '').slice(0, 8)}`,
-        `SUPABASE_API_PORT=${ports.api}`,
-        `SUPABASE_DB_PORT=${ports.db}`,
-        `SUPABASE_DB_SHADOW_PORT=${ports.shadowDb}`,
-        `SUPABASE_STUDIO_PORT=${ports.studio}`,
-      ].join('\n'),
+      [`SUPABASE_PROJECT_ID=${projectId}`]
+        .concat(Object.entries(ports).map(([key, value]) => `${key}=${value}`))
+        .join('\n'),
     );
 
     await execFileAsync('supabase', ['start', '--workdir', localSupabaseDir, '--yes'], {
@@ -249,26 +239,6 @@ suite('Supabase Postgres + Storage data plane', () => {
     return localSupabaseDataPlaneConfigFromStatusEnv(stdout);
   }
 });
-
-async function allocatePorts(): Promise<{
-  api: number;
-  db: number;
-  shadowDb: number;
-  studio: number;
-}> {
-  const api = await findFreePort(55_321);
-  const db = await findFreePort(api + 1);
-  const shadowDb = await findFreePort(db + 1);
-  const studio = await findFreePort(shadowDb + 1);
-  return { api, db, shadowDb, studio };
-}
-
-async function findFreePort(start: number): Promise<number> {
-  for (let port = start; port <= 65_000; port += 1) {
-    if (await isPortFree(port)) return port;
-  }
-  throw new Error(`No free port found starting at ${start}.`);
-}
 
 function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {

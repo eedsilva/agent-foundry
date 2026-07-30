@@ -776,7 +776,7 @@ Chaves de acesso locais saem de `supabase status -o env`.
 
 ### Harness de validação Supabase Postgres + Storage (#232)
 
-O harness focado deste repositório cria sua própria workdir temporária do Supabase, sobe a stack local, aplica as migrations do repositório, sobe o runtime em `PERSISTENCE_MODE=postgres` + `BLOB_STORE_MODE=s3`, completa um workflow representativo e faz round-trip de um blob pelo endpoint S3. Comandos:
+O harness focado deste repositório cria sua própria workdir temporária do Supabase, sobe a stack local, aplica as migrations do repositório, sobe o runtime em `PERSISTENCE_MODE=postgres` + `BLOB_STORE_MODE=s3`, completa um workflow representativo e faz round-trip de bytes via `runtime.blobStore` pelo endpoint S3. Isso **não** muda o fato de que, hoje, artifacts do `PostgresArtifactStore` continuam em `bytea`; o follow-up para mover artifacts de modo Postgres para object storage continua fora de escopo. Comandos:
 
 ```bash
 RUN_SUPABASE_DATA_PLANE_E2E=true \
@@ -804,7 +804,7 @@ Credenciais/endpoint S3 exigidos pelo harness hospedado:
 - `S3_REGION=<região do projeto>`
 - `S3_ACCESS_KEY_ID` e `S3_SECRET_ACCESS_KEY` gerados em Project Settings → Storage → S3 Connection
 
-O bucket não precisa ser pré-criado manualmente para esse teste: o harness cria um bucket efêmero próprio e o remove no cleanup.
+O bucket não precisa ser pré-criado manualmente para esse teste: o harness cria um bucket efêmero próprio. Cleanup não é “best effort silencioso”: o teste sempre tenta apagar objetos, bucket, stack local e diretórios temporários; se qualquer uma dessas etapas falhar, a suite falha com erro agregado para que vazamento de estado não passe como sucesso.
 
 `DATABASE_URL` para o Postgres do Supabase é configuração separada (persistência, não object storage) — ver a PR #53.
 

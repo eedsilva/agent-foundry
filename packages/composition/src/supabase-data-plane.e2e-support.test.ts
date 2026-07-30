@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  LOCAL_SUPABASE_HOST_PORT_FIELDS,
+  allocateLocalSupabasePorts,
   assertMigrationCapableDatabaseUrl,
+  buildLocalSupabaseConfig,
   hostedSupabaseDataPlaneConfigFromEnv,
   localSupabaseDataPlaneConfigFromStatusEnv,
   parseShellEnv,
+  runCleanupSteps,
 } from './supabase-data-plane.e2e-support.js';
 
 describe('Supabase data-plane e2e support', () => {
@@ -77,5 +81,68 @@ S3_PROTOCOL_REGION="local"
         'postgresql://postgres.x:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres',
       ),
     ).toThrow(/session pooler \(5432\)|transaction pooler \(6543\)/);
+  });
+
+  it('builds an isolated local Supabase config with every host-bound port seam parameterized', () => {
+    const config = buildLocalSupabaseConfig();
+
+    expect(config).toContain('project_id = "env(SUPABASE_PROJECT_ID)"');
+    for (const field of LOCAL_SUPABASE_HOST_PORT_FIELDS) {
+      expect(config).toContain(`${field.key} = "env(${field.envVar})"`);
+    }
+    expect(config).toContain('[analytics]\nenabled = false');
+    expect(config).toContain('[realtime]\nenabled = false');
+  });
+
+  it('allocates ports from the same hashed 8-port block pattern as the generated-project runtime', async () => {
+    const blockedFirstAttempt: number[] = [];
+    let calls = 0;
+
+    const ports = await allocateLocalSupabasePorts('a', async (port) => {
+      if (calls < LOCAL_SUPABASE_HOST_PORT_FIELDS.length) blockedFirstAttempt.push(port);
+      calls += 1;
+      return calls > LOCAL_SUPABASE_HOST_PORT_FIELDS.length;
+    });
+
+    const values = LOCAL_SUPABASE_HOST_PORT_FIELDS.map((field) => ports[field.envVar]);
+    expect(values).toEqual(
+      Array.from(
+        { length: LOCAL_SUPABASE_HOST_PORT_FIELDS.length },
+        (_, index) => values[0]! + index,
+      ),
+    );
+    expect(values[0]! % 8).toBe(0);
+    expect(values[0]).toBeGreaterThan(Math.max(...blockedFirstAttempt));
+  });
+
+  it('reports every cleanup failure after attempting every cleanup step', async () => {
+    const attempts: string[] = [];
+
+    await expect(
+      runCleanupSteps([
+        {
+          label: 'delete object',
+          run: async () => {
+            attempts.push('delete object');
+            throw new Error('no such object');
+          },
+        },
+        {
+          label: 'delete bucket',
+          run: async () => {
+            attempts.push('delete bucket');
+          },
+        },
+        {
+          label: 'stop supabase',
+          run: async () => {
+            attempts.push('stop supabase');
+            throw new Error('docker refused stop');
+          },
+        },
+      ]),
+    ).rejects.toThrow(/cleanup failed/i);
+
+    expect(attempts).toEqual(['delete object', 'delete bucket', 'stop supabase']);
   });
 });
