@@ -86,6 +86,25 @@ jobs:
           version: 2.62.5
       - run: RUN_SUPABASE_RLS_E2E=true npx vitest run packages/platform/src/security-rls.e2e.test.ts --pool=threads --maxWorkers=1
 
+  supabase-data-plane-e2e:
+    name: supabase-data-plane-e2e
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
+        with:
+          version: 2.62.5
+      - name: Fail closed if Docker is unavailable on the runner
+        run: docker info
+      - run: RUN_SUPABASE_DATA_PLANE_E2E=true npx vitest run packages/composition/src/supabase-data-plane.e2e.test.ts --pool=threads --maxWorkers=1
+
   issue-radar-e2e:
     name: issue-radar-e2e
     needs: preflight

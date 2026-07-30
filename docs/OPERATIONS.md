@@ -774,6 +774,38 @@ S3_FORCE_PATH_STYLE=true
 
 Chaves de acesso locais saem de `supabase status -o env`.
 
+### Harness de validação Supabase Postgres + Storage (#232)
+
+O harness focado deste repositório cria sua própria workdir temporária do Supabase, sobe a stack local, aplica as migrations do repositório, sobe o runtime em `PERSISTENCE_MODE=postgres` + `BLOB_STORE_MODE=s3`, completa um workflow representativo e faz round-trip de um blob pelo endpoint S3. Comandos:
+
+```bash
+RUN_SUPABASE_DATA_PLANE_E2E=true \
+npx vitest run packages/composition/src/supabase-data-plane.e2e.test.ts --pool=threads --maxWorkers=1
+```
+
+Para um projeto hospedado throwaway, o mesmo teste aceita `DATABASE_URL` + `S3_*` explícitos quando `SUPABASE_DATA_PLANE_USE_HOSTED=true`:
+
+```bash
+DATABASE_URL='postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres' \
+S3_ENDPOINT='https://<project-ref>.storage.supabase.co/storage/v1/s3' \
+S3_REGION='<region>' \
+S3_ACCESS_KEY_ID='<storage-access-key-id>' \
+S3_SECRET_ACCESS_KEY='<storage-secret-access-key>' \
+SUPABASE_DATA_PLANE_USE_HOSTED=true \
+RUN_SUPABASE_DATA_PLANE_E2E=true \
+npx vitest run packages/composition/src/supabase-data-plane.e2e.test.ts --pool=threads --maxWorkers=1
+```
+
+Esse harness executa migrations antes do boot, então **exige conexão direta ou session pooler (`5432`)**. Se você apontar `DATABASE_URL` para o transaction pooler (`6543`), o teste falha cedo com erro claro, porque `npm run db:migrate` / `migrateUp(...)` dependem de lock `pg_advisory_lock` com escopo de sessão. Já os adapters de runtime continuam pooler-safe via `pg_advisory_xact_lock`, então a restrição é do caminho de migration/validação, não do boot normal da API/worker em produção.
+
+Credenciais/endpoint S3 exigidos pelo harness hospedado:
+
+- `S3_ENDPOINT=https://<project-ref>.storage.supabase.co/storage/v1/s3`
+- `S3_REGION=<região do projeto>`
+- `S3_ACCESS_KEY_ID` e `S3_SECRET_ACCESS_KEY` gerados em Project Settings → Storage → S3 Connection
+
+O bucket não precisa ser pré-criado manualmente para esse teste: o harness cria um bucket efêmero próprio e o remove no cleanup.
+
 `DATABASE_URL` para o Postgres do Supabase é configuração separada (persistência, não object storage) — ver a PR #53.
 
 ### MinIO local (quickstart, fallback neutro)
