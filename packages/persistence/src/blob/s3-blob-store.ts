@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { Transform } from 'node:stream';
 import {
@@ -31,6 +31,34 @@ function encodeKeySegments(key: string): string {
 function isNotFoundError(error: unknown): boolean {
   const meta = (error as { $metadata?: { httpStatusCode?: number } } | undefined)?.$metadata;
   return meta?.httpStatusCode === 404;
+}
+
+function normalizeError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function temporaryUploadKey(key: string): string {
+  return `${key}.tmp-${randomUUID()}`;
+}
+
+function withCleanupFailureCause(error: unknown, cleanupError: AggregateError): unknown {
+  if (!(error instanceof Error)) {
+    return new AggregateError(
+      [normalizeError(error), cleanupError],
+      'S3BlobStore put failed and temporary-object cleanup also failed.',
+    );
+  }
+
+  const withCause = error as Error & { cause?: unknown };
+  if (withCause.cause === undefined) {
+    Object.defineProperty(withCause, 'cause', {
+      value: cleanupError,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+  }
+  return error;
 }
 
 interface MeteredStream {
@@ -86,6 +114,7 @@ export class S3BlobStore implements BlobStore {
 
   async put(input: BlobPutInput, source: Readable): Promise<BlobStat> {
     const { transform, digest } = meteredStream(input.maxBytes);
+    const tempKey = temporaryUploadKey(input.key);
     // .pipe() doesn't forward source errors to the destination; without this
     // a broken upstream read would leave Upload waiting forever instead of
     // failing (and being aborted) like a maxBytes/integrity violation does.
@@ -96,57 +125,76 @@ export class S3BlobStore implements BlobStore {
       client: this.client,
       params: {
         Bucket: this.bucket,
-        Key: input.key,
+        Key: tempKey,
         Body: body,
         ContentType: input.contentType,
       },
     });
 
+    let operationError: unknown;
+    let result: BlobStat | undefined;
+
     try {
-      await upload.done();
+      try {
+        await upload.done();
+      } catch (error) {
+        await upload.abort().catch(() => undefined);
+        throw error;
+      }
+
+      const { sha256, sizeBytes } = digest();
+
+      if (input.expectedSha256 && input.expectedSha256 !== sha256) {
+        throw new BlobIntegrityError(input.key, input.expectedSha256, sha256);
+      }
+
+      // sha256 is only known once the stream has fully drained, so it can't
+      // be set at upload time; copy from a temporary object into the final
+      // key to attach metadata without re-streaming the uploaded bytes.
+      const copyResult = await this.client.send(
+        new CopyObjectCommand({
+          Bucket: this.bucket,
+          Key: input.key,
+          CopySource: `${this.bucket}/${encodeKeySegments(tempKey)}`,
+          ContentType: input.contentType,
+          Metadata: { sha256 },
+          MetadataDirective: 'REPLACE',
+        }),
+      );
+
+      result = {
+        key: input.key,
+        sha256,
+        sizeBytes,
+        contentType: input.contentType,
+        createdAt: (copyResult.CopyObjectResult?.LastModified ?? new Date()).toISOString(),
+        ...(copyResult.ServerSideEncryption
+          ? { encryption: { algorithm: copyResult.ServerSideEncryption } }
+          : {}),
+      };
     } catch (error) {
-      await upload.abort().catch(() => undefined);
-      throw error;
-    }
-
-    const { sha256, sizeBytes } = digest();
-
-    if (input.expectedSha256 && input.expectedSha256 !== sha256) {
-      // Best-effort delete: if this fails, the corrupt object may persist (still
-      // metadata-less, so stat() treats it as incomplete/GC'able), but the
-      // BlobIntegrityError below still fires either way.
+      operationError = error;
+    } finally {
+      const cleanupFailures: Error[] = [];
       await this.client
-        .send(new DeleteObjectCommand({ Bucket: this.bucket, Key: input.key }))
-        .catch(() => undefined);
-      throw new BlobIntegrityError(input.key, input.expectedSha256, sha256);
+        .send(new DeleteObjectCommand({ Bucket: this.bucket, Key: tempKey }))
+        .catch((error) => cleanupFailures.push(normalizeError(error)));
+
+      if (cleanupFailures.length > 0) {
+        const cleanupError = new AggregateError(
+          cleanupFailures,
+          'S3BlobStore temporary-object cleanup failed.',
+        );
+        if (operationError !== undefined) {
+          operationError = withCleanupFailureCause(operationError, cleanupError);
+        } else {
+          throw cleanupError;
+        }
+      }
     }
 
-    // sha256 is only known once the stream has fully drained, so it can't be
-    // set at upload time; a same-bucket copy rewrites the object's metadata
-    // without re-streaming the (already uploaded) bytes. The copy response
-    // already carries the fields a follow-up HeadObjectCommand would have
-    // re-fetched, so there's no need for that extra round-trip.
-    const copyResult = await this.client.send(
-      new CopyObjectCommand({
-        Bucket: this.bucket,
-        Key: input.key,
-        CopySource: `${this.bucket}/${encodeKeySegments(input.key)}`,
-        ContentType: input.contentType,
-        Metadata: { sha256 },
-        MetadataDirective: 'REPLACE',
-      }),
-    );
-
-    return {
-      key: input.key,
-      sha256,
-      sizeBytes,
-      contentType: input.contentType,
-      createdAt: (copyResult.CopyObjectResult?.LastModified ?? new Date()).toISOString(),
-      ...(copyResult.ServerSideEncryption
-        ? { encryption: { algorithm: copyResult.ServerSideEncryption } }
-        : {}),
-    };
+    if (operationError !== undefined) throw operationError;
+    return result!;
   }
 
   async getStream(key: string): Promise<Readable | null> {

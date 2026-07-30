@@ -33,9 +33,11 @@ keys (future callers) go under `DATA_DIR/blobs/<encoded-key>`.
 
 Both adapters stream: `FsBlobStore` reuses `atomicWriteStream` (hash + size cap while writing, atomic
 rename on success); `S3BlobStore` pipes through a metered `Transform` (`meteredStream`) into
-`@aws-sdk/lib-storage`'s `Upload` for multipart streaming, then attaches the computed `sha256` as S3
-object metadata via a same-bucket `CopyObjectCommand` (metadata isn't knowable until the stream drains,
-but multipart `CreateMultipartUploadCommand` fires on the first chunk). Both fail safe on `stat()` for an
+`@aws-sdk/lib-storage`'s `Upload` for multipart streaming against a temporary object key, then copies
+that temporary object into the final key with the computed `sha256` attached as S3 metadata (metadata
+isn't knowable until the stream drains, but multipart `CreateMultipartUploadCommand` fires on the first
+chunk). The temporary object is always deleted in `finally`, and a cleanup failure is surfaced instead of
+being swallowed. Both fail safe on `stat()` for an
 incomplete two-phase write: `FsBlobStore` returns `null` when its `.meta.json` sidecar is missing;
 `S3BlobStore` returns `null` when the object has no `sha256` metadata (the exact window between the
 `Upload` finishing and the follow-up `Copy` completing). An incomplete write is therefore invisible to
