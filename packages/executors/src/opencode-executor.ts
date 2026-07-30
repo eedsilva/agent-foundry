@@ -98,5 +98,8 @@ export class OpenCodeCliExecutor extends BaseCliExecutor {
 
 export function ollamaHost(value = process.env.OLLAMA_HOST): string {
   const host = value?.trim() || 'http://127.0.0.1:11434';
-  return (host.includes('://') ? host : `http://${host}`).replace(/\/+$/, '').replace(/\/v1$/, '');
+  let normalized = host.includes('://') ? host : `http://${host}`;
+  while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
+  if (normalized.endsWith('/v1')) normalized = normalized.slice(0, -3);
+  return normalized;
 }

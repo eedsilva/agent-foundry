@@ -254,7 +254,9 @@ function emptyCapabilities() {
 
 async function probeOllamaEndpoint() {
   try {
-    const response = await fetch(`${ollamaHost()}/api/tags`, {
+    const endpoint = ollamaEndpoint();
+    if (!endpoint) return { ok: false };
+    const response = await fetch(endpoint, {
       signal: AbortSignal.timeout(2_000),
     });
     return { ok: response.ok };
@@ -265,7 +267,27 @@ async function probeOllamaEndpoint() {
 
 function ollamaHost() {
   const host = env.OLLAMA_HOST?.trim() || 'http://127.0.0.1:11434';
-  return host.includes('://') ? host.replace(/\/+$/, '') : `http://${host}`;
+  let normalized = host.includes('://') ? host : `http://${host}`;
+  while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
+  return normalized;
+}
+
+function ollamaEndpoint() {
+  try {
+    const base = new URL(ollamaHost());
+    const isHttpUrl = base.protocol === 'http:' || base.protocol === 'https:';
+    const hasUnsafeUrlParts =
+      !base.hostname || base.username || base.password || base.search || base.hash;
+    if (!isHttpUrl || hasUnsafeUrlParts) {
+      return undefined;
+    }
+    let pathname = base.pathname;
+    while (pathname.endsWith('/')) pathname = pathname.slice(0, -1);
+    base.pathname = `${pathname}/api/tags`;
+    return base;
+  } catch {
+    return undefined;
+  }
 }
 
 function isAgyModelList(output) {

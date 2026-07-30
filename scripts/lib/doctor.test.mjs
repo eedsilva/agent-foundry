@@ -394,6 +394,16 @@ test('reports unauthenticated when the identity variable is withheld from the pr
   assert.equal(probe.message, 'Claude is not authenticated.');
 });
 
+test('fails closed when the Ollama endpoint is not an HTTP URL', async (t) => {
+  const fixture = await createFixture(t, readyFixtures);
+  const result = runDoctor(fixture, ['--json'], { OLLAMA_HOST: 'file:///etc/passwd' });
+
+  assert.equal(result.status, 1);
+  const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'opencode');
+  assert.equal(probe.status, 'unavailable');
+  assert.equal(probe.capabilities.endpointReachable, false);
+});
+
 function readyProbe(provider, version, message, extraCapabilities = {}) {
   return {
     provider,

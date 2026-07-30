@@ -12,6 +12,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/dist-types/**',
       '**/.next/**',
+      'harness/scaffolds/nextjs/**',
       '**/coverage/**',
       '.claude/**',
       'data/**',

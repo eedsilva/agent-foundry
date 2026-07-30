@@ -6,9 +6,10 @@ import { describe, expect, it } from 'vitest';
 
 const scaffoldRoot = resolve(import.meta.dirname, '../../../harness/scaffolds/nextjs');
 
-function runPnpm(cwd: string, args: string[]): Promise<number> {
+function runPackageScript(cwd: string, args: string[]): Promise<number> {
   return new Promise((resolveExit, reject) => {
-    const child = spawn('pnpm', args, { cwd, stdio: 'ignore' });
+    const command = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const child = spawn(command, args, { cwd, stdio: 'ignore' });
     child.once('error', reject);
     child.once('exit', (code) => resolveExit(code ?? 1));
   });
@@ -93,15 +94,15 @@ process.exit(process.argv.includes('--check') && existsSync('invalid.txt') ? 1 :
       await chmod(resolve(bin, 'eslint'), 0o755);
       await chmod(resolve(bin, 'prettier'), 0o755);
 
-      expect(await runPnpm(cwd, ['run', 'lint'])).toBe(1);
-      expect(await runPnpm(cwd, ['test'])).toBe(1);
+      expect(await runPackageScript(cwd, ['run', 'lint'])).toBe(1);
+      expect(await runPackageScript(cwd, ['test'])).toBe(1);
 
       await rm(resolve(cwd, 'broken.test.js'));
-      expect(await runPnpm(cwd, ['run', 'format'])).toBe(0);
-      expect(await runPnpm(cwd, ['run', 'format:check'])).toBe(0);
+      expect(await runPackageScript(cwd, ['run', 'format'])).toBe(0);
+      expect(await runPackageScript(cwd, ['run', 'format:check'])).toBe(0);
       await writeFile(resolve(cwd, 'invalid.txt'), 'invalid');
-      expect(await runPnpm(cwd, ['run', 'lint:fix'])).toBe(0);
-      expect(await runPnpm(cwd, ['run', 'lint'])).toBe(0);
+      expect(await runPackageScript(cwd, ['run', 'lint:fix'])).toBe(0);
+      expect(await runPackageScript(cwd, ['run', 'lint'])).toBe(0);
     } finally {
       await rm(cwd, { force: true, recursive: true });
     }
