@@ -169,6 +169,7 @@ describe('CLI executor contracts', () => {
         read: 'allow',
         glob: 'allow',
         grep: 'allow',
+        external_directory: 'deny',
         edit: 'allow',
       });
     } finally {

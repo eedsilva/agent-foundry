@@ -23,6 +23,7 @@ export class OpenCodeCliExecutor extends BaseCliExecutor {
       read: 'allow',
       glob: 'allow',
       grep: 'allow',
+      external_directory: 'deny',
       ...(request.mutatesWorkspace ? { edit: 'allow' } : {}),
     };
 
