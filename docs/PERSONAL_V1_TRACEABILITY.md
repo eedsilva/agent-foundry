@@ -23,6 +23,17 @@ This matrix connects the normative contract to the versioned roadmap. `planning/
 
 Structural coverage supports a planning-confidence statement; it does not prove implementation quality. Release confidence requires the live Issue Radar evidence named above.
 
+## Existing local v0.x migration ownership
+
+Issue [#212](https://github.com/eedsilva/agent-foundry/issues/212) owns the operator runbook for migrating an existing **local** v0.x project into the Personal v1 runtime model. See [docs/PERSONAL_V1_LOCAL_MIGRATION.md](PERSONAL_V1_LOCAL_MIGRATION.md).
+
+That documentation ownership does not replace the existing release owners:
+
+- [#98](https://github.com/eedsilva/agent-foundry/issues/98) still owns the app-rollback release proof against the forward schema;
+- [#143](https://github.com/eedsilva/agent-foundry/issues/143) still owns the v1.0 structural traceability/release closure work.
+
+In other words, #212 documents how an operator upgrades a local project safely; it does not claim pricing, launch, hosted migration or dependent release features.
+
 ## Explicitly deferred
 
 The following decisions are represented as non-goals rather than silent gaps:

@@ -874,6 +874,8 @@ Em uso local, faça snapshot de todo `DATA_DIR`, incluindo `runs/`. Para restore
 
 ## Operação do Personal Builder v1
 
+Para upgrade de um projeto local v0.x já existente, siga o runbook dedicado em [`docs/PERSONAL_V1_LOCAL_MIGRATION.md`](PERSONAL_V1_LOCAL_MIGRATION.md). Ele cobre preflight, inventário, backup de `DATA_DIR`/workspace, migração forward-only, verificação, rollback somente do app e restore explícito.
+
 ### Runtime local por projeto
 
 Cada projeto greenfield possui nome de Compose, portas, rede, volumes e `.env` próprios. O lifecycle suportado é initialize, start, stop, inspect, migrate, seed, health e cleanup. Reset destrutivo exige confirmação e backup recente.
