@@ -258,7 +258,6 @@ describe('ProjectService.create workspace boot', () => {
       session: previewSession({
         status: 'failed',
         completedAt: NOW,
-        failurePhase: 'start',
         failureEvidence: { exitCode: 1, stdout: '', stderr },
         error: { name: 'PreviewInstallError', code: 'PREVIEW_INSTALL_FAILED', message: stderr },
       }),

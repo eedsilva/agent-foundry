@@ -23,6 +23,7 @@ const ENV_SECRET_ASSIGNMENT =
   /(\b(?:[A-Z][A-Z0-9_]*_)?(?:SECRET|PASSWORD|TOKEN|KEY)\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\]]+)/g;
 const WORKDIR_ARGUMENT = /(--workdir(?:=|\s+))(?:(?:"[^"]*")|(?:'[^']*')|\S+)/gi;
 const PROJECT_WORKDIR = /\/(?:[^/\s"'`]+\/)*projects\/[^/\s"'`]+\/environment(?:\/[^/\s"'`]*)?/gi;
+const ENVIRONMENT_WORKDIR = /\/(?:[^/\s"'`]+\/)+environment(?:\/[^/\s"'`]*)?/gi;
 
 const KEY_PREFIXES = new Set(['api', 'access', 'private']);
 
@@ -43,7 +44,8 @@ export function redactString(value: string): string {
     .replace(DATABASE_URL_ASSIGNMENT, '$1[REDACTED]')
     .replace(ENV_SECRET_ASSIGNMENT, '$1[REDACTED]')
     .replace(WORKDIR_ARGUMENT, '$1[REDACTED]')
-    .replace(PROJECT_WORKDIR, '[REDACTED]');
+    .replace(PROJECT_WORKDIR, '[REDACTED]')
+    .replace(ENVIRONMENT_WORKDIR, '[REDACTED]');
   return VALUE_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[REDACTED]'), assignments);
 }
 

@@ -37,9 +37,13 @@ describe('redactString', () => {
 
   it('redacts Supabase project workdirs in command arguments and transcripts', () => {
     const workdir = '/tmp/agent-foundry/projects/project-1/environment';
-    const output = redactString(`supabase --workdir "${workdir}" failed at ${workdir}`);
+    const alternateWorkdir = '/tmp/agent-foundry/project-1/environment';
+    const output = redactString(
+      `supabase --workdir "${workdir}" failed at ${workdir} and ${alternateWorkdir}`,
+    );
 
     expect(output).not.toContain(workdir);
+    expect(output).not.toContain(alternateWorkdir);
     expect(output).toContain('--workdir [REDACTED]');
   });
 

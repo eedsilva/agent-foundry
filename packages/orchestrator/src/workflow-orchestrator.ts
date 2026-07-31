@@ -14,6 +14,7 @@ import type {
   PlanTask,
   TaskBrowserAssertion,
   PreviewSession,
+  PreviewFailurePhase,
   Project,
   ProjectEvent,
   ProjectPolicy,
@@ -156,6 +157,23 @@ class ApprovalTimeoutScheduleError extends Error {
 
 const PROVISIONING_FAILURE_MESSAGE =
   'Project provisioning failed. Review the project event timeline for details.';
+
+function previewFailurePhase(code: string | undefined): PreviewFailurePhase | undefined {
+  switch (code) {
+    case 'PREVIEW_PREPARE_FAILED':
+      return 'prepare';
+    case 'PREVIEW_INSTALL_FAILED':
+    case 'PREVIEW_START_FAILED':
+      return 'start';
+    case 'PREVIEW_UNHEALTHY':
+      return 'health';
+    case 'PREVIEW_RESTART_LIMIT':
+    case 'PREVIEW_RESTART_FAILED':
+      return 'runtime';
+    default:
+      return undefined;
+  }
+}
 
 class ProjectProvisioningError extends Error {
   readonly code = 'PROJECT_PROVISIONING_FAILED';
@@ -335,13 +353,14 @@ export class WorkflowOrchestrator {
       runId,
     });
     if (session.status !== 'running') {
+      const failurePhase = session.failurePhase ?? previewFailurePhase(session.error?.code);
       throw Object.assign(
         new Error(
           session.error?.message ??
             `Preview session ${session.id} reached '${session.status}' instead of 'running' while booting the workspace.`,
         ),
         {
-          failurePhase: session.failurePhase,
+          failurePhase,
           exitCode: session.failureEvidence?.exitCode ?? session.error?.exitCode,
           stdout: session.failureEvidence?.stdout,
           stderr: session.failureEvidence?.stderr,
