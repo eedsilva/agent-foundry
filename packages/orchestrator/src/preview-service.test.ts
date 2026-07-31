@@ -288,6 +288,18 @@ describe('PreviewService durable lifecycle', () => {
     expect(await service.activeForProject('project-1')).toBeUndefined();
   });
 
+  it('renews an active project lease for long-running workflow work', async () => {
+    const built = await buildService();
+    const { session } = await start(built.service, 'run-1');
+    built.clock.advance(10_000);
+
+    await expect(built.service.renewForProject('project-1')).resolves.toBe(true);
+
+    expect((await built.sessions.get(session.id))?.session).toMatchObject({
+      ttl: { expiresAt: '2026-07-16T12:01:10.000Z' },
+    });
+  });
+
   it('activeForProject does not treat a failing session as live', async () => {
     const { service, sessions } = await buildService();
     const started = await start(service);

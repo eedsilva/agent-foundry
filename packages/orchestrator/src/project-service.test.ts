@@ -467,6 +467,58 @@ describe('ProjectService.create workspace boot', () => {
       (await harness.events.list('id-0001')).some((event) => event.type === 'project.provisioned'),
     ).toBe(true);
   });
+
+  it('retries a failed step without reprovisioning the generated runtime', async () => {
+    const initialize = vi.fn(async () => ENVIRONMENT);
+    const unused = () => Promise.reject(new Error('unused test runtime operation'));
+    const harness = makeHarness(
+      { implement: { kind: 'fail-once', error: () => new Error('implementation failed') } },
+      makeStores(),
+      {
+        generatedProjectRuntime: {
+          initialize,
+          start: unused,
+          stop: unused,
+          inspect: unused,
+          previewMigration: unused,
+          backupMigration: unused,
+          migrate: unused,
+          seed: unused,
+          health: unused,
+          reset: unused,
+          cleanup: unused,
+          deployFunction: unused,
+          listFunctionVersions: unused,
+          rollbackFunction: unused,
+          invokeFunction: unused,
+        } satisfies GeneratedProjectRuntime,
+      },
+    );
+
+    await harness.service.create({
+      name: 'Retry project',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    const worker = new WorkerLoop(harness.queue, harness.orchestrator, {} as never, {
+      workerId: 'worker-1',
+      pollIntervalMs: 1_000,
+    });
+    harness.queueForWorker(harness.enqueued[0]!);
+    await worker.runOnce();
+
+    const failedImplement = (await harness.stepRuns.list('id-0002')).find(
+      (step) => step.stepId === 'implement' && step.status === 'failed',
+    );
+    expect(failedImplement).toBeDefined();
+    await harness.service.retryStep('id-0002', failedImplement!.id, { mode: 'preserve' });
+
+    harness.queueForWorker(harness.enqueued[0]!);
+    await worker.runOnce();
+
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'completed' });
+  });
 });
 
 describe('ProjectService.create scaffold application', () => {

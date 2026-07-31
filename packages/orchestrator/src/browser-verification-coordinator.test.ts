@@ -104,11 +104,12 @@ function setup(
   artifacts: Pick<ArtifactStore, 'putBlob'> = {
     putBlob: () => Promise.reject(new Error('putBlob should not be called by this fixture')),
   },
+  startedPreview?: { session: PreviewSession; url: string },
 ) {
   const stopped: string[] = [];
   const session = runningSession();
   const previews = {
-    start: () => Promise.resolve({ session, url: session.url! }),
+    start: () => Promise.resolve(startedPreview ?? { session, url: session.url! }),
     stop: (sessionId: string) => {
       stopped.push(sessionId);
       return Promise.resolve({
@@ -137,6 +138,29 @@ const input = {
 };
 
 describe('BrowserVerificationCoordinator', () => {
+  it('preserves a terminal preview failure instead of masking it as a report binding error', async () => {
+    const failedSession: PreviewSession = {
+      ...runningSession(),
+      status: 'failed',
+      error: {
+        name: 'PreviewUnhealthyError',
+        code: 'PREVIEW_UNHEALTHY',
+        message: 'Dev server did not become healthy in time.',
+      },
+      completedAt: '2026-07-17T12:00:02.000Z',
+    };
+    const { coordinator, stopped } = setup(
+      () => Promise.reject(new Error('verifier must not run')),
+      undefined,
+      { session: failedSession, url: '' },
+    );
+
+    await expect(coordinator.verify(input, new AbortController().signal)).rejects.toThrow(
+      'Dev server did not become healthy in time.',
+    );
+    expect(stopped).toEqual([]);
+  });
+
   it('stops the preview once after successful verification', async () => {
     const { coordinator, stopped } = setup(() =>
       Promise.resolve({ report: report(), evidence: { screenshots: [] } }),

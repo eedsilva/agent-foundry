@@ -55,6 +55,12 @@ export class BrowserVerificationCoordinator {
       workspaceRef: { projectId: input.projectId, workspacePath: input.workspacePath },
       runId: input.runId,
     });
+    if (!started.url || !['running', 'unhealthy'].includes(started.session.status)) {
+      throw new Error(
+        started.session.error?.message ??
+          `Preview session is not available for browser verification (${started.session.status}).`,
+      );
+    }
     const session = PreviewSessionReferenceSchema.parse({
       sessionId: started.session.id,
       status: started.session.status,

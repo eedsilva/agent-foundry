@@ -70,7 +70,11 @@ describe('DockerPreviewInstaller', () => {
       },
       mounts: [{ source: '/host/project', target: '/project', readOnly: false }],
     });
-    expect(runner.requests[0]).toMatchObject({ command: 'npm', args: ['ci'], cwd: '/project' });
+    expect(runner.requests[0]).toMatchObject({
+      command: 'env',
+      args: ['HOME=/workspace', 'CI=true', 'npm', 'ci'],
+      cwd: '/project',
+    });
     expect(outcome).toMatchObject({ ok: true, networkEvents: [EVENT] });
     expect(runner.destroy).toHaveBeenCalledWith({ id: 'sandbox-1' });
   });
