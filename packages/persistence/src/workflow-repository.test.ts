@@ -37,6 +37,9 @@ describe('YamlWorkflowRepository', () => {
       'db:reset',
       'smoke',
     ]);
+    expect(workflow.routing?.find((entry) => entry.taskKind === 'verification')?.executors).toEqual(
+      ['codex', 'claude', 'glm', 'agy', 'opencode'],
+    );
   });
 
   it('rejects a step that consumes an artifact not guaranteed by earlier nodes', async () => {
