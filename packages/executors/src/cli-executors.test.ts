@@ -118,6 +118,22 @@ describe('CLI executor contracts', () => {
     expect(invocation.args.at(-1)).toBe('Open the request file.');
   });
 
+  it('removes unsupported Draft 2020-12 metadata from Claude schemas', async () => {
+    const invocation = await new InspectableClaudeExecutor(1_000_000).inspect(
+      request({
+        provider: 'claude',
+        outputSchema: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          'x-agent-foundry-runtime-validation': { internal: true },
+        },
+      }),
+    );
+    const schemaIndex = invocation.args.indexOf('--json-schema');
+    expect(schemaIndex).toBeGreaterThanOrEqual(0);
+    expect(JSON.parse(invocation.args[schemaIndex + 1] ?? '')).toEqual({ type: 'object' });
+  });
+
   it('reuses Claude invocation with GLM endpoint and auth overrides', async () => {
     const invocation = await new InspectableGlmExecutor(1_000_000, {
       provider: 'glm',

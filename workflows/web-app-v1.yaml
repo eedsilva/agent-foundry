@@ -87,13 +87,11 @@ nodes:
       # for what a machine cannot fix.
       autofixScripts: [format, 'lint:fix']
       scripts: [typecheck]
-      # Gating from the moment the generated project defines them, in order.
-      # The scaffold ships lint/test plus the last three: `db:start` is idempotent
-      # and brings up this project's own Supabase stack (writing .env), `db:reset`
-      # re-applies every migration and the seed against it, and `smoke` boots
-      # both tiers and asserts they answer. A generated project grows a lint
-      # and a test script as the tasks that need them land.
-      optionalScripts: [lint, test, 'db:start', 'db:reset', smoke]
+      # Lint and unit tests can gate each task as they are introduced. The
+      # database smoke is intentionally deferred to the full-suite node: an
+      # early migration task can legitimately leave the scaffold smoke script
+      # referring to the old schema until a later task updates it.
+      optionalScripts: [lint, test]
       includeGitDiffCheck: true
     repair:
       id: repair-task
@@ -149,6 +147,7 @@ nodes:
     title: Run the full repository verification suite
     outputArtifact: verification.report
     scripts: [typecheck, lint, test, build]
+    optionalScripts: ['db:start', 'db:reset', smoke]
     includeGitDiffCheck: true
     blocksOnFailure: true
 

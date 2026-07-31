@@ -2,6 +2,15 @@ import type { AgentExecutionRequest, ExecutorHealth } from '@agent-foundry/contr
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
 import { createClaudeStreamMapper } from './claude-stream-events.js';
 
+function claudeJsonSchema(schema: AgentExecutionRequest['outputSchema']): string {
+  if (schema === undefined) return '{}';
+
+  const compatibleSchema = Object.fromEntries(
+    Object.entries(schema).filter(([key]) => key !== '$schema' && !key.startsWith('x-')),
+  );
+  return JSON.stringify(compatibleSchema);
+}
+
 export interface ClaudeCliExecutorOptions {
   provider?: 'claude' | 'glm';
   environment?: NodeJS.ProcessEnv;
@@ -47,7 +56,7 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
       '--permission-mode',
       request.mutatesWorkspace ? 'acceptEdits' : 'plan',
       '--json-schema',
-      JSON.stringify(request.outputSchema ?? {}),
+      claudeJsonSchema(request.outputSchema),
     ];
     if (request.model.trim()) args.push('--model', request.model);
     args.push(request.prompt);

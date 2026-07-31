@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import type { NetworkPolicyEvent, SandboxSpec } from '@agent-foundry/contracts';
 import type { SandboxExecRequest, SandboxHandle } from '@agent-foundry/domain';
@@ -59,6 +62,7 @@ describe('DockerPreviewInstaller', () => {
     });
 
     expect(runner.specs[0]).toMatchObject({
+      resources: { memoryMiB: 2_048 },
       network: {
         mode: 'allowlist',
         purpose: 'dependency-install',
@@ -71,34 +75,59 @@ describe('DockerPreviewInstaller', () => {
     expect(runner.destroy).toHaveBeenCalledWith({ id: 'sandbox-1' });
   });
 
-  it('runs pnpm through corepack with a writable HOME — the image ships no pnpm binary', async () => {
+  it('runs pnpm through corepack with host-only optional packages', async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), 'agent-foundry-preview-'));
+    const packagePath = join(workspacePath, 'package.json');
+    const originalPackage = '{"name":"generated-app","pnpm":{"overrides":{"postcss":"^8"}}}\n';
+    await writeFile(packagePath, originalPackage);
     const runner = fakeRunner();
+    let installedManifest: Record<string, unknown> | undefined;
+    runner.exec = async (_sandbox, request) => {
+      runner.requests.push(request);
+      installedManifest = JSON.parse(await readFile(packagePath, 'utf8')) as Record<
+        string,
+        unknown
+      >;
+      return { exitCode: 0, stdout: 'installed', stderr: '' };
+    };
     const installer = new DockerPreviewInstaller({ runner });
 
-    const outcome = await installer.install({
-      plan: {
-        packageManager: 'pnpm',
-        install: { ok: true, command: 'pnpm', args: ['install', '--frozen-lockfile'] },
-        build: { ok: false, reason: 'not needed' },
-        dev: { ok: false, reason: 'not needed' },
-        detectedAt: '2026-07-22T12:00:00.000Z',
-      },
-      workspacePath: '/host/project',
-    });
+    try {
+      const outcome = await installer.install({
+        plan: {
+          packageManager: 'pnpm',
+          install: { ok: true, command: 'pnpm', args: ['install', '--frozen-lockfile'] },
+          build: { ok: false, reason: 'not needed' },
+          dev: { ok: false, reason: 'not needed' },
+          detectedAt: '2026-07-22T12:00:00.000Z',
+        },
+        workspacePath,
+      });
 
-    expect(runner.requests[0]).toMatchObject({
-      command: 'env',
-      args: [
-        'HOME=/workspace',
-        'COREPACK_ENABLE_DOWNLOAD_PROMPT=0',
-        'corepack',
-        'pnpm',
-        'install',
-        '--frozen-lockfile',
-      ],
-      cwd: '/project',
-    });
-    expect(outcome).toMatchObject({ ok: true });
+      expect(runner.requests[0]).toMatchObject({
+        command: 'env',
+        args: [
+          'HOME=/workspace',
+          'COREPACK_ENABLE_DOWNLOAD_PROMPT=0',
+          'CI=true',
+          'corepack',
+          'pnpm',
+          'install',
+          '--frozen-lockfile',
+        ],
+        cwd: '/project',
+      });
+      expect(installedManifest).toMatchObject({
+        pnpm: {
+          overrides: { postcss: '^8' },
+          supportedArchitectures: { os: [process.platform], cpu: [process.arch] },
+        },
+      });
+      expect(outcome).toMatchObject({ ok: true });
+      expect(await readFile(packagePath, 'utf8')).toBe(originalPackage);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
   });
 
   it('destroys the sandbox when install execution fails', async () => {
@@ -167,7 +196,7 @@ describe('DockerPreviewInstaller', () => {
     expect(outcome).toMatchObject({
       ok: false,
       exitCode: -1,
-      stderr: 'audit unavailable',
+      stderr: 'Network evidence unavailable: audit unavailable',
       networkEvents: [],
     });
     expect(runner.destroy).toHaveBeenCalledOnce();

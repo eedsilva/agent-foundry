@@ -25,6 +25,18 @@ describe('YamlWorkflowRepository', () => {
       'release-assessment',
       'diff-approval',
     ]);
+    const taskExecution = workflow.nodes.find((node) => node.id === 'task-execution');
+    const fullSuite = workflow.nodes.find((node) => node.id === 'full-suite-verification');
+    expect(taskExecution?.type).toBe('for-each-task');
+    expect(
+      taskExecution?.type === 'for-each-task' && taskExecution.verify?.optionalScripts,
+    ).toEqual(['lint', 'test']);
+    expect(fullSuite?.type).toBe('verify');
+    expect(fullSuite?.type === 'verify' && fullSuite.optionalScripts).toEqual([
+      'db:start',
+      'db:reset',
+      'smoke',
+    ]);
   });
 
   it('rejects a step that consumes an artifact not guaranteed by earlier nodes', async () => {

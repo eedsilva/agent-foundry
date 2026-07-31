@@ -58,6 +58,42 @@ describe('DockerSandboxRunner policy lifecycle', () => {
     expect(sidecarRemovalAttempts).toBe(2);
   });
 
+  it('treats Docker removal races as an idempotent cleanup', async () => {
+    execaMock.mockImplementation(async (_command: string, args: string[]) => {
+      if (!Array.isArray(args)) return result();
+      if (args[0] === 'network' && args[1] === 'ls') return result();
+      if (args[0] === 'network' && args[1] === 'create') return result('network-1');
+      if (args[0] === 'network' && args[1] === 'connect') return result();
+      if (args[0] === 'inspect') return result('172.30.0.2');
+      if (args[0] === 'exec' || args[0] === 'start') return result();
+      if (args[0] === 'create') {
+        return result(
+          args.includes('/opt/agent-foundry/network-policy.js') ? 'sidecar-1' : 'sandbox-1',
+        );
+      }
+      if (args[0] === 'rm' && args.includes('sidecar-1')) {
+        return result('', 1, 'removal of container sidecar-1 is already in progress');
+      }
+      if (args[0] === 'rm') return result('', 1, 'dead or marked for removal');
+      if (args[0] === 'network' && args[1] === 'rm') {
+        return result('', 1, 'network removal is already in progress');
+      }
+      throw new Error(`Unexpected docker args: ${args.join(' ')}`);
+    });
+
+    const runner = new DockerSandboxRunner({ sidecarScriptPath: import.meta.filename });
+    const handle = await runner.create({
+      image: PINNED_IMAGE,
+      resources: { cpuMillis: 500, memoryMiB: 128, diskMiB: 64, pids: 32 },
+      network: { mode: 'allowlist', allowedHosts: ['example.com'], purpose: 'execution' },
+      mounts: [],
+      ttlMs: 60_000,
+      user: '1000:1000',
+    });
+
+    await expect(runner.destroy(handle)).resolves.toBeUndefined();
+  });
+
   it('removes expired labeled networks before creating a new policy sandbox', async () => {
     execaMock.mockImplementation(async (_command: string, args: string[]) => {
       if (!Array.isArray(args)) return result();
