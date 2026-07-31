@@ -29,6 +29,7 @@ const ConfigSchema = z
     AUTO_INSTALL_DEPENDENCIES: booleanFromEnv,
     ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: booleanFromEnv,
     AGENT_TIMEOUT_MS: z.coerce.number().int().positive().default(1_200_000),
+    SUPABASE_PROVISIONING_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
     VERIFICATION_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
     MAX_CLI_OUTPUT_BYTES: z.coerce.number().int().positive().default(20_000_000),
     WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(750),
@@ -106,6 +107,7 @@ export interface RuntimeConfig {
   autoInstallDependencies: boolean;
   allowUnsafeRemoteRealExecution: boolean;
   agentTimeoutMs: number;
+  supabaseProvisioningTimeoutMs: number;
   verificationTimeoutMs: number;
   maxCliOutputBytes: number;
   workerPollIntervalMs: number;
@@ -201,6 +203,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     autoInstallDependencies: parsed.AUTO_INSTALL_DEPENDENCIES,
     allowUnsafeRemoteRealExecution: parsed.ALLOW_UNSAFE_REMOTE_REAL_EXECUTION,
     agentTimeoutMs: parsed.AGENT_TIMEOUT_MS,
+    supabaseProvisioningTimeoutMs: parsed.SUPABASE_PROVISIONING_TIMEOUT_MS,
     verificationTimeoutMs: parsed.VERIFICATION_TIMEOUT_MS,
     maxCliOutputBytes: parsed.MAX_CLI_OUTPUT_BYTES,
     workerPollIntervalMs: parsed.WORKER_POLL_INTERVAL_MS,

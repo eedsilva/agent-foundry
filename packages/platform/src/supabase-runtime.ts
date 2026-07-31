@@ -43,6 +43,9 @@ import { configureGeneratedAuth } from './supabase-auth.js';
 
 const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
+const DEFAULT_INITIALIZE_TIMEOUT_MS = 10 * 60 * 1000;
+const INITIALIZE_CLEANUP_TIMEOUT_MS = 30 * 1000;
+const PROVISIONING_TIMEOUT = Symbol('provisioning-timeout');
 const NUL = Buffer.from('\0');
 const PORT_BASE = 20_000;
 const PORT_BLOCK_SIZE = 8;
@@ -69,28 +72,47 @@ export interface SupabaseGeneratedProjectRuntimeOptions {
   dataDir: string;
   command?: SupabaseCommand;
   now?: () => Date;
+  initializeTimeoutMs?: number;
 }
 
-const defaultCommand: SupabaseCommand = async (...args) => {
-  const result = await execa('supabase', args);
+const defaultCommand: SupabaseCommand = (...args) => runDefaultCommand(undefined, ...args);
+
+const defaultCommandWithSignal = async (
+  signal: AbortSignal,
+  ...args: string[]
+): Promise<SupabaseCommandResult> => runDefaultCommand(signal, ...args);
+
+async function runDefaultCommand(
+  signal: AbortSignal | undefined,
+  ...args: string[]
+): Promise<SupabaseCommandResult> {
+  const result = await execa('supabase', args, signal ? { cancelSignal: signal } : undefined);
   return {
     stdout: result.stdout,
     stderr: result.stderr,
     ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
   };
-};
+}
 
 export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime {
   readonly #dataDir: string;
   readonly #command: SupabaseCommand;
+  readonly #abortableCommand:
+    ((signal: AbortSignal, ...args: string[]) => Promise<SupabaseCommandResult>) | undefined;
   readonly #now: () => Date;
+  readonly #initializeTimeoutMs: number;
   readonly #initializations = new Map<string, Promise<AppEnvironment>>();
   #configurationQueue = Promise.resolve();
 
   constructor(options: SupabaseGeneratedProjectRuntimeOptions) {
     this.#dataDir = options.dataDir;
     this.#command = options.command ?? defaultCommand;
+    this.#abortableCommand = options.command ? undefined : defaultCommandWithSignal;
     this.#now = options.now ?? (() => new Date());
+    this.#initializeTimeoutMs = options.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS;
+    if (!Number.isInteger(this.#initializeTimeoutMs) || this.#initializeTimeoutMs <= 0) {
+      throw new ValidationError('Supabase initialization timeout must be a positive integer.');
+    }
   }
 
   async initialize(input: { projectId: string }): Promise<AppEnvironment> {
@@ -120,20 +142,30 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       retainedWorkdir = false;
     }
     if (retainedWorkdir) {
-      await this.#execute('initialize', 'stop', '--workdir', workdir, '--no-backup', '--yes');
+      await this.#stopWithTimeout(workdir);
       try {
         await rm(workdir, { recursive: true, force: true });
       } catch (error) {
         throw operationError('initialize', error);
       }
     }
+    const initializationDeadline = createDeadline(this.#initializeTimeoutMs);
+    const wait = <T>(operation: EnvironmentLifecycleOperation, promise: Promise<T>) =>
+      waitWithSignal(operation, promise, initializationDeadline.signal, this.#initializeTimeoutMs);
+    const execute = (operation: EnvironmentLifecycleOperation, ...args: string[]) =>
+      this.#executeWithSignal(
+        operation,
+        initializationDeadline.signal,
+        this.#initializeTimeoutMs,
+        ...args,
+      );
     let startAttempted = false;
     try {
-      await mkdir(workdir, { recursive: true });
-      await this.#execute('initialize', 'init', '--workdir', workdir);
-      await this.#configure(workdir, composeProjectName);
+      await wait('initialize', mkdir(workdir, { recursive: true }));
+      await execute('initialize', 'init', '--workdir', workdir);
+      await wait('initialize', this.#configure(workdir, composeProjectName));
       startAttempted = true;
-      await this.#execute(
+      await execute(
         'start',
         'start',
         '--workdir',
@@ -144,8 +176,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
         '--network-id',
         network,
       );
-      await this.#execute('initialize', 'seed', 'buckets', '--workdir', workdir);
-      const result = await this.#execute(
+      await execute('initialize', 'seed', 'buckets', '--workdir', workdir);
+      const result = await execute(
         'initialize',
         'status',
         '--workdir',
@@ -173,24 +205,47 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
         'initialize',
       );
       const credentials = credentialsFromStatus(result.stdout);
-      if (credentials) await this.#writeAppSecrets(projectId, credentials);
-      await persist(environment);
+      if (credentials) await wait('initialize', this.#writeAppSecrets(projectId, credentials));
+      await wait('initialize', persist(environment));
       return environment;
     } catch (error) {
       const original = asOperationError('initialize', error);
+      const preserveWorkdir = isProvisioningTimeout(original);
       if (startAttempted) {
         try {
-          await this.#execute('initialize', 'stop', '--workdir', workdir, '--no-backup', '--yes');
+          await this.#stopWithTimeout(workdir);
         } catch (cleanupError) {
           throw recoveryError(original, cleanupError);
         }
       }
-      try {
-        await rm(workdir, { recursive: true, force: true });
-      } catch (cleanupError) {
-        throw recoveryError(original, cleanupError);
+      if (!preserveWorkdir) {
+        try {
+          await rm(workdir, { recursive: true, force: true });
+        } catch (cleanupError) {
+          throw recoveryError(original, cleanupError);
+        }
       }
       throw original;
+    } finally {
+      initializationDeadline.cancel();
+    }
+  }
+
+  async #stopWithTimeout(workdir: string): Promise<void> {
+    const cleanupDeadline = createDeadline(INITIALIZE_CLEANUP_TIMEOUT_MS);
+    try {
+      await this.#executeWithSignal(
+        'initialize',
+        cleanupDeadline.signal,
+        INITIALIZE_CLEANUP_TIMEOUT_MS,
+        'stop',
+        '--workdir',
+        workdir,
+        '--no-backup',
+        '--yes',
+      );
+    } finally {
+      cleanupDeadline.cancel();
     }
   }
 
@@ -611,10 +666,25 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   ): Promise<SupabaseCommandResult> {
     try {
       const result = await this.#command(...args);
-      if (result.exitCode !== undefined && result.exitCode !== 0) {
-        throw Object.assign(new Error('Supabase command failed.'), result);
-      }
-      return result;
+      return assertCommandSucceeded(result);
+    } catch (error) {
+      if (error instanceof EnvironmentOperationError) throw error;
+      throw operationError(operation, error);
+    }
+  }
+
+  async #executeWithSignal(
+    operation: EnvironmentLifecycleOperation,
+    signal: AbortSignal,
+    timeoutMs: number,
+    ...args: string[]
+  ): Promise<SupabaseCommandResult> {
+    try {
+      const command = this.#abortableCommand
+        ? this.#abortableCommand(signal, ...args)
+        : this.#command(...args);
+      const result = await waitWithSignal(operation, command, signal, timeoutMs);
+      return assertCommandSucceeded(result);
     } catch (error) {
       if (error instanceof EnvironmentOperationError) throw error;
       throw operationError(operation, error);
@@ -1161,6 +1231,75 @@ function backupManifestPath(dataDir: string, projectId: string, manifestId: stri
 async function persist(environment: AppEnvironment): Promise<void> {
   const path = join(environment.workdir, 'environment.json');
   await atomicWrite(path, `${JSON.stringify(AppEnvironmentSchema.parse(environment), null, 2)}\n`);
+}
+
+function createDeadline(timeoutMs: number): {
+  signal: AbortSignal;
+  cancel: () => void;
+} {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return { signal: controller.signal, cancel: () => clearTimeout(timer) };
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(signal.reason);
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function assertCommandSucceeded(result: SupabaseCommandResult): SupabaseCommandResult {
+  if (result.exitCode !== undefined && result.exitCode !== 0) {
+    throw Object.assign(new Error('Supabase command failed.'), result);
+  }
+  return result;
+}
+
+function timeoutError(
+  operation: EnvironmentLifecycleOperation,
+  timeoutMs: number,
+): EnvironmentOperationError {
+  const error = new EnvironmentOperationError(
+    operation,
+    undefined,
+    `Supabase ${operation} timed out after ${Math.ceil(timeoutMs / 1_000)} seconds. Verify Docker and Supabase readiness before retrying; cleanup is attempted automatically when a stack was started, and the partial workdir is preserved for inspection until retry.`,
+  );
+  Object.defineProperty(error, PROVISIONING_TIMEOUT, { value: true });
+  return error;
+}
+
+function isProvisioningTimeout(error: EnvironmentOperationError): boolean {
+  return PROVISIONING_TIMEOUT in error;
+}
+
+async function waitWithSignal<T>(
+  operation: EnvironmentLifecycleOperation,
+  promise: Promise<T>,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<T> {
+  try {
+    return await raceWithAbort(promise, signal);
+  } catch (error) {
+    if (signal.aborted) throw timeoutError(operation, timeoutMs);
+    throw error;
+  }
 }
 
 async function configureProject(

@@ -98,6 +98,19 @@ describe('preview service configuration', () => {
   });
 });
 
+describe('Supabase provisioning configuration', () => {
+  it('uses a bounded provisioning timeout by default', () => {
+    expect(loadRuntimeConfig(base).supabaseProvisioningTimeoutMs).toBe(600_000);
+  });
+
+  it('honors the provisioning timeout override', () => {
+    expect(
+      loadRuntimeConfig({ ...base, SUPABASE_PROVISIONING_TIMEOUT_MS: '25' })
+        .supabaseProvisioningTimeoutMs,
+    ).toBe(25);
+  });
+});
+
 describe('artifact retention configuration', () => {
   it('defaults artifact size and retention limits', () => {
     expect(loadRuntimeConfig(base)).toMatchObject({

@@ -22,9 +22,18 @@ function eventBadges(event: ProjectEvent): string[] {
   return badges;
 }
 
-function previewFailureDiagnostic(event: ProjectEvent): string | null {
-  if (event.type !== 'preview.failed' || !event.data.diagnostic) return null;
-  return JSON.stringify(event.data.diagnostic, null, 2);
+function eventDiagnostic(event: ProjectEvent): { label: string; value: string } | null {
+  if (
+    (event.type !== 'preview.failed' && event.type !== 'project.provisioning_failed') ||
+    !event.data.diagnostic
+  ) {
+    return null;
+  }
+  return {
+    label:
+      event.type === 'preview.failed' ? 'Diagnóstico do preview' : 'Diagnóstico do provisionamento',
+    value: JSON.stringify(event.data.diagnostic, null, 2),
+  };
 }
 
 export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: boolean }) {
@@ -43,7 +52,7 @@ export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: bo
         <div aria-live="polite" className="border-hairline flex flex-col gap-4 border-l pl-4">
           {[...events].reverse().map((event) => {
             const badges = eventBadges(event);
-            const diagnostic = previewFailureDiagnostic(event);
+            const diagnostic = eventDiagnostic(event);
             return (
               <article key={event.id} className="relative">
                 <span
@@ -68,10 +77,10 @@ export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: bo
                 {diagnostic ? (
                   <details className="mt-2">
                     <summary className="text-ink-subtle cursor-pointer text-[11px]">
-                      Diagnóstico do preview
+                      {diagnostic.label}
                     </summary>
                     <pre className="bg-surface-muted text-ink-subtle mt-2 max-h-64 overflow-auto rounded p-2 font-mono text-[10px] whitespace-pre-wrap">
-                      {diagnostic}
+                      {diagnostic.value}
                     </pre>
                   </details>
                 ) : null}

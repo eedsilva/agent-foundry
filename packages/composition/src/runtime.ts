@@ -227,7 +227,10 @@ export async function createRuntime(
   if (config.executorMode === 'real' && overrides.generatedProjectRuntime !== null) {
     generatedProjectRuntime =
       overrides.generatedProjectRuntime ??
-      new SupabaseGeneratedProjectRuntime({ dataDir: config.dataDir });
+      new SupabaseGeneratedProjectRuntime({
+        dataDir: config.dataDir,
+        initializeTimeoutMs: config.supabaseProvisioningTimeoutMs,
+      });
   }
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
   // The circuit breaker is on by default (DEFAULT_BREAKER_CONFIG merges in the
