@@ -207,6 +207,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       return environment;
     } catch (error) {
       const original = asOperationError('initialize', error);
+      const preserveWorkdir = original.diagnostic.includes(' timed out after ');
       if (startAttempted) {
         try {
           await this.#stopWithTimeout(workdir);
@@ -214,10 +215,12 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
           throw recoveryError(original, cleanupError);
         }
       }
-      try {
-        await rm(workdir, { recursive: true, force: true });
-      } catch (cleanupError) {
-        throw recoveryError(original, cleanupError);
+      if (!preserveWorkdir) {
+        try {
+          await rm(workdir, { recursive: true, force: true });
+        } catch (cleanupError) {
+          throw recoveryError(original, cleanupError);
+        }
       }
       throw original;
     } finally {
@@ -1273,7 +1276,7 @@ function timeoutError(
   return new EnvironmentOperationError(
     operation,
     undefined,
-    `Supabase ${operation} timed out after ${Math.ceil(timeoutMs / 1_000)} seconds. Verify Docker and Supabase readiness before retrying; cleanup is attempted automatically.`,
+    `Supabase ${operation} timed out after ${Math.ceil(timeoutMs / 1_000)} seconds. Verify Docker and Supabase readiness before retrying; cleanup is attempted automatically when a stack was started, and the partial workdir is preserved for inspection until retry.`,
   );
 }
 

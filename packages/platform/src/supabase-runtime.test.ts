@@ -376,7 +376,7 @@ enabled = false`);
     await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('times out a stuck start, stops the stack, and removes the workdir', async () => {
+  it('times out a stuck start, stops the stack, and preserves the workdir for retry', async () => {
     const workdir = join(dataDir, 'projects', 'project-a', 'environment');
     let startCalled = false;
     const command = vi.fn<SupabaseCommand>(async (...args) => {
@@ -394,11 +394,12 @@ enabled = false`);
     expect(rejection).toMatchObject({ operation: 'start', exitCode: undefined });
     if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
     expect(rejection.diagnostic).toContain('timed out');
+    expect(rejection.diagnostic).toContain('preserved');
     expect(rejection.diagnostic).toContain('retry');
     expect(command.mock.calls.slice(-1)).toEqual([
       ['stop', '--workdir', workdir, '--no-backup', '--yes'],
     ]);
-    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(workdir)).resolves.toBeDefined();
   });
 
   it('does not initialize or start Supabase twice for the same project', async () => {
