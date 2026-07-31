@@ -507,7 +507,12 @@ async function cleanupPolicyResources(
   const failures: Array<{ action: string; result: DockerResult }> = [];
   const remove = async (action: string, args: string[]): Promise<void> => {
     const result = normalizeDockerResult(await execa('docker', args, { reject: false }));
-    if (result.exitCode !== 0 && !/No such (container|network)/i.test(result.stderr ?? '')) {
+    if (
+      result.exitCode !== 0 &&
+      !/No such (container|network)|already in progress|dead or marked for removal/i.test(
+        result.stderr ?? '',
+      )
+    ) {
       failures.push({ action, result });
     }
   };

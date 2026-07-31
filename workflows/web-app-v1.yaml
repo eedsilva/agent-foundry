@@ -7,8 +7,10 @@ stack: nextjs
 # A table an operator can read before the run starts, rather than a six-dimension
 # score they cannot predict. Hosted providers appear everywhere because each
 # provider is an independent quota pool, and a different vendor is a genuinely
-# different attempt. OpenCode/Ollama is local and stays on the cheap verification
-# rung. `repair` and `verification` lead with a different vendor from
+# different attempt. Codex leads verification here so a missing local Ollama
+# process cannot hold the user-facing workflow until the agent timeout; OpenCode
+# remains a fallback for environments that have it running. `repair` and
+# `verification` lead with a different vendor from
 # `implementation` on purpose: re-reading your own work is the weakest check.
 routing:
   - taskKind: planning
@@ -18,7 +20,7 @@ routing:
   - taskKind: repair
     executors: [codex, claude, glm, agy]
   - taskKind: verification
-    executors: [opencode, glm, codex, claude, agy]
+    executors: [codex, claude, glm, agy, opencode]
 nodes:
   # One model call, then the operator decides. No model grades another model's
   # plan as a blocking gate (ADR 0042).
@@ -86,14 +88,16 @@ nodes:
       # Fixed silently before anything is judged, so repair is only invoked
       # for what a machine cannot fix.
       autofixScripts: [format, 'lint:fix']
-      scripts: [typecheck]
-      # Gating from the moment the generated project defines them, in order.
-      # The scaffold ships lint/test plus the last three: `db:start` is idempotent
-      # and brings up this project's own Supabase stack (writing .env), `db:reset`
-      # re-applies every migration and the seed against it, and `smoke` boots
-      # both tiers and asserts they answer. A generated project grows a lint
-      # and a test script as the tasks that need them land.
-      optionalScripts: [lint, test, 'db:start', 'db:reset', smoke]
+      # Tasks are dependency-ordered and may intentionally leave the workspace
+      # temporarily uncompilable while a later task updates a caller. The
+      # blocking compiler gate belongs to full-suite-verification, after the
+      # complete graph has landed.
+      scripts: []
+      # Lint and unit tests can gate each task as they are introduced. The
+      # database smoke is intentionally deferred to the full-suite node: an
+      # early migration task can legitimately leave the scaffold smoke script
+      # referring to the old schema until a later task updates it.
+      optionalScripts: [lint, test]
       includeGitDiffCheck: true
     repair:
       id: repair-task
@@ -149,6 +153,7 @@ nodes:
     title: Run the full repository verification suite
     outputArtifact: verification.report
     scripts: [typecheck, lint, test, build]
+    optionalScripts: ['db:start', 'db:reset', smoke]
     includeGitDiffCheck: true
     blocksOnFailure: true
 
