@@ -127,13 +127,17 @@ function configPort(config: string, section: string, key: string): number {
   throw new Error(`Missing ${section}.${key}`);
 }
 
-function fixture(command = vi.fn<SupabaseCommand>(statusCommand)) {
+function fixture(
+  command = vi.fn<SupabaseCommand>(statusCommand),
+  options: { initializeTimeoutMs?: number } = {},
+) {
   return {
     command,
     runtime: new SupabaseGeneratedProjectRuntime({
       dataDir,
       command,
       now: () => new Date(NOW),
+      ...options,
     }),
   };
 }
@@ -367,6 +371,31 @@ enabled = false`);
         '--network-id',
         'supabase_project-a_network',
       ],
+      ['stop', '--workdir', workdir, '--no-backup', '--yes'],
+    ]);
+    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('times out a stuck start, stops the stack, and removes the workdir', async () => {
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    let startCalled = false;
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'start') {
+        startCalled = true;
+        return new Promise(() => {});
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command, { initializeTimeoutMs: 1_000 });
+
+    const rejection = await runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
+
+    expect(startCalled).toBe(true);
+    expect(rejection).toMatchObject({ operation: 'start', exitCode: undefined });
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(rejection.diagnostic).toContain('timed out');
+    expect(rejection.diagnostic).toContain('retry');
+    expect(command.mock.calls.slice(-1)).toEqual([
       ['stop', '--workdir', workdir, '--no-backup', '--yes'],
     ]);
     await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
