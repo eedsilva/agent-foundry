@@ -101,6 +101,7 @@ import {
   recordRunDuration,
   recordStepRetry,
   recordTokenUsage,
+  redactString,
   browserRepairId,
   taskStepId,
   transitionStepAttempt,
@@ -153,6 +154,8 @@ class ApprovalTimeoutScheduleError extends Error {
 
 const PROVISIONING_FAILURE_MESSAGE =
   'Project provisioning failed. Review the project event timeline for details.';
+const PROVISIONING_DIAGNOSTIC_MAX_BYTES = 8 * 1024;
+const WORKDIR_ARGUMENT_PATTERN = /(--workdir(?:=|\s+))(?:(?:"[^"]*")|(?:'[^']*')|\S+)/gi;
 
 class ProjectProvisioningError extends Error {
   readonly code = 'PROJECT_PROVISIONING_FAILED';
@@ -186,15 +189,29 @@ function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagn
   const isEnvironmentFailure = error instanceof EnvironmentOperationError;
   const phase = isEnvironmentFailure ? error.operation : 'workspace';
   const exitCode = isEnvironmentFailure ? error.exitCode : undefined;
-  const logs =
-    (isEnvironmentFailure ? error.diagnostic : errorMessage(error)).trim() ||
-    'No provisioning diagnostic available.';
+  const logs = capProvisioningDiagnostic(
+    redactString(isEnvironmentFailure ? error.diagnostic : errorMessage(error)).replace(
+      WORKDIR_ARGUMENT_PATTERN,
+      '$1[REDACTED]',
+    ),
+  );
+  const fallbackContext = `${phase === 'workspace' ? 'Workspace' : `Supabase ${phase}`} reported a failure; inspect the bounded logs for the provider error.`;
+  const lines = logs
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
   const context =
-    logs
-      .split('\n')
-      .map((line) => line.trim())
-      .find((line) => /error|fail|unable|unhealthy|timeout|timed out|exit/i.test(line)) ??
-    logs.split('\n')[0]!.trim();
+    lines.find(
+      (line) =>
+        /error|fail|unable|unreachable|unhealthy|timeout|timed out|exit/i.test(line) &&
+        !/^error running container(?::|\s)/i.test(line),
+    ) ??
+    lines.find(
+      (line) =>
+        !/^error running container(?::|\s)/i.test(line) &&
+        !/^(starting|initiali[sz]ing|stopping)\b/i.test(line),
+    ) ??
+    fallbackContext;
   return ProvisioningFailureDiagnosticSchema.parse({
     schemaVersion: '1',
     phase,
@@ -205,6 +222,14 @@ function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagn
     context,
     logs,
   });
+}
+
+function capProvisioningDiagnostic(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return 'No provisioning diagnostic available.';
+  const bytes = new TextEncoder().encode(trimmed);
+  if (bytes.byteLength <= PROVISIONING_DIAGNOSTIC_MAX_BYTES) return trimmed;
+  return new TextDecoder().decode(bytes.slice(0, PROVISIONING_DIAGNOSTIC_MAX_BYTES));
 }
 
 export class WorkflowOrchestrator {

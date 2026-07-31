@@ -146,7 +146,8 @@ describe('ProjectService.create', () => {
               phase: 'start',
               exitCode: 1,
               summary: 'Supabase start failed (exit code 1)',
-              context: 'error running container: exit 1',
+              context:
+                'Supabase start reported a failure; inspect the bounded logs for the provider error.',
               logs: diagnostic,
             },
           },
@@ -333,6 +334,36 @@ describe('ProjectService.create workspace boot', () => {
         }),
       ]),
     );
+  });
+
+  it('redacts and bounds generic asynchronous provisioning diagnostics', async () => {
+    const workdir = '/tmp/agent-foundry/project/environment';
+    const start = vi.fn(async () => {
+      throw new Error(`migration failed --workdir ${workdir}\n${'x'.repeat(10_000)}`);
+    });
+    const stores = makeStores();
+    const harness = makeHarness({}, stores, {
+      previews: { start, activeForProject: async () => undefined },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    await runWorker(harness);
+
+    const event = (await harness.events.list('id-0001')).find(
+      (candidate) => candidate.type === 'project.provisioning_failed',
+    );
+    expect(event?.data).toMatchObject({
+      diagnostic: {
+        context: 'migration failed --workdir [REDACTED]',
+      },
+    });
+    const logs = (event?.data as { diagnostic: { logs: string } }).diagnostic.logs;
+    expect(logs).not.toContain(workdir);
+    expect(new TextEncoder().encode(logs).byteLength).toBeLessThanOrEqual(8 * 1024);
   });
 
   it('boots the workspace only after the generated runtime has provisioned its environment', async () => {
