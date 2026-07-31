@@ -1429,11 +1429,24 @@ function operationError(
   error: unknown,
 ): EnvironmentOperationError {
   const record = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
-  const diagnostic =
-    [record.stderr, record.stdout, error instanceof Error ? error.message : error]
-      .filter((value): value is string => typeof value === 'string' && value.length > 0)
-      .map(redactDiagnostic)
-      .join('\n') || 'Unknown Supabase CLI failure.';
+  const parts: string[] = [];
+  for (const value of [
+    record.stderr,
+    record.stdout,
+    error instanceof Error ? error.message : error,
+  ]) {
+    if (typeof value !== 'string' || value.length === 0) continue;
+    const redacted = redactDiagnostic(value);
+    const duplicateIndex = parts.findIndex(
+      (part) => part === redacted || part.includes(redacted) || redacted.includes(part),
+    );
+    if (duplicateIndex === -1) {
+      parts.push(redacted);
+    } else if (redacted.length > parts[duplicateIndex]!.length) {
+      parts[duplicateIndex] = redacted;
+    }
+  }
+  const diagnostic = parts.join('\n') || 'Unknown Supabase CLI failure.';
   return new EnvironmentOperationError(
     operation,
     typeof record.exitCode === 'number' ? record.exitCode : undefined,
@@ -1467,6 +1480,7 @@ function recoveryError(
 
 function redactDiagnostic(value: string): string {
   return redactString(value)
+    .replace(/(--workdir(?:=|\s+))(?:(?:"[^"]*")|(?:'[^']*')|\S+)/gi, '$1[REDACTED]')
     .replace(/([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+(@)/gi, '$1[REDACTED]$2')
     .replace(
       /((?:["']?[A-Z0-9_]*(?:SECRET|PASSWORD|TOKEN|KEY)[A-Z0-9_]*["']?)\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\]]+)/gi,

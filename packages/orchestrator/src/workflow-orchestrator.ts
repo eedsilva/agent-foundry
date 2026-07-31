@@ -17,6 +17,7 @@ import type {
   Project,
   ProjectEvent,
   ProjectPolicy,
+  ProvisioningFailureDiagnostic,
   QualityLoopStep,
   RankedModel,
   RunError,
@@ -42,6 +43,7 @@ import {
   EXECUTION_PROTOCOL_VERSION,
   formatZodIssues,
   isWorkflowRunStatusTerminal,
+  ProvisioningFailureDiagnosticSchema,
   resolveRoutingEntry,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   TaskGraphArtifactSchema,
@@ -80,6 +82,7 @@ import {
   ApprovalRejectedError,
   ApprovalRequiredError,
   EmergencyCeilingError,
+  EnvironmentOperationError,
   ExecutionError,
   LeaseLostError,
   NotFoundError,
@@ -177,6 +180,31 @@ function provisionedPreviewData(session: PreviewSession): Record<string, unknown
         }
       : {}),
   };
+}
+
+function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagnostic {
+  const isEnvironmentFailure = error instanceof EnvironmentOperationError;
+  const phase = isEnvironmentFailure ? error.operation : 'workspace';
+  const exitCode = isEnvironmentFailure ? error.exitCode : undefined;
+  const logs =
+    (isEnvironmentFailure ? error.diagnostic : errorMessage(error)).trim() ||
+    'No provisioning diagnostic available.';
+  const context =
+    logs
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => /error|fail|unable|unhealthy|timeout|timed out|exit/i.test(line)) ??
+    logs.split('\n')[0]!.trim();
+  return ProvisioningFailureDiagnosticSchema.parse({
+    schemaVersion: '1',
+    phase,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    summary: `${phase === 'workspace' ? 'Workspace provisioning' : `Supabase ${phase}`} failed${
+      exitCode === undefined ? '' : ` (exit code ${exitCode})`
+    }`,
+    context,
+    logs,
+  });
 }
 
 export class WorkflowOrchestrator {
@@ -322,7 +350,7 @@ export class WorkflowOrchestrator {
           await this.emit(projectId, 'project.provisioning_failed', PROVISIONING_FAILURE_MESSAGE, {
             runId: run.id,
             dedupeKey: `${run.id}:project.provisioning_failed`,
-            data: { diagnostic: errorMessage(error) },
+            data: { diagnostic: provisioningFailureDiagnostic(error) },
           });
           throw new ProjectProvisioningError(error);
         }

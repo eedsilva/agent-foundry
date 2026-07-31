@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import type { ProjectEvent } from '@agent-foundry/contracts';
+import { ProvisioningFailureDiagnosticSchema, type ProjectEvent } from '@agent-foundry/contracts';
 import { EmptyState } from '@/components/empty-state';
 import { StatusPill } from '@/components/status-pill';
 import { formatSeconds } from '../format-usage.js';
@@ -22,17 +22,29 @@ function eventBadges(event: ProjectEvent): string[] {
   return badges;
 }
 
-function eventDiagnostic(event: ProjectEvent): { label: string; value: string } | null {
-  if (
-    (event.type !== 'preview.failed' && event.type !== 'project.provisioning_failed') ||
-    !event.data.diagnostic
-  ) {
-    return null;
+function eventDiagnostic(
+  event: ProjectEvent,
+): { label: string; value: string; summary?: string; context?: string } | null {
+  if (event.type === 'preview.failed' && event.data.diagnostic) {
+    return {
+      label: 'Diagnóstico do preview',
+      value: JSON.stringify(event.data.diagnostic, null, 2),
+    };
+  }
+  if (event.type !== 'project.provisioning_failed' || !event.data.diagnostic) return null;
+  const diagnostic = ProvisioningFailureDiagnosticSchema.safeParse(event.data.diagnostic);
+  if (!diagnostic.success) {
+    return {
+      label: 'Diagnóstico do provisionamento',
+      summary: 'Diagnóstico legado indisponível.',
+      value: 'Logs antigos não são exibidos porque não têm formato redigido.',
+    };
   }
   return {
-    label:
-      event.type === 'preview.failed' ? 'Diagnóstico do preview' : 'Diagnóstico do provisionamento',
-    value: JSON.stringify(event.data.diagnostic, null, 2),
+    label: 'Diagnóstico do provisionamento',
+    summary: diagnostic.data.summary,
+    context: diagnostic.data.context,
+    value: diagnostic.data.logs,
   };
 }
 
@@ -79,6 +91,12 @@ export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: bo
                     <summary className="text-ink-subtle cursor-pointer text-[11px]">
                       {diagnostic.label}
                     </summary>
+                    {diagnostic.summary ? (
+                      <p className="text-ink mt-2 text-[12px]">{diagnostic.summary}</p>
+                    ) : null}
+                    {diagnostic.context ? (
+                      <p className="text-ink-subtle mt-1 text-[11px]">{diagnostic.context}</p>
+                    ) : null}
                     <pre className="bg-surface-muted text-ink-subtle mt-2 max-h-64 overflow-auto rounded p-2 font-mono text-[10px] whitespace-pre-wrap">
                       {diagnostic.value}
                     </pre>

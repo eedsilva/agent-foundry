@@ -128,6 +128,18 @@ export const ProjectEventSchema = z.object({
 });
 export type ProjectEvent = z.infer<typeof ProjectEventSchema>;
 
+export const ProvisioningFailureDiagnosticSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    phase: z.string().min(1),
+    exitCode: z.number().int().optional(),
+    summary: z.string().min(1),
+    context: z.string().min(1),
+    logs: z.string().min(1),
+  })
+  .strict();
+export type ProvisioningFailureDiagnostic = z.infer<typeof ProvisioningFailureDiagnosticSchema>;
+
 export const QueueLeaseSchema = z
   .object({
     workerId: PathSegmentSchema,

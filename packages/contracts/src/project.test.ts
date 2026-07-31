@@ -3,6 +3,7 @@ import {
   ArtifactMetadataSchema,
   ExecutorHealthSchema,
   ProjectEventSchema,
+  ProvisioningFailureDiagnosticSchema,
   QueueJobSchema,
 } from './project.js';
 
@@ -81,6 +82,28 @@ describe('ProjectEventSchema provisioning lifecycle', () => {
     });
 
     expect(event.data).toMatchObject({ diagnostic: expect.any(String) });
+  });
+
+  it('validates bounded structured provisioning diagnostics', () => {
+    expect(
+      ProvisioningFailureDiagnosticSchema.parse({
+        schemaVersion: '1',
+        phase: 'start',
+        exitCode: 1,
+        summary: 'Supabase start failed (exit code 1)',
+        context: 'error running container.',
+        logs: 'error running container: exit 1',
+      }),
+    ).toMatchObject({ phase: 'start', exitCode: 1 });
+    expect(() =>
+      ProvisioningFailureDiagnosticSchema.parse({
+        schemaVersion: '1',
+        phase: 'start',
+        summary: 'failed',
+        logs: 'raw logs',
+        workdir: '/tmp/host-path',
+      }),
+    ).toThrow();
   });
 });
 

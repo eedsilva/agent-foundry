@@ -38,13 +38,38 @@ describe('ActivityTab provisioning failures', () => {
       createdAt: '2026-07-30T12:00:00.000Z',
       message: 'Project provisioning failed.',
       data: {
-        diagnostic: 'Supabase start timed out; clean up completed; retry when Docker is ready.',
+        diagnostic: {
+          schemaVersion: '1',
+          phase: 'start',
+          exitCode: 1,
+          summary: 'Supabase start failed (exit code 1)',
+          context: 'error running container: exit 1',
+          logs: 'Starting database...\nerror running container: exit 1',
+        },
       },
     };
 
     const markup = renderToStaticMarkup(<ActivityTab events={[event]} live={false} />);
 
     expect(markup).toContain('Diagnóstico do provisionamento');
-    expect(markup).toContain('retry when Docker is ready');
+    expect(markup).toContain('Supabase start failed (exit code 1)');
+    expect(markup).toContain('error running container: exit 1');
+    expect(markup).not.toContain('&quot;phase&quot;');
+  });
+
+  it('does not render legacy raw provisioning diagnostics', () => {
+    const event: ProjectEvent = {
+      id: 'event-3',
+      projectId: 'project-1',
+      type: 'project.provisioning_failed',
+      createdAt: '2026-07-30T12:00:00.000Z',
+      message: 'Project provisioning failed.',
+      data: { diagnostic: 'supabase --workdir /tmp/host-path raw transcript' },
+    };
+
+    const markup = renderToStaticMarkup(<ActivityTab events={[event]} live={false} />);
+
+    expect(markup).toContain('Diagnóstico legado indisponível.');
+    expect(markup).not.toContain('/tmp/host-path');
   });
 });

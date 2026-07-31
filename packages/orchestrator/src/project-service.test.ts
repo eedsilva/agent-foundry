@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppEnvironment, PreviewSession, PreviewWorkspaceRef } from '@agent-foundry/contracts';
-import type { GeneratedProjectRuntime } from '@agent-foundry/domain';
+import { EnvironmentOperationError, type GeneratedProjectRuntime } from '@agent-foundry/domain';
 import { makeHarness, makeStores, seedRun } from './testing/harness.js';
 import { WorkerLoop } from './worker-loop.js';
 
@@ -84,8 +84,10 @@ describe('ProjectService.create', () => {
 
   it('persists provisioning diagnostics while exposing a concise project error', async () => {
     const stores = makeStores();
-    const diagnostic = 'supabase start failed: raw CLI/container output';
-    const initialize = vi.fn().mockRejectedValue(new Error(diagnostic));
+    const diagnostic = 'Starting database...\nerror running container: exit 1';
+    const initialize = vi
+      .fn()
+      .mockRejectedValue(new EnvironmentOperationError('start', 1, diagnostic));
     const unused = () => Promise.reject(new Error('unused test runtime operation'));
     const harness = makeHarness({}, stores, {
       generatedProjectRuntime: {
@@ -126,7 +128,10 @@ describe('ProjectService.create', () => {
     });
     expect(await stores.runs.get('id-0002')).toMatchObject({
       status: 'failed',
-      error: { code: 'PROJECT_PROVISIONING_FAILED', message: diagnostic },
+      error: {
+        code: 'PROJECT_PROVISIONING_FAILED',
+        message: `Environment start failed: ${diagnostic}`,
+      },
     });
     const events = await harness.events.list('id-0001');
     expect(events).toEqual(
@@ -135,7 +140,16 @@ describe('ProjectService.create', () => {
         expect.objectContaining({
           type: 'project.provisioning_failed',
           message: 'Project provisioning failed. Review the project event timeline for details.',
-          data: { diagnostic },
+          data: {
+            diagnostic: {
+              schemaVersion: '1',
+              phase: 'start',
+              exitCode: 1,
+              summary: 'Supabase start failed (exit code 1)',
+              context: 'error running container: exit 1',
+              logs: diagnostic,
+            },
+          },
         }),
       ]),
     );
@@ -269,7 +283,15 @@ describe('ProjectService.create workspace boot', () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: 'project.provisioning_failed',
-          data: { diagnostic: stderr },
+          data: {
+            diagnostic: {
+              schemaVersion: '1',
+              phase: 'workspace',
+              summary: 'Workspace provisioning failed',
+              context: stderr,
+              logs: stderr,
+            },
+          },
         }),
       ]),
     );
@@ -299,7 +321,15 @@ describe('ProjectService.create workspace boot', () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: 'project.provisioning_failed',
-          data: { diagnostic: 'docker daemon unreachable' },
+          data: {
+            diagnostic: {
+              schemaVersion: '1',
+              phase: 'workspace',
+              summary: 'Workspace provisioning failed',
+              context: 'docker daemon unreachable',
+              logs: 'docker daemon unreachable',
+            },
+          },
         }),
       ]),
     );
