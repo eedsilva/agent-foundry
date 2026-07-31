@@ -35,6 +35,14 @@ describe('redactString', () => {
     expect(redactString('node.completed em 3s')).toBe('node.completed em 3s');
   });
 
+  it('redacts Supabase project workdirs in command arguments and transcripts', () => {
+    const workdir = '/tmp/agent-foundry/projects/project-1/environment';
+    const output = redactString(`supabase --workdir "${workdir}" failed at ${workdir}`);
+
+    expect(output).not.toContain(workdir);
+    expect(output).toContain('--workdir [REDACTED]');
+  });
+
   it('redacts raw and quoted structured assignments including complete cookie chains', () => {
     const output = redactString(
       [

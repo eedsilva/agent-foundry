@@ -16,6 +16,8 @@ const COOKIE_HEADER = /(\bcookie\s*:\s*).*$/gim;
 const COOKIE_ASSIGNMENT = /(\bcookie\s*=\s*)(?!["']).*$/gim;
 const RAW_SECRET =
   /(\b(?:authorization|(?:[a-z][a-z0-9]*[_-]?)?token)\s*[:=]\s*)(?!["'])(?:basic\s+|bearer\s+)?[^\s,;]+/gi;
+const WORKDIR_ARGUMENT = /(--workdir(?:=|\s+))(?:(?:"[^"]*")|(?:'[^']*')|\S+)/gi;
+const PROJECT_WORKDIR = /\/(?:[^/\s"'`]+\/)*projects\/[^/\s"'`]+\/environment(?:\/[^/\s"'`]*)?/gi;
 
 const KEY_PREFIXES = new Set(['api', 'access', 'private']);
 
@@ -31,7 +33,9 @@ export function redactString(value: string): string {
     .replace(QUOTED_SECRET, '$1$2[REDACTED]$2')
     .replace(COOKIE_HEADER, '$1[REDACTED]')
     .replace(COOKIE_ASSIGNMENT, '$1[REDACTED]')
-    .replace(RAW_SECRET, '$1[REDACTED]');
+    .replace(RAW_SECRET, '$1[REDACTED]')
+    .replace(WORKDIR_ARGUMENT, '$1[REDACTED]')
+    .replace(PROJECT_WORKDIR, '[REDACTED]');
   return VALUE_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[REDACTED]'), assignments);
 }
 

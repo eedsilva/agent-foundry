@@ -43,6 +43,7 @@ import {
   EXECUTION_PROTOCOL_VERSION,
   formatZodIssues,
   isWorkflowRunStatusTerminal,
+  PROVISIONING_FAILURE_LOG_MAX_BYTES,
   ProvisioningFailureDiagnosticSchema,
   resolveRoutingEntry,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
@@ -154,14 +155,12 @@ class ApprovalTimeoutScheduleError extends Error {
 
 const PROVISIONING_FAILURE_MESSAGE =
   'Project provisioning failed. Review the project event timeline for details.';
-const PROVISIONING_DIAGNOSTIC_MAX_BYTES = 8 * 1024;
-const WORKDIR_ARGUMENT_PATTERN = /(--workdir(?:=|\s+))(?:(?:"[^"]*")|(?:'[^']*')|\S+)/gi;
 
 class ProjectProvisioningError extends Error {
   readonly code = 'PROJECT_PROVISIONING_FAILED';
 
-  constructor(cause: unknown) {
-    super(errorMessage(cause));
+  constructor(diagnostic: ProvisioningFailureDiagnostic) {
+    super(`${diagnostic.summary}: ${diagnostic.context}`);
     this.name = 'ProjectProvisioningError';
   }
 }
@@ -188,29 +187,36 @@ function provisionedPreviewData(session: PreviewSession): Record<string, unknown
 function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagnostic {
   const isEnvironmentFailure = error instanceof EnvironmentOperationError;
   const phase = isEnvironmentFailure ? error.operation : 'workspace';
-  const exitCode = isEnvironmentFailure ? error.exitCode : undefined;
+  const record = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
+  const exitCode = isEnvironmentFailure
+    ? error.exitCode
+    : typeof record.exitCode === 'number' && Number.isInteger(record.exitCode)
+      ? record.exitCode
+      : undefined;
   const logs = capProvisioningDiagnostic(
-    redactString(isEnvironmentFailure ? error.diagnostic : errorMessage(error)).replace(
-      WORKDIR_ARGUMENT_PATTERN,
-      '$1[REDACTED]',
-    ),
+    redactString(isEnvironmentFailure ? error.diagnostic : errorMessage(error)),
   );
   const fallbackContext = `${phase === 'workspace' ? 'Workspace' : `Supabase ${phase}`} reported a failure; inspect the bounded logs for the provider error.`;
   const lines = logs
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
+  const genericContainerError = lines.find((line) =>
+    /^error running container(?::|\s)/i.test(line),
+  );
   const context =
     lines.find(
       (line) =>
         /error|fail|unable|unreachable|unhealthy|timeout|timed out|exit/i.test(line) &&
-        !/^error running container(?::|\s)/i.test(line),
+        line !== genericContainerError,
     ) ??
     lines.find(
       (line) =>
-        !/^error running container(?::|\s)/i.test(line) &&
-        !/^(starting|initiali[sz]ing|stopping)\b/i.test(line),
+        line !== genericContainerError && !/^(starting|initiali[sz]ing|stopping)\b/i.test(line),
     ) ??
+    (genericContainerError
+      ? `${genericContainerError} Review the bounded logs for service details.`
+      : undefined) ??
     fallbackContext;
   return ProvisioningFailureDiagnosticSchema.parse({
     schemaVersion: '1',
@@ -228,8 +234,8 @@ function capProvisioningDiagnostic(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return 'No provisioning diagnostic available.';
   const bytes = new TextEncoder().encode(trimmed);
-  if (bytes.byteLength <= PROVISIONING_DIAGNOSTIC_MAX_BYTES) return trimmed;
-  return new TextDecoder().decode(bytes.slice(0, PROVISIONING_DIAGNOSTIC_MAX_BYTES));
+  if (bytes.byteLength <= PROVISIONING_FAILURE_LOG_MAX_BYTES) return trimmed;
+  return new TextDecoder().decode(bytes.slice(0, PROVISIONING_FAILURE_LOG_MAX_BYTES));
 }
 
 export class WorkflowOrchestrator {
@@ -372,12 +378,13 @@ export class WorkflowOrchestrator {
           await this.generatedProjectRuntime?.initialize({ projectId });
           bootedPreview = await this.bootWorkspacePreview(projectId, run.id);
         } catch (error) {
+          const diagnostic = provisioningFailureDiagnostic(error);
           await this.emit(projectId, 'project.provisioning_failed', PROVISIONING_FAILURE_MESSAGE, {
             runId: run.id,
             dedupeKey: `${run.id}:project.provisioning_failed`,
-            data: { diagnostic: provisioningFailureDiagnostic(error) },
+            data: { diagnostic },
           });
-          throw new ProjectProvisioningError(error);
+          throw new ProjectProvisioningError(diagnostic);
         }
         await this.emit(projectId, 'project.provisioned', 'Project provisioning completed.', {
           runId: run.id,

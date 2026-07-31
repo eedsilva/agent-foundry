@@ -130,7 +130,8 @@ describe('ProjectService.create', () => {
       status: 'failed',
       error: {
         code: 'PROJECT_PROVISIONING_FAILED',
-        message: `Environment start failed: ${diagnostic}`,
+        message:
+          'Supabase start failed (exit code 1): error running container: exit 1 Review the bounded logs for service details.',
       },
     });
     const events = await harness.events.list('id-0001');
@@ -147,7 +148,7 @@ describe('ProjectService.create', () => {
               exitCode: 1,
               summary: 'Supabase start failed (exit code 1)',
               context:
-                'Supabase start reported a failure; inspect the bounded logs for the provider error.',
+                'error running container: exit 1 Review the bounded logs for service details.',
               logs: diagnostic,
             },
           },
@@ -278,7 +279,10 @@ describe('ProjectService.create workspace boot', () => {
     });
     expect(await stores.runs.get('id-0002')).toMatchObject({
       status: 'failed',
-      error: { code: 'PROJECT_PROVISIONING_FAILED', message: stderr },
+      error: {
+        code: 'PROJECT_PROVISIONING_FAILED',
+        message: `Workspace provisioning failed: ${stderr}`,
+      },
     });
     expect(await harness.events.list('id-0001')).toEqual(
       expect.arrayContaining([
@@ -316,7 +320,10 @@ describe('ProjectService.create workspace boot', () => {
 
     expect(await stores.runs.get('id-0002')).toMatchObject({
       status: 'failed',
-      error: { code: 'PROJECT_PROVISIONING_FAILED', message: 'docker daemon unreachable' },
+      error: {
+        code: 'PROJECT_PROVISIONING_FAILED',
+        message: 'Workspace provisioning failed: docker daemon unreachable',
+      },
     });
     expect(await harness.events.list('id-0001')).toEqual(
       expect.arrayContaining([

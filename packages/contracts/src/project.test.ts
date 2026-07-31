@@ -104,6 +104,24 @@ describe('ProjectEventSchema provisioning lifecycle', () => {
         workdir: '/tmp/host-path',
       }),
     ).toThrow();
+    expect(() =>
+      ProjectEventSchema.parse({
+        id: 'event-2',
+        projectId: 'project-1',
+        type: 'project.provisioning_failed',
+        createdAt: '2026-07-24T12:00:00.000Z',
+        message: 'failed',
+        data: {
+          diagnostic: {
+            schemaVersion: '1',
+            phase: 'start',
+            summary: 'failed',
+            context: 'context',
+            logs: 'x'.repeat(8 * 1024 + 1),
+          },
+        },
+      }),
+    ).toThrow();
   });
 });
 
