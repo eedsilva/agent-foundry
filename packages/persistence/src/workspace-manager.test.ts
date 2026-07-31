@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
@@ -60,6 +60,27 @@ describe('FileWorkspaceManager.isClean', () => {
     await writeFile(join(workspace, 'untracked.txt'), 'keep me\n');
     expect(await manager.isClean(projectId)).toBe(false);
     expect(await readFile(join(workspace, 'untracked.txt'), 'utf8')).toBe('keep me\n');
+  });
+});
+
+describe('FileWorkspaceManager nested repository boundary', () => {
+  it('initializes a workspace repository instead of using an ancestor checkout', async () => {
+    const dataDir = await mkdtemp(join(process.cwd(), '.workspace-manager-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+
+    try {
+      await manager.ensureGit('project-1');
+      const workspace = manager.workspacePath('project-1');
+      const topLevel = await execa('git', ['rev-parse', '--show-toplevel'], { cwd: workspace });
+
+      expect(topLevel.stdout.trim()).toBe(workspace);
+      expect(await manager.checkpoint('project-1', 'isolated')).toMatch(/^[0-9a-f]{40}$/);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
   });
 });
 

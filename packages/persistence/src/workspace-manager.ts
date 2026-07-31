@@ -139,11 +139,13 @@ export class FileWorkspaceManager implements WorkspaceManager {
   async ensureGit(projectId: string): Promise<void> {
     await this.ensure(projectId);
     const cwd = this.workspacePath(projectId);
-    const inside = await execa('git', ['rev-parse', '--is-inside-work-tree'], {
+    const topLevel = await execa('git', ['rev-parse', '--show-toplevel'], {
       cwd,
       reject: false,
     });
-    if (inside.exitCode !== 0) {
+    const ownsRepository =
+      topLevel.exitCode === 0 && resolve(topLevel.stdout.trim()) === resolve(cwd);
+    if (!ownsRepository) {
       await execa('git', ['init'], { cwd });
     }
     await execa('git', ['config', 'user.name', this.options.gitAuthorName], { cwd });

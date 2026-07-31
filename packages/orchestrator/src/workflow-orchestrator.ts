@@ -185,7 +185,8 @@ class ProjectProvisioningError extends Error {
 }
 
 /** The slice of PreviewService that provisioning needs to boot a workspace. */
-export type WorkspacePreviewBooter = Pick<PreviewService, 'start' | 'activeForProject'>;
+export type WorkspacePreviewBooter = Pick<PreviewService, 'start' | 'activeForProject'> &
+  Partial<Pick<PreviewService, 'renewForProject'>>;
 
 /** Timeline evidence for a provisioning boot: which session, and what installed it. */
 function provisionedPreviewData(session: PreviewSession): Record<string, unknown> {
@@ -406,6 +407,7 @@ export class WorkflowOrchestrator {
       ? AbortSignal.any([cancellation.signal, externalSignal])
       : cancellation.signal;
     const stopWatching = this.watchForCancellation(run.id, cancellation);
+    const stopPreviewLeaseHeartbeat = this.startPreviewLeaseHeartbeat(projectId);
     try {
       throwIfCancelled(signal, run.id);
       // A ceiling can crash after the terminal state write but before summary
@@ -429,7 +431,11 @@ export class WorkflowOrchestrator {
         await this.finalizePause(run.id, projectId, workflow);
         return;
       }
-      if (this.generatedProjectRuntime || this.previews) {
+      const activeRunId = run.id;
+      const alreadyProvisioned = (await this.events.list(projectId)).some(
+        (event) => event.runId === activeRunId && event.type === 'project.provisioned',
+      );
+      if ((this.generatedProjectRuntime || this.previews) && !alreadyProvisioned) {
         if (run.status !== 'running') {
           run = await this.runs.update(
             transitionWorkflowRun(run, 'running', this.clock.now()),
@@ -574,8 +580,20 @@ export class WorkflowOrchestrator {
       );
       throw error;
     } finally {
+      stopPreviewLeaseHeartbeat();
       stopWatching();
     }
+  }
+
+  private startPreviewLeaseHeartbeat(projectId: string): () => void {
+    const previews = this.previews;
+    const renew = previews?.renewForProject;
+    if (!previews || !renew) return () => {};
+    const timer = setInterval(() => {
+      void renew.call(previews, projectId).catch(() => undefined);
+    }, 30_000);
+    timer.unref?.();
+    return () => clearInterval(timer);
   }
 
   private async startActiveExecution(runId: string): Promise<WorkflowRun> {

@@ -48,6 +48,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@swc/helpers':
+        specifier: 0.5.15
+        version: 0.5.15
       '@supabase/ssr':
         specifier: ^0.12.3
         version: 0.12.3(@supabase/supabase-js@2.110.8)

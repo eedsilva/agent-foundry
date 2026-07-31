@@ -79,26 +79,18 @@ export class DockerPreviewInstaller implements PreviewInstaller {
       install.command === 'pnpm'
         ? await configurePnpmForHostPreview(input.workspacePath)
         : undefined;
-    const exec: SandboxExec = viaCorepack
-      ? {
-          command: 'env',
-          args: [
-            `HOME=${SANDBOX_WORKSPACE_PATH}`,
-            'COREPACK_ENABLE_DOWNLOAD_PROMPT=0',
-            'CI=true',
-            'corepack',
-            install.command,
-            ...install.args,
-          ],
-          timeoutMs: this.timeoutMs,
-          cwd: '/project',
-        }
-      : {
-          command: install.command,
-          args: install.args,
-          timeoutMs: this.timeoutMs,
-          cwd: '/project',
-        };
+    const exec: SandboxExec = {
+      command: 'env',
+      args: [
+        `HOME=${SANDBOX_WORKSPACE_PATH}`,
+        ...(viaCorepack
+          ? ['COREPACK_ENABLE_DOWNLOAD_PROMPT=0', 'CI=true', 'corepack', install.command]
+          : ['CI=true', install.command]),
+        ...install.args,
+      ],
+      timeoutMs: this.timeoutMs,
+      cwd: '/project',
+    };
     try {
       const sandbox = await this.runner.create(spec);
       try {

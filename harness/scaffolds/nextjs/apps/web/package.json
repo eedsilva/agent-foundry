@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@swc/helpers": "0.5.15",
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.58.0",
     "next": "^16.2.11",

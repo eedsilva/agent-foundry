@@ -182,6 +182,30 @@ export class PreviewService {
     )?.session;
   }
 
+  async renewForProject(projectId: string): Promise<boolean> {
+    const active = await this.activeForProject(projectId);
+    if (!active || !['running', 'unhealthy'].includes(active.status)) return false;
+    return this.lifecycleLock.withSessionLock(active.id, async () => {
+      const current = await this.sessions.get(active.id);
+      if (
+        !current ||
+        current.session.workspaceRef.projectId !== projectId ||
+        !['running', 'unhealthy'].includes(current.session.status)
+      ) {
+        return false;
+      }
+      const expiresAt = new Date(
+        this.clock.now().getTime() + current.session.ttl.seconds * 1000,
+      ).toISOString();
+      await this.persist({
+        ...current.session,
+        ttl: { ...current.session.ttl, expiresAt },
+        updatedAt: this.clock.now().toISOString(),
+      });
+      return true;
+    });
+  }
+
   async stop(sessionId: string): Promise<PreviewSession> {
     return this.lifecycleLock.withSessionLock(sessionId, async () => {
       const record = await this.requireSession(sessionId);

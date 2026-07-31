@@ -56,6 +56,14 @@ describe('generated Next.js scaffold tooling', () => {
     expect(lockfile).toContain('prettier@');
   });
 
+  it('declares the Next.js runtime helper required by the generated web app', async () => {
+    const packageJson = JSON.parse(
+      await readFile(resolve(scaffoldRoot, 'apps/web/package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string> };
+
+    expect(packageJson.dependencies?.['@swc/helpers']).toBe('0.5.15');
+  });
+
   it('executes failing checks and runs the formatter/lint autofix commands', async () => {
     const cwd = await mkdtemp(resolve(tmpdir(), 'agent-foundry-scaffold-tooling-'));
     const bin = resolve(cwd, 'node_modules/.bin');
