@@ -92,4 +92,23 @@ describe('FileEventStore redaction on append', () => {
     expect(persisted?.message).toContain('[REDACTED]');
     expect(persisted?.data.apiKey).toBe('[REDACTED]');
   });
+
+  it('revalidates structured diagnostics after redaction expands a log', async () => {
+    const store = new FileEventStore(await temporaryDataDir());
+    await expect(
+      store.append({
+        ...event('event-1'),
+        type: 'project.provisioning_failed',
+        data: {
+          diagnostic: {
+            schemaVersion: '1',
+            phase: 'start',
+            summary: 'failed',
+            context: 'context',
+            logs: `${'x'.repeat(8181)} PASSWORD=x`,
+          },
+        },
+      }),
+    ).rejects.toThrow();
+  });
 });

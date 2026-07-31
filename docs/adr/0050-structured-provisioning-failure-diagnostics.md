@@ -25,6 +25,8 @@ not safe or useful for an operator.
   not rendered because their redaction cannot be verified.
 - The backend remains authoritative for the persisted event; the UI only
   chooses a safe presentation of the validated contract.
+- File and Postgres event stores validate the event again after redaction, so
+  redaction cannot expand a bounded diagnostic beyond its contract.
 
 ## Alternatives considered
 

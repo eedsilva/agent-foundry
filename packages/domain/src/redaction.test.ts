@@ -53,6 +53,16 @@ describe('redactString', () => {
     expect(output).toContain('DATABASE_URL=[REDACTED]');
   });
 
+  it('redacts uppercase environment secret assignments', () => {
+    const output = redactString(
+      'SUPABASE_SERVICE_ROLE_KEY=service-secret PASSWORD=password API_KEY=api-secret',
+    );
+
+    expect(output).toBe(
+      'SUPABASE_SERVICE_ROLE_KEY=[REDACTED] PASSWORD=[REDACTED] API_KEY=[REDACTED]',
+    );
+  });
+
   it('redacts raw and quoted structured assignments including complete cookie chains', () => {
     const output = redactString(
       [

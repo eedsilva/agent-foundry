@@ -12,7 +12,7 @@ export class FileEventStore implements EventStore {
   constructor(private readonly dataDir: string) {}
 
   async append(event: ProjectEvent): Promise<void> {
-    const parsed = redactEvent(ProjectEventSchema.parse(event));
+    const parsed = ProjectEventSchema.parse(redactEvent(ProjectEventSchema.parse(event)));
     const path = this.pathFor(parsed.projectId);
     if (!parsed.dedupeKey) {
       await appendJsonLine(path, parsed);
