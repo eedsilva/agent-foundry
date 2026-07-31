@@ -535,7 +535,8 @@ function mockBrowserVerificationCoordinator(
 ): BrowserVerificationCoordinator {
   let sequence = 0;
   const sessions = new Map<string, PreviewSession>();
-  const previews: Pick<PreviewService, 'start' | 'stop'> = {
+  const previews: Pick<PreviewService, 'activeForProject' | 'start' | 'stop'> = {
+    activeForProject: () => Promise.resolve(undefined),
     start: (input) => {
       sequence += 1;
       const now = new Date().toISOString();

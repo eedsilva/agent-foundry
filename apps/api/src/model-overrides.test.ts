@@ -106,7 +106,7 @@ describe('model override API', () => {
     expect(await runtime.stepAttempts.list(project.currentRunId!, step!.id)).toEqual([]);
   });
 
-  it('rejects a catalog entry whose provider default has not resolved to a model', async () => {
+  it('rejects a model override whose catalog tuple does not match', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-api-overrides-'));
     directories.push(dataDir);
     const runtime = await createRuntime({
@@ -119,7 +119,7 @@ describe('model override API', () => {
     });
     const project = await runtime.projectService.create({
       name: 'Unresolved override',
-      prd: 'Reject an explicit model pin when its configured catalog model is still empty.',
+      prd: 'Reject an explicit model pin when its catalog tuple does not match.',
       workflowId: 'web-app-v1',
     });
     const app = await buildApp(runtime);
@@ -139,7 +139,7 @@ describe('model override API', () => {
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json().message).toMatch(/does not resolve to an explicit model/);
+    expect(response.json().message).toMatch(/catalog tuple changed/);
     await app.close();
   });
 

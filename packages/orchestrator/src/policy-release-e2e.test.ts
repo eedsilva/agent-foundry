@@ -239,6 +239,7 @@ function browserCoordinator(verify: BrowserVerifier['verify']) {
   const sessions = new Map<string, PreviewSession>();
   let sequence = 0;
   const previews = {
+    activeForProject: () => Promise.resolve(undefined),
     start: ({ workspaceRef, runId }: Parameters<PreviewService['start']>[0]) => {
       sequence += 1;
       const now = '2026-07-17T12:00:00.000Z';
@@ -271,7 +272,7 @@ function browserCoordinator(verify: BrowserVerifier['verify']) {
         completedAt: '2026-07-17T12:00:01.000Z',
       });
     },
-  } satisfies Pick<PreviewService, 'start' | 'stop'>;
+  } satisfies Pick<PreviewService, 'activeForProject' | 'start' | 'stop'>;
   return {
     coordinator: new BrowserVerificationCoordinator(
       previews,
@@ -392,6 +393,7 @@ describe('browser verification orchestration (#32)', () => {
     const previewSessions = new Map<string, PreviewSession>();
     let previewSequence = 0;
     const previews = {
+      activeForProject: () => Promise.resolve(undefined),
       start: ({ workspaceRef, runId }: Parameters<PreviewService['start']>[0]) => {
         previewSequence += 1;
         const sessionId = `preview-${previewSequence}`;
@@ -425,7 +427,7 @@ describe('browser verification orchestration (#32)', () => {
           completedAt: '2026-07-17T12:00:01.000Z',
         });
       },
-    } satisfies Pick<PreviewService, 'start' | 'stop'>;
+    } satisfies Pick<PreviewService, 'activeForProject' | 'start' | 'stop'>;
     let addNewerPlan = (): Promise<void> => Promise.resolve();
     const browserVerifier: BrowserVerifier = {
       verify: async (input) => {

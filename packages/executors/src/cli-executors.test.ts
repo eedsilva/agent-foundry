@@ -189,7 +189,6 @@ describe('CLI executor contracts', () => {
           'ollama/qwen2.5-coder:7b',
           '--agent',
           'build',
-          '--auto',
           'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
         ],
       });

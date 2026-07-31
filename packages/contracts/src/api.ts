@@ -210,7 +210,7 @@ export const RetryStepRequestSchema = z.object({
     .object({
       modelId: PathSegmentSchema,
       provider: ProviderSchema.exclude(['mock']),
-      model: z.string().trim().min(1),
+      model: z.string().trim(),
       actor: ActorRefSchema,
       reason: z.string().trim().min(1),
       estimatedImpact: z.string().trim().min(1),
@@ -225,7 +225,7 @@ export const CreateModelOverrideRequestSchema = z
     scope: ModelOverrideScopeSchema,
     modelId: PathSegmentSchema,
     provider: ProviderSchema.exclude(['mock']),
-    model: z.string().trim().min(1),
+    model: z.string().trim(),
     actor: ActorRefSchema,
     reason: z.string().trim().min(1),
     estimatedImpact: z.string().trim().min(1),

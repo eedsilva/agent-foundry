@@ -1077,11 +1077,6 @@ export class ProjectService {
     if (!match || !match.enabled) {
       throw new ValidationError(`Catalog model ${modelId} is not enabled.`);
     }
-    if (!match.model.trim()) {
-      throw new ValidationError(
-        `Catalog model ${match.id} does not resolve to an explicit model; configure its provider model first.`,
-      );
-    }
     if (match.provider !== provider || match.model !== model) {
       throw new ValidationError(
         `Override model ${modelId} catalog tuple changed: expected ${provider}/${model}, found ${match.provider}/${match.model}.`,

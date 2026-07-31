@@ -62,7 +62,7 @@ describe('DockerPreviewInstaller', () => {
     });
 
     expect(runner.specs[0]).toMatchObject({
-      resources: { memoryMiB: 2_048 },
+      resources: { memoryMiB: 3_072 },
       network: {
         mode: 'allowlist',
         purpose: 'dependency-install',
@@ -118,6 +118,8 @@ describe('DockerPreviewInstaller', () => {
           'pnpm',
           'install',
           '--frozen-lockfile',
+          '--child-concurrency=1',
+          '--network-concurrency=1',
         ],
         cwd: '/project',
       });

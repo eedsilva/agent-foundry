@@ -290,6 +290,24 @@ describe('model override API contracts (#16)', () => {
     ).toMatchObject({ kind: 'step', stepId: 'repair-code' });
   });
 
+  it('accepts an empty model for a catalog entry that delegates model selection to the CLI', () => {
+    expect(
+      CreateModelOverrideRequestSchema.parse({
+        modelId: 'codex-default',
+        provider: 'codex',
+        model: '',
+        scope: { kind: 'run' },
+        ...audit,
+      }).model,
+    ).toBe('');
+    expect(
+      RetryStepRequestSchema.parse({
+        mode: 'preserve',
+        override: { modelId: 'codex-default', provider: 'codex', model: '', ...audit },
+      }).override?.model,
+    ).toBe('');
+  });
+
   it('rejects unaudited pins and retry overrides', () => {
     expect(() =>
       CreateModelOverrideRequestSchema.parse({
