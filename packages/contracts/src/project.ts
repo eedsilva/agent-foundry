@@ -70,30 +70,29 @@ export const FeedbackArtifactSchema = z
 export type FeedbackArtifact = z.infer<typeof FeedbackArtifactSchema>;
 
 export const PROVISIONING_FAILURE_LOG_MAX_BYTES = 8 * 1024;
+export const PROVISIONING_FAILURE_PHASE_MAX_BYTES = 64;
+export const PROVISIONING_FAILURE_SUMMARY_MAX_BYTES = 256;
 export const PROVISIONING_FAILURE_CONTEXT_MAX_BYTES = 512;
+
+function boundedProvisioningString(maxBytes: number, label: string) {
+  return z
+    .string()
+    .min(1)
+    .max(maxBytes)
+    .refine(
+      (value) => new TextEncoder().encode(value).byteLength <= maxBytes,
+      `${label} must be at most ${maxBytes} UTF-8 bytes`,
+    );
+}
+
 export const ProvisioningFailureDiagnosticSchema = z
   .object({
     schemaVersion: z.literal('1'),
-    phase: z.string().min(1),
+    phase: boundedProvisioningString(PROVISIONING_FAILURE_PHASE_MAX_BYTES, 'phase'),
     exitCode: z.number().int().optional(),
-    summary: z.string().min(1),
-    context: z
-      .string()
-      .min(1)
-      .max(PROVISIONING_FAILURE_CONTEXT_MAX_BYTES)
-      .refine(
-        (value) =>
-          new TextEncoder().encode(value).byteLength <= PROVISIONING_FAILURE_CONTEXT_MAX_BYTES,
-        `context must be at most ${PROVISIONING_FAILURE_CONTEXT_MAX_BYTES} UTF-8 bytes`,
-      ),
-    logs: z
-      .string()
-      .min(1)
-      .max(PROVISIONING_FAILURE_LOG_MAX_BYTES)
-      .refine(
-        (value) => new TextEncoder().encode(value).byteLength <= PROVISIONING_FAILURE_LOG_MAX_BYTES,
-        `logs must be at most ${PROVISIONING_FAILURE_LOG_MAX_BYTES} UTF-8 bytes`,
-      ),
+    summary: boundedProvisioningString(PROVISIONING_FAILURE_SUMMARY_MAX_BYTES, 'summary'),
+    context: boundedProvisioningString(PROVISIONING_FAILURE_CONTEXT_MAX_BYTES, 'context'),
+    logs: boundedProvisioningString(PROVISIONING_FAILURE_LOG_MAX_BYTES, 'logs'),
   })
   .strict();
 export type ProvisioningFailureDiagnostic = z.infer<typeof ProvisioningFailureDiagnosticSchema>;
