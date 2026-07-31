@@ -33,13 +33,7 @@ function eventDiagnostic(
   }
   if (event.type !== 'project.provisioning_failed' || !event.data.diagnostic) return null;
   const diagnostic = ProvisioningFailureDiagnosticSchema.safeParse(event.data.diagnostic);
-  if (!diagnostic.success) {
-    return {
-      label: 'Diagnóstico do provisionamento',
-      summary: 'Diagnóstico legado indisponível.',
-      value: 'Logs antigos não são exibidos porque não têm formato redigido.',
-    };
-  }
+  if (!diagnostic.success) return null;
   return {
     label: 'Diagnóstico do provisionamento',
     summary: diagnostic.data.summary,

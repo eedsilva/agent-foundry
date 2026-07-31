@@ -255,7 +255,9 @@ function deduplicateProvisioningLogs(value: string): string {
   return value
     .split('\n')
     .filter((line) => {
-      const normalized = line.replace(/^(?:command failed|supabase command failed):\s*/i, '');
+      const normalized = line
+        .replace(/^(?:(?:stdout|stderr):\s*|\[(?:stdout|stderr)\]\s*)/i, '')
+        .replace(/^(?:command failed|supabase command failed)(?::|\.)\s*/i, '');
       if (seen.has(normalized)) return false;
       seen.add(normalized);
       return true;

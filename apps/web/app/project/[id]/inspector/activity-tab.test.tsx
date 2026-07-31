@@ -69,7 +69,7 @@ describe('ActivityTab provisioning failures', () => {
 
     const markup = renderToStaticMarkup(<ActivityTab events={[event]} live={false} />);
 
-    expect(markup).toContain('Diagnóstico legado indisponível.');
+    expect(markup).not.toContain('Diagnóstico do provisionamento');
     expect(markup).not.toContain('/tmp/host-path');
   });
 });
