@@ -28,3 +28,23 @@ describe('ActivityTab preview failures', () => {
     expect(markup).toContain('&quot;exitCode&quot;: 1');
   });
 });
+
+describe('ActivityTab provisioning failures', () => {
+  it('renders the provisioning diagnostic on the timeline', () => {
+    const event: ProjectEvent = {
+      id: 'event-2',
+      projectId: 'project-1',
+      type: 'project.provisioning_failed',
+      createdAt: '2026-07-30T12:00:00.000Z',
+      message: 'Project provisioning failed.',
+      data: {
+        diagnostic: 'Supabase start timed out; clean up completed; retry when Docker is ready.',
+      },
+    };
+
+    const markup = renderToStaticMarkup(<ActivityTab events={[event]} live={false} />);
+
+    expect(markup).toContain('Diagnóstico do provisionamento');
+    expect(markup).toContain('retry when Docker is ready');
+  });
+});
