@@ -28,6 +28,7 @@ describe('YamlWorkflowRepository', () => {
     const taskExecution = workflow.nodes.find((node) => node.id === 'task-execution');
     const fullSuite = workflow.nodes.find((node) => node.id === 'full-suite-verification');
     expect(taskExecution?.type).toBe('for-each-task');
+    expect(taskExecution?.type === 'for-each-task' && taskExecution.verify?.scripts).toEqual([]);
     expect(
       taskExecution?.type === 'for-each-task' && taskExecution.verify?.optionalScripts,
     ).toEqual(['lint', 'test']);
