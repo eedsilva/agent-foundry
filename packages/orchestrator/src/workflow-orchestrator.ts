@@ -43,6 +43,7 @@ import {
   EXECUTION_PROTOCOL_VERSION,
   formatZodIssues,
   isWorkflowRunStatusTerminal,
+  PROVISIONING_FAILURE_CONTEXT_MAX_BYTES,
   PROVISIONING_FAILURE_LOG_MAX_BYTES,
   ProvisioningFailureDiagnosticSchema,
   resolveRoutingEntry,
@@ -205,7 +206,7 @@ function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagn
     : evidence.length > 0
       ? evidence.join('\n')
       : errorMessage(error);
-  const logs = capProvisioningDiagnostic(redactString(rawLogs));
+  const logs = capProvisioningDiagnostic(deduplicateProvisioningLogs(redactString(rawLogs)));
   const phaseLabel =
     phase === 'workspace'
       ? 'Workspace'
@@ -220,7 +221,7 @@ function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagn
   const genericContainerError = lines.find((line) =>
     /^error running container(?::|\s)/i.test(line),
   );
-  const context =
+  const contextCandidate =
     lines.find(
       (line) =>
         /error|fail|unable|unreachable|unhealthy|timeout|timed out|exit/i.test(line) &&
@@ -234,6 +235,10 @@ function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagn
       ? `${genericContainerError} Review the bounded logs for service details.`
       : undefined) ??
     fallbackContext;
+  const context = capProvisioningDiagnostic(
+    contextCandidate,
+    PROVISIONING_FAILURE_CONTEXT_MAX_BYTES,
+  );
   return ProvisioningFailureDiagnosticSchema.parse({
     schemaVersion: '1',
     phase,
@@ -246,17 +251,29 @@ function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagn
   });
 }
 
-function capProvisioningDiagnostic(value: string): string {
+function deduplicateProvisioningLogs(value: string): string {
+  const seen = new Set<string>();
+  return value
+    .split('\n')
+    .filter((line) => {
+      const normalized = line.replace(/^(?:command failed|supabase command failed):\s*/i, '');
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    })
+    .join('\n');
+}
+
+function capProvisioningDiagnostic(
+  value: string,
+  maxBytes = PROVISIONING_FAILURE_LOG_MAX_BYTES,
+): string {
   const trimmed = value.trim();
   if (!trimmed) return 'No provisioning diagnostic available.';
   const bytes = new TextEncoder().encode(trimmed);
-  if (bytes.byteLength <= PROVISIONING_FAILURE_LOG_MAX_BYTES) return trimmed;
+  if (bytes.byteLength <= maxBytes) return trimmed;
   const decoder = new TextDecoder('utf-8', { fatal: true });
-  for (
-    let end = PROVISIONING_FAILURE_LOG_MAX_BYTES;
-    end > PROVISIONING_FAILURE_LOG_MAX_BYTES - 4;
-    end -= 1
-  ) {
+  for (let end = maxBytes; end > maxBytes - 4; end -= 1) {
     try {
       return decoder.decode(bytes.slice(0, end));
     } catch {

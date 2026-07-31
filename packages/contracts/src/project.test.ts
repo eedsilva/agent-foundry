@@ -122,6 +122,15 @@ describe('ProjectEventSchema provisioning lifecycle', () => {
         },
       }),
     ).toThrow();
+    expect(() =>
+      ProvisioningFailureDiagnosticSchema.parse({
+        schemaVersion: '1',
+        phase: 'start',
+        summary: 'failed',
+        context: 'x'.repeat(513),
+        logs: 'x',
+      }),
+    ).toThrow();
   });
 });
 

@@ -15,9 +15,9 @@ not safe or useful for an operator.
 
 ## Decision
 
-- The runtime redacts provisioning workdir arguments and deduplicates overlapping
-  CLI output before creating an environment-operation error. Its existing byte
-  cap remains the bound for persisted runtime diagnostics.
+- The asynchronous diagnostic path redacts provisioning workdir arguments and
+  credentials, and deduplicates overlapping CLI output before persistence. The
+  existing runtime byte cap remains the bound for runtime diagnostics.
 - The orchestrator persists a versioned diagnostic with `phase`, optional
   `exitCode`, concise `summary`, actionable `context`, and bounded `logs`.
 - The web timeline renders the summary and context first, with logs behind the
@@ -45,7 +45,8 @@ not exposed by the web timeline.
 
 ## Validation and rollback
 
-Contract, runtime, orchestrator, and web tests cover structured persistence,
-deduplication, workdir redaction, legacy suppression, and expandable logs.
+Contract, domain redaction, orchestrator, and web tests cover structured
+persistence, deduplication, workdir redaction, legacy suppression, and
+expandable logs.
 Rollback is a revert of this ADR's implementation commit; it does not rewrite
 existing events.

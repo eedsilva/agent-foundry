@@ -43,6 +43,16 @@ describe('redactString', () => {
     expect(output).toContain('--workdir [REDACTED]');
   });
 
+  it('redacts URL credentials and database URL assignments', () => {
+    const output = redactString(
+      'postgres://user:password@example.test/db DATABASE_URL="postgres://user:password@example.test/db"',
+    );
+
+    expect(output).not.toContain('password');
+    expect(output).toContain('postgres://user:[REDACTED]@example.test/db');
+    expect(output).toContain('DATABASE_URL=[REDACTED]');
+  });
+
   it('redacts raw and quoted structured assignments including complete cookie chains', () => {
     const output = redactString(
       [

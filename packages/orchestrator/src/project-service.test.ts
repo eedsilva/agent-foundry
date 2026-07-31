@@ -84,7 +84,8 @@ describe('ProjectService.create', () => {
 
   it('persists provisioning diagnostics while exposing a concise project error', async () => {
     const stores = makeStores();
-    const diagnostic = 'Starting database...\nerror running container: exit 1';
+    const transcript = 'Starting database...\nerror running container: exit 1';
+    const diagnostic = `${transcript}\n${transcript}\nCommand failed: ${transcript}`;
     const initialize = vi
       .fn()
       .mockRejectedValue(new EnvironmentOperationError('start', 1, diagnostic));
@@ -149,7 +150,7 @@ describe('ProjectService.create', () => {
               summary: 'Supabase start provisioning failed (exit code 1)',
               context:
                 'error running container: exit 1 Review the bounded logs for service details.',
-              logs: diagnostic,
+              logs: transcript,
             },
           },
         }),

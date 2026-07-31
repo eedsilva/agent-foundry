@@ -1078,26 +1078,6 @@ SELECT '-- not a comment'; DROP TABLE quoted_line_marker;`,
     await expect(runtime.inspect('project-a')).resolves.toEqual(stopped);
   });
 
-  it('deduplicates CLI transcripts and redacts the provisioning workdir', async () => {
-    const { command, runtime } = fixture();
-    await runtime.initialize({ projectId: 'project-a' });
-    await runtime.stop('project-a');
-    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
-    const transcript = `Starting database...\nerror running container: exit 1 --workdir ${workdir}`;
-    command.mockRejectedValueOnce(
-      Object.assign(new Error(`Command failed: ${transcript}`), {
-        exitCode: 1,
-        stderr: transcript,
-      }),
-    );
-
-    const rejection = await runtime.start('project-a').catch((error: unknown) => error);
-
-    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
-    expect(rejection.diagnostic.match(/error running container/g)).toHaveLength(1);
-    expect(rejection.diagnostic).not.toContain(workdir);
-  });
-
   it('caps multibyte diagnostics at 8 KiB without splitting a UTF-8 character', async () => {
     const { command, runtime } = fixture();
     await runtime.initialize({ projectId: 'project-a' });

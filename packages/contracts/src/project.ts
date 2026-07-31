@@ -70,13 +70,22 @@ export const FeedbackArtifactSchema = z
 export type FeedbackArtifact = z.infer<typeof FeedbackArtifactSchema>;
 
 export const PROVISIONING_FAILURE_LOG_MAX_BYTES = 8 * 1024;
+export const PROVISIONING_FAILURE_CONTEXT_MAX_BYTES = 512;
 export const ProvisioningFailureDiagnosticSchema = z
   .object({
     schemaVersion: z.literal('1'),
     phase: z.string().min(1),
     exitCode: z.number().int().optional(),
     summary: z.string().min(1),
-    context: z.string().min(1),
+    context: z
+      .string()
+      .min(1)
+      .max(PROVISIONING_FAILURE_CONTEXT_MAX_BYTES)
+      .refine(
+        (value) =>
+          new TextEncoder().encode(value).byteLength <= PROVISIONING_FAILURE_CONTEXT_MAX_BYTES,
+        `context must be at most ${PROVISIONING_FAILURE_CONTEXT_MAX_BYTES} UTF-8 bytes`,
+      ),
     logs: z
       .string()
       .min(1)
