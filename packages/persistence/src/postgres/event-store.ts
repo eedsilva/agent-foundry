@@ -7,7 +7,7 @@ export class PostgresEventStore implements EventStore {
   constructor(private readonly sql: PostgresDb) {}
 
   async append(event: ProjectEvent, tx?: Tx): Promise<void> {
-    const parsed = redactEvent(ProjectEventSchema.parse(event));
+    const parsed = ProjectEventSchema.parse(redactEvent(ProjectEventSchema.parse(event)));
     const db = resolveDb(this.sql, tx);
     // The partial unique index (project_id, dedupe_key) where dedupe_key is not
     // null replaces the file store's full-file scan: a replayed emission with

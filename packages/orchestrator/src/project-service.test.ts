@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppEnvironment, PreviewSession, PreviewWorkspaceRef } from '@agent-foundry/contracts';
-import type { GeneratedProjectRuntime } from '@agent-foundry/domain';
+import { EnvironmentOperationError, type GeneratedProjectRuntime } from '@agent-foundry/domain';
 import { makeHarness, makeStores, seedRun } from './testing/harness.js';
 import { WorkerLoop } from './worker-loop.js';
 
@@ -84,8 +84,11 @@ describe('ProjectService.create', () => {
 
   it('persists provisioning diagnostics while exposing a concise project error', async () => {
     const stores = makeStores();
-    const diagnostic = 'supabase start failed: raw CLI/container output';
-    const initialize = vi.fn().mockRejectedValue(new Error(diagnostic));
+    const transcript = 'Starting database...\nerror running container: exit 1';
+    const diagnostic = `${transcript}\n${transcript}\nCommand failed: ${transcript}`;
+    const initialize = vi
+      .fn()
+      .mockRejectedValue(new EnvironmentOperationError('start', 1, diagnostic));
     const unused = () => Promise.reject(new Error('unused test runtime operation'));
     const harness = makeHarness({}, stores, {
       generatedProjectRuntime: {
@@ -126,7 +129,11 @@ describe('ProjectService.create', () => {
     });
     expect(await stores.runs.get('id-0002')).toMatchObject({
       status: 'failed',
-      error: { code: 'PROJECT_PROVISIONING_FAILED', message: diagnostic },
+      error: {
+        code: 'PROJECT_PROVISIONING_FAILED',
+        message:
+          'Supabase start provisioning failed (exit code 1): Supabase start could not start a service. No service-specific stderr was reported; inspect the bounded logs for the failing service before retrying provisioning.',
+      },
     });
     const events = await harness.events.list('id-0001');
     expect(events).toEqual(
@@ -135,7 +142,17 @@ describe('ProjectService.create', () => {
         expect.objectContaining({
           type: 'project.provisioning_failed',
           message: 'Project provisioning failed. Review the project event timeline for details.',
-          data: { diagnostic },
+          data: {
+            diagnostic: {
+              schemaVersion: '1',
+              phase: 'start',
+              exitCode: 1,
+              summary: 'Supabase start provisioning failed (exit code 1)',
+              context:
+                'Supabase start could not start a service. No service-specific stderr was reported; inspect the bounded logs for the failing service before retrying provisioning.',
+              logs: transcript,
+            },
+          },
         }),
       ]),
     );
@@ -241,6 +258,7 @@ describe('ProjectService.create workspace boot', () => {
       session: previewSession({
         status: 'failed',
         completedAt: NOW,
+        failureEvidence: { exitCode: 1, stdout: '', stderr },
         error: { name: 'PreviewInstallError', code: 'PREVIEW_INSTALL_FAILED', message: stderr },
       }),
       url: '',
@@ -263,13 +281,25 @@ describe('ProjectService.create workspace boot', () => {
     });
     expect(await stores.runs.get('id-0002')).toMatchObject({
       status: 'failed',
-      error: { code: 'PROJECT_PROVISIONING_FAILED', message: stderr },
+      error: {
+        code: 'PROJECT_PROVISIONING_FAILED',
+        message: `Preview start provisioning failed (exit code 1): ${stderr}`,
+      },
     });
     expect(await harness.events.list('id-0001')).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: 'project.provisioning_failed',
-          data: { diagnostic: stderr },
+          data: {
+            diagnostic: {
+              schemaVersion: '1',
+              phase: 'start',
+              exitCode: 1,
+              summary: 'Preview start provisioning failed (exit code 1)',
+              context: stderr,
+              logs: stderr,
+            },
+          },
         }),
       ]),
     );
@@ -293,16 +323,83 @@ describe('ProjectService.create workspace boot', () => {
 
     expect(await stores.runs.get('id-0002')).toMatchObject({
       status: 'failed',
-      error: { code: 'PROJECT_PROVISIONING_FAILED', message: 'docker daemon unreachable' },
+      error: {
+        code: 'PROJECT_PROVISIONING_FAILED',
+        message: 'Workspace provisioning failed: docker daemon unreachable',
+      },
     });
     expect(await harness.events.list('id-0001')).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: 'project.provisioning_failed',
-          data: { diagnostic: 'docker daemon unreachable' },
+          data: {
+            diagnostic: {
+              schemaVersion: '1',
+              phase: 'workspace',
+              summary: 'Workspace provisioning failed',
+              context: 'docker daemon unreachable',
+              logs: 'docker daemon unreachable',
+            },
+          },
         }),
       ]),
     );
+  });
+
+  it('redacts and bounds generic asynchronous provisioning diagnostics', async () => {
+    const workdir = '/tmp/agent-foundry/project/environment';
+    const start = vi.fn(async () => {
+      throw new Error(`migration failed --workdir ${workdir}\n${'x'.repeat(10_000)}`);
+    });
+    const stores = makeStores();
+    const harness = makeHarness({}, stores, {
+      previews: { start, activeForProject: async () => undefined },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    await runWorker(harness);
+
+    const event = (await harness.events.list('id-0001')).find(
+      (candidate) => candidate.type === 'project.provisioning_failed',
+    );
+    expect(event?.data).toMatchObject({
+      diagnostic: {
+        context: 'migration failed --workdir [REDACTED]',
+      },
+    });
+    const logs = (event?.data as { diagnostic: { logs: string } }).diagnostic.logs;
+    expect(logs).not.toContain(workdir);
+    expect(new TextEncoder().encode(logs).byteLength).toBeLessThanOrEqual(8 * 1024);
+  });
+
+  it('gives retry guidance when the provider returns only a generic failure', async () => {
+    const start = vi.fn(async () => {
+      throw new Error('Supabase command failed.');
+    });
+    const harness = makeHarness({}, makeStores(), {
+      previews: { start, activeForProject: async () => undefined },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    await runWorker(harness);
+
+    const event = (await harness.events.list('id-0001')).find(
+      (candidate) => candidate.type === 'project.provisioning_failed',
+    );
+    expect(event?.data).toMatchObject({
+      diagnostic: {
+        context:
+          'Workspace could not start a service. No service-specific stderr was reported; inspect the bounded logs for the failing service before retrying provisioning.',
+      },
+    });
   });
 
   it('boots the workspace only after the generated runtime has provisioned its environment', async () => {

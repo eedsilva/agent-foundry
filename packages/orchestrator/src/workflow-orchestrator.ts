@@ -14,9 +14,11 @@ import type {
   PlanTask,
   TaskBrowserAssertion,
   PreviewSession,
+  PreviewFailurePhase,
   Project,
   ProjectEvent,
   ProjectPolicy,
+  ProvisioningFailureDiagnostic,
   QualityLoopStep,
   RankedModel,
   RunError,
@@ -42,6 +44,9 @@ import {
   EXECUTION_PROTOCOL_VERSION,
   formatZodIssues,
   isWorkflowRunStatusTerminal,
+  PROVISIONING_FAILURE_CONTEXT_MAX_BYTES,
+  PROVISIONING_FAILURE_LOG_MAX_BYTES,
+  ProvisioningFailureDiagnosticSchema,
   resolveRoutingEntry,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   TaskGraphArtifactSchema,
@@ -80,6 +85,7 @@ import {
   ApprovalRejectedError,
   ApprovalRequiredError,
   EmergencyCeilingError,
+  EnvironmentOperationError,
   ExecutionError,
   LeaseLostError,
   NotFoundError,
@@ -98,6 +104,7 @@ import {
   recordRunDuration,
   recordStepRetry,
   recordTokenUsage,
+  redactString,
   browserRepairId,
   taskStepId,
   transitionStepAttempt,
@@ -151,11 +158,28 @@ class ApprovalTimeoutScheduleError extends Error {
 const PROVISIONING_FAILURE_MESSAGE =
   'Project provisioning failed. Review the project event timeline for details.';
 
+function previewFailurePhase(code: string | undefined): PreviewFailurePhase | undefined {
+  switch (code) {
+    case 'PREVIEW_PREPARE_FAILED':
+      return 'prepare';
+    case 'PREVIEW_INSTALL_FAILED':
+    case 'PREVIEW_START_FAILED':
+      return 'start';
+    case 'PREVIEW_UNHEALTHY':
+      return 'health';
+    case 'PREVIEW_RESTART_LIMIT':
+    case 'PREVIEW_RESTART_FAILED':
+      return 'runtime';
+    default:
+      return undefined;
+  }
+}
+
 class ProjectProvisioningError extends Error {
   readonly code = 'PROJECT_PROVISIONING_FAILED';
 
-  constructor(cause: unknown) {
-    super(errorMessage(cause));
+  constructor(diagnostic: ProvisioningFailureDiagnostic) {
+    super(`${diagnostic.summary}: ${diagnostic.context}`);
     this.name = 'ProjectProvisioningError';
   }
 }
@@ -177,6 +201,105 @@ function provisionedPreviewData(session: PreviewSession): Record<string, unknown
         }
       : {}),
   };
+}
+
+function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagnostic {
+  const isEnvironmentFailure = error instanceof EnvironmentOperationError;
+  const record = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
+  const phase = isEnvironmentFailure
+    ? error.operation
+    : typeof record.failurePhase === 'string'
+      ? record.failurePhase
+      : 'workspace';
+  const exitCode = isEnvironmentFailure
+    ? error.exitCode
+    : typeof record.exitCode === 'number' && Number.isInteger(record.exitCode)
+      ? record.exitCode
+      : undefined;
+  const evidence = [record.stderr, record.stdout].filter(
+    (value): value is string => typeof value === 'string' && value.length > 0,
+  );
+  const rawLogs = isEnvironmentFailure
+    ? error.diagnostic
+    : evidence.length > 0
+      ? evidence.join('\n')
+      : errorMessage(error);
+  const logs = capProvisioningDiagnostic(deduplicateProvisioningLogs(redactString(rawLogs)));
+  const phaseLabel =
+    phase === 'workspace'
+      ? 'Workspace'
+      : isEnvironmentFailure
+        ? `Supabase ${phase}`
+        : `Preview ${phase}`;
+  const fallbackContext = `${phaseLabel} reported a failure; inspect the bounded logs for the provider error.`;
+  const lines = logs
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const genericFailure = lines.find((line) =>
+    /^(?:error running container(?::|\s).*|(?:supabase )?command failed\.?)$/i.test(line),
+  );
+  const contextCandidate =
+    lines.find(
+      (line) =>
+        /error|fail|unable|unreachable|unhealthy|timeout|timed out|exit/i.test(line) &&
+        line !== genericFailure,
+    ) ??
+    lines.find(
+      (line) => line !== genericFailure && !/^(starting|initiali[sz]ing|stopping)\b/i.test(line),
+    ) ??
+    (genericFailure
+      ? `${phaseLabel} could not start a service. No service-specific stderr was reported; inspect the bounded logs for the failing service before retrying provisioning.`
+      : undefined) ??
+    fallbackContext;
+  const context = capProvisioningDiagnostic(
+    contextCandidate,
+    PROVISIONING_FAILURE_CONTEXT_MAX_BYTES,
+  );
+  return ProvisioningFailureDiagnosticSchema.parse({
+    schemaVersion: '1',
+    phase,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    summary: `${phaseLabel} provisioning failed${
+      exitCode === undefined ? '' : ` (exit code ${exitCode})`
+    }`,
+    context,
+    logs,
+  });
+}
+
+function deduplicateProvisioningLogs(value: string): string {
+  const seen = new Set<string>();
+  return value
+    .split('\n')
+    .filter((line) => {
+      const normalized = line
+        .replace(/^(?:(?:stdout|stderr):\s*|\[(?:stdout|stderr)\]\s*)/i, '')
+        .replace(/^(?:command failed|supabase command failed)(?::|\.)\s*/i, '');
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    })
+    .join('\n');
+}
+
+function capProvisioningDiagnostic(
+  value: string,
+  maxBytes = PROVISIONING_FAILURE_LOG_MAX_BYTES,
+): string {
+  const trimmed = value.trim();
+  if (!trimmed) return 'No provisioning diagnostic available.';
+  const bytes = new TextEncoder().encode(trimmed);
+  if (bytes.byteLength <= maxBytes) return trimmed;
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  for (let end = maxBytes; end > maxBytes - 4; end -= 1) {
+    try {
+      return decoder.decode(bytes.slice(0, end));
+    } catch {
+      // Try the previous UTF-8 boundary.
+    }
+  }
+  return '';
 }
 
 export class WorkflowOrchestrator {
@@ -230,9 +353,18 @@ export class WorkflowOrchestrator {
       runId,
     });
     if (session.status !== 'running') {
-      throw new Error(
-        session.error?.message ??
-          `Preview session ${session.id} reached '${session.status}' instead of 'running' while booting the workspace.`,
+      const failurePhase = session.failurePhase ?? previewFailurePhase(session.error?.code);
+      throw Object.assign(
+        new Error(
+          session.error?.message ??
+            `Preview session ${session.id} reached '${session.status}' instead of 'running' while booting the workspace.`,
+        ),
+        {
+          failurePhase,
+          exitCode: session.failureEvidence?.exitCode ?? session.error?.exitCode,
+          stdout: session.failureEvidence?.stdout,
+          stderr: session.failureEvidence?.stderr,
+        },
       );
     }
     return session;
@@ -319,12 +451,13 @@ export class WorkflowOrchestrator {
           await this.generatedProjectRuntime?.initialize({ projectId });
           bootedPreview = await this.bootWorkspacePreview(projectId, run.id);
         } catch (error) {
+          const diagnostic = provisioningFailureDiagnostic(error);
           await this.emit(projectId, 'project.provisioning_failed', PROVISIONING_FAILURE_MESSAGE, {
             runId: run.id,
             dedupeKey: `${run.id}:project.provisioning_failed`,
-            data: { diagnostic: errorMessage(error) },
+            data: { diagnostic },
           });
-          throw new ProjectProvisioningError(error);
+          throw new ProjectProvisioningError(diagnostic);
         }
         await this.emit(projectId, 'project.provisioned', 'Project provisioning completed.', {
           runId: run.id,

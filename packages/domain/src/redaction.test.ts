@@ -35,6 +35,38 @@ describe('redactString', () => {
     expect(redactString('node.completed em 3s')).toBe('node.completed em 3s');
   });
 
+  it('redacts Supabase project workdirs in command arguments and transcripts', () => {
+    const workdir = '/tmp/agent-foundry/projects/project-1/environment';
+    const alternateWorkdir = '/tmp/agent-foundry/project-1/environment';
+    const output = redactString(
+      `supabase --workdir "${workdir}" failed at ${workdir} and ${alternateWorkdir}`,
+    );
+
+    expect(output).not.toContain(workdir);
+    expect(output).not.toContain(alternateWorkdir);
+    expect(output).toContain('--workdir [REDACTED]');
+  });
+
+  it('redacts URL credentials and database URL assignments', () => {
+    const output = redactString(
+      'postgres://user:password@example.test/db DATABASE_URL="postgres://user:password@example.test/db"',
+    );
+
+    expect(output).not.toContain('password');
+    expect(output).toContain('postgres://user:[REDACTED]@example.test/db');
+    expect(output).toContain('DATABASE_URL=[REDACTED]');
+  });
+
+  it('redacts uppercase environment secret assignments', () => {
+    const output = redactString(
+      'SUPABASE_SERVICE_ROLE_KEY=service-secret PASSWORD=password API_KEY=api-secret',
+    );
+
+    expect(output).toBe(
+      'SUPABASE_SERVICE_ROLE_KEY=[REDACTED] PASSWORD=[REDACTED] API_KEY=[REDACTED]',
+    );
+  });
+
   it('redacts raw and quoted structured assignments including complete cookie chains', () => {
     const output = redactString(
       [

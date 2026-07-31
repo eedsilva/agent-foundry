@@ -69,63 +69,104 @@ export const FeedbackArtifactSchema = z
   .strict();
 export type FeedbackArtifact = z.infer<typeof FeedbackArtifactSchema>;
 
-export const ProjectEventSchema = z.object({
-  id: PathSegmentSchema,
-  projectId: PathSegmentSchema,
-  type: z.enum([
-    'project.created',
-    'scaffold.applied',
-    'project.queued',
-    'project.provisioning_started',
-    'project.provisioned',
-    'project.provisioning_failed',
-    'project.started',
-    'project.completed',
-    'project.failed',
-    'run.cancel_requested',
-    'run.cancelled',
-    'run.emergency_ceiling_reached',
-    'run.draft_discarded',
-    'run.pause_requested',
-    'run.paused',
-    'run.resume_requested',
-    'run.resume_blocked',
-    'run.approval_requested',
-    'run.approval_decided',
-    'run.rejected',
-    'step.reused',
-    'step.retry_requested',
-    'node.started',
-    'node.completed',
-    'node.failed',
-    'quality.approved',
-    'quality.repair_requested',
-    'task.started',
-    'task.completed',
-    'task.failed',
-    'agent.routed',
-    'agent.started',
-    'agent.completed',
-    'agent.failed',
-    'artifact.created',
-    'verification.completed',
-    'policy.violation',
-    'git.checkpoint',
-    'queue.job_recovered',
-    'preview.crashed',
-    'preview.restarted',
-    'preview.failed',
-    'preview.reaped',
-    'operation.completed',
-    'operation.failed',
-  ]),
-  createdAt: z.string().datetime(),
-  nodeId: PathSegmentSchema.optional(),
-  runId: PathSegmentSchema.optional(),
-  message: z.string(),
-  dedupeKey: z.string().min(1).optional(),
-  data: z.record(z.string(), z.unknown()).default({}),
-});
+export const PROVISIONING_FAILURE_LOG_MAX_BYTES = 8 * 1024;
+export const PROVISIONING_FAILURE_PHASE_MAX_BYTES = 64;
+export const PROVISIONING_FAILURE_SUMMARY_MAX_BYTES = 256;
+export const PROVISIONING_FAILURE_CONTEXT_MAX_BYTES = 512;
+
+function boundedProvisioningString(maxBytes: number, label: string) {
+  return z
+    .string()
+    .min(1)
+    .max(maxBytes)
+    .refine(
+      (value) => new TextEncoder().encode(value).byteLength <= maxBytes,
+      `${label} must be at most ${maxBytes} UTF-8 bytes`,
+    );
+}
+
+export const ProvisioningFailureDiagnosticSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    phase: boundedProvisioningString(PROVISIONING_FAILURE_PHASE_MAX_BYTES, 'phase'),
+    exitCode: z.number().int().optional(),
+    summary: boundedProvisioningString(PROVISIONING_FAILURE_SUMMARY_MAX_BYTES, 'summary'),
+    context: boundedProvisioningString(PROVISIONING_FAILURE_CONTEXT_MAX_BYTES, 'context'),
+    logs: boundedProvisioningString(PROVISIONING_FAILURE_LOG_MAX_BYTES, 'logs'),
+  })
+  .strict();
+export type ProvisioningFailureDiagnostic = z.infer<typeof ProvisioningFailureDiagnosticSchema>;
+
+export const ProjectEventSchema = z
+  .object({
+    id: PathSegmentSchema,
+    projectId: PathSegmentSchema,
+    type: z.enum([
+      'project.created',
+      'scaffold.applied',
+      'project.queued',
+      'project.provisioning_started',
+      'project.provisioned',
+      'project.provisioning_failed',
+      'project.started',
+      'project.completed',
+      'project.failed',
+      'run.cancel_requested',
+      'run.cancelled',
+      'run.emergency_ceiling_reached',
+      'run.draft_discarded',
+      'run.pause_requested',
+      'run.paused',
+      'run.resume_requested',
+      'run.resume_blocked',
+      'run.approval_requested',
+      'run.approval_decided',
+      'run.rejected',
+      'step.reused',
+      'step.retry_requested',
+      'node.started',
+      'node.completed',
+      'node.failed',
+      'quality.approved',
+      'quality.repair_requested',
+      'task.started',
+      'task.completed',
+      'task.failed',
+      'agent.routed',
+      'agent.started',
+      'agent.completed',
+      'agent.failed',
+      'artifact.created',
+      'verification.completed',
+      'policy.violation',
+      'git.checkpoint',
+      'queue.job_recovered',
+      'preview.crashed',
+      'preview.restarted',
+      'preview.failed',
+      'preview.reaped',
+      'operation.completed',
+      'operation.failed',
+    ]),
+    createdAt: z.string().datetime(),
+    nodeId: PathSegmentSchema.optional(),
+    runId: PathSegmentSchema.optional(),
+    message: z.string(),
+    dedupeKey: z.string().min(1).optional(),
+    data: z.record(z.string(), z.unknown()).default({}),
+  })
+  .superRefine((event, ctx) => {
+    const diagnostic = event.data.diagnostic;
+    if (event.type !== 'project.provisioning_failed' || diagnostic === undefined) return;
+    if (typeof diagnostic === 'string') return;
+    if (!ProvisioningFailureDiagnosticSchema.safeParse(diagnostic).success) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['data', 'diagnostic'],
+        message: 'project.provisioning_failed diagnostic must be a bounded versioned object',
+      });
+    }
+  });
 export type ProjectEvent = z.infer<typeof ProjectEventSchema>;
 
 export const QueueLeaseSchema = z

@@ -16,6 +16,14 @@ const COOKIE_HEADER = /(\bcookie\s*:\s*).*$/gim;
 const COOKIE_ASSIGNMENT = /(\bcookie\s*=\s*)(?!["']).*$/gim;
 const RAW_SECRET =
   /(\b(?:authorization|(?:[a-z][a-z0-9]*[_-]?)?token)\s*[:=]\s*)(?!["'])(?:basic\s+|bearer\s+)?[^\s,;]+/gi;
+const URL_CREDENTIAL = /([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+(@)/gi;
+const DATABASE_URL_ASSIGNMENT =
+  /(\b(?:DATABASE_URL|SUPABASE_DB_URL)\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\]]+)/gi;
+const ENV_SECRET_ASSIGNMENT =
+  /(\b(?:[A-Z][A-Z0-9_]*_)?(?:SECRET|PASSWORD|TOKEN|KEY)\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}\]]+)/g;
+const WORKDIR_ARGUMENT = /(--workdir(?:=|\s+))(?:(?:"[^"]*")|(?:'[^']*')|\S+)/gi;
+const PROJECT_WORKDIR = /\/(?:[^/\s"'`]+\/)*projects\/[^/\s"'`]+\/environment(?:\/[^/\s"'`]*)?/gi;
+const ENVIRONMENT_WORKDIR = /\/(?:[^/\s"'`]+\/)+environment(?:\/[^/\s"'`]*)?/gi;
 
 const KEY_PREFIXES = new Set(['api', 'access', 'private']);
 
@@ -31,7 +39,13 @@ export function redactString(value: string): string {
     .replace(QUOTED_SECRET, '$1$2[REDACTED]$2')
     .replace(COOKIE_HEADER, '$1[REDACTED]')
     .replace(COOKIE_ASSIGNMENT, '$1[REDACTED]')
-    .replace(RAW_SECRET, '$1[REDACTED]');
+    .replace(RAW_SECRET, '$1[REDACTED]')
+    .replace(URL_CREDENTIAL, '$1[REDACTED]$2')
+    .replace(DATABASE_URL_ASSIGNMENT, '$1[REDACTED]')
+    .replace(ENV_SECRET_ASSIGNMENT, '$1[REDACTED]')
+    .replace(WORKDIR_ARGUMENT, '$1[REDACTED]')
+    .replace(PROJECT_WORKDIR, '[REDACTED]')
+    .replace(ENVIRONMENT_WORKDIR, '[REDACTED]');
   return VALUE_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[REDACTED]'), assignments);
 }
 

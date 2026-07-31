@@ -3,6 +3,7 @@ import {
   ArtifactMetadataSchema,
   ExecutorHealthSchema,
   ProjectEventSchema,
+  ProvisioningFailureDiagnosticSchema,
   QueueJobSchema,
 } from './project.js';
 
@@ -81,6 +82,73 @@ describe('ProjectEventSchema provisioning lifecycle', () => {
     });
 
     expect(event.data).toMatchObject({ diagnostic: expect.any(String) });
+  });
+
+  it('validates bounded structured provisioning diagnostics', () => {
+    expect(
+      ProvisioningFailureDiagnosticSchema.parse({
+        schemaVersion: '1',
+        phase: 'start',
+        exitCode: 1,
+        summary: 'Supabase start failed (exit code 1)',
+        context: 'error running container.',
+        logs: 'error running container: exit 1',
+      }),
+    ).toMatchObject({ phase: 'start', exitCode: 1 });
+    expect(() =>
+      ProvisioningFailureDiagnosticSchema.parse({
+        schemaVersion: '1',
+        phase: 'start',
+        summary: 'failed',
+        logs: 'raw logs',
+        workdir: '/tmp/host-path',
+      }),
+    ).toThrow();
+    expect(() =>
+      ProjectEventSchema.parse({
+        id: 'event-2',
+        projectId: 'project-1',
+        type: 'project.provisioning_failed',
+        createdAt: '2026-07-24T12:00:00.000Z',
+        message: 'failed',
+        data: {
+          diagnostic: {
+            schemaVersion: '1',
+            phase: 'start',
+            summary: 'failed',
+            context: 'context',
+            logs: 'x'.repeat(8 * 1024 + 1),
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      ProvisioningFailureDiagnosticSchema.parse({
+        schemaVersion: '1',
+        phase: 'start',
+        summary: 'failed',
+        context: 'x'.repeat(513),
+        logs: 'x',
+      }),
+    ).toThrow();
+    expect(() =>
+      ProvisioningFailureDiagnosticSchema.parse({
+        schemaVersion: '1',
+        phase: 'x'.repeat(65),
+        summary: 'failed',
+        context: 'context',
+        logs: 'logs',
+      }),
+    ).toThrow();
+    expect(() =>
+      ProvisioningFailureDiagnosticSchema.parse({
+        schemaVersion: '1',
+        phase: 'start',
+        summary: 'x'.repeat(257),
+        context: 'context',
+        logs: 'logs',
+      }),
+    ).toThrow();
   });
 });
 
