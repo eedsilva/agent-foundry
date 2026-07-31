@@ -366,7 +366,7 @@ import { createServer } from 'node:http';
 const port = Number(process.env.PORT ?? 0);
 createServer((_req, res) => {
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-  res.end('<html><body><div>hello</div></body></html>');
+  res.end('<html><head><link href="/_next/style.css"></head><body><script src="/_next/app.js"></script><a href="/appointments">appointments</a><div>hello</div></body></html>');
 }).listen(port, '127.0.0.1', () => console.log('  VITE fixture  ready\\n\\n  ➜  Local:   http://127.0.0.1:' + port + '/\\n'));
 `;
 
@@ -383,6 +383,9 @@ createServer((_req, res) => {
     const { baseUrl, runtime } = await startApi();
     const started = await startPreviewWithHtmlFixture(baseUrl, runtime, HTML_FIXTURE, 'html');
     const body = await fetch(started.url).then((response) => response.text());
+    expect(body).toContain(`href="/preview/${started.session.id}/_next/style.css"`);
+    expect(body).toContain(`src="/preview/${started.session.id}/_next/app.js"`);
+    expect(body).toContain(`href="/preview/${started.session.id}/appointments"`);
     expect(body).toContain('af:selection:start');
     expect(body.indexOf('af:selection:start')).toBeLessThan(body.indexOf('</body>'));
     // Regression check: injectInspectorScript used to pass the script tag as a
@@ -396,6 +399,32 @@ createServer((_req, res) => {
     // only the part the bug actually corrupts).
     expect(body).toContain('__reactFiber$');
   });
+
+  it('decodes compressed HTML before injecting the inspector script', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const compressedFixture = `
+import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
+const port = Number(process.env.PORT ?? 0);
+createServer((_req, res) => {
+  const body = gzipSync('<html><body><div>compressed</div></body></html>');
+  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-encoding': 'gzip' });
+  res.end(body);
+}).listen(port, '127.0.0.1', () => console.log('  VITE fixture  ready\\n\\n  ➜  Local:   http://127.0.0.1:' + port + '/\\n'));
+`;
+    const started = await startPreviewWithHtmlFixture(
+      baseUrl,
+      runtime,
+      compressedFixture,
+      'compressed-html',
+    );
+    const response = await fetch(started.url);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-encoding')).toBeNull();
+    const body = await response.text();
+    expect(body).toContain('<div>compressed</div>');
+    expect(body).toContain('af:selection:start');
+  }, 20_000);
 
   it('does not touch a non-HTML response', async () => {
     const { baseUrl, runtime } = await startApi();

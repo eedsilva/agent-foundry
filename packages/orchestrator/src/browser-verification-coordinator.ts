@@ -40,7 +40,7 @@ export interface BrowserEvidenceLimits {
 
 export class BrowserVerificationCoordinator {
   constructor(
-    private readonly previews: Pick<PreviewService, 'start' | 'stop'>,
+    private readonly previews: Pick<PreviewService, 'activeForProject' | 'start' | 'stop'>,
     private readonly verifier: BrowserVerifier,
     private readonly artifacts: Pick<ArtifactStore, 'putBlob'>,
     private readonly limits: BrowserEvidenceLimits,
@@ -51,6 +51,8 @@ export class BrowserVerificationCoordinator {
     signal: AbortSignal,
     onSessionStarted?: (sessionId: string) => Promise<void>,
   ): Promise<BrowserVerificationReport> {
+    const active = await this.previews.activeForProject(input.projectId);
+    if (active) await this.previews.stop(active.id);
     const started = await this.previews.start({
       workspaceRef: { projectId: input.projectId, workspacePath: input.workspacePath },
       runId: input.runId,

@@ -6,6 +6,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import type { Socket } from 'node:net';
+import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Runtime } from '@agent-foundry/composition';
 import { isLoopbackHost } from '@agent-foundry/composition';
@@ -157,8 +158,22 @@ function respondFromUpstream(
   const chunks: Buffer[] = [];
   upstreamRes.on('data', (chunk: Buffer) => chunks.push(chunk));
   upstreamRes.on('end', () => {
-    const html = injectInspectorScript(Buffer.concat(chunks).toString('utf8'), inspectorScriptTag);
+    const body = Buffer.concat(chunks);
+    const decoded = decodeHtmlBody(body, headers['content-encoding']);
+    if (decoded === undefined) {
+      // Preserve an unknown or malformed encoding byte-for-byte. Injecting into
+      // compressed bytes would corrupt the response and surface as a browser
+      // decoding failure, which is harder to diagnose than a missing inspector.
+      raw.writeHead(upstreamRes.statusCode ?? 502, headers);
+      raw.end(body);
+      return;
+    }
+    const html = injectInspectorScript(
+      rewriteRootRelativeUrls(decoded, `/preview/${sessionId}`),
+      inspectorScriptTag,
+    );
     const rewritten = Buffer.from(html, 'utf8');
+    delete headers['content-encoding'];
     delete headers['content-length']; // body length changed; let Node recompute framing
     raw.writeHead(upstreamRes.statusCode ?? 502, {
       ...headers,
@@ -167,6 +182,29 @@ function respondFromUpstream(
     raw.end(rewritten);
   });
   upstreamRes.on('error', () => raw.destroy());
+}
+
+function decodeHtmlBody(
+  body: Buffer,
+  contentEncoding: string | string[] | undefined,
+): string | undefined {
+  const encoding = Array.isArray(contentEncoding)
+    ? contentEncoding.join(',')
+    : contentEncoding?.trim().toLowerCase();
+  if (!encoding || encoding === 'identity') return body.toString('utf8');
+  try {
+    const decoded =
+      encoding === 'gzip'
+        ? gunzipSync(body)
+        : encoding === 'deflate'
+          ? inflateSync(body)
+          : encoding === 'br'
+            ? brotliDecompressSync(body)
+            : undefined;
+    return decoded?.toString('utf8');
+  } catch {
+    return undefined;
+  }
 }
 
 function injectInspectorScript(html: string, inspectorScriptTag: string): string {
@@ -178,6 +216,14 @@ function injectInspectorScript(html: string, inspectorScriptTag: string): string
   // and silently corrupted the injected script). A function's return value is
   // inserted verbatim, with no $-pattern interpretation.
   return html.replace('</body>', () => `${inspectorScriptTag}</body>`);
+}
+
+function rewriteRootRelativeUrls(html: string, prefixPath: string): string {
+  const prefix = prefixPath.replace(/\/$/, '');
+  return html.replace(
+    /(\b(?:src|href|action|poster)\s*=\s*["'])\/(?!\/)/gi,
+    (_match, attribute: string) => `${attribute}${prefix}/`,
+  );
 }
 
 async function handleUpgrade(

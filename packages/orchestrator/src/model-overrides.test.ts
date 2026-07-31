@@ -33,6 +33,23 @@ async function persistLegacyRetry(
 }
 
 describe('audited model override resolution', () => {
+  it('allows pinning a catalog entry that delegates model selection to its CLI', async () => {
+    const harness = makeHarness({}, undefined, {
+      models: [{ ...MODELS[0]!, id: 'codex-default', model: '' }],
+    });
+    await seedRun(harness);
+
+    const override = await harness.service.createModelOverride('run-1', {
+      scope: { kind: 'run' },
+      modelId: 'codex-default',
+      provider: 'codex',
+      model: '',
+      ...audit,
+    });
+
+    expect(override.model).toBe('');
+  });
+
   it('rejects a step scope that does not identify an agent step in the run workflow', async () => {
     const harness = makeHarness();
     await seedRun(harness);

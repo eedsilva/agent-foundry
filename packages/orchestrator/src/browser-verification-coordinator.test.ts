@@ -109,6 +109,7 @@ function setup(
   const stopped: string[] = [];
   const session = runningSession();
   const previews = {
+    activeForProject: () => Promise.resolve(undefined),
     start: () => Promise.resolve(startedPreview ?? { session, url: session.url! }),
     stop: (sessionId: string) => {
       stopped.push(sessionId);
@@ -118,7 +119,7 @@ function setup(
         completedAt: '2026-07-17T12:00:02.000Z',
       });
     },
-  } satisfies Pick<PreviewService, 'start' | 'stop'>;
+  } satisfies Pick<PreviewService, 'activeForProject' | 'start' | 'stop'>;
   const coordinator = new BrowserVerificationCoordinator(previews, { verify }, artifacts, {
     maxScreenshotBytes: 5_000_000,
     maxTraceBytes: 20_000_000,
@@ -138,6 +139,35 @@ const input = {
 };
 
 describe('BrowserVerificationCoordinator', () => {
+  it('stops an existing project preview before starting verification', async () => {
+    const stopped: string[] = [];
+    const existing = { ...runningSession(), id: 'preview-existing' };
+    const started = runningSession();
+    const previews = {
+      activeForProject: () => Promise.resolve(existing),
+      start: () => Promise.resolve({ session: started, url: started.url! }),
+      stop: (sessionId: string) => {
+        stopped.push(sessionId);
+        return Promise.resolve({ ...started, status: 'stopped' as const });
+      },
+    } satisfies Pick<PreviewService, 'activeForProject' | 'start' | 'stop'>;
+    const coordinator = new BrowserVerificationCoordinator(
+      previews,
+      { verify: () => Promise.resolve({ report: report(), evidence: { screenshots: [] } }) },
+      { putBlob: () => Promise.reject(new Error('putBlob should not be called by this fixture')) },
+      {
+        maxScreenshotBytes: 5_000_000,
+        maxTraceBytes: 20_000_000,
+        maxVideoBytes: 50_000_000,
+        retentionSeconds: 604_800,
+      },
+    );
+
+    await coordinator.verify(input, new AbortController().signal);
+
+    expect(stopped).toEqual(['preview-existing', 'preview-1']);
+  });
+
   it('preserves a terminal preview failure instead of masking it as a report binding error', async () => {
     const failedSession: PreviewSession = {
       ...runningSession(),
@@ -218,6 +248,7 @@ describe('BrowserVerificationCoordinator', () => {
     const session = runningSession();
     const coordinator = new BrowserVerificationCoordinator(
       {
+        activeForProject: () => Promise.resolve(undefined),
         start: () => Promise.resolve({ session, url: session.url! }),
         stop: () => Promise.reject(new Error('preview stop failed')),
       },

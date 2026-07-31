@@ -119,7 +119,7 @@ export const RunRetryDirectiveSchema = z
       .object({
         modelId: PathSegmentSchema.optional(),
         provider: ProviderSchema.exclude(['mock']),
-        model: z.string().trim().min(1),
+        model: z.string().trim(),
         actor: ActorRefSchema.optional(),
         reason: z.string().trim().min(1).optional(),
         estimatedImpact: z.string().trim().min(1).optional(),
@@ -299,7 +299,7 @@ export const StepAttemptSchema = z
     sequence: z.number().int().positive(),
     executorKind: z.enum(['agent', 'verification']),
     provider: ProviderSchema.or(z.literal('internal')),
-    model: z.string().min(1),
+    model: z.string(),
     executedModel: z.string().min(1).optional(),
     modelId: PathSegmentSchema.optional(),
     status: StepAttemptStatusSchema,
