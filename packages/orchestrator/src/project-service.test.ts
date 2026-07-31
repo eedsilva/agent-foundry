@@ -132,7 +132,7 @@ describe('ProjectService.create', () => {
       error: {
         code: 'PROJECT_PROVISIONING_FAILED',
         message:
-          'Supabase start provisioning failed (exit code 1): error running container: exit 1 Review the bounded logs for service details.',
+          'Supabase start provisioning failed (exit code 1): Supabase start could not start a service. No service-specific stderr was reported; inspect the bounded logs for details.',
       },
     });
     const events = await harness.events.list('id-0001');
@@ -149,7 +149,7 @@ describe('ProjectService.create', () => {
               exitCode: 1,
               summary: 'Supabase start provisioning failed (exit code 1)',
               context:
-                'error running container: exit 1 Review the bounded logs for service details.',
+                'Supabase start could not start a service. No service-specific stderr was reported; inspect the bounded logs for details.',
               logs: transcript,
             },
           },

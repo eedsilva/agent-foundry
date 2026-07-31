@@ -232,7 +232,7 @@ function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagn
         line !== genericContainerError && !/^(starting|initiali[sz]ing|stopping)\b/i.test(line),
     ) ??
     (genericContainerError
-      ? `${genericContainerError} Review the bounded logs for service details.`
+      ? `${phaseLabel} could not start a service. No service-specific stderr was reported; inspect the bounded logs for details.`
       : undefined) ??
     fallbackContext;
   const context = capProvisioningDiagnostic(
