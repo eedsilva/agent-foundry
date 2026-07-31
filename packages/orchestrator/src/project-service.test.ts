@@ -377,6 +377,32 @@ describe('ProjectService.create workspace boot', () => {
     expect(new TextEncoder().encode(logs).byteLength).toBeLessThanOrEqual(8 * 1024);
   });
 
+  it('gives retry guidance when the provider returns only a generic failure', async () => {
+    const start = vi.fn(async () => {
+      throw new Error('Supabase command failed.');
+    });
+    const harness = makeHarness({}, makeStores(), {
+      previews: { start, activeForProject: async () => undefined },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+    await runWorker(harness);
+
+    const event = (await harness.events.list('id-0001')).find(
+      (candidate) => candidate.type === 'project.provisioning_failed',
+    );
+    expect(event?.data).toMatchObject({
+      diagnostic: {
+        context:
+          'Workspace could not start a service. No service-specific stderr was reported; inspect the bounded logs for the failing service before retrying provisioning.',
+      },
+    });
+  });
+
   it('boots the workspace only after the generated runtime has provisioned its environment', async () => {
     const initialize = vi.fn(async () => ENVIRONMENT);
     const unused = () => Promise.reject(new Error('unused test runtime operation'));

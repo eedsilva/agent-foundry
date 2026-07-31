@@ -218,20 +218,19 @@ function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagn
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
-  const genericContainerError = lines.find((line) =>
-    /^error running container(?::|\s)/i.test(line),
+  const genericFailure = lines.find((line) =>
+    /^(?:error running container(?::|\s).*|(?:supabase )?command failed\.?)$/i.test(line),
   );
   const contextCandidate =
     lines.find(
       (line) =>
         /error|fail|unable|unreachable|unhealthy|timeout|timed out|exit/i.test(line) &&
-        line !== genericContainerError,
+        line !== genericFailure,
     ) ??
     lines.find(
-      (line) =>
-        line !== genericContainerError && !/^(starting|initiali[sz]ing|stopping)\b/i.test(line),
+      (line) => line !== genericFailure && !/^(starting|initiali[sz]ing|stopping)\b/i.test(line),
     ) ??
-    (genericContainerError
+    (genericFailure
       ? `${phaseLabel} could not start a service. No service-specific stderr was reported; inspect the bounded logs for the failing service before retrying provisioning.`
       : undefined) ??
     fallbackContext;
