@@ -45,6 +45,7 @@ const MAX_BACKUP_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
 const DEFAULT_INITIALIZE_TIMEOUT_MS = 10 * 60 * 1000;
 const INITIALIZE_CLEANUP_TIMEOUT_MS = 30 * 1000;
+const PROVISIONING_TIMEOUT = Symbol('provisioning-timeout');
 const NUL = Buffer.from('\0');
 const PORT_BASE = 20_000;
 const PORT_BLOCK_SIZE = 8;
@@ -149,6 +150,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       }
     }
     const initializationDeadline = createDeadline(this.#initializeTimeoutMs);
+    const wait = <T>(operation: EnvironmentLifecycleOperation, promise: Promise<T>) =>
+      waitWithSignal(operation, promise, initializationDeadline.signal, this.#initializeTimeoutMs);
     const execute = (operation: EnvironmentLifecycleOperation, ...args: string[]) =>
       this.#executeWithSignal(
         operation,
@@ -158,9 +161,9 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       );
     let startAttempted = false;
     try {
-      await mkdir(workdir, { recursive: true });
+      await wait('initialize', mkdir(workdir, { recursive: true }));
       await execute('initialize', 'init', '--workdir', workdir);
-      await this.#configure(workdir, composeProjectName);
+      await wait('initialize', this.#configure(workdir, composeProjectName));
       startAttempted = true;
       await execute(
         'start',
@@ -202,12 +205,12 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
         'initialize',
       );
       const credentials = credentialsFromStatus(result.stdout);
-      if (credentials) await this.#writeAppSecrets(projectId, credentials);
-      await persist(environment);
+      if (credentials) await wait('initialize', this.#writeAppSecrets(projectId, credentials));
+      await wait('initialize', persist(environment));
       return environment;
     } catch (error) {
       const original = asOperationError('initialize', error);
-      const preserveWorkdir = original.diagnostic.includes(' timed out after ');
+      const preserveWorkdir = isProvisioningTimeout(original);
       if (startAttempted) {
         try {
           await this.#stopWithTimeout(workdir);
@@ -680,10 +683,9 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       const command = this.#abortableCommand
         ? this.#abortableCommand(signal, ...args)
         : this.#command(...args);
-      const result = await raceWithAbort(command, signal);
+      const result = await waitWithSignal(operation, command, signal, timeoutMs);
       return assertCommandSucceeded(result);
     } catch (error) {
-      if (signal.aborted) throw timeoutError(operation, timeoutMs);
       if (error instanceof EnvironmentOperationError) throw error;
       throw operationError(operation, error);
     }
@@ -1273,11 +1275,31 @@ function timeoutError(
   operation: EnvironmentLifecycleOperation,
   timeoutMs: number,
 ): EnvironmentOperationError {
-  return new EnvironmentOperationError(
+  const error = new EnvironmentOperationError(
     operation,
     undefined,
     `Supabase ${operation} timed out after ${Math.ceil(timeoutMs / 1_000)} seconds. Verify Docker and Supabase readiness before retrying; cleanup is attempted automatically when a stack was started, and the partial workdir is preserved for inspection until retry.`,
   );
+  Object.defineProperty(error, PROVISIONING_TIMEOUT, { value: true });
+  return error;
+}
+
+function isProvisioningTimeout(error: EnvironmentOperationError): boolean {
+  return PROVISIONING_TIMEOUT in error;
+}
+
+async function waitWithSignal<T>(
+  operation: EnvironmentLifecycleOperation,
+  promise: Promise<T>,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<T> {
+  try {
+    return await raceWithAbort(promise, signal);
+  } catch (error) {
+    if (signal.aborted) throw timeoutError(operation, timeoutMs);
+    throw error;
+  }
 }
 
 async function configureProject(

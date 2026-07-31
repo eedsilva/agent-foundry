@@ -891,6 +891,14 @@ docker info
 
 Ambos devem terminar com sucesso. `EXECUTOR_MODE=mock` não instancia esse runtime e não requer Supabase ou Docker.
 
+`SUPABASE_PROVISIONING_TIMEOUT_MS` limita quanto tempo cada inicialização pode aguardar a stack
+local ficar pronta; o padrão é `600000` ms (dez minutos). Em timeout, o runtime tenta parar a stack
+por até 30 segundos, registra um diagnóstico redigido no evento de provisioning e preserva o
+workdir parcial para inspeção/backup. Depois de corrigir Docker ou Supabase, a mesma tentativa de
+retry recolhe esse workdir antes de recriar o ambiente. Se a retenção não for mais necessária,
+faça backup do `DATA_DIR` e use o procedimento explícito de cleanup do runtime; não remova o
+diretório diretamente.
+
 O diretório autoritativo de cada runtime é `DATA_DIR/projects/<projectId>/environment/`; `environment.json` contém somente nomes de recursos, paths, portas, endpoints sem credenciais e timestamps de saúde. Nunca registre stdout/stderr bruto do Supabase, URLs de banco, JWTs ou chaves. Logs podem conter somente `EnvironmentOperationError.operation`, `exitCode` e o `diagnostic` já limitado e redigido pelo adapter.
 
 Use o lifecycle do `GeneratedProjectRuntime`, que fixa `--workdir`, nome de rede e validação de path. `initialize`, `start`, `stop`, `inspect` e `health` são seguros para repetição; `migrate` e `seed` aceitam somente arquivos contidos no workdir. `reset` e `cleanup` exigem `confirmed: true` e `backupCreatedAt` de um backup independente criado há no máximo 24 horas. Não execute `supabase db reset`, `supabase stop --no-backup` nem remova o workdir diretamente.

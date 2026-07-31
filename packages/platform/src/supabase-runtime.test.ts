@@ -388,18 +388,26 @@ enabled = false`);
     });
     const { runtime } = fixture(command, { initializeTimeoutMs: 1_000 });
 
-    const rejection = await runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
+    vi.useFakeTimers();
+    try {
+      const initialization = runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
+      await vi.waitFor(() => expect(startCalled).toBe(true), { timeout: 500, interval: 1 });
+      await vi.advanceTimersByTimeAsync(1_000);
+      const rejection = await initialization;
 
-    expect(startCalled).toBe(true);
-    expect(rejection).toMatchObject({ operation: 'start', exitCode: undefined });
-    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
-    expect(rejection.diagnostic).toContain('timed out');
-    expect(rejection.diagnostic).toContain('preserved');
-    expect(rejection.diagnostic).toContain('retry');
-    expect(command.mock.calls.slice(-1)).toEqual([
-      ['stop', '--workdir', workdir, '--no-backup', '--yes'],
-    ]);
-    await expect(stat(workdir)).resolves.toBeDefined();
+      expect(startCalled).toBe(true);
+      expect(rejection).toMatchObject({ operation: 'start', exitCode: undefined });
+      if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+      expect(rejection.diagnostic).toContain('timed out');
+      expect(rejection.diagnostic).toContain('preserved');
+      expect(rejection.diagnostic).toContain('retry');
+      expect(command.mock.calls.slice(-1)).toEqual([
+        ['stop', '--workdir', workdir, '--no-backup', '--yes'],
+      ]);
+      await expect(stat(workdir)).resolves.toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not initialize or start Supabase twice for the same project', async () => {
