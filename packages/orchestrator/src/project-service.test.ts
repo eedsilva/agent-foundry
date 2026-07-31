@@ -131,7 +131,7 @@ describe('ProjectService.create', () => {
       error: {
         code: 'PROJECT_PROVISIONING_FAILED',
         message:
-          'Supabase start failed (exit code 1): error running container: exit 1 Review the bounded logs for service details.',
+          'Supabase start provisioning failed (exit code 1): error running container: exit 1 Review the bounded logs for service details.',
       },
     });
     const events = await harness.events.list('id-0001');
@@ -146,7 +146,7 @@ describe('ProjectService.create', () => {
               schemaVersion: '1',
               phase: 'start',
               exitCode: 1,
-              summary: 'Supabase start failed (exit code 1)',
+              summary: 'Supabase start provisioning failed (exit code 1)',
               context:
                 'error running container: exit 1 Review the bounded logs for service details.',
               logs: diagnostic,
@@ -257,6 +257,8 @@ describe('ProjectService.create workspace boot', () => {
       session: previewSession({
         status: 'failed',
         completedAt: NOW,
+        failurePhase: 'start',
+        failureEvidence: { exitCode: 1, stdout: '', stderr },
         error: { name: 'PreviewInstallError', code: 'PREVIEW_INSTALL_FAILED', message: stderr },
       }),
       url: '',
@@ -281,7 +283,7 @@ describe('ProjectService.create workspace boot', () => {
       status: 'failed',
       error: {
         code: 'PROJECT_PROVISIONING_FAILED',
-        message: `Workspace provisioning failed: ${stderr}`,
+        message: `Preview start provisioning failed (exit code 1): ${stderr}`,
       },
     });
     expect(await harness.events.list('id-0001')).toEqual(
@@ -291,8 +293,9 @@ describe('ProjectService.create workspace boot', () => {
           data: {
             diagnostic: {
               schemaVersion: '1',
-              phase: 'workspace',
-              summary: 'Workspace provisioning failed',
+              phase: 'start',
+              exitCode: 1,
+              summary: 'Preview start provisioning failed (exit code 1)',
               context: stderr,
               logs: stderr,
             },

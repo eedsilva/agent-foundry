@@ -186,17 +186,33 @@ function provisionedPreviewData(session: PreviewSession): Record<string, unknown
 
 function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagnostic {
   const isEnvironmentFailure = error instanceof EnvironmentOperationError;
-  const phase = isEnvironmentFailure ? error.operation : 'workspace';
   const record = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
+  const phase = isEnvironmentFailure
+    ? error.operation
+    : typeof record.failurePhase === 'string'
+      ? record.failurePhase
+      : 'workspace';
   const exitCode = isEnvironmentFailure
     ? error.exitCode
     : typeof record.exitCode === 'number' && Number.isInteger(record.exitCode)
       ? record.exitCode
       : undefined;
-  const logs = capProvisioningDiagnostic(
-    redactString(isEnvironmentFailure ? error.diagnostic : errorMessage(error)),
+  const evidence = [record.stderr, record.stdout].filter(
+    (value): value is string => typeof value === 'string' && value.length > 0,
   );
-  const fallbackContext = `${phase === 'workspace' ? 'Workspace' : `Supabase ${phase}`} reported a failure; inspect the bounded logs for the provider error.`;
+  const rawLogs = isEnvironmentFailure
+    ? error.diagnostic
+    : evidence.length > 0
+      ? evidence.join('\n')
+      : errorMessage(error);
+  const logs = capProvisioningDiagnostic(redactString(rawLogs));
+  const phaseLabel =
+    phase === 'workspace'
+      ? 'Workspace'
+      : isEnvironmentFailure
+        ? `Supabase ${phase}`
+        : `Preview ${phase}`;
+  const fallbackContext = `${phaseLabel} reported a failure; inspect the bounded logs for the provider error.`;
   const lines = logs
     .split('\n')
     .map((line) => line.trim())
@@ -222,7 +238,7 @@ function provisioningFailureDiagnostic(error: unknown): ProvisioningFailureDiagn
     schemaVersion: '1',
     phase,
     ...(exitCode !== undefined ? { exitCode } : {}),
-    summary: `${phase === 'workspace' ? 'Workspace provisioning' : `Supabase ${phase}`} failed${
+    summary: `${phaseLabel} provisioning failed${
       exitCode === undefined ? '' : ` (exit code ${exitCode})`
     }`,
     context,
@@ -235,7 +251,19 @@ function capProvisioningDiagnostic(value: string): string {
   if (!trimmed) return 'No provisioning diagnostic available.';
   const bytes = new TextEncoder().encode(trimmed);
   if (bytes.byteLength <= PROVISIONING_FAILURE_LOG_MAX_BYTES) return trimmed;
-  return new TextDecoder().decode(bytes.slice(0, PROVISIONING_FAILURE_LOG_MAX_BYTES));
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  for (
+    let end = PROVISIONING_FAILURE_LOG_MAX_BYTES;
+    end > PROVISIONING_FAILURE_LOG_MAX_BYTES - 4;
+    end -= 1
+  ) {
+    try {
+      return decoder.decode(bytes.slice(0, end));
+    } catch {
+      // Try the previous UTF-8 boundary.
+    }
+  }
+  return '';
 }
 
 export class WorkflowOrchestrator {
@@ -289,9 +317,17 @@ export class WorkflowOrchestrator {
       runId,
     });
     if (session.status !== 'running') {
-      throw new Error(
-        session.error?.message ??
-          `Preview session ${session.id} reached '${session.status}' instead of 'running' while booting the workspace.`,
+      throw Object.assign(
+        new Error(
+          session.error?.message ??
+            `Preview session ${session.id} reached '${session.status}' instead of 'running' while booting the workspace.`,
+        ),
+        {
+          failurePhase: session.failurePhase,
+          exitCode: session.failureEvidence?.exitCode ?? session.error?.exitCode,
+          stdout: session.failureEvidence?.stdout,
+          stderr: session.failureEvidence?.stderr,
+        },
       );
     }
     return session;

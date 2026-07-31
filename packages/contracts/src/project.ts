@@ -77,7 +77,14 @@ export const ProvisioningFailureDiagnosticSchema = z
     exitCode: z.number().int().optional(),
     summary: z.string().min(1),
     context: z.string().min(1),
-    logs: z.string().min(1).max(PROVISIONING_FAILURE_LOG_MAX_BYTES),
+    logs: z
+      .string()
+      .min(1)
+      .max(PROVISIONING_FAILURE_LOG_MAX_BYTES)
+      .refine(
+        (value) => new TextEncoder().encode(value).byteLength <= PROVISIONING_FAILURE_LOG_MAX_BYTES,
+        `logs must be at most ${PROVISIONING_FAILURE_LOG_MAX_BYTES} UTF-8 bytes`,
+      ),
   })
   .strict();
 export type ProvisioningFailureDiagnostic = z.infer<typeof ProvisioningFailureDiagnosticSchema>;

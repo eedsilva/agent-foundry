@@ -87,20 +87,22 @@ export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: bo
                 </div>
                 <p className="text-ink mt-1 text-[13px] leading-snug">{event.message}</p>
                 {diagnostic ? (
-                  <details className="mt-2">
-                    <summary className="text-ink-subtle cursor-pointer text-[11px]">
-                      {diagnostic.label}
-                    </summary>
+                  <div className="mt-2">
                     {diagnostic.summary ? (
-                      <p className="text-ink mt-2 text-[12px]">{diagnostic.summary}</p>
+                      <p className="text-ink text-[12px]">{diagnostic.summary}</p>
                     ) : null}
                     {diagnostic.context ? (
                       <p className="text-ink-subtle mt-1 text-[11px]">{diagnostic.context}</p>
                     ) : null}
-                    <pre className="bg-surface-muted text-ink-subtle mt-2 max-h-64 overflow-auto rounded p-2 font-mono text-[10px] whitespace-pre-wrap">
-                      {diagnostic.value}
-                    </pre>
-                  </details>
+                    <details className="mt-2">
+                      <summary className="text-ink-subtle cursor-pointer text-[11px]">
+                        {diagnostic.label}
+                      </summary>
+                      <pre className="bg-surface-muted text-ink-subtle mt-2 max-h-64 overflow-auto rounded p-2 font-mono text-[10px] whitespace-pre-wrap">
+                        {diagnostic.value}
+                      </pre>
+                    </details>
+                  </div>
                 ) : null}
                 {event.nodeId ? (
                   <small className="text-ink-subtle font-mono text-[10px]">
