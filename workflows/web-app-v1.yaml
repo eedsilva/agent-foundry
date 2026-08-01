@@ -78,8 +78,8 @@ nodes:
         preferredTags: [coding, repository, tool-use]
       # Honoured: attempts per task before the task — and the run — fails.
       maxAttempts: 2
-    # The task's gate is the compiler, the linter, the tests, an applied
-    # migration and a booting preview — not a model's opinion (ADR 0045).
+    # The task's gate includes cheap source-integrity checks; the full compiler,
+    # test, migration and preview gates run once after the graph lands.
     verify:
       id: verify-task
       type: verify
@@ -92,7 +92,7 @@ nodes:
       # temporarily uncompilable while a later task updates a caller. The
       # blocking compiler gate belongs to full-suite-verification, after the
       # complete graph has landed.
-      scripts: []
+      scripts: [server-actions:check]
       # Lint and unit tests can gate each task as they are introduced. The
       # database smoke is intentionally deferred to the full-suite node: an
       # early migration task can legitimately leave the scaffold smoke script

@@ -22,6 +22,7 @@ describe('generated Next.js scaffold tooling', () => {
     ) as { scripts?: Record<string, string> };
 
     expect(packageJson.scripts).toMatchObject({
+      'server-actions:check': 'node scripts/check-server-actions.mjs',
       lint: 'eslint . --max-warnings=0',
       'lint:fix': 'eslint . --fix',
       format: 'prettier --write .',
