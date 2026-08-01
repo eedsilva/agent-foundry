@@ -5,9 +5,11 @@ import { createClaudeStreamMapper } from './claude-stream-events.js';
 function claudeJsonSchema(schema: AgentExecutionRequest['outputSchema']): string {
   if (schema === undefined) return '{}';
 
-  const compatibleSchema = Object.fromEntries(
-    Object.entries(schema).filter(([key]) => key !== '$schema' && !key.startsWith('x-')),
-  );
+  const compatibleSchema = JSON.parse(
+    JSON.stringify(schema, (key, value: unknown) =>
+      key === '$schema' || key === 'prefixItems' || key.startsWith('x-') ? undefined : value,
+    ),
+  ) as Record<string, unknown>;
   return JSON.stringify(compatibleSchema);
 }
 

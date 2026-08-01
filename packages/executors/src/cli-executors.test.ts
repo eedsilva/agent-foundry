@@ -134,6 +134,30 @@ describe('CLI executor contracts', () => {
     expect(JSON.parse(invocation.args[schemaIndex + 1] ?? '')).toEqual({ type: 'object' });
   });
 
+  it('removes unsupported tuple keywords from nested Claude schemas', async () => {
+    const invocation = await new InspectableClaudeExecutor(1_000_000).inspect(
+      request({
+        provider: 'claude',
+        outputSchema: {
+          type: 'object',
+          properties: {
+            data: {
+              type: 'array',
+              items: { type: 'string' },
+              prefixItems: [{ type: 'string' }],
+            },
+          },
+        },
+      }),
+    );
+    const schemaIndex = invocation.args.indexOf('--json-schema');
+    const schema = JSON.parse(invocation.args[schemaIndex + 1] ?? '') as {
+      properties: { data: Record<string, unknown> };
+    };
+    expect(schema.properties.data).not.toHaveProperty('prefixItems');
+    expect(schema.properties.data.items).toEqual({ type: 'string' });
+  });
+
   it('reuses Claude invocation with GLM endpoint and auth overrides', async () => {
     const invocation = await new InspectableGlmExecutor(1_000_000, {
       provider: 'glm',
