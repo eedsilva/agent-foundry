@@ -41,7 +41,20 @@ describe('check-server-actions build gate', () => {
   it('fails a use-server module that exports non-functions', async () => {
     const workspace = await workspaceWith({
       'apps/web/app/appointment-actions.ts':
-        "'use server';\nexport const initialState = {};\nexport async function create() {}\n",
+        "'use server';\nexport const initialCreateAppointmentState = {};\nexport async function create() {}\n",
+    });
+
+    const result = runCheck(workspace);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('apps/web/app/appointment-actions.ts:2');
+    expect(result.stderr).toContain('only export async functions');
+  });
+
+  it('fails a use-server module that re-exports unknown values', async () => {
+    const workspace = await workspaceWith({
+      'apps/web/app/appointment-actions.ts':
+        "'use server';\nexport * from './appointment-state';\n",
     });
 
     const result = runCheck(workspace);
