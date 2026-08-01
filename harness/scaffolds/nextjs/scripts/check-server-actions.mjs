@@ -9,7 +9,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs']);
 const SKIPPED_DIRECTORIES = new Set(['node_modules', '.next', 'dist']);
 const USE_SERVER = /^\s*["']use server["']\s*;?\s*$/m;
-const INVALID_EXPORT = /^\s*export\s+(?:(?:const|let|var|class|function)\b|default\b|\{)/;
+const INVALID_EXPORT = /^\s*export\s+(?:(?:const|let|var|class|function)\b|default\b|\{|\*)/;
 const offenders = [];
 
 walk(join(root, 'apps'));
