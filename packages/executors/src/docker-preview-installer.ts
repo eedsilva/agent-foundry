@@ -59,7 +59,9 @@ export class DockerPreviewInstaller implements PreviewInstaller {
     }
     const spec: SandboxSpec = {
       image: this.image,
-      resources: { cpuMillis: 1_000, memoryMiB: 2_048, diskMiB: 512, pids: 128 },
+      // Generated workspaces install Next/sharp/native optional packages in a
+      // single sandbox. 2 GiB is not enough for pnpm's package-link phase.
+      resources: { cpuMillis: 1_000, memoryMiB: 3_072, diskMiB: 512, pids: 128 },
       network: {
         mode: 'allowlist',
         allowedHosts: this.allowedHosts,
@@ -75,6 +77,10 @@ export class DockerPreviewInstaller implements PreviewInstaller {
     // and its --user has no home directory.
     const install = input.plan.install;
     const viaCorepack = install.command === 'pnpm' || install.command === 'yarn';
+    const installArgs =
+      install.command === 'pnpm'
+        ? [...install.args, '--child-concurrency=1', '--network-concurrency=1']
+        : install.args;
     const originalManifest =
       install.command === 'pnpm'
         ? await configurePnpmForHostPreview(input.workspacePath)
@@ -86,7 +92,7 @@ export class DockerPreviewInstaller implements PreviewInstaller {
         ...(viaCorepack
           ? ['COREPACK_ENABLE_DOWNLOAD_PROMPT=0', 'CI=true', 'corepack', install.command]
           : ['CI=true', install.command]),
-        ...install.args,
+        ...installArgs,
       ],
       timeoutMs: this.timeoutMs,
       cwd: '/project',

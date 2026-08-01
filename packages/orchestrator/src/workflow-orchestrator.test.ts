@@ -5,6 +5,7 @@ import {
   WorkflowDefinitionSchema,
   type AgentExecutionRequest,
   type AgentExecutionResult,
+  type AgentArtifact,
   type ExecutorHealth,
   type Project,
   type WorkflowDefinition,
@@ -37,6 +38,8 @@ import {
   MODELS,
   SequentialIds,
   ControllableExecutor,
+  makeHarness,
+  seedRun as seedHarnessRun,
 } from './testing/harness.js';
 import type { ProjectVersionService } from './project-version-service.js';
 import { WorkflowOrchestrator } from './workflow-orchestrator.js';
@@ -356,6 +359,106 @@ const VALID_GRAPH = {
   ],
 };
 
+const TASK_BROWSER_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'task-browser-retry-v1',
+  name: 'Task browser retry fixture',
+  description: 'Keeps a verified implementation when browser setup fails.',
+  stack: 'node',
+  nodes: [
+    {
+      id: 'plan',
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: 'Plan',
+      instructions: 'Plan one task.',
+      outputArtifact: 'plan.current',
+      outputContract: 'task-graph',
+    },
+    {
+      id: 'task-execution',
+      type: 'for-each-task',
+      title: 'Implement tasks',
+      taskGraphArtifact: 'plan.current',
+      implement: {
+        id: 'implement',
+        type: 'agent',
+        role: 'developer',
+        taskKind: 'implementation',
+        title: 'Implement task',
+        instructions: 'Implement the task.',
+        inputArtifacts: ['plan.current'],
+        outputArtifact: 'implementation.report',
+        mutatesWorkspace: true,
+      },
+      verify: {
+        id: 'verify-task',
+        type: 'verify',
+        title: 'Verify task',
+        outputArtifact: 'verification.report',
+        scripts: [],
+      },
+      repair: {
+        id: 'repair-task',
+        type: 'agent',
+        role: 'fixer',
+        taskKind: 'repair',
+        title: 'Repair task',
+        instructions: 'Repair the task.',
+        inputArtifacts: ['verification.report'],
+        outputArtifact: 'verification.fix',
+        mutatesWorkspace: true,
+      },
+      browser: {
+        plan: {
+          id: 'plan-task-browser-test',
+          type: 'agent',
+          role: 'tester',
+          taskKind: 'verification',
+          title: 'Plan browser test',
+          instructions: 'Plan the browser test.',
+          inputArtifacts: ['plan.current'],
+          outputArtifact: 'browser-test.plan',
+        },
+        check: {
+          id: 'assert-task',
+          type: 'verify',
+          title: 'Assert task',
+          outputArtifact: 'browser-verification.report',
+          browserTestPlanArtifact: 'browser-test.plan',
+          scripts: [],
+          includeGitDiffCheck: false,
+        },
+      },
+    },
+  ],
+});
+
+const VALID_BROWSER_PLAN: AgentArtifact = {
+  schemaVersion: '1',
+  status: 'completed',
+  summary: 'Open the task page.',
+  data: {
+    schemaVersion: '1',
+    id: 'open-task',
+    title: 'Open task',
+    viewport: { width: 1280, height: 720 },
+    steps: [
+      {
+        id: 'open-task',
+        title: 'Open task',
+        action: { kind: 'goto', path: '/' },
+        assertions: [{ kind: 'url', path: '/' }],
+      },
+    ],
+  },
+  decisions: [],
+  assumptions: [],
+  risks: [],
+  nextActions: [],
+};
+
 describe('task-graph output contract (#321)', () => {
   it('requests the task-graph JSON schema and stores a conforming plan', async () => {
     const stores = makeOrchestrator(undefined, undefined, undefined, {
@@ -426,5 +529,41 @@ describe('task-graph output contract (#321)', () => {
     );
     expect((await stores.runs.get('run-1'))?.status).toBe('failed');
     expect(await stores.artifacts.getLatest('project-1', 'plan.current')).toBeNull();
+  });
+});
+
+describe('task browser retry checkpoint (#325)', () => {
+  it('preserves the verified implementation when browser verification cannot start', async () => {
+    const harness = makeHarness({}, undefined, {
+      workflow: TASK_BROWSER_WORKFLOW,
+      agentOutput: (request) => {
+        if (request.stepId === 'plan') {
+          return {
+            schemaVersion: '1',
+            status: 'completed',
+            summary: 'Planned.',
+            data: VALID_GRAPH,
+            decisions: [],
+            assumptions: [],
+            risks: [],
+            nextActions: [],
+          };
+        }
+        if (request.stepId === 'plan-task-browser-test.T1') return VALID_BROWSER_PLAN;
+        return undefined;
+      },
+    });
+    await seedHarnessRun(harness);
+    expect((await harness.projects.get('project-1'))?.workflowId).toBe(TASK_BROWSER_WORKFLOW.id);
+    expect((await harness.runs.get('run-1'))?.workflowId).toBe(TASK_BROWSER_WORKFLOW.id);
+
+    await expect(
+      harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1'),
+    ).rejects.toThrow('Browser verification is not configured');
+
+    expect(harness.workspaces.commits).toEqual(['sha-0001']);
+    expect(harness.workspaces.current).toBe('sha-0001');
+    expect(harness.workspaces.rollbacks).toContain('sha-0001');
+    expect((await harness.runs.get('run-1'))?.status).toBe('failed');
   });
 });

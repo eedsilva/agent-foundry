@@ -107,6 +107,7 @@ export class MockAgentExecutor implements AgentExecutor {
       lint: 'node --check src/index.js',
       test: 'node --test',
       build: 'node --check src/index.js',
+      'server-actions:check': 'node --check src/index.js',
       'db:start': 'node -e ""',
       'db:reset': 'node -e ""',
       smoke: 'node -e ""',

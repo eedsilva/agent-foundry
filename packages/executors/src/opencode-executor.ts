@@ -58,7 +58,6 @@ export class OpenCodeCliExecutor extends BaseCliExecutor {
       model,
       '--agent',
       request.mutatesWorkspace ? 'build' : 'plan',
-      ...(request.mutatesWorkspace ? ['--auto'] : []),
       promptWithOutputSchema(request, 'OpenCode'),
     ];
 

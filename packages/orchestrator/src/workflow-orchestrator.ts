@@ -1517,6 +1517,7 @@ export class WorkflowOrchestrator {
     const taskCheckpoint =
       resumedFailure?.checkpoint ??
       (await this.workspaces.checkpoint(project.id, `${node.id}-${task.id}-${runId}`));
+    let attemptCheckpoint = taskCheckpoint;
     const startAttempt =
       resumedFailure?.attempt ?? (await this.firstTaskAttempt(runId, node.id, step.id));
     let routingStartIndex = resumedFailure?.routingStartIndex ?? 0;
@@ -1552,6 +1553,12 @@ export class WorkflowOrchestrator {
             signal,
             pinnedInputs,
             qualityAttemptBase,
+          );
+          // Once deterministic checks pass, a later browser failure must not
+          // erase the implementation that the browser retry needs to inspect.
+          attemptCheckpoint = await this.workspaces.checkpoint(
+            project.id,
+            `${node.id}-${task.id}-${runId}-verified`,
           );
           // Only once the checks are green: the assertion boots a preview, and a
           // preview of code that does not compile tells you nothing (#325).
@@ -1641,7 +1648,7 @@ export class WorkflowOrchestrator {
             );
           }
           routingStartIndex = nextRoutingStartIndex;
-          await this.workspaces.rollback(project.id, taskCheckpoint);
+          await this.workspaces.rollback(project.id, attemptCheckpoint);
         }
       }
       throw new ExecutionError(
@@ -1651,7 +1658,7 @@ export class WorkflowOrchestrator {
       // Control flow — a pause, a cancellation — must keep what the task has
       // done so far; only a real failure discards it.
       if (isTaskAttemptFailure(error, signal)) {
-        await this.workspaces.rollback(project.id, taskCheckpoint);
+        await this.workspaces.rollback(project.id, attemptCheckpoint);
       }
       throw error;
     }

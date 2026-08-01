@@ -205,7 +205,7 @@ export const ModelOverrideRecordSchema = z
     scope: ModelOverrideScopeSchema,
     modelId: PathSegmentSchema,
     provider: ProviderSchema.exclude(['mock']),
-    model: z.string().trim().min(1),
+    model: z.string().trim(),
     actor: ActorRefSchema,
     reason: z.string().trim().min(1),
     estimatedImpact: z.string().trim().min(1),
@@ -217,7 +217,7 @@ export type ModelOverrideRecord = z.infer<typeof ModelOverrideRecordSchema>;
 const RouteOverrideProvenanceShape = {
   modelId: PathSegmentSchema,
   provider: ProviderSchema.exclude(['mock']),
-  model: z.string().trim().min(1),
+  model: z.string().trim(),
   actor: ActorRefSchema,
   reason: z.string().trim().min(1),
   estimatedImpact: z.string().trim().min(1),

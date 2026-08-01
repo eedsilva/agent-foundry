@@ -18,6 +18,7 @@ tickets are real-provider validation slices, not new mock test fixtures.
 | RV-10 | Run the complete visible happy path once and capture evidence. | Not started | run/project IDs, UI, backend |
 | RV-11 | Preserve terminal preview lifecycle errors before browser-report binding. | Done here | `browser-verification-coordinator.test.ts` regression |
 | RV-12 | Declare the Next.js runtime helper directly in the generated web package. | Done here | scaffold package/lock plus harness test |
+| RV-13 | Reject non-function exports from generated `'use server'` modules before browser verification. | Done here | scaffold gate and focused harness tests |
 
 RV-04 is also the repair boundary: Docker-backed smoke is not handed to a
 repair agent that cannot reproduce it. If the full-suite verifier cannot run
