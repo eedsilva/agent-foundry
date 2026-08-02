@@ -500,7 +500,10 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
         );
       };
       const onPageError = (error: Error): void => {
-        observe({ kind: 'uncaught-exception', message: error.message }, activeStepIndex);
+        observe(
+          { kind: 'uncaught-exception', message: error.stack ?? error.message },
+          activeStepIndex,
+        );
       };
       target.on('console', onConsole);
       target.on('pageerror', onPageError);

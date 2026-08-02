@@ -507,6 +507,11 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps[0]?.observations.map(({ kind }) => kind)).toEqual(
       expect.arrayContaining(['http-error', 'console-error', 'uncaught-exception']),
     );
+    const uncaughtException = report.steps[0]?.observations.find(
+      ({ kind }) => kind === 'uncaught-exception',
+    );
+    expect(uncaughtException?.message).toContain('fixture page failure');
+    expect(uncaughtException?.message).toMatch(/fixture page failure[\s\S]*\bat\b/);
     expectRedacted(report);
   });
 
