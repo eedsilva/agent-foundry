@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   MockAgentExecutor,
   MockExecutorRegistry,
@@ -97,11 +99,19 @@ import type {
   GeneratedProjectRuntime,
 } from '@agent-foundry/domain';
 import { SupabaseGeneratedProjectRuntime } from '@agent-foundry/platform';
-import { BrowserTestPlanArtifactSchema, type PreviewSession } from '@agent-foundry/contracts';
+import { buildValidationCampaignPreview } from '@agent-foundry/model-router';
+import {
+  BrowserTestPlanArtifactSchema,
+  type ValidationCampaignPreview,
+  type PreviewSession,
+} from '@agent-foundry/contracts';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
+
+const execFileAsync = promisify(execFile);
 
 export interface Runtime {
   config: RuntimeConfig;
+  validationCampaign?: ValidationCampaignPreview;
   projects: ProjectRepository;
   runs: WorkflowRunRepository;
   stepRuns: StepRunRepository;
@@ -233,9 +243,28 @@ export async function createRuntime(
       });
   }
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
+  const validationCampaign = config.validationCampaignId
+    ? buildValidationCampaignPreview(catalog, await readSourceRevision(config.rootDir))
+    : undefined;
+  const routerCatalog = validationCampaign
+    ? catalog.filter((model) =>
+        validationCampaign.allowedModels.some((allowed) => allowed.id === model.id),
+      )
+    : catalog;
+  const routingOverride = validationCampaign
+    ? {
+        source: `validation-campaign:${validationCampaign.id}`,
+        table: validationCampaign.routes.map((route) => ({
+          taskKind: route.taskKind,
+          executors: [route.selected.provider, ...route.fallbacks.map((model) => model.provider)],
+        })),
+      }
+    : undefined;
   // The circuit breaker is on by default (DEFAULT_BREAKER_CONFIG merges in the
   // router's constructor); no options are needed to enable it here.
-  const router = new TableModelRouter(catalog, metrics);
+  const router = new TableModelRouter(routerCatalog, metrics, {
+    ...(routingOverride ? { routingOverride } : {}),
+  });
   const executors =
     config.executorMode === 'mock'
       ? new MockExecutorRegistry(new MockAgentExecutor())
@@ -424,6 +453,7 @@ export async function createRuntime(
 
   return {
     config,
+    ...(validationCampaign ? { validationCampaign } : {}),
     projects,
     runs,
     stepRuns,
@@ -471,6 +501,19 @@ export async function createRuntime(
     checkReadiness,
     ...(generatedProjectRuntime ? { generatedProjectRuntime } : {}),
   };
+}
+
+async function readSourceRevision(rootDir: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: rootDir });
+    const revision = stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(revision)) {
+      throw new Error(`git rev-parse HEAD returned an invalid revision: ${revision || '<empty>'}`);
+    }
+    return revision;
+  } catch (cause) {
+    throw new Error('Validation campaign requires a readable Git source revision', { cause });
+  }
 }
 
 /** Metadata stores (and, since issue #55, the queue and transaction seam) swap between file and

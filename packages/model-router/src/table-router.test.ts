@@ -144,6 +144,32 @@ describe('TableModelRouter', () => {
     expect(decision.selected.score).toBeUndefined();
   });
 
+  it('lets an opt-in campaign override the workflow routing table', async () => {
+    const decision = await new TableModelRouter(
+      [
+        model('claude-haiku', { provider: 'claude', model: 'haiku' }),
+        model('codex-default', { provider: 'codex', model: 'gpt-5.6-luna' }),
+      ],
+      new MemoryMetrics(),
+      {
+        routingOverride: {
+          source: 'validation-campaign:real-todo-v1',
+          table: [{ taskKind: 'implementation', executors: ['codex', 'claude'] }],
+        },
+      },
+    ).route(profile, undefined, {
+      routing: { source: 'workflow', executors: ['claude', 'codex'] },
+    });
+
+    expect(decision.selected.model.id).toBe('codex-default');
+    expect(decision.fallbacks.map((candidate) => candidate.model.id)).toEqual(['claude-haiku']);
+    expect(decision.routingTable).toMatchObject({
+      source: 'validation-campaign:real-todo-v1',
+      executors: ['codex', 'claude'],
+      selectedIndex: 0,
+    });
+  });
+
   it('starts at the next table entry for a task retry', async () => {
     const decision = await router().route(profile, undefined, {
       routing: { source: 'web-app-v1', executors: ['claude', 'codex', 'agy'] },

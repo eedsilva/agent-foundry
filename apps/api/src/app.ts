@@ -46,6 +46,7 @@ import {
   RetryStepRequestSchema,
   RouterDashboardQuerySchema,
   RouterDashboardResponseSchema,
+  ValidationCampaignResponseSchema,
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
   UpdateExperimentRequestSchema,
@@ -238,6 +239,14 @@ export async function buildApp(
     models: await runtime.router.catalog(),
     executors: await runtime.executors.health(),
   }));
+
+  app.get('/validation/campaign', async () =>
+    ValidationCampaignResponseSchema.parse({
+      availableCampaigns: ['real-todo-v1'],
+      selectedCampaign: runtime.config.validationCampaignId ?? null,
+      preview: runtime.validationCampaign ?? null,
+    }),
+  );
 
   app.get('/router/dashboard', async (request) => {
     const query = RouterDashboardQuerySchema.parse(request.query);
