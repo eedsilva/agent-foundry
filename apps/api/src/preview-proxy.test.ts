@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { request as httpRequest } from 'node:http';
+import { createServer as createHttpServer, request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
@@ -34,7 +34,9 @@ function getFreePort(): Promise<number> {
   });
 }
 
-async function startApi(): Promise<{ baseUrl: string; runtime: Runtime }> {
+async function startApi(
+  options: { allowLocalBrowserRedirects?: boolean } = {},
+): Promise<{ baseUrl: string; runtime: Runtime }> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-proxy-'));
   dirs.push(dataDir);
   const apiPort = await getFreePort();
@@ -47,6 +49,7 @@ async function startApi(): Promise<{ baseUrl: string; runtime: Runtime }> {
     WORKER_ID: 'proxy-worker',
     PREVIEW_TTL_SECONDS: '2', // short TTL for the expiry test
     API_PORT: String(apiPort),
+    ...(options.allowLocalBrowserRedirects ? { ALLOW_LOCAL_BROWSER_REDIRECTS: 'true' } : {}),
   });
   const app = await buildApp(runtime);
   apps.push(app);
@@ -66,7 +69,7 @@ async function writeNpmManifest(workspacePath: string): Promise<void> {
   );
 }
 
-async function startPreview(baseUrl: string, runtime: Runtime, id: string) {
+async function startPreview(baseUrl: string, runtime: Runtime, id: string, fixtureSource?: string) {
   const projectResponse = await fetch(`${baseUrl}/projects`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -75,11 +78,16 @@ async function startPreview(baseUrl: string, runtime: Runtime, id: string) {
   const { project } = (await projectResponse.json()) as { project: { id: string } };
   await runtime.workspaces.ensure(project.id);
   const workspacePath = runtime.workspaces.workspacePath(project.id);
-  const fixtureSource = await readFile(
-    resolve(import.meta.dirname, '../../../packages/executors/src/fixtures/preview-dev-server.mjs'),
-    'utf8',
-  );
-  await writeFile(join(workspacePath, 'server.mjs'), fixtureSource);
+  const source =
+    fixtureSource ??
+    (await readFile(
+      resolve(
+        import.meta.dirname,
+        '../../../packages/executors/src/fixtures/preview-dev-server.mjs',
+      ),
+      'utf8',
+    ));
+  await writeFile(join(workspacePath, 'server.mjs'), source);
   await writeNpmManifest(workspacePath);
   const startResponse = await fetch(`${baseUrl}/projects/${project.id}/preview`, {
     method: 'POST',
@@ -244,6 +252,45 @@ describe('preview reverse proxy', () => {
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).not.toContain('evil.example');
     expect(response.headers.get('location')).toBe(`/preview/${started.session.id}/`);
+  }, 20_000);
+
+  it('preserves an explicitly enabled redirect to a second loopback service', async () => {
+    const localTarget = createHttpServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/plain' });
+      response.end('local target');
+    });
+    await new Promise<void>((resolvePromise, reject) => {
+      localTarget.once('error', reject);
+      localTarget.listen(0, '127.0.0.1', () => resolvePromise());
+    });
+    cleanups.push(
+      () =>
+        new Promise<void>((resolvePromise) => {
+          localTarget.close(() => resolvePromise());
+        }),
+    );
+    const address = localTarget.address();
+    if (!address || typeof address === 'string')
+      throw new Error('local redirect target did not bind');
+    const { baseUrl, runtime } = await startApi({ allowLocalBrowserRedirects: true });
+    const started = await startPreview(
+      baseUrl,
+      runtime,
+      'redirect-local',
+      `
+import { createServer } from 'node:http';
+const port = Number(process.env.PORT ?? 0);
+createServer((_req, res) => {
+  res.writeHead(302, { location: 'http://127.0.0.1:${address.port}/callback' });
+  res.end();
+}).listen(port, '127.0.0.1');
+`,
+    );
+    const target = new URL(started.url);
+    target.pathname += 'redirect-local';
+    const response = await fetch(target, { redirect: 'manual' });
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe(`http://127.0.0.1:${address.port}/callback`);
   }, 20_000);
 
   it('relays a websocket upgrade to the session upstream', async () => {

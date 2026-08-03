@@ -23,14 +23,16 @@ const PLAN_ARTIFACT: ArtifactReference = {
 };
 const servers: Server[] = [];
 const routePolicyTestVerifier = new PlaywrightBrowserVerifier({
-  createProxy: (options) =>
-    createNetworkPolicyProxy({
-      ...options,
-      privateExceptions: new Set([
-        ...(options.privateExceptions ?? []),
-        ...(options.allowedAuthorities ?? []),
-      ]),
-    }),
+  createProxy: (options) => {
+    const privateExceptions = options.privateExceptions ?? new Set<string>();
+    for (const authority of options.allowedAuthorities ?? []) {
+      (privateExceptions as Set<string>).add(authority);
+    }
+    return createNetworkPolicyProxy({ ...options, privateExceptions });
+  },
+});
+const localRedirectTestVerifier = new PlaywrightBrowserVerifier({
+  allowLocalRedirects: true,
 });
 
 afterEach(async () => {
@@ -97,9 +99,13 @@ async function verify(
     allowedOrigins?: string[];
     signal?: AbortSignal;
     evidencePolicy?: BrowserEvidencePolicy;
+    allowLocalRedirects?: boolean;
   } = {},
 ): Promise<BrowserVerificationReport> {
-  const { report } = await routePolicyTestVerifier.verify(
+  const verifier = options.allowLocalRedirects
+    ? localRedirectTestVerifier
+    : routePolicyTestVerifier;
+  const { report } = await verifier.verify(
     {
       planArtifact: PLAN_ARTIFACT,
       planContent: artifact(browserPlan),
@@ -1593,6 +1599,74 @@ describe('PlaywrightBrowserVerifier', () => {
     );
 
     expect(sentinelRequests).toBe(0);
+    expect(report.approved).toBe(false);
+    expect(report.steps[0]?.observations.some(({ kind }) => kind === 'policy-block')).toBe(true);
+  });
+
+  it('follows an explicitly enabled redirect to a second loopback service', async () => {
+    let localRequests = 0;
+    const localOrigin = await serve((_request, response) => {
+      localRequests += 1;
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>Local redirect target</h1>');
+    });
+    const origin = await serve((request, response) => {
+      if (request.url?.startsWith('/preview/preview-1/redirect')) {
+        response.statusCode = 302;
+        response.setHeader('location', `${localOrigin}/sentinel`);
+      } else {
+        response.setHeader('content-type', 'text/html');
+        response.end('<h1>Preview</h1>');
+        return;
+      }
+      response.end();
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Follow local redirect',
+          action: { kind: 'goto', path: '/redirect' },
+          assertions: [
+            { kind: 'visible', locator: { by: 'role', role: 'heading', name: 'Local redirect target' } },
+          ],
+        },
+      ]),
+      { allowLocalRedirects: true },
+    );
+
+    expect(localRequests).toBe(1);
+    expect(report.approved).toBe(true);
+    expect(report.steps[0]?.observations).toEqual([]);
+  });
+
+  it('does not make an arbitrary loopback resource reachable when local redirects are enabled', async () => {
+    let localRequests = 0;
+    const localOrigin = await serve((_request, response) => {
+      localRequests += 1;
+      response.end('local');
+    });
+    const origin = await serve((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<img src="${localOrigin}/secret"><h1>Preview</h1>`);
+    });
+
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Keep local resources blocked',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+      ]),
+      { allowLocalRedirects: true },
+    );
+
+    expect(localRequests).toBe(0);
     expect(report.approved).toBe(false);
     expect(report.steps[0]?.observations.some(({ kind }) => kind === 'policy-block')).toBe(true);
   });
