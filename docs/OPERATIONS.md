@@ -85,6 +85,11 @@ serviço loopback (por exemplo, o Supabase local), o operador pode habilitar exp
 loopback aprendidas de um redirecionamento da própria prévia; recursos locais arbitrários
 continuam bloqueados.
 
+Essa opção não exige migração de dados, schema ou artifacts. Para rollback, reverta a
+configuração/implementação e reinicie API e worker; o comportamento anterior de negar
+redirecionamentos fora da prévia volta a valer. Use a opção apenas durante o menor slice
+de validação real necessário e desligue-a antes de retomar a operação normal.
+
 ### Ciclo de vida da sessão
 
 ```bash
