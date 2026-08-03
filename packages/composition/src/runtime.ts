@@ -246,25 +246,10 @@ export async function createRuntime(
   const validationCampaign = config.validationCampaignId
     ? buildValidationCampaignPreview(catalog, await readSourceRevision(config.rootDir))
     : undefined;
-  const routerCatalog = validationCampaign
-    ? catalog.filter((model) =>
-        validationCampaign.allowedModels.some((allowed) => allowed.id === model.id),
-      )
-    : catalog;
-  const routingOverride = validationCampaign
-    ? {
-        source: `validation-campaign:${validationCampaign.id}`,
-        table: validationCampaign.routes.map((route) => ({
-          taskKind: route.taskKind,
-          executors: [route.selected.provider, ...route.fallbacks.map((model) => model.provider)],
-        })),
-      }
-    : undefined;
-  // The circuit breaker is on by default (DEFAULT_BREAKER_CONFIG merges in the
-  // router's constructor); no options are needed to enable it here.
-  const router = new TableModelRouter(routerCatalog, metrics, {
-    ...(routingOverride ? { routingOverride } : {}),
-  });
+  // TableModelRouter enables its default circuit breaker configuration. A selected
+  // validation campaign is preview-only at this stage; it must not replace the
+  // process-wide product router before the campaign execution seam exists.
+  const router = new TableModelRouter(catalog, metrics);
   const executors =
     config.executorMode === 'mock'
       ? new MockExecutorRegistry(new MockAgentExecutor())

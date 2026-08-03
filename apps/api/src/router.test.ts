@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
+import { TaskProfileSchema } from '@agent-foundry/contracts';
 import { buildApp } from './app.js';
 
 describe('router dashboard + experiments API', () => {
@@ -111,11 +112,29 @@ describe('router dashboard + experiments API', () => {
         ],
       },
     });
-    expect((await selectedRuntime.router.catalog()).map((model) => model.id)).toEqual([
-      'opencode-ollama',
-      'codex-default',
-      'claude-haiku',
-    ]);
+    expect((await selectedRuntime.router.catalog()).map((model) => model.id)).toContain(
+      'claude-opus',
+    );
+    const normalPlanningRoute = await selectedRuntime.router.route(
+      TaskProfileSchema.parse({
+        role: 'planner',
+        taskKind: 'planning',
+        complexity: 1,
+        risk: 1,
+        estimatedContextTokens: 100,
+        estimatedOutputTokens: 100,
+        mutatesWorkspace: false,
+        priorities: { quality: 0.7, speed: 0.1, cost: 0.05, reliability: 0.15 },
+        preferredTags: [],
+      }),
+      undefined,
+      { routing: { source: 'web-app-v1', executors: ['claude', 'glm', 'codex', 'agy'] } },
+    );
+    expect(normalPlanningRoute.selected.model.id).toBe('claude-opus');
+    expect(normalPlanningRoute.routingTable).toMatchObject({
+      source: 'web-app-v1',
+      taskKind: 'planning',
+    });
 
     await selectedApp.close();
   });

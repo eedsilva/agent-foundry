@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ValidationCampaignResponse, ValidationModelIdentity } from '@agent-foundry/contracts';
-import { HINT, LABEL, META, PAGE, PANEL, PANEL_TITLE, WARN_BOX } from '@/lib/ui';
+import { LABEL, META, PAGE, PANEL, PANEL_TITLE, WARN_BOX } from '@/lib/ui';
 
 interface ValidationCampaignViewProps {
   response: ValidationCampaignResponse;
@@ -12,7 +12,7 @@ export function ValidationCampaignView({ response }: ValidationCampaignViewProps
   return (
     <div className={PAGE}>
       <header className="mb-8 max-w-[72ch]">
-        <p className={HINT}>REAL-MODE / OPERATOR PREVIEW</p>
+        <p className={`${META} mb-2 font-medium`}>Modo real · prévia do operador</p>
         <h1 className="text-ink mt-2 text-[32px] leading-tight font-semibold tracking-[-0.02em]">
           Campanha de validação TODO
         </h1>
@@ -72,7 +72,7 @@ function SelectedCampaign({
                   Identidade
                 </th>
                 <th scope="col" className="p-3 font-semibold">
-                  Provider
+                  Provedor
                 </th>
                 <th scope="col" className="p-3 font-semibold">
                   Modelo
@@ -89,19 +89,19 @@ function SelectedCampaign({
       </section>
 
       <section className={PANEL}>
-        <h2 className={PANEL_TITLE}>Rotas automáticas</h2>
+        <h2 className={PANEL_TITLE}>Rotas planejadas</h2>
         <div className="border-hairline mt-4 overflow-x-auto rounded-card border">
           <table className="text-ink w-full border-collapse text-left text-[13px]">
             <thead className="bg-surface-sunken">
               <tr>
                 <th scope="col" className="p-3 font-semibold">
-                  Task kind
+                  Tipo de tarefa
                 </th>
                 <th scope="col" className="p-3 font-semibold">
-                  Selecionado
+                  Planejado
                 </th>
                 <th scope="col" className="p-3 font-semibold">
-                  Fallback automático
+                  Fallback planejado
                 </th>
               </tr>
             </thead>
