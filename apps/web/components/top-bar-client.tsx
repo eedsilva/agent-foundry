@@ -6,5 +6,10 @@ import { TopBar } from './top-bar';
 
 export function TopBarClient() {
   const pathname = usePathname();
-  return <TopBar activePath={pathname?.startsWith('/router') ? '/router' : '/'} />;
+  const activePath = pathname?.startsWith('/router')
+    ? '/router'
+    : pathname?.startsWith('/validation')
+      ? '/validation'
+      : '/';
+  return <TopBar activePath={activePath} />;
 }

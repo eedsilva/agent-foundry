@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 const NAV = [
   { href: '/', label: 'Projetos' },
   { href: '/router', label: 'Router' },
+  { href: '/validation', label: 'Validação' },
 ];
 
 export function TopBar({ activePath }: { activePath: string }) {

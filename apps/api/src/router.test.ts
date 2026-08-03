@@ -79,6 +79,47 @@ describe('router dashboard + experiments API', () => {
     }
   });
 
+  it('returns the selected validation campaign route preview with the source revision', async () => {
+    const selectedRuntime = await createRuntime(
+      {
+        ...process.env,
+        DATA_DIR: dataDir,
+        WORKFLOWS_DIR: workflowsDir,
+        EXECUTOR_MODE: 'real',
+        VALIDATION_CAMPAIGN: 'real-todo-v1',
+        CODEX_DEFAULT_MODEL: 'gpt-5.6-luna',
+      } as NodeJS.ProcessEnv,
+      undefined,
+      undefined,
+      { generatedProjectRuntime: null },
+    );
+    const selectedApp = await buildApp(selectedRuntime);
+
+    const response = await selectedApp.inject({ method: 'GET', url: '/validation/campaign' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      availableCampaigns: ['real-todo-v1'],
+      selectedCampaign: 'real-todo-v1',
+      preview: {
+        id: 'real-todo-v1',
+        sourceRevision: expect.stringMatching(/^[0-9a-f]{40}$/),
+        allowedModels: [
+          { id: 'opencode-ollama' },
+          { id: 'claude-haiku', provider: 'claude', model: 'haiku' },
+          { id: 'codex-default', provider: 'codex', model: 'gpt-5.6-luna' },
+        ],
+      },
+    });
+    expect((await selectedRuntime.router.catalog()).map((model) => model.id)).toEqual([
+      'opencode-ollama',
+      'codex-default',
+      'claude-haiku',
+    ]);
+
+    await selectedApp.close();
+  });
+
   it('rate-limits /router/regression-gate at 30 requests/min/IP', async () => {
     const responses = [];
     for (let i = 0; i < 31; i++) {

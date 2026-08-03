@@ -19,6 +19,30 @@ RUN_WORKER_INLINE=false
 
 O worker precisa encontrar `codex`, `claude` e `agy` no `PATH`, além de sessões autenticadas. O adapter do AGY requer versão 1.1.1 ou superior. Use `npm run doctor` antes de iniciar.
 
+### Campanha real de validação TODO (opt-in)
+
+A campanha `real-todo-v1` é um diagnóstico isolado; ela não é a política do fluxo normal e não
+altera a tabela de roteamento de projetos. Selecione-a explicitamente ao iniciar API e worker:
+
+```bash
+VALIDATION_CAMPAIGN=real-todo-v1 \
+CODEX_DEFAULT_MODEL=gpt-5.6-luna \
+EXECUTOR_MODE=real \
+npm run dev
+```
+
+Antes de qualquer chamada de modelo, abra [`/validation`](http://localhost:3000/validation) ou
+consulte `GET /validation/campaign`. A tela registra a revisão Git, as únicas identidades
+permitidas (modelo local configurado, Claude Haiku e Codex GPT-5.6 Luna), as rotas por task kind,
+uma tentativa por etapa, um reparo, 45 minutos ativos e US$ 2 de custo medido. Verificação usa o
+modelo local e só pode cair para Haiku; planejamento usa Haiku; mutação do workspace e reparo usam
+Luna. Nenhum modelo deep ou premium aparece na rota automática.
+
+A seleção exige `EXECUTOR_MODE=real`. Identidade ausente, desabilitada, duplicada ou diferente da
+esperada interrompe a inicialização antes da execução. Deixe `VALIDATION_CAMPAIGN` vazio para o
+fluxo normal. Para rollback, pare API e worker, remova a variável (ou reverta o arquivo `.env`) e
+reinicie os processos; a campanha não grava estado de execução nem altera o catálogo padrão.
+
 ### Canary real dos providers
 
 Valide versões, autenticação e flags sem invocar modelos:

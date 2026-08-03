@@ -282,6 +282,20 @@ describe('Loopback Binding Validation', () => {
     });
     expect(config.deploymentProfile).toBe('custom');
   });
+
+  it('leaves the real TODO validation campaign opt-in and unselected by default', () => {
+    expect(loadRuntimeConfig(base).validationCampaignId).toBeUndefined();
+  });
+
+  it('requires real mode for the explicitly selected validation campaign', () => {
+    expect(() =>
+      loadRuntimeConfig({ ...base, VALIDATION_CAMPAIGN: 'real-todo-v1', EXECUTOR_MODE: 'mock' }),
+    ).toThrow(/requires EXECUTOR_MODE=real/);
+    expect(
+      loadRuntimeConfig({ ...base, VALIDATION_CAMPAIGN: 'real-todo-v1', EXECUTOR_MODE: 'real' })
+        .validationCampaignId,
+    ).toBe('real-todo-v1');
+  });
 });
 
 describe('blob store configuration', () => {

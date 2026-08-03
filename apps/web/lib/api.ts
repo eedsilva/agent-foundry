@@ -34,6 +34,7 @@ import type {
   RouterDecisionLogEntry,
   RunDetailResponse,
   RuntimeInfoResponse,
+  ValidationCampaignResponse,
   StartOperationRequest,
   StoredArtifact,
   WorkflowDefinition,
@@ -141,6 +142,10 @@ export async function removeKnowledgeFile(
 
 export function getRuntime(): Promise<RuntimeInfoResponse> {
   return api<RuntimeInfoResponse>('/runtime');
+}
+
+export function getValidationCampaign(): Promise<ValidationCampaignResponse> {
+  return api<ValidationCampaignResponse>('/validation/campaign');
 }
 
 export function getRouterDashboard(

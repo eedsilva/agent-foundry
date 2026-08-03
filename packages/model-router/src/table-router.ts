@@ -7,6 +7,7 @@ import {
   type Provider,
   type RankedModel,
   type RouteDecision,
+  type RoutingTable,
   type TaskProfile,
 } from '@agent-foundry/contracts';
 import type {
@@ -23,6 +24,10 @@ import {
 
 export interface TableModelRouterOptions {
   breaker?: Partial<CircuitBreakerConfig>;
+  routingOverride?: {
+    source: string;
+    table: RoutingTable;
+  };
 }
 
 /**
@@ -38,6 +43,7 @@ export interface TableModelRouterOptions {
  */
 export class TableModelRouter implements ModelRouter {
   private readonly breakerConfig: CircuitBreakerConfig;
+  private readonly routingOverride: TableModelRouterOptions['routingOverride'];
 
   constructor(
     private readonly models: ModelDefinition[],
@@ -46,6 +52,7 @@ export class TableModelRouter implements ModelRouter {
   ) {
     if (models.length === 0) throw new Error('Model catalog has no enabled models');
     this.breakerConfig = { ...DEFAULT_BREAKER_CONFIG, ...options?.breaker };
+    this.routingOverride = options?.routingOverride;
   }
 
   async catalog(): Promise<ModelDefinition[]> {
@@ -70,9 +77,14 @@ export class TableModelRouter implements ModelRouter {
     }
 
     // A pin is the operator overruling the table, so no entry is claimed for it.
+    const campaignRouting = this.routingOverride?.table.find(
+      (entry) => entry.taskKind === profile.taskKind,
+    );
     const routing = explicit
       ? undefined
-      : (constraints?.routing ?? resolveRoutingEntry(undefined, 'default', profile.taskKind));
+      : campaignRouting
+        ? { source: this.routingOverride!.source, executors: campaignRouting.executors }
+        : (constraints?.routing ?? resolveRoutingEntry(undefined, 'default', profile.taskKind));
     const routingStartIndex = Math.max(0, constraints?.routingStartIndex ?? 0);
     const eligibleExecutors = routing?.executors.slice(routingStartIndex) ?? [];
 

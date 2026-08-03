@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
+import { ValidationCampaignIdSchema, type ValidationCampaignId } from '@agent-foundry/contracts';
 import { createTextFileExclusiveSync } from '@agent-foundry/persistence';
 import { getDeploymentProfile } from './deployment-profiles.js';
 
@@ -23,6 +24,10 @@ const ConfigSchema = z
     POLICIES_DIR: z.string().default('policies'),
     MODEL_CATALOG_PATH: z.string().default('models/catalog.yaml'),
     EXECUTOR_MODE: z.enum(['real', 'mock']).default('mock'),
+    VALIDATION_CAMPAIGN: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      ValidationCampaignIdSchema.optional(),
+    ),
     // Operator-only validation escape hatch for generated apps that redirect
     // the browser to a second loopback service (for example local Supabase).
     // Keep this disabled for normal verification; the browser policy remains
@@ -74,6 +79,13 @@ const ConfigSchema = z
     S3_FORCE_PATH_STYLE: booleanFromEnv,
   })
   .superRefine((parsed, ctx) => {
+    if (parsed.VALIDATION_CAMPAIGN && parsed.EXECUTOR_MODE !== 'real') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['VALIDATION_CAMPAIGN'],
+        message: 'VALIDATION_CAMPAIGN requires EXECUTOR_MODE=real',
+      });
+    }
     if (parsed.BLOB_STORE_MODE !== 's3') return;
     const required = [
       'S3_ENDPOINT',
@@ -106,6 +118,7 @@ export interface RuntimeConfig {
   policiesDir: string;
   modelCatalogPath: string;
   executorMode: 'real' | 'mock';
+  validationCampaignId?: ValidationCampaignId;
   allowLocalBrowserRedirects: boolean;
   persistenceMode: 'file' | 'postgres';
   databaseUrl?: string;
@@ -203,6 +216,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     policiesDir: resolve(rootDir, parsed.POLICIES_DIR),
     modelCatalogPath: resolve(rootDir, parsed.MODEL_CATALOG_PATH),
     executorMode: parsed.EXECUTOR_MODE,
+    ...(parsed.VALIDATION_CAMPAIGN ? { validationCampaignId: parsed.VALIDATION_CAMPAIGN } : {}),
     allowLocalBrowserRedirects: parsed.ALLOW_LOCAL_BROWSER_REDIRECTS,
     persistenceMode: parsed.PERSISTENCE_MODE,
     ...(parsed.DATABASE_URL ? { databaseUrl: parsed.DATABASE_URL } : {}),
