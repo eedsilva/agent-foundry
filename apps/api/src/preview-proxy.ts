@@ -30,6 +30,7 @@ const HOP_BY_HOP = new Set([
 
 export function registerPreviewProxy(app: FastifyInstance, runtime: Runtime): void {
   const allowedPort = String(runtime.config.apiPort);
+  const allowLocalRedirects = runtime.config.allowLocalBrowserRedirects;
   // webOrigin is CORS's comma-separated allow-list (see app.ts); the inspector
   // script's parent-origin check is a single strict `===`. Built once at
   // startup, not per-request: parentOrigin is fixed for the process lifetime,
@@ -57,10 +58,10 @@ export function registerPreviewProxy(app: FastifyInstance, runtime: Runtime): vo
     }
 
     instance.all('/preview/:sessionId', (request, reply) =>
-      handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
+      handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag, allowLocalRedirects),
     );
     instance.all('/preview/:sessionId/*', (request, reply) =>
-      handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag),
+      handleHttp(request, reply, runtime, allowedPort, inspectorScriptTag, allowLocalRedirects),
     );
   });
 
@@ -75,6 +76,7 @@ async function handleHttp(
   runtime: Runtime,
   allowedPort: string,
   inspectorScriptTag: string,
+  allowLocalRedirects: boolean,
 ): Promise<void> {
   // DNS-rebinding defense: reject anything whose Host header isn't this API's own
   // loopback host:port. This runs BEFORE any token check or upstream connection.
@@ -119,6 +121,7 @@ async function handleHttp(
         resolved.port,
         cookieValue,
         inspectorScriptTag,
+        allowLocalRedirects,
       ),
   );
   upstreamReq.on('error', () => {
@@ -135,8 +138,14 @@ function respondFromUpstream(
   upstreamPort: number,
   cookieValue: string | undefined,
   inspectorScriptTag: string,
+  allowLocalRedirects: boolean,
 ): void {
-  const headers = sanitizeResponseHeaders(upstreamRes.headers, sessionId, upstreamPort);
+  const headers = sanitizeResponseHeaders(
+    upstreamRes.headers,
+    sessionId,
+    upstreamPort,
+    allowLocalRedirects,
+  );
   if (cookieValue) {
     const cookie = `pv_${sessionId}=${cookieValue}; Path=/preview/${sessionId}; HttpOnly; SameSite=Lax`;
     const existing = headers['set-cookie'];
@@ -274,7 +283,12 @@ async function handleUpgrade(
     // Run the upstream's 101 response headers through the SAME sanitizer the
     // HTTP path uses (port-leak containment + hop-by-hop strip + backstop)
     // before relaying, then re-add the handshake headers it strips.
-    const responseHeaders = sanitizeResponseHeaders(upstreamRes.headers, sessionId, resolved.port);
+    const responseHeaders = sanitizeResponseHeaders(
+      upstreamRes.headers,
+      sessionId,
+      resolved.port,
+      runtime.config.allowLocalBrowserRedirects,
+    );
     responseHeaders.connection = 'Upgrade';
     if (upstreamRes.headers.upgrade) responseHeaders.upgrade = upstreamRes.headers.upgrade;
     const statusLine = `HTTP/1.1 ${upstreamRes.statusCode ?? 101} ${upstreamRes.statusMessage || 'Switching Protocols'}\r\n`;
@@ -303,7 +317,12 @@ async function handleUpgrade(
   upstreamReq.on('response', (upstreamRes) => {
     // Upstream answered a normal response instead of upgrading; relay it
     // sanitized and close rather than leaving the client hanging.
-    const responseHeaders = sanitizeResponseHeaders(upstreamRes.headers, sessionId, resolved.port);
+    const responseHeaders = sanitizeResponseHeaders(
+      upstreamRes.headers,
+      sessionId,
+      resolved.port,
+      runtime.config.allowLocalBrowserRedirects,
+    );
     const statusLine = `HTTP/1.1 ${upstreamRes.statusCode ?? 502} ${upstreamRes.statusMessage || ''}\r\n`;
     socket.write(statusLine + serializeHeaders(responseHeaders) + '\r\n\r\n');
     upstreamRes.pipe(socket);
@@ -393,6 +412,7 @@ function sanitizeResponseHeaders(
   headers: IncomingMessage['headers'],
   sessionId: string,
   upstreamPort: number,
+  allowLocalRedirects: boolean,
 ): Record<string, string | string[]> {
   const result: Record<string, string | string[]> = {};
   for (const [key, value] of Object.entries(headers)) {
@@ -402,7 +422,7 @@ function sanitizeResponseHeaders(
   for (const name of URL_BEARING_HEADERS) {
     const value = headers[name];
     if (typeof value === 'string') {
-      result[name] = rewriteLocation(value, sessionId, upstreamPort);
+      result[name] = rewriteLocation(value, sessionId, upstreamPort, allowLocalRedirects);
     }
   }
   // Defense-in-depth backstop: drop any *other* header whose value embeds the
@@ -417,9 +437,14 @@ function sanitizeResponseHeaders(
   return result;
 }
 
-/** Relative locations are rebased under the proxy prefix; absolute locations pointing anywhere but this session's own upstream are dropped rather than followed, so a compromised preview process can't redirect through the trusted proxy origin.
+/** Relative locations are rebased under the proxy prefix; absolute locations pointing anywhere but this session's own upstream are dropped rather than followed, so a compromised preview process can't redirect through the trusted proxy origin. The operator-only local redirect escape hatch is deliberately explicit and limited to loopback HTTP(S) URLs.
  * ponytail: the relative-rebase branch doesn't scrub an absolute same-host URL embedded in the redirect's own query string (e.g. `Location: /foo?next=http://127.0.0.1:<port>/bar`); low-severity port-leak edge case under this tool's loopback/single-operator threat model. Upgrade: parse and recursively sanitize URL-shaped query values if this tool is ever exposed beyond loopback. */
-function rewriteLocation(location: string, sessionId: string, upstreamPort: number): string {
+function rewriteLocation(
+  location: string,
+  sessionId: string,
+  upstreamPort: number,
+  allowLocalRedirects: boolean,
+): string {
   if (location.startsWith('/') && !location.startsWith('//')) {
     return `/preview/${sessionId}${location}`;
   }
@@ -427,6 +452,13 @@ function rewriteLocation(location: string, sessionId: string, upstreamPort: numb
     const parsed = new URL(location);
     if (isLoopbackHost(parsed.hostname) && Number(parsed.port) === upstreamPort) {
       return `/preview/${sessionId}${parsed.pathname}${parsed.search}`;
+    }
+    if (
+      allowLocalRedirects &&
+      ['http:', 'https:'].includes(parsed.protocol) &&
+      isLoopbackHost(parsed.hostname)
+    ) {
+      return parsed.href;
     }
   } catch {
     // not a parseable absolute URL; fall through to blocking it below

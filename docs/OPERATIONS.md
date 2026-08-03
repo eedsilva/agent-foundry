@@ -78,6 +78,13 @@ Usa volume para dados e não injeta credenciais de CLI.
 
 A prévia em tempo real permite que desenvolvedores testem mudanças no projeto sem fazer commit. O runtime orquestra a preparação, inicialização e monitoramento de saúde de um servidor de desenvolvimento efêmero, e um proxy reverso oferece acesso seguro a esse servidor.
 
+Por padrão, a verificação do navegador permanece restrita ao prefixo da prévia e às origens
+declaradas na policy. Para uma validação manual de um app local que redireciona para outro
+serviço loopback (por exemplo, o Supabase local), o operador pode habilitar explicitamente
+`ALLOW_LOCAL_BROWSER_REDIRECTS=true`. A opção é desligada por padrão e só libera origens
+loopback aprendidas de um redirecionamento da própria prévia; recursos locais arbitrários
+continuam bloqueados.
+
 ### Ciclo de vida da sessão
 
 ```bash

@@ -23,6 +23,11 @@ const ConfigSchema = z
     POLICIES_DIR: z.string().default('policies'),
     MODEL_CATALOG_PATH: z.string().default('models/catalog.yaml'),
     EXECUTOR_MODE: z.enum(['real', 'mock']).default('mock'),
+    // Operator-only validation escape hatch for generated apps that redirect
+    // the browser to a second loopback service (for example local Supabase).
+    // Keep this disabled for normal verification; the browser policy remains
+    // deny-by-default unless the operator opts in explicitly.
+    ALLOW_LOCAL_BROWSER_REDIRECTS: booleanFromEnv,
     PERSISTENCE_MODE: z.enum(['file', 'postgres']).default('file'),
     DATABASE_URL: z.string().min(1).optional(),
     RUN_WORKER_INLINE: booleanFromEnv,
@@ -101,6 +106,7 @@ export interface RuntimeConfig {
   policiesDir: string;
   modelCatalogPath: string;
   executorMode: 'real' | 'mock';
+  allowLocalBrowserRedirects: boolean;
   persistenceMode: 'file' | 'postgres';
   databaseUrl?: string;
   runWorkerInline: boolean;
@@ -197,6 +203,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     policiesDir: resolve(rootDir, parsed.POLICIES_DIR),
     modelCatalogPath: resolve(rootDir, parsed.MODEL_CATALOG_PATH),
     executorMode: parsed.EXECUTOR_MODE,
+    allowLocalBrowserRedirects: parsed.ALLOW_LOCAL_BROWSER_REDIRECTS,
     persistenceMode: parsed.PERSISTENCE_MODE,
     ...(parsed.DATABASE_URL ? { databaseUrl: parsed.DATABASE_URL } : {}),
     runWorkerInline: parsed.RUN_WORKER_INLINE,

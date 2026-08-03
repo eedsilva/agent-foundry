@@ -297,7 +297,9 @@ export async function createRuntime(
     clock,
     ids,
   );
-  const browserVerifier = new PlaywrightBrowserVerifier();
+  const browserVerifier = new PlaywrightBrowserVerifier({
+    allowLocalRedirects: config.allowLocalBrowserRedirects,
+  });
   const previewSelectionService = new PreviewSelectionService(
     workspaces,
     browserVerifier,

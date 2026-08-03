@@ -24,6 +24,14 @@ describe('runtime exposure policy', () => {
     const config = loadRuntimeConfig(base);
     expect(config.apiHost).toBe('127.0.0.1');
     expect(config.allowUnsafeRemoteRealExecution).toBe(false);
+    expect(config.allowLocalBrowserRedirects).toBe(false);
+  });
+
+  it('requires an explicit operator opt-in for local browser redirects', () => {
+    expect(
+      loadRuntimeConfig({ ...base, ALLOW_LOCAL_BROWSER_REDIRECTS: 'true' })
+        .allowLocalBrowserRedirects,
+    ).toBe(true);
   });
 
   it('refuses real executors on a non-loopback host', () => {

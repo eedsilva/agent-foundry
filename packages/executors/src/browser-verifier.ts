@@ -114,15 +114,23 @@ type StepReport = BrowserVerificationReport['steps'][number];
 export interface PlaywrightBrowserVerifierOptions {
   createProxy?: typeof createNetworkPolicyProxy;
   createTempDir?: typeof mkdtemp;
+  /**
+   * Operator-only validation escape hatch for a preview that redirects to a
+   * separate loopback service (for example local Supabase). Normal browser
+   * verification remains deny-by-default when this is false.
+   */
+  allowLocalRedirects?: boolean;
 }
 
 export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScreenshotCapturer {
   private readonly createProxy: typeof createNetworkPolicyProxy;
   private readonly createTempDir: typeof mkdtemp;
+  private readonly allowLocalRedirects: boolean;
 
   constructor(options: PlaywrightBrowserVerifierOptions = {}) {
     this.createProxy = options.createProxy ?? createNetworkPolicyProxy;
     this.createTempDir = options.createTempDir ?? mkdtemp;
+    this.allowLocalRedirects = options.allowLocalRedirects ?? false;
   }
 
   async verify(
@@ -189,6 +197,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
     const allowedHosts = [
       ...new Set(allowedOriginUrls.map((origin) => origin.hostname.toLowerCase())),
     ];
+    const privateExceptions = new Set([previewAuthority]);
     const evidencePolicy: BrowserEvidencePolicy = input.evidencePolicy;
     const videoDir = evidencePolicy.captureVideo
       ? await this.createTempDir(join(tmpdir(), 'agent-foundry-browser-video-'))
@@ -198,7 +207,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
         allowedHosts.length > 0
           ? { mode: 'allowlist', purpose: 'browser', allowedHosts }
           : { mode: 'none', purpose: 'browser', allowedHosts: [] },
-      privateExceptions: new Set([previewAuthority]),
+      privateExceptions,
       allowedAuthorities: new Set(allowedOriginUrls.map(networkAuthority)),
       onEvent: (event) => {
         if (networkEvents.length < MAX_NETWORK_POLICY_EVENTS) networkEvents.push(event);
@@ -236,6 +245,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
           prefixUrl,
           token,
           allowedOrigins,
+          privateExceptions,
           input,
           previewSession,
         );
@@ -306,6 +316,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
     prefixUrl: URL,
     token: string | null,
     allowedOrigins: Set<string>,
+    privateExceptions: Set<string>,
     input: Parameters<BrowserVerifier['verify']>[0],
     previewSession: Parameters<BrowserVerifier['verify']>[0]['session'],
   ): Promise<{
@@ -327,6 +338,11 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
     const passiveFailureSteps = new Set<number>();
     const runObservations: Array<{ stepIndex: number; observation: Observation }> = [];
     const requestSteps = new WeakMap<Request, number>();
+    // Local origins are learned only from a redirect emitted by the preview
+    // (or by a previously learned local origin). This keeps the explicit
+    // operator escape hatch from turning arbitrary <img>/<script>/fetch URLs
+    // into a local-network allowlist.
+    const localRedirectOrigins = new Set<string>();
     const pendingRequests = new Set<Request>();
     const ignoredRequests = new WeakSet<Request>();
     const pendingPages = new Set<Page>();
@@ -356,6 +372,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
         if (!url.pathname.startsWith(prefixUrl.pathname)) return false;
         return isSafeBrowserPath(`/${url.pathname.slice(prefixUrl.pathname.length)}`);
       }
+      if (this.allowLocalRedirects && localRedirectOrigins.has(url.origin)) return true;
       return allowedOrigins.has(comparisonOrigin(url));
     };
     const settleRequest = (request: Request): void => {
@@ -556,6 +573,16 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
           ? response.headers().location
           : undefined;
         const redirect = location ? new URL(location, url).href : undefined;
+        if (redirect && this.allowLocalRedirects && isLoopbackUrl(redirect)) {
+          const source = new URL(url);
+          const sourceIsPreview =
+            source.origin === prefixUrl.origin && source.pathname.startsWith(prefixUrl.pathname);
+          if (sourceIsPreview || localRedirectOrigins.has(source.origin)) {
+            const redirectUrl = new URL(redirect);
+            localRedirectOrigins.add(redirectUrl.origin);
+            privateExceptions.add(networkAuthority(redirectUrl));
+          }
+        }
         if (redirect && !permitted(redirect)) {
           observe(
             {
@@ -853,6 +880,17 @@ function comparisonOrigin(url: URL): string {
   if (url.protocol === 'ws:') return `http://${url.host}`;
   if (url.protocol === 'wss:') return `https://${url.host}`;
   return url.origin;
+}
+
+function isLoopbackUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (!['http:', 'https:'].includes(url.protocol)) return false;
+    const hostname = url.hostname.toLowerCase().replace(/^\[(.*)\]$/, '$1');
+    return hostname === 'localhost' || hostname === '::1' || /^127\./.test(hostname);
+  } catch {
+    return false;
+  }
 }
 
 function networkAuthority(url: URL): string {
