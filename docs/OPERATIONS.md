@@ -21,8 +21,9 @@ O worker precisa encontrar `codex`, `claude` e `agy` no `PATH`, além de sessõe
 
 ### Campanha real de validação TODO (opt-in)
 
-A campanha `real-todo-v1` é um diagnóstico isolado; ela não é a política do fluxo normal e não
-altera a tabela de roteamento de projetos. Selecione-a explicitamente ao iniciar API e worker:
+A campanha `real-todo-v1` é uma prévia de diagnóstico explicitamente selecionada; ela não é a
+política do fluxo normal e não altera o catálogo ou a tabela de roteamento de projetos. Selecione-a
+explicitamente ao iniciar API e worker:
 
 ```bash
 VALIDATION_CAMPAIGN=real-todo-v1 \
@@ -33,15 +34,18 @@ npm run dev
 
 Antes de qualquer chamada de modelo, abra [`/validation`](http://localhost:3000/validation) ou
 consulte `GET /validation/campaign`. A tela registra a revisão Git, as únicas identidades
-permitidas (modelo local configurado, Claude Haiku e Codex GPT-5.6 Luna), as rotas por task kind,
-uma tentativa por etapa, um reparo, 45 minutos ativos e US$ 2 de custo medido. Verificação usa o
-modelo local e só pode cair para Haiku; planejamento usa Haiku; mutação do workspace e reparo usam
-Luna. Nenhum modelo deep ou premium aparece na rota automática.
+permitidas (modelo local configurado, Claude Haiku e Codex GPT-5.6 Luna), as rotas planejadas por
+tipo de tarefa, uma tentativa por etapa, um reparo, 45 minutos ativos e US$ 2 de custo medido.
+Verificação usará o modelo local e só poderá cair para Haiku; planejamento usará Haiku; mutação do
+workspace e reparo usarão Luna. Nenhum modelo deep ou premium aparece na prévia.
 
 A seleção exige `EXECUTOR_MODE=real`. Identidade ausente, desabilitada, duplicada ou diferente da
-esperada interrompe a inicialização antes da execução. Deixe `VALIDATION_CAMPAIGN` vazio para o
-fluxo normal. Para rollback, pare API e worker, remova a variável (ou reverta o arquivo `.env`) e
-reinicie os processos; a campanha não grava estado de execução nem altera o catálogo padrão.
+esperada interrompe a inicialização antes da execução. Nesta etapa, a seleção apenas valida e
+exibe a campanha: ainda não inicia uma execução de validação. O worker continua usando o roteador
+normal; uma execução futura deverá receber um roteador próprio da campanha. Deixe
+`VALIDATION_CAMPAIGN` vazio para o fluxo normal. Para rollback, pare API e worker, remova a
+variável (ou reverta o arquivo `.env`) e reinicie os processos; não há estado de execução da
+campanha para limpar.
 
 ### Canary real dos providers
 

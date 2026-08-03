@@ -169,11 +169,12 @@ No component gets built until a second caller exists, except the six above.
 Sticky glass top bar, 56px, on every route:
 
 ```
-[AF] Agent Foundry   Projetos  Router          [● real · 6 modelos]  [local-first]
+[AF] Agent Foundry   Projetos  Router  Validação     [● real · 6 modelos]  [local-first]
 ```
 
 - Brand links to `/`.
-- Nav is `Projetos` (`/`) and `Router` (`/router`). Active item gets `--accent-wash`.
+- Nav is `Projetos` (`/`), `Router` (`/router`), and `Validação` (`/validation`). Active item gets
+  `--accent-wash`.
 - The runtime pill shows executor mode, model count, and a status dot. It replaces the
   `runtimeCard` currently embedded in the home hero, so runtime health is visible on every page.
 - Clicking the pill opens a popover with the full `RuntimeInfoResponse`.

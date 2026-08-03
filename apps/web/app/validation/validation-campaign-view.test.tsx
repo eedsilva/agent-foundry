@@ -68,6 +68,8 @@ describe('ValidationCampaignView', () => {
     expect(markup).toContain('gpt-5.6-luna');
     expect(markup).toContain('planning');
     expect(markup).toContain('verification');
+    expect(markup).toContain('Rotas planejadas');
+    expect(markup).toContain('Fallback planejado');
     expect(markup).toContain('45 min');
     expect(markup).toContain('US$ 2');
     expect(markup).toContain('Haiku');
