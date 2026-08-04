@@ -102,16 +102,23 @@ import { SupabaseGeneratedProjectRuntime } from '@agent-foundry/platform';
 import { buildValidationCampaignPreview } from '@agent-foundry/model-router';
 import {
   BrowserTestPlanArtifactSchema,
+  type ValidationPreflightReport,
   type ValidationCampaignPreview,
   type PreviewSession,
 } from '@agent-foundry/contracts';
 import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
+import {
+  createProductionValidationPreflightChecks,
+  persistValidationPreflightReport,
+  runValidationPreflight as runPreflight,
+} from './validation-preflight.js';
 
 const execFileAsync = promisify(execFile);
 
 export interface Runtime {
   config: RuntimeConfig;
   validationCampaign?: ValidationCampaignPreview;
+  runValidationPreflight?(): Promise<ValidationPreflightReport>;
   projects: ProjectRepository;
   runs: WorkflowRunRepository;
   stepRuns: StepRunRepository;
@@ -243,9 +250,13 @@ export async function createRuntime(
       });
   }
   const catalog = await loadModelCatalog(config.modelCatalogPath, env);
-  const validationCampaign = config.validationCampaignId
-    ? buildValidationCampaignPreview(catalog, await readSourceRevision(config.rootDir))
+  const sourceRevision = config.validationCampaignId
+    ? await readSourceRevision(config.rootDir)
     : undefined;
+  const validationCampaign =
+    sourceRevision !== undefined
+      ? buildValidationCampaignPreview(catalog, sourceRevision)
+      : undefined;
   // TableModelRouter enables its default circuit breaker configuration. A selected
   // validation campaign is preview-only at this stage; it must not replace the
   // process-wide product router before the campaign execution seam exists.
@@ -435,10 +446,39 @@ export async function createRuntime(
   const leaseReaper = new QueueLeaseReaper(queue, events, clock, ids, {
     intervalMs: config.queueReapIntervalMs,
   });
+  const runValidationCampaignPreflight =
+    validationCampaign && sourceRevision
+      ? (): Promise<ValidationPreflightReport> => {
+          const environmentId = `validation-preflight-${ids.next()}`;
+          return runPreflight({
+            campaign: validationCampaign,
+            sourceRevision,
+            rootDirectory: config.rootDir,
+            dataDirectory: config.dataDir,
+            executorMode: config.executorMode,
+            environmentId,
+            checks: createProductionValidationPreflightChecks({
+              campaign: validationCampaign,
+              environmentId,
+              harness,
+              workspaces,
+              ...(generatedProjectRuntime ? { generatedProjectRuntime } : {}),
+              previews: previewService,
+              previewRunner,
+              maxOutputBytes: config.maxCliOutputBytes,
+              installTimeoutMs: config.verificationTimeoutMs,
+            }),
+            persist: (report) => persistValidationPreflightReport(config.dataDir, report),
+          });
+        }
+      : undefined;
 
   return {
     config,
     ...(validationCampaign ? { validationCampaign } : {}),
+    ...(runValidationCampaignPreflight
+      ? { runValidationPreflight: runValidationCampaignPreflight }
+      : {}),
     projects,
     runs,
     stepRuns,
