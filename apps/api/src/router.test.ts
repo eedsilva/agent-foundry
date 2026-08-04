@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
-import { TaskProfileSchema } from '@agent-foundry/contracts';
+import { TaskProfileSchema, type ValidationPreflightReport } from '@agent-foundry/contracts';
 import { buildApp } from './app.js';
 
 describe('router dashboard + experiments API', () => {
@@ -37,6 +37,13 @@ describe('router dashboard + experiments API', () => {
     expect(body.facets.modelIds).toEqual([]);
     expect(body.kpis.sampleSize).toBe(0);
     expect(body.kpis.firstPassRate).toBeNull();
+  });
+
+  it('requires an explicitly selected campaign before preflight', async () => {
+    const response = await app.inject({ method: 'POST', url: '/validation/campaign/preflight' });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: 'VALIDATION_CAMPAIGN_NOT_READY' });
   });
 
   it('creates, lists, and updates an experiment', async () => {
@@ -135,6 +142,39 @@ describe('router dashboard + experiments API', () => {
       source: 'web-app-v1',
       taskKind: 'planning',
     });
+
+    const report: ValidationPreflightReport = {
+      schemaVersion: '1',
+      campaignId: 'real-todo-v1',
+      sourceRevision: 'a'.repeat(40),
+      dataDirectory: dataDir,
+      executorMode: 'real',
+      environmentId: 'validation-preflight-test',
+      startedAt: '2026-08-03T12:00:00.000Z',
+      completedAt: '2026-08-03T12:00:01.000Z',
+      status: 'environment-blocked',
+      checks: [
+        {
+          boundary: 'docker',
+          status: 'failed',
+          durationMs: 1,
+          errorCode: 'PREFLIGHT_FAILED',
+          message: 'docker prerequisite failed.',
+        },
+      ],
+      generatedProjectCreated: false,
+    };
+    const runnableApp = await buildApp({
+      ...selectedRuntime,
+      runValidationPreflight: async () => report,
+    });
+    const preflight = await runnableApp.inject({
+      method: 'POST',
+      url: '/validation/campaign/preflight',
+    });
+    expect(preflight.statusCode).toBe(200);
+    expect(preflight.json()).toEqual(report);
+    await runnableApp.close();
 
     await selectedApp.close();
   });

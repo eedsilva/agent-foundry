@@ -5,7 +5,9 @@ import { execa } from 'execa';
 import {
   AGENT_ARTIFACT_JSON_SCHEMA,
   ProviderCanaryReportSchema,
+  ProviderCanaryRunSchema,
   ProviderProbeSchema,
+  ValidationCanaryResultSchema,
   type AgentExecutionRequest,
   type AgentExecutionResult,
   type CanaryScenario,
@@ -14,11 +16,14 @@ import {
   type ProviderCanaryReport,
   type ProviderCanaryRun,
   type ProviderProbe,
+  type ValidationCanaryResult,
+  type ValidationModelIdentity,
 } from '@agent-foundry/contracts';
 import {
   AgyCliExecutor,
   ClaudeCliExecutor,
   CodexCliExecutor,
+  OpenCodeCliExecutor,
   createGlmEnvironment,
 } from '@agent-foundry/executors';
 import { markdownCell, publishBaselinePair } from './baseline-publish.js';
@@ -48,6 +53,14 @@ export interface ProviderCanaryDependencies {
   loadProbes(): Promise<ProviderProbe[]>;
   execute(
     provider: ProviderCanaryProvider,
+    request: AgentExecutionRequest,
+  ): Promise<AgentExecutionResult>;
+}
+
+type ValidationCanaryProvider = 'opencode' | 'claude' | 'codex';
+export interface ValidationCanaryDependencies {
+  execute(
+    provider: ValidationCanaryProvider,
     request: AgentExecutionRequest,
   ): Promise<AgentExecutionResult>;
 }
@@ -106,13 +119,15 @@ export async function runProviderCanaries(
 
       const model = models[provider];
       if (model === undefined) throw new Error(`Missing selected model for ${provider}.`);
-      const run = await executeCanaryScenario({
-        provider,
-        scenario,
-        model,
-        timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        dependencies,
-      });
+      const run = ProviderCanaryRunSchema.parse(
+        await executeCanaryScenario({
+          provider,
+          scenario,
+          model,
+          timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          dependencies,
+        }),
+      );
       runs.push(run);
       if (run.status === 'failed') await writeFailureDiagnostic(rootDir, run, now());
     }
@@ -291,6 +306,50 @@ export function modelsFromEnvironment(
   };
 }
 
+export function createValidationCampaignCanaryDependencies(): ValidationCanaryDependencies {
+  const executors = {
+    opencode: new OpenCodeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
+    claude: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
+    codex: new CodexCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, true),
+  };
+  return {
+    execute(provider, request) {
+      return executors[provider].execute(request);
+    },
+  };
+}
+
+export async function runValidationCampaignCanary(input: {
+  model: ValidationModelIdentity;
+  taskKind: 'planning' | 'implementation';
+  dependencies: ValidationCanaryDependencies;
+  timeoutMs?: number;
+}): Promise<ValidationCanaryResult> {
+  if (!isValidationCanaryProvider(input.model.provider)) {
+    throw new Error(`Unsupported validation canary provider: ${input.model.provider}.`);
+  }
+  const scenario = input.taskKind === 'implementation' ? 'greenfield' : 'planning';
+  const run = await executeCanaryScenario({
+    provider: input.model.provider,
+    scenario,
+    model: input.model.model,
+    timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    dependencies: input.dependencies,
+  });
+  return ValidationCanaryResultSchema.parse({
+    provider: input.model.provider,
+    selectedModel: input.model.model,
+    ...(run.executedModel ? { executedModel: run.executedModel } : {}),
+    status: run.status === 'passed' ? 'passed' : 'failed',
+  });
+}
+
+function isValidationCanaryProvider(
+  provider: ValidationModelIdentity['provider'],
+): provider is ValidationCanaryProvider {
+  return provider === 'opencode' || provider === 'claude' || provider === 'codex';
+}
+
 function createProductionProviderCanaryDependencies(
   rootDir: string,
   env: NodeJS.ProcessEnv,
@@ -382,13 +441,17 @@ function deriveGlmProbe(probes: ProviderProbe[], env: NodeJS.ProcessEnv): Provid
   };
 }
 
-async function executeCanaryScenario(input: {
-  provider: ProviderCanaryProvider;
+async function executeCanaryScenario<
+  Provider extends ProviderCanaryProvider | ValidationCanaryProvider,
+>(input: {
+  provider: Provider;
   scenario: CanaryScenario;
   model: string;
   timeoutMs: number;
-  dependencies: ProviderCanaryDependencies;
-}): Promise<ProviderCanaryRun> {
+  dependencies: {
+    execute(provider: Provider, request: AgentExecutionRequest): Promise<AgentExecutionResult>;
+  };
+}): Promise<Omit<ProviderCanaryRun, 'provider'> & { provider: Provider }> {
   const startedAt = Date.now();
   let workspacePath: string | undefined;
   let verification: CanaryVerificationResult[] = [];
@@ -535,7 +598,7 @@ async function createFixtureWorkspace(
 }
 
 async function createExecutionRequest(
-  provider: ProviderCanaryProvider,
+  provider: ProviderCanaryProvider | ValidationCanaryProvider,
   scenario: CanaryScenario,
   model: string,
   timeoutMs: number,
