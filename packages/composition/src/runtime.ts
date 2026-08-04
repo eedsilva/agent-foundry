@@ -246,9 +246,9 @@ export async function createRuntime(
   const validationCampaign = config.validationCampaignId
     ? buildValidationCampaignPreview(catalog, await readSourceRevision(config.rootDir))
     : undefined;
-  // TableModelRouter enables its default circuit breaker configuration. A selected
-  // validation campaign is preview-only at this stage; it must not replace the
-  // process-wide product router before the campaign execution seam exists.
+  // TableModelRouter keeps its default circuit breaker configuration. A selected
+  // validation campaign is passed as run-scoped state; it must not replace the
+  // process-wide product router for normal runs.
   const router = new TableModelRouter(catalog, metrics);
   const executors =
     config.executorMode === 'mock'
@@ -367,6 +367,7 @@ export async function createRuntime(
     // Provisioning boots the scaffolded workspace only in real mode; the mock
     // executor never installs anything (#318).
     config.executorMode === 'real' ? previewService : undefined,
+    validationCampaign,
   );
   const projectService = new ProjectService(
     projects,
@@ -388,6 +389,7 @@ export async function createRuntime(
     ids,
     modelOverrides,
     qualityObservationService,
+    validationCampaign,
   );
   const conversationService = new ConversationService(
     projects,

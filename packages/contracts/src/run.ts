@@ -3,6 +3,7 @@ import { RouteDecisionSchema } from './model.js';
 import { PolicyRecordSchema } from './policy.js';
 import { ActorRefSchema, PathSegmentSchema, ProviderSchema } from './primitives.js';
 import { ApprovalActionSchema, ApprovalTimeoutPolicySchema } from './workflow.js';
+import { ValidationCampaignExecutionSchema } from './validation-campaign.js';
 
 export const EntityVersionSchema = z.number().int().positive();
 
@@ -123,6 +124,8 @@ export const RunRetryDirectiveSchema = z
         actor: ActorRefSchema.optional(),
         reason: z.string().trim().min(1).optional(),
         estimatedImpact: z.string().trim().min(1).optional(),
+        failedStep: z.string().trim().min(1).optional(),
+        minimalReproducer: z.string().trim().min(1).optional(),
       })
       .strict()
       .superRefine((override, context) => {
@@ -162,6 +165,7 @@ export const RunExecutionStateSchema = z
       })
       .strict()
       .optional(),
+    campaign: ValidationCampaignExecutionSchema.optional(),
   })
   .strict();
 export type RunExecutionState = z.infer<typeof RunExecutionStateSchema>;

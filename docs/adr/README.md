@@ -12,4 +12,5 @@ Latest: [0050 structured and redacted provisioning failure diagnostics](0050-str
 Latest: [0051 normalize JSON Schema before Claude CLI execution](0051-claude-json-schema-compatibility.md).
 Latest: [0052 operator-enabled loopback browser redirects](0052-operator-enabled-loopback-browser-redirects.md).
 Latest: [0053 validation campaign preview isolation](0053-validation-campaign-preview-isolation.md).
+Latest: [0054 enforce validation campaign run budgets](0054-validation-campaign-run-budget.md).
 Latest: [0046 a readable executor table replaces router scoring](0046-executor-table-replaces-router-scoring.md).

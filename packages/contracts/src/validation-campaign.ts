@@ -42,8 +42,55 @@ export const ValidationCampaignPreviewSchema = z
     routes: z.array(ValidationCampaignRouteSchema).min(1),
     limits: ValidationCampaignLimitsSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((preview, context) => {
+    const allowedById = new Map(preview.allowedModels.map((model) => [model.id, model]));
+    for (const [routeIndex, route] of preview.routes.entries()) {
+      const routeModels = [
+        { path: ['selected'] as const, model: route.selected },
+        ...route.fallbacks.map((model, fallbackIndex) => ({
+          path: ['fallbacks', fallbackIndex] as const,
+          model,
+        })),
+      ];
+      for (const routeModel of routeModels) {
+        const allowed = allowedById.get(routeModel.model.id);
+        if (
+          !allowed ||
+          allowed.provider !== routeModel.model.provider ||
+          allowed.model !== routeModel.model.model
+        ) {
+          context.addIssue({
+            code: 'custom',
+            path: ['routes', routeIndex, ...routeModel.path],
+            message: `Route model ${routeModel.model.id} must match an allowed campaign identity`,
+          });
+        }
+      }
+    }
+  });
 export type ValidationCampaignPreview = z.infer<typeof ValidationCampaignPreviewSchema>;
+
+/** Persisted snapshot used by an explicitly selected campaign run. */
+export const ValidationCampaignExecutionSchema = z
+  .object({
+    preview: ValidationCampaignPreviewSchema,
+    activeElapsedMs: z.number().int().nonnegative(),
+    activeSince: z.string().datetime().optional(),
+    targetedRepairs: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ValidationCampaignExecution = z.infer<typeof ValidationCampaignExecutionSchema>;
+
+export function createValidationCampaignExecution(
+  preview: ValidationCampaignPreview,
+): ValidationCampaignExecution {
+  return ValidationCampaignExecutionSchema.parse({
+    preview,
+    activeElapsedMs: 0,
+    targetedRepairs: 0,
+  });
+}
 
 export const ValidationCampaignResponseSchema = z
   .object({

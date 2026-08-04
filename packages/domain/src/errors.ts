@@ -108,6 +108,19 @@ export class EmergencyCeilingError extends Error {
   }
 }
 
+export class ValidationCampaignLimitError extends Error {
+  override readonly name = 'ValidationCampaignLimitError';
+  readonly code = 'VALIDATION_CAMPAIGN_LIMIT';
+
+  constructor(
+    readonly runId: string,
+    readonly reason:
+      'attempts' | 'targeted-repairs' | 'active-time' | 'metered-cost' | 'subscription-quota',
+  ) {
+    super(`Validation campaign for workflow run ${runId} reached its ${reason} limit.`);
+  }
+}
+
 /** A hard ProjectPolicy constraint was violated; the run must not proceed. */
 export class PolicyViolationError extends Error {
   override readonly name = 'PolicyViolationError';

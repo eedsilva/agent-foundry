@@ -5,6 +5,10 @@
 - Owners: Core, Model Router
 - Amends issue #391 and PR #403
 
+Issue #394 later adds the explicit run-scoped execution boundary described in
+[`0054-validation-campaign-run-budget.md`](0054-validation-campaign-run-budget.md); this ADR
+records the preview-only decision at the #391 boundary.
+
 ## Context
 
 PR #403 added the opt-in `real-todo-v1` campaign preview and constructed its restricted
