@@ -116,9 +116,36 @@ describe('validation campaign budget accounting', () => {
 
   it('estimates the next metered dispatch without inventing a value for unknown pricing', () => {
     expect(estimateValidationDispatchCostUsd(profile, metered)).toBe(4);
+    expect(estimateValidationDispatchCostUsd(profile, subscription)).toBe(4);
+    expect(estimateValidationDispatchCostUsd(profile, unknown)).toBeUndefined();
     expect(
       estimateValidationDispatchCostUsd(profile, { ...metered, pricing: undefined }),
     ).toBeUndefined();
+  });
+
+  it('does not attribute quota to an unrelated persisted route identity', () => {
+    const persistedRoute = RouteDecisionSchema.parse({
+      routeId: 'route-1',
+      createdAt: '2026-08-03T12:00:00.000Z',
+      profile,
+      selected: { model: subscription },
+      fallbacks: [],
+      rejected: [],
+    });
+    const summary = summarizeValidationUsage(
+      [
+        {
+          ...attempt('unmatched', { quotaUnits: 4 }, subscription.id),
+          modelId: undefined,
+          model: 'different-model',
+          routeDecision: persistedRoute,
+        },
+      ],
+      [subscription],
+    );
+
+    expect(summary.subscriptionQuotaUnits).toBe(0);
+    expect(summary.unknownMeteredAttempts).toBe(1);
   });
 
   it('uses the persisted route identity when the current catalog no longer has the model id', () => {

@@ -48,15 +48,22 @@ export function summarizeValidationUsage(
       ...(attempt.routeDecision ? [attempt.routeDecision.selected.model] : []),
       ...(attempt.routeDecision?.fallbacks.map((fallback) => fallback.model) ?? []),
     ];
+    const matchesAttemptIdentity = (candidate: ModelDefinition): boolean =>
+      candidate.provider === attempt.provider && candidate.model === attempt.model;
+    const routeModel =
+      persistedRouteModels.find(matchesAttemptIdentity) ??
+      persistedRouteModels.find((candidate) => candidate.id === attempt.modelId);
+    const catalogIdentityMatches = catalog.filter(matchesAttemptIdentity);
+    const catalogModel = attempt.modelId
+      ? catalogById.get(attempt.modelId)
+      : catalogIdentityMatches.length === 1
+        ? catalogIdentityMatches[0]
+        : undefined;
     const model =
-      persistedRouteModels.find((candidate) => candidate.id === attempt.modelId) ??
-      persistedRouteModels[0] ??
-      catalogById.get(attempt.modelId ?? '');
+      (routeModel && matchesAttemptIdentity(routeModel) ? routeModel : undefined) ??
+      (catalogModel && matchesAttemptIdentity(catalogModel) ? catalogModel : undefined);
     const billingMode =
-      model?.billingMode ??
-      (usage?.providerReportedCostUsd !== undefined || usage?.estimatedCostUsd !== undefined
-        ? 'metered'
-        : undefined);
+      model?.billingMode ?? (attempt.executorKind === 'agent' ? 'unknown' : undefined);
     if (billingMode === 'unknown') {
       if (usage?.providerReportedCostUsd !== undefined) {
         summary.providerReportedCostUsd += usage.providerReportedCostUsd;
@@ -98,7 +105,7 @@ export function estimateValidationDispatchCostUsd(
   profile: TaskProfile,
   model: ModelDefinition,
 ): number | undefined {
-  if (model.billingMode !== 'metered' || !model.pricing) return undefined;
+  if (model.billingMode === 'unknown' || !model.pricing) return undefined;
   return calculateUsageCostUsd(
     {
       inputTokens: profile.estimatedContextTokens,

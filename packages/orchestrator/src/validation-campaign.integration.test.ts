@@ -50,6 +50,9 @@ const premiumModels = models.map((model, index) =>
     },
   }),
 );
+const subscriptionPremiumModels = premiumModels.map((model) =>
+  ModelDefinitionSchema.parse({ ...model, billingMode: 'subscription' }),
+);
 
 const campaign = ValidationCampaignPreviewSchema.parse({
   schemaVersion: '1',
@@ -704,43 +707,49 @@ describe('validation campaign run enforcement', () => {
     expect(harness.executor.requests).toHaveLength(0);
   });
 
-  it('allows a premium promotion only when the audited override is bound to the failed step', async () => {
-    const stores = makeStores();
-    const harness = makeHarness({}, stores, {
-      models: premiumModels,
-      validationCampaign: campaign,
-      usage: { inputTokens: 100, outputTokens: 100 },
-    });
-    await seedRun(harness);
-    await recordFailedAttempt(harness, 'plan', 'plan');
-    await harness.service.createModelOverride('run-1', {
-      scope: { kind: 'step', nodeId: 'plan', stepId: 'plan' },
-      modelId: 'campaign-model-2',
-      provider: 'codex',
-      model: 'campaign-model-2',
-      actor: { kind: 'user', id: 'operator' },
-      failedStep: 'plan/plan',
-      minimalReproducer: 'plan output violates the task graph contract',
-      reason: 'The restricted model failed the same reproducer',
-      estimatedImpact: 'One premium planning dispatch',
-    });
-    const run = await stores.runs.get('run-1');
-    await stores.runs.update(
-      {
-        ...run!,
-        execution: {
-          activeElapsedMs: 0,
-          consecutiveRepairs: 0,
-          campaign: createValidationCampaignExecution(campaign),
+  it.each([
+    ['metered', premiumModels],
+    ['subscription', subscriptionPremiumModels],
+  ] as const)(
+    'allows a known-priced %s premium promotion with matching audit evidence',
+    async (_billingMode, promotionModels) => {
+      const stores = makeStores();
+      const harness = makeHarness({}, stores, {
+        models: promotionModels,
+        validationCampaign: campaign,
+        usage: { inputTokens: 100, outputTokens: 100 },
+      });
+      await seedRun(harness);
+      await recordFailedAttempt(harness, 'plan', 'plan');
+      await harness.service.createModelOverride('run-1', {
+        scope: { kind: 'step', nodeId: 'plan', stepId: 'plan' },
+        modelId: 'campaign-model-2',
+        provider: 'codex',
+        model: 'campaign-model-2',
+        actor: { kind: 'user', id: 'operator' },
+        failedStep: 'plan/plan',
+        minimalReproducer: 'plan output violates the task graph contract',
+        reason: 'The restricted model failed the same reproducer',
+        estimatedImpact: 'One premium planning dispatch',
+      });
+      const run = await stores.runs.get('run-1');
+      await stores.runs.update(
+        {
+          ...run!,
+          execution: {
+            activeElapsedMs: 0,
+            consecutiveRepairs: 0,
+            campaign: createValidationCampaignExecution(campaign),
+          },
         },
-      },
-      run!.version,
-    );
+        run!.version,
+      );
 
-    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-    expect(harness.executor.requests[0]?.model).toBe('campaign-model-2');
-    expect((await stores.runs.get('run-1'))?.status).toBe('completed');
-  });
+      await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+      expect(harness.executor.requests[0]?.model).toBe('campaign-model-2');
+      expect((await stores.runs.get('run-1'))?.status).toBe('completed');
+    },
+  );
 });
 
 async function recordFailedAttempt(
