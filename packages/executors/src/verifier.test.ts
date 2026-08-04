@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -107,6 +107,37 @@ describe('WorkspaceVerifier', () => {
       skipped: false,
       exitCode: 1,
     });
+  });
+
+  it('runs required scripts before optional scripts in the declared pre-optional seam', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager: 'npm@10',
+        scripts: {
+          required: "node -e \"require('fs').appendFileSync('order', 'required')\"",
+          before: "node -e \"require('fs').appendFileSync('order', 'before')\"",
+          optional: "node -e \"require('fs').appendFileSync('order', 'optional')\"",
+        },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 30_000,
+      maxOutputBytes: 1_000_000,
+    }).verify({
+      workspacePath: cwd,
+      scripts: ['required'],
+      beforeOptionalScripts: ['before'],
+      optionalScripts: ['optional'],
+      includeGitDiffCheck: false,
+    });
+
+    expect(report.approved).toBe(true);
+    expect(await readFile(join(cwd, 'order'), 'utf8')).toBe('requiredbeforeoptional');
   });
 
   it('runs the auto-fix pre-pass before the checks without letting it gate', async () => {

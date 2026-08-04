@@ -89,6 +89,7 @@ import type {
   BlobStore,
   BrowserVerifier,
   ConversationRepository,
+  ExecutorRegistry,
   EventStore,
   JobQueue,
   ProjectRepository,
@@ -103,6 +104,7 @@ import { SupabaseGeneratedProjectRuntime } from '@agent-foundry/platform';
 import { buildValidationCampaignPreview } from '@agent-foundry/model-router';
 import {
   BrowserTestPlanArtifactSchema,
+  ValidationPreflightReportSchema,
   type ValidationPreflightReport,
   type ValidationCampaignPreview,
   type PreviewSession,
@@ -145,7 +147,7 @@ export interface Runtime {
   workspaces: FileWorkspaceManager;
   secretStore: FileSecretStore;
   router: TableModelRouter;
-  executors: StaticExecutorRegistry | MockExecutorRegistry;
+  executors: ExecutorRegistry;
   executionPlane: LocalExecutionPlane;
   verifier: WorkspaceVerifier;
   browserVerifier: PlaywrightBrowserVerifier;
@@ -180,6 +182,12 @@ export interface RuntimeOverrides {
   previewInstaller?: PreviewInstaller | null;
   /** Test-only escape hatch for real-mode suites that use controlled local fixtures. */
   generatedProjectRuntime?: GeneratedProjectRuntime | null;
+  /** Test-only executor registry override for controlled validation runs. */
+  executors?: ExecutorRegistry;
+  /** Test-only switch to keep a controlled workflow away from preview boot. */
+  disablePreviews?: boolean;
+  /** Test-only preflight report source for public validation-runtime tests. */
+  validationPreflight?: (campaign: ValidationCampaignPreview) => Promise<ValidationPreflightReport>;
 }
 
 export async function createRuntime(
@@ -260,6 +268,10 @@ export async function createRuntime(
     sourceRevision !== undefined
       ? buildValidationCampaignPreview(catalog, sourceRevision)
       : undefined;
+  const readCurrentValidationPreflight =
+    validationCampaign && sourceRevision
+      ? () => readValidationPreflightReport(config.dataDir, sourceRevision)
+      : undefined;
   const validationEvidence = new ValidationEvidenceService(
     runs,
     stepRuns,
@@ -267,14 +279,26 @@ export async function createRuntime(
     artifacts,
     catalog,
     events,
-    async () => readValidationPreflightReport(config.dataDir),
+    async (runId) => {
+      const run = await runs.get(runId);
+      if (!run) return undefined;
+      const metadata = (await artifacts.listMetadata(run.projectId, 'validation-preflight'))
+        .filter((item) => item.runId === runId)
+        .at(-1);
+      if (!metadata) return undefined;
+      const artifact = await artifacts.getRevision(run.projectId, metadata.name, metadata.revision);
+      if (!artifact) return undefined;
+      const parsed = ValidationPreflightReportSchema.safeParse(artifact.content);
+      return parsed.success ? parsed.data : undefined;
+    },
   );
   // TableModelRouter keeps its default circuit breaker configuration. A selected
   // validation campaign is passed as run-scoped state; it must not replace the
   // process-wide product router for normal runs.
   const router = new TableModelRouter(catalog, metrics);
   const executors =
-    config.executorMode === 'mock'
+    overrides.executors ??
+    (config.executorMode === 'mock'
       ? new MockExecutorRegistry(new MockAgentExecutor())
       : new StaticExecutorRegistry([
           new CodexCliExecutor(config.maxCliOutputBytes),
@@ -285,7 +309,7 @@ export async function createRuntime(
           }),
           new AgyCliExecutor(config.maxCliOutputBytes),
           new OpenCodeCliExecutor(config.maxCliOutputBytes),
-        ]);
+        ]));
   const executionPlane = new LocalExecutionPlane(executors, workspaces);
   const verifier = new WorkspaceVerifier({
     autoInstallDependencies: config.autoInstallDependencies,
@@ -389,7 +413,7 @@ export async function createRuntime(
     generatedProjectRuntime,
     // Provisioning boots the scaffolded workspace only in real mode; the mock
     // executor never installs anything (#318).
-    config.executorMode === 'real' ? previewService : undefined,
+    config.executorMode === 'real' && !overrides.disablePreviews ? previewService : undefined,
     validationCampaign,
     validationCampaign ? validationEvidence : undefined,
   );
@@ -414,6 +438,7 @@ export async function createRuntime(
     modelOverrides,
     qualityObservationService,
     validationCampaign,
+    readCurrentValidationPreflight,
   );
   const conversationService = new ConversationService(
     projects,
@@ -461,31 +486,38 @@ export async function createRuntime(
   const leaseReaper = new QueueLeaseReaper(queue, events, clock, ids, {
     intervalMs: config.queueReapIntervalMs,
   });
+  const validationPreflight = overrides.validationPreflight;
   const runValidationCampaignPreflight =
     validationCampaign && sourceRevision
-      ? async (): Promise<ValidationPreflightReport> => {
-          const environmentId = `validation-preflight-${ids.next()}`;
-          return runPreflight({
-            campaign: validationCampaign,
-            sourceRevision,
-            rootDirectory: config.rootDir,
-            dataDirectory: config.dataDir,
-            executorMode: config.executorMode,
-            environmentId,
-            checks: createProductionValidationPreflightChecks({
+      ? validationPreflight
+        ? async (): Promise<ValidationPreflightReport> => {
+            const report = await validationPreflight(validationCampaign);
+            await persistValidationPreflightReport(config.dataDir, report);
+            return report;
+          }
+        : async (): Promise<ValidationPreflightReport> => {
+            const environmentId = `validation-preflight-${ids.next()}`;
+            return runPreflight({
               campaign: validationCampaign,
+              sourceRevision,
+              rootDirectory: config.rootDir,
+              dataDirectory: config.dataDir,
+              executorMode: config.executorMode,
               environmentId,
-              harness,
-              workspaces,
-              ...(generatedProjectRuntime ? { generatedProjectRuntime } : {}),
-              previews: previewService,
-              previewRunner,
-              maxOutputBytes: config.maxCliOutputBytes,
-              installTimeoutMs: config.verificationTimeoutMs,
-            }),
-            persist: (report) => persistValidationPreflightReport(config.dataDir, report),
-          });
-        }
+              checks: createProductionValidationPreflightChecks({
+                campaign: validationCampaign,
+                environmentId,
+                harness,
+                workspaces,
+                ...(generatedProjectRuntime ? { generatedProjectRuntime } : {}),
+                previews: previewService,
+                previewRunner,
+                maxOutputBytes: config.maxCliOutputBytes,
+                installTimeoutMs: config.verificationTimeoutMs,
+              }),
+              persist: (report) => persistValidationPreflightReport(config.dataDir, report),
+            });
+          }
       : undefined;
 
   return {

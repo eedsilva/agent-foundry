@@ -48,6 +48,7 @@ import {
   RouterDashboardResponseSchema,
   ValidationCampaignResponseSchema,
   ValidationEvidencePublicationRequestSchema,
+  ValidationOperatorAcceptanceRequestSchema,
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
   UpdateExperimentRequestSchema,
@@ -875,6 +876,12 @@ export async function buildApp(
     const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
     const input = ValidationEvidencePublicationRequestSchema.parse(request.body);
     return runtime.validationEvidence.publish(runId, input);
+  });
+
+  app.post('/runs/:runId/validation-acceptance', async (request, reply) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    const input = ValidationOperatorAcceptanceRequestSchema.parse(request.body);
+    return reply.status(202).send(await runtime.validationEvidence.acceptOperator(runId, input));
   });
 
   app.get('/runs/:runId/validation-evidence', async (request) => {

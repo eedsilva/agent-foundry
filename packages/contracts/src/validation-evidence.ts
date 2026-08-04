@@ -57,6 +57,19 @@ export type ValidationEvidenceGateStatus = z.infer<typeof ValidationEvidenceGate
 export const ValidationEvidenceFailureClassSchema = z.enum(['product', 'model', 'environment']);
 export type ValidationEvidenceFailureClass = z.infer<typeof ValidationEvidenceFailureClassSchema>;
 
+export const ValidationDatabaseEvidenceSchema = z
+  .object({
+    schemaVersion: z.literal('1'),
+    status: z.literal('matched'),
+    verification: z.literal('create-list-reload'),
+    rowFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+    browserArtifact: ArtifactReferenceSchema,
+    verificationArtifact: ArtifactReferenceSchema,
+    checkedAt: z.string().datetime(),
+  })
+  .strict();
+export type ValidationDatabaseEvidence = z.infer<typeof ValidationDatabaseEvidenceSchema>;
+
 export const ValidationEvidenceReferenceSchema = z
   .object({
     runId: PathSegmentSchema,
@@ -82,6 +95,13 @@ export const ValidationEvidenceGateSchema = z
         code: 'custom',
         path: ['references'],
         message: 'A passed gate requires at least one immutable evidence reference',
+      });
+    }
+    if (gate.status !== 'passed' && !gate.failureClass) {
+      context.addIssue({
+        code: 'custom',
+        path: ['failureClass'],
+        message: 'A non-passed gate requires a failure classification',
       });
     }
   });
@@ -160,6 +180,17 @@ export type ValidationEvidencePublicationRequest = z.infer<
   typeof ValidationEvidencePublicationRequestSchema
 >;
 
+export const ValidationOperatorAcceptanceRequestSchema = z
+  .object({
+    decidedBy: z.string().trim().min(1).max(200),
+    browserArtifact: ArtifactReferenceSchema,
+    databaseArtifact: ArtifactReferenceSchema,
+  })
+  .strict();
+export type ValidationOperatorAcceptanceRequest = z.infer<
+  typeof ValidationOperatorAcceptanceRequestSchema
+>;
+
 export const ValidationEvidenceAttemptSchema = z
   .object({
     reference: ValidationEvidenceReferenceSchema,
@@ -181,8 +212,8 @@ export const ValidationEvidenceUsageSchema = z
     attemptsByStep: z
       .record(z.string(), z.number().int().nonnegative())
       .refine((value) => Object.keys(value).length <= MAX_EVIDENCE_ATTEMPTS),
-    providerReportedCostUsd: z.number().nonnegative(),
-    catalogEstimatedCostUsd: z.number().nonnegative(),
+    providerReportedCostUsd: z.number().nonnegative().nullable(),
+    catalogEstimatedCostUsd: z.number().nonnegative().nullable(),
     meteredCostUsd: z.number().nonnegative().nullable(),
     unknownMeteredAttempts: z.number().int().nonnegative(),
     subscriptionQuotaUnits: z.number().nonnegative(),

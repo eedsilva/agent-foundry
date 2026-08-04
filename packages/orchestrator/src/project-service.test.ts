@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AppEnvironment, PreviewSession, PreviewWorkspaceRef } from '@agent-foundry/contracts';
+import {
+  ValidationCampaignPreviewSchema,
+  type AppEnvironment,
+  type PreviewSession,
+  type PreviewWorkspaceRef,
+} from '@agent-foundry/contracts';
 import { EnvironmentOperationError, type GeneratedProjectRuntime } from '@agent-foundry/domain';
 import { makeHarness, makeStores, seedRun } from './testing/harness.js';
 import { WorkerLoop } from './worker-loop.js';
@@ -31,6 +36,166 @@ describe('ProjectService.get', () => {
 });
 
 describe('ProjectService.create', () => {
+  it('stops before project creation when validation preflight is blocked', async () => {
+    const campaign = ValidationCampaignPreviewSchema.parse({
+      schemaVersion: '1',
+      id: 'real-todo-v1',
+      name: 'Test campaign',
+      sourceRevision: 'a'.repeat(40),
+      allowedModels: [
+        { id: 'model-1', provider: 'codex', model: 'test-model' },
+        { id: 'model-2', provider: 'codex', model: 'alt-model' },
+        { id: 'model-3', provider: 'codex', model: 'third-model' },
+      ],
+      routes: [
+        {
+          taskKind: 'planning',
+          selected: { id: 'model-1', provider: 'codex', model: 'test-model' },
+          fallbacks: [],
+        },
+      ],
+      limits: {
+        attemptsPerAgentStep: 1,
+        targetedRepairs: 1,
+        activeTimeMinutes: 1,
+        meteredCostUsd: 2,
+      },
+    });
+    const harness = makeHarness({}, undefined, {
+      validationCampaign: campaign,
+      validationPreflight: async () => ({
+        schemaVersion: '1',
+        campaignId: campaign.id,
+        sourceRevision: campaign.sourceRevision,
+        dataDirectory: '/Users/edsilva/private-validation-data',
+        executorMode: 'real',
+        environmentId: 'blocked-preflight',
+        startedAt: '2026-08-04T12:00:00.000Z',
+        completedAt: '2026-08-04T12:00:01.000Z',
+        status: 'environment-blocked',
+        checks: [
+          {
+            boundary: 'docker',
+            status: 'failed',
+            durationMs: 1,
+            errorCode: 'DOCKER_UNAVAILABLE',
+          },
+        ],
+        generatedProjectCreated: false,
+      }),
+    });
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+      }),
+    ).rejects.toThrow('Validation preflight environment-blocked at docker.');
+
+    expect(await harness.projects.get('id-0001')).toBeNull();
+    expect(harness.enqueued).toHaveLength(0);
+    expect(harness.workspaces.lastPrd).toBeUndefined();
+  });
+
+  it('stops before project creation when validation preflight is absent or mismatched', async () => {
+    const campaign = ValidationCampaignPreviewSchema.parse({
+      schemaVersion: '1',
+      id: 'real-todo-v1',
+      name: 'Test campaign',
+      sourceRevision: 'a'.repeat(40),
+      allowedModels: [
+        { id: 'model-1', provider: 'codex', model: 'test-model' },
+        { id: 'model-2', provider: 'codex', model: 'alt-model' },
+        { id: 'model-3', provider: 'codex', model: 'third-model' },
+      ],
+      routes: [
+        {
+          taskKind: 'planning',
+          selected: { id: 'model-1', provider: 'codex', model: 'test-model' },
+          fallbacks: [],
+        },
+      ],
+      limits: {
+        attemptsPerAgentStep: 1,
+        targetedRepairs: 1,
+        activeTimeMinutes: 1,
+        meteredCostUsd: 2,
+      },
+    });
+    const harness = makeHarness({}, undefined, { validationCampaign: campaign });
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+      }),
+    ).rejects.toThrow('Validation preflight is missing or does not match the selected campaign.');
+
+    expect(await harness.projects.get('id-0001')).toBeNull();
+    expect(harness.enqueued).toHaveLength(0);
+    expect(harness.workspaces.lastPrd).toBeUndefined();
+  });
+
+  it('persists the run preflight before exposing its queue job', async () => {
+    const campaign = ValidationCampaignPreviewSchema.parse({
+      schemaVersion: '1',
+      id: 'real-todo-v1',
+      name: 'Test campaign',
+      sourceRevision: 'a'.repeat(40),
+      allowedModels: [
+        { id: 'model-1', provider: 'codex', model: 'test-model' },
+        { id: 'model-2', provider: 'codex', model: 'alt-model' },
+        { id: 'model-3', provider: 'codex', model: 'third-model' },
+      ],
+      routes: [
+        {
+          taskKind: 'planning',
+          selected: { id: 'model-1', provider: 'codex', model: 'test-model' },
+          fallbacks: [],
+        },
+      ],
+      limits: {
+        attemptsPerAgentStep: 1,
+        targetedRepairs: 1,
+        activeTimeMinutes: 1,
+        meteredCostUsd: 2,
+      },
+    });
+    const harness = makeHarness({}, undefined, {
+      validationCampaign: campaign,
+      validationPreflight: async () => ({
+        schemaVersion: '1',
+        campaignId: campaign.id,
+        sourceRevision: campaign.sourceRevision,
+        dataDirectory: '/Users/edsilva/private-validation-data',
+        executorMode: 'real',
+        environmentId: 'preflight-1',
+        startedAt: '2026-08-04T12:00:00.000Z',
+        completedAt: '2026-08-04T12:00:01.000Z',
+        status: 'passed',
+        checks: [{ boundary: 'source-revision', status: 'passed', durationMs: 1 }],
+        generatedProjectCreated: false,
+      }),
+    });
+    const enqueue = harness.queue.enqueue.bind(harness.queue);
+    vi.spyOn(harness.queue, 'enqueue').mockImplementation(async (job, tx) => {
+      expect(await harness.artifacts.getLatest('id-0001', 'validation-preflight')).toEqual(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ runId: 'id-0002' }),
+        }),
+      );
+      return enqueue(job, tx);
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+    });
+  });
+
   it('defers generated-runtime initialization until a worker claims the durable project job', async () => {
     const stores = makeStores();
     const initialize = vi.fn(async ({ projectId }: { projectId: string }) => {

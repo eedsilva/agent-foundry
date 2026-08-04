@@ -29,6 +29,7 @@ import type {
   WorkflowNode,
   WorkflowRun,
   ValidationCampaignPreview,
+  ValidationPreflightReport,
 } from '@agent-foundry/contracts';
 import {
   createValidationCampaignExecution,
@@ -74,6 +75,22 @@ import { policyHash, workflowHash } from './idempotency.js';
 import type { QualityObservationService } from './quality-observation-service.js';
 
 const RUN_PROJECT_MAX_ATTEMPTS = 2;
+const PERSONAL_PATH_PATTERN = /(?:\/Users|\/home)\/[^\s"'`]+/g;
+
+function redactValidationPreflight(report: ValidationPreflightReport): ValidationPreflightReport {
+  return {
+    ...report,
+    dataDirectory: '[REDACTED]',
+    checks: report.checks.map((check) => ({
+      ...check,
+      ...(check.message
+        ? {
+            message: redactString(check.message).replace(PERSONAL_PATH_PATTERN, '[REDACTED]'),
+          }
+        : {}),
+    })),
+  };
+}
 
 export class ProjectService {
   constructor(
@@ -97,6 +114,7 @@ export class ProjectService {
     private readonly modelOverrides?: ModelOverrideRepository,
     private readonly qualityObservations?: QualityObservationService,
     private readonly validationCampaign?: ValidationCampaignPreview,
+    private readonly validationPreflight?: () => Promise<ValidationPreflightReport | undefined>,
   ) {}
 
   async createModelOverride(
@@ -133,6 +151,27 @@ export class ProjectService {
     const workflow = await this.workflows.get(input.workflowId);
     const policyId = input.policyId ?? 'default';
     await this.policies.get(policyId);
+    const preflight = await this.validationPreflight?.();
+    const runPreflight =
+      preflight &&
+      this.validationCampaign &&
+      preflight.campaignId === this.validationCampaign.id &&
+      preflight.sourceRevision === this.validationCampaign.sourceRevision
+        ? preflight
+        : undefined;
+    if (this.validationCampaign && !runPreflight) {
+      throw new ValidationError(
+        'Validation preflight is missing or does not match the selected campaign.',
+      );
+    }
+    if (runPreflight && runPreflight.status !== 'passed') {
+      const failedBoundary = runPreflight.checks.find(
+        (check) => check.status === 'failed',
+      )?.boundary;
+      throw new ValidationError(
+        `Validation preflight ${runPreflight.status} at ${failedBoundary ?? 'unknown boundary'}.`,
+      );
+    }
     const now = this.clock.now().toISOString();
     const projectId = this.ids.next();
     const runId = this.ids.next();
@@ -192,6 +231,7 @@ export class ProjectService {
         await this.projects.create(project, tx);
         await this.runs.create(run, tx);
         await this.appendEvent(project.id, 'project.created', 'Project and workspace created.', {
+          runId,
           tx,
         });
         if (scaffoldFiles.length > 0) {
@@ -199,13 +239,9 @@ export class ProjectService {
             project.id,
             'scaffold.applied',
             `Applied ${scaffoldFiles.length} scaffold file(s) for stack '${workflow.stack}'.`,
-            { tx },
+            { runId, tx },
           );
         }
-        await this.queue.enqueue(job, tx);
-        await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
-          tx,
-        });
       });
     } catch (error) {
       await this.workspaces.cleanup(project.id).catch(() => undefined);
@@ -222,6 +258,7 @@ export class ProjectService {
       content: input.prd,
       contentType: 'text/markdown',
       createdBy: 'user',
+      runId,
     });
     if (scaffoldFiles.length > 0) {
       await this.artifacts.put({
@@ -230,8 +267,26 @@ export class ProjectService {
         content: scaffoldFiles.map((file) => file.path),
         contentType: 'application/json',
         createdBy: `scaffold:${workflow.stack}`,
+        runId,
       });
     }
+    if (runPreflight) {
+      await this.artifacts.put({
+        projectId: project.id,
+        name: 'validation-preflight',
+        content: redactValidationPreflight(runPreflight),
+        createdBy: `validation-preflight:${runPreflight.environmentId}`,
+        runId,
+      });
+    }
+
+    await this.transactionRunner.run(async (tx) => {
+      await this.queue.enqueue(job, tx);
+      await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
+        runId,
+        tx,
+      });
+    });
 
     return project;
   }

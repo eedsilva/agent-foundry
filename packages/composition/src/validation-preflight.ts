@@ -19,6 +19,7 @@ import type {
   PreviewRunner,
   WorkspaceManager,
 } from '@agent-foundry/domain';
+import { redactString } from '@agent-foundry/domain';
 import { runReproducibleInstall, resolvePreviewCommandPlan } from '@agent-foundry/executors';
 import type { PreviewService } from '@agent-foundry/orchestrator';
 import {
@@ -63,6 +64,25 @@ export interface ProductionValidationPreflightOptions {
   canaryDependencies?: ValidationCanaryDependencies;
   maxOutputBytes: number;
   installTimeoutMs?: number;
+}
+
+const PERSONAL_PATH_PATTERN = /(?:\/Users|\/home)\/[^\s"'`]+/g;
+
+export function redactValidationPreflightReport(
+  report: ValidationPreflightReport,
+): ValidationPreflightReport {
+  return {
+    ...report,
+    dataDirectory: '[REDACTED]',
+    checks: report.checks.map((check) => ({
+      ...check,
+      ...(check.message
+        ? {
+            message: redactString(check.message).replace(PERSONAL_PATH_PATTERN, '[REDACTED]'),
+          }
+        : {}),
+    })),
+  };
 }
 
 export async function runValidationPreflight(
@@ -174,7 +194,7 @@ export async function runValidationPreflight(
       ],
     });
   }
-  await options.persist?.(report);
+  await options.persist?.(redactValidationPreflightReport(report));
   return report;
 }
 
@@ -299,19 +319,25 @@ export async function persistValidationPreflightReport(
   dataDirectory: string,
   report: ValidationPreflightReport,
 ): Promise<void> {
+  const safeReport = redactValidationPreflightReport(report);
   const directory = join(dataDirectory, 'validation-campaign');
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await writeFile(join(directory, 'preflight.json'), `${JSON.stringify(report, null, 2)}\n`, {
-    mode: 0o600,
-  });
+  await writeFile(
+    join(directory, `preflight-${safeReport.sourceRevision}.json`),
+    `${JSON.stringify(safeReport, null, 2)}\n`,
+    {
+      mode: 0o600,
+    },
+  );
 }
 
 export async function readValidationPreflightReport(
   dataDirectory: string,
+  sourceRevision: string,
 ): Promise<ValidationPreflightReport | undefined> {
   try {
     const content = await readFile(
-      join(dataDirectory, 'validation-campaign', 'preflight.json'),
+      join(dataDirectory, 'validation-campaign', `preflight-${sourceRevision}.json`),
       'utf8',
     );
     return ValidationPreflightReportSchema.parse(JSON.parse(content));

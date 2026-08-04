@@ -28,9 +28,13 @@ the terminal run and persisted project, plan approval, implementation, determini
 browser, database, and terminal proofs are present. Missing or skipped mandatory evidence remains
 non-accepted.
 
-Terminal validation-campaign runs invoke the publisher from the orchestrator. The public
-publish/readback routes remain available for bounded browser/database observations that are
-captured after the run; the artifact store validates every referenced revision and digest.
+Terminal validation-campaign runs invoke the publisher from the orchestrator. The campaign-only
+blocking verification adds `database-row-match`; the orchestrator turns its bounded fingerprint
+into a run/step/attempt-bound `database.evidence` artifact and event. A preflight report is copied
+to a run-bound artifact when the project is created. The public publish/readback routes remain
+available for bounded browser/database observations captured after the run; outcome classification
+uses persisted run, attempt, and run-bound preflight state rather than caller labels, and the
+artifact store validates every referenced revision, digest, and available lineage.
 
 ## Alternatives considered
 

@@ -2,6 +2,7 @@ export * from './config.js';
 export * from './runtime.js';
 export * from './provider-canary.js';
 export * from './validation-preflight.js';
+export { createValidationCampaignTestExecutorRegistry } from './validation-evidence-test-support.js';
 export * from './provider-canary-fixtures.js';
 export * from './dogfood.js';
 export * from './benchmark-runner.js';

@@ -496,7 +496,9 @@ export interface VerificationService {
       scripts: string[];
       includeGitDiffCheck: boolean;
       autofixScripts?: string[] | undefined;
+      beforeOptionalScripts?: string[] | undefined;
       optionalScripts?: string[] | undefined;
+      environment?: Record<string, string> | undefined;
       policy?: ProjectPolicy | undefined;
     },
     signal?: AbortSignal,

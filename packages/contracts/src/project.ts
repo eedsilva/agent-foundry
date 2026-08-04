@@ -147,6 +147,8 @@ export const ProjectEventSchema = z
       'preview.reaped',
       'operation.completed',
       'operation.failed',
+      'validation.evidence_failed',
+      'validation.operator_accepted',
     ]),
     createdAt: z.string().datetime(),
     nodeId: PathSegmentSchema.optional(),

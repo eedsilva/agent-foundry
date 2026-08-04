@@ -75,6 +75,7 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
       'prettier.config.mjs',
       'scripts/check-server-actions.mjs',
       'scripts/check-service-role.mjs',
+      'scripts/database-row-match.mjs',
       'scripts/db.mjs',
       'scripts/smoke.mjs',
       'supabase/config.toml',

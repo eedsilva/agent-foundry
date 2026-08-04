@@ -36,6 +36,7 @@ import {
   type StoredArtifact,
   type VerificationReport,
   type ValidationCampaignPreview,
+  type ValidationPreflightReport,
   type WorkflowDefinition,
   type WorkflowRun,
 } from '@agent-foundry/contracts';
@@ -84,6 +85,7 @@ import { ProjectService } from '../project-service.js';
 import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
 import type { ProjectVersionService } from '../project-version-service.js';
 import type { QualityObservationService } from '../quality-observation-service.js';
+import type { ValidationEvidencePublisher } from '../validation-evidence.js';
 import { WorkflowOrchestrator, type WorkspacePreviewBooter } from '../workflow-orchestrator.js';
 
 const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
@@ -1196,6 +1198,8 @@ export function makeHarness(
     generatedProjectRuntime?: GeneratedProjectRuntime;
     previews?: WorkspacePreviewBooter;
     validationCampaign?: ValidationCampaignPreview;
+    validationPreflight?: () => Promise<ValidationPreflightReport | undefined>;
+    validationEvidence?: Pick<ValidationEvidencePublisher, 'publishFromRun'>;
     usage?: ExecutionUsage;
     executorHealth?: ExecutorHealth;
     executedModel?: string;
@@ -1258,7 +1262,7 @@ export function makeHarness(
         : [node],
     ),
   });
-  const verifierInputs: Array<{ policy?: ProjectPolicy | undefined }> = [];
+  const verifierInputs: Array<Parameters<VerificationService['verify']>[0]> = [];
   const verifier: VerificationService = {
     verify: async (input) => {
       verifierInputs.push(input);
@@ -1409,6 +1413,7 @@ export function makeHarness(
     opts.generatedProjectRuntime,
     opts.previews,
     opts.validationCampaign,
+    opts.validationEvidence,
   );
   const service = new ProjectService(
     stores.projects,
@@ -1431,6 +1436,7 @@ export function makeHarness(
     stores.modelOverrides,
     undefined,
     opts.validationCampaign,
+    opts.validationPreflight,
   );
   return {
     ...stores,

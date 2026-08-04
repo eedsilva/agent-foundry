@@ -14,6 +14,7 @@
     "format:check": "prettier --check .",
     "test": "node --test",
     "smoke": "node scripts/smoke.mjs",
+    "database-row-match": "node scripts/database-row-match.mjs",
     "db:start": "node scripts/db.mjs start",
     "db:stop": "node scripts/db.mjs stop",
     "db:reset": "node scripts/db.mjs db reset",

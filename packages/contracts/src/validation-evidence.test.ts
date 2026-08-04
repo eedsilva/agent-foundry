@@ -71,4 +71,15 @@ describe('validation evidence contracts', () => {
       }),
     ).toThrow();
   });
+
+  it('requires a failure class for every non-passed gate', () => {
+    expect(() =>
+      ValidationEvidencePublicationRequestSchema.parse({
+        environmentReadiness,
+        gates: gates().map((gate, index) =>
+          index === 0 ? { ...gate, status: 'unavailable' as const } : gate,
+        ),
+      }),
+    ).toThrow(/failure classification/);
+  });
 });
