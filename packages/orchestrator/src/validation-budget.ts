@@ -57,6 +57,21 @@ export function summarizeValidationUsage(
       (usage?.providerReportedCostUsd !== undefined || usage?.estimatedCostUsd !== undefined
         ? 'metered'
         : undefined);
+    if (billingMode === 'unknown') {
+      if (usage?.providerReportedCostUsd !== undefined) {
+        summary.providerReportedCostUsd += usage.providerReportedCostUsd;
+        summary.meteredCostUsd += usage.providerReportedCostUsd;
+        if (usage.estimatedCostUsd !== undefined) {
+          summary.catalogEstimatedCostUsd += usage.estimatedCostUsd;
+        }
+      } else if (usage?.estimatedCostUsd !== undefined) {
+        summary.catalogEstimatedCostUsd += usage.estimatedCostUsd;
+        summary.meteredCostUsd += usage.estimatedCostUsd;
+      } else {
+        summary.unknownMeteredAttempts += 1;
+      }
+      continue;
+    }
     if (usage?.quotaUnits !== undefined && billingMode === 'subscription') {
       summary.subscriptionQuotaUnits += usage.quotaUnits;
       summary.subscriptionQuotaUnitsByProvider[attempt.provider] =
