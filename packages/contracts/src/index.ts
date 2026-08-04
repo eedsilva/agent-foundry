@@ -27,3 +27,4 @@ export * from './app-environment.js';
 export * from './function-deployment.js';
 export * from './security.js';
 export * from './validation-campaign.js';
+export * from './validation-preflight.js';
