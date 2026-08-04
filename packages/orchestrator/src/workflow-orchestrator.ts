@@ -734,10 +734,12 @@ export class WorkflowOrchestrator {
     const run = await this.requireRun(runId);
     const campaign = run.execution?.campaign;
     if (!campaign) return;
-    const usage = summarizeValidationUsage(
-      await this.listRunAttempts(runId),
-      await this.router.catalog(),
-    );
+    const catalog = await this.router.catalog();
+    const attempts = await this.listRunAttempts(runId);
+    const usage = summarizeValidationUsage(attempts, catalog);
+    if (usage.unknownMeteredAttempts > 0) {
+      throw new ValidationCampaignLimitError(runId, 'unknown-cost');
+    }
     if (usage.meteredCostUsd > campaign.preview.limits.meteredCostUsd) {
       throw new ValidationCampaignLimitError(runId, 'metered-cost');
     }
@@ -746,10 +748,12 @@ export class WorkflowOrchestrator {
       : undefined;
     const exceededSubscriptionQuota = Object.entries(usage.subscriptionQuotaUnitsByProvider).some(
       ([provider, quotaUnits]) => {
-        const limit = [...(providerHealth?.values() ?? [])].find(
+        const health = [...(providerHealth?.values() ?? [])].find(
           (health) => health.provider === provider,
-        )?.rateLimit?.limit;
-        return limit !== undefined && quotaUnits > limit;
+        );
+        const remaining = health?.rateLimit?.remaining;
+        if (remaining === undefined) return true;
+        return health?.rateLimit?.limit !== undefined && quotaUnits > health.rateLimit.limit;
       },
     );
     if (exceededSubscriptionQuota) {
@@ -757,11 +761,18 @@ export class WorkflowOrchestrator {
     }
     const currentAttemptProvider = currentAttempt?.provider;
     const currentAttemptQuota = currentAttempt?.usage?.quotaUnits;
-    if (currentAttemptProvider !== undefined && currentAttemptQuota !== undefined) {
+    const currentAttemptModel = currentAttempt?.modelId
+      ? catalog.find((model) => model.id === currentAttempt.modelId)
+      : undefined;
+    if (
+      currentAttemptModel?.billingMode === 'subscription' &&
+      currentAttemptProvider !== undefined &&
+      currentAttemptQuota !== undefined
+    ) {
       const remaining = [...(providerHealth?.values() ?? [])].find(
         (health) => health.provider === currentAttemptProvider,
       )?.rateLimit?.remaining;
-      if (remaining !== undefined && currentAttemptQuota > remaining) {
+      if (remaining === undefined || currentAttemptQuota > remaining) {
         throw new ValidationCampaignLimitError(runId, 'subscription-quota');
       }
     }
@@ -938,19 +949,26 @@ export class WorkflowOrchestrator {
     if (usage.meteredCostUsd >= campaign.preview.limits.meteredCostUsd) {
       throw new ValidationCampaignLimitError(runId, 'metered-cost');
     }
+    if (candidate.model.billingMode === 'unknown') {
+      throw new ValidationCampaignLimitError(runId, 'unknown-cost');
+    }
     if (
       candidate.model.billingMode === 'metered' &&
-      nextCost !== undefined &&
-      usage.meteredCostUsd + nextCost > campaign.preview.limits.meteredCostUsd
+      (nextCost === undefined ||
+        usage.meteredCostUsd + nextCost > campaign.preview.limits.meteredCostUsd)
     ) {
-      throw new ValidationCampaignLimitError(runId, 'metered-cost');
+      throw new ValidationCampaignLimitError(
+        runId,
+        nextCost === undefined ? 'unknown-cost' : 'metered-cost',
+      );
     }
 
     if (candidate.model.billingMode === 'subscription') {
       const rateLimit = providerHealth?.get(candidate.model.provider)?.rateLimit;
       const usedQuota = usage.subscriptionQuotaUnitsByProvider[candidate.model.provider] ?? 0;
       if (
-        (rateLimit?.remaining !== undefined && rateLimit.remaining <= 0) ||
+        rateLimit?.remaining === undefined ||
+        rateLimit.remaining <= 0 ||
         (rateLimit?.limit !== undefined && usedQuota >= rateLimit.limit)
       ) {
         throw new ValidationCampaignLimitError(runId, 'subscription-quota');
@@ -3042,6 +3060,7 @@ export class WorkflowOrchestrator {
       runId,
       stepRun.nodeId,
       step.id,
+      profile,
       override,
       overrideCreatedAt,
       campaign,
@@ -3534,6 +3553,7 @@ export class WorkflowOrchestrator {
     runId: string,
     nodeId: string,
     stepId: string,
+    profile: TaskProfile,
     retry?: RunRetryDirective['override'],
     retryCreatedAt?: string,
     campaign?: ValidationCampaignExecution,
@@ -3561,6 +3581,7 @@ export class WorkflowOrchestrator {
         nodeId,
         stepId,
         retry,
+        profile,
       );
       return {
         modelId,
@@ -3598,6 +3619,7 @@ export class WorkflowOrchestrator {
       nodeId,
       stepId,
       match,
+      profile,
     );
     return {
       modelId: match.modelId,
@@ -3632,6 +3654,7 @@ export class WorkflowOrchestrator {
       failedStep?: string | undefined;
       minimalReproducer?: string | undefined;
     },
+    profile: TaskProfile,
   ): Promise<void> {
     if (!campaign) return;
     const allowed = campaign.preview.allowedModels.find((model) => model.id === identity.modelId);
@@ -3643,12 +3666,27 @@ export class WorkflowOrchestrator {
       }
       return;
     }
-    const failedAttempt = (await this.listRunAttempts(runId)).some(
+    const catalog = await this.router.catalog();
+    const auditReproducer = redactString(audit.minimalReproducer ?? '').trim();
+    const failedAttempt = (await this.listRunAttempts(runId)).find(
       (attempt) =>
         attempt.status === 'failed' &&
         attempt.context.nodeId === nodeId &&
-        attempt.context.stepId === stepId,
+        attempt.context.stepId === stepId &&
+        campaign.preview.allowedModels.some((model) => model.id === attempt.modelId) &&
+        attempt.error?.message !== undefined &&
+        redactString(attempt.error.message).trim() === auditReproducer,
     );
+    const failedModel = failedAttempt?.modelId
+      ? catalog.find((model) => model.id === failedAttempt.modelId)
+      : undefined;
+    const promotedModel = catalog.find((model) => model.id === identity.modelId);
+    const failedCost = failedModel
+      ? estimateValidationDispatchCostUsd(profile, failedModel)
+      : undefined;
+    const promotedCost = promotedModel
+      ? estimateValidationDispatchCostUsd(profile, promotedModel)
+      : undefined;
     const expectedStep = `${nodeId}/${stepId}`;
     if (
       !failedAttempt ||
@@ -3657,10 +3695,13 @@ export class WorkflowOrchestrator {
       !audit.reason ||
       !audit.estimatedImpact ||
       audit.failedStep !== expectedStep ||
-      !audit.minimalReproducer
+      !audit.minimalReproducer ||
+      failedCost === undefined ||
+      promotedCost === undefined ||
+      promotedCost <= failedCost
     ) {
       throw new ExecutionError(
-        `Premium validation model ${identity.modelId} requires an audited override after a recorded failed attempt for ${expectedStep}: failed step, minimal reproducer, reason, actor, and expected impact are required`,
+        `Premium validation model ${identity.modelId} requires an audited override after a recorded failed attempt for ${expectedStep}: failed step, same minimal reproducer, cheaper candidate, reason, actor, and expected impact are required`,
       );
     }
   }
