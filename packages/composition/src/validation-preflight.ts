@@ -94,6 +94,7 @@ export async function runValidationPreflight(
   let status: ValidationPreflightStatus = 'passed';
   let report: ValidationPreflightReport | undefined;
   let cleanupFailed = false;
+  let cleanupCause = 'No cause reported.';
   const cleanupStartedAt = Date.now();
 
   try {
@@ -172,8 +173,9 @@ export async function runValidationPreflight(
   } finally {
     try {
       await options.checks.cleanup();
-    } catch {
+    } catch (error) {
       cleanupFailed = true;
+      cleanupCause = describeCause(error);
     }
   }
 
@@ -189,7 +191,7 @@ export async function runValidationPreflight(
           status: 'failed',
           durationMs: Date.now() - cleanupStartedAt,
           errorCode: 'CLEANUP_FAILED',
-          message: 'Disposable preflight resources could not be cleaned up.',
+          message: `Disposable preflight resources could not be cleaned up. ${cleanupCause}`,
         },
       ],
     });
@@ -295,21 +297,37 @@ export function createProductionValidationPreflightChecks(
         dependencies: canaryDependencies,
       }),
     async cleanup() {
-      const results = await Promise.allSettled([
-        preview ? options.previews.stop(preview.session.id) : Promise.resolve(),
-        workspaceCreated ? options.workspaces.cleanup(options.environmentId) : Promise.resolve(),
-        environmentInitialized && options.generatedProjectRuntime
-          ? options.generatedProjectRuntime.cleanup({
-              projectId: options.environmentId,
-              confirmation: {
-                confirmed: true,
-                backupCreatedAt: new Date(Date.now() - 1_000).toISOString(),
-              },
-            })
-          : Promise.resolve(),
-      ]);
-      if (results.some((result) => result.status === 'rejected')) {
-        throw new Error('Preflight cleanup failed.');
+      // Labelled so a leak names the resource that survived — an unlabelled
+      // "cleanup failed" leaves the operator diffing `docker ps` by hand.
+      const teardowns = [
+        ['preview', preview ? options.previews.stop(preview.session.id) : Promise.resolve()],
+        [
+          'workspace',
+          workspaceCreated ? options.workspaces.cleanup(options.environmentId) : Promise.resolve(),
+        ],
+        [
+          'supabase',
+          environmentInitialized && options.generatedProjectRuntime
+            ? options.generatedProjectRuntime.cleanup({
+                projectId: options.environmentId,
+                confirmation: {
+                  confirmed: true,
+                  backupCreatedAt: new Date(Date.now() - 1_000).toISOString(),
+                },
+              })
+            : Promise.resolve(),
+        ],
+      ] as const satisfies ReadonlyArray<readonly [string, Promise<unknown>]>;
+
+      const results = await Promise.allSettled(teardowns.map(([, task]) => task));
+      const failures = results.flatMap((result, index) => {
+        if (result.status !== 'rejected') return [];
+        const reason =
+          result.reason instanceof Error ? result.reason.message : String(result.reason);
+        return [`${teardowns[index]![0]} teardown failed: ${reason}`];
+      });
+      if (failures.length > 0) {
+        throw new Error(failures.join('; '));
       }
     },
   };
@@ -361,16 +379,28 @@ async function recordCheck(
     await check();
     checks.push({ boundary, status: 'passed', durationMs: Date.now() - startedAt });
     return true;
-  } catch {
+  } catch (error) {
     checks.push({
       boundary,
       status: 'failed',
       durationMs: Date.now() - startedAt,
       errorCode: 'PREFLIGHT_FAILED',
-      message: `${boundary} prerequisite failed.`,
+      message: `${boundary} prerequisite failed. ${describeCause(error)}`,
     });
     return false;
   }
+}
+
+/**
+ * Evidence must be redacted, not empty: a bare boundary name leaves the
+ * operator re-running the gate by hand to learn what broke. Secrets are
+ * scrubbed by redactString; the cap keeps a stdout dump out of the bundle.
+ */
+function describeCause(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const redacted = redactString(raw).trim();
+  if (redacted === '') return 'No cause reported.';
+  return redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted;
 }
 
 async function recordCanaryCheck(

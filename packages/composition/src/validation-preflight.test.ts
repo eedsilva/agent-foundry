@@ -178,8 +178,11 @@ describe('validation preflight', () => {
     expect(report.checks.at(-1)).toMatchObject({
       boundary: 'docker',
       status: 'failed',
-      message: 'docker prerequisite failed.',
     });
+    // The cause must survive redaction: an operator cannot act on
+    // "docker prerequisite failed." alone.
+    expect(report.checks.at(-1)?.message).toContain('docker prerequisite failed.');
+    expect(report.checks.at(-1)?.message).toContain('ECONNREFUSED 127.0.0.1:54321');
     expect(JSON.stringify(report)).not.toContain('secret-value');
     expect(validationChecks.supabase).not.toHaveBeenCalled();
     expect(validationChecks.localCanary).not.toHaveBeenCalled();
@@ -218,7 +221,7 @@ describe('validation preflight', () => {
   it('downgrades the report when disposable cleanup fails', async () => {
     const validationChecks = checks({
       cleanup: vi.fn(async () => {
-        throw new Error('private cleanup detail');
+        throw new Error('supabase teardown timed out after 90000ms; token=hunter2');
       }),
     });
 
@@ -229,6 +232,8 @@ describe('validation preflight', () => {
       boundary: 'cleanup',
       errorCode: 'CLEANUP_FAILED',
     });
-    expect(JSON.stringify(report)).not.toContain('private cleanup detail');
+    // Which teardown leaked, and why, is the whole point of the cleanup record.
+    expect(report.checks.at(-1)?.message).toContain('supabase teardown timed out after 90000ms');
+    expect(JSON.stringify(report)).not.toContain('hunter2');
   });
 });
