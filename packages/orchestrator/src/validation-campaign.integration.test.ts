@@ -629,13 +629,15 @@ describe('validation campaign run enforcement', () => {
   });
 
   it('rejects a premium promotion when the reproducer does not match the failed attempt', async () => {
-    const stores = makeStores();
+    const clock = new TestClock();
+    const stores = makeStores(clock);
     const harness = makeHarness({}, stores, {
       models: premiumModels,
       validationCampaign: campaign,
     });
     await seedRun(harness);
     await recordFailedAttempt(harness, 'plan', 'plan');
+    clock.advance(1);
     await harness.service.createModelOverride('run-1', {
       scope: { kind: 'step', nodeId: 'plan', stepId: 'plan' },
       modelId: 'campaign-model-2',
@@ -666,8 +668,49 @@ describe('validation campaign run enforcement', () => {
     expect(harness.executor.requests).toHaveLength(0);
   });
 
+  it('rejects a premium promotion whose audit predates the failed attempt', async () => {
+    const clock = new TestClock();
+    const stores = makeStores(clock);
+    const harness = makeHarness({}, stores, {
+      models: premiumModels,
+      validationCampaign: campaign,
+    });
+    await seedRun(harness);
+    await harness.service.createModelOverride('run-1', {
+      scope: { kind: 'step', nodeId: 'plan', stepId: 'plan' },
+      modelId: 'campaign-model-2',
+      provider: 'codex',
+      model: 'campaign-model-2',
+      actor: { kind: 'user', id: 'operator' },
+      failedStep: 'plan/plan',
+      minimalReproducer: 'plan output violates the task graph contract',
+      reason: 'The restricted model failed the same reproducer',
+      estimatedImpact: 'One premium planning dispatch',
+    });
+    clock.advance(1);
+    await recordFailedAttempt(harness, 'plan', 'plan');
+    const run = await stores.runs.get('run-1');
+    await stores.runs.update(
+      {
+        ...run!,
+        execution: {
+          activeElapsedMs: 0,
+          consecutiveRepairs: 0,
+          campaign: createValidationCampaignExecution(campaign),
+        },
+      },
+      run!.version,
+    );
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /after a recorded failed attempt/i,
+    );
+    expect(harness.executor.requests).toHaveLength(0);
+  });
+
   it('rejects a premium promotion when it is not more expensive than the failed candidate', async () => {
-    const stores = makeStores();
+    const clock = new TestClock();
+    const stores = makeStores(clock);
     const cheaperPremiumModels = premiumModels.map((model) =>
       model.id === 'campaign-model-2' ? { ...model, pricing: premiumModels[0]!.pricing } : model,
     );
@@ -677,6 +720,7 @@ describe('validation campaign run enforcement', () => {
     });
     await seedRun(harness);
     await recordFailedAttempt(harness, 'plan', 'plan');
+    clock.advance(1);
     await harness.service.createModelOverride('run-1', {
       scope: { kind: 'step', nodeId: 'plan', stepId: 'plan' },
       modelId: 'campaign-model-2',
@@ -713,7 +757,8 @@ describe('validation campaign run enforcement', () => {
   ] as const)(
     'allows a known-priced %s premium promotion with matching audit evidence',
     async (_billingMode, promotionModels) => {
-      const stores = makeStores();
+      const clock = new TestClock();
+      const stores = makeStores(clock);
       const harness = makeHarness({}, stores, {
         models: promotionModels,
         validationCampaign: campaign,
@@ -721,6 +766,7 @@ describe('validation campaign run enforcement', () => {
       });
       await seedRun(harness);
       await recordFailedAttempt(harness, 'plan', 'plan');
+      clock.advance(1);
       await harness.service.createModelOverride('run-1', {
         scope: { kind: 'step', nodeId: 'plan', stepId: 'plan' },
         modelId: 'campaign-model-2',

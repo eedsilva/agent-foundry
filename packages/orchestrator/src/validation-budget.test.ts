@@ -97,7 +97,7 @@ describe('validation campaign budget accounting', () => {
         attempt('provider', { providerReportedCostUsd: 1.25, quotaUnits: 2 }),
         attempt('estimated', { estimatedCostUsd: 0.75, quotaUnits: 3 }),
         attempt('unknown'),
-        attempt('unknown-reported', { providerReportedCostUsd: 0.5 }, unknown.id),
+        attempt('unknown-reported', { providerReportedCostUsd: 0.5, quotaUnits: 1 }, unknown.id),
         attempt('subscription', { quotaUnits: 4 }, subscription.id),
       ],
       [metered, subscription, unknown],
@@ -107,7 +107,7 @@ describe('validation campaign budget accounting', () => {
       providerReportedCostUsd: 1.75,
       catalogEstimatedCostUsd: 0.75,
       meteredCostUsd: 2.5,
-      unknownMeteredAttempts: 1,
+      unknownMeteredAttempts: 2,
       subscriptionQuotaUnits: 4,
       subscriptionQuotaUnitsByProvider: { codex: 4 },
     });
@@ -170,5 +170,28 @@ describe('validation campaign budget accounting', () => {
 
     expect(summary.providerReportedCostUsd).toBe(1);
     expect(summary.meteredCostUsd).toBe(1);
+  });
+
+  it('prefers the exact persisted route model id when provider tuples are duplicated', () => {
+    const persistedRoute = RouteDecisionSchema.parse({
+      routeId: 'route-1',
+      createdAt: '2026-08-03T12:00:00.000Z',
+      profile,
+      selected: { model: subscription },
+      fallbacks: [],
+      rejected: [],
+    });
+    const summary = summarizeValidationUsage(
+      [
+        {
+          ...attempt('duplicate', { quotaUnits: 4 }, subscription.id),
+          routeDecision: persistedRoute,
+        },
+      ],
+      [metered, subscription],
+    );
+
+    expect(summary.subscriptionQuotaUnits).toBe(4);
+    expect(summary.meteredCostUsd).toBe(0);
   });
 });

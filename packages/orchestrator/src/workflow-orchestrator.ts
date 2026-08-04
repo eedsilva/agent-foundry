@@ -123,6 +123,7 @@ import {
 import {
   campaignLimitMs,
   estimateValidationDispatchCostUsd,
+  resolveValidationAttemptModel,
   summarizeValidationUsage,
   validationStepKey,
 } from './validation-budget.js';
@@ -762,8 +763,8 @@ export class WorkflowOrchestrator {
     }
     const currentAttemptProvider = currentAttempt?.provider;
     const currentAttemptQuota = currentAttempt?.usage?.quotaUnits;
-    const currentAttemptModel = currentAttempt?.modelId
-      ? catalog.find((model) => model.id === currentAttempt.modelId)
+    const currentAttemptModel = currentAttempt
+      ? resolveValidationAttemptModel(currentAttempt, catalog)
       : undefined;
     if (
       currentAttemptModel?.billingMode === 'subscription' &&
@@ -3599,7 +3600,7 @@ export class WorkflowOrchestrator {
         { modelId, provider: retry.provider, model: retry.model },
         nodeId,
         stepId,
-        retry,
+        { ...retry, createdAt: retryCreatedAt },
         profile,
       );
       return {
@@ -3672,6 +3673,7 @@ export class WorkflowOrchestrator {
       estimatedImpact?: string | undefined;
       failedStep?: string | undefined;
       minimalReproducer?: string | undefined;
+      createdAt?: string | undefined;
     },
     profile: TaskProfile,
   ): Promise<void> {
@@ -3696,8 +3698,15 @@ export class WorkflowOrchestrator {
         attempt.error?.message !== undefined &&
         redactString(attempt.error.message).trim() === auditReproducer,
     );
-    const failedModel = failedAttempt?.modelId
-      ? catalog.find((model) => model.id === failedAttempt.modelId)
+    const failureTimestamp = failedAttempt?.completedAt;
+    const auditAfterFailure =
+      failedAttempt !== undefined &&
+      failureTimestamp !== undefined &&
+      audit.createdAt !== undefined &&
+      Number.isFinite(Date.parse(audit.createdAt)) &&
+      Date.parse(audit.createdAt) > Date.parse(failureTimestamp);
+    const failedModel = failedAttempt
+      ? resolveValidationAttemptModel(failedAttempt, catalog)
       : undefined;
     const promotedModel = catalog.find((model) => model.id === identity.modelId);
     const failedCost = failedModel
@@ -3709,6 +3718,7 @@ export class WorkflowOrchestrator {
     const expectedStep = `${nodeId}/${stepId}`;
     if (
       !failedAttempt ||
+      !auditAfterFailure ||
       !audit.actor ||
       audit.actor.kind !== 'user' ||
       !audit.reason ||
