@@ -16,3 +16,4 @@ export * from './context-compiler.js';
 export * from './quality-observation-service.js';
 export * from './preview-selection-service.js';
 export * from './validation-budget.js';
+export * from './validation-evidence.js';

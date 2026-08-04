@@ -141,6 +141,7 @@ import {
   type BrowserVerificationCoordinator,
 } from './browser-verification-coordinator.js';
 import type { QualityObservationService } from './quality-observation-service.js';
+import type { ValidationEvidencePublisher } from './validation-evidence.js';
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -357,6 +358,7 @@ export class WorkflowOrchestrator {
     private readonly generatedProjectRuntime?: GeneratedProjectRuntime,
     private readonly previews?: WorkspacePreviewBooter,
     private readonly validationCampaign?: ValidationCampaignPreview,
+    private readonly validationEvidence?: ValidationEvidencePublisher,
   ) {}
 
   /**
@@ -605,8 +607,20 @@ export class WorkflowOrchestrator {
       );
       throw error;
     } finally {
+      await this.publishTerminalEvidence(run.id);
       stopPreviewLeaseHeartbeat();
       stopWatching();
+    }
+  }
+
+  private async publishTerminalEvidence(runId: string): Promise<void> {
+    if (!this.validationEvidence) return;
+    try {
+      const run = await this.runs.get(runId);
+      if (!run || !isWorkflowRunStatusTerminal(run.status)) return;
+      await this.validationEvidence.publishFromRun(runId);
+    } catch {
+      // Evidence is best-effort at the terminal seam and must not rewrite the run outcome.
     }
   }
 
@@ -2798,7 +2812,12 @@ export class WorkflowOrchestrator {
         nodeId: step.id,
         runId,
         dedupeKey: `${runId}:attempt:${attempt.id}:verification.completed`,
-        data: { approved: report.approved, attemptId: attempt.id },
+        data: {
+          approved: report.approved,
+          attemptId: attempt.id,
+          artifactName: step.outputArtifact,
+          artifact: artifactReference(artifact),
+        },
       });
       await this.emitArtifactCreated(project.id, artifact, step.id, runId);
       return artifact;
@@ -2986,7 +3005,12 @@ export class WorkflowOrchestrator {
         nodeId: step.id,
         runId,
         dedupeKey: `${runId}:attempt:${attempt.id}:verification.completed`,
-        data: { approved: persistedReport.approved, attemptId: attempt.id },
+        data: {
+          approved: persistedReport.approved,
+          attemptId: attempt.id,
+          artifactName: step.outputArtifact,
+          artifact: artifactReference(artifact),
+        },
       });
       await this.emitArtifactCreated(project.id, artifact, step.id, runId);
       return artifact;

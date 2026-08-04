@@ -75,6 +75,7 @@ import {
   WorkflowOrchestrator,
   PreviewService,
   PreviewSelectionService,
+  ValidationEvidenceService,
   QualityObservationService,
   BrowserVerificationCoordinator,
   type BrowserEvidenceLimits,
@@ -110,6 +111,7 @@ import { loadRuntimeConfig, type RuntimeConfig } from './config.js';
 import {
   createProductionValidationPreflightChecks,
   persistValidationPreflightReport,
+  readValidationPreflightReport,
   runValidationPreflight as runPreflight,
 } from './validation-preflight.js';
 
@@ -149,6 +151,7 @@ export interface Runtime {
   browserVerifier: PlaywrightBrowserVerifier;
   browserVerification: BrowserVerificationCoordinator;
   projectService: ProjectService;
+  validationEvidence: ValidationEvidenceService;
   conversationService: ConversationService;
   operationRunner: ConversationOperationRunner;
   operationService: OperationService;
@@ -257,6 +260,15 @@ export async function createRuntime(
     sourceRevision !== undefined
       ? buildValidationCampaignPreview(catalog, sourceRevision)
       : undefined;
+  const validationEvidence = new ValidationEvidenceService(
+    runs,
+    stepRuns,
+    stepAttempts,
+    artifacts,
+    catalog,
+    events,
+    async () => readValidationPreflightReport(config.dataDir),
+  );
   // TableModelRouter keeps its default circuit breaker configuration. A selected
   // validation campaign is passed as run-scoped state; it must not replace the
   // process-wide product router for normal runs.
@@ -379,6 +391,7 @@ export async function createRuntime(
     // executor never installs anything (#318).
     config.executorMode === 'real' ? previewService : undefined,
     validationCampaign,
+    validationCampaign ? validationEvidence : undefined,
   );
   const projectService = new ProjectService(
     projects,
@@ -450,7 +463,7 @@ export async function createRuntime(
   });
   const runValidationCampaignPreflight =
     validationCampaign && sourceRevision
-      ? (): Promise<ValidationPreflightReport> => {
+      ? async (): Promise<ValidationPreflightReport> => {
           const environmentId = `validation-preflight-${ids.next()}`;
           return runPreflight({
             campaign: validationCampaign,
@@ -511,6 +524,7 @@ export async function createRuntime(
     browserVerifier,
     browserVerification,
     projectService,
+    validationEvidence,
     conversationService,
     operationRunner,
     operationService,

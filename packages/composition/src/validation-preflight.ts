@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { execa } from 'execa';
 import {
@@ -304,6 +304,20 @@ export async function persistValidationPreflightReport(
   await writeFile(join(directory, 'preflight.json'), `${JSON.stringify(report, null, 2)}\n`, {
     mode: 0o600,
   });
+}
+
+export async function readValidationPreflightReport(
+  dataDirectory: string,
+): Promise<ValidationPreflightReport | undefined> {
+  try {
+    const content = await readFile(
+      join(dataDirectory, 'validation-campaign', 'preflight.json'),
+      'utf8',
+    );
+    return ValidationPreflightReportSchema.parse(JSON.parse(content));
+  } catch {
+    return undefined;
+  }
 }
 
 function isExternalDirectory(rootDirectory: string, dataDirectory: string): boolean {

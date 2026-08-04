@@ -76,6 +76,30 @@ primeiro limite que falhar encerra a campanha e retorna `environment-blocked` ou
 Configure `DATA_DIR` para um caminho fora do repositório (por exemplo,
 `DATA_DIR=/tmp/agent-foundry-validation`); o padrão `.data` é recusado pelo gate de isolamento.
 
+### Bundle de evidências da campanha
+
+Ao terminar um run da campanha, o worker publica automaticamente um artifacto versionado
+`validation-evidence-real-todo-v1`. O bundle contém somente referências imutáveis e resumos
+limitados; custos reportados pelo provider, estimados pelo catálogo, desconhecidos e quota ficam
+separados. O endpoint público permite completar observações bounded de browser e banco:
+
+```bash
+POST /runs/:runId/validation-evidence
+GET /runs/:runId/validation-evidence
+```
+
+`accepted` só é possível quando o run terminal está completo e existem provas persistidas de
+projeto, aprovação do plano, implementação, checks determinísticos, preview saudável, browser,
+matching de banco e terminal. Gate `skipped` ou `unavailable` nunca é aceito. As referências devem
+conter o digest exato de cada artifact; não envie stdout/stderr bruto, prompts, tokens, caminhos
+pessoais ou valores de banco. O servidor redige resumos, erros e identidades antes de persistir.
+
+Para rollback ou contenção, pare API e worker, faça snapshot de `DATA_DIR`, remova
+`VALIDATION_CAMPAIGN` e reinicie a versão anterior. Preserve os bundles para auditoria; não edite
+nem apague revisões antigas. Se browser ou banco ainda não tiverem produzido seus artifacts, o
+bundle deve permanecer `product-failed`/`environment-blocked` e a causa deve ser investigada antes
+de qualquer nova publicação.
+
 ### Canary real dos providers
 
 Valide versões, autenticação e flags sem invocar modelos:

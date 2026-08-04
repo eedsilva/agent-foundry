@@ -47,6 +47,7 @@ import {
   RouterDashboardQuerySchema,
   RouterDashboardResponseSchema,
   ValidationCampaignResponseSchema,
+  ValidationEvidencePublicationRequestSchema,
   SetVersionProtectedRequestSchema,
   StartOperationRequestSchema,
   UpdateExperimentRequestSchema,
@@ -868,6 +869,17 @@ export async function buildApp(
   app.get('/runs/:runId', async (request) => {
     const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
     return runtime.projectService.getRunDetail(runId);
+  });
+
+  app.post('/runs/:runId/validation-evidence', async (request) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    const input = ValidationEvidencePublicationRequestSchema.parse(request.body);
+    return runtime.validationEvidence.publish(runId, input);
+  });
+
+  app.get('/runs/:runId/validation-evidence', async (request) => {
+    const { runId } = z.object({ runId: PathSegmentSchema }).parse(request.params);
+    return runtime.validationEvidence.get(runId);
   });
 
   app.post('/runs/:runId/model-overrides', async (request, reply) => {
