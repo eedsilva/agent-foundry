@@ -2,6 +2,13 @@ import { z } from 'zod';
 import { AgentArtifactSchema } from './agent.js';
 import { PathSegmentSchema } from './primitives.js';
 
+/**
+ * How a planned task proves its acceptance. Optional for compatibility with
+ * task graphs written before #393; new planners should always emit it.
+ */
+export const TaskAcceptanceModeSchema = z.enum(['deterministic-only', 'browser-visible']);
+export type TaskAcceptanceMode = z.infer<typeof TaskAcceptanceModeSchema>;
+
 export const PlanTaskSchema = z
   .object({
     id: PathSegmentSchema,
@@ -9,6 +16,7 @@ export const PlanTaskSchema = z
     dependsOn: z.array(PathSegmentSchema).default([]),
     deliverables: z.array(z.string().min(1)).min(1),
     acceptanceCheck: z.string().min(1),
+    acceptanceMode: TaskAcceptanceModeSchema.optional(),
   })
   .strict();
 export type PlanTask = z.infer<typeof PlanTaskSchema>;

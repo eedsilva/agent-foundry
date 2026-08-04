@@ -47,6 +47,18 @@ normal; uma execução futura deverá receber um roteador próprio da campanha. 
 variável (ou reverta o arquivo `.env`) e reinicie os processos; não há estado de execução da
 campanha para limpar.
 
+### Aceitação por tarefa
+
+Cada tarefa do `plan.current` deve declarar `acceptanceMode` como `deterministic-only` ou
+`browser-visible`. Use o primeiro para migrações, configuração, refactors e trabalho de backend que
+possa ser provado pelos checks do app gerado; use o segundo somente quando uma jornada, estado renderizado,
+navegação ou negação precisa ser observada no app em execução. Tarefas `deterministic-only` executam os
+checks configurados e fazem commit sem gerar `browser-test.plan` ou `browser-verification.report`.
+Tarefas `browser-visible` precisam do canal browser do workflow e preservam o plano declarativo, as
+assertions e o reparo baseado no relatório. A ausência do campo é aceita apenas para ler grafos
+históricos; novos planners devem sempre escrevê-lo. Uma declaração browser-visible sem canal browser é
+rejeitada antes do primeiro implementador.
+
 ### Canary real dos providers
 
 Valide versões, autenticação e flags sem invocar modelos:

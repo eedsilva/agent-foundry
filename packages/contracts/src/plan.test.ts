@@ -43,6 +43,30 @@ describe('task graph contracts', () => {
     });
   });
 
+  it('accepts explicit deterministic and browser acceptance modes', () => {
+    const parsed = TaskGraphSchema.parse({
+      ...graph,
+      tasks: [
+        { ...graph.tasks[0], acceptanceMode: 'deterministic-only' },
+        { ...graph.tasks[1], acceptanceMode: 'browser-visible' },
+      ],
+    });
+    expect(parsed.tasks.map((task) => task.acceptanceMode)).toEqual([
+      'deterministic-only',
+      'browser-visible',
+    ]);
+  });
+
+  it('keeps historical graphs readable and rejects unknown acceptance modes', () => {
+    expect(TaskGraphSchema.parse(graph).tasks[0]?.acceptanceMode).toBeUndefined();
+    expect(() =>
+      TaskGraphSchema.parse({
+        ...graph,
+        tasks: [{ ...graph.tasks[0], acceptanceMode: 'maybe-browser' }],
+      }),
+    ).toThrow();
+  });
+
   it('rejects a malformed graph', () => {
     expect(() => TaskGraphSchema.parse({ schemaVersion: '1', tasks: [] })).toThrow();
     expect(() =>

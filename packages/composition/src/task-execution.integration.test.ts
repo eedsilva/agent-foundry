@@ -113,13 +113,18 @@ const ASSERTED_TASK_LOOP_WORKFLOW = `${GATED_TASK_LOOP_WORKFLOW}    browser:
         includeGitDiffCheck: false
 `;
 
-function task(id: string, dependsOn: string[] = []): PlanTask {
+function task(
+  id: string,
+  dependsOn: string[] = [],
+  acceptanceMode?: PlanTask['acceptanceMode'],
+): PlanTask {
   return {
     id,
     title: `${id} work`,
     dependsOn,
     deliverables: [`src/${id}.ts`],
     acceptanceCheck: `${id} behaves`,
+    ...(acceptanceMode ? { acceptanceMode } : {}),
   };
 }
 
@@ -762,6 +767,76 @@ describe('per-task deterministic verification', () => {
 });
 
 describe('per-task browser assertion', () => {
+  it('runs only the declared acceptance channel for a mixed task graph', async () => {
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1', [], 'deterministic-only'), task('T2', ['T1'], 'browser-visible')],
+    });
+    const runtime = await createTaskLoopRuntime(
+      'task-acceptance-channels',
+      executor,
+      ASSERTED_TASK_LOOP_WORKFLOW,
+    );
+    const browser = stubBrowser(runtime);
+    const project = await startProject(runtime, 'Task acceptance channels');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('completed');
+    expect(executor.executedSteps).toEqual([
+      'plan',
+      'implement.T1',
+      'implement.T2',
+      'plan-task-browser-test.T2',
+    ]);
+    expect(browser.attempts).toBe(1);
+    expect(
+      (await runtime.stepRuns.list(project.runId)).some(
+        (step) => step.stepId.includes('T1') && step.stepId.startsWith('plan-task-browser-test'),
+      ),
+    ).toBe(false);
+    expect(
+      (await runtime.artifacts.listMetadata(project.id, 'browser-verification.report')).map(
+        (artifact) => artifact.name,
+      ),
+    ).toEqual(['browser-verification.report']);
+    expect(taskTimeline(detail.events, 'T1')).toEqual([
+      'task.started',
+      'quality.approved',
+      'task.completed',
+    ]);
+    expect(taskTimeline(detail.events, 'T2')).toEqual([
+      'task.started',
+      'quality.approved',
+      'quality.approved',
+      'task.completed',
+    ]);
+    expect(
+      detail.events.filter(
+        (event) => event.type === 'quality.approved' && event.data.asserted === true,
+      ),
+    ).toHaveLength(1);
+  }, 120_000);
+
+  it('rejects a browser-visible declaration before implementing a task without a browser channel', async () => {
+    const executor = new TaskGraphExecutor({ tasks: [task('T1', [], 'browser-visible')] });
+    const runtime = await createTaskLoopRuntime('task-acceptance-contradiction', executor);
+    const project = await startProject(runtime, 'Task acceptance contradiction');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('failed');
+    expect(detail.project.error).toContain('browser-visible acceptance');
+    expect(executor.executedSteps).toEqual(['plan']);
+    expect((await runtime.stepRuns.list(project.runId)).map((step) => step.stepId)).toEqual([
+      'plan',
+      'plan-approval',
+    ]);
+  }, 120_000);
+
   it('asserts each task in a browser after its deterministic checks pass', async () => {
     const executor = new TaskGraphExecutor({ tasks: [task('T1'), task('T2', ['T1'])] });
     const runtime = await createTaskLoopRuntime(

@@ -77,6 +77,15 @@ same-plan rerun, composition wiring, real Chromium CRUD, exact semantic locators
 failures, token redaction, request and WebSocket policy blocks, diagnostics, observation cap, timeout
 cleanup, and cancellation cleanup.
 
+## Per-task acceptance channels — 2026-08-03
+
+Task graphs now carry an explicit `acceptanceMode`: `deterministic-only` runs the configured generated-
+app checks and commits without browser artifacts, while `browser-visible` runs the existing declarative
+plan and browser assertion loop after those checks. The engine rejects a browser-visible graph when its
+workflow has no browser channel before any task implementation starts. Missing mode remains readable for
+historical graphs and preserves their existing workflow behavior; new planner instructions require the
+field so execution never classifies a task by inspecting its free-text acceptance check.
+
 The preview origin is always constrained to the exact `/preview/<sessionId>/` prefix, even if that
 origin is also present in `browserAllowedOrigins`. Contracts and the executor share one path
 validator: it rejects literal or encoded traversal, encoded network paths, backslashes, controls,
