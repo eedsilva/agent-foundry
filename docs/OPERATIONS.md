@@ -47,6 +47,15 @@ normal; uma execução futura deverá receber um roteador próprio da campanha. 
 variável (ou reverta o arquivo `.env`) e reinicie os processos; não há estado de execução da
 campanha para limpar.
 
+Antes de criar o projeto TODO, execute `POST /validation/campaign/preflight`. O preflight registra a
+revisão, o diretório externo de dados e a identidade do ambiente descartável; verifica Docker,
+Supabase, scaffold, build, saúde do app e gateway; depois executa os três canaries limitados. O
+primeiro limite que falhar encerra a campanha e retorna `environment-blocked` ou `model-failed`;
+`generatedProjectCreated` permanece `false`. O relatório normalizado é salvo em
+`DATA_DIR/validation-campaign/preflight.json` sem stdout, segredos ou respostas brutas de provider.
+Configure `DATA_DIR` para um caminho fora do repositório (por exemplo,
+`DATA_DIR=/tmp/agent-foundry-validation`); o padrão `.data` é recusado pelo gate de isolamento.
+
 ### Canary real dos providers
 
 Valide versões, autenticação e flags sem invocar modelos:

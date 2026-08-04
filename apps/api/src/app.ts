@@ -248,6 +248,16 @@ export async function buildApp(
     }),
   );
 
+  app.post('/validation/campaign/preflight', async (_request, reply) => {
+    if (!runtime.validationCampaign || !runtime.runValidationPreflight) {
+      return reply.status(409).send({
+        error: 'VALIDATION_CAMPAIGN_NOT_READY',
+        message: 'Select a real validation campaign before running its preflight.',
+      });
+    }
+    return runtime.runValidationPreflight();
+  });
+
   app.get('/router/dashboard', async (request) => {
     const query = RouterDashboardQuerySchema.parse(request.query);
     const filtered = await runtime.decisionLog.list(query);

@@ -1,0 +1,200 @@
+import { describe, expect, it, vi } from 'vitest';
+import type {
+  ValidationCanaryResult,
+  ValidationCampaignPreview,
+  ValidationPreflightReport,
+} from '@agent-foundry/contracts';
+import { runValidationPreflight, type ValidationPreflightChecks } from './validation-preflight.js';
+
+const campaign: ValidationCampaignPreview = {
+  schemaVersion: '1',
+  id: 'real-todo-v1',
+  name: 'Real TODO validation campaign',
+  sourceRevision: 'a'.repeat(40),
+  allowedModels: [
+    { id: 'opencode-ollama', provider: 'opencode', model: 'qwen2.5-coder:7b' },
+    { id: 'claude-haiku', provider: 'claude', model: 'haiku' },
+    { id: 'codex-default', provider: 'codex', model: 'gpt-5.6-luna' },
+  ],
+  routes: [],
+  limits: { attemptsPerAgentStep: 1, targetedRepairs: 1, activeTimeMinutes: 45, meteredCostUsd: 2 },
+};
+
+const canary = (provider: ValidationCanaryResult['provider'], model: string) => ({
+  provider,
+  selectedModel: model,
+  executedModel: `${provider}-executed`,
+  status: 'passed' as const,
+});
+
+function checks(overrides: Partial<ValidationPreflightChecks> = {}): ValidationPreflightChecks {
+  return {
+    disposableEnvironment: vi.fn(),
+    docker: vi.fn(),
+    supabase: vi.fn(),
+    scaffold: vi.fn(),
+    applicationHealth: vi.fn(),
+    previewGateway: vi.fn(),
+    localCanary: vi.fn().mockResolvedValue(canary('opencode', 'local')),
+    haikuCanary: vi.fn().mockResolvedValue(canary('claude', 'haiku')),
+    lunaCanary: vi.fn().mockResolvedValue(canary('codex', 'luna')),
+    cleanup: vi.fn(),
+    ...overrides,
+  };
+}
+
+function options(
+  validationChecks: ValidationPreflightChecks,
+  persist?: (report: ValidationPreflightReport) => Promise<void>,
+) {
+  return {
+    campaign,
+    sourceRevision: campaign.sourceRevision,
+    rootDirectory: '/repo',
+    dataDirectory: '/tmp/agent-foundry-validation',
+    executorMode: 'real' as const,
+    environmentId: 'validation-preflight-1',
+    checks: validationChecks,
+    now: () => new Date('2026-08-03T12:00:00.000Z'),
+    ...(persist ? { persist } : {}),
+  };
+}
+
+describe('validation preflight', () => {
+  it('runs infrastructure then model gates, records identities, and persists safe evidence', async () => {
+    const order: string[] = [];
+    const validationChecks = checks(
+      Object.fromEntries(
+        [
+          'disposableEnvironment',
+          'docker',
+          'supabase',
+          'scaffold',
+          'applicationHealth',
+          'previewGateway',
+          'localCanary',
+          'haikuCanary',
+          'lunaCanary',
+        ].map((name) => [name, vi.fn(async () => order.push(name))]),
+      ) as Partial<ValidationPreflightChecks>,
+    );
+    validationChecks.localCanary = vi.fn(async () => {
+      order.push('localCanary');
+      return canary('opencode', 'local');
+    });
+    validationChecks.haikuCanary = vi.fn(async () => {
+      order.push('haikuCanary');
+      return canary('claude', 'haiku');
+    });
+    validationChecks.lunaCanary = vi.fn(async () => {
+      order.push('lunaCanary');
+      return canary('codex', 'luna');
+    });
+    const persist = vi.fn(async () => undefined);
+
+    const report = await runValidationPreflight(options(validationChecks, persist));
+
+    expect(report.status).toBe('passed');
+    expect(report.generatedProjectCreated).toBe(false);
+    expect(report.environmentId).toBe('validation-preflight-1');
+    expect(report.checks.map((check) => check.boundary)).toEqual([
+      'source-revision',
+      'data-directory',
+      'executor-mode',
+      'disposable-environment',
+      'docker',
+      'supabase',
+      'scaffold',
+      'application-health',
+      'preview-gateway',
+      'local-canary',
+      'haiku-canary',
+      'luna-canary',
+    ]);
+    expect(order).toEqual([
+      'disposableEnvironment',
+      'docker',
+      'supabase',
+      'scaffold',
+      'applicationHealth',
+      'previewGateway',
+      'localCanary',
+      'haikuCanary',
+      'lunaCanary',
+    ]);
+    expect(report.checks.at(-1)).toMatchObject({
+      provider: 'codex',
+      selectedModel: 'luna',
+      executedModel: 'codex-executed',
+    });
+    expect(persist).toHaveBeenCalledWith(report);
+    expect(validationChecks.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('stops at the failed environment boundary and redacts provider errors', async () => {
+    const validationChecks = checks({
+      docker: vi.fn(async () => {
+        throw new Error('token=secret-value ECONNREFUSED 127.0.0.1:54321');
+      }),
+    });
+
+    const report = await runValidationPreflight(options(validationChecks));
+
+    expect(report.status).toBe('environment-blocked');
+    expect(report.checks.at(-1)).toMatchObject({
+      boundary: 'docker',
+      status: 'failed',
+      message: 'docker prerequisite failed.',
+    });
+    expect(JSON.stringify(report)).not.toContain('secret-value');
+    expect(validationChecks.supabase).not.toHaveBeenCalled();
+    expect(validationChecks.localCanary).not.toHaveBeenCalled();
+    expect(validationChecks.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('stops at the first model canary failure without creating a project', async () => {
+    const validationChecks = checks({
+      haikuCanary: vi.fn().mockResolvedValue({
+        provider: 'claude',
+        selectedModel: 'haiku',
+        status: 'failed',
+      }),
+    });
+
+    const report = await runValidationPreflight(options(validationChecks));
+
+    expect(report.status).toBe('model-failed');
+    expect(report.checks.at(-1)).toMatchObject({ boundary: 'haiku-canary', status: 'failed' });
+    expect(validationChecks.lunaCanary).not.toHaveBeenCalled();
+    expect(report.generatedProjectCreated).toBe(false);
+  });
+
+  it('blocks a campaign that reuses source-local data', async () => {
+    const validationChecks = checks();
+    const report = await runValidationPreflight({
+      ...options(validationChecks),
+      dataDirectory: '/repo/.data',
+    });
+
+    expect(report.status).toBe('environment-blocked');
+    expect(report.checks.at(-1)?.boundary).toBe('data-directory');
+    expect(validationChecks.disposableEnvironment).not.toHaveBeenCalled();
+  });
+
+  it('downgrades the report when disposable cleanup fails', async () => {
+    const validationChecks = checks({
+      cleanup: vi.fn(async () => {
+        throw new Error('private cleanup detail');
+      }),
+    });
+
+    const report = await runValidationPreflight(options(validationChecks));
+
+    expect(report.status).toBe('environment-blocked');
+    expect(report.checks.at(-1)).toMatchObject({
+      boundary: 'cleanup',
+      errorCode: 'CLEANUP_FAILED',
+    });
+    expect(JSON.stringify(report)).not.toContain('private cleanup detail');
+  });
+});
