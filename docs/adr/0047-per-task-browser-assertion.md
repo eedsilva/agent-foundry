@@ -1,4 +1,6 @@
-# ADR 0047: Each task asserts its acceptance check in a browser
+# ADR 0047: Tasks use their declared acceptance channel
+
+> Amended by #393: browser assertion is conditional on the task's explicit `acceptanceMode`.
 
 - Status: Accepted
 - Date: 2026-07-29
@@ -19,6 +21,11 @@ broken journey in task 1 surfaced after task 14 and cost the whole run.
 The task graph already carries the claim to assert: #321 gave every task an `acceptanceCheck`.
 
 ## Decision
+
+- The task graph declares `acceptanceMode`: `deterministic-only` runs the deterministic gate and
+  does not create browser artifacts; `browser-visible` runs the browser plan and assertion after
+  that gate. A missing mode remains readable for historical graphs and follows the legacy browser
+  behavior, while newly generated graphs must declare the channel explicitly.
 
 - `for-each-task` gains an optional `browser: { plan, check }`. `plan` is an agent step that turns
   the task's `acceptanceCheck` into a declarative `browser-test.plan`; `check` is the existing
@@ -62,9 +69,10 @@ The task graph already carries the claim to assert: #321 gave every task an `acc
 - `workflowUsesBrowserPlan` now looks inside `for-each-task.browser.check`, so the per-task plan
   agent gets the browser-plan output schema the pipeline-tail one already got.
 - The per-task plan and the browser repair are pinnable per task, like `implement` and `repair`.
-- Every task in a graph now boots a preview and drives a browser. That is slow and deliberately so:
-  it is what makes "the feature works" a fact rather than a claim. The standalone pipeline-tail
-  `browser-verification` node was removed by #329; this per-task assertion remains.
+- Only `browser-visible` tasks boot a preview and drive a browser. That keeps the visible acceptance
+  claim factual without imposing browser work on migrations, configuration changes, and other
+  deterministic-only tasks. The standalone pipeline-tail `browser-verification` node was removed
+  by #329; the conditional per-task assertion remains.
 - `MockAgentExecutor` already emits a valid browser plan for any step given the browser-plan schema,
   so mock runs exercise the loop. The composition seam stubs the **coordinator**, not the Playwright
   verifier — mock mode swaps in an auto-approving coordinator, so stubbing the verifier under it

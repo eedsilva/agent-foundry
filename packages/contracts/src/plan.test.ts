@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as contracts from './index.js';
 import {
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  GeneratedTaskGraphArtifactSchema,
   TaskGraphArtifactSchema,
   TaskGraphSchema,
 } from './plan.js';
@@ -41,6 +42,55 @@ describe('task graph contracts', () => {
         { id: 'T2', dependsOn: ['T1'] },
       ],
     });
+  });
+
+  it('accepts explicit deterministic and browser acceptance modes', () => {
+    const parsed = TaskGraphSchema.parse({
+      ...graph,
+      tasks: [
+        { ...graph.tasks[0], acceptanceMode: 'deterministic-only' },
+        { ...graph.tasks[1], acceptanceMode: 'browser-visible' },
+      ],
+    });
+    expect(parsed.tasks.map((task) => task.acceptanceMode)).toEqual([
+      'deterministic-only',
+      'browser-visible',
+    ]);
+  });
+
+  it('keeps historical graphs readable and rejects unknown acceptance modes', () => {
+    expect(TaskGraphSchema.parse(graph).tasks[0]?.acceptanceMode).toBeUndefined();
+    expect(() =>
+      TaskGraphSchema.parse({
+        ...graph,
+        tasks: [{ ...graph.tasks[0], acceptanceMode: 'maybe-browser' }],
+      }),
+    ).toThrow();
+  });
+
+  it('requires acceptance modes from new planner output while retaining historical reads', () => {
+    expect(() =>
+      GeneratedTaskGraphArtifactSchema.parse({
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned the MVP',
+        data: graph,
+      }),
+    ).toThrow(/acceptanceMode/);
+    expect(
+      GeneratedTaskGraphArtifactSchema.parse({
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned the MVP',
+        data: {
+          ...graph,
+          tasks: graph.tasks.map((task, index) => ({
+            ...task,
+            acceptanceMode: index === 0 ? 'deterministic-only' : 'browser-visible',
+          })),
+        },
+      }).data.tasks,
+    ).toHaveLength(2);
   });
 
   it('rejects a malformed graph', () => {

@@ -49,6 +49,7 @@ import {
   ProvisioningFailureDiagnosticSchema,
   resolveRoutingEntry,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  GeneratedTaskGraphArtifactSchema,
   TaskGraphArtifactSchema,
   VerificationReportSchema,
 } from '@agent-foundry/contracts';
@@ -1451,6 +1452,7 @@ export class WorkflowOrchestrator {
       );
     }
     const tasks = parsed.data.data.tasks;
+    validateTaskAcceptanceChannels(tasks, node);
     // Every task reads the same input revisions — resolved once, before the
     // first task runs. Re-reading them per task would let a sibling write
     // change a later task's inputs, and with them its step identity.
@@ -1504,7 +1506,9 @@ export class WorkflowOrchestrator {
         maxAttempts,
       },
     });
-    const qualityAttemptStride = (node.browser ? 2 : 1) * ((node.repair?.maxAttempts ?? 0) + 1);
+    const browserAcceptance = taskUsesBrowserAcceptance(task, node);
+    const qualityAttemptStride =
+      (browserAcceptance ? 2 : 1) * ((node.repair?.maxAttempts ?? 0) + 1);
     const routing = resolveRoutingEntry(workflow.routing, workflow.id, step.taskKind);
     const resumedFailure = await this.resumedTaskFailure(
       project.id,
@@ -1562,16 +1566,18 @@ export class WorkflowOrchestrator {
           );
           // Only once the checks are green: the assertion boots a preview, and a
           // preview of code that does not compile tells you nothing (#325).
-          const asserted = await this.assertTask(
-            project,
-            workflow,
-            node,
-            task,
-            runId,
-            signal,
-            pinnedInputs,
-            qualityAttemptBase,
-          );
+          const asserted = browserAcceptance
+            ? await this.assertTask(
+                project,
+                workflow,
+                node,
+                task,
+                runId,
+                signal,
+                pinnedInputs,
+                qualityAttemptBase,
+              )
+            : null;
           // A browser repair edited the workspace after the checks went green, so
           // they are no longer known to be. Re-run them, or a task could complete on
           // a red typecheck — the one thing ADR 0045 promises cannot happen. The
@@ -1874,7 +1880,15 @@ export class WorkflowOrchestrator {
     iterationBase = 0,
   ): Promise<StoredArtifact | null> {
     const { browser, repair } = node;
-    if (!browser || !repair) return null;
+    if (task.acceptanceMode === 'deterministic-only') return null;
+    if (!browser || !repair) {
+      if (task.acceptanceMode === 'browser-visible') {
+        throw new ExecutionError(
+          `Task ${task.id} declares browser-visible acceptance, but the workflow has no browser assertion channel`,
+        );
+      }
+      return null;
+    }
     const planStep = taskBrowserPlanStep(browser.plan, task);
     const checkStep = taskBrowserCheckStep(browser.check, task);
     const repairStep = taskBrowserRepairStep(repair, browser, task);
@@ -1895,6 +1909,11 @@ export class WorkflowOrchestrator {
     // journey to assert. That is an answer, not a failure.
     const declared = AgentArtifactSchema.safeParse(plan.content);
     if (declared.success && declared.data.status === 'blocked') {
+      if (task.acceptanceMode === 'browser-visible') {
+        throw new ExecutionError(
+          `Task ${task.id} declares browser-visible acceptance, but its browser plan refused the assertion`,
+        );
+      }
       await this.emit(
         project.id,
         'quality.approved',
@@ -3054,7 +3073,7 @@ export class WorkflowOrchestrator {
       );
       await this.assertExecutionMayContinue(runId, signal);
       if (step.outputContract === 'task-graph') {
-        const graph = TaskGraphArtifactSchema.safeParse(result.output);
+        const graph = GeneratedTaskGraphArtifactSchema.safeParse(result.output);
         if (!graph.success) {
           throw new Error(
             `Step ${step.id} must emit a task graph in data; output failed validation: ${formatZodIssues(graph.error, 'plan')}`,
@@ -3830,10 +3849,34 @@ function taskImplementStep(implement: AgentStep, task: PlanTask): AgentStep {
       `Task ${task.id}: ${task.title}`,
       `Deliverables: ${task.deliverables.join(', ')}`,
       `Acceptance check: ${task.acceptanceCheck}`,
+      ...(task.acceptanceMode
+        ? [`Acceptance mode: ${task.acceptanceMode}`]
+        : ['Acceptance mode: legacy graph (preserve existing workflow behavior).']),
       ...(task.dependsOn.length > 0 ? [`Depends on: ${task.dependsOn.join(', ')}`] : []),
       'Implement only this task. Earlier tasks are already implemented and committed in the workspace.',
     ].join('\n'),
   };
+}
+
+/**
+ * New graphs must declare the browser channel explicitly. A missing field is
+ * deliberately retained as a legacy mode so persisted pre-#393 graphs keep
+ * their historical browser-plan behavior when their workflow provides it.
+ */
+function taskUsesBrowserAcceptance(task: PlanTask, node: ForEachTaskStep): boolean {
+  return (
+    task.acceptanceMode === 'browser-visible' ||
+    (task.acceptanceMode === undefined && node.browser !== undefined)
+  );
+}
+
+function validateTaskAcceptanceChannels(tasks: readonly PlanTask[], node: ForEachTaskStep): void {
+  const browserTask = tasks.find((task) => task.acceptanceMode === 'browser-visible');
+  if (browserTask && !node.browser) {
+    throw new ExecutionError(
+      `Task ${browserTask.id} declares browser-visible acceptance, but the workflow has no browser assertion channel`,
+    );
+  }
 }
 
 /**
