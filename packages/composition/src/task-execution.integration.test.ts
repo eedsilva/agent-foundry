@@ -12,6 +12,7 @@ import type {
   ProjectEvent,
   VerificationCommandResult,
 } from '@agent-foundry/contracts';
+import { TASK_GRAPH_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor } from '@agent-foundry/executors';
 import { createRuntime, type Runtime } from './runtime.js';
@@ -113,6 +114,12 @@ const ASSERTED_TASK_LOOP_WORKFLOW = `${GATED_TASK_LOOP_WORKFLOW}    browser:
         includeGitDiffCheck: false
 `;
 
+/** A pre-#393 graph producer for the historical read-compatibility seam. */
+const LEGACY_ASSERTED_TASK_LOOP_WORKFLOW = ASSERTED_TASK_LOOP_WORKFLOW.replace(
+  '    outputContract: task-graph\n',
+  '',
+);
+
 function task(
   id: string,
   dependsOn: string[] = [],
@@ -184,7 +191,17 @@ class TaskGraphExecutor implements AgentExecutor {
     if (request.stepId !== 'plan') return result;
     const output = {
       ...result.output,
-      data: { schemaVersion: '1' as const, goal: 'Fixture plan', tasks: this.options.tasks },
+      data: {
+        schemaVersion: '1' as const,
+        goal: 'Fixture plan',
+        tasks:
+          request.outputSchema?.$id === TASK_GRAPH_ARTIFACT_JSON_SCHEMA.$id
+            ? this.options.tasks.map((task) => ({
+                ...task,
+                acceptanceMode: task.acceptanceMode ?? 'deterministic-only',
+              }))
+            : this.options.tasks,
+      },
     };
     return { ...result, output, stdout: JSON.stringify(output) };
   }
@@ -363,7 +380,11 @@ describe('for-each-task execution', () => {
 
   it('keeps completed tasks committed when a later task exhausts its executor fallbacks', async () => {
     const executor = new TaskGraphExecutor({
-      tasks: [task('T1'), task('T2', ['T1']), task('T3', ['T2'])],
+      tasks: [
+        task('T1', [], 'deterministic-only'),
+        task('T2', ['T1'], 'deterministic-only'),
+        task('T3', ['T2'], 'deterministic-only'),
+      ],
       fail: (request) => request.stepId === 'implement.T2',
     });
     const runtime = await createTaskLoopRuntime('task-failure', executor);
@@ -418,7 +439,11 @@ describe('for-each-task execution', () => {
     // boundary, which is T2.
     let pause: () => Promise<void> = async () => {};
     const executor = new TaskGraphExecutor({
-      tasks: [task('T1'), task('T2', ['T1']), task('T3', ['T2'])],
+      tasks: [
+        task('T1', [], 'deterministic-only'),
+        task('T2', ['T1'], 'deterministic-only'),
+        task('T3', ['T2'], 'deterministic-only'),
+      ],
       onStep: async (request) => {
         if (request.stepId === 'implement.T1') await pause();
       },
@@ -454,7 +479,7 @@ describe('for-each-task execution', () => {
     let pause: () => Promise<void> = async () => {};
     let firstAttempt = true;
     const executor = new TaskGraphExecutor({
-      tasks: [task('T1'), task('T2', ['T1'])],
+      tasks: [task('T1', [], 'deterministic-only'), task('T2', ['T1'], 'deterministic-only')],
       corrupt: (request) => {
         if (request.stepId === 'implement.T1') return firstAttempt;
         if (request.stepId === 'repair-task.T1') {
@@ -838,7 +863,9 @@ describe('per-task browser assertion', () => {
   }, 120_000);
 
   it('asserts each task in a browser after its deterministic checks pass', async () => {
-    const executor = new TaskGraphExecutor({ tasks: [task('T1'), task('T2', ['T1'])] });
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1', [], 'browser-visible'), task('T2', ['T1'], 'browser-visible')],
+    });
     const runtime = await createTaskLoopRuntime(
       'task-assert',
       executor,
@@ -877,7 +904,9 @@ describe('per-task browser assertion', () => {
   }, 120_000);
 
   it('repairs a failed assertion once and completes the task only when it passes', async () => {
-    const executor = new TaskGraphExecutor({ tasks: [task('T1')] });
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1', [], 'browser-visible')],
+    });
     const runtime = await createTaskLoopRuntime(
       'task-assert-repair',
       executor,
@@ -925,7 +954,7 @@ describe('per-task browser assertion', () => {
     const runtime = await createTaskLoopRuntime(
       'task-assert-skip',
       executor,
-      ASSERTED_TASK_LOOP_WORKFLOW,
+      LEGACY_ASSERTED_TASK_LOOP_WORKFLOW,
     );
     const browser = stubBrowser(runtime);
     const project = await startProject(runtime, 'Task assertion skipped');
@@ -947,7 +976,7 @@ describe('per-task browser assertion', () => {
 
   it('fails the task when the plan step returns neither a plan nor a refusal', async () => {
     const executor = new TaskGraphExecutor({
-      tasks: [task('T1')],
+      tasks: [task('T1', [], 'browser-visible')],
       malformedPlan: (request) => request.stepId === 'plan-task-browser-test.T1',
     });
     const runtime = await createTaskLoopRuntime(

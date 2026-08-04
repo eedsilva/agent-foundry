@@ -49,6 +49,7 @@ import {
   ProvisioningFailureDiagnosticSchema,
   resolveRoutingEntry,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  GeneratedTaskGraphArtifactSchema,
   TaskGraphArtifactSchema,
   VerificationReportSchema,
 } from '@agent-foundry/contracts';
@@ -3072,7 +3073,7 @@ export class WorkflowOrchestrator {
       );
       await this.assertExecutionMayContinue(runId, signal);
       if (step.outputContract === 'task-graph') {
-        const graph = TaskGraphArtifactSchema.safeParse(result.output);
+        const graph = GeneratedTaskGraphArtifactSchema.safeParse(result.output);
         if (!graph.success) {
           throw new Error(
             `Step ${step.id} must emit a task graph in data; output failed validation: ${formatZodIssues(graph.error, 'plan')}`,

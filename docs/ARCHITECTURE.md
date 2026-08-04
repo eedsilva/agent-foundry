@@ -365,15 +365,17 @@ realmente falhar no workspace do projeto. Nenhum modelo julga o trabalho de outr
 - `task.completed` só é emitido depois de um relatório verde; `quality.approved` e
   `quality.repair_requested` carregam `taskId`.
 
-### Asserção de browser por tarefa (ADR 0047)
+### Canais de aceitação por tarefa (ADR 0047, #393)
 
-Passar no typecheck não significa que a funcionalidade funciona. Depois — e só depois — de os checks
-determinísticos ficarem verdes, o `acceptanceCheck` da própria tarefa vira uma asserção de browser
-contra o preview vivo.
+Passar no typecheck não significa que uma superfície visível funciona. O contrato do plano declara
+`acceptanceMode` para tornar o canal explícito: `deterministic-only` executa apenas os checks
+determinísticos, enquanto `browser-visible` também transforma o `acceptanceCheck` da tarefa em uma
+asserção contra o preview vivo. Grafos históricos sem o campo continuam legíveis e preservam o
+comportamento legado.
 
 - `browser.plan` transforma o `acceptanceCheck` num `browser-test.plan` declarativo; `browser.check`
   é o runner Playwright que já existia, movido para dentro do laço em vez de reimplementado.
-- `browser` exige o gate determinístico: um preview de código que não compila não prova nada.
+- `browser-visible` exige o gate determinístico: um preview de código que não compila não prova nada.
 - Asserção reprovada dispara `repair` com o plano **e** o relatório pinados: passo que falhou, erro e
   referências de screenshot/trace. O plano vai pinado sem alteração para a reexecução.
 - O reparo da asserção é um passo próprio, `<repair>-browser.<taskId>` — os dois laços rodam para a

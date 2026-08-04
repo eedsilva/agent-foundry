@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as contracts from './index.js';
 import {
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  GeneratedTaskGraphArtifactSchema,
   TaskGraphArtifactSchema,
   TaskGraphSchema,
 } from './plan.js';
@@ -65,6 +66,31 @@ describe('task graph contracts', () => {
         tasks: [{ ...graph.tasks[0], acceptanceMode: 'maybe-browser' }],
       }),
     ).toThrow();
+  });
+
+  it('requires acceptance modes from new planner output while retaining historical reads', () => {
+    expect(() =>
+      GeneratedTaskGraphArtifactSchema.parse({
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned the MVP',
+        data: graph,
+      }),
+    ).toThrow(/acceptanceMode/);
+    expect(
+      GeneratedTaskGraphArtifactSchema.parse({
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned the MVP',
+        data: {
+          ...graph,
+          tasks: graph.tasks.map((task, index) => ({
+            ...task,
+            acceptanceMode: index === 0 ? 'deterministic-only' : 'browser-visible',
+          })),
+        },
+      }).data.tasks,
+    ).toHaveLength(2);
   });
 
   it('rejects a malformed graph', () => {

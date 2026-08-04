@@ -173,6 +173,7 @@ export class MockAgentExecutor implements AgentExecutor {
                   dependsOn: [],
                   deliverables: ['package.json', 'src/index.js'],
                   acceptanceCheck: 'npm test passes in the generated workspace',
+                  acceptanceMode: 'deterministic-only',
                 },
                 {
                   id: 'T2',
@@ -180,6 +181,7 @@ export class MockAgentExecutor implements AgentExecutor {
                   dependsOn: ['T1'],
                   deliverables: ['src/index.js'],
                   acceptanceCheck: 'createProject queues a valid project',
+                  acceptanceMode: 'browser-visible',
                 },
               ],
             }

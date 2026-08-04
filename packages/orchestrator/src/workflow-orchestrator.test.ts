@@ -359,6 +359,16 @@ const VALID_GRAPH = {
   ],
 };
 
+const GENERATED_GRAPH = {
+  ...VALID_GRAPH,
+  tasks: VALID_GRAPH.tasks.map((task) => ({ ...task, acceptanceMode: 'deterministic-only' })),
+};
+
+const BROWSER_GRAPH = {
+  ...VALID_GRAPH,
+  tasks: VALID_GRAPH.tasks.map((task) => ({ ...task, acceptanceMode: 'browser-visible' })),
+};
+
 const TASK_BROWSER_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   schemaVersion: '1',
   id: 'task-browser-retry-v1',
@@ -467,7 +477,7 @@ describe('task-graph output contract (#321)', () => {
         schemaVersion: '1',
         status: 'completed',
         summary: 'Planned.',
-        data: VALID_GRAPH,
+        data: GENERATED_GRAPH,
         decisions: [],
         assumptions: [],
         risks: [],
@@ -496,7 +506,7 @@ describe('task-graph output contract (#321)', () => {
         status: 'completed',
         summary: 'Planned.',
         // First attempt: prose. Second attempt: a conforming graph.
-        data: ++calls === 1 ? { note: 'prose' } : VALID_GRAPH,
+        data: ++calls === 1 ? { note: 'prose' } : GENERATED_GRAPH,
         decisions: [],
         assumptions: [],
         risks: [],
@@ -542,7 +552,7 @@ describe('task browser retry checkpoint (#325)', () => {
             schemaVersion: '1',
             status: 'completed',
             summary: 'Planned.',
-            data: VALID_GRAPH,
+            data: BROWSER_GRAPH,
             decisions: [],
             assumptions: [],
             risks: [],
