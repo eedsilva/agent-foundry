@@ -647,9 +647,7 @@ function publication(
         status,
         ...(status === 'failed' ? { failureClass } : {}),
         references: [id ? (proofs[id] ?? { runId }) : { runId }],
-        ...(status === 'failed'
-          ? { summary: 'Create a TODO for alice@example.com; db row id=todo-1 title=Buy milk' }
-          : {}),
+        ...(status === 'failed' ? { summary: 'Contact alice@example.com for help' } : {}),
       }))
       .map((gate) => ({
         ...gate,

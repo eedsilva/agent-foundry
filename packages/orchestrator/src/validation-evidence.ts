@@ -955,7 +955,7 @@ function redactEvidenceText(value: string, maxLength = 500): string {
       value,
     ) ||
     /\b(?:please|the user|application|todo|app)\b/i.test(value) ||
-    /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/.test(value);
+    containsEmailLike(value);
   if (isPromptLike) {
     return '[REDACTED_PROMPT]';
   }
@@ -968,6 +968,57 @@ function redactEvidenceText(value: string, maxLength = 500): string {
     return '[REDACTED_DATABASE_VALUE]';
   }
   return redactString(value).replace(PERSONAL_PATH_PATTERN, '[REDACTED]').slice(0, maxLength);
+}
+
+function containsEmailLike(value: string): boolean {
+  for (
+    let atIndex = value.indexOf('@');
+    atIndex !== -1;
+    atIndex = value.indexOf('@', atIndex + 1)
+  ) {
+    let localStart = atIndex - 1;
+    while (localStart >= 0 && isEmailLocalChar(value.charCodeAt(localStart))) {
+      localStart -= 1;
+    }
+    if (localStart === atIndex - 1) continue;
+
+    let cursor = atIndex + 1;
+    let labelLength = 0;
+    let hasDot = false;
+    while (cursor < value.length) {
+      const code = value.charCodeAt(cursor);
+      if (isEmailDomainChar(code)) {
+        labelLength += 1;
+        cursor += 1;
+        continue;
+      }
+      if (code === 46 && labelLength > 0 && cursor + 1 < value.length) {
+        const nextCode = value.charCodeAt(cursor + 1);
+        if (!isEmailDomainChar(nextCode)) {
+          break;
+        }
+        hasDot = true;
+        labelLength = 0;
+        cursor += 1;
+        continue;
+      }
+      break;
+    }
+    if (hasDot && labelLength > 0) return true;
+  }
+  return false;
+}
+
+function isEmailLocalChar(code: number): boolean {
+  return isAsciiLetterOrDigit(code) || code === 43 || code === 45 || code === 46 || code === 95;
+}
+
+function isEmailDomainChar(code: number): boolean {
+  return isAsciiLetterOrDigit(code) || code === 45 || code === 95;
+}
+
+function isAsciiLetterOrDigit(code: number): boolean {
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 }
 
 function storedArtifactReference(artifact: StoredArtifact) {
