@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { RouteDecisionSchema } from './model.js';
+import { FailedStepSchema, RouteDecisionSchema } from './model.js';
 import { PolicyRecordSchema } from './policy.js';
 import { ActorRefSchema, PathSegmentSchema, ProviderSchema } from './primitives.js';
 import { ApprovalActionSchema, ApprovalTimeoutPolicySchema } from './workflow.js';
@@ -124,7 +124,7 @@ export const RunRetryDirectiveSchema = z
         actor: ActorRefSchema.optional(),
         reason: z.string().trim().min(1).optional(),
         estimatedImpact: z.string().trim().min(1).optional(),
-        failedStep: z.string().trim().min(1).optional(),
+        failedStep: FailedStepSchema.optional(),
         minimalReproducer: z.string().trim().min(1).optional(),
       })
       .strict()

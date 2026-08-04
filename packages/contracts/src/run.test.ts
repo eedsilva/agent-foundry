@@ -86,6 +86,13 @@ describe('persisted run contracts', () => {
         scope: { kind: 'step', nodeId: 'implementation', stepId: 'repair' },
       }),
     ).toMatchObject({ failedStep: 'implementation/repair' });
+    expect(() =>
+      ModelOverrideRecordSchema.parse({
+        ...base,
+        failedStep: 'repair',
+        scope: { kind: 'step', nodeId: 'implementation', stepId: 'repair' },
+      }),
+    ).toThrow();
   });
 
   it('keeps route decisions compatible while exposing override provenance', () => {
