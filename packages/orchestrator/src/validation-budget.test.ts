@@ -55,8 +55,15 @@ const subscription = {
   id: 'subscription',
   billingMode: 'subscription',
 } satisfies ModelDefinition;
+const unknown = {
+  ...metered,
+  id: 'unknown',
+  billingMode: 'unknown',
+} satisfies ModelDefinition;
 
 function attempt(id: string, usage?: StepAttempt['usage'], modelId = metered.id): StepAttempt {
+  const model =
+    modelId === metered.id ? metered : modelId === subscription.id ? subscription : unknown;
   return {
     id,
     runId: 'run-1',
@@ -64,7 +71,7 @@ function attempt(id: string, usage?: StepAttempt['usage'], modelId = metered.id)
     sequence: 1,
     executorKind: 'agent',
     provider: 'codex',
-    model: modelId === metered.id ? metered.model : subscription.model,
+    model: model.model,
     modelId,
     status: 'succeeded',
     version: 1,
@@ -90,27 +97,55 @@ describe('validation campaign budget accounting', () => {
         attempt('provider', { providerReportedCostUsd: 1.25, quotaUnits: 2 }),
         attempt('estimated', { estimatedCostUsd: 0.75, quotaUnits: 3 }),
         attempt('unknown'),
+        attempt('unknown-reported', { providerReportedCostUsd: 0.5, quotaUnits: 1 }, unknown.id),
         attempt('subscription', { quotaUnits: 4 }, subscription.id),
       ],
-      [metered, subscription],
+      [metered, subscription, unknown],
     );
 
     expect(summary).toMatchObject({
-      providerReportedCostUsd: 1.25,
+      providerReportedCostUsd: 1.75,
       catalogEstimatedCostUsd: 0.75,
-      meteredCostUsd: 2,
-      unknownMeteredAttempts: 1,
+      meteredCostUsd: 2.5,
+      unknownMeteredAttempts: 2,
       subscriptionQuotaUnits: 4,
       subscriptionQuotaUnitsByProvider: { codex: 4 },
     });
-    expect(summary.attemptsByStep[validationStepKey('node-1', 'step-1')]).toBe(4);
+    expect(summary.attemptsByStep[validationStepKey('node-1', 'step-1')]).toBe(5);
   });
 
   it('estimates the next metered dispatch without inventing a value for unknown pricing', () => {
     expect(estimateValidationDispatchCostUsd(profile, metered)).toBe(4);
+    expect(estimateValidationDispatchCostUsd(profile, subscription)).toBe(4);
+    expect(estimateValidationDispatchCostUsd(profile, unknown)).toBeUndefined();
     expect(
       estimateValidationDispatchCostUsd(profile, { ...metered, pricing: undefined }),
     ).toBeUndefined();
+  });
+
+  it('does not attribute quota to an unrelated persisted route identity', () => {
+    const persistedRoute = RouteDecisionSchema.parse({
+      routeId: 'route-1',
+      createdAt: '2026-08-03T12:00:00.000Z',
+      profile,
+      selected: { model: subscription },
+      fallbacks: [],
+      rejected: [],
+    });
+    const summary = summarizeValidationUsage(
+      [
+        {
+          ...attempt('unmatched', { quotaUnits: 4 }, subscription.id),
+          modelId: undefined,
+          model: 'different-model',
+          routeDecision: persistedRoute,
+        },
+      ],
+      [subscription],
+    );
+
+    expect(summary.subscriptionQuotaUnits).toBe(0);
+    expect(summary.unknownMeteredAttempts).toBe(1);
   });
 
   it('uses the persisted route identity when the current catalog no longer has the model id', () => {
@@ -135,5 +170,28 @@ describe('validation campaign budget accounting', () => {
 
     expect(summary.providerReportedCostUsd).toBe(1);
     expect(summary.meteredCostUsd).toBe(1);
+  });
+
+  it('prefers the exact persisted route model id when provider tuples are duplicated', () => {
+    const persistedRoute = RouteDecisionSchema.parse({
+      routeId: 'route-1',
+      createdAt: '2026-08-03T12:00:00.000Z',
+      profile,
+      selected: { model: subscription },
+      fallbacks: [],
+      rejected: [],
+    });
+    const summary = summarizeValidationUsage(
+      [
+        {
+          ...attempt('duplicate', { quotaUnits: 4 }, subscription.id),
+          routeDecision: persistedRoute,
+        },
+      ],
+      [metered, subscription],
+    );
+
+    expect(summary.subscriptionQuotaUnits).toBe(4);
+    expect(summary.meteredCostUsd).toBe(0);
   });
 });
