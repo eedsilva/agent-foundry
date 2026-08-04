@@ -55,8 +55,15 @@ const subscription = {
   id: 'subscription',
   billingMode: 'subscription',
 } satisfies ModelDefinition;
+const unknown = {
+  ...metered,
+  id: 'unknown',
+  billingMode: 'unknown',
+} satisfies ModelDefinition;
 
 function attempt(id: string, usage?: StepAttempt['usage'], modelId = metered.id): StepAttempt {
+  const model =
+    modelId === metered.id ? metered : modelId === subscription.id ? subscription : unknown;
   return {
     id,
     runId: 'run-1',
@@ -64,7 +71,7 @@ function attempt(id: string, usage?: StepAttempt['usage'], modelId = metered.id)
     sequence: 1,
     executorKind: 'agent',
     provider: 'codex',
-    model: modelId === metered.id ? metered.model : subscription.model,
+    model: model.model,
     modelId,
     status: 'succeeded',
     version: 1,
@@ -90,20 +97,21 @@ describe('validation campaign budget accounting', () => {
         attempt('provider', { providerReportedCostUsd: 1.25, quotaUnits: 2 }),
         attempt('estimated', { estimatedCostUsd: 0.75, quotaUnits: 3 }),
         attempt('unknown'),
+        attempt('unknown-reported', { providerReportedCostUsd: 0.5 }, unknown.id),
         attempt('subscription', { quotaUnits: 4 }, subscription.id),
       ],
-      [metered, subscription],
+      [metered, subscription, unknown],
     );
 
     expect(summary).toMatchObject({
-      providerReportedCostUsd: 1.25,
+      providerReportedCostUsd: 1.75,
       catalogEstimatedCostUsd: 0.75,
-      meteredCostUsd: 2,
+      meteredCostUsd: 2.5,
       unknownMeteredAttempts: 1,
       subscriptionQuotaUnits: 4,
       subscriptionQuotaUnitsByProvider: { codex: 4 },
     });
-    expect(summary.attemptsByStep[validationStepKey('node-1', 'step-1')]).toBe(4);
+    expect(summary.attemptsByStep[validationStepKey('node-1', 'step-1')]).toBe(5);
   });
 
   it('estimates the next metered dispatch without inventing a value for unknown pricing', () => {

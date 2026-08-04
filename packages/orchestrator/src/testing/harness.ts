@@ -1206,22 +1206,32 @@ export function makeHarness(
 ) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
+  const models = opts.models ?? MODELS;
+  const configuredExecutorHealth =
+    opts.executorHealth ??
+    (opts.validationCampaign
+      ? {
+          provider: models[0]!.provider,
+          available: true,
+          version: 'test',
+          message: 'Campaign quota is available.',
+          rateLimit: { limit: 1_000, remaining: 1_000 },
+        }
+      : undefined);
   const executor = new ControllableExecutor(
     behaviors,
     stores.workspaces,
     opts.agentOutput,
     opts.usage,
-    opts.executorHealth,
+    configuredExecutorHealth,
     opts.executedModel,
     Boolean(opts.validationCampaign),
     opts.cancelledWithUsage,
   );
-  const configuredExecutorHealth = opts.executorHealth;
   const executorRegistry = configuredExecutorHealth
     ? { health: async (): Promise<ExecutorHealth[]> => [configuredExecutorHealth] }
     : undefined;
   const policies = new InMemoryPolicies(opts.policy ?? DEFAULT_POLICY);
-  const models = opts.models ?? MODELS;
   // Fallback recovery needs the mutating step to offer a second candidate.
   // A gate opt inserts an approval-gate node reviewing the review artifact,
   // between 'review' and 'verify', for approval-gate.test.ts.
