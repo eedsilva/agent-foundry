@@ -44,6 +44,13 @@ export const ModelPricingSchema = z.object({
 });
 export type ModelPricing = z.infer<typeof ModelPricingSchema>;
 
+/** Identifies the failed workflow step as `nodeId/stepId` in audit records. */
+export const FailedStepSchema = z
+  .string()
+  .trim()
+  .regex(/^[^/\s]+\/[^/\s]+$/, 'Must use the nodeId/stepId format');
+export type FailedStep = z.infer<typeof FailedStepSchema>;
+
 export const ModelDefinitionSchema = z.object({
   id: PathSegmentSchema,
   provider: ProviderSchema.exclude(['mock']),
@@ -209,6 +216,8 @@ export const ModelOverrideRecordSchema = z
     actor: ActorRefSchema,
     reason: z.string().trim().min(1),
     estimatedImpact: z.string().trim().min(1),
+    failedStep: FailedStepSchema.optional(),
+    minimalReproducer: z.string().trim().min(1).optional(),
     createdAt: z.string().datetime(),
   })
   .strict();
@@ -221,6 +230,8 @@ const RouteOverrideProvenanceShape = {
   actor: ActorRefSchema,
   reason: z.string().trim().min(1),
   estimatedImpact: z.string().trim().min(1),
+  failedStep: FailedStepSchema.optional(),
+  minimalReproducer: z.string().trim().min(1).optional(),
   createdAt: z.string().datetime(),
 };
 

@@ -15,3 +15,4 @@ export * from './operation-service.js';
 export * from './context-compiler.js';
 export * from './quality-observation-service.js';
 export * from './preview-selection-service.js';
+export * from './validation-budget.js';

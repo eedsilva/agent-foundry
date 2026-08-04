@@ -32,20 +32,28 @@ EXECUTOR_MODE=real \
 npm run dev
 ```
 
-Antes de qualquer chamada de modelo, abra [`/validation`](http://localhost:3000/validation) ou
-consulte `GET /validation/campaign`. A tela registra a revisão Git, as únicas identidades
+A execução explicitamente selecionada registra no run a revisão Git, as únicas identidades
 permitidas (modelo local configurado, Claude Haiku e Codex GPT-5.6 Luna), as rotas planejadas por
 tipo de tarefa, uma tentativa por etapa, um reparo, 45 minutos ativos e US$ 2 de custo medido.
 Verificação usará o modelo local e só poderá cair para Haiku; planejamento usará Haiku; mutação do
-workspace e reparo usarão Luna. Nenhum modelo deep ou premium aparece na prévia.
+workspace e reparo usarão Luna. Nenhum modelo deep ou premium aparece na rota automática.
+
+Antes de qualquer chamada de modelo, abra [`/validation`](http://localhost:3000/validation) ou
+consulte `GET /validation/campaign` e confirme a configuração. O worker aplica os limites no run
+selecionado: cancela o próximo dispatch quando o attempt, reparo, tempo ativo ou gasto conhecido
+excederia a política. Custos informados pelo provider, estimativas do catálogo, classes
+desconhecidas e quota de assinatura ficam registrados separadamente nos attempts; um restart não
+zera esse accounting persistido.
+
+Promover um modelo fora da lista exige um override de operador auditado no retry/pin, com
+`failedStep` no formato `nodeId/stepId`, `minimalReproducer`, `reason`, `actor` e
+`estimatedImpact`. Fallback automático nunca concede essa promoção.
 
 A seleção exige `EXECUTOR_MODE=real`. Identidade ausente, desabilitada, duplicada ou diferente da
-esperada interrompe a inicialização antes da execução. Nesta etapa, a seleção apenas valida e
-exibe a campanha: ainda não inicia uma execução de validação. O worker continua usando o roteador
-normal; uma execução futura deverá receber um roteador próprio da campanha. Deixe
-`VALIDATION_CAMPAIGN` vazio para o fluxo normal. Para rollback, pare API e worker, remova a
-variável (ou reverta o arquivo `.env`) e reinicie os processos; não há estado de execução da
-campanha para limpar.
+esperada interrompe a inicialização antes da execução. Runs normais, sem a seleção explícita,
+continuam no catálogo, tabela e emergency ceiling normais. Deixe `VALIDATION_CAMPAIGN` vazio para
+o fluxo normal. Para rollback, pare API e worker, remova a variável (ou reverta o arquivo `.env`)
+e reinicie os processos; runs já iniciados mantêm o snapshot auditável que foi persistido.
 
 ### Aceitação por tarefa
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createValidationCampaignExecution,
+  ValidationCampaignExecutionSchema,
   ValidationCampaignPreviewSchema,
   ValidationCampaignResponseSchema,
 } from './validation-campaign.js';
@@ -61,5 +63,38 @@ describe('validation campaign contracts', () => {
     expect(() =>
       ValidationCampaignPreviewSchema.parse({ ...preview, sourceRevision: 'main' }),
     ).toThrow();
+  });
+
+  it('rejects a route identity that is not in the allowed campaign snapshot', () => {
+    expect(() =>
+      ValidationCampaignPreviewSchema.parse({
+        ...preview,
+        routes: [
+          {
+            ...preview.routes[0]!,
+            selected: { ...preview.routes[0]!.selected, model: 'drifted-model' },
+          },
+        ],
+      }),
+    ).toThrow(/allowed campaign identity/);
+  });
+
+  it('persists the complete preview with independent active-time and repair accounting', () => {
+    const execution = createValidationCampaignExecution(
+      ValidationCampaignPreviewSchema.parse(preview),
+    );
+
+    expect(ValidationCampaignExecutionSchema.parse(execution)).toEqual({
+      preview,
+      activeElapsedMs: 0,
+      targetedRepairs: 0,
+    });
+    expect(
+      ValidationCampaignExecutionSchema.parse({
+        ...execution,
+        activeElapsedMs: 45 * 60 * 1_000,
+        targetedRepairs: 1,
+      }),
+    ).toMatchObject({ activeElapsedMs: 2_700_000, targetedRepairs: 1 });
   });
 });

@@ -21,6 +21,7 @@ import {
   type Conversation,
   type ExecutionRequest,
   type ExecutionResult,
+  type ExecutionUsage,
   type ExecutorHealth,
   type Message,
   type ModelDefinition,
@@ -34,6 +35,7 @@ import {
   type StepRun,
   type StoredArtifact,
   type VerificationReport,
+  type ValidationCampaignPreview,
   type WorkflowDefinition,
   type WorkflowRun,
 } from '@agent-foundry/contracts';
@@ -937,6 +939,11 @@ export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
     private readonly output?: (
       request: AgentExecutionRequest,
     ) => AgentExecutionResult['output'] | undefined,
+    private readonly usage?: ExecutionUsage,
+    private readonly healthOverride?: ExecutorHealth,
+    private readonly executedModel?: string,
+    private readonly reportExecutedModel = false,
+    private readonly cancelledWithUsage = false,
   ) {}
 
   async submit(request: ExecutionRequest, signal?: AbortSignal): Promise<ExecutionResult> {
@@ -960,6 +967,16 @@ export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
         agent: result,
       };
     } catch (error) {
+      if (this.cancelledWithUsage && signal?.aborted) {
+        const result: ExecutionResult = {
+          protocolVersion: EXECUTION_PROTOCOL_VERSION,
+          executionId: request.executionId,
+          state: 'cancelled',
+          agent: this.result({ ...request.agent, cwd: 'unused' }),
+        };
+        this.states.set(request.executionId, result.state);
+        return result;
+      }
       // emergency-ceiling.test.ts's 'hang-until-abort' scenario rejects with
       // an EmergencyCeilingError via the aborted signal's `reason` — toExecutionResult
       // rethrows that rather than mapping it, so it keeps propagating as a
@@ -986,12 +1003,14 @@ export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
   }
 
   health(): Promise<ExecutorHealth> {
-    return Promise.resolve({
-      provider: this.provider,
-      available: true,
-      version: 'test',
-      message: 'Controllable test executor is available.',
-    });
+    return Promise.resolve(
+      this.healthOverride ?? {
+        provider: this.provider,
+        available: true,
+        version: 'test',
+        message: 'Controllable test executor is available.',
+      },
+    );
   }
 
   private executeInternal(
@@ -1056,6 +1075,12 @@ export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
       durationMs: 1,
       stdout: '',
       stderr: '',
+      ...(this.executedModel
+        ? { executedModel: this.executedModel }
+        : this.reportExecutedModel
+          ? { executedModel: request.model }
+          : {}),
+      ...(this.usage ? { usage: this.usage } : {}),
       output: this.output?.(request) ?? {
         schemaVersion: '1',
         status: 'completed',
@@ -1170,13 +1195,31 @@ export function makeHarness(
     decisionLog?: RouterDecisionLogRepository;
     generatedProjectRuntime?: GeneratedProjectRuntime;
     previews?: WorkspacePreviewBooter;
+    validationCampaign?: ValidationCampaignPreview;
+    usage?: ExecutionUsage;
+    executorHealth?: ExecutorHealth;
+    executedModel?: string;
+    cancelledWithUsage?: boolean;
     versions?: ProjectVersionService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
   } = {},
 ) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
-  const executor = new ControllableExecutor(behaviors, stores.workspaces, opts.agentOutput);
+  const executor = new ControllableExecutor(
+    behaviors,
+    stores.workspaces,
+    opts.agentOutput,
+    opts.usage,
+    opts.executorHealth,
+    opts.executedModel,
+    Boolean(opts.validationCampaign),
+    opts.cancelledWithUsage,
+  );
+  const configuredExecutorHealth = opts.executorHealth;
+  const executorRegistry = configuredExecutorHealth
+    ? { health: async (): Promise<ExecutorHealth[]> => [configuredExecutorHealth] }
+    : undefined;
   const policies = new InMemoryPolicies(opts.policy ?? DEFAULT_POLICY);
   const models = opts.models ?? MODELS;
   // Fallback recovery needs the mutating step to offer a second candidate.
@@ -1350,11 +1393,12 @@ export function makeHarness(
     opts.versions,
     opts.browserVerification,
     opts.qualityObservationService,
-    undefined,
+    executorRegistry,
     undefined,
     opts.decisionLog,
     opts.generatedProjectRuntime,
     opts.previews,
+    opts.validationCampaign,
   );
   const service = new ProjectService(
     stores.projects,
@@ -1376,6 +1420,7 @@ export function makeHarness(
     ids,
     stores.modelOverrides,
     undefined,
+    opts.validationCampaign,
   );
   return {
     ...stores,

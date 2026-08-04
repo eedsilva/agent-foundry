@@ -28,8 +28,12 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
   WorkflowRun,
+  ValidationCampaignPreview,
 } from '@agent-foundry/contracts';
-import { FeedbackArtifactSchema } from '@agent-foundry/contracts';
+import {
+  createValidationCampaignExecution,
+  FeedbackArtifactSchema,
+} from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
   ApprovalRequestRepository,
@@ -92,6 +96,7 @@ export class ProjectService {
     private readonly ids: IdGenerator,
     private readonly modelOverrides?: ModelOverrideRepository,
     private readonly qualityObservations?: QualityObservationService,
+    private readonly validationCampaign?: ValidationCampaignPreview,
   ) {}
 
   async createModelOverride(
@@ -150,6 +155,15 @@ export class ProjectService {
       version: 1,
       createdAt: now,
       updatedAt: now,
+      ...(this.validationCampaign
+        ? {
+            execution: {
+              activeElapsedMs: 0,
+              consecutiveRepairs: 0,
+              campaign: createValidationCampaignExecution(this.validationCampaign),
+            },
+          }
+        : {}),
     };
 
     await this.workspaces.ensure(project.id);
@@ -304,6 +318,8 @@ export class ProjectService {
     if (project.status === 'running') return project;
     if (input?.prompt) await this.workspaces.writePrd(projectId, input.prompt);
     const now = this.clock.now().toISOString();
+    const previousRun = project.currentRunId ? await this.runs.get(project.currentRunId) : null;
+    const campaignPreview = previousRun?.execution?.campaign?.preview ?? this.validationCampaign;
     const runId = this.ids.next();
     const run: WorkflowRun = {
       id: runId,
@@ -313,6 +329,15 @@ export class ProjectService {
       version: 1,
       createdAt: now,
       updatedAt: now,
+      ...(campaignPreview
+        ? {
+            execution: {
+              activeElapsedMs: 0,
+              consecutiveRepairs: 0,
+              campaign: createValidationCampaignExecution(campaignPreview),
+            },
+          }
+        : {}),
     };
     await this.runs.create(run);
     // Created before the job is enqueued so the override is already visible
@@ -1158,10 +1183,18 @@ function isAgentStep(workflow: WorkflowDefinition, nodeId: string, stepId: strin
   );
 }
 
-function redactOverrideAudit(input: { actor: ActorRef; reason: string; estimatedImpact: string }): {
+function redactOverrideAudit(input: {
   actor: ActorRef;
   reason: string;
   estimatedImpact: string;
+  failedStep?: string | undefined;
+  minimalReproducer?: string | undefined;
+}): {
+  actor: ActorRef;
+  reason: string;
+  estimatedImpact: string;
+  failedStep?: string | undefined;
+  minimalReproducer?: string | undefined;
 } {
   return {
     actor: {
@@ -1173,5 +1206,11 @@ function redactOverrideAudit(input: { actor: ActorRef; reason: string; estimated
     },
     reason: redactString(input.reason).trim() || '[REDACTED]',
     estimatedImpact: redactString(input.estimatedImpact).trim() || '[REDACTED]',
+    ...(input.failedStep
+      ? { failedStep: redactString(input.failedStep).trim() || '[REDACTED]' }
+      : {}),
+    ...(input.minimalReproducer
+      ? { minimalReproducer: redactString(input.minimalReproducer).trim() || '[REDACTED]' }
+      : {}),
   };
 }

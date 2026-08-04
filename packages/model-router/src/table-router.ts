@@ -91,6 +91,27 @@ export class TableModelRouter implements ModelRouter {
     const eligible: ModelDefinition[] = [];
     for (const model of this.models) {
       if (explicit && model.id !== explicit.modelId) continue;
+      if (
+        !explicit &&
+        constraints?.allowedModelIds &&
+        !constraints.allowedModelIds.includes(model.id)
+      ) {
+        rejected.push({
+          modelId: model.id,
+          reason: `model ${model.id} is outside the selected validation campaign`,
+        });
+        continue;
+      }
+      if (!explicit && constraints?.allowedModels) {
+        const allowed = constraints.allowedModels.find((candidate) => candidate.id === model.id);
+        if (!allowed || allowed.provider !== model.provider || allowed.model !== model.model) {
+          rejected.push({
+            modelId: model.id,
+            reason: `model ${model.id} does not match the selected validation campaign identity`,
+          });
+          continue;
+        }
+      }
       if (routing && !eligibleExecutors.includes(model.provider)) {
         rejected.push({
           modelId: model.id,

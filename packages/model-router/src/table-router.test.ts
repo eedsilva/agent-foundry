@@ -190,6 +190,39 @@ describe('TableModelRouter', () => {
     );
   });
 
+  it('keeps automatic routing inside the campaign model snapshot', async () => {
+    const decision = await router().route(profile, undefined, {
+      routing: { source: 'validation-campaign:real-todo-v1', executors: ['claude', 'codex'] },
+      allowedModelIds: ['codex-default'],
+    });
+
+    expect(decision.selected.model.id).toBe('codex-default');
+    expect(decision.fallbacks).toEqual([]);
+    expect(decision.rejected).toEqual(
+      expect.arrayContaining([
+        { modelId: 'claude-opus', reason: expect.stringContaining('outside') },
+        { modelId: 'claude-sonnet', reason: expect.stringContaining('outside') },
+      ]),
+    );
+  });
+
+  it('rejects a catalog identity that drifted under a campaign model id', async () => {
+    const decision = await router().route(profile, undefined, {
+      routing: { source: 'validation-campaign:real-todo-v1', executors: ['claude', 'codex'] },
+      allowedModels: [
+        { id: 'codex-default', provider: 'codex', model: 'different-model' },
+        { id: 'claude-sonnet', provider: 'claude', model: 'claude-sonnet' },
+      ],
+    });
+
+    expect(decision.selected.model.id).toBe('claude-sonnet');
+    expect(decision.rejected).toEqual(
+      expect.arrayContaining([
+        { modelId: 'codex-default', reason: expect.stringContaining('does not match') },
+      ]),
+    );
+  });
+
   it('orders fallbacks by the table and takes one model per executor', async () => {
     const decision = await router().route(profile, undefined, {
       routing: { source: 'web-app-v1', executors: ['agy', 'claude', 'codex'] },

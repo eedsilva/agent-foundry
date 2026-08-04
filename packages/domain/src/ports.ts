@@ -311,6 +311,14 @@ export interface RouteConstraints {
   routing?: { source: string; executors: readonly Exclude<Provider, 'mock'>[] };
   /** Skip executors already consumed by earlier attempts of the same task. */
   routingStartIndex?: number;
+  /** Restrict automatic routing to the snapshot of an explicitly selected campaign. */
+  allowedModelIds?: readonly string[];
+  /** Restrict automatic routing to the snapshot's complete model identities. */
+  allowedModels?: readonly {
+    id: string;
+    provider: Exclude<Provider, 'mock'>;
+    model: string;
+  }[];
 }
 
 export interface ModelRouter {

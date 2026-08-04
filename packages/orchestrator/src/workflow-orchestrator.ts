@@ -11,6 +11,7 @@ import type {
   ExecutableStep,
   ExecutorStreamEvent,
   ForEachTaskStep,
+  ExecutorHealth,
   PlanTask,
   TaskBrowserAssertion,
   PreviewSession,
@@ -33,6 +34,8 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
   WorkflowRun,
+  ValidationCampaignExecution,
+  ValidationCampaignPreview,
 } from '@agent-foundry/contracts';
 import {
   AGENT_ARTIFACT_JSON_SCHEMA,
@@ -51,6 +54,7 @@ import {
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   GeneratedTaskGraphArtifactSchema,
   TaskGraphArtifactSchema,
+  createValidationCampaignExecution,
   VerificationReportSchema,
 } from '@agent-foundry/contracts';
 import type {
@@ -92,6 +96,7 @@ import {
   NotFoundError,
   PolicyViolationError,
   ProviderAuthenticationError,
+  ValidationCampaignLimitError,
   QualityGateError,
   RunCancelledError,
   RunPausedError,
@@ -115,6 +120,12 @@ import {
   withSpan,
   calculateUsageCostUsd,
 } from '@agent-foundry/domain';
+import {
+  campaignLimitMs,
+  estimateValidationDispatchCostUsd,
+  summarizeValidationUsage,
+  validationStepKey,
+} from './validation-budget.js';
 import type { PreviewService } from './preview-service.js';
 import type { ProjectVersionService } from './project-version-service.js';
 import { buildTaskProfile } from './task-profiler.js';
@@ -153,6 +164,15 @@ class ApprovalTimeoutScheduleError extends Error {
   ) {
     super(`Failed to schedule approval timeout: ${errorMessage(cause)}`);
     this.name = 'ApprovalTimeoutScheduleError';
+  }
+}
+
+class CancelledExecutionWithUsage extends RunCancelledError {
+  constructor(
+    runId: string,
+    readonly usage: NonNullable<AgentExecutionResult['usage']>,
+  ) {
+    super(runId);
   }
 }
 
@@ -336,6 +356,7 @@ export class WorkflowOrchestrator {
     private readonly decisionLog?: RouterDecisionLogRepository,
     private readonly generatedProjectRuntime?: GeneratedProjectRuntime,
     private readonly previews?: WorkspacePreviewBooter,
+    private readonly validationCampaign?: ValidationCampaignPreview,
   ) {}
 
   /**
@@ -555,7 +576,10 @@ export class WorkflowOrchestrator {
         throw error;
       }
       const latest = await this.stopActiveExecution(run.id);
-      throwIfCancelled(signal, run.id);
+      const campaignLimitReached =
+        error instanceof ValidationCampaignLimitError ||
+        signal.reason instanceof ValidationCampaignLimitError;
+      if (!campaignLimitReached) throwIfCancelled(signal, run.id);
       if (latest.status === 'running' || latest.status === 'pause_requested') {
         run = await this.runs.update(
           transitionWorkflowRun(latest, 'failed', this.clock.now(), { error: runError(error) }),
@@ -600,20 +624,45 @@ export class WorkflowOrchestrator {
   private async startActiveExecution(runId: string): Promise<WorkflowRun> {
     return this.updateExecution(runId, (run, now) => {
       const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
-      return execution.activeSince || execution.ceiling
-        ? execution
-        : { ...execution, activeSince: now.toISOString() };
+      if (execution.ceiling) return execution;
+      const activeSince = execution.activeSince ?? now.toISOString();
+      const campaign = execution.campaign;
+      const campaignSince = campaign?.activeSince ?? now.toISOString();
+      if (execution.activeSince === activeSince && campaign?.activeSince === campaignSince) {
+        return execution;
+      }
+      return {
+        ...execution,
+        activeSince,
+        ...(campaign ? { campaign: { ...campaign, activeSince: campaignSince } } : {}),
+      };
     });
   }
 
   private async stopActiveExecution(runId: string): Promise<WorkflowRun> {
     return this.updateExecution(runId, (run, now) => {
       const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
-      if (!execution.activeSince) return execution;
-      const activeElapsedMs =
-        execution.activeElapsedMs + Math.max(0, now.getTime() - Date.parse(execution.activeSince));
+      const activeElapsedMs = execution.activeSince
+        ? execution.activeElapsedMs + Math.max(0, now.getTime() - Date.parse(execution.activeSince))
+        : execution.activeElapsedMs;
+      const campaign = execution.campaign;
+      const campaignElapsedMs = campaign?.activeSince
+        ? campaign.activeElapsedMs + Math.max(0, now.getTime() - Date.parse(campaign.activeSince))
+        : campaign?.activeElapsedMs;
+      if (!execution.activeSince && campaign?.activeSince === undefined) return execution;
       const { activeSince: _activeSince, ...inactive } = execution;
-      return { ...inactive, activeElapsedMs };
+      const nextCampaign = campaign
+        ? {
+            preview: campaign.preview,
+            activeElapsedMs: campaignElapsedMs ?? campaign.activeElapsedMs,
+            targetedRepairs: campaign.targetedRepairs,
+          }
+        : undefined;
+      return {
+        ...inactive,
+        activeElapsedMs,
+        ...(nextCampaign ? { campaign: nextCampaign } : {}),
+      };
     });
   }
 
@@ -659,6 +708,64 @@ export class WorkflowOrchestrator {
         ? Math.max(0, this.clock.now().getTime() - Date.parse(execution.activeSince))
         : 0);
     if (activeElapsedMs >= 14_400_000) await this.reachCeiling(runId, 'active-time', signal);
+    this.assertCampaignMayContinue(run, signal);
+  }
+
+  private assertCampaignMayContinue(run: WorkflowRun, signal?: AbortSignal): void {
+    const campaign = run.execution?.campaign;
+    if (!campaign) return;
+    if (signal) throwIfCancelled(signal, run.id);
+    if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+      throw new RunCancelledError(run.id);
+    }
+    const activeElapsedMs =
+      campaign.activeElapsedMs +
+      (campaign.activeSince
+        ? Math.max(0, this.clock.now().getTime() - Date.parse(campaign.activeSince))
+        : 0);
+    if (activeElapsedMs >= campaignLimitMs(campaign)) {
+      throw new ValidationCampaignLimitError(run.id, 'active-time');
+    }
+  }
+
+  private async assertCampaignUsageMayContinue(
+    runId: string,
+    currentAttempt?: StepAttempt,
+  ): Promise<void> {
+    const run = await this.requireRun(runId);
+    const campaign = run.execution?.campaign;
+    if (!campaign) return;
+    const usage = summarizeValidationUsage(
+      await this.listRunAttempts(runId),
+      await this.router.catalog(),
+    );
+    if (usage.meteredCostUsd > campaign.preview.limits.meteredCostUsd) {
+      throw new ValidationCampaignLimitError(runId, 'metered-cost');
+    }
+    const providerHealth = this.executors
+      ? new Map((await this.executors.health()).map((health) => [health.provider, health]))
+      : undefined;
+    const exceededSubscriptionQuota = Object.entries(usage.subscriptionQuotaUnitsByProvider).some(
+      ([provider, quotaUnits]) => {
+        const limit = [...(providerHealth?.values() ?? [])].find(
+          (health) => health.provider === provider,
+        )?.rateLimit?.limit;
+        return limit !== undefined && quotaUnits > limit;
+      },
+    );
+    if (exceededSubscriptionQuota) {
+      throw new ValidationCampaignLimitError(runId, 'subscription-quota');
+    }
+    const currentAttemptProvider = currentAttempt?.provider;
+    const currentAttemptQuota = currentAttempt?.usage?.quotaUnits;
+    if (currentAttemptProvider !== undefined && currentAttemptQuota !== undefined) {
+      const remaining = [...(providerHealth?.values() ?? [])].find(
+        (health) => health.provider === currentAttemptProvider,
+      )?.rateLimit?.remaining;
+      if (remaining !== undefined && currentAttemptQuota > remaining) {
+        throw new ValidationCampaignLimitError(runId, 'subscription-quota');
+      }
+    }
   }
 
   private async classifyFailure(
@@ -671,8 +778,16 @@ export class WorkflowOrchestrator {
       return error;
     } catch (boundaryError) {
       if (
+        error instanceof CancelledExecutionWithUsage &&
+        (boundaryError instanceof RunCancelledError ||
+          boundaryError instanceof ValidationCampaignLimitError)
+      ) {
+        return error;
+      }
+      if (
         boundaryError instanceof EmergencyCeilingError ||
-        boundaryError instanceof RunCancelledError
+        boundaryError instanceof RunCancelledError ||
+        boundaryError instanceof ValidationCampaignLimitError
       ) {
         return boundaryError;
       }
@@ -770,6 +885,90 @@ export class WorkflowOrchestrator {
     }
   }
 
+  private async listRunAttempts(runId: string): Promise<StepAttempt[]> {
+    const steps = await this.stepRuns.list(runId);
+    return (await Promise.all(steps.map((step) => this.stepAttempts.list(runId, step.id)))).flat();
+  }
+
+  private async reserveCampaignDispatch(input: {
+    runId: string;
+    nodeId: string;
+    step: AgentStep;
+    iteration?: number;
+    candidate: RankedModel;
+    profile: TaskProfile;
+    providerHealth?: ReadonlyMap<string, ExecutorHealth>;
+    sequence: number;
+    targetedRetry: boolean;
+    signal: AbortSignal;
+  }): Promise<void> {
+    const {
+      runId,
+      nodeId,
+      step,
+      iteration,
+      candidate,
+      profile,
+      providerHealth,
+      sequence,
+      targetedRetry,
+      signal,
+    } = input;
+    const run = await this.requireRun(runId);
+    this.assertCampaignMayContinue(run, signal);
+    const campaign = run.execution?.campaign;
+    if (!campaign) return;
+
+    const attempts = await this.listRunAttempts(runId);
+    const catalog = await this.router.catalog();
+    const usage = summarizeValidationUsage(attempts, catalog);
+    const key = validationStepKey(nodeId, step.id, iteration);
+    const attemptsForStep = usage.attemptsByStep[key] ?? 0;
+    const attemptLimit = campaign.preview.limits.attemptsPerAgentStep + (targetedRetry ? 1 : 0);
+    if (attemptsForStep >= attemptLimit) {
+      throw new ValidationCampaignLimitError(runId, 'attempts');
+    }
+
+    const isFirstRepairAttempt = step.taskKind === 'repair' && sequence === 1;
+    const isTargetedRepair = targetedRetry || isFirstRepairAttempt;
+    if (isTargetedRepair && campaign.targetedRepairs >= campaign.preview.limits.targetedRepairs) {
+      throw new ValidationCampaignLimitError(runId, 'targeted-repairs');
+    }
+
+    const nextCost = estimateValidationDispatchCostUsd(profile, candidate.model);
+    if (usage.meteredCostUsd >= campaign.preview.limits.meteredCostUsd) {
+      throw new ValidationCampaignLimitError(runId, 'metered-cost');
+    }
+    if (
+      candidate.model.billingMode === 'metered' &&
+      nextCost !== undefined &&
+      usage.meteredCostUsd + nextCost > campaign.preview.limits.meteredCostUsd
+    ) {
+      throw new ValidationCampaignLimitError(runId, 'metered-cost');
+    }
+
+    if (candidate.model.billingMode === 'subscription') {
+      const rateLimit = providerHealth?.get(candidate.model.provider)?.rateLimit;
+      const usedQuota = usage.subscriptionQuotaUnitsByProvider[candidate.model.provider] ?? 0;
+      if (
+        (rateLimit?.remaining !== undefined && rateLimit.remaining <= 0) ||
+        (rateLimit?.limit !== undefined && usedQuota >= rateLimit.limit)
+      ) {
+        throw new ValidationCampaignLimitError(runId, 'subscription-quota');
+      }
+    }
+
+    if (!isTargetedRepair) return;
+    await this.updateExecution(runId, (latest) => {
+      const latestCampaign = latest.execution?.campaign;
+      if (!latestCampaign) return latest.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      return {
+        ...(latest.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
+        campaign: { ...latestCampaign, targetedRepairs: latestCampaign.targetedRepairs + 1 },
+      };
+    });
+  }
+
   private watchForCancellation(runId: string, controller: AbortController): () => void {
     let stopped = false;
     let timer: NodeJS.Timeout;
@@ -783,7 +982,10 @@ export class WorkflowOrchestrator {
         }
         await this.assertExecutionMayContinue(runId);
       } catch (error) {
-        if (error instanceof EmergencyCeilingError) {
+        if (
+          error instanceof EmergencyCeilingError ||
+          error instanceof ValidationCampaignLimitError
+        ) {
           controller.abort(error);
           return;
         }
@@ -2221,6 +2423,7 @@ export class WorkflowOrchestrator {
                 : {}),
               ...(iteration ? { iteration } : {}),
               ...(routingStartIndex !== undefined ? { routingStartIndex } : {}),
+              targetedRetry: isRetryTarget && directive?.mode === 'preserve',
             })
           : await this.executeVerifyStep(
               project,
@@ -2827,6 +3030,7 @@ export class WorkflowOrchestrator {
       overrideCreatedAt?: string;
       iteration?: number;
       routingStartIndex?: number;
+      targetedRetry?: boolean;
     },
   ): Promise<StoredArtifact> {
     const {
@@ -2836,6 +3040,7 @@ export class WorkflowOrchestrator {
       overrideCreatedAt,
       iteration: loopIteration,
       routingStartIndex,
+      targetedRetry = false,
     } = options;
     const harness = await this.harness.select({
       role: step.role,
@@ -2850,24 +3055,74 @@ export class WorkflowOrchestrator {
         : workflowUsesBrowserPlan(workflow, step.outputArtifact)
           ? BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA
           : AGENT_ARTIFACT_JSON_SCHEMA;
+    const run = await this.requireRun(runId);
+    const campaign = run.execution?.campaign;
     const explicit = await this.resolveModelPin(
       runId,
       stepRun.nodeId,
       step.id,
       override,
       overrideCreatedAt,
+      campaign,
     );
     const providerHealth = this.executors
       ? new Map((await this.executors.health()).map((health) => [health.provider, health]))
       : undefined;
     // Only this layer knows which workflow is running, so it resolves the table
     // entry and the router just consumes it (#326).
-    const routing = resolveRoutingEntry(workflow.routing, workflow.id, step.taskKind);
+    const workflowRouting = resolveRoutingEntry(workflow.routing, workflow.id, step.taskKind);
+    const campaignRoute = campaign?.preview.routes.find(
+      (candidate) => candidate.taskKind === step.taskKind,
+    );
+    const campaignId = campaign?.preview.id;
+    if (campaign && !campaignRoute) {
+      throw new ExecutionError(
+        `Validation campaign ${campaign.preview.id} has no route for task kind ${step.taskKind}`,
+      );
+    }
+    const routing =
+      campaignRoute && campaignId
+        ? {
+            source: `validation-campaign:${campaignId}`,
+            executors: [
+              campaignRoute.selected.provider,
+              ...campaignRoute.fallbacks.map((candidate) => candidate.provider),
+            ] as const,
+          }
+        : workflowRouting;
+    const allowedModelIds = campaignRoute
+      ? [campaignRoute.selected.id, ...campaignRoute.fallbacks.map((candidate) => candidate.id)]
+      : undefined;
+    const allowedModels = campaignRoute
+      ? [campaignRoute.selected, ...campaignRoute.fallbacks]
+      : undefined;
+    const campaignPromotion = Boolean(
+      campaign &&
+      explicit &&
+      !campaign.preview.allowedModels.some((model) => model.id === explicit.modelId),
+    );
     const route = await this.router.route(profile, explicit, {
       ...(providerHealth ? { providerHealth } : {}),
       ...(routing ? { routing } : {}),
+      ...(allowedModelIds && !explicit ? { allowedModelIds } : {}),
+      ...(allowedModels && !explicit ? { allowedModels } : {}),
       ...(routingStartIndex !== undefined ? { routingStartIndex } : {}),
     });
+    if (campaignRoute && !explicit) {
+      const campaignModels = [campaignRoute.selected, ...campaignRoute.fallbacks];
+      for (const candidate of [route.selected, ...route.fallbacks]) {
+        const expected = campaignModels.find((model) => model.id === candidate.model.id);
+        if (
+          !expected ||
+          expected.provider !== candidate.model.provider ||
+          expected.model !== candidate.model.model
+        ) {
+          throw new ExecutionError(
+            `Validation campaign ${campaignId} resolved an unapproved identity for model ${candidate.model.id}`,
+          );
+        }
+      }
+    }
     await this.emit(
       project.id,
       'agent.routed',
@@ -2951,6 +3206,18 @@ export class WorkflowOrchestrator {
         inputArtifacts: inputArtifacts.map(artifactReference),
         outputArtifacts: [],
       };
+      await this.reserveCampaignDispatch({
+        runId,
+        nodeId: stepRun.nodeId,
+        step,
+        ...(loopIteration !== undefined ? { iteration: loopIteration } : {}),
+        candidate,
+        profile,
+        ...(providerHealth ? { providerHealth } : {}),
+        sequence: index + 1,
+        targetedRetry: targetedRetry || campaignPromotion,
+        signal,
+      });
       await this.stepAttempts.create(attempt);
 
       // A fallback candidate (index > 0) is already known to be a retry when
@@ -2984,6 +3251,7 @@ export class WorkflowOrchestrator {
             index,
             attempt,
             route,
+            campaign,
             harness,
             outputSchema,
             inputArtifacts,
@@ -3015,6 +3283,7 @@ export class WorkflowOrchestrator {
     index: number,
     initialAttempt: StepAttempt,
     route: RouteDecision,
+    campaign: ValidationCampaignExecution | undefined,
     harness: HarnessSelection,
     outputSchema: Record<string, unknown>,
     inputArtifacts: StoredArtifact[],
@@ -3071,6 +3340,26 @@ export class WorkflowOrchestrator {
         outputSchema,
         workspaceRef,
       );
+      if (result.usage) {
+        // Persist provider usage while the attempt is still running. A crash
+        // after the provider responds but before artifact validation must not
+        // make a restart forget money or subscription units already spent.
+        attempt = await this.stepAttempts.update(
+          { ...attempt, usage: result.usage, updatedAt: this.clock.now().toISOString() },
+          attempt.version,
+        );
+      }
+      if (
+        campaign &&
+        (result.provider !== candidate.model.provider ||
+          result.executedModel === undefined ||
+          result.executedModel !== candidate.model.model)
+      ) {
+        throw new ExecutionError(
+          `Validation campaign executed identity ${result.provider}/${result.executedModel ?? '<unknown>'} does not match ${candidate.model.provider}/${candidate.model.model}`,
+        );
+      }
+      await this.assertCampaignUsageMayContinue(runId, attempt);
       await this.assertExecutionMayContinue(runId, signal);
       if (step.outputContract === 'task-graph') {
         const graph = GeneratedTaskGraphArtifactSchema.safeParse(result.output);
@@ -3162,6 +3451,26 @@ export class WorkflowOrchestrator {
     } catch (caught) {
       const error = await this.classifyFailure(runId, signal, caught);
       if (attempt.status !== 'running') throw error;
+      if (error instanceof CancelledExecutionWithUsage && !attempt.usage) {
+        attempt = await this.stepAttempts.update(
+          { ...attempt, usage: error.usage, updatedAt: this.clock.now().toISOString() },
+          attempt.version,
+        );
+      }
+      const campaignLimitCancellation =
+        error instanceof CancelledExecutionWithUsage &&
+        signal.reason instanceof ValidationCampaignLimitError;
+      if (campaignLimitCancellation) {
+        await this.stepAttempts.update(
+          transitionStepAttempt(attempt, 'failed', this.clock.now(), {
+            durationMs: Date.now() - attemptStartedAt,
+            error: runError(signal.reason),
+          }),
+          attempt.version,
+        );
+        if (checkpoint) await this.workspaces.rollback(project.id, checkpoint);
+        throw signal.reason;
+      }
       if (isCancellation(error, signal)) {
         await this.stepAttempts.update(
           transitionStepAttempt(attempt, 'cancelled', this.clock.now(), {
@@ -3210,6 +3519,7 @@ export class WorkflowOrchestrator {
       span.setAttribute('foundry.force_sample', true);
       if (failureRecordError) throw failureRecordError;
       if (error instanceof EmergencyCeilingError) throw error;
+      if (error instanceof ValidationCampaignLimitError) throw error;
       // An unauthenticated CLI never reached the model, so it says nothing about
       // the model's quality. Recording it would feed recentFailurePenalty in the
       // score router and consecutiveFailures in the circuit breaker, letting an
@@ -3245,6 +3555,7 @@ export class WorkflowOrchestrator {
     stepId: string,
     retry?: RunRetryDirective['override'],
     retryCreatedAt?: string,
+    campaign?: ValidationCampaignExecution,
   ): Promise<ExplicitModelRoute | undefined> {
     if (retry) {
       let modelId = retry.modelId;
@@ -3262,6 +3573,14 @@ export class WorkflowOrchestrator {
         }
         modelId = matches[0]!.id;
       }
+      await this.assertCampaignPromotionAudit(
+        campaign,
+        runId,
+        { modelId, provider: retry.provider, model: retry.model },
+        nodeId,
+        stepId,
+        retry,
+      );
       return {
         modelId,
         provider: retry.provider,
@@ -3274,6 +3593,8 @@ export class WorkflowOrchestrator {
           actor: retry.actor ?? { kind: 'system', id: 'legacy-retry' },
           reason: retry.reason ?? 'Legacy retry override without a recorded reason',
           estimatedImpact: retry.estimatedImpact ?? 'Not recorded in legacy retry directive',
+          ...(retry.failedStep ? { failedStep: retry.failedStep } : {}),
+          ...(retry.minimalReproducer ? { minimalReproducer: retry.minimalReproducer } : {}),
           createdAt: retryCreatedAt ?? this.clock.now().toISOString(),
         },
       };
@@ -3289,6 +3610,14 @@ export class WorkflowOrchestrator {
           isTaskStepId(stepId, item.scope.stepId),
       ) ?? overrides.find((item) => item.scope.kind === 'run');
     if (!match) return undefined;
+    await this.assertCampaignPromotionAudit(
+      campaign,
+      runId,
+      { modelId: match.modelId, provider: match.provider, model: match.model },
+      nodeId,
+      stepId,
+      match,
+    );
     return {
       modelId: match.modelId,
       provider: match.provider,
@@ -3302,9 +3631,57 @@ export class WorkflowOrchestrator {
         actor: match.actor,
         reason: match.reason,
         estimatedImpact: match.estimatedImpact,
+        ...(match.failedStep ? { failedStep: match.failedStep } : {}),
+        ...(match.minimalReproducer ? { minimalReproducer: match.minimalReproducer } : {}),
         createdAt: match.createdAt,
       },
     };
+  }
+
+  private async assertCampaignPromotionAudit(
+    campaign: ValidationCampaignExecution | undefined,
+    runId: string,
+    identity: { modelId: string; provider: string; model: string },
+    nodeId: string,
+    stepId: string,
+    audit: {
+      actor?: { kind: string; id: string } | undefined;
+      reason?: string | undefined;
+      estimatedImpact?: string | undefined;
+      failedStep?: string | undefined;
+      minimalReproducer?: string | undefined;
+    },
+  ): Promise<void> {
+    if (!campaign) return;
+    const allowed = campaign.preview.allowedModels.find((model) => model.id === identity.modelId);
+    if (allowed) {
+      if (allowed.provider !== identity.provider || allowed.model !== identity.model) {
+        throw new ExecutionError(
+          `Validation campaign model ${identity.modelId} no longer matches its snapshotted identity`,
+        );
+      }
+      return;
+    }
+    const failedAttempt = (await this.listRunAttempts(runId)).some(
+      (attempt) =>
+        attempt.status === 'failed' &&
+        attempt.context.nodeId === nodeId &&
+        attempt.context.stepId === stepId,
+    );
+    const expectedStep = `${nodeId}/${stepId}`;
+    if (
+      !failedAttempt ||
+      !audit.actor ||
+      audit.actor.kind !== 'user' ||
+      !audit.reason ||
+      !audit.estimatedImpact ||
+      audit.failedStep !== expectedStep ||
+      !audit.minimalReproducer
+    ) {
+      throw new ExecutionError(
+        `Premium validation model ${identity.modelId} requires an audited override after a recorded failed attempt for ${expectedStep}: failed step, minimal reproducer, reason, actor, and expected impact are required`,
+      );
+    }
   }
 
   private async executeCandidate(
@@ -3366,9 +3743,13 @@ export class WorkflowOrchestrator {
           event,
         ),
     );
-    // A result that arrives after cancellation was requested must never be promoted.
-    throwIfCancelled(signal, runId);
-    if (executionResult.state === 'cancelled') throw new RunCancelledError(runId);
+    // Let the caller persist provider usage before cancellation prevents result promotion.
+    if (executionResult.state === 'cancelled') {
+      if (executionResult.agent?.usage) {
+        throw new CancelledExecutionWithUsage(runId, executionResult.agent.usage);
+      }
+      throw new RunCancelledError(runId);
+    }
     if (executionResult.state === 'failed' || !executionResult.agent) {
       const detail = executionResult.error;
       const ErrorType = detail?.kind === 'auth' ? ProviderAuthenticationError : ExecutionError;
@@ -3682,6 +4063,15 @@ export class WorkflowOrchestrator {
       version: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
+      ...(this.validationCampaign
+        ? {
+            execution: {
+              activeElapsedMs: 0,
+              consecutiveRepairs: 0,
+              campaign: createValidationCampaignExecution(this.validationCampaign),
+            },
+          }
+        : {}),
     };
     await this.runs.create(run);
     const updated: Project = {
@@ -4008,6 +4398,7 @@ function throwIfCancelled(signal: AbortSignal, runId: string): void {
   if (!signal.aborted) return;
   if (signal.reason instanceof EmergencyCeilingError) throw signal.reason;
   if (signal.reason instanceof LeaseLostError) throw signal.reason;
+  if (signal.reason instanceof ValidationCampaignLimitError) throw signal.reason;
   throw new RunCancelledError(runId);
 }
 
@@ -4016,7 +4407,8 @@ function isCancellation(error: unknown, signal: AbortSignal): boolean {
     error instanceof RunCancelledError ||
     (signal.aborted &&
       !(signal.reason instanceof EmergencyCeilingError) &&
-      !(signal.reason instanceof LeaseLostError))
+      !(signal.reason instanceof LeaseLostError) &&
+      !(signal.reason instanceof ValidationCampaignLimitError))
   );
 }
 

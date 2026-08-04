@@ -361,6 +361,35 @@ describe('model override API contracts (#16)', () => {
       }),
     ).toThrow();
   });
+
+  it('requires failed-step audit fields to identify a node and step', () => {
+    const base = {
+      provider: 'codex' as const,
+      model: 'gpt-5',
+      scope: { kind: 'run' as const },
+      ...audit,
+    };
+    const retryBase = { provider: 'codex' as const, model: 'gpt-5', ...audit };
+
+    expect(
+      CreateModelOverrideRequestSchema.parse({
+        ...base,
+        modelId: 'codex-gpt-5',
+        failedStep: 'node/step',
+      }).failedStep,
+    ).toBe('node/step');
+    for (const failedStep of ['node', 'node/step/extra', 'node /step', '']) {
+      expect(() =>
+        CreateModelOverrideRequestSchema.parse({ ...base, modelId: 'codex-gpt-5', failedStep }),
+      ).toThrow();
+      expect(() =>
+        RetryStepRequestSchema.parse({
+          mode: 'preserve',
+          override: { ...retryBase, modelId: 'codex-gpt-5', failedStep },
+        }),
+      ).toThrow();
+    }
+  });
 });
 
 describe('DecideApprovalRequestSchema (#14)', () => {
