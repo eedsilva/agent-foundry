@@ -33,10 +33,11 @@ npm run dev
 ```
 
 A execução explicitamente selecionada registra no run a revisão Git, as únicas identidades
-permitidas (modelo local configurado, Claude Haiku e Codex GPT-5.6 Luna), as rotas planejadas por
-tipo de tarefa, uma tentativa por etapa, um reparo, 45 minutos ativos e US$ 2 de custo medido.
-Verificação usará o modelo local e só poderá cair para Haiku; planejamento usará Haiku; mutação do
-workspace e reparo usarão Luna. Nenhum modelo deep ou premium aparece na rota automática.
+permitidas (Claude Haiku e Codex GPT-5.6 Luna — a campanha é cloud-only; o executor local foi
+adiado para a issue #415), as rotas planejadas por tipo de tarefa, uma tentativa por etapa, um
+reparo, 45 minutos ativos e US$ 2 de custo medido. Planejamento e verificação usarão Haiku;
+mutação do workspace e reparo usarão Luna. Nenhum modelo deep ou premium aparece na rota
+automática.
 
 Antes de qualquer chamada de modelo, abra [`/validation`](http://localhost:3000/validation) ou
 consulte `GET /validation/campaign` e confirme a configuração. O worker aplica os limites no run
@@ -69,7 +70,8 @@ rejeitada antes do primeiro implementador.
 
 Antes de criar o projeto TODO, execute `POST /validation/campaign/preflight`. O preflight registra a
 revisão, o diretório externo de dados e a identidade do ambiente descartável; verifica Docker,
-Supabase, scaffold, build, saúde do app e gateway; depois executa os três canaries limitados. O
+Supabase, scaffold, build, saúde do app e gateway; depois executa os dois canaries cloud
+limitados (Haiku e Luna). O
 primeiro limite que falhar encerra a campanha e retorna `environment-blocked` ou `model-failed`;
 `generatedProjectCreated` permanece `false`. O relatório normalizado é salvo em
 `DATA_DIR/validation-campaign/preflight-<sourceRevision>.json` sem segredos, sem prompts e sem
