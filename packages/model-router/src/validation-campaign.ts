@@ -8,6 +8,11 @@ import {
 export const REAL_TODO_VALIDATION_CAMPAIGN_ID = 'real-todo-v1' as const;
 
 const CLAUDE_HAIKU_MODEL_ID = 'claude-haiku';
+// Dated identity, not the 'haiku' alias: the Claude CLI resolves aliases to
+// their dated ID, and the campaign compares executed identity exactly — an
+// alias here can never match what actually ran (#420). Boot with
+// CLAUDE_FAST_MODEL=claude-haiku-4-5-20251001 (see OPERATIONS.md).
+const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001';
 const CODEX_LUNA_MODEL_ID = 'codex-default';
 const CODEX_LUNA_MODEL = 'gpt-5.6-luna';
 
@@ -15,7 +20,7 @@ export function buildValidationCampaignPreview(
   models: readonly ModelDefinition[],
   sourceRevision: string,
 ): ValidationCampaignPreview {
-  const haiku = requireModel(models, CLAUDE_HAIKU_MODEL_ID, 'claude', 'haiku');
+  const haiku = requireModel(models, CLAUDE_HAIKU_MODEL_ID, 'claude', CLAUDE_HAIKU_MODEL);
   const luna = requireModel(models, CODEX_LUNA_MODEL_ID, 'codex', CODEX_LUNA_MODEL);
 
   return ValidationCampaignPreviewSchema.parse({

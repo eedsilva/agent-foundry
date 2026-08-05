@@ -33,7 +33,12 @@ function model(overrides: Partial<ModelDefinition> = {}): ModelDefinition {
 function catalog(): ModelDefinition[] {
   return [
     model(),
-    model({ id: 'claude-haiku', provider: 'claude', model: 'haiku', tags: ['fast'] }),
+    model({
+      id: 'claude-haiku',
+      provider: 'claude',
+      model: 'claude-haiku-4-5-20251001',
+      tags: ['fast'],
+    }),
     model({ id: 'codex-default', provider: 'codex', model: 'gpt-5.6-luna', tags: ['coding'] }),
     model({ id: 'claude-opus', provider: 'claude', model: 'opus', tags: ['reasoning'] }),
   ];
@@ -91,7 +96,7 @@ describe('buildValidationCampaignPreview', () => {
       'ambiguous',
       (models: ModelDefinition[]) => [
         ...models,
-        model({ id: 'claude-haiku', provider: 'claude', model: 'haiku' }),
+        model({ id: 'claude-haiku', provider: 'claude', model: 'claude-haiku-4-5-20251001' }),
       ],
     ],
     [

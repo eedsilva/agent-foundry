@@ -28,6 +28,7 @@ explicitamente ao iniciar API e worker:
 ```bash
 VALIDATION_CAMPAIGN=real-todo-v1 \
 CODEX_DEFAULT_MODEL=gpt-5.6-luna \
+CLAUDE_FAST_MODEL=claude-haiku-4-5-20251001 \
 EXECUTOR_MODE=real \
 npm run dev
 ```
