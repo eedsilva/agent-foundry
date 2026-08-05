@@ -76,6 +76,10 @@ primeiro limite que falhar encerra a campanha e retorna `environment-blocked` ou
 Configure `DATA_DIR` para um caminho fora do repositório (por exemplo,
 `DATA_DIR=/tmp/agent-foundry-validation`); o padrão `.data` é recusado pelo gate de isolamento.
 
+Em um worktree novo, execute `npm install && npm run build` antes do preflight. O boundary
+`scaffold` cria sandbox com política de rede e exige o sidecar compilado em
+`packages/executors/dist/docker-network-policy-sidecar.js`; sem o build, a campanha para ali.
+
 ### Bundle de evidências da campanha
 
 Ao terminar um run da campanha, o worker publica automaticamente um artifacto versionado
