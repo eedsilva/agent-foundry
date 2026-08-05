@@ -17,10 +17,7 @@ const preview = {
   id: 'real-todo-v1' as const,
   name: 'Real TODO validation campaign',
   sourceRevision: 'a'.repeat(40),
-  allowedModels: [
-    identity,
-    { ...identity, id: 'haiku', provider: 'claude', model: 'haiku' },
-  ],
+  allowedModels: [identity, { ...identity, id: 'haiku', provider: 'claude', model: 'haiku' }],
   routes: [
     {
       taskKind: 'planning' as const,
