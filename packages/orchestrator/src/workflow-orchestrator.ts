@@ -788,7 +788,8 @@ export class WorkflowOrchestrator {
           (health) => health.provider === provider,
         );
         const remaining = health?.rateLimit?.remaining;
-        if (remaining === undefined) return true;
+        // Unknown metadata is not exhaustion (#418); only known evidence stops the run.
+        if (remaining !== undefined && remaining <= 0) return true;
         return health?.rateLimit?.limit !== undefined && quotaUnits > health.rateLimit.limit;
       },
     );
@@ -1002,9 +1003,13 @@ export class WorkflowOrchestrator {
     if (candidate.model.billingMode === 'subscription') {
       const rateLimit = providerHealth?.get(candidate.model.provider)?.rateLimit;
       const usedQuota = usage.subscriptionQuotaUnitsByProvider[candidate.model.provider] ?? 0;
+      // Unknown quota metadata stays unknown in the evidence; it is not a
+      // synthetic exhausted-quota failure. CLI executors only learn their rate
+      // limit from a previous execution's stdout, so failing closed here would
+      // make the first subscription dispatch of every real campaign impossible
+      // (#418). Only evidence of exhaustion stops the dispatch.
       if (
-        rateLimit?.remaining === undefined ||
-        rateLimit.remaining <= 0 ||
+        (rateLimit?.remaining !== undefined && rateLimit.remaining <= 0) ||
         (rateLimit?.limit !== undefined && usedQuota >= rateLimit.limit)
       ) {
         throw new ValidationCampaignLimitError(runId, 'subscription-quota');
