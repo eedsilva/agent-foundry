@@ -50,7 +50,10 @@ export class DockerPreviewInstaller implements PreviewInstaller {
     this.runner = options.runner;
     this.image = options.image ?? DEFAULT_POLICY_PROXY_IMAGE;
     this.allowedHosts = options.allowedHosts ?? ['registry.npmjs.org'];
-    this.timeoutMs = options.timeoutMs ?? 120_000;
+    // Installs run cold (no store mount) at --network-concurrency=1 on the
+    // policy proxy; 120s killed 3 of 4 real preflights (#422). 300s holds on a
+    // loaded host until a persistent pnpm store makes cold installs warm.
+    this.timeoutMs = options.timeoutMs ?? 300_000;
   }
 
   async install(input: Parameters<PreviewInstaller['install']>[0]): Promise<PreviewInstallOutcome> {
@@ -60,8 +63,10 @@ export class DockerPreviewInstaller implements PreviewInstaller {
     const spec: SandboxSpec = {
       image: this.image,
       // Generated workspaces install Next/sharp/native optional packages in a
-      // single sandbox. 2 GiB is not enough for pnpm's package-link phase.
-      resources: { cpuMillis: 1_000, memoryMiB: 3_072, diskMiB: 512, pids: 128 },
+      // single sandbox. 2 GiB is not enough for pnpm's package-link phase, and
+      // 1 CPU + 512 MiB scratch left a serialized cold install racing the
+      // timeout (#422: exit 137 kills on real preflights).
+      resources: { cpuMillis: 2_000, memoryMiB: 3_072, diskMiB: 1_024, pids: 128 },
       network: {
         mode: 'allowlist',
         allowedHosts: this.allowedHosts,
