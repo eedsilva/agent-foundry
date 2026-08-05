@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -237,6 +237,18 @@ describe('validation preflight', () => {
     expect(detail.length).toBeLessThanOrEqual(MAX_DETAIL_CHARS);
   });
 
+  it('falls back to stdout when the failing tool left stderr empty', () => {
+    // pnpm reports a failing child script on stdout; reading stderr alone turned
+    // every real build failure in the campaign into "No output."
+    const stdout = 'ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  web@0.0.0 build: `next build`';
+
+    expect(failureDetail('', stdout)).toContain('ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL');
+    expect(failureDetail('   ', stdout)).toContain('ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL');
+    // stderr still wins when it carries anything.
+    expect(failureDetail('npm error 401', stdout)).toBe('npm error 401');
+    expect(failureDetail(undefined, undefined)).toBe('No output.');
+  });
+
   it('reports what a canary returned when it fails without throwing', async () => {
     const validationChecks = checks({
       haikuCanary: vi.fn(async () => ({
@@ -350,5 +362,164 @@ describe('production preflight cleanup', () => {
     await expect(production.cleanup()).rejects.toThrow(
       'supabase teardown failed: container stop timed out after 90000ms',
     );
+  });
+});
+
+describe('production scaffold and preview gateway boundaries', () => {
+  const PREVIEW_URL = 'http://127.0.0.1:4000/preview/p1/?token=t';
+  const LEAK_VARIABLE = 'AGENT_FOUNDRY_PREFLIGHT_LEAK';
+
+  /** A workspace whose build script records the environment it was spawned in. */
+  async function probeWorkspace(): Promise<string> {
+    const workspacePath = await mkdtemp(join(tmpdir(), 'af-preflight-scaffold-'));
+    await writeFile(
+      join(workspacePath, 'package.json'),
+      JSON.stringify({
+        name: 'probe',
+        version: '1.0.0',
+        private: true,
+        scripts: {
+          build:
+            "node -e \"require('fs').writeFileSync('env-probe.json', " +
+            `JSON.stringify({ nodeEnv: process.env.NODE_ENV ?? null, leaked: process.env.${LEAK_VARIABLE} ?? null }))"`,
+        },
+      }),
+    );
+    await writeFile(
+      join(workspacePath, 'package-lock.json'),
+      JSON.stringify({
+        name: 'probe',
+        version: '1.0.0',
+        lockfileVersion: 3,
+        requires: true,
+        packages: { '': { name: 'probe', version: '1.0.0' } },
+      }),
+    );
+    return workspacePath;
+  }
+
+  function production(workspacePath: string, overrides: Record<string, unknown> = {}) {
+    return createProductionValidationPreflightChecks({
+      campaign,
+      environmentId: 'validation-preflight-1',
+      harness: { scaffoldFiles: vi.fn(async () => []) },
+      workspaces: {
+        ensure: vi.fn(),
+        applyScaffold: vi.fn(),
+        workspacePath: vi.fn(() => workspacePath),
+        cleanup: vi.fn(),
+      },
+      ...overrides,
+      previews: {
+        start: vi.fn(async () => ({ session: { id: 'p1', status: 'running' }, url: PREVIEW_URL })),
+        stop: vi.fn(async () => {}),
+      },
+      previewRunner: { health: vi.fn(async () => ({ state: 'healthy' })) },
+      maxOutputBytes: 10_000_000,
+      installTimeoutMs: 120_000,
+    } as unknown as Parameters<typeof createProductionValidationPreflightChecks>[0]);
+  }
+
+  it('stops Supabase before deleting the directory its workdir lives in', async () => {
+    const workspacePath = await probeWorkspace();
+    const order: string[] = [];
+    let releaseSupabase = () => {};
+    const supabaseStopped = new Promise<void>((resolve) => {
+      releaseSupabase = resolve;
+    });
+    const checks = production(workspacePath, {
+      generatedProjectRuntime: {
+        initialize: vi.fn(),
+        health: vi.fn(async () => ({ health: { state: 'healthy' } })),
+        cleanup: vi.fn(async () => {
+          await supabaseStopped;
+          order.push('supabase');
+        }),
+      },
+      workspaces: {
+        ensure: vi.fn(),
+        applyScaffold: vi.fn(),
+        workspacePath: vi.fn(() => workspacePath),
+        cleanup: vi.fn(async () => {
+          order.push('workspace');
+        }),
+      },
+    });
+
+    try {
+      await checks.supabase();
+      await checks.scaffold();
+      const cleanup = checks.cleanup();
+      // The rm is instant and `supabase stop --workdir` is not, so a concurrent
+      // teardown deletes the workdir out from under the stop and strands a
+      // ten-container stack that restart=always then revives on every boot.
+      await new Promise((tick) => setImmediate(tick));
+      expect(order).toEqual([]);
+      releaseSupabase();
+      await cleanup;
+
+      expect(order).toEqual(['supabase', 'workspace']);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('builds the generated app under its own environment, not the orchestrator’s', async () => {
+    const workspacePath = await probeWorkspace();
+    const nodeEnv = process.env.NODE_ENV;
+    process.env[LEAK_VARIABLE] = 'foundry-secret';
+    process.env.NODE_ENV = 'development';
+    try {
+      await production(workspacePath).scaffold();
+
+      const probe = JSON.parse(await readFile(join(workspacePath, 'env-probe.json'), 'utf8'));
+      // NODE_ENV=development reaches React through the build and kills the
+      // prerender worker; every other foundry variable is a secret leak.
+      expect(probe.nodeEnv).toBe('production');
+      expect(probe.leaked).toBeNull();
+    } finally {
+      delete process.env[LEAK_VARIABLE];
+      if (nodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = nodeEnv;
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts the auth redirect the generated app serves on /', async () => {
+    const workspacePath = await probeWorkspace();
+    const fetchMock = vi.fn(async () => ({ status: 307 }) as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const checks = production(workspacePath);
+      await checks.scaffold();
+
+      await expect(checks.previewGateway()).resolves.toBeUndefined();
+      // Following the redirect drops the `?token=`, and fetch keeps no cookie
+      // jar for the one the gateway issues, so the hop arrives unauthorized.
+      expect(fetchMock).toHaveBeenCalledWith(
+        PREVIEW_URL,
+        expect.objectContaining({ redirect: 'manual' }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it('still fails when the gateway itself denies the request', async () => {
+    const workspacePath = await probeWorkspace();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ status: 403 }) as Response),
+    );
+    try {
+      const checks = production(workspacePath);
+      await checks.scaffold();
+
+      await expect(checks.previewGateway()).rejects.toThrow('status=403');
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(workspacePath, { recursive: true, force: true });
+    }
   });
 });

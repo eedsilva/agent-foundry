@@ -22,7 +22,11 @@ import {
   type PreviewRunner,
   type WorkspaceManager,
 } from '@agent-foundry/domain';
-import { runReproducibleInstall, resolvePreviewCommandPlan } from '@agent-foundry/executors';
+import {
+  runReproducibleInstall,
+  resolvePreviewCommandPlan,
+  safeSpawnEnv,
+} from '@agent-foundry/executors';
 import type { PreviewService } from '@agent-foundry/orchestrator';
 import {
   createValidationCampaignCanaryDependencies,
@@ -211,7 +215,7 @@ export function createProductionValidationPreflightChecks(
         maxBuffer: options.maxOutputBytes,
       });
       if (result.exitCode !== 0 || !result.stdout.trim()) {
-        throw new Error(`Docker is not ready. ${failureDetail(result.stderr)}`);
+        throw new Error(`Docker is not ready. ${failureDetail(result.stderr, result.stdout)}`);
       }
     },
     async supabase() {
@@ -238,16 +242,24 @@ export function createProductionValidationPreflightChecks(
         maxOutputBytes: options.maxOutputBytes,
       });
       if (!install.ok) {
-        throw new Error(`Scaffold install failed. ${failureDetail(install.stderr)}`);
+        throw new Error(
+          `Scaffold install failed. ${failureDetail(install.stderr, install.stdout)}`,
+        );
       }
+      // The generated app builds under its own environment, not the
+      // orchestrator's: execa extends process.env by default, which both hands
+      // the app every foundry secret and leaks NODE_ENV=development into a
+      // production build — React then resolves its dev bundle inside the
+      // prerender worker and `next build` dies on a null internal.
       const build = await execa(plan.build.command, plan.build.args, {
         cwd: workspacePath,
         reject: false,
         timeout: options.installTimeoutMs ?? 120_000,
         maxBuffer: options.maxOutputBytes,
+        ...safeSpawnEnv(process.env, { NODE_ENV: 'production' }),
       });
       if (build.exitCode !== 0) {
-        throw new Error(`Scaffold build failed. ${failureDetail(build.stderr)}`);
+        throw new Error(`Scaffold build failed. ${failureDetail(build.stderr, build.stdout)}`);
       }
       preview = await options.previews.start({
         workspaceRef: {
@@ -268,8 +280,18 @@ export function createProductionValidationPreflightChecks(
     },
     async previewGateway() {
       if (!preview) throw new Error('Preview gateway is unavailable.');
-      const response = await fetch(preview.url, { signal: AbortSignal.timeout(10_000) });
-      if (!response.ok) {
+      // Don't follow redirects: the gateway authorizes the first request by its
+      // `?token=` query and hands the caller a `pv_<sessionId>` cookie for the
+      // rest, and fetch keeps no cookie jar. The scaffold's auth middleware
+      // redirects `/` to `/sign-in`, so a followed redirect arrives with no
+      // credential at all and the proxy denies it — reading as a broken gateway
+      // when the gateway is exactly what just worked. Any non-error status is
+      // proof the proxy resolved the session and reached the app.
+      const response = await fetch(preview.url, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (response.status >= 400) {
         throw new Error(
           `Preview gateway returned a non-success response. status=${response.status}`,
         );
@@ -301,14 +323,15 @@ export function createProductionValidationPreflightChecks(
           throw new Error(`${name} teardown failed: ${causeText(error)}`);
         });
 
-      const results = await Promise.allSettled([
+      // Workspace removal goes last and alone: it deletes the whole project
+      // root, and the Supabase stack lives under it — `supabase stop --workdir`
+      // needs that directory to still exist. Run concurrently, the rm wins the
+      // race and every failed preflight strands a ten-container stack that
+      // restart=always then revives on each Docker boot.
+      const stopped = await Promise.allSettled([
         labelled(
           'preview',
           preview ? options.previews.stop(preview.session.id) : Promise.resolve(),
-        ),
-        labelled(
-          'workspace',
-          workspaceCreated ? options.workspaces.cleanup(options.environmentId) : Promise.resolve(),
         ),
         labelled(
           'supabase',
@@ -323,7 +346,13 @@ export function createProductionValidationPreflightChecks(
             : Promise.resolve(),
         ),
       ]);
-      const failures = results.flatMap((result) =>
+      const removed = await Promise.allSettled([
+        labelled(
+          'workspace',
+          workspaceCreated ? options.workspaces.cleanup(options.environmentId) : Promise.resolve(),
+        ),
+      ]);
+      const failures = [...stopped, ...removed].flatMap((result) =>
         result.status === 'rejected' ? [causeText(result.reason)] : [],
       );
       if (failures.length > 0) {
@@ -400,13 +429,20 @@ const MAX_DETAIL_CHARS = 300;
 /**
  * Build tools put the diagnosis at the end of stderr, so keep the tail — without
  * it the boundary throws a fixed string and describeCause has nothing to carry.
- * Redact the whole stream before cutting: slicing raw output can start mid-token
- * and hand the cap a key whose prefix — the only thing VALUE_PATTERNS matches on
- * — was left behind on the other side of the cut.
+ * Task runners like pnpm report a failing child script on stdout and leave
+ * stderr empty, so take the first stream that carries anything: a stderr-only
+ * reading turns those failures into "No output." Redact the whole stream before
+ * cutting: slicing raw output can start mid-token and hand the cap a key whose
+ * prefix — the only thing VALUE_PATTERNS matches on — was left behind on the
+ * other side of the cut.
  */
-export function failureDetail(stream: string | undefined): string {
-  if (!stream) return 'No output.';
-  return redactPersonalPaths(redactString(stream)).trim().slice(-MAX_DETAIL_CHARS) || 'No output.';
+export function failureDetail(...streams: Array<string | undefined>): string {
+  for (const stream of streams) {
+    if (!stream) continue;
+    const detail = redactPersonalPaths(redactString(stream)).trim().slice(-MAX_DETAIL_CHARS);
+    if (detail) return detail;
+  }
+  return 'No output.';
 }
 
 function causeText(error: unknown): string {

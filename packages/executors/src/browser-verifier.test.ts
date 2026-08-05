@@ -1181,8 +1181,10 @@ describe('PlaywrightBrowserVerifier', () => {
     const origin = await serve((request, response) => {
       if (request.url === '/preview/preview-1/popup') {
         response.setHeader('content-type', 'text/html');
+        // The opener posts to the popup during the wait step, so the error lands
+        // inside that step regardless of how slow the runner is.
         response.end(
-          `<script>setTimeout(() => console.error('late popup failure'), 1100)</script>`,
+          `<script>addEventListener('message', () => console.error('late popup failure'))</script>`,
         );
         return;
       }
@@ -1197,8 +1199,8 @@ describe('PlaywrightBrowserVerifier', () => {
       }
       response.setHeader('content-type', 'text/html');
       response.end(`
-        <button onclick="window.open('/preview/preview-1/popup')">Open popup</button>
-        <button onclick="fetch('/preview/preview-1/wait')">Wait</button>
+        <button onclick="window.popupWindow = window.open('/preview/preview-1/popup')">Open popup</button>
+        <button onclick="fetch('/preview/preview-1/wait'); window.popupWindow.postMessage('fail', '*')">Wait</button>
         <button onclick="fetch('/preview/preview-1/later-side-effect')">Later side effect</button>
       `);
     });

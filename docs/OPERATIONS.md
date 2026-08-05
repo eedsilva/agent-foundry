@@ -74,7 +74,8 @@ primeiro limite que falhar encerra a campanha e retorna `environment-blocked` ou
 `generatedProjectCreated` permanece `false`. O relatório normalizado é salvo em
 `DATA_DIR/validation-campaign/preflight-<sourceRevision>.json` sem segredos, sem prompts e sem
 respostas brutas de provider. A causa de cada boundary que falha carrega até 300 caracteres do fim
-do stderr da ferramenta — redigidos antes do corte — porque sem eles o relatório não é acionável.
+do stderr da ferramenta — ou do stdout, quando o stderr vem vazio, como no pnpm — redigidos antes
+do corte, porque sem eles o relatório não é acionável.
 Configure `DATA_DIR` para um caminho fora do repositório (por exemplo,
 `DATA_DIR=/tmp/agent-foundry-validation`); o padrão `.data` é recusado pelo gate de isolamento.
 
