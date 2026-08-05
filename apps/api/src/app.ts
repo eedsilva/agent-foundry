@@ -19,7 +19,7 @@ import {
   getRiskById,
   verifyBlobToken,
 } from '@agent-foundry/composition';
-import { currentTraceIds } from '@agent-foundry/domain';
+import { currentTraceIds, redactValidationPreflightReport } from '@agent-foundry/domain';
 import {
   BenchmarkReportSchema,
   BranchVersionRequestSchema,
@@ -257,7 +257,9 @@ export async function buildApp(
         message: 'Select a real validation campaign before running its preflight.',
       });
     }
-    return runtime.runValidationPreflight();
+    // The persisted report is redacted; the response was not, so the raw
+    // dataDirectory left the process over HTTP.
+    return redactValidationPreflightReport(await runtime.runValidationPreflight());
   });
 
   app.get('/router/dashboard', async (request) => {

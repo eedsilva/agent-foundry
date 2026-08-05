@@ -1,4 +1,8 @@
-import type { ApprovalDecision, ProjectEvent } from '@agent-foundry/contracts';
+import type {
+  ApprovalDecision,
+  ProjectEvent,
+  ValidationPreflightReport,
+} from '@agent-foundry/contracts';
 
 const SENSITIVE_WORD =
   /^(?:token|secret|secrets|password|passwd|credential|credentials|authorization|auth|bearer|cookie|cookies|session|apikey)$/i;
@@ -9,6 +13,12 @@ export const VALUE_PATTERNS = [
   /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}/gi,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9._-]{8,}\b/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
+  // Bare in a tool's stderr these carry no key= shape, so only the prefix
+  // identifies them. Google's AIza prefix is deliberately absent: benchmark case
+  // security-redaction-google-api-key owns it, and implementing it here would
+  // answer the case in the product.
+  /\bsb_(?:secret|publishable)_[A-Za-z0-9_-]{16,}\b/g,
+  /\bhf_[A-Za-z0-9]{20,}\b/g,
 ];
 const QUOTED_SECRET =
   /((?:["']?(?:authorization|(?:[a-z][a-z0-9]*[_-]?)?token|cookie)["']?)\s*[:=]\s*)(["'])([^\r\n]*?)\2/gi;
@@ -47,6 +57,37 @@ export function redactString(value: string): string {
     .replace(PROJECT_WORKDIR, '[REDACTED]')
     .replace(ENVIRONMENT_WORKDIR, '[REDACTED]');
   return VALUE_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[REDACTED]'), assignments);
+}
+
+/**
+ * Home directories carry the operator's account name into shared evidence, but
+ * the rest of the path is what makes a failure diagnosable — so drop the name
+ * and keep the path. Single source for every evidence surface that persists or
+ * publishes operator-side paths.
+ */
+const HOME_DIRECTORY = /(\/(?:Users|home)\/)[^/\s'"`]+/g;
+
+export function redactPersonalPaths(value: string): string {
+  return value.replace(HOME_DIRECTORY, '$1[REDACTED]');
+}
+
+/**
+ * The preflight report crosses three boundaries — the persisted file, the
+ * run-bound artifact and the HTTP response — and each one used to carry its own
+ * copy of this. One definition, so a redaction fix cannot land on two of them
+ * and miss the third.
+ */
+export function redactValidationPreflightReport(
+  report: ValidationPreflightReport,
+): ValidationPreflightReport {
+  return {
+    ...report,
+    dataDirectory: '[REDACTED]',
+    checks: report.checks.map((check) => ({
+      ...check,
+      ...(check.message ? { message: redactPersonalPaths(redactString(check.message)) } : {}),
+    })),
+  };
 }
 
 function redactValue(value: unknown, depth: number): unknown {

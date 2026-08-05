@@ -3,6 +3,7 @@ import { ApprovalDecisionSchema, type ProjectEvent } from '@agent-foundry/contra
 import {
   normalizeApprovalDecision,
   redactEvent,
+  redactPersonalPaths,
   redactString,
   redactUnknown,
 } from './redaction.js';
@@ -85,6 +86,24 @@ describe('redactString', () => {
         'Cookie=[REDACTED]',
       ].join('\n'),
     );
+  });
+});
+
+describe('redactPersonalPaths', () => {
+  it('drops the account name but keeps the rest of the path diagnosable', () => {
+    expect(redactPersonalPaths("ENOENT, open '/Users/rosalind/work/dist/sidecar.js'")).toBe(
+      "ENOENT, open '/Users/[REDACTED]/work/dist/sidecar.js'",
+    );
+    expect(redactPersonalPaths('/home/rosalind/agent-foundry/.data')).toBe(
+      '/home/[REDACTED]/agent-foundry/.data',
+    );
+  });
+
+  it('redacts every occurrence and leaves paths without a home prefix alone', () => {
+    expect(redactPersonalPaths('/Users/a/x and /Users/b/y')).toBe(
+      '/Users/[REDACTED]/x and /Users/[REDACTED]/y',
+    );
+    expect(redactPersonalPaths('/var/lib/agent-foundry')).toBe('/var/lib/agent-foundry');
   });
 });
 

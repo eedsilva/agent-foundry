@@ -68,6 +68,7 @@ import {
   isTaskStepId,
   normalizeApprovalDecision,
   redactString,
+  redactValidationPreflightReport,
   traceContextField,
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
@@ -75,22 +76,6 @@ import { policyHash, workflowHash } from './idempotency.js';
 import type { QualityObservationService } from './quality-observation-service.js';
 
 const RUN_PROJECT_MAX_ATTEMPTS = 2;
-const PERSONAL_PATH_PATTERN = /(?:\/Users|\/home)\/[^\s"'`]+/g;
-
-function redactValidationPreflight(report: ValidationPreflightReport): ValidationPreflightReport {
-  return {
-    ...report,
-    dataDirectory: '[REDACTED]',
-    checks: report.checks.map((check) => ({
-      ...check,
-      ...(check.message
-        ? {
-            message: redactString(check.message).replace(PERSONAL_PATH_PATTERN, '[REDACTED]'),
-          }
-        : {}),
-    })),
-  };
-}
 
 export class ProjectService {
   constructor(
@@ -274,7 +259,7 @@ export class ProjectService {
       await this.artifacts.put({
         projectId: project.id,
         name: 'validation-preflight',
-        content: redactValidationPreflight(runPreflight),
+        content: redactValidationPreflightReport(runPreflight),
         createdBy: `validation-preflight:${runPreflight.environmentId}`,
         runId,
       });

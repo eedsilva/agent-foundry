@@ -22,7 +22,26 @@ Provider-reported cost, catalog estimates, metered unknowns, and subscription qu
 separate fields.
 
 The publisher redacts summaries, errors, preflight model fields, and personal paths before
-persistence. Repeated publication of the same campaign/run/input is idempotent; a different
+persistence. Two rules bound what "redacted" means, both amended after the first real preflight
+run produced evidence that was empty rather than redacted:
+
+- Personal paths keep the path and lose the account name (`/Users/[REDACTED]/dist/sidecar.js`),
+  not the whole path. A gate failure is only actionable if the operator can see which file was
+  missing. `redactPersonalPaths` in `@agent-foundry/domain` is the single definition; every
+  evidence surface calls it.
+- Preflight boundary messages are redacted as diagnostics, not as prompts. Instruction keywords
+  (`build`, `create`, `list`, `app`) are ordinary English in an ops diagnostic, and matching on
+  them published `[REDACTED_PROMPT]` for every real gate failure. Role markers (`system:`),
+  addresses, database shapes, secrets, and personal paths are still redacted; free-form model
+  text and model identity fields keep the stricter keyword rule.
+
+Boundary causes carry the tail of a failing tool's stderr, so the stream is redacted whole before
+it is cut to length: slicing first can start mid-token and strip the prefix that identifies a key.
+The preflight report is redacted by one shared function for all three of its boundaries — the
+persisted file, the run-bound artifact, and the `POST /validation/campaign/preflight` response,
+which no longer returns the operator's data directory.
+
+Repeated publication of the same campaign/run/input is idempotent; a different
 observation set receives a distinct immutable artifact revision. A run cannot be `accepted` unless
 the terminal run and persisted project, plan approval, implementation, deterministic, preview,
 browser, database, and terminal proofs are present. Missing or skipped mandatory evidence remains

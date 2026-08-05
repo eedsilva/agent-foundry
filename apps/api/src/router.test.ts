@@ -173,7 +173,9 @@ describe('router dashboard + experiments API', () => {
       url: '/validation/campaign/preflight',
     });
     expect(preflight.statusCode).toBe(200);
-    expect(preflight.json()).toEqual(report);
+    // The route redacts on the way out: the operator's data directory is not
+    // part of the response contract.
+    expect(preflight.json()).toEqual({ ...report, dataDirectory: '[REDACTED]' });
     await runnableApp.close();
 
     await selectedApp.close();

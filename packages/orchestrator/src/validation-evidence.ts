@@ -35,12 +35,17 @@ import type {
   StepRunRepository,
   WorkflowRunRepository,
 } from '@agent-foundry/domain';
-import { NotFoundError, redactString, redactUnknown, ValidationError } from '@agent-foundry/domain';
+import {
+  NotFoundError,
+  redactPersonalPaths,
+  redactString,
+  redactUnknown,
+  ValidationError,
+} from '@agent-foundry/domain';
 import { summarizeValidationUsage } from './validation-budget.js';
 import { validateBrowserVerificationReportBinding } from './browser-verification-coordinator.js';
 
 const EVIDENCE_ARTIFACT_PREFIX = 'validation-evidence-';
-const PERSONAL_PATH_PATTERN = /(?:\/Users|\/home)\/[^\s"'`]+/g;
 
 export interface ValidationEvidencePublisher {
   publishFromRun(runId: string): Promise<ValidationEvidenceResponse | null>;
@@ -807,7 +812,7 @@ export function buildValidationEvidenceBundle(options: {
   const publication = options.input;
   const gates = publication.gates.map((gate) => ({
     ...gate,
-    ...(gate.summary ? { summary: redactEvidenceText(gate.summary) } : {}),
+    ...(gate.summary ? { summary: redactModelText(gate.summary) } : {}),
   }));
   const attempts = options.attempts.map(toEvidenceAttempt);
   const usage = summarizeValidationUsage(options.attempts, options.catalog);
@@ -866,12 +871,14 @@ export function buildValidationEvidenceBundle(options: {
         ...environmentReadiness,
         checks: environmentReadiness.checks.map((check) => ({
           ...check,
-          ...(check.message ? { message: redactEvidenceText(check.message) } : {}),
+          ...(check.message ? { message: redactOpsText(check.message) } : {}),
+          // Model fields carry provider-shaped text, so they keep the stricter
+          // rule the attempt-level ones use.
           ...(check.selectedModel
-            ? { selectedModel: redactEvidenceText(check.selectedModel, 200) }
+            ? { selectedModel: redactModelText(check.selectedModel, 200) }
             : {}),
           ...(check.executedModel
-            ? { executedModel: redactEvidenceText(check.executedModel, 200) }
+            ? { executedModel: redactModelText(check.executedModel, 200) }
             : {}),
         })),
       },
@@ -917,15 +924,15 @@ function toEvidenceAttempt(attempt: StepAttempt): ValidationEvidenceAttempt {
     },
     provider: attempt.provider,
     ...(attempt.modelId ? { modelId: attempt.modelId } : {}),
-    selectedModel: redactEvidenceText(
+    selectedModel: redactModelText(
       attempt.routeDecision?.selected.model.model ?? attempt.model,
       200,
     ),
-    executedModel: redactEvidenceText(attempt.executedModel ?? attempt.model, 200),
+    executedModel: redactModelText(attempt.executedModel ?? attempt.model, 200),
     status: attempt.status,
     ...(attempt.durationMs !== undefined ? { durationMs: attempt.durationMs } : {}),
     ...(attempt.usage ? { usage: attempt.usage } : {}),
-    ...(attempt.checkpoint ? { checkpoint: redactEvidenceText(attempt.checkpoint, 200) } : {}),
+    ...(attempt.checkpoint ? { checkpoint: redactModelText(attempt.checkpoint, 200) } : {}),
     outputArtifacts: attempt.outputArtifacts,
   };
 }
@@ -938,9 +945,9 @@ function toTerminalState(run: WorkflowRun): ValidationEvidenceTerminalState {
     ...(run.error
       ? {
           error: {
-            name: redactEvidenceText(run.error.name, 200),
-            message: redactEvidenceText(run.error.message, 1_000),
-            ...(run.error.code ? { code: redactEvidenceText(run.error.code, 200) } : {}),
+            name: redactModelText(run.error.name, 200),
+            message: redactModelText(run.error.message, 1_000),
+            ...(run.error.code ? { code: redactModelText(run.error.code, 200) } : {}),
             ...(run.error.exitCode !== undefined ? { exitCode: run.error.exitCode } : {}),
           },
         }
@@ -948,15 +955,29 @@ function toTerminalState(run: WorkflowRun): ValidationEvidenceTerminalState {
   };
 }
 
-function redactEvidenceText(value: string, maxLength = 500): string {
-  const isPromptLike =
-    /(?:^|\b)(?:system|user|assistant)\s*:/i.test(value) ||
-    /\b(?:you are|write|implement|inspect|produce|respond with|acceptance criteria|create|build|make|add|delete|update|list|show)\b/i.test(
-      value,
-    ) ||
-    /\b(?:please|the user|application|todo|app)\b/i.test(value) ||
-    containsEmailLike(value);
-  if (isPromptLike) {
+/**
+ * Instruction words are ordinary English in an ops diagnostic — "scaffold build
+ * failed", "cannot create container" — so they only mark free-form model text,
+ * never a gate message. Role markers and addresses mark a prompt wherever they
+ * appear.
+ */
+const INSTRUCTION_LIKE =
+  /\b(?:you are|write|implement|inspect|produce|respond with|acceptance criteria|create|build|make|add|delete|update|list|show|please|the user|application|todo|app)\b/i;
+const PROMPT_SHAPED = /(?:^|\b)(?:system|user|assistant)\s*:/i;
+
+function redactModelText(value: string, maxLength = 500): string {
+  if (INSTRUCTION_LIKE.test(value)) return '[REDACTED_PROMPT]';
+  return redactOpsText(value, maxLength);
+}
+
+/**
+ * Preflight boundaries report why a gate failed. Redacting them by prompt
+ * keywords published `[REDACTED_PROMPT]` for every real failure — evidence that
+ * is empty, not redacted, at the one boundary #397 attaches evidence from.
+ * Secrets, addresses, personal paths and database values still go.
+ */
+function redactOpsText(value: string, maxLength = 500): string {
+  if (PROMPT_SHAPED.test(value) || containsEmailLike(value)) {
     return '[REDACTED_PROMPT]';
   }
   const isDatabaseLike =
@@ -967,7 +988,7 @@ function redactEvidenceText(value: string, maxLength = 500): string {
   if (isDatabaseLike) {
     return '[REDACTED_DATABASE_VALUE]';
   }
-  return redactString(value).replace(PERSONAL_PATH_PATTERN, '[REDACTED]').slice(0, maxLength);
+  return redactPersonalPaths(redactString(value)).slice(0, maxLength);
 }
 
 function containsEmailLike(value: string): boolean {
