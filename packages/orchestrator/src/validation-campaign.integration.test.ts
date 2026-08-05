@@ -309,7 +309,10 @@ describe('validation campaign run enforcement', () => {
     expect(harness.executor.requests).toHaveLength(0);
   });
 
-  it('stops before a subscription dispatch when quota metadata is unavailable', async () => {
+  it('allows the first subscription dispatch when quota metadata is unavailable', async () => {
+    // CLI executors only learn their rate limit from a previous execution's
+    // stdout, so unknown metadata must stay unknown evidence — failing closed
+    // here made every real campaign's first dispatch impossible (#418).
     const stores = makeStores();
     const harness = makeHarness({}, stores, {
       models,
@@ -323,10 +326,9 @@ describe('validation campaign run enforcement', () => {
     });
     await seedCampaignRun(harness);
 
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      'subscription-quota limit',
-    );
-    expect(harness.executor.requests).toHaveLength(0);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect(harness.executor.requests.length).toBeGreaterThan(0);
   });
 
   it('rejects a provider response that exceeds subscription quota before promotion', async () => {
