@@ -72,7 +72,9 @@ revisão, o diretório externo de dados e a identidade do ambiente descartável;
 Supabase, scaffold, build, saúde do app e gateway; depois executa os três canaries limitados. O
 primeiro limite que falhar encerra a campanha e retorna `environment-blocked` ou `model-failed`;
 `generatedProjectCreated` permanece `false`. O relatório normalizado é salvo em
-`DATA_DIR/validation-campaign/preflight-<sourceRevision>.json` sem stdout, segredos ou respostas brutas de provider.
+`DATA_DIR/validation-campaign/preflight-<sourceRevision>.json` sem segredos, sem prompts e sem
+respostas brutas de provider. A causa de cada boundary que falha carrega até 300 caracteres do fim
+do stderr da ferramenta — redigidos antes do corte — porque sem eles o relatório não é acionável.
 Configure `DATA_DIR` para um caminho fora do repositório (por exemplo,
 `DATA_DIR=/tmp/agent-foundry-validation`); o padrão `.data` é recusado pelo gate de isolamento.
 

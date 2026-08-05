@@ -9,6 +9,7 @@ import type {
 } from '@agent-foundry/contracts';
 import {
   createProductionValidationPreflightChecks,
+  failureDetail,
   persistValidationPreflightReport,
   runValidationPreflight,
   type ValidationPreflightChecks,
@@ -216,6 +217,24 @@ describe('validation preflight', () => {
     expect(JSON.stringify(persisted)).not.toContain('rosalind');
     expect(JSON.stringify(report)).not.toContain('rosalind');
     expect(validationChecks.lunaCanary).not.toHaveBeenCalled();
+  });
+
+  const MAX_DETAIL_CHARS = 300;
+
+  it('redacts a stderr stream before cutting it to the tail', () => {
+    const key = 'sk-ant-api03-QQ7vN9fLb2xKdM4tRw8yZc';
+    // Positioned so the 300-char cut lands inside the key: slicing first would
+    // drop the `sk-` prefix — the only thing the secret patterns match on — and
+    // publish the rest of the key as ordinary trace text.
+    const trailing = 'npm error trace line'.repeat(20).slice(0, 275);
+    const stream = `npm error 401 Unauthorized: ${key}${trailing}`;
+    expect(stream.slice(-MAX_DETAIL_CHARS)).toContain('N9fLb2xKdM4tRw8yZc');
+    expect(stream.slice(-MAX_DETAIL_CHARS)).not.toContain('sk-ant');
+
+    const detail = failureDetail(stream);
+
+    expect(detail).not.toContain('N9fLb2xKdM4tRw8yZc');
+    expect(detail.length).toBeLessThanOrEqual(MAX_DETAIL_CHARS);
   });
 
   it('reports what a canary returned when it fails without throwing', async () => {

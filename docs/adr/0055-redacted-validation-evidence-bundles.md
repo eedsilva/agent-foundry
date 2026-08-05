@@ -33,7 +33,15 @@ run produced evidence that was empty rather than redacted:
   (`build`, `create`, `list`, `app`) are ordinary English in an ops diagnostic, and matching on
   them published `[REDACTED_PROMPT]` for every real gate failure. Role markers (`system:`),
   addresses, database shapes, secrets, and personal paths are still redacted; free-form model
-  text keeps the stricter keyword rule. Repeated publication of the same campaign/run/input is idempotent; a different
+  text and model identity fields keep the stricter keyword rule.
+
+Boundary causes carry the tail of a failing tool's stderr, so the stream is redacted whole before
+it is cut to length: slicing first can start mid-token and strip the prefix that identifies a key.
+The preflight report is redacted by one shared function for all three of its boundaries — the
+persisted file, the run-bound artifact, and the `POST /validation/campaign/preflight` response,
+which no longer returns the operator's data directory.
+
+Repeated publication of the same campaign/run/input is idempotent; a different
 observation set receives a distinct immutable artifact revision. A run cannot be `accepted` unless
 the terminal run and persisted project, plan approval, implementation, deterministic, preview,
 browser, database, and terminal proofs are present. Missing or skipped mandatory evidence remains

@@ -16,6 +16,7 @@ import {
 import {
   redactPersonalPaths,
   redactString,
+  redactValidationPreflightReport,
   type GeneratedProjectRuntime,
   type HarnessRepository,
   type PreviewRunner,
@@ -65,19 +66,6 @@ export interface ProductionValidationPreflightOptions {
   canaryDependencies?: ValidationCanaryDependencies;
   maxOutputBytes: number;
   installTimeoutMs?: number;
-}
-
-export function redactValidationPreflightReport(
-  report: ValidationPreflightReport,
-): ValidationPreflightReport {
-  return {
-    ...report,
-    dataDirectory: '[REDACTED]',
-    checks: report.checks.map((check) => ({
-      ...check,
-      ...(check.message ? { message: redactPersonalPaths(redactString(check.message)) } : {}),
-    })),
-  };
 }
 
 export async function runValidationPreflight(
@@ -209,12 +197,6 @@ export function createProductionValidationPreflightChecks(
     if (!selected) throw new Error(`Campaign model ${id} is not configured.`);
     return selected;
   };
-
-  // Build tools put the diagnosis at the end of stderr, so keep the tail. Without
-  // it the boundary throws a fixed string and describeCause has nothing to carry —
-  // the gap that made the missing sidecar undiagnosable in the first real run.
-  const failureDetail = (stream: string | undefined) =>
-    stream?.trim().slice(-MAX_DETAIL_CHARS) || 'No output.';
 
   return {
     async disposableEnvironment() {
@@ -415,6 +397,18 @@ const MAX_CAUSE_CHARS = 500;
 /** Leaves room for the boundary prefix inside MAX_CAUSE_CHARS. */
 const MAX_DETAIL_CHARS = 300;
 
+/**
+ * Build tools put the diagnosis at the end of stderr, so keep the tail — without
+ * it the boundary throws a fixed string and describeCause has nothing to carry.
+ * Redact the whole stream before cutting: slicing raw output can start mid-token
+ * and hand the cap a key whose prefix — the only thing VALUE_PATTERNS matches on
+ * — was left behind on the other side of the cut.
+ */
+export function failureDetail(stream: string | undefined): string {
+  if (!stream) return 'No output.';
+  return redactPersonalPaths(redactString(stream)).trim().slice(-MAX_DETAIL_CHARS) || 'No output.';
+}
+
 function causeText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -456,7 +450,7 @@ async function recordCanaryCheck(
             // The canary can fail without throwing, and the result schema carries
             // no error field — so report what it did return, or the operator is
             // left re-running the boundary that costs quota.
-            message: `${boundary} did not prove its executed model and output contract. status=${result.status}, executedModel=${result.executedModel ?? 'missing'}`,
+            message: `${boundary} did not prove its executed model and output contract. status=${result.status} executedModel=${result.executedModel ?? 'missing'}`,
           }),
     });
     return passed;

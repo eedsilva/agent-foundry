@@ -812,7 +812,7 @@ export function buildValidationEvidenceBundle(options: {
   const publication = options.input;
   const gates = publication.gates.map((gate) => ({
     ...gate,
-    ...(gate.summary ? { summary: redactEvidenceText(gate.summary) } : {}),
+    ...(gate.summary ? { summary: redactModelText(gate.summary) } : {}),
   }));
   const attempts = options.attempts.map(toEvidenceAttempt);
   const usage = summarizeValidationUsage(options.attempts, options.catalog);
@@ -871,12 +871,14 @@ export function buildValidationEvidenceBundle(options: {
         ...environmentReadiness,
         checks: environmentReadiness.checks.map((check) => ({
           ...check,
-          ...(check.message ? { message: redactDiagnosticText(check.message) } : {}),
+          ...(check.message ? { message: redactOpsText(check.message) } : {}),
+          // Model fields carry provider-shaped text, so they keep the stricter
+          // rule the attempt-level ones use.
           ...(check.selectedModel
-            ? { selectedModel: redactDiagnosticText(check.selectedModel, 200) }
+            ? { selectedModel: redactModelText(check.selectedModel, 200) }
             : {}),
           ...(check.executedModel
-            ? { executedModel: redactDiagnosticText(check.executedModel, 200) }
+            ? { executedModel: redactModelText(check.executedModel, 200) }
             : {}),
         })),
       },
@@ -922,15 +924,15 @@ function toEvidenceAttempt(attempt: StepAttempt): ValidationEvidenceAttempt {
     },
     provider: attempt.provider,
     ...(attempt.modelId ? { modelId: attempt.modelId } : {}),
-    selectedModel: redactEvidenceText(
+    selectedModel: redactModelText(
       attempt.routeDecision?.selected.model.model ?? attempt.model,
       200,
     ),
-    executedModel: redactEvidenceText(attempt.executedModel ?? attempt.model, 200),
+    executedModel: redactModelText(attempt.executedModel ?? attempt.model, 200),
     status: attempt.status,
     ...(attempt.durationMs !== undefined ? { durationMs: attempt.durationMs } : {}),
     ...(attempt.usage ? { usage: attempt.usage } : {}),
-    ...(attempt.checkpoint ? { checkpoint: redactEvidenceText(attempt.checkpoint, 200) } : {}),
+    ...(attempt.checkpoint ? { checkpoint: redactModelText(attempt.checkpoint, 200) } : {}),
     outputArtifacts: attempt.outputArtifacts,
   };
 }
@@ -943,9 +945,9 @@ function toTerminalState(run: WorkflowRun): ValidationEvidenceTerminalState {
     ...(run.error
       ? {
           error: {
-            name: redactEvidenceText(run.error.name, 200),
-            message: redactEvidenceText(run.error.message, 1_000),
-            ...(run.error.code ? { code: redactEvidenceText(run.error.code, 200) } : {}),
+            name: redactModelText(run.error.name, 200),
+            message: redactModelText(run.error.message, 1_000),
+            ...(run.error.code ? { code: redactModelText(run.error.code, 200) } : {}),
             ...(run.error.exitCode !== undefined ? { exitCode: run.error.exitCode } : {}),
           },
         }
@@ -963,9 +965,9 @@ const INSTRUCTION_LIKE =
   /\b(?:you are|write|implement|inspect|produce|respond with|acceptance criteria|create|build|make|add|delete|update|list|show|please|the user|application|todo|app)\b/i;
 const PROMPT_SHAPED = /(?:^|\b)(?:system|user|assistant)\s*:/i;
 
-function redactEvidenceText(value: string, maxLength = 500): string {
+function redactModelText(value: string, maxLength = 500): string {
   if (INSTRUCTION_LIKE.test(value)) return '[REDACTED_PROMPT]';
-  return redactDiagnosticText(value, maxLength);
+  return redactOpsText(value, maxLength);
 }
 
 /**
@@ -974,7 +976,7 @@ function redactEvidenceText(value: string, maxLength = 500): string {
  * is empty, not redacted, at the one boundary #397 attaches evidence from.
  * Secrets, addresses, personal paths and database values still go.
  */
-function redactDiagnosticText(value: string, maxLength = 500): string {
+function redactOpsText(value: string, maxLength = 500): string {
   if (PROMPT_SHAPED.test(value) || containsEmailLike(value)) {
     return '[REDACTED_PROMPT]';
   }

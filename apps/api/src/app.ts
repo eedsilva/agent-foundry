@@ -17,10 +17,9 @@ import {
   compareBenchmarkReports,
   listRisks,
   getRiskById,
-  redactValidationPreflightReport,
   verifyBlobToken,
 } from '@agent-foundry/composition';
-import { currentTraceIds } from '@agent-foundry/domain';
+import { currentTraceIds, redactValidationPreflightReport } from '@agent-foundry/domain';
 import {
   BenchmarkReportSchema,
   BranchVersionRequestSchema,
