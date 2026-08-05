@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { SpanStatusCode, type Span } from '@opentelemetry/api';
 import type {
   AgentArtifact,
@@ -56,6 +57,7 @@ import {
   TaskGraphArtifactSchema,
   createValidationCampaignExecution,
   VerificationReportSchema,
+  ValidationDatabaseEvidenceSchema,
 } from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
@@ -142,6 +144,7 @@ import {
   type BrowserVerificationCoordinator,
 } from './browser-verification-coordinator.js';
 import type { QualityObservationService } from './quality-observation-service.js';
+import type { ValidationEvidencePublisher } from './validation-evidence.js';
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -358,6 +361,7 @@ export class WorkflowOrchestrator {
     private readonly generatedProjectRuntime?: GeneratedProjectRuntime,
     private readonly previews?: WorkspacePreviewBooter,
     private readonly validationCampaign?: ValidationCampaignPreview,
+    private readonly validationEvidence?: ValidationEvidencePublisher,
   ) {}
 
   /**
@@ -606,8 +610,38 @@ export class WorkflowOrchestrator {
       );
       throw error;
     } finally {
-      stopPreviewLeaseHeartbeat();
-      stopWatching();
+      try {
+        await this.publishTerminalEvidence(run.id);
+      } finally {
+        stopPreviewLeaseHeartbeat();
+        stopWatching();
+      }
+    }
+  }
+
+  private async publishTerminalEvidence(runId: string): Promise<void> {
+    if (!this.validationEvidence) return;
+    try {
+      const run = await this.runs.get(runId);
+      if (!run || !isWorkflowRunStatusTerminal(run.status)) return;
+      await this.validationEvidence.publishFromRun(runId);
+    } catch (error) {
+      const run = await this.runs.get(runId).catch(() => undefined);
+      if (run) {
+        await this.emit(
+          run.projectId,
+          'validation.evidence_failed',
+          'Validation evidence publication failed; the terminal run remains unchanged.',
+          {
+            runId,
+            dedupeKey: `${runId}:validation.evidence_failed`,
+            data: { error: redactString(errorMessage(error)).slice(0, 500) },
+          },
+        ).catch(() => undefined);
+        if (run.status === 'cancelled') return;
+      }
+      // Preserve the terminal run state but let the queue retry evidence publication.
+      throw error;
     }
   }
 
@@ -1474,7 +1508,12 @@ export class WorkflowOrchestrator {
     await this.emit(project.id, 'run.approval_decided', `${node.title} approved.`, {
       nodeId: node.id,
       runId,
-      data: { action: decision.action, decidedBy: decision.decidedBy },
+      data: {
+        action: decision.action,
+        decidedBy: decision.decidedBy,
+        artifact: artifactReference(artifact),
+        reviewedArtifact: artifactReference(reviewed),
+      },
     });
     throwIfCancelled(signal, runId);
     await this.emitArtifactCreated(project.id, artifact, node.id, runId);
@@ -2773,13 +2812,39 @@ export class WorkflowOrchestrator {
   ): Promise<StoredArtifact> {
     const startedAt = Date.now();
     try {
+      const validationDatabaseGate =
+        this.validationCampaign &&
+        step.blocksOnFailure &&
+        step.outputArtifact === 'verification.report';
+      const optionalScripts = validationDatabaseGate
+        ? step.optionalScripts?.filter((script) => !['db:start', 'db:reset'].includes(script))
+        : step.optionalScripts;
+      const beforeOptionalScripts = validationDatabaseGate
+        ? [
+            ...(step.optionalScripts?.includes('db:start') ? ['db:start'] : []),
+            'database-row-match',
+          ]
+        : undefined;
+      const validationRowTitleSha256 = await this.validationBrowserRowTitleSha256(project, runId);
+      const validationRun = this.validationCampaign ? await this.runs.get(runId) : undefined;
       const report = await this.verifier.verify(
         {
           workspacePath: this.workspaces.workspacePath(project.id),
           scripts: step.scripts,
           autofixScripts: step.autofixScripts,
-          optionalScripts: step.optionalScripts,
+          optionalScripts,
+          ...(validationRowTitleSha256
+            ? {
+                environment: {
+                  AGENT_FOUNDRY_VALIDATION_ROW_TITLE_SHA256: validationRowTitleSha256,
+                  ...(validationRun?.startedAt
+                    ? { AGENT_FOUNDRY_VALIDATION_RUN_STARTED_AT: validationRun.startedAt }
+                    : {}),
+                },
+              }
+            : {}),
           includeGitDiffCheck: step.includeGitDiffCheck,
+          ...(beforeOptionalScripts ? { beforeOptionalScripts } : {}),
           policy,
         },
         signal,
@@ -2806,10 +2871,22 @@ export class WorkflowOrchestrator {
         attemptId: attempt.id,
         idempotencyKey,
       });
+      const databaseArtifact = await this.persistValidationDatabaseEvidence(
+        project,
+        step,
+        runId,
+        stepRun,
+        attempt,
+        artifact,
+        report,
+      );
       attempt = await this.stepAttempts.update(
         transitionStepAttempt(attempt, 'succeeded', this.clock.now(), {
           durationMs: Date.now() - startedAt,
-          outputArtifacts: [artifactReference(artifact)],
+          outputArtifacts: [
+            artifactReference(artifact),
+            ...(databaseArtifact ? [artifactReference(databaseArtifact)] : []),
+          ],
         }),
         attempt.version,
       );
@@ -2817,7 +2894,12 @@ export class WorkflowOrchestrator {
         nodeId: step.id,
         runId,
         dedupeKey: `${runId}:attempt:${attempt.id}:verification.completed`,
-        data: { approved: report.approved, attemptId: attempt.id },
+        data: {
+          approved: report.approved,
+          attemptId: attempt.id,
+          artifactName: step.outputArtifact,
+          artifact: artifactReference(artifact),
+        },
       });
       await this.emitArtifactCreated(project.id, artifact, step.id, runId);
       return artifact;
@@ -2844,6 +2926,138 @@ export class WorkflowOrchestrator {
       }
       throw error;
     }
+  }
+
+  private async persistValidationDatabaseEvidence(
+    project: Project,
+    step: VerifyStep,
+    runId: string,
+    stepRun: StepRun,
+    attempt: StepAttempt,
+    verificationArtifact: StoredArtifact,
+    report: import('@agent-foundry/contracts').VerificationReport,
+  ): Promise<StoredArtifact | undefined> {
+    if (!this.validationCampaign || !step.blocksOnFailure) return undefined;
+    let fingerprint: string | undefined;
+    for (const command of report.commands) {
+      if (command.name !== 'database-row-match' || command.skipped) continue;
+      const match = command.stdout.match(/AGENT_FOUNDRY_DB_MATCH:([0-9a-f]{64})/i);
+      if (match?.[1]) {
+        fingerprint = match[1];
+        break;
+      }
+    }
+    if (!fingerprint) return undefined;
+    const browserContext = await this.validationBrowserContext(project, runId);
+    if (
+      !browserContext?.sourceAttempt ||
+      browserContext.sourceAttempt.status !== 'succeeded' ||
+      !browserContext.sourceAttempt.previewSessionId ||
+      !browserContext.sourceAttempt.outputArtifacts.some(
+        (reference) =>
+          reference.name === browserContext.browserArtifact.metadata.name &&
+          reference.revision === browserContext.browserArtifact.metadata.revision &&
+          reference.sha256 === browserContext.browserArtifact.metadata.sha256,
+      )
+    ) {
+      return undefined;
+    }
+    const planArtifact = await this.artifacts.getRevision(
+      project.id,
+      browserContext.planReference.name,
+      browserContext.planReference.revision,
+    );
+    if (!planArtifact) return undefined;
+    try {
+      validateBrowserVerificationReportBinding(browserContext.browserArtifact.content, {
+        planArtifact: browserContext.planReference,
+        planContent: planArtifact.content,
+        previewSessionId: browserContext.sourceAttempt.previewSessionId,
+      });
+    } catch {
+      return undefined;
+    }
+    const content = ValidationDatabaseEvidenceSchema.parse({
+      schemaVersion: '1',
+      status: 'matched',
+      verification: 'create-list-reload',
+      rowFingerprint: fingerprint,
+      browserArtifact: artifactReference(browserContext.browserArtifact),
+      verificationArtifact: artifactReference(verificationArtifact),
+      checkedAt: this.clock.now().toISOString(),
+    });
+    const artifact = await this.artifacts.put({
+      projectId: project.id,
+      name: 'database.evidence',
+      content,
+      createdBy: `validation-evidence:${this.validationCampaign.id}`,
+      runId,
+      stepRunId: stepRun.id,
+      attemptId: attempt.id,
+      idempotencyKey: createHash('sha256')
+        .update(
+          JSON.stringify({
+            runId,
+            verificationArtifact: artifactReference(verificationArtifact),
+            browserArtifact: artifactReference(browserContext.browserArtifact),
+            fingerprint,
+          }),
+        )
+        .digest('hex'),
+    });
+    await this.emitArtifactCreated(project.id, artifact, step.id, runId);
+    return artifact;
+  }
+
+  private async validationBrowserRowTitleSha256(
+    project: Project,
+    runId: string,
+  ): Promise<string | undefined> {
+    const browserContext = await this.validationBrowserContext(project, runId);
+    if (!browserContext) return undefined;
+    const plan = await this.artifacts.getRevision(
+      project.id,
+      browserContext.planReference.name,
+      browserContext.planReference.revision,
+    );
+    const parsedPlan = plan ? BrowserTestPlanArtifactSchema.safeParse(plan.content) : null;
+    if (!parsedPlan?.success) return undefined;
+    const fillValues = parsedPlan.data.data.steps
+      .map((browserStep) => browserStep.action)
+      .filter(
+        (action): action is Extract<typeof action, { kind: 'fill' }> => action.kind === 'fill',
+      )
+      .map((action) => action.value);
+    const rowTitle = fillValues.at(-1);
+    return rowTitle ? createHash('sha256').update(rowTitle).digest('hex') : undefined;
+  }
+
+  private async validationBrowserContext(
+    project: Project,
+    runId: string,
+  ): Promise<
+    | {
+        browserArtifact: StoredArtifact;
+        sourceAttempt: StepAttempt | undefined;
+        planReference: ArtifactReference;
+      }
+    | undefined
+  > {
+    if (!this.validationCampaign) return undefined;
+    const browserArtifact = await this.artifacts.getLatest(
+      project.id,
+      'browser-verification.report',
+    );
+    if (!browserArtifact || browserArtifact.metadata.runId !== runId) return undefined;
+    const { stepRunId, attemptId } = browserArtifact.metadata;
+    const sourceAttempt =
+      stepRunId && attemptId
+        ? ((await this.stepAttempts.get(runId, stepRunId, attemptId)) ?? undefined)
+        : undefined;
+    const planReference = sourceAttempt?.inputArtifacts.find(
+      (reference) => reference.name === 'browser-test.plan',
+    );
+    return planReference ? { browserArtifact, sourceAttempt, planReference } : undefined;
   }
 
   private async executeBrowserVerifyStep(
@@ -3005,7 +3219,12 @@ export class WorkflowOrchestrator {
         nodeId: step.id,
         runId,
         dedupeKey: `${runId}:attempt:${attempt.id}:verification.completed`,
-        data: { approved: persistedReport.approved, attemptId: attempt.id },
+        data: {
+          approved: persistedReport.approved,
+          attemptId: attempt.id,
+          artifactName: step.outputArtifact,
+          artifact: artifactReference(artifact),
+        },
       });
       await this.emitArtifactCreated(project.id, artifact, step.id, runId);
       return artifact;
@@ -3397,7 +3616,10 @@ export class WorkflowOrchestrator {
       const artifact = await this.artifacts.put({
         projectId: project.id,
         name: step.outputArtifact,
-        content: result.output,
+        content:
+          campaign && step.outputArtifact === 'browser-test.plan'
+            ? scopeValidationBrowserPlan(result.output, runId)
+            : result.output,
         createdBy: `${step.role}:${candidate.model.provider}/${candidate.model.model || 'default'}`,
         runId,
         stepRunId: stepRun.id,
@@ -4223,6 +4445,42 @@ export class WorkflowOrchestrator {
       data: options.data ?? {},
     });
   }
+}
+
+function scopeValidationBrowserPlan(content: unknown, runId: string): unknown {
+  const parsed = BrowserTestPlanArtifactSchema.safeParse(content);
+  if (!parsed.success) return content;
+  const fillIndexes = parsed.data.data.steps.flatMap((step, index) =>
+    step.action.kind === 'fill' ? [index] : [],
+  );
+  const fillIndex = fillIndexes.at(-1);
+  const fillStep = fillIndex === undefined ? undefined : parsed.data.data.steps[fillIndex];
+  if (fillIndex === undefined || !fillStep || fillStep.action.kind !== 'fill') return content;
+  const originalValue = fillStep.action.value;
+  const scopedValue = `${originalValue} [validation ${runId}]`;
+  const rewriteLocator = <T extends { by: string; text?: string }>(locator: T): T =>
+    locator.by === 'text' && locator.text === originalValue
+      ? ({ ...locator, text: scopedValue } as T)
+      : locator;
+  return {
+    ...parsed.data,
+    data: {
+      ...parsed.data.data,
+      steps: parsed.data.data.steps.map((step, index) => ({
+        ...step,
+        ...(index === fillIndex ? { action: { ...step.action, value: scopedValue } } : {}),
+        assertions: step.assertions.map((assertion) =>
+          assertion.kind === 'containsText'
+            ? {
+                ...assertion,
+                ...(assertion.expected === originalValue ? { expected: scopedValue } : {}),
+                locator: rewriteLocator(assertion.locator),
+              }
+            : assertion,
+        ),
+      })),
+    },
+  };
 }
 
 /**

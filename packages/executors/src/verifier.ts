@@ -34,7 +34,9 @@ export class WorkspaceVerifier implements VerificationService {
       scripts: string[];
       includeGitDiffCheck: boolean;
       autofixScripts?: string[] | undefined;
+      beforeOptionalScripts?: string[] | undefined;
       optionalScripts?: string[] | undefined;
+      environment?: Record<string, string> | undefined;
       policy?: ProjectPolicy | undefined;
     },
     signal?: AbortSignal,
@@ -71,6 +73,12 @@ export class WorkspaceVerifier implements VerificationService {
       commands.push({ ...result, advisory: true });
     }
     for (const script of input.scripts) {
+      if (signal?.aborted) throw new RunCancelledError();
+      commands.push(
+        await this.runConfigured(script, packageManager, scripts, input, false, signal),
+      );
+    }
+    for (const script of input.beforeOptionalScripts ?? []) {
       if (signal?.aborted) throw new RunCancelledError();
       commands.push(
         await this.runConfigured(script, packageManager, scripts, input, false, signal),
@@ -132,7 +140,11 @@ export class WorkspaceVerifier implements VerificationService {
     script: string,
     packageManager: PackageManager,
     scripts: Record<string, unknown>,
-    input: { workspacePath: string; policy?: ProjectPolicy | undefined },
+    input: {
+      workspacePath: string;
+      environment?: Record<string, string> | undefined;
+      policy?: ProjectPolicy | undefined;
+    },
     optional: boolean,
     signal?: AbortSignal,
   ): Promise<VerificationCommandResult> {
@@ -157,7 +169,7 @@ export class WorkspaceVerifier implements VerificationService {
         skipReason: `Script '${script}' is not defined in package.json.`,
       };
     }
-    return this.runScript(packageManager, script, input.workspacePath, signal);
+    return this.runScript(packageManager, script, input.workspacePath, signal, input.environment);
   }
 
   private async runInstall(
@@ -188,6 +200,7 @@ export class WorkspaceVerifier implements VerificationService {
     script: string,
     cwd: string,
     signal?: AbortSignal,
+    environment?: Record<string, string>,
   ): Promise<VerificationCommandResult> {
     if (packageManager === 'unknown') {
       return syntheticResult(
@@ -197,7 +210,7 @@ export class WorkspaceVerifier implements VerificationService {
       );
     }
     const { command, args } = scriptCommand(packageManager, script);
-    return this.run(script, command, args, cwd, signal);
+    return this.run(script, command, args, cwd, signal, environment);
   }
 
   private async run(
@@ -206,6 +219,7 @@ export class WorkspaceVerifier implements VerificationService {
     args: string[],
     cwd: string,
     signal?: AbortSignal,
+    environment?: Record<string, string>,
   ): Promise<VerificationCommandResult> {
     const startedAt = Date.now();
     try {
@@ -214,6 +228,7 @@ export class WorkspaceVerifier implements VerificationService {
         timeout: this.options.timeoutMs,
         maxBuffer: this.options.maxOutputBytes,
         reject: false,
+        ...(environment ? { env: { ...process.env, ...environment } } : {}),
         ...(signal ? { cancelSignal: signal } : {}),
       });
       return {

@@ -1,10 +1,17 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   ValidationCanaryResult,
   ValidationCampaignPreview,
   ValidationPreflightReport,
 } from '@agent-foundry/contracts';
-import { runValidationPreflight, type ValidationPreflightChecks } from './validation-preflight.js';
+import {
+  persistValidationPreflightReport,
+  runValidationPreflight,
+  type ValidationPreflightChecks,
+} from './validation-preflight.js';
 
 const campaign: ValidationCampaignPreview = {
   schemaVersion: '1',
@@ -127,8 +134,35 @@ describe('validation preflight', () => {
       selectedModel: 'luna',
       executedModel: 'codex-executed',
     });
-    expect(persist).toHaveBeenCalledWith(report);
+    expect(persist).toHaveBeenCalledWith(expect.objectContaining({ dataDirectory: '[REDACTED]' }));
     expect(validationChecks.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('redacts the report at the file persistence boundary', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'validation-preflight-persist-'));
+    try {
+      const report = await runValidationPreflight(
+        options(
+          checks({
+            docker: vi.fn(async () => {
+              throw new Error('token=secret-value at /Users/edsilva/private/db');
+            }),
+          }),
+        ),
+      );
+
+      await persistValidationPreflightReport(dataDirectory, report);
+
+      const persisted = await readFile(
+        join(dataDirectory, 'validation-campaign', `preflight-${report.sourceRevision}.json`),
+        'utf8',
+      );
+      expect(persisted).toContain('"dataDirectory": "[REDACTED]"');
+      expect(persisted).not.toContain('secret-value');
+      expect(persisted).not.toContain('/Users/edsilva/private/db');
+    } finally {
+      await rm(dataDirectory, { recursive: true, force: true });
+    }
   });
 
   it('stops at the failed environment boundary and redacts provider errors', async () => {

@@ -24,6 +24,7 @@ export class MockAgentExecutor implements AgentExecutor {
   ): Promise<AgentExecutionResult> {
     if (signal?.aborted) throw new RunCancelledError(request.runId);
     const startedAt = Date.now();
+    const mockModel = `mock:${request.provider}/${request.model || 'default'}`;
     if (onEvent) await this.emitMockStream(request, onEvent);
     if (request.mutatesWorkspace) await this.mutateWorkspace(request);
     const output = await this.artifactFor(request);
@@ -34,8 +35,8 @@ export class MockAgentExecutor implements AgentExecutor {
       stepRunId: request.stepRunId,
       attemptId: request.attemptId,
       provider: 'mock',
-      model: `mock:${request.provider}/${request.model || 'default'}`,
-      executedModel: `mock:${request.provider}/${request.model || 'default'}`,
+      model: mockModel,
+      executedModel: mockModel,
       exitCode: 0,
       durationMs: Date.now() - startedAt,
       stdout,
@@ -111,6 +112,7 @@ export class MockAgentExecutor implements AgentExecutor {
       'db:start': 'node -e ""',
       'db:reset': 'node -e ""',
       smoke: 'node -e ""',
+      'database-row-match': `node -e "console.log('AGENT_FOUNDRY_DB_MATCH:${'0'.repeat(64)}')"`,
     };
     await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
     await writeFile(

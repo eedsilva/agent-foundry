@@ -72,9 +72,48 @@ revisão, o diretório externo de dados e a identidade do ambiente descartável;
 Supabase, scaffold, build, saúde do app e gateway; depois executa os três canaries limitados. O
 primeiro limite que falhar encerra a campanha e retorna `environment-blocked` ou `model-failed`;
 `generatedProjectCreated` permanece `false`. O relatório normalizado é salvo em
-`DATA_DIR/validation-campaign/preflight.json` sem stdout, segredos ou respostas brutas de provider.
+`DATA_DIR/validation-campaign/preflight-<sourceRevision>.json` sem stdout, segredos ou respostas brutas de provider.
 Configure `DATA_DIR` para um caminho fora do repositório (por exemplo,
 `DATA_DIR=/tmp/agent-foundry-validation`); o padrão `.data` é recusado pelo gate de isolamento.
+
+### Bundle de evidências da campanha
+
+Ao terminar um run da campanha, o worker publica automaticamente um artifacto versionado
+`validation-evidence-real-todo-v1`. O bundle contém somente referências imutáveis e resumos
+limitados; custos reportados pelo provider, estimados pelo catálogo, desconhecidos e quota ficam
+separados. O endpoint público permite completar observações bounded de browser e banco:
+
+No run real, a verificação bloqueante da campanha adiciona `database-row-match` somente nesse
+contexto. O script consulta as linhas persistidas usando a credencial de serviço sem imprimir os
+valores, emite apenas uma impressão digital SHA-256, e o orquestrador persiste o artifacto
+`database.evidence` com os refs do browser e da verificação, além do run/step/attempt que o criou.
+O preflight também é copiado para um artifacto `validation-preflight` ligado ao run quando o
+projeto é criado; o publisher não reutiliza um relatório solto de outro run.
+
+```bash
+POST /runs/:runId/validation-acceptance
+POST /runs/:runId/validation-evidence
+GET /runs/:runId/validation-evidence
+```
+
+After the operator visibly creates and reloads the TODO and compares the matching
+redacted database result, call `validation-acceptance` with the browser and database
+artifact references. The event is required before an accepted bundle can be published.
+
+`accepted` só é possível quando o run terminal está completo e existem provas persistidas de
+projeto, aprovação do plano, implementação, checks determinísticos, preview saudável, browser,
+matching de banco e terminal. Gate `skipped` ou `unavailable` nunca é aceito. As referências devem
+conter o digest exato de cada artifact; não envie stdout/stderr bruto, prompts, tokens, caminhos
+pessoais ou valores de banco. O servidor redige resumos, erros e identidades antes de persistir.
+As classes `product-failed`, `model-failed` e `environment-blocked` são derivadas do estado
+persistido do run, das tentativas e do preflight; os rótulos enviados por um caller não promovem
+uma falha para outra classe.
+
+Para rollback ou contenção, pare API e worker, faça snapshot de `DATA_DIR`, remova
+`VALIDATION_CAMPAIGN` e reinicie a versão anterior. Preserve os bundles para auditoria; não edite
+nem apague revisões antigas. Se browser ou banco ainda não tiverem produzido seus artifacts, o
+bundle deve permanecer `product-failed`/`environment-blocked` e a causa deve ser investigada antes
+de qualquer nova publicação.
 
 ### Canary real dos providers
 

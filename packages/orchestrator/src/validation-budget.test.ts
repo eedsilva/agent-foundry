@@ -106,6 +106,8 @@ describe('validation campaign budget accounting', () => {
     expect(summary).toMatchObject({
       providerReportedCostUsd: 1.75,
       catalogEstimatedCostUsd: 0.75,
+      hasProviderReportedCost: true,
+      hasCatalogEstimatedCost: true,
       meteredCostUsd: 2.5,
       unknownMeteredAttempts: 2,
       subscriptionQuotaUnits: 4,
