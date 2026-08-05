@@ -209,6 +209,7 @@ describe('step retry with controlled invalidation (#8)', () => {
     expect(plan.downstream.map((step) => step.stepId)).toEqual(['review', 'verify']);
     expect(plan.artifacts).toContain('review');
     expect(plan.artifacts).toContain('verification-report');
+    expect(plan.checkpoint).toBe(originalAttempt!.checkpoint);
 
     await harness.service.retryStep('run-1', implement.id, {
       mode: 'invalidate',

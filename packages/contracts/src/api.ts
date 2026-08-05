@@ -265,6 +265,8 @@ export const RetryPlanResponseSchema = z.object({
   target: StepRunSchema,
   downstream: z.array(StepRunSchema),
   artifacts: z.array(z.string()),
+  /** Workspace state a retry of this step rolls back to; absent when it does not mutate. */
+  checkpoint: z.string().min(1).optional(),
 });
 export type RetryPlanResponse = z.infer<typeof RetryPlanResponseSchema>;
 

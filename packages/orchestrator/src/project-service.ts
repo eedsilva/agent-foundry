@@ -584,7 +584,13 @@ export class ProjectService {
         for (const output of attempt.outputArtifacts) artifacts.add(output.name);
       }
     }
-    return { target, downstream, artifacts: [...artifacts].sort() };
+    const checkpoint = await this.retryCheckpoint(runId, target.id);
+    return {
+      target,
+      downstream,
+      artifacts: [...artifacts].sort(),
+      ...(checkpoint ? { checkpoint } : {}),
+    };
   }
 
   /**
@@ -946,6 +952,12 @@ export class ProjectService {
     });
   }
 
+  /** The checkpoint a retry rolls back to — previewed by retryPlan, executed by invalidateFromStep. */
+  private async retryCheckpoint(runId: string, stepRunId: string): Promise<string | undefined> {
+    const attempts = await this.stepAttempts.list(runId, stepRunId);
+    return attempts.filter((attempt) => attempt.checkpoint).at(-1)?.checkpoint;
+  }
+
   /**
    * Shared by retryStep and decideApproval: invalidate a target step (and,
    * in 'invalidate' mode, everything downstream of it), then reopen the run
@@ -964,8 +976,7 @@ export class ProjectService {
       reason: string;
     },
   ): Promise<{ run: WorkflowRun; invalidatedStepRunIds: string[] }> {
-    const attempts = await this.stepAttempts.list(run.id, target.id);
-    const checkpoint = attempts.filter((attempt) => attempt.checkpoint).at(-1)?.checkpoint;
+    const checkpoint = await this.retryCheckpoint(run.id, target.id);
     const now = this.clock.now().toISOString();
 
     if (!target.invalidatedAt) await this.invalidateStepRun(target, options.reason, now);
