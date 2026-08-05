@@ -8,6 +8,7 @@ import type {
   ValidationPreflightReport,
 } from '@agent-foundry/contracts';
 import {
+  createProductionValidationPreflightChecks,
   persistValidationPreflightReport,
   runValidationPreflight,
   type ValidationPreflightChecks,
@@ -178,12 +179,51 @@ describe('validation preflight', () => {
     expect(report.checks.at(-1)).toMatchObject({
       boundary: 'docker',
       status: 'failed',
-      message: 'docker prerequisite failed.',
     });
+    // The cause must survive redaction: an operator cannot act on
+    // "docker prerequisite failed." alone.
+    expect(report.checks.at(-1)?.message).toContain('docker prerequisite failed.');
+    expect(report.checks.at(-1)?.message).toContain('ECONNREFUSED 127.0.0.1:54321');
     expect(JSON.stringify(report)).not.toContain('secret-value');
     expect(validationChecks.supabase).not.toHaveBeenCalled();
     expect(validationChecks.localCanary).not.toHaveBeenCalled();
     expect(validationChecks.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the cause when a canary throws, and never leaks the operator home path', async () => {
+    const validationChecks = checks({
+      haikuCanary: vi.fn(async () => {
+        throw new Error(
+          "ENOENT: no such file or directory, open '/Users/rosalind/work/dist/sidecar.js'",
+        );
+      }),
+    });
+
+    const report = await runValidationPreflight(options(validationChecks));
+
+    expect(report.status).toBe('model-failed');
+    const failed = report.checks.at(-1);
+    expect(failed).toMatchObject({ boundary: 'haiku-canary', status: 'failed' });
+    expect(failed?.message).toContain('ENOENT');
+    expect(failed?.message).toContain('dist/sidecar.js');
+    // The path stays diagnosable; only the account name goes.
+    expect(failed?.message).toContain('/Users/[REDACTED]/');
+    expect(JSON.stringify(report)).not.toContain('rosalind');
+    expect(validationChecks.lunaCanary).not.toHaveBeenCalled();
+  });
+
+  it('caps a flooded cause so a stdout dump cannot land in the bundle', async () => {
+    const validationChecks = checks({
+      docker: vi.fn(async () => {
+        throw new Error('x'.repeat(5_000));
+      }),
+    });
+
+    const report = await runValidationPreflight(options(validationChecks));
+
+    const message = report.checks.at(-1)?.message ?? '';
+    expect(message.length).toBeLessThan(600);
+    expect(message).toContain('…');
   });
 
   it('stops at the first model canary failure without creating a project', async () => {
@@ -218,7 +258,7 @@ describe('validation preflight', () => {
   it('downgrades the report when disposable cleanup fails', async () => {
     const validationChecks = checks({
       cleanup: vi.fn(async () => {
-        throw new Error('private cleanup detail');
+        throw new Error('supabase teardown timed out after 90000ms; token=hunter2');
       }),
     });
 
@@ -229,6 +269,40 @@ describe('validation preflight', () => {
       boundary: 'cleanup',
       errorCode: 'CLEANUP_FAILED',
     });
-    expect(JSON.stringify(report)).not.toContain('private cleanup detail');
+    // Which teardown leaked, and why, is the whole point of the cleanup record.
+    expect(report.checks.at(-1)?.message).toContain('supabase teardown timed out after 90000ms');
+    expect(JSON.stringify(report)).not.toContain('hunter2');
+  });
+});
+
+describe('production preflight cleanup', () => {
+  it('names the teardown that leaked instead of a bare failure', async () => {
+    const generatedProjectRuntime = {
+      initialize: vi.fn(),
+      health: vi.fn().mockResolvedValue({ health: { state: 'healthy' } }),
+      cleanup: vi.fn().mockRejectedValue(new Error('container stop timed out after 90000ms')),
+    };
+    const production = createProductionValidationPreflightChecks({
+      campaign,
+      environmentId: 'validation-preflight-1',
+      harness: { scaffoldFiles: vi.fn() },
+      workspaces: {
+        ensure: vi.fn(),
+        applyScaffold: vi.fn(),
+        workspacePath: vi.fn(),
+        cleanup: vi.fn(),
+      },
+      generatedProjectRuntime,
+      previews: { start: vi.fn(), stop: vi.fn() },
+      previewRunner: { health: vi.fn() },
+      maxOutputBytes: 1_000,
+    } as unknown as Parameters<typeof createProductionValidationPreflightChecks>[0]);
+
+    // Only a torn-down resource can leak, so initialize before asserting.
+    await production.supabase();
+
+    await expect(production.cleanup()).rejects.toThrow(
+      'supabase teardown failed: container stop timed out after 90000ms',
+    );
   });
 });

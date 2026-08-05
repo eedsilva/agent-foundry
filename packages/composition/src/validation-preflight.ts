@@ -13,13 +13,13 @@ import {
   type PreviewSession,
   type PreviewWorkspaceRef,
 } from '@agent-foundry/contracts';
-import type {
-  GeneratedProjectRuntime,
-  HarnessRepository,
-  PreviewRunner,
-  WorkspaceManager,
+import {
+  redactString,
+  type GeneratedProjectRuntime,
+  type HarnessRepository,
+  type PreviewRunner,
+  type WorkspaceManager,
 } from '@agent-foundry/domain';
-import { redactString } from '@agent-foundry/domain';
 import { runReproducibleInstall, resolvePreviewCommandPlan } from '@agent-foundry/executors';
 import type { PreviewService } from '@agent-foundry/orchestrator';
 import {
@@ -94,6 +94,7 @@ export async function runValidationPreflight(
   let status: ValidationPreflightStatus = 'passed';
   let report: ValidationPreflightReport | undefined;
   let cleanupFailed = false;
+  let cleanupCause = '';
   const cleanupStartedAt = Date.now();
 
   try {
@@ -172,8 +173,9 @@ export async function runValidationPreflight(
   } finally {
     try {
       await options.checks.cleanup();
-    } catch {
+    } catch (error) {
       cleanupFailed = true;
+      cleanupCause = describeCause(error);
     }
   }
 
@@ -189,7 +191,7 @@ export async function runValidationPreflight(
           status: 'failed',
           durationMs: Date.now() - cleanupStartedAt,
           errorCode: 'CLEANUP_FAILED',
-          message: 'Disposable preflight resources could not be cleaned up.',
+          message: `Disposable preflight resources could not be cleaned up. ${cleanupCause}`,
         },
       ],
     });
@@ -295,21 +297,40 @@ export function createProductionValidationPreflightChecks(
         dependencies: canaryDependencies,
       }),
     async cleanup() {
+      // Labelled so a leak names the resource that survived — an unlabelled
+      // "cleanup failed" leaves the operator diffing `docker ps` by hand.
+      const labelled = (name: string, task: Promise<unknown>) =>
+        task.catch((error: unknown) => {
+          throw new Error(`${name} teardown failed: ${causeText(error)}`);
+        });
+
       const results = await Promise.allSettled([
-        preview ? options.previews.stop(preview.session.id) : Promise.resolve(),
-        workspaceCreated ? options.workspaces.cleanup(options.environmentId) : Promise.resolve(),
-        environmentInitialized && options.generatedProjectRuntime
-          ? options.generatedProjectRuntime.cleanup({
-              projectId: options.environmentId,
-              confirmation: {
-                confirmed: true,
-                backupCreatedAt: new Date(Date.now() - 1_000).toISOString(),
-              },
-            })
-          : Promise.resolve(),
+        labelled(
+          'preview',
+          preview ? options.previews.stop(preview.session.id) : Promise.resolve(),
+        ),
+        labelled(
+          'workspace',
+          workspaceCreated ? options.workspaces.cleanup(options.environmentId) : Promise.resolve(),
+        ),
+        labelled(
+          'supabase',
+          environmentInitialized && options.generatedProjectRuntime
+            ? options.generatedProjectRuntime.cleanup({
+                projectId: options.environmentId,
+                confirmation: {
+                  confirmed: true,
+                  backupCreatedAt: new Date(Date.now() - 1_000).toISOString(),
+                },
+              })
+            : Promise.resolve(),
+        ),
       ]);
-      if (results.some((result) => result.status === 'rejected')) {
-        throw new Error('Preflight cleanup failed.');
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected' ? [causeText(result.reason)] : [],
+      );
+      if (failures.length > 0) {
+        throw new Error(failures.join('; '));
       }
     },
   };
@@ -361,16 +382,39 @@ async function recordCheck(
     await check();
     checks.push({ boundary, status: 'passed', durationMs: Date.now() - startedAt });
     return true;
-  } catch {
+  } catch (error) {
     checks.push({
       boundary,
       status: 'failed',
       durationMs: Date.now() - startedAt,
       errorCode: 'PREFLIGHT_FAILED',
-      message: `${boundary} prerequisite failed.`,
+      message: `${boundary} prerequisite failed. ${describeCause(error)}`,
     });
     return false;
   }
+}
+
+/** Home directories leak the operator's account name into shared evidence. */
+const HOME_DIRECTORY = /(\/(?:Users|home)\/)[^/\s'"]+/g;
+
+/** Keeps a stdout dump from landing in the bundle when a tool floods stderr. */
+const MAX_CAUSE_CHARS = 500;
+
+/**
+ * Evidence must be redacted, not empty: a bare boundary name leaves the
+ * operator re-running the gate by hand to learn what broke. This is the only
+ * funnel through which raw error text reaches a persisted report, so every
+ * scrub belongs here. Redact before truncating, so no half-scrubbed secret
+ * survives the cap.
+ */
+function causeText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function describeCause(error: unknown): string {
+  const redacted = redactString(causeText(error)).replace(HOME_DIRECTORY, '$1[REDACTED]').trim();
+  if (redacted === '') return 'No cause reported.';
+  return redacted.length > MAX_CAUSE_CHARS ? `${redacted.slice(0, MAX_CAUSE_CHARS)}…` : redacted;
 }
 
 async function recordCanaryCheck(
@@ -398,13 +442,13 @@ async function recordCanaryCheck(
           }),
     });
     return passed;
-  } catch {
+  } catch (error) {
     checks.push({
       boundary,
       status: 'failed',
       durationMs: Date.now() - startedAt,
       errorCode: 'CANARY_FAILED',
-      message: `${boundary} did not complete.`,
+      message: `${boundary} did not complete. ${describeCause(error)}`,
     });
     return false;
   }
