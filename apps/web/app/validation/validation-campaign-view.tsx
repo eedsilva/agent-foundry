@@ -146,5 +146,5 @@ function ModelRow({ model }: { model: ValidationModelIdentity }) {
 function modelLabel(model: ValidationModelIdentity): string {
   if (model.id === 'claude-haiku') return 'Claude Haiku';
   if (model.id === 'codex-default') return 'Codex GPT-5.6 Luna';
-  return `Local · ${model.id}`;
+  return model.id;
 }

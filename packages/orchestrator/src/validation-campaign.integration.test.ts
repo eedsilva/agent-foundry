@@ -76,7 +76,6 @@ const campaign = ValidationCampaignPreviewSchema.parse({
   allowedModels: [
     { id: 'campaign-model-1', provider: 'codex', model: 'campaign-model-1' },
     { id: 'campaign-model-3', provider: 'codex', model: 'campaign-model-3' },
-    { id: 'campaign-model-4', provider: 'codex', model: 'campaign-model-4' },
   ],
   routes: [
     {
@@ -187,7 +186,6 @@ describe('validation campaign run enforcement', () => {
       allowedModels: [
         { id: meteredModel.id, provider: meteredModel.provider, model: meteredModel.model },
         { id: models[1]!.id, provider: models[1]!.provider, model: models[1]!.model },
-        campaign.allowedModels[2]!,
       ],
       routes: campaign.routes.map((route) =>
         route.taskKind === 'planning'
@@ -493,7 +491,6 @@ describe('validation campaign run enforcement', () => {
       allowedModels: [
         { id: models[0]!.id, provider: models[0]!.provider, model: models[0]!.model },
         { id: models[1]!.id, provider: models[1]!.provider, model: models[1]!.model },
-        campaign.allowedModels[2]!,
       ],
       routes: campaign.routes.map((route) =>
         route.taskKind === 'planning'

@@ -13,7 +13,6 @@ export const ValidationPreflightBoundarySchema = z.enum([
   'application-health',
   'preview-gateway',
   'cleanup',
-  'local-canary',
   'haiku-canary',
   'luna-canary',
 ]);

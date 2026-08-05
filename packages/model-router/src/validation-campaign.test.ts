@@ -44,7 +44,6 @@ describe('buildValidationCampaignPreview', () => {
     const preview = buildValidationCampaignPreview(catalog(), 'a'.repeat(40));
 
     expect(preview.allowedModels.map((entry) => entry.id)).toEqual([
-      'opencode-ollama',
       'claude-haiku',
       'codex-default',
     ]);
@@ -66,8 +65,8 @@ describe('buildValidationCampaignPreview', () => {
       },
       {
         taskKind: 'verification',
-        selected: expect.objectContaining({ id: 'opencode-ollama' }),
-        fallbacks: [expect.objectContaining({ id: 'claude-haiku' })],
+        selected: expect.objectContaining({ id: 'claude-haiku' }),
+        fallbacks: [],
       },
     ]);
     expect(preview.limits).toEqual({

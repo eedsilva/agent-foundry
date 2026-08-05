@@ -19,7 +19,6 @@ const selected: ValidationCampaignResponse = {
     name: 'Real TODO validation campaign',
     sourceRevision: 'a'.repeat(40),
     allowedModels: [
-      { id: 'opencode-ollama', provider: 'opencode', model: 'qwen2.5-coder:7b' },
       { id: 'claude-haiku', provider: 'claude', model: 'haiku' },
       { id: 'codex-default', provider: 'codex', model: 'gpt-5.6-luna' },
     ],
@@ -41,8 +40,8 @@ const selected: ValidationCampaignResponse = {
       },
       {
         taskKind: 'verification',
-        selected: { id: 'opencode-ollama', provider: 'opencode', model: 'qwen2.5-coder:7b' },
-        fallbacks: [{ id: 'claude-haiku', provider: 'claude', model: 'haiku' }],
+        selected: { id: 'claude-haiku', provider: 'claude', model: 'haiku' },
+        fallbacks: [],
       },
     ],
     limits: {
