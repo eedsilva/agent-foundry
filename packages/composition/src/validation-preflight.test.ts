@@ -21,7 +21,6 @@ const campaign: ValidationCampaignPreview = {
   name: 'Real TODO validation campaign',
   sourceRevision: 'a'.repeat(40),
   allowedModels: [
-    { id: 'opencode-ollama', provider: 'opencode', model: 'qwen2.5-coder:7b' },
     { id: 'claude-haiku', provider: 'claude', model: 'haiku' },
     { id: 'codex-default', provider: 'codex', model: 'gpt-5.6-luna' },
   ],
@@ -44,7 +43,6 @@ function checks(overrides: Partial<ValidationPreflightChecks> = {}): ValidationP
     scaffold: vi.fn(),
     applicationHealth: vi.fn(),
     previewGateway: vi.fn(),
-    localCanary: vi.fn().mockResolvedValue(canary('opencode', 'local')),
     haikuCanary: vi.fn().mockResolvedValue(canary('claude', 'haiku')),
     lunaCanary: vi.fn().mockResolvedValue(canary('codex', 'luna')),
     cleanup: vi.fn(),
@@ -81,16 +79,11 @@ describe('validation preflight', () => {
           'scaffold',
           'applicationHealth',
           'previewGateway',
-          'localCanary',
           'haikuCanary',
           'lunaCanary',
         ].map((name) => [name, vi.fn(async () => order.push(name))]),
       ) as Partial<ValidationPreflightChecks>,
     );
-    validationChecks.localCanary = vi.fn(async () => {
-      order.push('localCanary');
-      return canary('opencode', 'local');
-    });
     validationChecks.haikuCanary = vi.fn(async () => {
       order.push('haikuCanary');
       return canary('claude', 'haiku');
@@ -116,7 +109,6 @@ describe('validation preflight', () => {
       'scaffold',
       'application-health',
       'preview-gateway',
-      'local-canary',
       'haiku-canary',
       'luna-canary',
     ]);
@@ -127,7 +119,6 @@ describe('validation preflight', () => {
       'scaffold',
       'applicationHealth',
       'previewGateway',
-      'localCanary',
       'haikuCanary',
       'lunaCanary',
     ]);
@@ -187,7 +178,7 @@ describe('validation preflight', () => {
     expect(report.checks.at(-1)?.message).toContain('ECONNREFUSED 127.0.0.1:54321');
     expect(JSON.stringify(report)).not.toContain('secret-value');
     expect(validationChecks.supabase).not.toHaveBeenCalled();
-    expect(validationChecks.localCanary).not.toHaveBeenCalled();
+    expect(validationChecks.haikuCanary).not.toHaveBeenCalled();
     expect(validationChecks.cleanup).toHaveBeenCalledOnce();
   });
 

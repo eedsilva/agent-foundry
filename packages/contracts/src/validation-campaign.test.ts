@@ -19,7 +19,6 @@ const preview = {
   sourceRevision: 'a'.repeat(40),
   allowedModels: [
     identity,
-    { ...identity, id: 'local', provider: 'opencode', model: 'qwen' },
     { ...identity, id: 'haiku', provider: 'claude', model: 'haiku' },
   ],
   routes: [
@@ -32,8 +31,8 @@ const preview = {
     { taskKind: 'repair' as const, selected: identity, fallbacks: [] },
     {
       taskKind: 'verification' as const,
-      selected: { ...identity, id: 'local', provider: 'opencode', model: 'qwen' },
-      fallbacks: [{ ...identity, id: 'haiku', provider: 'claude', model: 'haiku' }],
+      selected: { ...identity, id: 'haiku', provider: 'claude', model: 'haiku' },
+      fallbacks: [],
     },
   ],
   limits: {

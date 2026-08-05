@@ -17,7 +17,6 @@ const campaign = ValidationCampaignPreviewSchema.parse({
   sourceRevision: 'a'.repeat(40),
   allowedModels: [
     { id: 'model-1', provider: 'codex', model: 'test-model' },
-    { id: 'model-2', provider: 'codex', model: 'alt-model' },
     { id: 'model-3', provider: 'claude', model: 'haiku' },
   ],
   routes: [

@@ -7,7 +7,6 @@ import {
 
 export const REAL_TODO_VALIDATION_CAMPAIGN_ID = 'real-todo-v1' as const;
 
-const LOCAL_MODEL_ID = 'opencode-ollama';
 const CLAUDE_HAIKU_MODEL_ID = 'claude-haiku';
 const CODEX_LUNA_MODEL_ID = 'codex-default';
 const CODEX_LUNA_MODEL = 'gpt-5.6-luna';
@@ -16,7 +15,6 @@ export function buildValidationCampaignPreview(
   models: readonly ModelDefinition[],
   sourceRevision: string,
 ): ValidationCampaignPreview {
-  const local = requireModel(models, LOCAL_MODEL_ID, 'opencode', undefined, 'local');
   const haiku = requireModel(models, CLAUDE_HAIKU_MODEL_ID, 'claude', 'haiku');
   const luna = requireModel(models, CODEX_LUNA_MODEL_ID, 'codex', CODEX_LUNA_MODEL);
 
@@ -25,12 +23,12 @@ export function buildValidationCampaignPreview(
     id: REAL_TODO_VALIDATION_CAMPAIGN_ID,
     name: 'Real TODO validation campaign',
     sourceRevision,
-    allowedModels: [local, haiku, luna],
+    allowedModels: [haiku, luna],
     routes: [
       { taskKind: 'planning', selected: haiku, fallbacks: [] },
       { taskKind: 'implementation', selected: luna, fallbacks: [] },
       { taskKind: 'repair', selected: luna, fallbacks: [] },
-      { taskKind: 'verification', selected: local, fallbacks: [haiku] },
+      { taskKind: 'verification', selected: haiku, fallbacks: [] },
     ],
     limits: {
       attemptsPerAgentStep: 1,
@@ -46,7 +44,6 @@ function requireModel(
   id: string,
   provider: ModelDefinition['provider'],
   expectedModel: string | undefined,
-  requiredTag?: string,
 ): ValidationModelIdentity {
   const matches = models.filter((candidate) => candidate.id === id);
   if (matches.length !== 1) {
@@ -76,11 +73,5 @@ function requireModel(
       `Validation campaign ${REAL_TODO_VALIDATION_CAMPAIGN_ID} model ${id} has no configured model identity`,
     );
   }
-  if (requiredTag !== undefined && !model.tags.includes(requiredTag)) {
-    throw new Error(
-      `Validation campaign ${REAL_TODO_VALIDATION_CAMPAIGN_ID} model ${id} is not tagged ${requiredTag}`,
-    );
-  }
-
   return { id: model.id, provider: model.provider, model: model.model };
 }

@@ -45,7 +45,6 @@ describe('ProjectService.create', () => {
       allowedModels: [
         { id: 'model-1', provider: 'codex', model: 'test-model' },
         { id: 'model-2', provider: 'codex', model: 'alt-model' },
-        { id: 'model-3', provider: 'codex', model: 'third-model' },
       ],
       routes: [
         {
@@ -107,7 +106,6 @@ describe('ProjectService.create', () => {
       allowedModels: [
         { id: 'model-1', provider: 'codex', model: 'test-model' },
         { id: 'model-2', provider: 'codex', model: 'alt-model' },
-        { id: 'model-3', provider: 'codex', model: 'third-model' },
       ],
       routes: [
         {
@@ -147,7 +145,6 @@ describe('ProjectService.create', () => {
       allowedModels: [
         { id: 'model-1', provider: 'codex', model: 'test-model' },
         { id: 'model-2', provider: 'codex', model: 'alt-model' },
-        { id: 'model-3', provider: 'codex', model: 'third-model' },
       ],
       routes: [
         {

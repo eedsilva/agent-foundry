@@ -113,7 +113,6 @@ describe('router dashboard + experiments API', () => {
         id: 'real-todo-v1',
         sourceRevision: expect.stringMatching(/^[0-9a-f]{40}$/),
         allowedModels: [
-          { id: 'opencode-ollama' },
           { id: 'claude-haiku', provider: 'claude', model: 'haiku' },
           { id: 'codex-default', provider: 'codex', model: 'gpt-5.6-luna' },
         ],

@@ -38,7 +38,7 @@ export const ValidationCampaignPreviewSchema = z
     id: ValidationCampaignIdSchema,
     name: z.string().trim().min(1),
     sourceRevision: z.string().regex(/^[0-9a-f]{40}$/),
-    allowedModels: z.array(ValidationModelIdentitySchema).length(3),
+    allowedModels: z.array(ValidationModelIdentitySchema).length(2),
     routes: z.array(ValidationCampaignRouteSchema).min(1),
     limits: ValidationCampaignLimitsSchema,
   })

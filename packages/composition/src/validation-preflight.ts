@@ -41,7 +41,6 @@ export interface ValidationPreflightChecks {
   scaffold(): Promise<void>;
   applicationHealth(): Promise<void>;
   previewGateway(): Promise<void>;
-  localCanary(): Promise<ValidationCanaryResult>;
   haikuCanary(): Promise<ValidationCanaryResult>;
   lunaCanary(): Promise<ValidationCanaryResult>;
   cleanup(): Promise<void>;
@@ -129,7 +128,6 @@ export async function runValidationPreflight(
         const canaries: Array<
           readonly [ValidationPreflightBoundary, () => Promise<ValidationCanaryResult>]
         > = [
-          ['local-canary', options.checks.localCanary],
           ['haiku-canary', options.checks.haikuCanary],
           ['luna-canary', options.checks.lunaCanary],
         ];
@@ -297,12 +295,6 @@ export function createProductionValidationPreflightChecks(
         );
       }
     },
-    localCanary: () =>
-      runValidationCampaignCanary({
-        model: model('opencode-ollama'),
-        taskKind: 'planning',
-        dependencies: canaryDependencies,
-      }),
     haikuCanary: () =>
       runValidationCampaignCanary({
         model: model('claude-haiku'),
