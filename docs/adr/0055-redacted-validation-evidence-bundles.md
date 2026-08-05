@@ -35,8 +35,10 @@ run produced evidence that was empty rather than redacted:
   addresses, database shapes, secrets, and personal paths are still redacted; free-form model
   text and model identity fields keep the stricter keyword rule.
 
-Boundary causes carry the tail of a failing tool's stderr, so the stream is redacted whole before
-it is cut to length: slicing first can start mid-token and strip the prefix that identifies a key.
+Boundary causes carry the tail of a failing tool's stderr, falling back to stdout when stderr is
+empty — pnpm reports a failing child script on stdout, and a stderr-only reading published
+"No output." for every real build failure. The stream is redacted whole before it is cut to length:
+slicing first can start mid-token and strip the prefix that identifies a key.
 The preflight report is redacted by one shared function for all three of its boundaries — the
 persisted file, the run-bound artifact, and the `POST /validation/campaign/preflight` response,
 which no longer returns the operator's data directory.

@@ -20,3 +20,4 @@ export * from './network-policy-dns.js';
 export * from './docker-preview-installer.js';
 export * from './claude-stream-events.js';
 export * from './codex-stream-events.js';
+export * from './safe-environment.js';
