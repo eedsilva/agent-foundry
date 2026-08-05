@@ -22,7 +22,18 @@ Provider-reported cost, catalog estimates, metered unknowns, and subscription qu
 separate fields.
 
 The publisher redacts summaries, errors, preflight model fields, and personal paths before
-persistence. Repeated publication of the same campaign/run/input is idempotent; a different
+persistence. Two rules bound what "redacted" means, both amended after the first real preflight
+run produced evidence that was empty rather than redacted:
+
+- Personal paths keep the path and lose the account name (`/Users/[REDACTED]/dist/sidecar.js`),
+  not the whole path. A gate failure is only actionable if the operator can see which file was
+  missing. `redactPersonalPaths` in `@agent-foundry/domain` is the single definition; every
+  evidence surface calls it.
+- Preflight boundary messages are redacted as diagnostics, not as prompts. Instruction keywords
+  (`build`, `create`, `list`, `app`) are ordinary English in an ops diagnostic, and matching on
+  them published `[REDACTED_PROMPT]` for every real gate failure. Role markers (`system:`),
+  addresses, database shapes, secrets, and personal paths are still redacted; free-form model
+  text keeps the stricter keyword rule. Repeated publication of the same campaign/run/input is idempotent; a different
 observation set receives a distinct immutable artifact revision. A run cannot be `accepted` unless
 the terminal run and persisted project, plan approval, implementation, deterministic, preview,
 browser, database, and terminal proofs are present. Missing or skipped mandatory evidence remains

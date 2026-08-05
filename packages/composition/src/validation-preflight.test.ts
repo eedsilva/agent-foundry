@@ -198,18 +198,45 @@ describe('validation preflight', () => {
         );
       }),
     });
+    const persist = vi.fn(async (_report: ValidationPreflightReport) => {});
 
-    const report = await runValidationPreflight(options(validationChecks));
+    const report = await runValidationPreflight(options(validationChecks, persist));
 
     expect(report.status).toBe('model-failed');
     const failed = report.checks.at(-1);
     expect(failed).toMatchObject({ boundary: 'haiku-canary', status: 'failed' });
-    expect(failed?.message).toContain('ENOENT');
-    expect(failed?.message).toContain('dist/sidecar.js');
+    // Assert the persisted report, not the in-memory return: the published
+    // artifact is the one #397 attaches, and it is the one that can leak.
+    const persisted = persist.mock.calls.at(-1)?.[0];
+    const persistedMessage = persisted?.checks.at(-1)?.message ?? '';
+    expect(persistedMessage).toContain('ENOENT');
+    expect(persistedMessage).toContain('dist/sidecar.js');
     // The path stays diagnosable; only the account name goes.
-    expect(failed?.message).toContain('/Users/[REDACTED]/');
+    expect(persistedMessage).toContain('/Users/[REDACTED]/');
+    expect(JSON.stringify(persisted)).not.toContain('rosalind');
     expect(JSON.stringify(report)).not.toContain('rosalind');
     expect(validationChecks.lunaCanary).not.toHaveBeenCalled();
+  });
+
+  it('reports what a canary returned when it fails without throwing', async () => {
+    const validationChecks = checks({
+      haikuCanary: vi.fn(async () => ({
+        provider: 'claude' as const,
+        selectedModel: 'haiku',
+        status: 'failed' as const,
+      })),
+    });
+
+    const report = await runValidationPreflight(options(validationChecks));
+
+    const failed = report.checks.at(-1);
+    expect(failed).toMatchObject({
+      boundary: 'haiku-canary',
+      status: 'failed',
+      errorCode: 'UNKNOWN_EXECUTED_MODEL',
+    });
+    expect(failed?.message).toContain('status=failed');
+    expect(failed?.message).toContain('executedModel=missing');
   });
 
   it('caps a flooded cause so a stdout dump cannot land in the bundle', async () => {

@@ -49,6 +49,18 @@ export function redactString(value: string): string {
   return VALUE_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[REDACTED]'), assignments);
 }
 
+/**
+ * Home directories carry the operator's account name into shared evidence, but
+ * the rest of the path is what makes a failure diagnosable — so drop the name
+ * and keep the path. Single source for every evidence surface that persists or
+ * publishes operator-side paths.
+ */
+const HOME_DIRECTORY = /(\/(?:Users|home)\/)[^/\s'"`]+/g;
+
+export function redactPersonalPaths(value: string): string {
+  return value.replace(HOME_DIRECTORY, '$1[REDACTED]');
+}
+
 function redactValue(value: unknown, depth: number): unknown {
   if (depth > 8) return '[REDACTED]';
   if (typeof value === 'string') return redactString(value);

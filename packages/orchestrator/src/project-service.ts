@@ -67,6 +67,7 @@ import {
   browserRepairId,
   isTaskStepId,
   normalizeApprovalDecision,
+  redactPersonalPaths,
   redactString,
   traceContextField,
   transitionWorkflowRun,
@@ -75,7 +76,6 @@ import { policyHash, workflowHash } from './idempotency.js';
 import type { QualityObservationService } from './quality-observation-service.js';
 
 const RUN_PROJECT_MAX_ATTEMPTS = 2;
-const PERSONAL_PATH_PATTERN = /(?:\/Users|\/home)\/[^\s"'`]+/g;
 
 function redactValidationPreflight(report: ValidationPreflightReport): ValidationPreflightReport {
   return {
@@ -83,11 +83,7 @@ function redactValidationPreflight(report: ValidationPreflightReport): Validatio
     dataDirectory: '[REDACTED]',
     checks: report.checks.map((check) => ({
       ...check,
-      ...(check.message
-        ? {
-            message: redactString(check.message).replace(PERSONAL_PATH_PATTERN, '[REDACTED]'),
-          }
-        : {}),
+      ...(check.message ? { message: redactPersonalPaths(redactString(check.message)) } : {}),
     })),
   };
 }

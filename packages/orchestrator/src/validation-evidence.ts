@@ -35,12 +35,17 @@ import type {
   StepRunRepository,
   WorkflowRunRepository,
 } from '@agent-foundry/domain';
-import { NotFoundError, redactString, redactUnknown, ValidationError } from '@agent-foundry/domain';
+import {
+  NotFoundError,
+  redactPersonalPaths,
+  redactString,
+  redactUnknown,
+  ValidationError,
+} from '@agent-foundry/domain';
 import { summarizeValidationUsage } from './validation-budget.js';
 import { validateBrowserVerificationReportBinding } from './browser-verification-coordinator.js';
 
 const EVIDENCE_ARTIFACT_PREFIX = 'validation-evidence-';
-const PERSONAL_PATH_PATTERN = /(?:\/Users|\/home)\/[^\s"'`]+/g;
 
 export interface ValidationEvidencePublisher {
   publishFromRun(runId: string): Promise<ValidationEvidenceResponse | null>;
@@ -866,12 +871,12 @@ export function buildValidationEvidenceBundle(options: {
         ...environmentReadiness,
         checks: environmentReadiness.checks.map((check) => ({
           ...check,
-          ...(check.message ? { message: redactEvidenceText(check.message) } : {}),
+          ...(check.message ? { message: redactDiagnosticText(check.message) } : {}),
           ...(check.selectedModel
-            ? { selectedModel: redactEvidenceText(check.selectedModel, 200) }
+            ? { selectedModel: redactDiagnosticText(check.selectedModel, 200) }
             : {}),
           ...(check.executedModel
-            ? { executedModel: redactEvidenceText(check.executedModel, 200) }
+            ? { executedModel: redactDiagnosticText(check.executedModel, 200) }
             : {}),
         })),
       },
@@ -948,15 +953,29 @@ function toTerminalState(run: WorkflowRun): ValidationEvidenceTerminalState {
   };
 }
 
+/**
+ * Instruction words are ordinary English in an ops diagnostic — "scaffold build
+ * failed", "cannot create container" — so they only mark free-form model text,
+ * never a gate message. Role markers and addresses mark a prompt wherever they
+ * appear.
+ */
+const INSTRUCTION_LIKE =
+  /\b(?:you are|write|implement|inspect|produce|respond with|acceptance criteria|create|build|make|add|delete|update|list|show|please|the user|application|todo|app)\b/i;
+const PROMPT_SHAPED = /(?:^|\b)(?:system|user|assistant)\s*:/i;
+
 function redactEvidenceText(value: string, maxLength = 500): string {
-  const isPromptLike =
-    /(?:^|\b)(?:system|user|assistant)\s*:/i.test(value) ||
-    /\b(?:you are|write|implement|inspect|produce|respond with|acceptance criteria|create|build|make|add|delete|update|list|show)\b/i.test(
-      value,
-    ) ||
-    /\b(?:please|the user|application|todo|app)\b/i.test(value) ||
-    containsEmailLike(value);
-  if (isPromptLike) {
+  if (INSTRUCTION_LIKE.test(value)) return '[REDACTED_PROMPT]';
+  return redactDiagnosticText(value, maxLength);
+}
+
+/**
+ * Preflight boundaries report why a gate failed. Redacting them by prompt
+ * keywords published `[REDACTED_PROMPT]` for every real failure — evidence that
+ * is empty, not redacted, at the one boundary #397 attaches evidence from.
+ * Secrets, addresses, personal paths and database values still go.
+ */
+function redactDiagnosticText(value: string, maxLength = 500): string {
+  if (PROMPT_SHAPED.test(value) || containsEmailLike(value)) {
     return '[REDACTED_PROMPT]';
   }
   const isDatabaseLike =
@@ -967,7 +986,7 @@ function redactEvidenceText(value: string, maxLength = 500): string {
   if (isDatabaseLike) {
     return '[REDACTED_DATABASE_VALUE]';
   }
-  return redactString(value).replace(PERSONAL_PATH_PATTERN, '[REDACTED]').slice(0, maxLength);
+  return redactPersonalPaths(redactString(value)).slice(0, maxLength);
 }
 
 function containsEmailLike(value: string): boolean {

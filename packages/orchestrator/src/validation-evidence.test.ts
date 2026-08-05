@@ -5,6 +5,7 @@ import {
   WorkflowDefinitionSchema,
   type ValidationEvidenceReference,
   type ValidationEvidencePublicationRequest,
+  type ValidationPreflightReport,
 } from '@agent-foundry/contracts';
 import { makeHarness, MODELS, seedRun } from './testing/harness.js';
 import { ValidationEvidenceService } from './validation-evidence.js';
@@ -101,7 +102,12 @@ function request(
   };
 }
 
-async function setup(options: { withPreflight?: boolean } = {}) {
+async function setup(
+  options: {
+    withPreflight?: boolean;
+    preflightChecks?: ValidationPreflightReport['checks'];
+  } = {},
+) {
   const harness = makeHarness({}, undefined, { validationCampaign: campaign });
   await seedRun(harness);
   const now = harness.clock.now().toISOString();
@@ -608,8 +614,10 @@ async function setup(options: { withPreflight?: boolean } = {}) {
             environmentId: 'validation-preflight-test',
             startedAt: now,
             completedAt: now,
-            status: 'passed' as const,
-            checks: [
+            status: (options.preflightChecks?.some((check) => check.status === 'failed')
+              ? 'environment-blocked'
+              : 'passed') as 'passed' | 'environment-blocked',
+            checks: options.preflightChecks ?? [
               { boundary: 'source-revision' as const, status: 'passed' as const, durationMs: 1 },
             ],
             generatedProjectCreated: false as const,
@@ -807,6 +815,48 @@ describe('validation evidence publication', () => {
     expect(JSON.stringify(first.bundle)).not.toContain('top-secret-value');
     expect(JSON.stringify(first.bundle)).not.toContain('/Users/edsilva');
     expect(JSON.stringify(first.bundle)).not.toContain('SELECT password');
+  });
+
+  it('publishes the preflight failure cause instead of redacting it as a prompt', async () => {
+    const { evidence, proofs } = await setup({
+      preflightChecks: [
+        {
+          boundary: 'scaffold',
+          status: 'failed',
+          durationMs: 1,
+          errorCode: 'PREFLIGHT_FAILED',
+          // Ordinary ops English: "build", "create" and "app" all used to trip
+          // the prompt heuristic and publish [REDACTED_PROMPT] instead.
+          message:
+            "scaffold prerequisite failed. Scaffold build failed. Cannot create app: ENOENT, open '/Users/rosalind/dist/sidecar.js'",
+        },
+      ],
+    });
+
+    const published = await evidence.publish('run-1', request('accepted', proofs));
+
+    const check = published.bundle.environmentReadiness.checks.at(-1);
+    expect(check?.message).toContain('Scaffold build failed.');
+    expect(check?.message).toContain('dist/sidecar.js');
+    expect(check?.message).not.toContain('rosalind');
+  });
+
+  it('still redacts a prompt-shaped preflight message', async () => {
+    const { evidence, proofs } = await setup({
+      preflightChecks: [
+        {
+          boundary: 'haiku-canary',
+          status: 'failed',
+          durationMs: 1,
+          errorCode: 'CANARY_FAILED',
+          message: 'haiku-canary did not complete. system: you are a helpful assistant',
+        },
+      ],
+    });
+
+    const published = await evidence.publish('run-1', request('accepted', proofs));
+
+    expect(published.bundle.environmentReadiness.checks.at(-1)?.message).toBe('[REDACTED_PROMPT]');
   });
 
   it('publishes an automatic terminal bundle when preflight evidence is unavailable', async () => {

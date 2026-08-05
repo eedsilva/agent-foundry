@@ -14,6 +14,7 @@ import {
   type PreviewWorkspaceRef,
 } from '@agent-foundry/contracts';
 import {
+  redactPersonalPaths,
   redactString,
   type GeneratedProjectRuntime,
   type HarnessRepository,
@@ -66,8 +67,6 @@ export interface ProductionValidationPreflightOptions {
   installTimeoutMs?: number;
 }
 
-const PERSONAL_PATH_PATTERN = /(?:\/Users|\/home)\/[^\s"'`]+/g;
-
 export function redactValidationPreflightReport(
   report: ValidationPreflightReport,
 ): ValidationPreflightReport {
@@ -76,11 +75,7 @@ export function redactValidationPreflightReport(
     dataDirectory: '[REDACTED]',
     checks: report.checks.map((check) => ({
       ...check,
-      ...(check.message
-        ? {
-            message: redactString(check.message).replace(PERSONAL_PATH_PATTERN, '[REDACTED]'),
-          }
-        : {}),
+      ...(check.message ? { message: redactPersonalPaths(redactString(check.message)) } : {}),
     })),
   };
 }
@@ -215,6 +210,12 @@ export function createProductionValidationPreflightChecks(
     return selected;
   };
 
+  // Build tools put the diagnosis at the end of stderr, so keep the tail. Without
+  // it the boundary throws a fixed string and describeCause has nothing to carry —
+  // the gap that made the missing sidecar undiagnosable in the first real run.
+  const failureDetail = (stream: string | undefined) =>
+    stream?.trim().slice(-MAX_DETAIL_CHARS) || 'No output.';
+
   return {
     async disposableEnvironment() {
       if (!options.generatedProjectRuntime) {
@@ -227,14 +228,18 @@ export function createProductionValidationPreflightChecks(
         timeout: 30_000,
         maxBuffer: options.maxOutputBytes,
       });
-      if (result.exitCode !== 0 || !result.stdout.trim()) throw new Error('Docker is not ready.');
+      if (result.exitCode !== 0 || !result.stdout.trim()) {
+        throw new Error(`Docker is not ready. ${failureDetail(result.stderr)}`);
+      }
     },
     async supabase() {
       if (!options.generatedProjectRuntime) throw new Error('Supabase runtime is unavailable.');
       await options.generatedProjectRuntime.initialize({ projectId: options.environmentId });
       environmentInitialized = true;
       const environment = await options.generatedProjectRuntime.health(options.environmentId);
-      if (environment.health.state !== 'healthy') throw new Error('Supabase is not healthy.');
+      if (environment.health.state !== 'healthy') {
+        throw new Error(`Supabase is not healthy. state=${environment.health.state}`);
+      }
     },
     async scaffold() {
       await options.workspaces.ensure(options.environmentId);
@@ -250,14 +255,18 @@ export function createProductionValidationPreflightChecks(
         timeoutMs: options.installTimeoutMs ?? 120_000,
         maxOutputBytes: options.maxOutputBytes,
       });
-      if (!install.ok) throw new Error('Scaffold install failed.');
+      if (!install.ok) {
+        throw new Error(`Scaffold install failed. ${failureDetail(install.stderr)}`);
+      }
       const build = await execa(plan.build.command, plan.build.args, {
         cwd: workspacePath,
         reject: false,
         timeout: options.installTimeoutMs ?? 120_000,
         maxBuffer: options.maxOutputBytes,
       });
-      if (build.exitCode !== 0) throw new Error('Scaffold build failed.');
+      if (build.exitCode !== 0) {
+        throw new Error(`Scaffold build failed. ${failureDetail(build.stderr)}`);
+      }
       preview = await options.previews.start({
         workspaceRef: {
           projectId: options.environmentId,
@@ -265,18 +274,24 @@ export function createProductionValidationPreflightChecks(
         } satisfies PreviewWorkspaceRef,
       });
       if (preview.session.status !== 'running' || !preview.url) {
-        throw new Error('Scaffold preview did not start.');
+        throw new Error(`Scaffold preview did not start. status=${preview.session.status}`);
       }
     },
     async applicationHealth() {
       if (!preview) throw new Error('Scaffold preview is unavailable.');
       const health = await options.previewRunner.health(preview.session);
-      if (health.state !== 'healthy') throw new Error('Generated application is not healthy.');
+      if (health.state !== 'healthy') {
+        throw new Error(`Generated application is not healthy. state=${health.state}`);
+      }
     },
     async previewGateway() {
       if (!preview) throw new Error('Preview gateway is unavailable.');
       const response = await fetch(preview.url, { signal: AbortSignal.timeout(10_000) });
-      if (!response.ok) throw new Error('Preview gateway returned a non-success response.');
+      if (!response.ok) {
+        throw new Error(
+          `Preview gateway returned a non-success response. status=${response.status}`,
+        );
+      }
     },
     localCanary: () =>
       runValidationCampaignCanary({
@@ -394,25 +409,25 @@ async function recordCheck(
   }
 }
 
-/** Home directories leak the operator's account name into shared evidence. */
-const HOME_DIRECTORY = /(\/(?:Users|home)\/)[^/\s'"]+/g;
-
 /** Keeps a stdout dump from landing in the bundle when a tool floods stderr. */
 const MAX_CAUSE_CHARS = 500;
 
-/**
- * Evidence must be redacted, not empty: a bare boundary name leaves the
- * operator re-running the gate by hand to learn what broke. This is the only
- * funnel through which raw error text reaches a persisted report, so every
- * scrub belongs here. Redact before truncating, so no half-scrubbed secret
- * survives the cap.
- */
+/** Leaves room for the boundary prefix inside MAX_CAUSE_CHARS. */
+const MAX_DETAIL_CHARS = 300;
+
 function causeText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Evidence must be redacted, not empty: a bare boundary name leaves the
+ * operator re-running the gate by hand to learn what broke. Every raw error
+ * that enters a report passes here first; the publisher scrubs again on the
+ * way out. Redact before truncating, so no half-scrubbed secret survives the
+ * cap.
+ */
 function describeCause(error: unknown): string {
-  const redacted = redactString(causeText(error)).replace(HOME_DIRECTORY, '$1[REDACTED]').trim();
+  const redacted = redactPersonalPaths(redactString(causeText(error))).trim();
   if (redacted === '') return 'No cause reported.';
   return redacted.length > MAX_CAUSE_CHARS ? `${redacted.slice(0, MAX_CAUSE_CHARS)}…` : redacted;
 }
@@ -438,7 +453,10 @@ async function recordCanaryCheck(
           }
         : {
             errorCode: result.executedModel ? 'CANARY_FAILED' : 'UNKNOWN_EXECUTED_MODEL',
-            message: `${boundary} did not prove its executed model and output contract.`,
+            // The canary can fail without throwing, and the result schema carries
+            // no error field — so report what it did return, or the operator is
+            // left re-running the boundary that costs quota.
+            message: `${boundary} did not prove its executed model and output contract. status=${result.status}, executedModel=${result.executedModel ?? 'missing'}`,
           }),
     });
     return passed;
