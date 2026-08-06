@@ -75,9 +75,9 @@ describe('buildValidationCampaignPreview', () => {
       },
     ]);
     expect(preview.limits).toEqual({
-      attemptsPerAgentStep: 1,
-      targetedRepairs: 1,
-      activeTimeMinutes: 45,
+      attemptsPerAgentStep: 2,
+      targetedRepairs: 3,
+      activeTimeMinutes: 60,
       meteredCostUsd: 2,
     });
   });
