@@ -324,6 +324,13 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
     evidence: BrowserVerificationEvidence;
     video: Video | null;
   }> {
+    // Playwright serializes installTimerTracker's transformed source, which
+    // references esbuild's keep-names __name helper — defined in our bundle,
+    // absent in the page. Without this shim the tracker throws on every page
+    // and no browser report can ever be approved (#427).
+    await context.addInitScript(
+      'globalThis.__name = globalThis.__name ?? ((t, v) => Object.defineProperty(t, "name", { value: v, configurable: true }));',
+    );
     await context.addInitScript(installTimerTracker, {
       key: TIMER_TRACKER_KEY,
       maxDelayMs: MAX_TRACKED_TIMER_DELAY_MS,
