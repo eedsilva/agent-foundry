@@ -168,6 +168,23 @@ describe('preview reverse proxy', () => {
     expect(received.cookie ?? '').toContain('app_pref=keep'); // other cookies survive
   }, 20_000);
 
+  it('forwards the public host as x-forwarded-host so Server Actions pass their origin check', async () => {
+    // Next.js compares the browser's Origin against Host/X-Forwarded-Host and
+    // 500s Server Actions on mismatch; the forced upstream Host is the
+    // rebinding defense, so the public host must travel alongside it (#429).
+    const { baseUrl, runtime } = await startApi();
+    const started = await startPreview(baseUrl, runtime, 'fwd-host');
+    const target = new URL(started.url);
+    const token = target.searchParams.get('token') as string;
+    const response = await fetch(
+      `${target.origin}/preview/${started.session.id}/echo-headers?token=${token}`,
+    );
+    const received = (await response.json()) as Record<string, string>;
+    expect(received['x-forwarded-host']).toBe(target.host);
+    expect(received['x-forwarded-proto']).toBe('http');
+    expect(received.host).toBe('127.0.0.1');
+  }, 20_000);
+
   it('forwards a JSON POST body to the session upstream instead of draining it', async () => {
     const { baseUrl, runtime } = await startApi();
     const started = await startPreview(baseUrl, runtime, 'json-body');

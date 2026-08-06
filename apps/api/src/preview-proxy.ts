@@ -400,6 +400,16 @@ function sanitizeRequestHeaders(
     }
     result[key] = value;
   }
+  // The forced Host is the rebinding defense, but it breaks Next.js Server
+  // Actions: Next compares the browser's Origin (the proxy's public host)
+  // against Host/X-Forwarded-Host and rejects on mismatch with a 500
+  // "Invalid Server Actions request" (#429). Forward the public host the
+  // browser actually used so the comparison holds.
+  const publicHost = headers.host;
+  if (publicHost) {
+    result['x-forwarded-host'] = publicHost;
+    result['x-forwarded-proto'] = 'http';
+  }
   result.host = '127.0.0.1';
   return result;
 }
