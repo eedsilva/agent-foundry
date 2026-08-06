@@ -1,5 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
@@ -408,6 +418,35 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
     await this.#execute('migrate', 'migration', 'up', '--workdir', environment.workdir, '--yes');
     return this.#touch(environment);
+  }
+
+  async applyWorkspaceMigrations(input: {
+    projectId: string;
+    workspaceMigrationsDir: string;
+    approval?: MigrationApproval;
+  }): Promise<AppEnvironment | null> {
+    const environment = await this.#require(input.projectId);
+    let names: string[];
+    try {
+      names = (await readdir(input.workspaceMigrationsDir))
+        .filter((name) => name.endsWith('.sql'))
+        .sort();
+    } catch {
+      return null;
+    }
+    const targetDir = join(environment.workdir, 'supabase', 'migrations');
+    await mkdir(targetDir, { recursive: true });
+    const existing = new Set(await readdir(targetDir));
+    const fresh = names.filter((name) => !existing.has(name));
+    if (fresh.length === 0) return null;
+    for (const name of fresh) {
+      await copyFile(join(input.workspaceMigrationsDir, name), join(targetDir, name));
+    }
+    return this.migrate({
+      projectId: input.projectId,
+      migrationPath: `supabase/migrations/${fresh.at(-1)!}`,
+      ...(input.approval ? { approval: input.approval } : {}),
+    });
   }
 
   async seed(input: { projectId: string; seedPath: string }): Promise<AppEnvironment> {

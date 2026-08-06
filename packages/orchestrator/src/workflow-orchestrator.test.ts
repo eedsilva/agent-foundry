@@ -590,7 +590,7 @@ describe('generated database sync before browser verification (#429)', () => {
       'create table todos ();',
     );
 
-    const migrate = vi.fn(async () => ({}) as never);
+    const applyWorkspaceMigrations = vi.fn(async () => ({}) as never);
     const verify = vi.fn(
       async (
         input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
@@ -628,7 +628,7 @@ describe('generated database sync before browser verification (#429)', () => {
       workflow: TASK_BROWSER_WORKFLOW,
       browserVerification: { verify } as never,
       generatedProjectRuntime: {
-        migrate,
+        applyWorkspaceMigrations,
         initialize: vi.fn(async () => ({}) as never),
         health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
       } as never,
@@ -654,10 +654,12 @@ describe('generated database sync before browser verification (#429)', () => {
 
     await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
 
-    expect(migrate).toHaveBeenCalledWith({
+    expect(applyWorkspaceMigrations).toHaveBeenCalledWith({
       projectId: 'project-1',
-      migrationPath: 'supabase/migrations/0001_create_todos.sql',
+      workspaceMigrationsDir: join(workspace, 'supabase', 'migrations'),
     });
-    expect(migrate.mock.invocationCallOrder[0]!).toBeLessThan(verify.mock.invocationCallOrder[0]!);
+    expect(applyWorkspaceMigrations.mock.invocationCallOrder[0]!).toBeLessThan(
+      verify.mock.invocationCallOrder[0]!,
+    );
   });
 });

@@ -621,6 +621,17 @@ export interface GeneratedProjectRuntime {
     migrationPath: string;
     approval?: MigrationApproval;
   }): Promise<AppEnvironment>;
+  /**
+   * Copies new supabase/migrations/*.sql files from the given workspace
+   * directory into the runtime environment and applies pending migrations.
+   * Returns null when the directory is absent or holds nothing new. The
+   * destructive-migration approval gate applies exactly as in migrate().
+   */
+  applyWorkspaceMigrations(input: {
+    projectId: string;
+    workspaceMigrationsDir: string;
+    approval?: MigrationApproval;
+  }): Promise<AppEnvironment | null>;
   seed(input: { projectId: string; seedPath: string }): Promise<AppEnvironment>;
   health(projectId: string): Promise<AppEnvironment>;
   reset(input: {

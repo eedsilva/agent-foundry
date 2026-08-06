@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { SpanStatusCode, type Span } from '@opentelemetry/api';
 import type {
@@ -3139,25 +3138,21 @@ export class WorkflowOrchestrator {
    * Task commits add supabase/migrations that only ever ran inside the verify
    * sandbox; the preview's API tier reads the long-lived project database, so
    * the schema must be applied there before a browser walks the app (#429:
-   * "Could not find the table 'public.todos'"). `migration up` is idempotent —
-   * already-applied files no-op — and a destructive migration still fails
-   * closed through the existing approval gate. Seed is deliberately not
-   * re-run: it is not idempotent, and browser plans handle an empty state.
+   * "Could not find the table 'public.todos'"). The runtime copies new files
+   * into its environment and applies pending migrations; a destructive
+   * migration still fails closed through the existing approval gate. Seed is
+   * deliberately not re-run: it is not idempotent, and browser plans handle
+   * an empty state.
    */
   private async syncGeneratedDatabase(projectId: string): Promise<void> {
     if (!this.generatedProjectRuntime) return;
-    const migrationsDir = join(this.workspaces.workspacePath(projectId), 'supabase', 'migrations');
-    let files: string[];
-    try {
-      files = (await readdir(migrationsDir)).filter((file) => file.endsWith('.sql')).sort();
-    } catch {
-      return;
-    }
-    const latest = files.at(-1);
-    if (!latest) return;
-    await this.generatedProjectRuntime.migrate({
+    await this.generatedProjectRuntime.applyWorkspaceMigrations({
       projectId,
-      migrationPath: `supabase/migrations/${latest}`,
+      workspaceMigrationsDir: join(
+        this.workspaces.workspacePath(projectId),
+        'supabase',
+        'migrations',
+      ),
     });
   }
 
