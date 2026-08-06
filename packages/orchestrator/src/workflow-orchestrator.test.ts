@@ -577,3 +577,87 @@ describe('task browser retry checkpoint (#325)', () => {
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
   });
 });
+
+describe('generated database sync before browser verification (#429)', () => {
+  it('applies pending workspace migrations to the project runtime before the browser walks the app', async () => {
+    const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-429-migrations-'));
+    await mkdir(join(workspace, 'supabase', 'migrations'), { recursive: true });
+    await writeFile(
+      join(workspace, 'supabase', 'migrations', '0001_create_todos.sql'),
+      'create table todos ();',
+    );
+
+    const migrate = vi.fn(async () => ({}) as never);
+    const verify = vi.fn(
+      async (
+        input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
+        _signal: AbortSignal,
+        onSessionStarted?: (sessionId: string) => Promise<void>,
+      ) => {
+        await onSessionStarted?.('preview-429');
+        return {
+          schemaVersion: '1' as const,
+          approved: true,
+          summary: 'browser approved',
+          planArtifact: {
+            name: input.plan.metadata.name,
+            revision: input.plan.metadata.revision,
+            sha256: input.plan.metadata.sha256,
+          },
+          previewSession: {
+            sessionId: 'preview-429',
+            status: 'running' as const,
+            evidence: { screenshots: [] },
+          },
+          steps: [
+            {
+              stepId: 'open-task',
+              title: 'Open task',
+              status: 'passed' as const,
+              durationMs: 5,
+              observations: [],
+            },
+          ],
+        };
+      },
+    );
+    const harness = makeHarness({}, undefined, {
+      workflow: TASK_BROWSER_WORKFLOW,
+      browserVerification: { verify } as never,
+      generatedProjectRuntime: {
+        migrate,
+        initialize: vi.fn(async () => ({}) as never),
+        health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
+      } as never,
+      agentOutput: (request) => {
+        if (request.stepId === 'plan') {
+          return {
+            schemaVersion: '1',
+            status: 'completed',
+            summary: 'Planned.',
+            data: BROWSER_GRAPH,
+            decisions: [],
+            assumptions: [],
+            risks: [],
+            nextActions: [],
+          };
+        }
+        if (request.stepId === 'plan-task-browser-test.T1') return VALID_BROWSER_PLAN;
+        return undefined;
+      },
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect(migrate).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      migrationPath: 'supabase/migrations/0001_create_todos.sql',
+    });
+    expect(migrate.mock.invocationCallOrder[0]!).toBeLessThan(verify.mock.invocationCallOrder[0]!);
+  });
+});

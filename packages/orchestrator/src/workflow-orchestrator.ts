@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { SpanStatusCode, type Span } from '@opentelemetry/api';
 import type {
   AgentArtifact,
@@ -3133,6 +3135,32 @@ export class WorkflowOrchestrator {
     );
   }
 
+  /**
+   * Task commits add supabase/migrations that only ever ran inside the verify
+   * sandbox; the preview's API tier reads the long-lived project database, so
+   * the schema must be applied there before a browser walks the app (#429:
+   * "Could not find the table 'public.todos'"). `migration up` is idempotent —
+   * already-applied files no-op — and a destructive migration still fails
+   * closed through the existing approval gate. Seed is deliberately not
+   * re-run: it is not idempotent, and browser plans handle an empty state.
+   */
+  private async syncGeneratedDatabase(projectId: string): Promise<void> {
+    if (!this.generatedProjectRuntime) return;
+    const migrationsDir = join(this.workspaces.workspacePath(projectId), 'supabase', 'migrations');
+    let files: string[];
+    try {
+      files = (await readdir(migrationsDir)).filter((file) => file.endsWith('.sql')).sort();
+    } catch {
+      return;
+    }
+    const latest = files.at(-1);
+    if (!latest) return;
+    await this.generatedProjectRuntime.migrate({
+      projectId,
+      migrationPath: `supabase/migrations/${latest}`,
+    });
+  }
+
   private async executeBrowserVerifyStepAttempt(
     project: Project,
     step: VerifyStep,
@@ -3151,6 +3179,7 @@ export class WorkflowOrchestrator {
     try {
       let artifact = await this.findArtifactByKey(project.id, step.outputArtifact, idempotencyKey);
       if (!artifact) {
+        await this.syncGeneratedDatabase(project.id);
         const report = await browserVerification.verify(
           {
             projectId: project.id,
