@@ -7,7 +7,7 @@ import {
   type ValidationEvidencePublicationRequest,
   type ValidationPreflightReport,
 } from '@agent-foundry/contracts';
-import { makeHarness, MODELS, seedRun } from './testing/harness.js';
+import { FakeSecretStore, makeHarness, MODELS, seedRun } from './testing/harness.js';
 import { ValidationEvidenceService } from './validation-evidence.js';
 
 const campaign = ValidationCampaignPreviewSchema.parse({
@@ -647,6 +647,10 @@ describe('validation evidence publication', () => {
     const harness = makeHarness({}, undefined, {
       workflow,
       validationCampaign: campaign,
+      secretStore: new FakeSecretStore({
+        NEXT_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:54321',
+        SUPABASE_SERVICE_ROLE_KEY: 'service-role-secret',
+      }),
       verification: () => ({
         schemaVersion: '1',
         approved: true,
@@ -791,6 +795,12 @@ describe('validation evidence publication', () => {
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
     expect(harness.verifierInputs[0]?.beforeOptionalScripts).toContain('database-row-match');
+    // The check must query the long-lived runtime database, not the fresh
+    // stack db:start boots inside the workspace (#397 runs 8-9).
+    expect(harness.verifierInputs[0]?.environment).toMatchObject({
+      NEXT_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:54321',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-secret',
+    });
     expect(harness.artifacts.named('database.evidence')).toHaveLength(1);
   });
 

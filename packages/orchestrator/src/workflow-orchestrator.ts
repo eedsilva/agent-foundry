@@ -2833,22 +2833,37 @@ export class WorkflowOrchestrator {
         : undefined;
       const validationRowTitleSha256 = await this.validationBrowserRowTitleSha256(project, runId);
       const validationRun = this.validationCampaign ? await this.runs.get(runId) : undefined;
+      // The browser wrote its row to the long-lived project runtime database,
+      // but db:start (run just before the row-match check) boots a fresh
+      // ephemeral stack inside the workspace and overwrites .env with its
+      // credentials — so the check queried an empty database and failed with
+      // zero matches on every real campaign run. The script prefers process
+      // env over .env; hand it the runtime credentials explicitly.
+      const validationDatabaseSecrets =
+        validationDatabaseGate && this.secretStore
+          ? await this.secretStore.resolveAll(project.id)
+          : undefined;
+      const gateEnvironment: Record<string, string> = {
+        ...(validationDatabaseSecrets?.NEXT_PUBLIC_SUPABASE_URL
+          ? { NEXT_PUBLIC_SUPABASE_URL: validationDatabaseSecrets.NEXT_PUBLIC_SUPABASE_URL }
+          : {}),
+        ...(validationDatabaseSecrets?.SUPABASE_SERVICE_ROLE_KEY
+          ? { SUPABASE_SERVICE_ROLE_KEY: validationDatabaseSecrets.SUPABASE_SERVICE_ROLE_KEY }
+          : {}),
+        ...(validationRowTitleSha256
+          ? { AGENT_FOUNDRY_VALIDATION_ROW_TITLE_SHA256: validationRowTitleSha256 }
+          : {}),
+        ...(validationRowTitleSha256 && validationRun?.startedAt
+          ? { AGENT_FOUNDRY_VALIDATION_RUN_STARTED_AT: validationRun.startedAt }
+          : {}),
+      };
       const report = await this.verifier.verify(
         {
           workspacePath: this.workspaces.workspacePath(project.id),
           scripts: step.scripts,
           autofixScripts: step.autofixScripts,
           optionalScripts,
-          ...(validationRowTitleSha256
-            ? {
-                environment: {
-                  AGENT_FOUNDRY_VALIDATION_ROW_TITLE_SHA256: validationRowTitleSha256,
-                  ...(validationRun?.startedAt
-                    ? { AGENT_FOUNDRY_VALIDATION_RUN_STARTED_AT: validationRun.startedAt }
-                    : {}),
-                },
-              }
-            : {}),
+          ...(Object.keys(gateEnvironment).length ? { environment: gateEnvironment } : {}),
           includeGitDiffCheck: step.includeGitDiffCheck,
           ...(beforeOptionalScripts ? { beforeOptionalScripts } : {}),
           policy,

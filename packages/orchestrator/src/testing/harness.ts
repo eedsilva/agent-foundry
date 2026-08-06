@@ -1193,6 +1193,7 @@ export function makeHarness(
     workflow?: WorkflowDefinition;
     verification?: () => VerificationReport | Promise<VerificationReport>;
     browserVerification?: BrowserVerificationCoordinator;
+    secretStore?: SecretStore;
     qualityObservationService?: QualityObservationService;
     decisionLog?: RouterDecisionLogRepository;
     generatedProjectRuntime?: GeneratedProjectRuntime;
@@ -1408,7 +1409,7 @@ export function makeHarness(
     opts.browserVerification,
     opts.qualityObservationService,
     executorRegistry,
-    undefined,
+    opts.secretStore,
     opts.decisionLog,
     opts.generatedProjectRuntime,
     opts.previews,
