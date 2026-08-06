@@ -37,34 +37,57 @@ if (!runStartedAt || Number.isNaN(Date.parse(runStartedAt))) {
   throw new Error('database-row-match: no validation run start time was provided.');
 }
 
-const response = await fetch(
-  `${url}/rest/v1/items?select=id,title,created_at&order=created_at.desc&limit=1000`,
-  {
-    headers: { apikey: serviceRoleKey, authorization: `Bearer ${serviceRoleKey}` },
-  },
-);
-if (!response.ok) {
-  throw new Error(`database-row-match: items query failed with HTTP ${response.status}.`);
+const headers = { apikey: serviceRoleKey, authorization: `Bearer ${serviceRoleKey}` };
+
+// The generated app owns its table names (todos, appointments, ...), so the
+// check cannot hard-code one. PostgREST's OpenAPI root lists every exposed
+// table; any table with a created_at column is a candidate, and the match is
+// any string column whose sha256 equals the browser-typed value's hash.
+const specResponse = await fetch(`${url}/rest/v1/`, { headers });
+if (!specResponse.ok) {
+  throw new Error(`database-row-match: schema discovery failed with HTTP ${specResponse.status}.`);
+}
+const spec = await specResponse.json();
+const tables = Object.entries(spec.definitions ?? {})
+  .filter(([, definition]) => definition?.properties?.created_at)
+  .map(([name]) => name);
+if (tables.length === 0) {
+  throw new Error('database-row-match: no exposed table has a created_at column.');
 }
 
-const rows = await response.json();
-const matches = Array.isArray(rows)
-  ? rows.filter(
-      (row) =>
-        createHash('sha256').update(String(row.title)).digest('hex') === expectedTitleSha256 &&
-        Date.parse(String(row.created_at)) >= Date.parse(runStartedAt),
-    )
-  : [];
+const matches = [];
+for (const table of tables) {
+  const response = await fetch(
+    `${url}/rest/v1/${table}?select=*&order=created_at.desc&limit=1000`,
+    { headers },
+  );
+  if (!response.ok) {
+    throw new Error(`database-row-match: ${table} query failed with HTTP ${response.status}.`);
+  }
+  const rows = await response.json();
+  if (!Array.isArray(rows)) continue;
+  for (const row of rows) {
+    if (Date.parse(String(row.created_at)) < Date.parse(runStartedAt)) continue;
+    const matched = Object.entries(row).some(
+      ([column, value]) =>
+        column !== 'id' &&
+        typeof value === 'string' &&
+        createHash('sha256').update(value).digest('hex') === expectedTitleSha256,
+    );
+    if (matched) matches.push({ table, row });
+  }
+}
 if (matches.length !== 1) {
   throw new Error(
     'database-row-match: exactly one row created during this validation run must match the browser value.',
   );
 }
-const [matched] = matches;
+const [{ table: matchedTable, row: matched }] = matches;
 
 const rowFingerprint = createHash('sha256')
   .update(
     JSON.stringify({
+      table: matchedTable,
       id: matched.id,
       titleSha256: expectedTitleSha256,
       createdAt: matched.created_at,
