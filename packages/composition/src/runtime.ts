@@ -301,7 +301,10 @@ export async function createRuntime(
     (config.executorMode === 'mock'
       ? new MockExecutorRegistry(new MockAgentExecutor())
       : new StaticExecutorRegistry([
-          new CodexCliExecutor(config.maxCliOutputBytes),
+          // A selected campaign enforces executed-model identity on every
+          // dispatch; without reportConfiguredModel the Codex CLI never
+          // reveals it and the check burns a real attempt to learn that (#424).
+          new CodexCliExecutor(config.maxCliOutputBytes, Boolean(config.validationCampaignId)),
           new ClaudeCliExecutor(config.maxCliOutputBytes),
           new ClaudeCliExecutor(config.maxCliOutputBytes, {
             provider: 'glm',
