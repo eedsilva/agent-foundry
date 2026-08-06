@@ -36,9 +36,16 @@ export function buildValidationCampaignPreview(
       { taskKind: 'verification', selected: haiku, fallbacks: [] },
     ],
     limits: {
-      attemptsPerAgentStep: 1,
-      targetedRepairs: 1,
-      activeTimeMinutes: 45,
+      // Operator decision 2026-08-06 (#426): cycles 10-12 each stopped on a
+      // different single-shot model flake (guessed locator, non-surgical
+      // repair, malformed artifact JSON) after infrastructure went solid for
+      // five straight cycles. One retry per step absorbs output flakes; three
+      // targeted repairs stop task-repair and browser-repair from competing
+      // for the same slot. Metered cost stays at $2 — every campaign model is
+      // subscription-billed.
+      attemptsPerAgentStep: 2,
+      targetedRepairs: 3,
+      activeTimeMinutes: 60,
       meteredCostUsd: 2,
     },
   });

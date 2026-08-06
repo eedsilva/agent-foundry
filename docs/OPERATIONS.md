@@ -35,8 +35,9 @@ npm run dev
 
 A execução explicitamente selecionada registra no run a revisão Git, as únicas identidades
 permitidas (Claude Haiku e Codex GPT-5.6 Luna — a campanha é cloud-only; o executor local foi
-adiado para a issue #415), as rotas planejadas por tipo de tarefa, uma tentativa por etapa, um
-reparo, 45 minutos ativos e US$ 2 de custo medido. Planejamento e verificação usarão Haiku;
+adiado para a issue #415), as rotas planejadas por tipo de tarefa, duas tentativas por etapa,
+três reparos direcionados, 60 minutos ativos e US$ 2 de custo medido (decisão de operador
+2026-08-06, #426). Planejamento e verificação usarão Haiku;
 mutação do workspace e reparo usarão Luna. Nenhum modelo deep ou premium aparece na rota
 automática.
 
