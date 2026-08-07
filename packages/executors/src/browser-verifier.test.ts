@@ -455,7 +455,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed', 'passed']);
   });
 
-  it('approves a missing locator as advisory diagnostics when passive signals are clean', async () => {
+  it('approves a missing locator as advisory diagnostics and continues the journey', async () => {
     const origin = await serve((_request, response) => response.end('<h1>Fixture</h1>'));
     const report = await verify(
       origin,
@@ -474,7 +474,7 @@ describe('PlaywrightBrowserVerifier', () => {
         },
         {
           id: 'later',
-          title: 'Never execute this step',
+          title: 'Still executes after one advisory failure',
           action: { kind: 'goto', path: '/later' },
           assertions: [],
         },
@@ -483,9 +483,51 @@ describe('PlaywrightBrowserVerifier', () => {
 
     expect(report.approved).toBe(true);
     expect(report.summary).toMatch(/advisory/i);
-    expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed', 'skipped']);
+    expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed', 'passed']);
     expect(report.steps[1]?.error).toContain('Missing');
-    expect(report.steps[2]?.durationMs).toBe(0);
+    expectRedacted(report);
+  });
+
+  it('skips the rest of the journey after two consecutive advisory failures', async () => {
+    const origin = await serve((_request, response) => response.end('<h1>Fixture</h1>'));
+    const report = await verify(
+      origin,
+      plan([
+        {
+          id: 'open',
+          title: 'Open fixture',
+          action: { kind: 'goto', path: '/' },
+          assertions: [],
+        },
+        {
+          id: 'missing-1',
+          title: 'Click first missing button',
+          action: { kind: 'click', locator: { by: 'text', text: 'MissingOne' } },
+          assertions: [],
+        },
+        {
+          id: 'missing-2',
+          title: 'Click second missing button',
+          action: { kind: 'click', locator: { by: 'text', text: 'MissingTwo' } },
+          assertions: [],
+        },
+        {
+          id: 'later',
+          title: 'Never executes after the advisory cluster',
+          action: { kind: 'goto', path: '/later' },
+          assertions: [],
+        },
+      ]),
+    );
+
+    expect(report.approved).toBe(true);
+    expect(report.steps.map(({ status }) => status)).toEqual([
+      'passed',
+      'failed',
+      'failed',
+      'skipped',
+    ]);
+    expect(report.steps[3]?.durationMs).toBe(0);
     expectRedacted(report);
   });
 
