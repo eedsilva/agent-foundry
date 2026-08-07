@@ -1,6 +1,7 @@
-import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { Readable } from 'node:stream';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
@@ -273,6 +274,8 @@ async function taskCommits(runtime: Runtime, projectId: string): Promise<string[
  * script, so the loop's logic is tested without a real browser (#325).
  * `verdicts` is consumed per assertion attempt; anything past its end passes.
  */
+const STUB_SCREENSHOT_BYTES = Buffer.from('fake-png-bytes-357');
+
 function stubBrowser(runtime: Runtime, verdicts: boolean[] = []): { attempts: number } {
   const state = { attempts: 0 };
   // The coordinator, not the Playwright verifier under it: mock mode already
@@ -281,7 +284,11 @@ function stubBrowser(runtime: Runtime, verdicts: boolean[] = []): { attempts: nu
   Object.defineProperty(runtime.browserVerification, 'verify', {
     configurable: true,
     value: async (
-      input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
+      input: {
+        projectId: string;
+        runId: string;
+        plan: { metadata: { name: string; revision: number; sha256: string } };
+      },
       _signal: AbortSignal,
       onSessionStarted?: (sessionId: string) => Promise<void>,
     ) => {
@@ -291,6 +298,19 @@ function stubBrowser(runtime: Runtime, verdicts: boolean[] = []): { attempts: nu
       // announced; without this it rejects the report as unsourced.
       const sessionId = `preview-${state.attempts}`;
       await onSessionStarted?.(sessionId);
+      // Like the real coordinator, the stub persists the step screenshot as a
+      // blob artifact and references it from the report (#357).
+      const screenshot = await runtime.artifacts.putBlob(
+        {
+          projectId: input.projectId,
+          name: `browser-screenshot-${sessionId}-open-root`,
+          contentType: 'image/png',
+          createdBy: 'browser-verification',
+          maxBytes: 1_000_000,
+          runId: input.runId,
+        },
+        Readable.from(STUB_SCREENSHOT_BYTES),
+      );
       return {
         schemaVersion: '1',
         approved: passed,
@@ -304,7 +324,18 @@ function stubBrowser(runtime: Runtime, verdicts: boolean[] = []): { attempts: nu
           sessionId,
           status: 'running',
           url: 'http://127.0.0.1:4000/preview/preview-1/',
-          evidence: { screenshots: [] },
+          evidence: {
+            screenshots: [
+              {
+                name: screenshot.name,
+                revision: screenshot.revision,
+                sha256: screenshot.sha256,
+                stepId: 'open-root',
+                url: 'http://127.0.0.1:4000/preview/preview-1/',
+                viewport: { width: 1280, height: 720 },
+              },
+            ],
+          },
         },
         steps: [
           {
@@ -944,6 +975,26 @@ describe('per-task browser assertion', () => {
     expect(attempt?.inputArtifacts.map((artifact) => artifact.name)).toEqual(
       expect.arrayContaining(['browser-test.plan', 'browser-verification.report']),
     );
+
+    // #357: the failing step's screenshot is materialized into the repair
+    // attempt's run context so the fixer can actually open it, and the
+    // request names that path instead of an unreachable artifact reference.
+    const attemptDir = join(
+      runtime.workspaces.workspacePath(project.id),
+      '.orchestrator',
+      'runs',
+      project.runId,
+      'steps',
+      repairStep!.id,
+      'attempts',
+      attempt!.id,
+    );
+    const evidenceRelativePath = 'inputs/browser-evidence/open-root.png';
+    await expect(readFile(join(attemptDir, evidenceRelativePath))).resolves.toEqual(
+      STUB_SCREENSHOT_BYTES,
+    );
+    const requestMarkdown = await readFile(join(attemptDir, 'REQUEST.md'), 'utf8');
+    expect(requestMarkdown).toContain(evidenceRelativePath);
   }, 120_000);
 
   it('lets a task with no user-visible surface complete without asserting', async () => {

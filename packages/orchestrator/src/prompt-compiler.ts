@@ -27,6 +27,8 @@ export function compileRequestMarkdown(input: {
   harness: HarnessSelection;
   artifacts: StoredArtifact[];
   previewFailureEvents?: ProjectEvent[];
+  /** Workspace-relative paths of materialized browser evidence (#357). */
+  browserEvidenceFiles?: Array<{ stepId: string; path: string }>;
   workspacePath: string;
   toolPolicy?: TaskProfile['toolPolicy'];
 }): string {
@@ -46,6 +48,10 @@ export function compileRequestMarkdown(input: {
         )
         .join('\n\n')
     : '_No input artifacts were requested for this step._';
+  const browserEvidenceSection = input.browserEvidenceFiles?.length
+    ? 'Screenshots of the failing browser steps, readable from the workspace root:\n\n' +
+      input.browserEvidenceFiles.map((file) => `- ${file.stepId}: ${file.path}`).join('\n')
+    : '_No browser evidence files were materialized for this step._';
   const previewFailureSections = input.previewFailureEvents?.length
     ? input.previewFailureEvents
         .map(
@@ -96,6 +102,10 @@ ${input.harness.combined}
 ## Input artifacts
 
 ${artifactSections}
+
+## Browser evidence files
+
+${browserEvidenceSection}
 
 ## Preview failure diagnostics
 

@@ -3538,6 +3538,16 @@ export class WorkflowOrchestrator {
     let requestMarkdown = '';
     const attemptStartedAt = Date.now();
     try {
+      const browserEvidence =
+        step.taskKind === 'repair'
+          ? await this.materializeBrowserEvidence(
+              project.id,
+              runId,
+              stepRun.id,
+              attempt.id,
+              inputArtifacts,
+            )
+          : { inputFiles: [], browserEvidenceFiles: [] };
       requestMarkdown = compileRequestMarkdown({
         projectId: project.id,
         runId,
@@ -3548,6 +3558,7 @@ export class WorkflowOrchestrator {
         step,
         harness,
         artifacts: inputArtifacts,
+        browserEvidenceFiles: browserEvidence.browserEvidenceFiles,
         ...(step.taskKind === 'repair'
           ? {
               previewFailureEvents: [
@@ -3567,6 +3578,7 @@ export class WorkflowOrchestrator {
         attemptId: attempt.id,
         requestMarkdown,
         outputSchema,
+        inputFiles: browserEvidence.inputFiles,
       });
       const workspaceRef = checkpoint ?? (await this.workspaces.head(project.id)) ?? runId;
       const result = await this.executeCandidate(
@@ -3863,6 +3875,54 @@ export class WorkflowOrchestrator {
         createdAt: match.createdAt,
       },
     };
+  }
+
+  /**
+   * Materializes the failing steps' screenshots from a browser-verification
+   * report into openable run-context files (#357). The report inlined into the
+   * prompt only carries { name, revision, sha256 } references a CLI executor
+   * cannot fetch; the returned files/paths make the evidence real for the
+   * fixer. Missing blobs are skipped — the prompt then simply does not claim
+   * them.
+   */
+  private async materializeBrowserEvidence(
+    projectId: string,
+    runId: string,
+    stepRunId: string,
+    attemptId: string,
+    inputArtifacts: StoredArtifact[],
+  ): Promise<{
+    inputFiles: Array<{ path: string; content: Uint8Array }>;
+    browserEvidenceFiles: Array<{ stepId: string; path: string }>;
+  }> {
+    const report = inputArtifacts
+      .filter((artifact) => artifact.metadata.name === 'browser-verification.report')
+      .map((artifact) => BrowserVerificationReportSchema.safeParse(artifact.content))
+      .find((parsed) => parsed.success)?.data;
+    if (!report) return { inputFiles: [], browserEvidenceFiles: [] };
+    const failedStepIds = new Set(
+      report.steps.filter((step) => step.status === 'failed').map((step) => step.stepId),
+    );
+    const screenshots = report.previewSession.evidence.screenshots.filter((shot) =>
+      failedStepIds.has(shot.stepId),
+    );
+    const inputFiles: Array<{ path: string; content: Uint8Array }> = [];
+    const browserEvidenceFiles: Array<{ stepId: string; path: string }> = [];
+    for (const shot of screenshots) {
+      const stream = await this.artifacts.getBlobStream(projectId, shot.name, shot.revision);
+      if (!stream) continue;
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const relativePath = `browser-evidence/${shot.stepId}.png`;
+      inputFiles.push({ path: relativePath, content: Buffer.concat(chunks) });
+      browserEvidenceFiles.push({
+        stepId: shot.stepId,
+        path: `.orchestrator/runs/${runId}/steps/${stepRunId}/attempts/${attemptId}/inputs/${relativePath}`,
+      });
+    }
+    return { inputFiles, browserEvidenceFiles };
   }
 
   private async executeCandidate(
