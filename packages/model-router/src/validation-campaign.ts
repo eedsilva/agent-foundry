@@ -30,10 +30,15 @@ export function buildValidationCampaignPreview(
     sourceRevision,
     allowedModels: [haiku, luna],
     routes: [
-      { taskKind: 'planning', selected: haiku, fallbacks: [] },
-      { taskKind: 'implementation', selected: luna, fallbacks: [] },
-      { taskKind: 'repair', selected: luna, fallbacks: [] },
-      { taskKind: 'verification', selected: haiku, fallbacks: [] },
+      // Route depth must cover the dispatch budget: repeated dispatches of the
+      // same logical step advance the routing start index, so an empty
+      // fallback list makes the third repair die on "no executor can satisfy"
+      // instead of a clean budget stop (#436). Repeating the selected identity
+      // keeps the catalog restricted while giving the budget room to act.
+      { taskKind: 'planning', selected: haiku, fallbacks: [haiku] },
+      { taskKind: 'implementation', selected: luna, fallbacks: [luna] },
+      { taskKind: 'repair', selected: luna, fallbacks: [luna, luna] },
+      { taskKind: 'verification', selected: haiku, fallbacks: [haiku] },
     ],
     limits: {
       // Operator decision 2026-08-06 (#426): cycles 10-12 each stopped on a

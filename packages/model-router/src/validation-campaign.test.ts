@@ -56,22 +56,25 @@ describe('buildValidationCampaignPreview', () => {
       {
         taskKind: 'planning',
         selected: expect.objectContaining({ id: 'claude-haiku' }),
-        fallbacks: [],
+        fallbacks: [expect.objectContaining({ id: 'claude-haiku' })],
       },
       {
         taskKind: 'implementation',
         selected: expect.objectContaining({ id: 'codex-default' }),
-        fallbacks: [],
+        fallbacks: [expect.objectContaining({ id: 'codex-default' })],
       },
       {
         taskKind: 'repair',
         selected: expect.objectContaining({ id: 'codex-default' }),
-        fallbacks: [],
+        fallbacks: [
+          expect.objectContaining({ id: 'codex-default' }),
+          expect.objectContaining({ id: 'codex-default' }),
+        ],
       },
       {
         taskKind: 'verification',
         selected: expect.objectContaining({ id: 'claude-haiku' }),
-        fallbacks: [],
+        fallbacks: [expect.objectContaining({ id: 'claude-haiku' })],
       },
     ]);
     expect(preview.limits).toEqual({
