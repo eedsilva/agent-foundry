@@ -102,8 +102,25 @@ export class MockAgentExecutor implements AgentExecutor {
     // Supabase CLI and both tiers running, so leaving any of them in place
     // would send every mock run into repair over a missing dependency instead
     // of exercising the workflow.
+    const existingScripts = (packageJson.scripts as Record<string, string> | undefined) ?? {};
+    // Only a scaffolded app workspace (pnpm dev script) gets the preview
+    // machinery below: its `dev` drives a pnpm workspace this executor never
+    // installs, so it is swapped for a zero-dependency server and given a stub
+    // lockfile so `npm run foundry`'s preview boots in mock mode (#443).
+    // Dogfood/benchmark mini-workspaces and test-seeded dev servers (e.g. the
+    // golden-flow fixture) are left alone — extra files would violate dogfood
+    // file allowlists.
+    const scaffoldDev =
+      typeof existingScripts.dev === 'string' && existingScripts.dev.includes('pnpm');
+    if (scaffoldDev) {
+      // The mock never installs anything, so declared dependencies would only
+      // put package.json out of sync with the stub lockfile and fail `npm ci`.
+      delete packageJson.dependencies;
+      delete packageJson.devDependencies;
+    }
     packageJson.scripts = {
-      ...((packageJson.scripts as Record<string, string> | undefined) ?? {}),
+      ...existingScripts,
+      ...(scaffoldDev ? { dev: 'node scripts/mock-dev-server.mjs' } : {}),
       typecheck: 'node --check src/index.js',
       lint: 'node --check src/index.js',
       test: 'node --test',
@@ -115,6 +132,40 @@ export class MockAgentExecutor implements AgentExecutor {
       'database-row-match': `node -e "console.log('AGENT_FOUNDRY_DB_MATCH:${'0'.repeat(64)}')"`,
     };
     await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
+    if (scaffoldDev) {
+      // A dependency-free lockfile so the preview installer's `npm ci` succeeds
+      // against the mock workspace (the scaffold ships only pnpm-lock.yaml).
+      await writeFile(
+        join(request.cwd, 'package-lock.json'),
+        `${JSON.stringify(
+          {
+            name: packageJson.name,
+            version: packageJson.version ?? '0.0.0',
+            lockfileVersion: 3,
+            requires: true,
+            packages: { '': { name: packageJson.name, version: packageJson.version ?? '0.0.0' } },
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      );
+      await mkdir(join(request.cwd, 'scripts'), { recursive: true });
+      await writeFile(
+        join(request.cwd, 'scripts', 'mock-dev-server.mjs'),
+        [
+          "import { createServer } from 'node:http';",
+          'const server = createServer((request, response) => {',
+          "  response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });",
+          "  response.end('<html><body><h1>Generated mock app</h1><p>Served by the mock executor.</p></body></html>');",
+          '});',
+          "server.listen(Number(process.env.PORT ?? 0), '127.0.0.1');",
+          "process.on('SIGTERM', () => server.close(() => process.exit(0)));",
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+    }
     await writeFile(
       join(request.cwd, 'src', 'index.js'),
       [

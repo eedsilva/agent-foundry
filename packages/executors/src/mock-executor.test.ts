@@ -59,7 +59,29 @@ describe('MockAgentExecutor stream events', () => {
     const packageJson = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8'));
     expect(packageJson.packageManager).toBe('npm@10');
     expect(packageJson.scripts.build).toBe('node --check src/index.js');
-    expect(packageJson.scripts.dev).toBe('pnpm --recursive --parallel dev');
+    // The scaffold's pnpm dev script is replaced by the zero-dependency mock
+    // server so the preview boots in mock mode (#443); npm ci gets a lockfile.
+    expect(packageJson.scripts.dev).toBe('node scripts/mock-dev-server.mjs');
+    const lock = JSON.parse(await readFile(join(cwd, 'package-lock.json'), 'utf8'));
+    expect(lock.lockfileVersion).toBe(3);
+    await expect(readFile(join(cwd, 'scripts', 'mock-dev-server.mjs'), 'utf8')).resolves.toContain(
+      'createServer',
+    );
+  });
+
+  it('keeps a dev script a test seeded instead of clobbering it', async () => {
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({ scripts: { dev: 'node server.mjs' } }),
+    );
+
+    await new MockAgentExecutor().execute({ ...request, cwd, mutatesWorkspace: true });
+
+    const packageJson = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8'));
+    expect(packageJson.scripts.dev).toBe('node server.mjs');
+    // Non-scaffold workspaces get no preview machinery: extra files would
+    // violate dogfood/benchmark file allowlists.
+    await expect(readFile(join(cwd, 'package-lock.json'), 'utf8')).rejects.toThrow();
   });
 
   it('emits a deterministic status/delta/tool sequence when onEvent is provided', async () => {
