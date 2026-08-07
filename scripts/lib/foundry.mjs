@@ -73,7 +73,8 @@ export function pendingApprovals(approvals) {
 
 export function statusKind(status) {
   if (status === 'completed') return 'succeeded';
-  if (status === 'failed' || status === 'rejected' || status === 'cancelled') return 'failed';
+  if (status === 'failed' || status === 'rejected') return 'failed';
+  if (status === 'cancelled') return 'cancelled';
   if (status === 'awaiting_approval') return 'awaiting-approval';
   return 'active';
 }

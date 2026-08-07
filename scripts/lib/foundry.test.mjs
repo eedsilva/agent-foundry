@@ -122,9 +122,10 @@ describe('statusKind', () => {
     assert.equal(statusKind('completed'), 'succeeded');
     assert.equal(statusKind('failed'), 'failed');
     assert.equal(statusKind('rejected'), 'failed');
-    assert.equal(statusKind('cancelled'), 'failed');
+    assert.equal(statusKind('cancelled'), 'cancelled');
     assert.equal(statusKind('awaiting_approval'), 'awaiting-approval');
     assert.equal(statusKind('running'), 'active');
     assert.equal(statusKind('queued'), 'active');
+    assert.equal(statusKind('paused'), 'active');
   });
 });

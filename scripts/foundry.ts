@@ -119,7 +119,10 @@ async function ensureStack(): Promise<void> {
       return;
     }
   }
-  throw new Error('O stack não ficou pronto em 180s. Rode `npm run dev:inline` e olhe o log.');
+  throw new Error(
+    'O stack não ficou pronto em 180s — /ready também exige o banco de pé (Supabase/Postgres do seu .env). ' +
+      'Rode `npm run doctor`, suba o banco, ou rode `npm run dev:inline` para ver o log.',
+  );
 }
 
 function streamEvents(projectId: string): () => void {
@@ -171,7 +174,13 @@ async function promptForDecision(
   for (;;) {
     const raw = await ask('   [a]provar / [m]udanças / [c]ancelar run? ');
     if (raw === null) {
-      console.log('   stdin fechado — decida esta aprovação pela UI (aba Aprovações).');
+      // Without stdin this session can never decide the gate, and a
+      // self-booted stack has no UI to fall back to — waiting would hang the
+      // one-command journey forever. Fail loudly instead.
+      console.error(
+        '✖ Aprovação pendente sem stdin interativo. Rode o comando num terminal ou decida pela UI (npm run dev:inline) e reexecute.',
+      );
+      await shutdown(1);
       return;
     }
     const answer = raw.trim();
@@ -203,18 +212,30 @@ async function promptForDecision(
 }
 
 async function openInBrowser(url: string): Promise<void> {
-  const command =
-    process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-  spawn(command, [url], { stdio: 'ignore', detached: true }).unref();
+  // `start` is a cmd builtin, not an executable; the empty string is its
+  // window-title slot so the URL is not mistaken for a title.
+  const [command, prefix] =
+    process.platform === 'darwin'
+      ? ['open', []]
+      : process.platform === 'win32'
+        ? ['cmd', ['/c', 'start', '']]
+        : ['xdg-open', []];
+  spawn(command, [...prefix, url], { stdio: 'ignore', detached: true }).unref();
 }
 
 async function main(): Promise<void> {
   await ensureStack();
 
   const name = args.name ?? defaultProjectName(args.prompt);
+  const prd = normalizePrd(args.prompt);
+  if (prd !== args.prompt.trim()) {
+    console.log(
+      '· Prompt curto: complementado até o mínimo de PRD (detalhes ficam com o builder).',
+    );
+  }
   const { project } = await api<{ project: { id: string; currentRunId?: string } }>('/projects', {
     method: 'POST',
-    body: JSON.stringify({ name, prd: normalizePrd(args.prompt) }),
+    body: JSON.stringify({ name, prd }),
   });
   const runId = project.currentRunId;
   if (!runId) throw new Error(`Projeto ${project.id} foi criado sem run.`);
@@ -223,9 +244,16 @@ async function main(): Promise<void> {
   cleanups.push(streamEvents(project.id));
 
   const decided = new Set<string>();
+  let lastStatus = '';
   for (;;) {
     const { run } = await api<{ run: { status: string } }>(`/runs/${runId}`);
     const kind = statusKind(run.status);
+    // Statuses without their own event line (paused, cancel_requested, …)
+    // would otherwise poll invisibly forever.
+    if (run.status !== lastStatus && kind === 'active' && lastStatus !== '') {
+      console.log(`· Run está '${run.status}'.`);
+    }
+    lastStatus = run.status;
     if (kind === 'awaiting-approval') {
       const { approvals } = await api<{
         approvals: Array<{
@@ -240,6 +268,10 @@ async function main(): Promise<void> {
       }
     }
     if (kind === 'succeeded') break;
+    if (kind === 'cancelled') {
+      console.log('\n· Run cancelado.');
+      await shutdown(0);
+    }
     if (kind === 'failed') {
       console.error(
         `\n✖ Run terminou com status '${run.status}'. Veja o inspector na UI ou /runs/${runId}.`,
