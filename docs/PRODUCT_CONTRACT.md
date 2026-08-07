@@ -4,7 +4,7 @@
 
 **Primary user:** one trusted solo developer using macOS who wants a private, self-owned alternative to Lovable.
 
-**Primary job:** turn a short idea into a greenfield, authenticated, full-stack web application; evolve it conversationally and visually; verify every change; and publish it to an existing self-managed VPS.
+**Primary job:** turn a short idea into a greenfield, authenticated, full-stack web application built locally by Codex CLI + Claude CLI working together; evolve it conversationally and visually; and verify every change. Publishing to the owner's VPS is the next phase (Personal v2).
 
 **Promise:**
 
@@ -15,11 +15,11 @@ idea / prompt / optional reference image
 -> local Next.js + Supabase application
 -> conversational and visual iteration
 -> immutable local Git version
--> isolated Docker Compose deployment on the owner's VPS
--> health check, backup and application rollback
 ```
 
-**Differentiation:** provider-independent execution, a rigorous multi-agent pipeline for every build, persistent artifacts, adaptive model routing, deterministic and browser gates, reversible local Git history, self-hosted full-stack infrastructure, and explicit human authority over risky actions.
+Publishing (`-> isolated Docker Compose deployment on the owner's VPS -> health check, backup and application rollback`) is the Personal v2 promise.
+
+**Differentiation:** the owner's own Codex CLI and Claude CLI doing the work (no platform API keys), one planning call plus per-task execution with deterministic gates, persistent artifacts, reversible local Git history, self-hosted full-stack infrastructure, and explicit human authority over risky actions.
 
 **North-star metric:** percentage of new-app requests and follow-up operations that reach a working, verified result without manual code edits.
 
@@ -31,7 +31,7 @@ V1 ships only when the Issue Radar golden application proves, end to end:
 
 - chat-first creation from a short idea;
 - the planner / operator-approval / developer / reviewer / verifier / release pipeline;
-- evidence-based model routing across Codex, Claude and AGY (the existing router; learned adaptive routing remains exploratory v0.9);
+- Claude planning/verifying and Codex implementing/repairing through the existing executor table (exactly these two CLIs — no other providers);
 - a generated Next.js, TypeScript, Tailwind CSS and shadcn/ui repository;
 - an isolated local Supabase Docker stack;
 - default email/password authentication, protected routes, sessions and baseline RLS;
@@ -39,14 +39,10 @@ V1 ships only when the Issue Radar golden application proves, end to end:
 - local preview plus deterministic and browser verification;
 - reference-image context;
 - element-aware prompting and direct visual controls;
-- one verified local Git commit per successful operation;
-- failed-work preservation on a draft branch;
-- isolated deployment to an existing Ubuntu LTS VPS using Docker Compose;
-- immediate host/port access and optional manually configured custom domain with automatic TLS;
-- scheduled backups retained on the VPS and copied to the local Mac; and
-- application-code/configuration rollback without automatic database reversal.
+- one verified local Git commit per successful operation; and
+- failed-work preservation on a draft branch.
 
-Full-stack provisioning and VPS publishing are Personal v1 launch blockers. They are not post-v1 enhancements.
+Full-stack local provisioning is a Personal v1 launch blocker. VPS publishing, custom domains, scheduled backups and deploy rollback moved to **Personal v2** (operator decision, 2026-08-06) — they are the next phase, not v1 blockers.
 
 ### Operating and trust boundary
 
@@ -77,13 +73,19 @@ Every generated project is an ordinary local Git repository and can be opened in
 - Automatic DNS-provider mutation.
 - Automatic database rollback.
 - More than one generated-app stack.
+- Executors beyond Codex CLI and Claude CLI (AGY, GLM, OpenCode/Ollama and any new provider are out; see #438).
+- Enterprise-grade sandbox hardening for the owner's own generated code (rootless/egress-deny/adversarial canaries belong to a hosted product, not this one).
 
-### Post-v1 personal evolution
+### Personal v2 (next phase)
 
-- The next personal release adds Linux control-plane support, a built-in browser code editor and existing-repository workflows.
-- A later personal release adds Windows control-plane support.
-- Deepen the coding harness with per-task-kind implementation guidance and per-provider authorship rules, driven by evidence observed in real runs (canaries, dogfooding and v0.9 routing signals), not written speculatively.
-- Add open-source model executors through the existing provider port and model catalog, competing on measured routing evidence.
+- Publish to an existing Ubuntu LTS VPS through SSH, Compose and Caddy, with immediate host/port access and optional custom domain with automatic TLS.
+- Optional GitHub connection over the local repository (push, pull, pull requests).
+- Scheduled backups retained on the VPS and copied to the Mac; application rollback without automatic database reversal.
+
+### Later personal evolution
+
+- Linux and Windows control-plane support, a built-in browser code editor and existing-repository workflows.
+- Deepen the coding harness with per-task-kind implementation guidance for the two CLIs, driven by evidence observed in real runs.
 
 ## Hosted Platform v2
 

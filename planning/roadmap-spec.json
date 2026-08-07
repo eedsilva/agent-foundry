@@ -22,15 +22,14 @@
   },
   "targets": {
     "personal-v1": {
-      "promise": "Transformar uma ideia em um app web greenfield, autenticado, full-stack, verificado e publicado no VPS do próprio operador, sem depender de uma plataforma SaaS.",
+      "promise": "Transformar uma ideia em um app web greenfield, autenticado, full-stack e verificado, construído localmente por Codex CLI + Claude CLI com preview ao vivo e iteração por chat. Publicação no VPS do operador é a fase seguinte (Personal v2).",
       "definition": [
-        "Começar por chat e imagem de referência opcional; PRD é artifact, não pré-requisito.",
-        "Executar planner com aprovação do operador, developer, reviewers, verifiers e repair loops em todo build.",
+        "Começar por chat; PRD é artifact, não pré-requisito.",
+        "Executar uma chamada de planejamento (Claude) com aprovação do operador e implementação tarefa a tarefa (Codex) com checks determinísticos.",
         "Gerar Next.js, TypeScript, Tailwind e shadcn/ui com Supabase Docker isolado.",
-        "Incluir auth email/senha, RLS, database, storage, functions e secrets em .env.",
+        "Incluir auth email/senha, RLS, database, storage e secrets em .env.",
         "Iterar por conversa, seleção visual, controles diretos, preview, history e diff.",
-        "Versionar no Git local e publicar por SSH/Compose/Caddy em VPS existente.",
-        "Agendar backup no VPS, copiar para o Mac e permitir rollback somente do app."
+        "Versionar no Git local. Publicação SSH/Compose/Caddy, GitHub e backup passam a ser Personal v2 (decisão do operador, 2026-08-06)."
       ],
       "nonGoals": [
         "Multi-tenancy e billing.",
@@ -139,15 +138,15 @@
       "evidence": "Issue Radar clean initialization, auth, CRUD, attachment and negative RLS journeys."
     },
     {
-      "id": "PV1-DEPLOY",
-      "statement": "Publish to an existing Ubuntu LTS VPS through SSH, Compose and Caddy.",
+      "id": "PV2-DEPLOY",
+      "statement": "(Personal v2) Publish to an existing Ubuntu LTS VPS through SSH, Compose and Caddy.",
       "milestones": ["v0.11"],
       "tasks": ["v011-deployment-domain", "v011-publish-domains", "v011-release-ui-e2e"],
       "evidence": "Issue Radar deploys to a clean VPS, passes health and supports host/port plus optional TLS domain."
     },
     {
-      "id": "PV1-BACKUP",
-      "statement": "Scheduled backups remain on the VPS and are copied to the Mac; restore is explicit.",
+      "id": "PV2-BACKUP",
+      "statement": "(Personal v2) Scheduled backups remain on the VPS and are copied to the Mac; restore is explicit.",
       "milestones": ["v0.11"],
       "tasks": ["v011-reference-connectors", "v011-release-ui-e2e"],
       "evidence": "Verified backup artifact on VPS and Mac plus an approved restore drill."
@@ -2410,7 +2409,7 @@
     {
       "key": "v0.11",
       "title": "v0.11 - Self-hosted Publish",
-      "description": "Publicação por SSH em VPS existente com Compose, Caddy, backup para Mac e GitHub opcional.",
+      "description": "(Personal v2 — retriagem 2026-08-06) Publicação por SSH em VPS existente com Compose, Caddy, backup para Mac e GitHub opcional.",
       "objective": "Levar o app local a um VPS controlado pelo operador sem Vercel, cloud provisioning ou database rollback implícito.",
       "exitCriteria": [
         "Issue Radar publica em Ubuntu LTS existente por SSH e Compose isolado.",
@@ -2625,7 +2624,7 @@
       ],
       "track": "Integrations",
       "target": "Personal v1",
-      "commitment": "Candidate",
+      "commitment": "candidate",
       "risk": "High"
     },
     {

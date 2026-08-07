@@ -8,7 +8,7 @@ Spec: **2.0.0** · Milestones: **16** · Tasks: **114** · Managed issues: **131
 
 ### Personal Builder v1
 
-Transformar uma ideia em um app web greenfield, autenticado, full-stack, verificado e publicado no VPS do próprio operador, sem depender de uma plataforma SaaS.
+Transformar uma ideia em um app web greenfield, autenticado, full-stack e verificado, construído localmente por Codex CLI + Claude CLI com preview ao vivo e iteração por chat. Publicação no VPS do operador é a fase seguinte (Personal v2).
 
 North star: **Percentual de operações greenfield e incrementais aceitas sem edição manual de código.**
 
@@ -300,9 +300,9 @@ Next.js e Supabase Docker isolados por projeto, com auth, RLS, database, storage
 
 ### v0.11 - Self-hosted Publish
 
-**Track:** Integrations · **Target:** Personal v1 · **Commitment:** Candidate · **Risk:** High
+**Track:** Integrations · **Target:** Personal v1 · **Commitment:** candidate · **Risk:** High
 
-Publicação por SSH em VPS existente com Compose, Caddy, backup para Mac e GitHub opcional.
+(Personal v2 — retriagem 2026-08-06) Publicação por SSH em VPS existente com Compose, Caddy, backup para Mac e GitHub opcional.
 
 **Objective:** Levar o app local a um VPS controlado pelo operador sem Vercel, cloud provisioning ou database rollback implícito.
 
