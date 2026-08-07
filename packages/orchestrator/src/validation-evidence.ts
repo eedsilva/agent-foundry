@@ -229,13 +229,20 @@ export class ValidationEvidenceService {
   ): Promise<void> {
     for (const gate of input.gates) {
       for (const reference of gate.references) {
+        // A reference may record the run that actually produced the evidence:
+        // a retried run reuses artifacts produced under earlier runs of the
+        // same project, and the recorded origin is part of the bundle's
+        // provenance (#449). Foreign runs still reject.
         if (reference.runId !== run.id) {
-          throw new ValidationError(
-            `Evidence reference belongs to another run: ${reference.runId}`,
-          );
+          const origin = await this.runs.get(reference.runId);
+          if (origin?.projectId !== run.projectId) {
+            throw new ValidationError(
+              `Evidence reference belongs to another run: ${reference.runId}`,
+            );
+          }
         }
         if (reference.stepRunId) {
-          const step = await this.stepRuns.get(run.id, reference.stepRunId);
+          const step = await this.stepRuns.get(reference.runId, reference.stepRunId);
           if (!step) throw new ValidationError(`Evidence step ${reference.stepRunId} not found`);
         }
         if (reference.attemptId) {
@@ -243,7 +250,7 @@ export class ValidationEvidenceService {
             throw new ValidationError('An attempt evidence reference requires stepRunId');
           }
           const attempt = await this.stepAttempts.get(
-            run.id,
+            reference.runId,
             reference.stepRunId,
             reference.attemptId,
           );
@@ -255,7 +262,7 @@ export class ValidationEvidenceService {
           await this.validateArtifactReference(run, reference);
           if (reference.stepRunId && reference.attemptId) {
             const attempt = await this.stepAttempts.get(
-              run.id,
+              reference.runId,
               reference.stepRunId,
               reference.attemptId,
             );
@@ -298,8 +305,10 @@ export class ValidationEvidenceService {
     input: ValidationEvidencePublicationRequest,
     attempts: readonly StepAttempt[],
   ): Promise<void> {
+    // Event proofs are project-scoped on purpose: a retried run's reused
+    // artifacts were created and verified under sibling runs (#449), and every
+    // matcher below pins the exact artifact reference (name/revision/sha).
     const events = await this.events.list(run.projectId);
-    const runEvents = events.filter((event) => event.runId === run.id);
     const gate = (id: ValidationEvidenceGateId) =>
       input.gates.find((candidate) => candidate.id === id);
     const artifactReferences = (id: ValidationEvidenceGateId) =>
@@ -318,7 +327,7 @@ export class ValidationEvidenceService {
       if (
         !reference ||
         !names.includes(reference.name) ||
-        !hasArtifactCreatedEvent(runEvents, reference)
+        !hasArtifactCreatedEvent(events, reference)
       ) {
         return false;
       }
@@ -327,17 +336,17 @@ export class ValidationEvidenceService {
         reference.name,
         reference.revision,
       );
+      const provenanceRunId = await this.provenanceRunId(run, artifact);
       const producer =
-        artifact?.metadata.stepRunId && artifact.metadata.attemptId
+        artifact?.metadata.stepRunId && artifact.metadata.attemptId && provenanceRunId
           ? await this.stepAttempts.get(
-              run.id,
+              provenanceRunId,
               artifact.metadata.stepRunId,
               artifact.metadata.attemptId,
             )
           : undefined;
       return Boolean(
         artifact &&
-        artifact.metadata.runId === run.id &&
         artifact.metadata.sha256 === reference.sha256 &&
         producer?.status === 'succeeded' &&
         producer.outputArtifacts.some((candidate) => sameArtifactReference(reference, candidate)),
@@ -345,7 +354,7 @@ export class ValidationEvidenceService {
     };
     const hasApprovedDeterministic = async (id: ValidationEvidenceGateId) => {
       const [reference] = artifactReferences(id);
-      if (!reference || !hasArtifactCreatedEvent(runEvents, reference)) return false;
+      if (!reference || !hasArtifactCreatedEvent(events, reference)) return false;
       const artifact = await this.artifacts.getRevision(
         run.projectId,
         reference.name,
@@ -355,12 +364,12 @@ export class ValidationEvidenceService {
       return Boolean(
         report?.success &&
         report.data.approved &&
-        hasApprovedVerificationEvent(runEvents, reference, 'verification.report'),
+        hasApprovedVerificationEvent(events, reference, 'verification.report'),
       );
     };
     const hasApprovedBrowser = async (id: ValidationEvidenceGateId) => {
       const [reference] = artifactReferences(id);
-      if (!reference || !hasArtifactCreatedEvent(runEvents, reference)) return false;
+      if (!reference || !hasArtifactCreatedEvent(events, reference)) return false;
       const artifact = await this.artifacts.getRevision(
         run.projectId,
         reference.name,
@@ -368,12 +377,12 @@ export class ValidationEvidenceService {
       );
       return Boolean(
         (await this.isApprovedBrowserEvidence(run, artifact)) &&
-        hasApprovedVerificationEvent(runEvents, reference, 'browser-verification.report'),
+        hasApprovedVerificationEvent(events, reference, 'browser-verification.report'),
       );
     };
     const hasHealthyPreview = async () => {
       const [reference] = artifactReferences('preview-healthy');
-      if (!reference || !hasArtifactCreatedEvent(runEvents, reference)) return false;
+      if (!reference || !hasArtifactCreatedEvent(events, reference)) return false;
       const artifact = await this.artifacts.getRevision(
         run.projectId,
         reference.name,
@@ -384,7 +393,7 @@ export class ValidationEvidenceService {
         report?.success &&
         report.data.previewSession.status === 'running' &&
         (await this.isApprovedBrowserEvidence(run, artifact)) &&
-        hasApprovedVerificationEvent(runEvents, reference, 'browser-verification.report'),
+        hasApprovedVerificationEvent(events, reference, 'browser-verification.report'),
       );
     };
     const hasDatabaseProof = async () => {
@@ -393,7 +402,7 @@ export class ValidationEvidenceService {
       if (
         !verificationArtifact ||
         !databaseReference ||
-        !hasArtifactCreatedEvent(runEvents, databaseReference)
+        !hasArtifactCreatedEvent(events, databaseReference)
       ) {
         return false;
       }
@@ -415,7 +424,7 @@ export class ValidationEvidenceService {
     const approvedPlan = artifactReferences('plan-approved')[0];
     const hasApprovedPlan = Boolean(
       approvedPlan &&
-      runEvents.some(
+      events.some(
         (event) =>
           event.type === 'run.approval_decided' &&
           event.data.action === 'approve' &&
@@ -437,7 +446,7 @@ export class ValidationEvidenceService {
     );
     const missing: string[] = [];
     if (
-      !runEvents.some((event) => event.type === 'project.created') ||
+      !events.some((event) => event.type === 'project.created') ||
       !hasName('project-created', ['prd', 'scaffold-manifest'])
     ) {
       missing.push('project-created');
@@ -458,7 +467,7 @@ export class ValidationEvidenceService {
       missing.push('deterministic-checks');
     }
     if (
-      !runEvents.some((event) => event.type === 'project.provisioned') ||
+      !events.some((event) => event.type === 'project.provisioned') ||
       !hasName('preview-healthy', ['browser-verification.report']) ||
       !(await hasHealthyPreview())
     ) {
@@ -535,19 +544,29 @@ export class ValidationEvidenceService {
           ],
         };
     const events = await this.events.list(run.projectId);
-    const runEvents = events.filter((event) => event.runId === run.id);
+    // Lineage artifacts (prd, scaffold, plan) may have been created by an
+    // earlier run of this project and reused by a retry (#449); run outputs
+    // stay scoped to the publishing run so a concurrent sibling run's newer
+    // report can never be bundled by accident.
+    const LINEAGE_NAMES = ['prd', 'scaffold-manifest', 'plan.current'];
     const latest = async (names: readonly string[]) => {
       const metadata = (await this.artifacts.listMetadata(run.projectId))
-        .filter((item) => names.includes(item.name) && item.runId === run.id)
+        .filter(
+          (item) =>
+            names.includes(item.name) &&
+            (LINEAGE_NAMES.includes(item.name) || item.runId === run.id),
+        )
         .at(-1);
       return metadata
         ? this.artifacts.getRevision(run.projectId, metadata.name, metadata.revision)
         : null;
     };
+    // The reference records the run that actually produced the artifact —
+    // "the run recorded per artifact" half of #449.
     const reference = (artifact: Awaited<ReturnType<typeof latest>>) =>
       artifact
         ? {
-            runId: run.id,
+            runId: artifact.metadata.runId ?? run.id,
             ...(artifact.metadata.stepRunId ? { stepRunId: artifact.metadata.stepRunId } : {}),
             ...(artifact.metadata.attemptId ? { attemptId: artifact.metadata.attemptId } : {}),
             artifact: {
@@ -576,14 +595,14 @@ export class ValidationEvidenceService {
       if (!artifact || !approved) return false;
       const reference = storedArtifactReference(artifact);
       return (
-        hasArtifactCreatedEvent(runEvents, reference) &&
-        hasApprovedVerificationEvent(runEvents, reference, name)
+        hasArtifactCreatedEvent(events, reference) &&
+        hasApprovedVerificationEvent(events, reference, name)
       );
     };
     const planReference = planArtifact ? storedArtifactReference(planArtifact) : undefined;
     const hasApprovedPlan = Boolean(
       planReference &&
-      runEvents.some(
+      events.some(
         (event) =>
           event.type === 'run.approval_decided' &&
           event.data.action === 'approve' &&
@@ -607,7 +626,7 @@ export class ValidationEvidenceService {
         gate(
           'project-created',
           projectArtifact,
-          runEvents.some((event) => event.type === 'project.created') && Boolean(projectArtifact),
+          events.some((event) => event.type === 'project.created') && Boolean(projectArtifact),
           'Project creation evidence was not persisted.',
         ),
         gate(
@@ -621,7 +640,7 @@ export class ValidationEvidenceService {
           implementationArtifact,
           Boolean(
             implementationArtifact &&
-            hasArtifactCreatedEvent(runEvents, storedArtifactReference(implementationArtifact)),
+            hasArtifactCreatedEvent(events, storedArtifactReference(implementationArtifact)),
           ),
           'Implementation output evidence was not persisted.',
         ),
@@ -634,7 +653,7 @@ export class ValidationEvidenceService {
         gate(
           'preview-healthy',
           browserArtifact,
-          runEvents.some((event) => event.type === 'project.provisioned') &&
+          events.some((event) => event.type === 'project.provisioned') &&
             (await approvedVerification(browserArtifact, 'browser-verification.report')),
           'Preview health evidence was not persisted.',
         ),
@@ -669,6 +688,23 @@ export class ValidationEvidenceService {
     };
   }
 
+  /**
+   * The run whose persisted attempts prove an artifact: a retried run reuses
+   * artifacts created under earlier runs of the same project (#449), so the
+   * recorded origin counts when it is a sibling run of this project. Returns
+   * null when the recorded origin is not part of this project's lineage.
+   */
+  private async provenanceRunId(
+    run: WorkflowRun,
+    artifact: StoredArtifact | null,
+  ): Promise<string | null> {
+    if (!artifact) return null;
+    const originRunId = artifact.metadata.runId;
+    if (originRunId === undefined || originRunId === run.id) return run.id;
+    const origin = await this.runs.get(originRunId);
+    return origin?.projectId === run.projectId ? originRunId : null;
+  }
+
   private async validateArtifactReference(
     run: WorkflowRun,
     reference: ValidationEvidenceReference,
@@ -681,10 +717,11 @@ export class ValidationEvidenceService {
       artifactReference.name,
       artifactReference.revision,
     );
+    const originIsSiblingRun = (await this.provenanceRunId(run, artifact)) !== null;
     if (
       !artifact ||
       artifact.metadata.sha256 !== artifactReference.sha256 ||
-      (artifact.metadata.runId !== undefined && artifact.metadata.runId !== run.id) ||
+      !originIsSiblingRun ||
       (!allowUpstreamLineage &&
         ((artifact.metadata.stepRunId !== undefined &&
           artifact.metadata.stepRunId !== reference.stepRunId) ||
@@ -736,7 +773,7 @@ export class ValidationEvidenceService {
     if (
       !artifact ||
       artifact.metadata.sha256 !== reference.sha256 ||
-      artifact.metadata.runId !== run.id
+      (await this.provenanceRunId(run, artifact)) === null
     ) {
       return false;
     }
@@ -748,16 +785,17 @@ export class ValidationEvidenceService {
     run: WorkflowRun,
     artifact: StoredArtifact | null,
   ): Promise<boolean> {
+    const provenanceRunId = await this.provenanceRunId(run, artifact);
     if (
       !artifact ||
-      artifact.metadata.runId !== run.id ||
+      provenanceRunId === null ||
       !artifact.metadata.stepRunId ||
       !artifact.metadata.attemptId
     ) {
       return false;
     }
     const sourceAttempt = await this.stepAttempts.get(
-      run.id,
+      provenanceRunId,
       artifact.metadata.stepRunId,
       artifact.metadata.attemptId,
     );
