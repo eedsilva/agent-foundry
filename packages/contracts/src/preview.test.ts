@@ -725,30 +725,57 @@ describe('browser verification contracts', () => {
     ).toBe(true);
   });
 
+  it('accepts an approved report with an advisory failed step followed by a skipped step', () => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        schemaVersion: '1',
+        approved: true,
+        summary: 'Passive signals clean; 1 advisory browser step failure(s) recorded.',
+        planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          evidence: { screenshots: [] },
+        },
+        steps: [
+          {
+            stepId: 'open',
+            title: 'Open fixture',
+            status: 'failed',
+            durationMs: 1,
+            error: 'locator timed out',
+            observations: [],
+          },
+          {
+            stepId: 'later',
+            title: 'Never executed',
+            status: 'skipped',
+            durationMs: 0,
+            observations: [],
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
   it.each([
     ['no steps', []],
     [
-      'a failed step',
+      'passive failure evidence',
       [
         {
           stepId: 'open',
           title: 'Open fixture',
           status: 'failed',
           durationMs: 1,
-          error: 'failed',
-          observations: [],
-        },
-      ],
-    ],
-    [
-      'a skipped step',
-      [
-        {
-          stepId: 'open',
-          title: 'Open fixture',
-          status: 'skipped',
-          durationMs: 0,
-          observations: [],
+          error: 'Passive browser failure observed.',
+          observations: [
+            {
+              kind: 'http-error',
+              message: 'HTTP 500 http://127.0.0.1:3100/',
+              timestamp: createdAt,
+            },
+          ],
         },
       ],
     ],
