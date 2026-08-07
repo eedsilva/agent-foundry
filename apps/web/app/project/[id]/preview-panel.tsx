@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   VisualEditBreakpointSchema,
   VisualEditPropertySchema,
   VisualEditSchema,
+  PreviewFailureDiagnosticSchema,
   type VisualEditBreakpoint,
   type VisualEditClearMessage,
   type VisualEditProperty,
@@ -14,6 +15,8 @@ import {
   type PreviewLogEntry,
   type PreviewSelectionResult,
   type PreviewSession,
+  type ProjectEvent,
+  type Operation,
   type StepAttempt,
   type StoredArtifact,
   type WorkflowRun,
@@ -41,6 +44,89 @@ const VIEWPORTS = {
 type ViewportKey = keyof typeof VIEWPORTS;
 
 const TERMINAL_SESSION_STATUSES = new Set(['stopped', 'failed', 'expired']);
+
+export type PreviewRepairContext = { key: string; title: string; detail: string };
+
+export function previewRepairContext(
+  session: PreviewSession | null,
+  events: ProjectEvent[],
+  report: BrowserVerificationReport | null,
+  logs: PreviewLogEntry[] = [],
+): PreviewRepairContext | null {
+  const failureEvent = [...events].reverse().find((event) => {
+    if (event.type !== 'preview.failed') return false;
+    if (!session) return true;
+    const diagnostic = PreviewFailureDiagnosticSchema.safeParse(event.data.diagnostic);
+    return diagnostic.success && diagnostic.data.sessionId === session.id;
+  });
+  if (failureEvent) {
+    const diagnostic = PreviewFailureDiagnosticSchema.safeParse(failureEvent.data.diagnostic);
+    const detail = diagnostic.success
+      ? [
+          `Phase: ${diagnostic.data.phase}`,
+          `Error: ${diagnostic.data.error.message}`,
+          diagnostic.data.output?.stderr,
+          diagnostic.data.output?.stdout,
+          diagnostic.data.logs.entries
+            .slice(-20)
+            .map((entry) => `[${entry.stream}] ${entry.message}`)
+            .join('\n'),
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : failureEvent.message;
+    return { key: failureEvent.id, title: 'Preview failure', detail };
+  }
+
+  if (session?.status === 'failed' && session.error) {
+    return {
+      key: session.id,
+      title: 'Preview failure',
+      detail: [
+        `Error: ${session.error.message}`,
+        session.failureEvidence?.stderr,
+        session.failureEvidence?.stdout,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    };
+  }
+
+  const runtimeError = [...logs]
+    .reverse()
+    .find(
+      (entry) =>
+        entry.stream === 'stderr' &&
+        /error|exception|failed|failure|unhandled|cannot find module|eaddrinuse/i.test(
+          entry.message,
+        ),
+    );
+  if (runtimeError) {
+    return {
+      key: `${session?.id ?? 'preview'}:log:${runtimeError.cursor}`,
+      title: 'Preview runtime error',
+      detail: logs
+        .slice(-20)
+        .map((entry) => `[${entry.stream}] ${entry.message}`)
+        .join('\n'),
+    };
+  }
+
+  if (report && !report.approved) {
+    const failures = report.steps
+      .filter((step) => step.status === 'failed' || step.observations.length > 0)
+      .flatMap((step) => [step.title, step.error, ...step.observations.map((item) => item.message)])
+      .filter(Boolean)
+      .join('\n');
+    return {
+      key: `${report.previewSession.sessionId}:${report.summary}`,
+      title: 'Preview verification failure',
+      detail: [report.summary, failures].filter(Boolean).join('\n'),
+    };
+  }
+
+  return null;
+}
 
 export function startPreviewLogPolling({
   getPage,
@@ -215,12 +301,20 @@ export function PreviewPanel({
   run,
   artifacts,
   attempts,
+  events,
+  onPreviewFailure,
+  repairOperation,
+  repairOperationRunTerminal,
   onConversationalFallback,
 }: {
   projectId: string;
   run: WorkflowRun | null;
   artifacts: StoredArtifact[];
   attempts: StepAttempt[];
+  events: ProjectEvent[];
+  onPreviewFailure: (failure: PreviewRepairContext | null) => void;
+  repairOperation: Operation | undefined;
+  repairOperationRunTerminal: boolean;
   onConversationalFallback: (prompt: string) => void;
 }) {
   const [session, setSession] = useState<PreviewSession | null>(null);
@@ -237,6 +331,8 @@ export function PreviewPanel({
   const [oldValue, setOldValue] = useState('');
   const [newValue, setNewValue] = useState('');
   const [breakpoint, setBreakpoint] = useState<VisualEditBreakpoint | ''>('');
+  const notifiedFailure = useRef<string | undefined>(undefined);
+  const reloadedRepair = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
@@ -353,16 +449,54 @@ export function PreviewPanel({
     postInspectorMessage({ type: 'af:visual-edit:clear' });
   }
 
-  async function start() {
-    try {
-      setPanelError('');
-      const { session: started } = await startPreview(projectId);
-      setSession(started);
-      setLogs([]);
-    } catch (cause) {
-      setPanelError(cause instanceof Error ? cause.message : String(cause));
+  const start = useCallback(
+    async (replaceCurrent = false) => {
+      try {
+        setPanelError('');
+        if (replaceCurrent && session && !TERMINAL_SESSION_STATUSES.has(session.status)) {
+          await stopPreview(projectId, session.id);
+        }
+        const { session: started } = await startPreview(projectId);
+        setSession(started);
+        setLogs([]);
+      } catch (cause) {
+        setPanelError(cause instanceof Error ? cause.message : String(cause));
+      }
+    },
+    [projectId, session],
+  );
+
+  const report = useMemo(
+    () => (run ? latestBrowserVerificationReport(artifacts, run.id, attempts) : null),
+    [artifacts, attempts, run],
+  );
+  const failure = useMemo(
+    () => previewRepairContext(session, events, report, logs),
+    [events, logs, report, session],
+  );
+
+  useEffect(() => {
+    if (!failure) {
+      onPreviewFailure(null);
+      return;
     }
-  }
+    if (notifiedFailure.current === failure.key) return;
+    notifiedFailure.current = failure.key;
+    onPreviewFailure(failure);
+  }, [failure, onPreviewFailure]);
+
+  useEffect(() => {
+    if (
+      repairOperation?.kind !== 'repair' ||
+      !repairOperation.projectVersionId ||
+      !repairOperationRunTerminal ||
+      reloadedRepair.current === repairOperation.id
+    ) {
+      return;
+    }
+    reloadedRepair.current = repairOperation.id;
+    void start(true);
+  }, [repairOperation, repairOperationRunTerminal, start]);
 
   async function stop() {
     if (!session) return;
@@ -375,10 +509,6 @@ export function PreviewPanel({
     }
   }
 
-  const report = useMemo(
-    () => (run ? latestBrowserVerificationReport(artifacts, run.id, attempts) : null),
-    [artifacts, attempts, run],
-  );
   const hasCompleteResolvedSource =
     selectionResult?.status === 'resolved' &&
     selectionResult.line !== undefined &&

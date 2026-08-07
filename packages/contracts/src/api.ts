@@ -70,13 +70,25 @@ export type CreateOperationResponse = z.infer<typeof CreateOperationResponseSche
 
 export const StartOperationRequestSchema = z
   .object({
-    kind: z.enum(['plan', 'build']),
+    kind: z.enum(['plan', 'build', 'repair']),
     planOperationId: PathSegmentSchema.optional(),
     directExecution: z.boolean().optional(),
     changeRequestId: PathSegmentSchema.optional(),
   })
   .strict()
-  .superRefine(requireExactlyOnePlanSource);
+  .superRefine((input, context) => {
+    requireExactlyOnePlanSource(input, context);
+    if (
+      input.kind === 'repair' &&
+      (input.planOperationId !== undefined || input.directExecution !== undefined)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['kind'],
+        message: 'repair operations cannot carry build gating fields',
+      });
+    }
+  });
 export type StartOperationRequest = z.infer<typeof StartOperationRequestSchema>;
 
 export const StartOperationResponseSchema = z.object({ operation: OperationSchema }).strict();

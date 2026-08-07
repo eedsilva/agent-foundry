@@ -1,14 +1,16 @@
 import type { AgentStep, Message, VisualEdit } from '@agent-foundry/contracts';
 import { ValidationError } from '@agent-foundry/domain';
 
-export const CONVERSATION_WORKFLOW_ID: Record<'plan' | 'build' | 'visual-edit', string> = {
-  plan: 'conversation-plan',
-  build: 'conversation-build',
-  'visual-edit': 'conversation-visual-edit',
-};
+export const CONVERSATION_WORKFLOW_ID: Record<'plan' | 'build' | 'repair' | 'visual-edit', string> =
+  {
+    plan: 'conversation-plan',
+    build: 'conversation-build',
+    repair: 'conversation-repair',
+    'visual-edit': 'conversation-visual-edit',
+  };
 
 const STEP_BASE: Record<
-  'plan' | 'build' | 'visual-edit',
+  'plan' | 'build' | 'repair' | 'visual-edit',
   Omit<AgentStep, 'id' | 'instructions'>
 > = {
   plan: {
@@ -50,6 +52,19 @@ const STEP_BASE: Record<
     profile: {},
     maxAttempts: 1,
   },
+  repair: {
+    type: 'agent',
+    role: 'developer',
+    taskKind: 'repair',
+    title: 'Preview failure repair',
+    outputArtifact: 'repair-report',
+    inputArtifacts: [],
+    secretRefs: [],
+    mutatesWorkspace: true,
+    harnessTags: [],
+    profile: {},
+    maxAttempts: 1,
+  },
 };
 
 const DIRECT_VISUAL_EDIT_BASE: Omit<AgentStep, 'id' | 'instructions'> = {
@@ -76,7 +91,7 @@ export function messageText(message: Message): string {
 
 export function buildConversationStep(input: {
   operationId: string;
-  kind: 'plan' | 'build' | 'visual-edit';
+  kind: 'plan' | 'build' | 'repair' | 'visual-edit';
   message: Message;
   visualEdit?: VisualEdit | undefined;
   planArtifact?: { content: unknown } | undefined;

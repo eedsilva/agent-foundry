@@ -205,6 +205,18 @@ describe('OperationService.start', () => {
     });
   });
 
+  it('creates a queued repair operation, run, and job', async () => {
+    const { service, runs, queue, conversations } = setup();
+    const message = await seedMessage(conversations);
+
+    const operation = await service.start('project-1', message.id, { kind: 'repair' });
+
+    expect(operation).toMatchObject({ kind: 'repair' });
+    expect(operation.runId).toBeDefined();
+    expect((await runs.get(operation.runId!))?.workflowId).toBe('conversation-repair');
+    expect(queue.enqueued).toHaveLength(1);
+  });
+
   it('rejects a build request with neither planOperationId nor directExecution', async () => {
     const { service, conversations } = setup();
     const message = await seedMessage(conversations);

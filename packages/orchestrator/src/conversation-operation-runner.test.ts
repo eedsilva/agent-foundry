@@ -432,6 +432,28 @@ async function seed(
 }
 
 describe('ConversationOperationRunner', () => {
+  it('runs a repair as a mutating operation and records its committed version', async () => {
+    const { runs, workspaces, conversations, projectVersions, events, runner } = setup();
+    const { runId, operationId } = await seed(conversations, runs, 'repair', 'repair');
+    await events.append({
+      id: 'preview-event-1',
+      projectId: 'project-1',
+      type: 'preview.failed',
+      createdAt: '2026-07-18T12:00:01.000Z',
+      message: 'Preview failed.',
+      data: { diagnostic: { sessionId: 'preview-1', phase: 'runtime', error: 'boom' } },
+    });
+
+    await runner.run('project-1', runId, operationId);
+
+    expect((await runs.get(runId))?.status).toBe('completed');
+    expect(workspaces.lastRequestMarkdown).toContain('Preview failure repair');
+    expect(workspaces.lastRequestMarkdown).toContain('preview-1');
+    expect(workspaces.checkpoints).toHaveLength(1);
+    expect(workspaces.commits).toHaveLength(1);
+    expect(await projectVersions.list('project-1')).toHaveLength(1);
+  });
+
   it('passes live provider health to conversation routing', async () => {
     const health: ExecutorHealth = {
       provider: 'codex',

@@ -668,8 +668,12 @@ export async function buildApp(
       const { projectId, messageId } = z
         .object({ projectId: PathSegmentSchema, messageId: PathSegmentSchema })
         .parse(request.params);
-      const body = request.body as { kind?: unknown };
-      if (body?.kind === 'plan' || body?.kind === 'build') {
+      const body = request.body as { kind?: unknown; idempotencyKey?: unknown };
+      const startsQueuedOperation =
+        body?.kind === 'plan' ||
+        body?.kind === 'build' ||
+        (body?.kind === 'repair' && body.idempotencyKey === undefined);
+      if (startsQueuedOperation) {
         const input = StartOperationRequestSchema.parse(request.body);
         const operation = await runtime.operationService.start(projectId, messageId, input);
         return reply.status(201).send({ operation });

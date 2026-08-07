@@ -101,8 +101,10 @@ export class ConversationOperationRunner {
     if (operation.runId !== runId) {
       throw new ValidationError(`Operation ${operationId} is not bound to workflow run ${runId}`);
     }
-    const kind: 'plan' | 'build' | 'visual-edit' =
-      operation.kind === 'build' || operation.kind === 'visual-edit' ? operation.kind : 'plan';
+    const kind: 'plan' | 'build' | 'repair' | 'visual-edit' =
+      operation.kind === 'build' || operation.kind === 'repair' || operation.kind === 'visual-edit'
+        ? operation.kind
+        : 'plan';
     span.setAttribute('foundry.operation.kind', kind);
     const message = await this.requireMessage(projectId, operation.messageId);
     const planArtifact = await this.loadPlanArtifact(projectId, operation);
@@ -225,6 +227,12 @@ export class ConversationOperationRunner {
       };
       await this.stepAttempts.create(attempt);
 
+      const latestPreviewFailure =
+        operation.kind === 'repair'
+          ? [...(await this.events.list(projectId))]
+              .reverse()
+              .find((event) => event.type === 'preview.failed')
+          : undefined;
       const requestMarkdown = compileRequestMarkdown({
         projectId,
         runId,
@@ -235,6 +243,7 @@ export class ConversationOperationRunner {
         step,
         harness,
         artifacts: inputArtifacts,
+        ...(latestPreviewFailure ? { previewFailureEvents: [latestPreviewFailure] } : {}),
         workspacePath: this.workspaces.workspacePath(projectId),
         toolPolicy: profile.toolPolicy,
       });

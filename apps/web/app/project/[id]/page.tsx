@@ -74,6 +74,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [deciding, setDeciding] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [previousArtifact, setPreviousArtifact] = useState<StoredArtifact | null>(null);
+  const [previewFailure, setPreviewFailure] = useState<{
+    key: string;
+    title: string;
+    detail: string;
+  } | null>(null);
   // `?tab=` keeps the inspector deep-linkable and reload-proof. Read once from
   // `location` rather than `useSearchParams` + `router.replace`: a router
   // navigation re-resolves this page's `params` promise, and a suspended
@@ -493,6 +498,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           classifyPromptRef={classifyPromptRef}
           onCancelRun={(runId) => void cancel(runId)}
           onOpenArtifactRef={openArtifactRef}
+          previewFailure={previewFailure}
+          onRepairStarted={() => setPreviewFailure(null)}
         />
       }
       center={
@@ -501,6 +508,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           run={run ?? null}
           artifacts={detail.artifacts}
           attempts={runDetail?.steps.flatMap(({ attempts }) => attempts) ?? []}
+          events={events}
+          onPreviewFailure={setPreviewFailure}
+          repairOperation={latestOperation?.kind === 'repair' ? latestOperation : undefined}
+          repairOperationRunTerminal={latestOperationRunTerminal}
           onConversationalFallback={(prompt) => classifyPromptRef.current(prompt)}
         />
       }
