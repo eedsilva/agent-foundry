@@ -1,0 +1,33 @@
+name: pipeline-regression
+
+# Real-mode foundry pipeline regression (#416): the builder's own golden
+# journey with real Docker + disposable per-project Supabase and the fake
+# provider CLIs as the LLM boundary. Deliberately nightly/manual, not per-PR:
+# it provisions a Supabase stack per run and takes several minutes.
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline-regression:
+    name: pipeline-regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
+        with:
+          version: 2.62.5
+      - name: Fail closed if Docker is unavailable on the runner
+        run: docker info
+      - run: npm run build:packages
+      - run: RUN_PIPELINE_REGRESSION_E2E=true npx vitest run packages/composition/src/pipeline-regression.e2e.test.ts --pool=threads --maxWorkers=1
