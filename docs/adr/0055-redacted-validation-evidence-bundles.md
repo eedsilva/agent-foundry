@@ -71,6 +71,17 @@ Evidence is directly reviewable and safe to retain under the existing artifact p
 database or browser proof is visible as unavailable/product-failed rather than silently accepted.
 The bundle schema is additive and run-scoped; no existing run or artifact is rewritten.
 
+## Amendment (2026-08-07, #449)
+
+Provenance widened from run-scoped to project-lineage-scoped: a reference (and an artifact's
+recorded origin run) may name any sibling run of the same project, because a retried run reuses
+the project's prd/plan artifacts created under the original run. References record the run that
+actually produced the artifact; producer-attempt lookups follow that origin run; event proofs are
+project-scoped but stay pinned to exact artifact references. Foreign or unknown origin runs still
+reject. Operator acceptance, terminal state, and checkpoints remain scoped to the publishing run,
+and the automatic collector only takes lineage artifacts (prd, scaffold, plan) from sibling runs —
+run outputs stay scoped to the publishing run.
+
 ## Validation and rollback
 
 Contract, publisher, public API, fast unit, and runtime integration tests cover all four outcomes,

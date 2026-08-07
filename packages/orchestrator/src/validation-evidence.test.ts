@@ -168,6 +168,9 @@ async function setup(
     /** Run-17 shape (#398): database.evidence pins an earlier browser report
      * revision than the one the browser-acceptance gate proves. */
     splitBrowserEvidence?: boolean;
+    /** #449 retry shape: prd/plan artifacts were created under an earlier
+     * run and reused. When 'run-0', that sibling run exists on the project. */
+    lineageArtifactRunId?: string;
   } = {},
 ) {
   const harness = makeHarness({}, undefined, { validationCampaign: campaign });
@@ -175,6 +178,19 @@ async function setup(
   const now = harness.clock.now().toISOString();
   const run = await harness.runs.get('run-1');
   if (!run) throw new Error('run-1 was not seeded');
+  if (options.lineageArtifactRunId === 'run-0') {
+    await harness.runs.create({
+      id: 'run-0',
+      projectId: 'project-1',
+      workflowId: harness.workflow.id,
+      status: 'completed',
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      completedAt: now,
+    });
+  }
   await harness.runs.update(
     {
       ...run,
@@ -503,18 +519,30 @@ async function setup(
                 nextActions: [],
               }
             : { approved: true };
+    // #449 retry shape: prd and the planner-produced plan.current were created
+    // under the original run; everything else was produced by the retry run.
+    const isLineageName = name === 'prd' || name === 'plan.current';
+    const artifactRunId =
+      options.lineageArtifactRunId && isLineageName
+        ? options.lineageArtifactRunId
+        : name === 'prd'
+          ? undefined
+          : 'run-1';
     const artifact = await harness.artifacts.put({
       projectId: 'project-1',
       name,
       content,
       createdBy: 'validation-test',
-      ...(name === 'prd' ? {} : { runId: 'run-1' }),
+      ...(artifactRunId ? { runId: artifactRunId } : {}),
       ...(name === 'implementation.report' || name === 'browser-verification.report'
         ? { stepRunId: 'step-1', attemptId: 'attempt-1' }
         : {}),
+      ...(options.lineageArtifactRunId === 'run-0' && name === 'plan.current'
+        ? { stepRunId: 'step-0', attemptId: 'attempt-0' }
+        : {}),
     });
     const proof: ValidationEvidenceReference = {
-      runId: 'run-1',
+      runId: artifact.metadata.runId ?? 'run-1',
       ...(artifact.metadata.stepRunId ? { stepRunId: artifact.metadata.stepRunId } : {}),
       ...(artifact.metadata.attemptId ? { attemptId: artifact.metadata.attemptId } : {}),
       artifact: {
@@ -537,6 +565,47 @@ async function setup(
     if (name === 'browser-verification.report') {
       proofs['preview-healthy'] = proof;
     }
+  }
+  if (options.lineageArtifactRunId === 'run-0') {
+    const planReference = proofs['plan-approved']?.artifact;
+    if (!planReference) throw new Error('missing lineage plan artifact');
+    await harness.stepRuns.create({
+      id: 'step-0',
+      runId: 'run-0',
+      nodeId: 'plan',
+      stepId: 'plan',
+      stepType: 'agent',
+      status: 'completed',
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      completedAt: now,
+    });
+    await harness.stepAttempts.create({
+      id: 'attempt-0',
+      runId: 'run-0',
+      stepRunId: 'step-0',
+      sequence: 1,
+      executorKind: 'agent',
+      provider: 'codex',
+      model: 'test-model',
+      modelId: 'model-1',
+      status: 'succeeded',
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      completedAt: now,
+      context: {
+        projectId: 'project-1',
+        workflowId: harness.workflow.id,
+        nodeId: 'plan',
+        stepId: 'plan',
+      },
+      inputArtifacts: [],
+      outputArtifacts: [planReference],
+    });
   }
   const browserRev1 = proofs['browser-acceptance']?.artifact;
   if (options.splitBrowserEvidence) {
@@ -956,6 +1025,22 @@ describe('validation evidence publication', () => {
     expect(result.bundle.outcome).toBe('accepted');
   });
 
+  it('publishes evidence for a retried run that reuses prd/plan from the original run (#449)', async () => {
+    const { evidence, proofs } = await setup({ lineageArtifactRunId: 'run-0' });
+
+    const result = await evidence.publish('run-1', request('accepted', proofs));
+
+    expect(result.bundle.outcome).toBe('accepted');
+  });
+
+  it('rejects an artifact whose recorded origin is not a run of this project (#449)', async () => {
+    const { evidence, proofs } = await setup({ lineageArtifactRunId: 'ghost-run' });
+
+    await expect(evidence.publish('run-1', request('accepted', proofs))).rejects.toThrow(
+      /belongs to another run|does not match run/,
+    );
+  });
+
   it('classifies an accepted run and is idempotent while redacting persisted evidence', async () => {
     const { harness, evidence, proofs } = await setup();
     const first = await evidence.publish('run-1', request('accepted', proofs));
@@ -1018,6 +1103,36 @@ describe('validation evidence publication', () => {
     const result = await evidence.publishFromRun('run-1');
 
     expect(result?.bundle.outcome).toBe('environment-blocked');
+  });
+
+  it('never bundles a concurrent sibling run output as automatic evidence (#449)', async () => {
+    const { harness, evidence } = await setup({ withPreflight: false });
+    const now = harness.clock.now().toISOString();
+    await harness.runs.create({
+      id: 'run-9',
+      projectId: 'project-1',
+      workflowId: harness.workflow.id,
+      status: 'running',
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const foreign = await harness.artifacts.put({
+      projectId: 'project-1',
+      name: 'implementation.report',
+      content: { schemaVersion: '1', status: 'completed', summary: 'other run', data: {} },
+      createdBy: 'validation-test',
+      runId: 'run-9',
+    });
+
+    const result = await evidence.publishFromRun('run-1');
+
+    const implementation = result?.bundle.gates.find(
+      (gate) => gate.id === 'implementation-generated',
+    );
+    const bundled = implementation?.references.find((reference) => reference.artifact);
+    expect(bundled?.artifact?.revision).not.toBe(foreign.metadata.revision);
+    expect(bundled?.runId).not.toBe('run-9');
   });
 
   it.each(['product-failed', 'model-failed', 'environment-blocked'] as const)(
