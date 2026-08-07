@@ -6,7 +6,7 @@
     "outDir": "dist-types",
     "emitDeclarationOnly": true
   },
-  "include": ["src/**/*.ts", "src/safe-env-allowlist.json"],
+  "include": ["src/**/*.ts", "src/**/*.mts", "src/safe-env-allowlist.json"],
   "references": [
     {
       "path": "../contracts"

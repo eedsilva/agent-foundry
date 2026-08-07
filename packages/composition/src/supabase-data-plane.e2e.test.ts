@@ -1,4 +1,4 @@
-import { execFile, execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -15,7 +15,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PostgresJobQueue, createPostgresClient, migrateUp } from '@agent-foundry/persistence';
-import { approveAllGates } from './testing-helpers.js';
+import { approveAllGates, probeDocker } from './testing-helpers.js';
 import { createRuntime, type Runtime } from './runtime.js';
 import {
   allocateLocalSupabasePorts,
@@ -36,15 +36,6 @@ const STOP_TIMEOUT_MS = 60_000;
 const FETCH_TIMEOUT_MS = 60_000;
 const FULL_SUITE_TIMEOUT_MS = 10 * 60_000;
 const rootDir = resolve(import.meta.dirname, '../../..');
-
-function probeDocker(): boolean {
-  try {
-    execSync('docker info', { stdio: 'ignore', timeout: 15_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 const dockerAvailable = probeDocker();
 if (SHOULD_RUN && !USE_HOSTED && process.env.CI && !dockerAvailable) {

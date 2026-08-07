@@ -1,4 +1,3 @@
-import { execSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -10,21 +9,7 @@ import {
   type PostgresDb,
 } from '@agent-foundry/persistence';
 import { createRuntime } from './runtime.js';
-import { approveAllGates } from './testing-helpers.js';
-
-// ponytail: duplicates the Docker-skip guard from persistence/src/postgres/testing.ts instead of
-// exporting `describePostgres` through the package barrel. Exporting it would pull
-// @testcontainers/postgresql into the production bundle of every consumer (api, worker) built
-// from `@agent-foundry/persistence`'s single index.ts entry point. Promote to a shared
-// test-utils export if a third package ever needs the same guard.
-function probeDocker(): boolean {
-  try {
-    execSync('docker info', { stdio: 'ignore', timeout: 15_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { approveAllGates, probeDocker } from './testing-helpers.js';
 
 const dockerAvailable = probeDocker();
 if (process.env.CI && !dockerAvailable) {

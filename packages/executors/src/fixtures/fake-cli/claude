@@ -1,0 +1,40 @@
+#!/usr/bin/env node
+// Fake Claude CLI (#416): speaks `claude -p --output-format stream-json` —
+// prompt as the last argument, stream-json lines on stdout with the artifact
+// as the result's structured_output.
+import { argValue, respond } from './fake-cli-core.mjs';
+
+const argv = process.argv.slice(2);
+if (argv.includes('--version')) {
+  console.log('fake-claude 1.0.0');
+  process.exit(0);
+}
+
+try {
+  const prompt = argv.at(-1) ?? '';
+  const artifact = await respond(prompt);
+  const model = argValue(argv, '--model') ?? 'fake-claude-model';
+  const usage = { input_tokens: 120, cache_read_input_tokens: 70, output_tokens: 45 };
+  console.log(
+    JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      model,
+      permissionMode: 'acceptEdits',
+      claude_code_version: '0.0.0-fake',
+    }),
+  );
+  console.log(JSON.stringify({ type: 'assistant', message: { model, usage } }));
+  console.log(
+    JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      structured_output: artifact,
+      usage,
+    }),
+  );
+} catch (error) {
+  console.error(`fake-claude failed: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}

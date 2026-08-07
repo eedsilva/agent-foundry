@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { execa } from 'execa';
@@ -64,4 +65,15 @@ export async function seedFixtureRepo(
   await execa('git', ['add', '.'], { cwd: path });
   await execa('git', ['commit', '--quiet', '-m', 'later commit'], { cwd: path });
   return { path, sha: short.stdout.trim() };
+}
+
+/** Shared Docker guard for e2e/integration suites (promoted at the third
+ * caller, per the ponytail note that used to live in runtime.postgres.test.ts). */
+export function probeDocker(): boolean {
+  try {
+    execSync('docker info', { stdio: 'ignore', timeout: 15_000 });
+    return true;
+  } catch {
+    return false;
+  }
 }
