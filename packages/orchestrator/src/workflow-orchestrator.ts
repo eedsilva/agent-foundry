@@ -125,8 +125,6 @@ import {
 } from '@agent-foundry/domain';
 import {
   campaignLimitMs,
-  estimateValidationDispatchCostUsd,
-  resolveValidationAttemptModel,
   summarizeValidationUsage,
   validationStepKey,
 } from './validation-budget.js';
@@ -771,15 +769,8 @@ export class WorkflowOrchestrator {
     const run = await this.requireRun(runId);
     const campaign = run.execution?.campaign;
     if (!campaign) return;
-    const catalog = await this.router.catalog();
     const attempts = await this.listRunAttempts(runId);
-    const usage = summarizeValidationUsage(attempts, catalog);
-    if (usage.unknownMeteredAttempts > 0) {
-      throw new ValidationCampaignLimitError(runId, 'unknown-cost');
-    }
-    if (usage.meteredCostUsd > campaign.preview.limits.meteredCostUsd) {
-      throw new ValidationCampaignLimitError(runId, 'metered-cost');
-    }
+    const usage = summarizeValidationUsage(attempts);
     const providerHealth = this.executors
       ? new Map((await this.executors.health()).map((health) => [health.provider, health]))
       : undefined;
@@ -799,14 +790,7 @@ export class WorkflowOrchestrator {
     }
     const currentAttemptProvider = currentAttempt?.provider;
     const currentAttemptQuota = currentAttempt?.usage?.quotaUnits;
-    const currentAttemptModel = currentAttempt
-      ? resolveValidationAttemptModel(currentAttempt, catalog)
-      : undefined;
-    if (
-      currentAttemptModel?.billingMode === 'subscription' &&
-      currentAttemptProvider !== undefined &&
-      currentAttemptQuota !== undefined
-    ) {
+    if (currentAttemptProvider !== undefined && currentAttemptQuota !== undefined) {
       const remaining = [...(providerHealth?.values() ?? [])].find(
         (health) => health.provider === currentAttemptProvider,
       )?.rateLimit?.remaining;
@@ -944,7 +928,6 @@ export class WorkflowOrchestrator {
     step: AgentStep;
     iteration?: number;
     candidate: RankedModel;
-    profile: TaskProfile;
     providerHealth?: ReadonlyMap<string, ExecutorHealth>;
     sequence: number;
     targetedRetry: boolean;
@@ -956,7 +939,6 @@ export class WorkflowOrchestrator {
       step,
       iteration,
       candidate,
-      profile,
       providerHealth,
       sequence,
       targetedRetry,
@@ -968,8 +950,7 @@ export class WorkflowOrchestrator {
     if (!campaign) return;
 
     const attempts = await this.listRunAttempts(runId);
-    const catalog = await this.router.catalog();
-    const usage = summarizeValidationUsage(attempts, catalog);
+    const usage = summarizeValidationUsage(attempts);
     const key = validationStepKey(nodeId, step.id, iteration);
     const attemptsForStep = usage.attemptsByStep[key] ?? 0;
     const attemptLimit = campaign.preview.limits.attemptsPerAgentStep + (targetedRetry ? 1 : 0);
@@ -983,38 +964,18 @@ export class WorkflowOrchestrator {
       throw new ValidationCampaignLimitError(runId, 'targeted-repairs');
     }
 
-    const nextCost = estimateValidationDispatchCostUsd(profile, candidate.model);
-    if (usage.meteredCostUsd >= campaign.preview.limits.meteredCostUsd) {
-      throw new ValidationCampaignLimitError(runId, 'metered-cost');
-    }
-    if (candidate.model.billingMode === 'unknown') {
-      throw new ValidationCampaignLimitError(runId, 'unknown-cost');
-    }
+    const rateLimit = providerHealth?.get(candidate.model.provider)?.rateLimit;
+    const usedQuota = usage.subscriptionQuotaUnitsByProvider[candidate.model.provider] ?? 0;
+    // Unknown quota metadata stays unknown in the evidence; it is not a
+    // synthetic exhausted-quota failure. CLI executors only learn their rate
+    // limit from a previous execution's stdout, so failing closed here would
+    // make the first subscription dispatch of every real campaign impossible
+    // (#418). Only evidence of exhaustion stops the dispatch.
     if (
-      candidate.model.billingMode === 'metered' &&
-      (nextCost === undefined ||
-        usage.meteredCostUsd + nextCost > campaign.preview.limits.meteredCostUsd)
+      (rateLimit?.remaining !== undefined && rateLimit.remaining <= 0) ||
+      (rateLimit?.limit !== undefined && usedQuota >= rateLimit.limit)
     ) {
-      throw new ValidationCampaignLimitError(
-        runId,
-        nextCost === undefined ? 'unknown-cost' : 'metered-cost',
-      );
-    }
-
-    if (candidate.model.billingMode === 'subscription') {
-      const rateLimit = providerHealth?.get(candidate.model.provider)?.rateLimit;
-      const usedQuota = usage.subscriptionQuotaUnitsByProvider[candidate.model.provider] ?? 0;
-      // Unknown quota metadata stays unknown in the evidence; it is not a
-      // synthetic exhausted-quota failure. CLI executors only learn their rate
-      // limit from a previous execution's stdout, so failing closed here would
-      // make the first subscription dispatch of every real campaign impossible
-      // (#418). Only evidence of exhaustion stops the dispatch.
-      if (
-        (rateLimit?.remaining !== undefined && rateLimit.remaining <= 0) ||
-        (rateLimit?.limit !== undefined && usedQuota >= rateLimit.limit)
-      ) {
-        throw new ValidationCampaignLimitError(runId, 'subscription-quota');
-      }
+      throw new ValidationCampaignLimitError(runId, 'subscription-quota');
     }
 
     if (!isTargetedRepair) return;
@@ -3348,10 +3309,8 @@ export class WorkflowOrchestrator {
       runId,
       stepRun.nodeId,
       step.id,
-      profile,
       override,
       overrideCreatedAt,
-      campaign,
     );
     const providerHealth = this.executors
       ? new Map((await this.executors.health()).map((health) => [health.provider, health]))
@@ -3384,11 +3343,6 @@ export class WorkflowOrchestrator {
     const allowedModels = campaignRoute
       ? [campaignRoute.selected, ...campaignRoute.fallbacks]
       : undefined;
-    const campaignPromotion = Boolean(
-      campaign &&
-      explicit &&
-      !campaign.preview.allowedModels.some((model) => model.id === explicit.modelId),
-    );
     const route = await this.router.route(profile, explicit, {
       ...(providerHealth ? { providerHealth } : {}),
       ...(routing ? { routing } : {}),
@@ -3500,10 +3454,9 @@ export class WorkflowOrchestrator {
         step,
         ...(loopIteration !== undefined ? { iteration: loopIteration } : {}),
         candidate,
-        profile,
         ...(providerHealth ? { providerHealth } : {}),
         sequence: index + 1,
-        targetedRetry: targetedRetry || campaignPromotion,
+        targetedRetry,
         signal,
       });
       await this.stepAttempts.create(attempt);
@@ -3844,10 +3797,8 @@ export class WorkflowOrchestrator {
     runId: string,
     nodeId: string,
     stepId: string,
-    profile: TaskProfile,
     retry?: RunRetryDirective['override'],
     retryCreatedAt?: string,
-    campaign?: ValidationCampaignExecution,
   ): Promise<ExplicitModelRoute | undefined> {
     if (retry) {
       let modelId = retry.modelId;
@@ -3865,15 +3816,6 @@ export class WorkflowOrchestrator {
         }
         modelId = matches[0]!.id;
       }
-      await this.assertCampaignPromotionAudit(
-        campaign,
-        runId,
-        { modelId, provider: retry.provider, model: retry.model },
-        nodeId,
-        stepId,
-        { ...retry, createdAt: retryCreatedAt },
-        profile,
-      );
       return {
         modelId,
         provider: retry.provider,
@@ -3903,15 +3845,6 @@ export class WorkflowOrchestrator {
           isTaskStepId(stepId, item.scope.stepId),
       ) ?? overrides.find((item) => item.scope.kind === 'run');
     if (!match) return undefined;
-    await this.assertCampaignPromotionAudit(
-      campaign,
-      runId,
-      { modelId: match.modelId, provider: match.provider, model: match.model },
-      nodeId,
-      stepId,
-      match,
-      profile,
-    );
     return {
       modelId: match.modelId,
       provider: match.provider,
@@ -3930,80 +3863,6 @@ export class WorkflowOrchestrator {
         createdAt: match.createdAt,
       },
     };
-  }
-
-  private async assertCampaignPromotionAudit(
-    campaign: ValidationCampaignExecution | undefined,
-    runId: string,
-    identity: { modelId: string; provider: string; model: string },
-    nodeId: string,
-    stepId: string,
-    audit: {
-      actor?: { kind: string; id: string } | undefined;
-      reason?: string | undefined;
-      estimatedImpact?: string | undefined;
-      failedStep?: string | undefined;
-      minimalReproducer?: string | undefined;
-      createdAt?: string | undefined;
-    },
-    profile: TaskProfile,
-  ): Promise<void> {
-    if (!campaign) return;
-    const allowed = campaign.preview.allowedModels.find((model) => model.id === identity.modelId);
-    if (allowed) {
-      if (allowed.provider !== identity.provider || allowed.model !== identity.model) {
-        throw new ExecutionError(
-          `Validation campaign model ${identity.modelId} no longer matches its snapshotted identity`,
-        );
-      }
-      return;
-    }
-    const catalog = await this.router.catalog();
-    const auditReproducer = redactString(audit.minimalReproducer ?? '').trim();
-    const failedAttempt = (await this.listRunAttempts(runId)).find(
-      (attempt) =>
-        attempt.status === 'failed' &&
-        attempt.context.nodeId === nodeId &&
-        attempt.context.stepId === stepId &&
-        campaign.preview.allowedModels.some((model) => model.id === attempt.modelId) &&
-        attempt.error?.message !== undefined &&
-        redactString(attempt.error.message).trim() === auditReproducer,
-    );
-    const failureTimestamp = failedAttempt?.completedAt;
-    const auditAfterFailure =
-      failedAttempt !== undefined &&
-      failureTimestamp !== undefined &&
-      audit.createdAt !== undefined &&
-      Number.isFinite(Date.parse(audit.createdAt)) &&
-      Date.parse(audit.createdAt) > Date.parse(failureTimestamp);
-    const failedModel = failedAttempt
-      ? resolveValidationAttemptModel(failedAttempt, catalog)
-      : undefined;
-    const promotedModel = catalog.find((model) => model.id === identity.modelId);
-    const failedCost = failedModel
-      ? estimateValidationDispatchCostUsd(profile, failedModel)
-      : undefined;
-    const promotedCost = promotedModel
-      ? estimateValidationDispatchCostUsd(profile, promotedModel)
-      : undefined;
-    const expectedStep = `${nodeId}/${stepId}`;
-    if (
-      !failedAttempt ||
-      !auditAfterFailure ||
-      !audit.actor ||
-      audit.actor.kind !== 'user' ||
-      !audit.reason ||
-      !audit.estimatedImpact ||
-      audit.failedStep !== expectedStep ||
-      !audit.minimalReproducer ||
-      failedCost === undefined ||
-      promotedCost === undefined ||
-      promotedCost <= failedCost
-    ) {
-      throw new ExecutionError(
-        `Premium validation model ${identity.modelId} requires an audited override after a recorded failed attempt for ${expectedStep}: failed step, same minimal reproducer, cheaper candidate, reason, actor, and expected impact are required`,
-      );
-    }
   }
 
   private async executeCandidate(
@@ -4207,9 +4066,6 @@ export class WorkflowOrchestrator {
       firstPass: approved && iteration === 1,
       repairs: iteration - 1,
       durationMs,
-      ...(executed.confidence
-        ? { confidence: executed.confidence.value, sampleSize: executed.confidence.sampleSize }
-        : {}),
     });
   }
 

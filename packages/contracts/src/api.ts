@@ -11,7 +11,6 @@ import {
   ModelDefinitionSchema,
   ModelOverrideRecordSchema,
   ModelOverrideScopeSchema,
-  FailedStepSchema,
 } from './model.js';
 import { ActorRefSchema, PathSegmentSchema, ProviderSchema, TaskKindSchema } from './primitives.js';
 import { BenchmarkReportSchema } from './benchmark.js';
@@ -215,8 +214,6 @@ export const RetryStepRequestSchema = z.object({
       actor: ActorRefSchema,
       reason: z.string().trim().min(1),
       estimatedImpact: z.string().trim().min(1),
-      failedStep: FailedStepSchema.optional(),
-      minimalReproducer: z.string().trim().min(1).optional(),
     })
     .strict()
     .optional(),
@@ -232,8 +229,6 @@ export const CreateModelOverrideRequestSchema = z
     actor: ActorRefSchema,
     reason: z.string().trim().min(1),
     estimatedImpact: z.string().trim().min(1),
-    failedStep: FailedStepSchema.optional(),
-    minimalReproducer: z.string().trim().min(1).optional(),
   })
   .strict();
 export type CreateModelOverrideRequest = z.infer<typeof CreateModelOverrideRequestSchema>;

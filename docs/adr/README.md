@@ -14,4 +14,5 @@ Latest: [0052 operator-enabled loopback browser redirects](0052-operator-enabled
 Latest: [0053 validation campaign preview isolation](0053-validation-campaign-preview-isolation.md).
 Latest: [0054 enforce validation campaign run budgets](0054-validation-campaign-run-budget.md).
 Latest: [0055 redacted validation evidence bundles](0055-redacted-validation-evidence-bundles.md).
+Latest: [0056 dismantle the validation campaign bureaucracy](0056-dismantle-validation-campaign-bureaucracy.md).
 Latest: [0046 a readable executor table replaces router scoring](0046-executor-table-replaces-router-scoring.md).

@@ -15,7 +15,6 @@ import {
   isTaskCategoryCompatible,
   legacyTaskCategory,
 } from './task-taxonomy.js';
-import { QualitySignalSummarySchema } from './quality.js';
 
 export const CapabilityScoresSchema = z.object({
   planning: z.number().min(0).max(1),
@@ -55,7 +54,6 @@ export const ModelDefinitionSchema = z.object({
   id: PathSegmentSchema,
   provider: ProviderSchema.exclude(['mock']),
   model: z.string(),
-  billingMode: z.enum(['subscription', 'metered', 'unknown']).default('subscription'),
   pricing: ModelPricingSchema.optional(),
   enabled: z.boolean().default(true),
   requireExplicitModel: z.boolean().default(false),
@@ -71,14 +69,6 @@ export const ModelCatalogSchema = z.object({
   models: z.array(ModelDefinitionSchema).min(1),
 });
 export type ModelCatalog = z.infer<typeof ModelCatalogSchema>;
-
-export const RoutingPrioritiesSchema = z.object({
-  quality: z.number().min(0).max(1),
-  speed: z.number().min(0).max(1),
-  cost: z.number().min(0).max(1),
-  reliability: z.number().min(0).max(1),
-});
-export type RoutingPriorities = z.infer<typeof RoutingPrioritiesSchema>;
 
 export const TaskProfileSchema = z.preprocess(
   (value) => {
@@ -114,7 +104,6 @@ export const TaskProfileSchema = z.preprocess(
       estimatedOutputTokens: z.number().int().nonnegative(),
       mutatesWorkspace: z.boolean(),
       toolPolicy: z.enum(['read-only', 'workspace-write']),
-      priorities: RoutingPrioritiesSchema,
       allowedProviders: z.array(ProviderSchema.exclude(['mock'])).optional(),
       policy: z
         .object({
@@ -146,29 +135,12 @@ export const RouteScoreBreakdownSchema = z.object({
 });
 export type RouteScoreBreakdown = z.infer<typeof RouteScoreBreakdownSchema>;
 
-export const RouteConfidenceSchema = z
-  .object({
-    value: z.number().min(0).max(1),
-    sampleSize: z.number().int().nonnegative(),
-    interval: z
-      .object({
-        lower: z.number().min(0).max(1),
-        upper: z.number().min(0).max(1),
-      })
-      .strict(),
-    coldStart: z.boolean(),
-    rationale: z.string().trim().min(1),
-  })
-  .strict();
-export type RouteConfidence = z.infer<typeof RouteConfidenceSchema>;
-
 export const RankedModelSchema = z.object({
   model: ModelDefinitionSchema,
   // Optional since #326 replaced scored selection with a readable executor
-  // table. Route decisions persisted before that still carry a breakdown.
+  // table. Route decisions persisted before that still carry a breakdown;
+  // unknown legacy keys (quality, confidence) are stripped on parse (#358).
   score: RouteScoreBreakdownSchema.optional(),
-  quality: QualitySignalSummarySchema.optional(),
-  confidence: RouteConfidenceSchema.optional(),
 });
 export type RankedModel = z.infer<typeof RankedModelSchema>;
 
@@ -216,6 +188,8 @@ export const ModelOverrideRecordSchema = z
     actor: ActorRefSchema,
     reason: z.string().trim().min(1),
     estimatedImpact: z.string().trim().min(1),
+    // Legacy (#439): the campaign promotion audit was the only writer. Kept so
+    // override records persisted before the dismantling still parse.
     failedStep: FailedStepSchema.optional(),
     minimalReproducer: z.string().trim().min(1).optional(),
     createdAt: z.string().datetime(),
@@ -275,14 +249,6 @@ export const RouteDecisionSchema = z.object({
       reason: z.string(),
     }),
   ),
-  exploration: z
-    .object({
-      explored: z.boolean(),
-      rate: z.number().min(0).max(1),
-      reason: z.string().trim().min(1),
-    })
-    .strict()
-    .optional(),
   /**
    * Which table and which of its entries produced this decision (#326). Optional
    * because decisions persisted under the scored router carry no table.

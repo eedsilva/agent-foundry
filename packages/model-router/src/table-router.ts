@@ -194,21 +194,20 @@ export class TableModelRouter implements ModelRouter {
     const health = constraints?.providerHealth?.get(model.provider);
     const breaker = evaluateBreaker(metric, health, this.breakerConfig, new Date());
     if (breaker.state === 'open') return `circuit-open: ${breaker.reason}`;
-    return quotaRejection(model, metric, health);
+    return quotaRejection(metric, health);
   }
 }
 
 /**
- * A subscription model whose average run costs more quota than the provider has
- * left. The breaker only opens at zero remaining, so without this a task with a
- * known appetite is dispatched into a quota it cannot finish in.
+ * A model whose average run costs more quota than the provider has left. The
+ * breaker only opens at zero remaining, so without this a task with a known
+ * appetite is dispatched into a quota it cannot finish in. Every catalog model
+ * is subscription-billed (#439).
  */
 function quotaRejection(
-  model: ModelDefinition,
   metric: ModelMetric | null,
   health: ExecutorHealth | undefined,
 ): string | null {
-  if (model.billingMode !== 'subscription') return null;
   const rateLimit = health?.rateLimit;
   // An expired window is not a limit any more.
   if (!rateLimit?.resetAt || new Date(rateLimit.resetAt).getTime() > Date.now()) {

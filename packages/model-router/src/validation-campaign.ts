@@ -46,12 +46,11 @@ export function buildValidationCampaignPreview(
       // repair, malformed artifact JSON) after infrastructure went solid for
       // five straight cycles. One retry per step absorbs output flakes; three
       // targeted repairs stop task-repair and browser-repair from competing
-      // for the same slot. Metered cost stays at $2 — every campaign model is
-      // subscription-billed.
+      // for the same slot. No metered ceiling — every campaign model is
+      // subscription-billed (#439).
       attemptsPerAgentStep: 2,
       targetedRepairs: 3,
       activeTimeMinutes: 60,
-      meteredCostUsd: 2,
     },
   });
 }

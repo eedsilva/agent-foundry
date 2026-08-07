@@ -37,7 +37,6 @@ function model(id: string, overrides: Partial<ModelDefinition> = {}): ModelDefin
     id,
     provider: 'claude',
     model: id,
-    billingMode: 'subscription',
     enabled: true,
     requireExplicitModel: false,
     maxContextTokens: 100_000,
@@ -69,7 +68,6 @@ const profile: TaskProfile = {
   estimatedOutputTokens: 8_000,
   mutatesWorkspace: true,
   toolPolicy: 'workspace-write',
-  priorities: { quality: 0.7, speed: 0.1, cost: 0.05, reliability: 0.15 },
   preferredTags: ['coding'],
 };
 

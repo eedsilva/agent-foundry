@@ -12,42 +12,36 @@ import { estimateTokens, stableJson } from '@agent-foundry/domain';
 
 const DEFAULTS: Record<
   AgentStep['taskKind'],
-  Pick<TaskProfile, 'complexity' | 'risk' | 'priorities' | 'preferredTags'>
+  Pick<TaskProfile, 'complexity' | 'risk' | 'preferredTags'>
 > = {
   planning: {
     complexity: 4,
     risk: 3,
-    priorities: { quality: 0.55, speed: 0.1, cost: 0.1, reliability: 0.25 },
     preferredTags: ['planning', 'reasoning', 'structured-output'],
   },
   'plan-review': {
     complexity: 4,
     risk: 4,
-    priorities: { quality: 0.58, speed: 0.07, cost: 0.05, reliability: 0.3 },
     preferredTags: ['review', 'reasoning', 'structured-output'],
   },
   implementation: {
     complexity: 5,
     risk: 4,
-    priorities: { quality: 0.58, speed: 0.12, cost: 0.06, reliability: 0.24 },
     preferredTags: ['coding', 'tool-use', 'workspace-write'],
   },
   'code-review': {
     complexity: 4,
     risk: 5,
-    priorities: { quality: 0.62, speed: 0.06, cost: 0.04, reliability: 0.28 },
     preferredTags: ['review', 'coding', 'reasoning'],
   },
   repair: {
     complexity: 4,
     risk: 4,
-    priorities: { quality: 0.55, speed: 0.14, cost: 0.06, reliability: 0.25 },
     preferredTags: ['repair', 'coding', 'tool-use'],
   },
   verification: {
     complexity: 3,
     risk: 4,
-    priorities: { quality: 0.45, speed: 0.15, cost: 0.08, reliability: 0.32 },
     preferredTags: ['testing', 'review', 'tool-use'],
   },
 };
@@ -76,7 +70,6 @@ export function buildTaskProfile(input: {
   const features = FEATURE_RULES.filter(([, pattern]) => pattern.test(classificationText)).map(
     ([feature]) => feature,
   );
-  const customPriorities = input.step.profile.priorities ?? {};
 
   return {
     role: input.step.role,
@@ -90,12 +83,6 @@ export function buildTaskProfile(input: {
     estimatedOutputTokens: estimatedOutputTokens(input.step.taskKind),
     mutatesWorkspace: input.step.mutatesWorkspace,
     toolPolicy: input.step.mutatesWorkspace ? 'workspace-write' : 'read-only',
-    priorities: {
-      quality: customPriorities.quality ?? defaults.priorities.quality,
-      speed: customPriorities.speed ?? defaults.priorities.speed,
-      cost: customPriorities.cost ?? defaults.priorities.cost,
-      reliability: customPriorities.reliability ?? defaults.priorities.reliability,
-    },
     ...(input.step.profile.allowedProviders
       ? { allowedProviders: input.step.profile.allowedProviders }
       : {}),

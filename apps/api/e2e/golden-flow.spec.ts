@@ -206,7 +206,6 @@ async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
     estimatedContextTokens: 1_000,
     estimatedOutputTokens: 500,
     mutatesWorkspace: false,
-    priorities: { quality: 0.5, speed: 0.2, cost: 0.1, reliability: 0.2 },
     preferredTags: [],
   };
   const profiles: TaskProfile[] = [

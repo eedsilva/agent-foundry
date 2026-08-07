@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  CalibrationReportSchema,
-  ModelMetricSchema,
-  RouteConfidenceSchema,
-  RouteDecisionSchema,
-} from './model.js';
+import { CalibrationReportSchema, ModelMetricSchema, RouteDecisionSchema } from './model.js';
 
 describe('ModelMetricSchema known counts', () => {
   const base = {
@@ -36,42 +31,6 @@ describe('ModelMetricSchema known counts', () => {
     });
     expect(metric.quotaUnitsTotal).toBe(5);
     expect(metric.inputTokensKnownCount).toBe(1);
-  });
-});
-
-describe('RouteConfidenceSchema', () => {
-  const valid = {
-    value: 0.44,
-    sampleSize: 4,
-    interval: { lower: 0.2, upper: 0.8 },
-    coldStart: true,
-    rationale: '4 executions; prior weight 44% -> conservative',
-  };
-
-  it('accepts a well-formed confidence block', () => {
-    expect(RouteConfidenceSchema.parse(valid)).toEqual(valid);
-  });
-
-  it('rejects a value outside [0,1]', () => {
-    expect(() => RouteConfidenceSchema.parse({ ...valid, value: 1.1 })).toThrow();
-  });
-
-  it('rejects a negative sampleSize', () => {
-    expect(() => RouteConfidenceSchema.parse({ ...valid, sampleSize: -1 })).toThrow();
-  });
-
-  it('rejects an interval bound outside [0,1]', () => {
-    expect(() =>
-      RouteConfidenceSchema.parse({ ...valid, interval: { lower: -0.1, upper: 0.8 } }),
-    ).toThrow();
-  });
-
-  it('rejects an empty rationale', () => {
-    expect(() => RouteConfidenceSchema.parse({ ...valid, rationale: '' })).toThrow();
-  });
-
-  it('rejects unknown extra fields', () => {
-    expect(() => RouteConfidenceSchema.parse({ ...valid, extra: 'nope' })).toThrow();
   });
 });
 
@@ -109,7 +68,7 @@ describe('CalibrationReportSchema', () => {
   });
 });
 
-describe('RouteDecisionSchema exploration field', () => {
+describe('RouteDecisionSchema legacy fields (#358)', () => {
   const base = {
     routeId: 'route-1',
     createdAt: '2026-07-16T12:00:00.000Z',
@@ -121,7 +80,6 @@ describe('RouteDecisionSchema exploration field', () => {
       estimatedContextTokens: 1_000,
       estimatedOutputTokens: 500,
       mutatesWorkspace: true,
-      priorities: { quality: 1, speed: 0, cost: 0, reliability: 0 },
     },
     selected: {
       model: {
@@ -157,84 +115,33 @@ describe('RouteDecisionSchema exploration field', () => {
     rejected: [],
   };
 
-  it('parses a valid RouteDecision without exploration (back-compat)', () => {
-    const route = RouteDecisionSchema.parse(base);
-    expect(route.exploration).toBeUndefined();
+  it('parses a current RouteDecision', () => {
+    expect(() => RouteDecisionSchema.parse(base)).not.toThrow();
   });
 
-  it('parses a valid RouteDecision with a well-formed exploration object and round-trips', () => {
-    const exploration = {
-      explored: true,
-      rate: 0.1,
-      reason: 'Epsilon-greedy exploration',
-    };
+  it('strips legacy keys persisted before #358 (exploration, priorities, quality, confidence, billingMode)', () => {
     const route = RouteDecisionSchema.parse({
       ...base,
-      exploration,
+      profile: {
+        ...base.profile,
+        priorities: { quality: 1, speed: 0, cost: 0, reliability: 0 },
+      },
+      selected: {
+        ...base.selected,
+        model: { ...base.selected.model, billingMode: 'metered' },
+        quality: { some: 'legacy' },
+        confidence: { value: 0.5 },
+      },
+      exploration: {
+        explored: true,
+        rate: 0.1,
+        reason: 'Epsilon-greedy exploration',
+      },
     });
-    expect(route.exploration).toEqual(exploration);
-    expect(route.exploration?.explored).toBe(true);
-    expect(route.exploration?.rate).toBe(0.1);
-    expect(route.exploration?.reason).toBe('Epsilon-greedy exploration');
-  });
-
-  it('rejects exploration object with rate out of [0, 1] range', () => {
-    expect(() =>
-      RouteDecisionSchema.parse({
-        ...base,
-        exploration: {
-          explored: false,
-          rate: 1.5,
-          reason: 'Invalid rate',
-        },
-      }),
-    ).toThrow();
-    expect(() =>
-      RouteDecisionSchema.parse({
-        ...base,
-        exploration: {
-          explored: false,
-          rate: -0.1,
-          reason: 'Invalid rate',
-        },
-      }),
-    ).toThrow();
-  });
-
-  it('rejects exploration object with empty or whitespace-only reason', () => {
-    expect(() =>
-      RouteDecisionSchema.parse({
-        ...base,
-        exploration: {
-          explored: false,
-          rate: 0.1,
-          reason: '',
-        },
-      }),
-    ).toThrow();
-    expect(() =>
-      RouteDecisionSchema.parse({
-        ...base,
-        exploration: {
-          explored: false,
-          rate: 0.1,
-          reason: '   ',
-        },
-      }),
-    ).toThrow();
-  });
-
-  it('rejects exploration object with extra unknown keys (strict mode)', () => {
-    expect(() =>
-      RouteDecisionSchema.parse({
-        ...base,
-        exploration: {
-          explored: true,
-          rate: 0.1,
-          reason: 'Valid reason',
-          extra: 'unknown',
-        },
-      }),
-    ).toThrow();
+    expect(route).not.toHaveProperty('exploration');
+    expect(route.profile).not.toHaveProperty('priorities');
+    expect(route.selected).not.toHaveProperty('quality');
+    expect(route.selected).not.toHaveProperty('confidence');
+    expect(route.selected.model).not.toHaveProperty('billingMode');
   });
 });

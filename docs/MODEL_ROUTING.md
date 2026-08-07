@@ -20,12 +20,6 @@ interface TaskProfile {
   estimatedContextTokens: number;
   estimatedOutputTokens: number;
   mutatesWorkspace: boolean;
-  priorities: {
-    quality: number;
-    speed: number;
-    cost: number;
-    reliability: number;
-  };
   allowedProviders?: Array<'codex' | 'claude'>;
   preferredTags: string[];
 }
@@ -64,13 +58,13 @@ Cada modelo possui:
 - tags;
 - priors de capacidade entre 0 e 1.
 
-Exemplo de modelo medido por token:
+Exemplo de modelo com pricing declarado (todo modelo do catálogo é cobrado por
+assinatura; `pricing` serve só para estimativa informativa de custo):
 
 ```yaml
 - id: provider-model-x
   provider: codex
   model: model-x
-  billingMode: metered
   pricing:
     inputUsdPerMillionTokens: 2.00
     outputUsdPerMillionTokens: 8.00

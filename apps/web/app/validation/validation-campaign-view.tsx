@@ -126,7 +126,6 @@ function SelectedCampaign({
           <li>{preview.limits.attemptsPerAgentStep} tentativa por etapa de agente</li>
           <li>{preview.limits.targetedRepairs} reparo direcionado</li>
           <li>{preview.limits.activeTimeMinutes} min de tempo ativo</li>
-          <li>US$ {preview.limits.meteredCostUsd} de custo medido</li>
         </ul>
       </section>
     </div>
