@@ -114,13 +114,7 @@ export class ValidationCampaignLimitError extends Error {
 
   constructor(
     readonly runId: string,
-    readonly reason:
-      | 'attempts'
-      | 'targeted-repairs'
-      | 'active-time'
-      | 'metered-cost'
-      | 'unknown-cost'
-      | 'subscription-quota',
+    readonly reason: 'attempts' | 'targeted-repairs' | 'active-time' | 'subscription-quota',
   ) {
     super(`Validation campaign for workflow run ${runId} reached its ${reason} limit.`);
   }

@@ -12,7 +12,6 @@ import {
   type ArtifactReference,
   type BrowserTestPlan,
   type BrowserVerificationReport,
-  type ModelDefinition,
   type StepAttempt,
   type ValidationEvidenceAttempt,
   type ValidationEvidenceBundle,
@@ -57,7 +56,6 @@ export class ValidationEvidenceService {
     private readonly stepRuns: StepRunRepository,
     private readonly stepAttempts: StepAttemptRepository,
     private readonly artifacts: ArtifactStore,
-    private readonly catalog: readonly ModelDefinition[],
     private readonly events: EventStore,
     private readonly preflightReport?: (
       runId: string,
@@ -150,7 +148,6 @@ export class ValidationEvidenceService {
       sourceRevision: campaign.preview.sourceRevision,
       input: publication,
       attempts,
-      catalog: this.catalog,
       publishedAt: new Date().toISOString(),
       ...(trustedPreflight ? { trustedPreflight } : {}),
       automaticCapture,
@@ -842,7 +839,6 @@ export function buildValidationEvidenceBundle(options: {
   sourceRevision: string;
   input: ValidationEvidencePublicationRequest;
   attempts: readonly StepAttempt[];
-  catalog: readonly ModelDefinition[];
   publishedAt: string;
   trustedPreflight?: ValidationPreflightReport;
   automaticCapture?: boolean;
@@ -854,7 +850,7 @@ export function buildValidationEvidenceBundle(options: {
     ...(gate.summary ? { summary: redactModelText(gate.summary) } : {}),
   }));
   const attempts = options.attempts.map(toEvidenceAttempt);
-  const usage = summarizeValidationUsage(options.attempts, options.catalog);
+  const usage = summarizeValidationUsage(options.attempts);
   const terminalState = toTerminalState(options.run);
   const skippedGates = gates
     .filter((gate) => gate.status === 'skipped' || gate.status === 'unavailable')
@@ -925,14 +921,6 @@ export function buildValidationEvidenceBundle(options: {
       attempts,
       usage: {
         attemptsByStep: usage.attemptsByStep,
-        providerReportedCostUsd: usage.hasProviderReportedCost
-          ? usage.providerReportedCostUsd
-          : null,
-        catalogEstimatedCostUsd: usage.hasCatalogEstimatedCost
-          ? usage.catalogEstimatedCostUsd
-          : null,
-        meteredCostUsd: usage.unknownMeteredAttempts > 0 ? null : usage.meteredCostUsd,
-        unknownMeteredAttempts: usage.unknownMeteredAttempts,
         subscriptionQuotaUnits: usage.subscriptionQuotaUnits,
         subscriptionQuotaUnitsByProvider: usage.subscriptionQuotaUnitsByProvider,
       },

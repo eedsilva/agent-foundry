@@ -24,7 +24,6 @@ const routeDecision = RouteDecisionSchema.parse({
     estimatedContextTokens: 1_000,
     estimatedOutputTokens: 500,
     mutatesWorkspace: true,
-    priorities: { quality: 0.5, speed: 0.2, cost: 0.1, reliability: 0.2 },
     preferredTags: [],
   },
   selected: {

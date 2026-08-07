@@ -70,7 +70,7 @@ describe('ValidationCampaignView', () => {
     expect(markup).toContain('Rotas planejadas');
     expect(markup).toContain('Fallback planejado');
     expect(markup).toContain('45 min');
-    expect(markup).toContain('US$ 2');
+    expect(markup).not.toContain('US$');
     expect(markup).toContain('Haiku');
     expect(markup).not.toContain('claude-opus');
   });

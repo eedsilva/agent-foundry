@@ -36,21 +36,19 @@ npm run dev
 A execução explicitamente selecionada registra no run a revisão Git, as únicas identidades
 permitidas (Claude Haiku e Codex GPT-5.6 Luna — a campanha é cloud-only; o executor local foi
 adiado para a issue #415), as rotas planejadas por tipo de tarefa, duas tentativas por etapa,
-três reparos direcionados, 60 minutos ativos e US$ 2 de custo medido (decisão de operador
-2026-08-06, #426). Planejamento e verificação usarão Haiku;
-mutação do workspace e reparo usarão Luna. Nenhum modelo deep ou premium aparece na rota
-automática.
+três reparos direcionados e 60 minutos ativos (decisão de operador 2026-08-06, #426).
+Planejamento e verificação usarão Haiku; mutação do workspace e reparo usarão Luna. Nenhum modelo
+deep ou premium aparece na rota automática.
 
 Antes de qualquer chamada de modelo, abra [`/validation`](http://localhost:3000/validation) ou
 consulte `GET /validation/campaign` e confirme a configuração. O worker aplica os limites no run
-selecionado: cancela o próximo dispatch quando o attempt, reparo, tempo ativo ou gasto conhecido
-excederia a política. Custos informados pelo provider, estimativas do catálogo, classes
-desconhecidas e quota de assinatura ficam registrados separadamente nos attempts; um restart não
-zera esse accounting persistido.
+selecionado: cancela o próximo dispatch quando o attempt, reparo, tempo ativo ou quota de
+assinatura excederia a política. Usage e quota por attempt ficam persistidos; um restart não zera
+esse accounting.
 
-Promover um modelo fora da lista exige um override de operador auditado no retry/pin, com
-`failedStep` no formato `nodeId/stepId`, `minimalReproducer`, `reason`, `actor` e
-`estimatedImpact`. Fallback automático nunca concede essa promoção.
+Pinar um modelo fora da lista usa o override de operador normal (`actor`, `reason`,
+`estimatedImpact`); a auditoria de promoção premium da campanha foi removida (#439). Fallback
+automático continua restrito ao snapshot.
 
 A seleção exige `EXECUTOR_MODE=real`. Identidade ausente, desabilitada, duplicada ou diferente da
 esperada interrompe a inicialização antes da execução. Runs normais, sem a seleção explícita,

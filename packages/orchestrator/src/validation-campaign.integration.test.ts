@@ -40,7 +40,6 @@ const models = [
     id: 'campaign-model-1',
     provider: 'codex',
     model: 'campaign-model-1',
-    billingMode: 'subscription',
     maxContextTokens: 200_000,
     capabilities,
   }),
@@ -48,25 +47,10 @@ const models = [
     id: 'campaign-model-2',
     provider: 'codex',
     model: 'campaign-model-2',
-    billingMode: 'subscription',
     maxContextTokens: 200_000,
     capabilities,
   }),
 ];
-
-const premiumModels = models.map((model, index) =>
-  ModelDefinitionSchema.parse({
-    ...model,
-    billingMode: 'metered',
-    pricing: {
-      inputUsdPerMillionTokens: index === 0 ? 1 : 10,
-      outputUsdPerMillionTokens: index === 0 ? 1 : 10,
-    },
-  }),
-);
-const subscriptionPremiumModels = premiumModels.map((model) =>
-  ModelDefinitionSchema.parse({ ...model, billingMode: 'subscription' }),
-);
 
 const campaign = ValidationCampaignPreviewSchema.parse({
   schemaVersion: '1',
@@ -98,7 +82,6 @@ const campaign = ValidationCampaignPreviewSchema.parse({
     attemptsPerAgentStep: 1,
     targetedRepairs: 1,
     activeTimeMinutes: 1,
-    meteredCostUsd: 2,
   },
 });
 
@@ -153,141 +136,6 @@ async function seedCampaignRun(harness: ReturnType<typeof makeHarness>): Promise
 }
 
 describe('validation campaign run enforcement', () => {
-  it('stops before a metered dispatch whose catalog estimate would exceed the limit', async () => {
-    const stores = makeStores();
-    const expensiveModels = models.map((model) =>
-      ModelDefinitionSchema.parse({
-        ...model,
-        billingMode: 'metered',
-        pricing: { inputUsdPerMillionTokens: 1_000_000, outputUsdPerMillionTokens: 1_000_000 },
-      }),
-    );
-    const harness = makeHarness({}, stores, {
-      models: expensiveModels,
-      validationCampaign: campaign,
-    });
-    await seedCampaignRun(harness);
-
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      'metered-cost limit',
-    );
-    expect(harness.executor.requests).toHaveLength(0);
-  });
-
-  it('stops at the exact metered ceiling before a subscription fallback can run', async () => {
-    const stores = makeStores();
-    const meteredModel = ModelDefinitionSchema.parse({
-      ...models[0],
-      billingMode: 'metered',
-      pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 },
-    });
-    const fallbackCampaign = ValidationCampaignPreviewSchema.parse({
-      ...campaign,
-      allowedModels: [
-        { id: meteredModel.id, provider: meteredModel.provider, model: meteredModel.model },
-        { id: models[1]!.id, provider: models[1]!.provider, model: models[1]!.model },
-      ],
-      routes: campaign.routes.map((route) =>
-        route.taskKind === 'planning'
-          ? {
-              ...route,
-              selected: {
-                id: meteredModel.id,
-                provider: meteredModel.provider,
-                model: meteredModel.model,
-              },
-              fallbacks: [
-                { id: models[1]!.id, provider: models[1]!.provider, model: models[1]!.model },
-              ],
-            }
-          : route,
-      ),
-    });
-    const harness = makeHarness({}, stores, {
-      fallback: true,
-      models: [meteredModel, models[1]!],
-      validationCampaign: fallbackCampaign,
-    });
-    await seedRun(harness);
-    const now = harness.clock.now().toISOString();
-    await harness.stepRuns.create({
-      id: 'previous-step',
-      runId: 'run-1',
-      nodeId: 'previous',
-      stepId: 'previous',
-      stepType: 'agent',
-      status: 'completed',
-      version: 1,
-      createdAt: now,
-      updatedAt: now,
-      completedAt: now,
-    });
-    await harness.stepAttempts.create({
-      id: 'previous-attempt',
-      runId: 'run-1',
-      stepRunId: 'previous-step',
-      sequence: 1,
-      executorKind: 'agent',
-      provider: 'codex',
-      model: meteredModel.model,
-      modelId: meteredModel.id,
-      status: 'succeeded',
-      version: 1,
-      createdAt: now,
-      updatedAt: now,
-      startedAt: now,
-      completedAt: now,
-      usage: { providerReportedCostUsd: 2 },
-      context: {
-        projectId: 'project-1',
-        workflowId: harness.workflow.id,
-        nodeId: 'previous',
-        stepId: 'previous',
-      },
-      inputArtifacts: [],
-      outputArtifacts: [],
-    });
-    const run = await harness.runs.get('run-1');
-    if (!run) throw new Error('run-1 was not seeded');
-    await harness.runs.update(
-      {
-        ...run,
-        execution: {
-          activeElapsedMs: 0,
-          consecutiveRepairs: 0,
-          campaign: createValidationCampaignExecution(fallbackCampaign),
-        },
-      },
-      run.version,
-    );
-
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      'metered-cost limit',
-    );
-    expect(harness.executor.requests).toHaveLength(0);
-  });
-
-  it('stops before an unknown metered dispatch without guessing its cost', async () => {
-    const stores = makeStores();
-    const unknownModels = models.map((model) =>
-      ModelDefinitionSchema.parse({ ...model, billingMode: 'metered', pricing: undefined }),
-    );
-    const harness = makeHarness({}, stores, {
-      models: unknownModels,
-      validationCampaign: campaign,
-    });
-    await seedCampaignRun(harness);
-
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      'unknown-cost limit',
-    );
-
-    const summary = summarizeValidationUsage(harness.stepAttempts.all(), unknownModels);
-    expect(summary.unknownMeteredAttempts).toBe(0);
-    expect(summary.meteredCostUsd).toBe(0);
-    expect(harness.executor.requests).toHaveLength(0);
-  });
-
   it('stops before a subscription dispatch when provider quota is exhausted', async () => {
     const stores = makeStores();
     const harness = makeHarness({}, stores, {
@@ -424,26 +272,17 @@ describe('validation campaign run enforcement', () => {
       restarted.orchestrator.runProject('project-1', undefined, 'run-1'),
     ).rejects.toThrow('attempts limit');
 
-    expect(summarizeValidationUsage(stores.stepAttempts.all(), models).subscriptionQuotaUnits).toBe(
-      3,
-    );
+    expect(summarizeValidationUsage(stores.stepAttempts.all()).subscriptionQuotaUnits).toBe(3);
     expect(restarted.executor.requests).toHaveLength(0);
   });
 
   it('persists provider usage before output validation and enforces it after restart', async () => {
     const stores = makeStores();
-    const meteredModels = models.map((model) =>
-      ModelDefinitionSchema.parse({
-        ...model,
-        billingMode: 'metered',
-        pricing: { inputUsdPerMillionTokens: 1, outputUsdPerMillionTokens: 1 },
-      }),
-    );
     const first = makeHarness({}, stores, {
       workflow: validationFailureWorkflow,
-      models: meteredModels,
+      models,
       validationCampaign: campaign,
-      usage: { providerReportedCostUsd: 1 },
+      usage: { quotaUnits: 1 },
     });
     await seedCampaignRun(first);
 
@@ -460,15 +299,15 @@ describe('validation campaign run enforcement', () => {
 
     const restarted = makeHarness({}, stores, {
       workflow: validationFailureWorkflow,
-      models: meteredModels,
+      models,
       validationCampaign: campaign,
     });
     await expect(
       restarted.orchestrator.runProject('project-1', undefined, 'run-1'),
     ).rejects.toThrow('attempts limit');
 
-    const summary = summarizeValidationUsage(stores.stepAttempts.all(), meteredModels);
-    expect(summary.providerReportedCostUsd).toBe(1);
+    const summary = summarizeValidationUsage(stores.stepAttempts.all());
+    expect(summary.subscriptionQuotaUnits).toBe(1);
     expect(restarted.executor.requests).toHaveLength(0);
   });
 
@@ -609,7 +448,7 @@ describe('validation campaign run enforcement', () => {
     expect(harness.executor.requests).toHaveLength(0);
   });
 
-  it('rejects a premium promotion without the failed-step reproducer audit', async () => {
+  it('routes an operator override outside the campaign snapshot without a promotion audit (#439)', async () => {
     const stores = makeStores();
     const harness = makeHarness({}, stores, { models, validationCampaign: campaign });
     await seedRun(harness);
@@ -635,180 +474,10 @@ describe('validation campaign run enforcement', () => {
       run!.version,
     );
 
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      /failed step, same minimal reproducer, cheaper candidate/i,
-    );
-    expect(harness.executor.requests).toHaveLength(0);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    expect(harness.executor.requests[0]?.model).toBe('campaign-model-2');
+    expect((await stores.runs.get('run-1'))?.status).toBe('completed');
   });
-
-  it('rejects a premium promotion when the reproducer does not match the failed attempt', async () => {
-    const clock = new TestClock();
-    const stores = makeStores(clock);
-    const harness = makeHarness({}, stores, {
-      models: premiumModels,
-      validationCampaign: campaign,
-    });
-    await seedRun(harness);
-    await recordFailedAttempt(harness, 'plan', 'plan');
-    clock.advance(1);
-    await harness.service.createModelOverride('run-1', {
-      scope: { kind: 'step', nodeId: 'plan', stepId: 'plan' },
-      modelId: 'campaign-model-2',
-      provider: 'codex',
-      model: 'campaign-model-2',
-      actor: { kind: 'user', id: 'operator' },
-      failedStep: 'plan/plan',
-      minimalReproducer: 'a different failure',
-      reason: 'The restricted model failed the same reproducer',
-      estimatedImpact: 'One premium planning dispatch',
-    });
-    const run = await stores.runs.get('run-1');
-    await stores.runs.update(
-      {
-        ...run!,
-        execution: {
-          activeElapsedMs: 0,
-          consecutiveRepairs: 0,
-          campaign: createValidationCampaignExecution(campaign),
-        },
-      },
-      run!.version,
-    );
-
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      /same minimal reproducer/i,
-    );
-    expect(harness.executor.requests).toHaveLength(0);
-  });
-
-  it('rejects a premium promotion whose audit predates the failed attempt', async () => {
-    const clock = new TestClock();
-    const stores = makeStores(clock);
-    const harness = makeHarness({}, stores, {
-      models: premiumModels,
-      validationCampaign: campaign,
-    });
-    await seedRun(harness);
-    await harness.service.createModelOverride('run-1', {
-      scope: { kind: 'step', nodeId: 'plan', stepId: 'plan' },
-      modelId: 'campaign-model-2',
-      provider: 'codex',
-      model: 'campaign-model-2',
-      actor: { kind: 'user', id: 'operator' },
-      failedStep: 'plan/plan',
-      minimalReproducer: 'plan output violates the task graph contract',
-      reason: 'The restricted model failed the same reproducer',
-      estimatedImpact: 'One premium planning dispatch',
-    });
-    clock.advance(1);
-    await recordFailedAttempt(harness, 'plan', 'plan');
-    const run = await stores.runs.get('run-1');
-    await stores.runs.update(
-      {
-        ...run!,
-        execution: {
-          activeElapsedMs: 0,
-          consecutiveRepairs: 0,
-          campaign: createValidationCampaignExecution(campaign),
-        },
-      },
-      run!.version,
-    );
-
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      /after a recorded failed attempt/i,
-    );
-    expect(harness.executor.requests).toHaveLength(0);
-  });
-
-  it('rejects a premium promotion when it is not more expensive than the failed candidate', async () => {
-    const clock = new TestClock();
-    const stores = makeStores(clock);
-    const cheaperPremiumModels = premiumModels.map((model) =>
-      model.id === 'campaign-model-2' ? { ...model, pricing: premiumModels[0]!.pricing } : model,
-    );
-    const harness = makeHarness({}, stores, {
-      models: cheaperPremiumModels,
-      validationCampaign: campaign,
-    });
-    await seedRun(harness);
-    await recordFailedAttempt(harness, 'plan', 'plan');
-    clock.advance(1);
-    await harness.service.createModelOverride('run-1', {
-      scope: { kind: 'step', nodeId: 'plan', stepId: 'plan' },
-      modelId: 'campaign-model-2',
-      provider: 'codex',
-      model: 'campaign-model-2',
-      actor: { kind: 'user', id: 'operator' },
-      failedStep: 'plan/plan',
-      minimalReproducer: 'plan output violates the task graph contract',
-      reason: 'The restricted model failed the same reproducer',
-      estimatedImpact: 'One premium planning dispatch',
-    });
-    const run = await stores.runs.get('run-1');
-    await stores.runs.update(
-      {
-        ...run!,
-        execution: {
-          activeElapsedMs: 0,
-          consecutiveRepairs: 0,
-          campaign: createValidationCampaignExecution(campaign),
-        },
-      },
-      run!.version,
-    );
-
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      /cheaper candidate/i,
-    );
-    expect(harness.executor.requests).toHaveLength(0);
-  });
-
-  it.each([
-    ['metered', premiumModels],
-    ['subscription', subscriptionPremiumModels],
-  ] as const)(
-    'allows a known-priced %s premium promotion with matching audit evidence',
-    async (_billingMode, promotionModels) => {
-      const clock = new TestClock();
-      const stores = makeStores(clock);
-      const harness = makeHarness({}, stores, {
-        models: promotionModels,
-        validationCampaign: campaign,
-        usage: { inputTokens: 100, outputTokens: 100 },
-      });
-      await seedRun(harness);
-      await recordFailedAttempt(harness, 'plan', 'plan');
-      clock.advance(1);
-      await harness.service.createModelOverride('run-1', {
-        scope: { kind: 'step', nodeId: 'plan', stepId: 'plan' },
-        modelId: 'campaign-model-2',
-        provider: 'codex',
-        model: 'campaign-model-2',
-        actor: { kind: 'user', id: 'operator' },
-        failedStep: 'plan/plan',
-        minimalReproducer: 'plan output violates the task graph contract',
-        reason: 'The restricted model failed the same reproducer',
-        estimatedImpact: 'One premium planning dispatch',
-      });
-      const run = await stores.runs.get('run-1');
-      await stores.runs.update(
-        {
-          ...run!,
-          execution: {
-            activeElapsedMs: 0,
-            consecutiveRepairs: 0,
-            campaign: createValidationCampaignExecution(campaign),
-          },
-        },
-        run!.version,
-      );
-
-      await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-      expect(harness.executor.requests[0]?.model).toBe('campaign-model-2');
-      expect((await stores.runs.get('run-1'))?.status).toBe('completed');
-    },
-  );
 });
 
 /**
@@ -921,7 +590,6 @@ async function seedTaskCampaignRun(
     stores.stepRuns,
     stores.stepAttempts,
     stores.artifacts,
-    catalog,
     stores.events,
     async () => ({
       schemaVersion: '1' as const,
@@ -1189,53 +857,3 @@ describe('targeted preserve retry (#396)', () => {
     expect(await stepsByIds(harness, PRESERVED_STEP_IDS)).toEqual(before);
   });
 });
-
-async function recordFailedAttempt(
-  harness: ReturnType<typeof makeHarness>,
-  nodeId: string,
-  stepId: string,
-): Promise<void> {
-  const now = harness.clock.now().toISOString();
-  const stepRunId = `failed-${nodeId}-${stepId}`;
-  await harness.stepRuns.create({
-    id: stepRunId,
-    runId: 'run-1',
-    nodeId,
-    stepId,
-    stepType: 'agent',
-    status: 'failed',
-    version: 1,
-    createdAt: now,
-    updatedAt: now,
-    completedAt: now,
-  });
-  await harness.stepAttempts.create({
-    id: `failed-attempt-${nodeId}-${stepId}`,
-    runId: 'run-1',
-    stepRunId,
-    sequence: 1,
-    executorKind: 'agent',
-    provider: 'codex',
-    model: models[0]!.model,
-    modelId: models[0]!.id,
-    status: 'failed',
-    version: 1,
-    createdAt: now,
-    updatedAt: now,
-    startedAt: now,
-    completedAt: now,
-    usage: { providerReportedCostUsd: 0 },
-    error: {
-      name: 'ExecutionError',
-      message: 'plan output violates the task graph contract',
-    },
-    context: {
-      projectId: 'project-1',
-      workflowId: harness.workflow.id,
-      nodeId,
-      stepId,
-    },
-    inputArtifacts: [],
-    outputArtifacts: [],
-  });
-}

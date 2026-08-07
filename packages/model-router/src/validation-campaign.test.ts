@@ -19,7 +19,6 @@ function model(overrides: Partial<ModelDefinition> = {}): ModelDefinition {
     id: 'codex-extra',
     provider: 'codex',
     model: 'gpt-5.3-codex',
-    billingMode: 'metered',
     enabled: true,
     requireExplicitModel: false,
     maxContextTokens: 65_536,
@@ -81,7 +80,6 @@ describe('buildValidationCampaignPreview', () => {
       attemptsPerAgentStep: 2,
       targetedRepairs: 3,
       activeTimeMinutes: 60,
-      meteredCostUsd: 2,
     });
   });
 

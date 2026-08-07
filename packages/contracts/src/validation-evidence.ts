@@ -212,10 +212,14 @@ export const ValidationEvidenceUsageSchema = z
     attemptsByStep: z
       .record(z.string(), z.number().int().nonnegative())
       .refine((value) => Object.keys(value).length <= MAX_EVIDENCE_ATTEMPTS),
-    providerReportedCostUsd: z.number().nonnegative().nullable(),
-    catalogEstimatedCostUsd: z.number().nonnegative().nullable(),
-    meteredCostUsd: z.number().nonnegative().nullable(),
-    unknownMeteredAttempts: z.number().int().nonnegative(),
+    // Legacy cost cross-checks (#439): only the retired validation campaign
+    // read these. Kept optional so bundles published before the dismantling
+    // still parse; new bundles omit them. Per-attempt usage remains the
+    // cost evidence.
+    providerReportedCostUsd: z.number().nonnegative().nullable().optional(),
+    catalogEstimatedCostUsd: z.number().nonnegative().nullable().optional(),
+    meteredCostUsd: z.number().nonnegative().nullable().optional(),
+    unknownMeteredAttempts: z.number().int().nonnegative().optional(),
     subscriptionQuotaUnits: z.number().nonnegative(),
     subscriptionQuotaUnitsByProvider: z
       .record(z.string(), z.number().nonnegative())

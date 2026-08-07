@@ -131,7 +131,6 @@ describe('router dashboard + experiments API', () => {
         estimatedContextTokens: 100,
         estimatedOutputTokens: 100,
         mutatesWorkspace: false,
-        priorities: { quality: 0.7, speed: 0.1, cost: 0.05, reliability: 0.15 },
         preferredTags: [],
       }),
       undefined,

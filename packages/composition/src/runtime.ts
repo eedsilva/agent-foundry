@@ -274,7 +274,6 @@ export async function createRuntime(
     stepRuns,
     stepAttempts,
     artifacts,
-    catalog,
     events,
     async (runId) => {
       const run = await runs.get(runId);

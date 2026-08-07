@@ -7,7 +7,7 @@ import {
   type ValidationEvidencePublicationRequest,
   type ValidationPreflightReport,
 } from '@agent-foundry/contracts';
-import { FakeSecretStore, makeHarness, MODELS, seedRun } from './testing/harness.js';
+import { FakeSecretStore, makeHarness, seedRun } from './testing/harness.js';
 import { ValidationEvidenceService } from './validation-evidence.js';
 
 const campaign = ValidationCampaignPreviewSchema.parse({
@@ -720,7 +720,6 @@ async function setup(
     harness.stepRuns,
     harness.stepAttempts,
     harness.artifacts,
-    MODELS,
     harness.events,
     async () =>
       options.withPreflight === false

@@ -27,7 +27,10 @@ export const ValidationCampaignLimitsSchema = z
     attemptsPerAgentStep: z.number().int().positive(),
     targetedRepairs: z.number().int().nonnegative(),
     activeTimeMinutes: z.number().int().positive(),
-    meteredCostUsd: z.number().nonnegative(),
+    // Legacy (#439): every campaign model is subscription-billed, so nothing
+    // enforces a metered ceiling any more. Kept optional so persisted campaign
+    // snapshots written before the dismantling still parse.
+    meteredCostUsd: z.number().nonnegative().optional(),
   })
   .strict();
 export type ValidationCampaignLimits = z.infer<typeof ValidationCampaignLimitsSchema>;

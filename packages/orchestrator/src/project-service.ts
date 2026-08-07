@@ -1234,18 +1234,10 @@ function isAgentStep(workflow: WorkflowDefinition, nodeId: string, stepId: strin
   );
 }
 
-function redactOverrideAudit(input: {
+function redactOverrideAudit(input: { actor: ActorRef; reason: string; estimatedImpact: string }): {
   actor: ActorRef;
   reason: string;
   estimatedImpact: string;
-  failedStep?: string | undefined;
-  minimalReproducer?: string | undefined;
-}): {
-  actor: ActorRef;
-  reason: string;
-  estimatedImpact: string;
-  failedStep?: string | undefined;
-  minimalReproducer?: string | undefined;
 } {
   return {
     actor: {
@@ -1257,11 +1249,5 @@ function redactOverrideAudit(input: {
     },
     reason: redactString(input.reason).trim() || '[REDACTED]',
     estimatedImpact: redactString(input.estimatedImpact).trim() || '[REDACTED]',
-    ...(input.failedStep
-      ? { failedStep: redactString(input.failedStep).trim() || '[REDACTED]' }
-      : {}),
-    ...(input.minimalReproducer
-      ? { minimalReproducer: redactString(input.minimalReproducer).trim() || '[REDACTED]' }
-      : {}),
   };
 }

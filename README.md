@@ -232,7 +232,7 @@ Os números de `models/catalog.yaml` são **priors subjetivos**, não benchmarks
 - falhas consecutivas recentes;
 - usage e custo reportados pela CLI, quando disponíveis.
 
-Como as assinaturas normalmente não expõem um custo marginal confiável por chamada, `costEfficiency` deve representar consumo de quota e custo de oportunidade. Para modelos cobrados por token, você pode adicionar `billingMode: metered` e `pricing` ao catálogo. Veja [docs/MODEL_ROUTING.md](docs/MODEL_ROUTING.md).
+Como as assinaturas normalmente não expõem um custo marginal confiável por chamada, `costEfficiency` deve representar consumo de quota e custo de oportunidade. Todo modelo do catálogo é cobrado por assinatura; `pricing` é opcional e serve para estimativas informativas. Veja [docs/MODEL_ROUTING.md](docs/MODEL_ROUTING.md).
 
 ## Harness
 
