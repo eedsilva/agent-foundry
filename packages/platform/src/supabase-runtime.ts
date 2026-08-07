@@ -442,11 +442,38 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     for (const name of fresh) {
       await copyFile(join(input.workspaceMigrationsDir, name), join(targetDir, name));
     }
-    return this.migrate({
-      projectId: input.projectId,
-      migrationPath: `supabase/migrations/${fresh.at(-1)!}`,
-      ...(input.approval ? { approval: input.approval } : {}),
-    });
+    // An implementing agent may have applied its migration SQL straight to the
+    // runtime database while verifying its own task, leaving the schema
+    // present but the CLI history unrecorded; `migration up` then dies on
+    // "already exists" — permanently, once file-presence dedup stops copying
+    // the file (#446). Reconcile by marking the failing version as applied and
+    // retrying, at most once per fresh migration.
+    let repairs = 0;
+    for (;;) {
+      try {
+        return await this.migrate({
+          projectId: input.projectId,
+          migrationPath: `supabase/migrations/${fresh.at(-1)!}`,
+          ...(input.approval ? { approval: input.approval } : {}),
+        });
+      } catch (error) {
+        const version = repairs < fresh.length ? alreadyAppliedMigrationVersion(error) : undefined;
+        if (!version) throw error;
+        repairs += 1;
+        await this.#execute(
+          'migrate',
+          'migration',
+          'repair',
+          version,
+          '--status',
+          'applied',
+          '--local',
+          '--workdir',
+          environment.workdir,
+          '--yes',
+        );
+      }
+    }
   }
 
   async seed(input: { projectId: string; seedPath: string }): Promise<AppEnvironment> {
@@ -1461,6 +1488,16 @@ async function atomicWrite(path: string, value: string | Buffer): Promise<void> 
     await rm(temp, { force: true });
     throw error;
   }
+}
+
+/** The migration version `supabase migration up` was applying when it failed
+ * on a duplicate-object error, or undefined when the failure is anything else.
+ * 42P07/42710/42701 are Postgres's duplicate table/object/column codes. */
+function alreadyAppliedMigrationVersion(error: unknown): string | undefined {
+  if (!(error instanceof EnvironmentOperationError)) return undefined;
+  if (!/already exists \(SQLSTATE (?:42P07|42710|42701)\)/.test(error.diagnostic)) return undefined;
+  const applying = [...error.diagnostic.matchAll(/Applying migration (\d+)_[\w.-]*\.sql/g)];
+  return applying.at(-1)?.[1];
 }
 
 function operationError(

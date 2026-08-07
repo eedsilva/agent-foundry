@@ -729,6 +729,93 @@ enabled = false`);
     ).rejects.toThrow(/supabase\/migrations/);
   });
 
+  it('repairs history and retries when out-of-band schema makes migration up hit already-exists', async () => {
+    let upAttempts = 0;
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'migration' && args[1] === 'up') {
+        upAttempts += 1;
+        if (upAttempts === 1) {
+          return {
+            stdout: '',
+            stderr: [
+              'Connecting to local database...',
+              'Applying migration 20260726000000_rls_baseline.sql...',
+              'Applying migration 20260806000000_create_todos.sql...',
+              'ERROR: relation "todos" already exists (SQLSTATE 42P07)',
+              'At statement: 0',
+            ].join('\n'),
+            exitCode: 1,
+          };
+        }
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+    const environment = await runtime.initialize({ projectId: 'project-a' });
+    const workspaceDir = join(dataDir, 'workspace-migrations');
+    await mkdir(workspaceDir, { recursive: true });
+    await writeFile(
+      join(workspaceDir, '20260726000000_rls_baseline.sql'),
+      'CREATE TABLE profiles (id uuid PRIMARY KEY);',
+    );
+    await writeFile(
+      join(workspaceDir, '20260806000000_create_todos.sql'),
+      'CREATE TABLE todos (id uuid PRIMARY KEY);',
+    );
+
+    await expect(
+      runtime.applyWorkspaceMigrations({
+        projectId: 'project-a',
+        workspaceMigrationsDir: workspaceDir,
+      }),
+    ).resolves.toMatchObject({ projectId: 'project-a' });
+
+    expect(upAttempts).toBe(2);
+    expect(command.mock.calls).toContainEqual([
+      'migration',
+      'repair',
+      '20260806000000',
+      '--status',
+      'applied',
+      '--local',
+      '--workdir',
+      environment.workdir,
+      '--yes',
+    ]);
+  });
+
+  it('does not repair history for a migration failure that is not already-exists', async () => {
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'migration' && args[1] === 'up') {
+        return {
+          stdout: '',
+          stderr: [
+            'Applying migration 20260806000000_create_todos.sql...',
+            'ERROR: syntax error at or near "tabel" (SQLSTATE 42601)',
+          ].join('\n'),
+          exitCode: 1,
+        };
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+    await runtime.initialize({ projectId: 'project-a' });
+    const workspaceDir = join(dataDir, 'workspace-migrations');
+    await mkdir(workspaceDir, { recursive: true });
+    await writeFile(
+      join(workspaceDir, '20260806000000_create_todos.sql'),
+      'CREATE tabel todos (id uuid PRIMARY KEY);',
+    );
+
+    await expect(
+      runtime.applyWorkspaceMigrations({
+        projectId: 'project-a',
+        workspaceMigrationsDir: workspaceDir,
+      }),
+    ).rejects.toThrow(EnvironmentOperationError);
+    expect(command.mock.calls.map((call) => call[1])).not.toContain('repair');
+  });
+
   it('finds required destructive statements after removing SQL comments', async () => {
     const { runtime } = fixture();
     const environment = await runtime.initialize({ projectId: 'project-a' });
