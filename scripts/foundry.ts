@@ -97,13 +97,17 @@ async function isReady(): Promise<boolean> {
 
 async function ensureStack(): Promise<void> {
   if (await isReady()) return;
+  if (args.apiUrl !== 'http://localhost:4000') {
+    throw new Error(
+      `A API em ${args.apiUrl} não respondeu e o boot automático só cobre o stack local padrão. Suba essa API e reexecute.`,
+    );
+  }
   console.log('· API não está de pé — subindo o stack (API + worker inline)...');
-  devStack = spawn('npm', ['run', 'dev', '--workspace', '@agent-foundry/api'], {
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  devStack = spawn(npm, ['run', 'dev', '--workspace', '@agent-foundry/api'], {
     env: { ...process.env, RUN_WORKER_INLINE: 'true' },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: 'ignore',
   });
-  devStack.stdout?.on('data', () => undefined);
-  devStack.stderr?.on('data', () => undefined);
   devStack.on('exit', (code) => {
     if (code !== null && code !== 0) {
       console.error(
@@ -140,16 +144,14 @@ function streamEvents(projectId: string): () => void {
         let buffered = '';
         for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
           buffered += chunk;
-          const idMatches = buffered.match(/^id: (.+)$/gm);
-          const lastId = idMatches?.at(-1)?.slice('id: '.length);
-          if (lastId) cursor = lastId;
-          const { events, rest } = parseSseChunk(buffered);
+          const { events, rest, lastId } = parseSseChunk(buffered);
           buffered = rest;
+          if (lastId) cursor = lastId;
           for (const event of events) console.log(formatEvent(event));
         }
       } catch {
         if (controller.signal.aborted) return;
-        await sleep(2_000).catch(() => undefined);
+        await sleep(2_000);
       }
     }
   })();
@@ -172,7 +174,7 @@ async function promptForDecision(
   );
   if (summary) console.log(`   Resumo: ${summary}`);
   for (;;) {
-    const raw = await ask('   [a]provar / [m]udanças / [c]ancelar run? ');
+    const raw = await ask('   [a]provar / [m]udanças / [r]ejeitar / [c]ancelar run? ');
     if (raw === null) {
       // Without stdin this session can never decide the gate, and a
       // self-booted stack has no UI to fall back to — waiting would hang the
@@ -203,6 +205,14 @@ async function promptForDecision(
       console.log('   ↩ Mudanças pedidas; o run continua.');
       return;
     }
+    if (answer === 'r') {
+      await api(`/runs/${runId}/approvals/${approval.id}/decide`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'reject', decidedBy }),
+      });
+      console.log('   ✖ Rejeitado; o run termina como rejected.');
+      return;
+    }
     if (answer === 'c') {
       await api(`/runs/${runId}/cancel`, { method: 'POST', body: '{}' });
       console.log('   ✖ Cancelamento pedido.');
@@ -211,7 +221,7 @@ async function promptForDecision(
   }
 }
 
-async function openInBrowser(url: string): Promise<void> {
+function openInBrowser(url: string): void {
   // `start` is a cmd builtin, not an executable; the empty string is its
   // window-title slot so the URL is not mistaken for a title.
   const [command, prefix] =
@@ -292,7 +302,7 @@ async function main(): Promise<void> {
     await shutdown(1);
   }
   console.log(`· Preview: ${url}`);
-  if (args.open) await openInBrowser(url);
+  if (args.open) openInBrowser(url);
 
   if (devStack) {
     console.log('· Stack foi iniciado por este comando; Ctrl+C encerra tudo.');

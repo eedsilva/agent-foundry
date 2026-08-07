@@ -1,24 +1,31 @@
 // Pure core of `npm run foundry` (issue #443): everything here is I/O-free so
 // scripts/lib/foundry.test.mjs can cover it with node:test. The CLI wrapper in
 // scripts/foundry.ts owns HTTP, SSE, readline and process spawning.
+import { parseArgs } from 'node:util';
 
+// Mirrors the PRD minimum in packages/contracts/src/api.ts
+// (CreateProjectRequestSchema `prd.min(50)`); not importable from plain .mjs.
 const PRD_MIN_CHARS = 50;
 
 export function parseFoundryArgs(argv) {
-  const words = [];
-  let name;
-  let apiUrl = 'http://localhost:4000';
-  let open = true;
-  let help = false;
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === '--help' || arg === '-h') help = true;
-    else if (arg === '--no-open') open = false;
-    else if (arg === '--name') name = argv[(index += 1)];
-    else if (arg === '--api') apiUrl = argv[(index += 1)] ?? apiUrl;
-    else words.push(arg);
-  }
-  return { prompt: words.join(' ').trim(), name, apiUrl, open, help };
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      name: { type: 'string' },
+      api: { type: 'string' },
+      'no-open': { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+    },
+    allowPositionals: true,
+    strict: false,
+  });
+  return {
+    prompt: positionals.join(' ').trim(),
+    name: typeof values.name === 'string' ? values.name : undefined,
+    apiUrl: typeof values.api === 'string' ? values.api : 'http://localhost:4000',
+    open: values['no-open'] !== true,
+    help: values.help === true,
+  };
 }
 
 export function normalizePrd(prompt) {
@@ -44,16 +51,21 @@ export function formatEvent(event) {
 
 /**
  * Incremental SSE parser: feed it the buffered text, get back the parsed
- * `data:` payloads of complete frames and the unconsumed remainder to prepend
- * to the next chunk. Comment frames (`: connected`, `: ping`) are dropped.
+ * `data:` payloads of complete frames, the last `id:` of a complete frame (the
+ * resume cursor — an incomplete tail frame must never advance it), and the
+ * unconsumed remainder to prepend to the next chunk. Comment frames
+ * (`: connected`, `: ping`) are dropped.
  */
 export function parseSseChunk(buffered) {
   const frames = buffered.split('\n\n');
   const rest = frames.pop() ?? '';
   const events = [];
+  let lastId;
   for (const frame of frames) {
-    const data = frame
-      .split('\n')
+    const lines = frame.split('\n');
+    const id = lines.find((line) => line.startsWith('id: '))?.slice('id: '.length);
+    if (id) lastId = id;
+    const data = lines
       .filter((line) => line.startsWith('data: '))
       .map((line) => line.slice('data: '.length))
       .join('\n');
@@ -64,13 +76,15 @@ export function parseSseChunk(buffered) {
       // A malformed frame is dropped rather than wedging the stream.
     }
   }
-  return { events, rest };
+  return { events, rest, lastId };
 }
 
 export function pendingApprovals(approvals) {
   return approvals.filter((entry) => !entry.decision).map((entry) => entry.request);
 }
 
+// Mirrors WorkflowRunStatusSchema in packages/contracts/src/run.ts (the source
+// of truth for terminality); not importable from plain .mjs — keep in sync.
 export function statusKind(status) {
   if (status === 'completed') return 'succeeded';
   if (status === 'failed' || status === 'rejected') return 'failed';
