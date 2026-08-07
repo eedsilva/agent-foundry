@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# A manual dispatch overlapping the nightly run would fight over Docker.
+concurrency:
+  group: pipeline-regression
+  cancel-in-progress: false
+
 jobs:
   pipeline-regression:
     name: pipeline-regression
@@ -29,5 +34,7 @@ jobs:
           version: 2.62.5
       - name: Fail closed if Docker is unavailable on the runner
         run: docker info
-      - run: npm run build:packages
+      # No build step: vitest resolves @agent-foundry/* straight from src via
+      # its aliases, and every subprocess this test spawns (fake CLIs, docker,
+      # supabase, the generated app's node scripts) is self-contained.
       - run: RUN_PIPELINE_REGRESSION_E2E=true npx vitest run packages/composition/src/pipeline-regression.e2e.test.ts --pool=threads --maxWorkers=1

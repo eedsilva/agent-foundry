@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -23,6 +23,8 @@ describe('fake provider CLIs', () => {
 
   beforeAll(async () => {
     workspace = await mkdtemp(join(tmpdir(), 'agent-foundry-fake-cli-'));
+    // PATH mutation is process-wide; this file lives in the serial slow
+    // bucket (--maxWorkers=1) so no concurrent test observes it.
     process.env.PATH = `${FAKE_CLI_DIR}:${originalPath}`;
   });
 
@@ -30,15 +32,20 @@ describe('fake provider CLIs', () => {
     process.env.PATH = originalPath;
   });
 
+  // Hand-written copy of compileRequestMarkdown's Identity block
+  // (packages/orchestrator/src/prompt-compiler.ts) — executors cannot depend
+  // on the orchestrator package. The fake CLI throws on missing fields, so a
+  // format change over there fails this test loudly rather than silently.
   async function seedRequestFiles(
+    workspaceDir: string,
     runId: string,
     stepRunId: string,
     attemptId: string,
-    identity: { stepId: string; taskKind: string; role: string },
+    identity: { stepId: string; taskKind: string; role: string; mutationAllowed: boolean },
     outputSchema: object,
   ): Promise<void> {
     const attemptDir = join(
-      workspace,
+      workspaceDir,
       '.orchestrator',
       'runs',
       runId,
@@ -61,7 +68,7 @@ describe('fake provider CLIs', () => {
         `- Step: ${identity.stepId}`,
         `- Role: ${identity.role}`,
         `- Task kind: ${identity.taskKind}`,
-        `- Workspace mutation allowed: ${identity.taskKind === 'implementation' || identity.taskKind === 'repair' ? 'yes' : 'no'}`,
+        `- Workspace mutation allowed: ${identity.mutationAllowed ? 'yes' : 'no'}`,
         '',
         '## Mission',
         '',
@@ -103,10 +110,11 @@ describe('fake provider CLIs', () => {
 
   it('round-trips a planning step through the fake codex CLI into a task-graph artifact', async () => {
     await seedRequestFiles(
+      workspace,
       'run-1',
       'step-plan',
       'attempt-plan',
-      { stepId: 'plan', taskKind: 'planning', role: 'planner' },
+      { stepId: 'plan', taskKind: 'planning', role: 'planner', mutationAllowed: false },
       TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
     );
     const executor = new CodexCliExecutor(1_000_000);
@@ -137,10 +145,16 @@ describe('fake provider CLIs', () => {
 
   it('round-trips an implementation step through the fake claude CLI and mutates the workspace', async () => {
     await seedRequestFiles(
+      workspace,
       'run-1',
       'step-impl',
       'attempt-impl',
-      { stepId: 'implement.T1', taskKind: 'implementation', role: 'developer' },
+      {
+        stepId: 'implement.T1',
+        taskKind: 'implementation',
+        role: 'developer',
+        mutationAllowed: true,
+      },
       { $id: 'agent-artifact' },
     );
     const executor = new ClaudeCliExecutor(1_000_000);
@@ -168,25 +182,13 @@ describe('fake provider CLIs', () => {
 
   it('does not write workspace files on a read-only step', async () => {
     const readOnlyWorkspace = await mkdtemp(join(tmpdir(), 'agent-foundry-fake-cli-ro-'));
-    await chmod(readOnlyWorkspace, 0o755);
-    const attemptDir = join(
+    await seedRequestFiles(
       readOnlyWorkspace,
-      '.orchestrator/runs/run-1/steps/step-review/attempts/attempt-review',
-    );
-    await mkdir(attemptDir, { recursive: true });
-    await writeFile(
-      join(attemptDir, 'REQUEST.md'),
-      [
-        '## Identity',
-        '- Run: run-1',
-        '- Step run: step-review',
-        '- Attempt: attempt-review',
-        '- Step: review',
-        '- Role: code-reviewer',
-        '- Task kind: code-review',
-        '- Workspace mutation allowed: no',
-      ].join('\n'),
-      'utf8',
+      'run-1',
+      'step-review',
+      'attempt-review',
+      { stepId: 'review', taskKind: 'code-review', role: 'code-reviewer', mutationAllowed: false },
+      { $id: 'agent-artifact' },
     );
     const executor = new CodexCliExecutor(1_000_000);
 
