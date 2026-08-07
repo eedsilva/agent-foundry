@@ -640,6 +640,7 @@ describe('validation evidence publication', () => {
           title: 'Full suite',
           outputArtifact: 'verification.report',
           scripts: [],
+          optionalScripts: ['db:start', 'db:reset', 'smoke'],
           blocksOnFailure: true,
         },
       ],
@@ -795,6 +796,11 @@ describe('validation evidence publication', () => {
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
     expect(harness.verifierInputs[0]?.beforeOptionalScripts).toContain('database-row-match');
+    // The gate redirects database reads to the long-lived runtime environment,
+    // where the scaffold seed never ran — db:start-dependent scripts like the
+    // scaffold smoke are sandbox-only and must not run here (#448).
+    expect(harness.verifierInputs[0]?.optionalScripts ?? []).not.toContain('smoke');
+    expect(harness.verifierInputs[0]?.optionalScripts ?? []).not.toContain('db:start');
     // The check must query the long-lived runtime database, not the fresh
     // stack db:start boots inside the workspace (#397 runs 8-9).
     expect(harness.verifierInputs[0]?.environment).toMatchObject({

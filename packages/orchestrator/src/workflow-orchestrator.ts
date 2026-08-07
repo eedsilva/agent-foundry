@@ -2822,8 +2822,13 @@ export class WorkflowOrchestrator {
         this.validationCampaign &&
         step.blocksOnFailure &&
         step.outputArtifact === 'verification.report';
+      // 'smoke' asserts the scaffold's seeded turn-zero state, which only a
+      // fresh db:start sandbox stack has; the gate queries the long-lived
+      // runtime database where seed.sql never ran (#448).
       const optionalScripts = validationDatabaseGate
-        ? step.optionalScripts?.filter((script) => !['db:start', 'db:reset'].includes(script))
+        ? step.optionalScripts?.filter(
+            (script) => !['db:start', 'db:reset', 'smoke'].includes(script),
+          )
         : step.optionalScripts;
       const beforeOptionalScripts = validationDatabaseGate
         ? [
