@@ -326,8 +326,11 @@ O plano aceita no máximo 100 passos, começa com `goto` e usa somente paths rel
 semânticos e ações/assertions declarativas. Cada ação, assertion e espera de requests tem 10 s; a
 execução inteira tem 60 s. A sessão de preview é sempre parada ao terminar, falhar, expirar o timeout
 ou ser cancelada. `console.error`, exceção não capturada, request falho, HTTP >= 400 e bloqueio de
-política entram como observações; qualquer um torna o relatório não aprovado. Há no máximo 100
-observações, para manter o JSON de diagnóstico limitado.
+política entram como observações; qualquer um torna o relatório não aprovado. Esses sinais passivos
+são o único gate de aprovação (#441): falha ativa de locator/assertion sozinha é diagnóstico
+advisory — o step fica `failed` e os seguintes `skipped`, mas o relatório continua aprovado se
+nenhum sinal passivo apareceu. Há no máximo 100 observações, para manter o JSON de diagnóstico
+limitado.
 
 O mesmo validador de path é usado pelo contrato e pelo executor. Ele rejeita traversal literal ou
 codificado, network paths codificados, barra invertida, controles e percent-encoding aninhado antes

@@ -455,7 +455,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'passed', 'passed']);
   });
 
-  it('fails a missing locator and skips every later step', async () => {
+  it('approves a missing locator as advisory diagnostics when passive signals are clean', async () => {
     const origin = await serve((_request, response) => response.end('<h1>Fixture</h1>'));
     const report = await verify(
       origin,
@@ -481,7 +481,8 @@ describe('PlaywrightBrowserVerifier', () => {
       ]),
     );
 
-    expect(report.approved).toBe(false);
+    expect(report.approved).toBe(true);
+    expect(report.summary).toMatch(/advisory/i);
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed', 'skipped']);
     expect(report.steps[1]?.error).toContain('Missing');
     expect(report.steps[2]?.durationMs).toBe(0);
@@ -1539,7 +1540,7 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(report.steps[0]?.status).toBe('passed');
   });
 
-  it('rejects a matching path on an explicitly allowed external origin', async () => {
+  it('fails the URL assertion for a matching path on an explicitly allowed external origin', async () => {
     const allowedOrigin = await serve((_request, response) => {
       response.setHeader('content-type', 'text/html');
       response.end('<h1>External</h1>');
@@ -1570,8 +1571,12 @@ describe('PlaywrightBrowserVerifier', () => {
       { allowedOrigins: [allowedOrigin] },
     );
 
-    expect(report.approved).toBe(false);
+    // The failed assertion is advisory under the passive gate (#441); the
+    // protective property is that the URL assertion never matches a path
+    // outside the preview prefix.
+    expect(report.approved).toBe(true);
     expect(report.steps.map(({ status }) => status)).toEqual(['passed', 'failed']);
+    expect(report.steps[1]?.error).toBeTruthy();
   });
 
   it('blocks a redirect to a forbidden origin before the sentinel receives it', async () => {

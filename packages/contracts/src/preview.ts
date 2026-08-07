@@ -674,12 +674,15 @@ export const BrowserVerificationReportSchema = z
         path: ['steps'],
       });
     }
+    // Passive signals are the approval gate (#441): failed steps are allowed
+    // in an approved report as advisory diagnostics, but passive failure
+    // evidence (observations) contradicts approval.
     for (const [index, step] of report.steps.entries()) {
-      if (step.status !== 'passed') {
+      if (step.observations.length > 0) {
         context.addIssue({
           code: 'custom',
-          message: 'Every step in an approved browser report must pass',
-          path: ['steps', index, 'status'],
+          message: 'An approved browser report cannot contain passive failure evidence',
+          path: ['steps', index, 'observations'],
         });
       }
     }

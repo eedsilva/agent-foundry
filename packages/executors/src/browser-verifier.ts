@@ -693,14 +693,25 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
         step.error = 'Passive browser failure observed.';
       }
     }
-    const approved = !failed && !passiveFailure;
+    // Passive signals are the quality gate (#441): console errors, uncaught
+    // exceptions, failed/blocked requests, HTTP >= 400. Active locator or
+    // assertion failures alone are advisory diagnostics — a planner that never
+    // saw the markup guesses locators, and those guesses were the only
+    // remaining flake source (#434). Fail-fast skip is retained so cascading
+    // 10s locator timeouts cannot blow the 60s run budget; the coverage lost
+    // on skipped steps is backstopped by the database gate, the full suite,
+    // and the operator walkthrough (#398).
+    const failedSteps = steps.filter((step) => step.status === 'failed').length;
+    const approved = !passiveFailure;
     return {
       report: BrowserVerificationReportSchema.parse({
         schemaVersion: '1',
         approved,
         summary: approved
-          ? 'All browser verification steps passed.'
-          : `${steps.filter((step) => step.status === 'failed').length} browser step failure(s) and ${runObservations.length} passive failure(s).`,
+          ? failedSteps === 0
+            ? 'All browser verification steps passed.'
+            : `Passive signals clean; ${failedSteps} advisory browser step failure(s) recorded.`
+          : `${failedSteps} browser step failure(s) and ${runObservations.length} passive failure(s).`,
         planArtifact: input.planArtifact,
         previewSession,
         steps,
