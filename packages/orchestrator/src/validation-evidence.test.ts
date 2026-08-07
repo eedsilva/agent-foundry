@@ -163,6 +163,11 @@ async function setup(
     preflightChecks?: ValidationPreflightReport['checks'];
     browserPlanSteps?: typeof CYCLE17_PLAN_STEPS;
     browserReportSteps?: typeof CYCLE17_REPORT_STEPS;
+    /** Run-17 shape (#398): a fourth planned task with its own checkpoint. */
+    fourthTask?: boolean;
+    /** Run-17 shape (#398): database.evidence pins an earlier browser report
+     * revision than the one the browser-acceptance gate proves. */
+    splitBrowserEvidence?: boolean;
   } = {},
 ) {
   const harness = makeHarness({}, undefined, { validationCampaign: campaign });
@@ -228,6 +233,7 @@ async function setup(
   for (const [taskIndex, taskId] of [
     ['2', 'create-list-api'],
     ['3', 'visible-todo-flow'],
+    ...(options.fourthTask ? ([['4', 'public-middleware']] as const) : []),
   ] as const) {
     const stepRunId = `step-${taskIndex}`;
     const attemptId = `attempt-${taskIndex}`;
@@ -477,6 +483,18 @@ async function setup(
                       acceptanceCheck: 'A user can create, list, and reload a TODO.',
                       acceptanceMode: 'browser-visible' as const,
                     },
+                    ...(options.fourthTask
+                      ? [
+                          {
+                            id: 'public-middleware',
+                            title: 'Exclude public routes from authentication middleware',
+                            dependsOn: [],
+                            deliverables: ['public route middleware exclusion'],
+                            acceptanceCheck: 'Unauthenticated requests reach public routes.',
+                            acceptanceMode: 'deterministic-only' as const,
+                          },
+                        ]
+                      : []),
                   ],
                 },
                 decisions: [],
@@ -520,6 +538,40 @@ async function setup(
       proofs['preview-healthy'] = proof;
     }
   }
+  const browserRev1 = proofs['browser-acceptance']?.artifact;
+  if (options.splitBrowserEvidence) {
+    if (!browserRev1) throw new Error('missing first browser evidence revision');
+    const rev1 = await harness.artifacts.getRevision(
+      'project-1',
+      'browser-verification.report',
+      browserRev1.revision,
+    );
+    if (!rev1) throw new Error('missing first browser evidence artifact');
+    const rev2 = await harness.artifacts.put({
+      projectId: 'project-1',
+      name: 'browser-verification.report',
+      content: {
+        ...(rev1.content as Record<string, unknown>),
+        summary: 'Standalone browser verification passed.',
+      },
+      createdBy: 'validation-test',
+      runId: 'run-1',
+      stepRunId: 'step-1',
+      attemptId: 'attempt-1',
+    });
+    const proof: ValidationEvidenceReference = {
+      runId: 'run-1',
+      stepRunId: 'step-1',
+      attemptId: 'attempt-1',
+      artifact: {
+        name: rev2.metadata.name,
+        revision: rev2.metadata.revision,
+        sha256: rev2.metadata.sha256,
+      },
+    };
+    proofs['browser-acceptance'] = proof;
+    proofs['preview-healthy'] = proof;
+  }
   const browserProof = proofs['browser-acceptance'];
   if (!browserProof?.artifact) throw new Error('missing browser evidence proof');
   const attempt = await harness.stepAttempts.get('run-1', 'step-1', 'attempt-1');
@@ -542,7 +594,9 @@ async function setup(
       status: 'matched',
       verification: 'create-list-reload',
       rowFingerprint: 'a'.repeat(64),
-      browserArtifact: proofs['browser-acceptance']?.artifact,
+      browserArtifact: options.splitBrowserEvidence
+        ? browserRev1
+        : proofs['browser-acceptance']?.artifact,
       verificationArtifact: proofs['deterministic-checks']?.artifact,
       checkedAt: now,
     },
@@ -889,6 +943,15 @@ describe('validation evidence publication', () => {
     const { evidence, proofs } = await setup({
       browserPlanSteps: CYCLE17_PLAN_STEPS,
       browserReportSteps: CYCLE17_REPORT_STEPS,
+    });
+    const result = await evidence.publish('run-1', request('accepted', proofs));
+    expect(result.bundle.outcome).toBe('accepted');
+  });
+
+  it('accepts a four-task run whose database evidence pins an earlier browser revision (#398)', async () => {
+    const { evidence, proofs } = await setup({
+      fourthTask: true,
+      splitBrowserEvidence: true,
     });
     const result = await evidence.publish('run-1', request('accepted', proofs));
     expect(result.bundle.outcome).toBe('accepted');

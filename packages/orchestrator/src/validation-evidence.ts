@@ -391,11 +391,9 @@ export class ValidationEvidenceService {
       );
     };
     const hasDatabaseProof = async () => {
-      const browserArtifact = artifactReferences('browser-acceptance')[0];
       const verificationArtifact = artifactReferences('deterministic-checks')[0];
       const [databaseReference] = artifactReferences('database-match');
       if (
-        !browserArtifact ||
         !verificationArtifact ||
         !databaseReference ||
         !hasArtifactCreatedEvent(runEvents, databaseReference)
@@ -414,7 +412,8 @@ export class ValidationEvidenceService {
           verificationArtifact.revision,
         ),
       ]);
-      return isDatabaseEvidence(database, browserArtifact, verificationArtifact, verification);
+      const browserRef = databaseEvidenceBrowserRef(database, verificationArtifact, verification);
+      return Boolean(browserRef && (await this.isPersistedApprovedBrowserReport(run, browserRef)));
     };
     const approvedPlan = artifactReferences('plan-approved')[0];
     const hasApprovedPlan = Boolean(
@@ -432,8 +431,12 @@ export class ValidationEvidenceService {
     const approvedPlanGraph = approvedPlanArtifact
       ? GeneratedTaskGraphArtifactSchema.safeParse(approvedPlanArtifact.content)
       : null;
-    const hasThreeTaskPlan = Boolean(
-      approvedPlanGraph?.success && approvedPlanGraph.data.data.tasks.length === 3,
+    // The approved plan's own task count is the source of truth: the PRD
+    // evolved from the original 3-task shape to require the middleware
+    // exclusion as its own dependency task (#398), and the plan gate already
+    // bounds what the operator approves.
+    const hasApprovedPlanGraph = Boolean(
+      approvedPlanGraph?.success && approvedPlanGraph.data.data.tasks.length > 0,
     );
     const missing: string[] = [];
     if (
@@ -442,7 +445,7 @@ export class ValidationEvidenceService {
     ) {
       missing.push('project-created');
     }
-    if (!hasApprovedPlan || !hasThreeTaskPlan || !hasName('plan-approved', ['plan.current'])) {
+    if (!hasApprovedPlan || !hasApprovedPlanGraph || !hasName('plan-approved', ['plan.current'])) {
       missing.push('plan-approved');
     }
     if (
@@ -488,7 +491,10 @@ export class ValidationEvidenceService {
             : [];
         }),
     );
-    if (!approvedPlanGraph?.success || checkpointedTaskIds.size !== 3) {
+    if (
+      !approvedPlanGraph?.success ||
+      checkpointedTaskIds.size !== approvedPlanGraph.data.data.tasks.length
+    ) {
       missing.push('checkpoints');
     }
     if (missing.length > 0) {
@@ -644,12 +650,16 @@ export class ValidationEvidenceService {
         gate(
           'database-match',
           databaseArtifact,
-          isDatabaseEvidence(
-            databaseArtifact,
-            browserArtifact ? storedArtifactReference(browserArtifact) : undefined,
-            verificationArtifact ? storedArtifactReference(verificationArtifact) : undefined,
-            verificationArtifact,
-          ),
+          await (async () => {
+            const browserRef = databaseEvidenceBrowserRef(
+              databaseArtifact,
+              verificationArtifact ? storedArtifactReference(verificationArtifact) : undefined,
+              verificationArtifact,
+            );
+            return Boolean(
+              browserRef && (await this.isPersistedApprovedBrowserReport(run, browserRef)),
+            );
+          })(),
           'Database match evidence was not persisted.',
         ),
         gate(
@@ -711,6 +721,30 @@ export class ValidationEvidenceService {
         sameArtifactReference(browserArtifact, event.data.browserArtifact) &&
         sameArtifactReference(databaseArtifact, event.data.databaseArtifact),
     );
+  }
+
+  /** The database evidence may pin any approved browser report persisted by
+   * this run — the report whose journey created the matched row — not
+   * necessarily the revision the browser-acceptance gate proves (#398). */
+  private async isPersistedApprovedBrowserReport(
+    run: WorkflowRun,
+    reference: ArtifactReference,
+  ): Promise<boolean> {
+    if (reference.name !== 'browser-verification.report') return false;
+    const artifact = await this.artifacts.getRevision(
+      run.projectId,
+      reference.name,
+      reference.revision,
+    );
+    if (
+      !artifact ||
+      artifact.metadata.sha256 !== reference.sha256 ||
+      artifact.metadata.runId !== run.id
+    ) {
+      return false;
+    }
+    const report = BrowserVerificationReportSchema.safeParse(artifact.content);
+    return Boolean(report.success && report.data.approved);
   }
 
   private async isApprovedBrowserEvidence(
@@ -1088,33 +1122,35 @@ function hasApprovedVerificationEvent(
   );
 }
 
-function isDatabaseEvidence(
+/** The browser report the database evidence pins, or null when the evidence
+ * itself is invalid. The caller validates that report separately: it may be an
+ * earlier revision than the one the browser-acceptance gate proves — a
+ * per-task assert and the standalone verification both persist reports, and
+ * the row-match binds to whichever created the matched row (#398). */
+function databaseEvidenceBrowserRef(
   artifact: StoredArtifact | null,
-  browserArtifact: ArtifactReference | undefined,
   verificationArtifact: ArtifactReference | undefined,
   verificationReportArtifact: StoredArtifact | null,
-): boolean {
+): ArtifactReference | null {
   if (
     !artifact ||
     artifact.metadata.name !== 'database.evidence' ||
     !artifact.metadata.runId ||
     !artifact.metadata.stepRunId ||
     !artifact.metadata.attemptId ||
-    !browserArtifact ||
     !verificationArtifact
   ) {
-    return false;
+    return null;
   }
   const evidence = ValidationDatabaseEvidenceSchema.safeParse(artifact.content);
   if (
     !evidence.success ||
-    !sameArtifactReference(browserArtifact, evidence.data.browserArtifact) ||
     !sameArtifactReference(verificationArtifact, evidence.data.verificationArtifact)
   ) {
-    return false;
+    return null;
   }
   const report = VerificationReportSchema.safeParse(verificationReportArtifact?.content);
-  return Boolean(
+  const matched = Boolean(
     report.success &&
     report.data.approved &&
     report.data.commands.some(
@@ -1125,6 +1161,7 @@ function isDatabaseEvidence(
         command.stdout.includes(`AGENT_FOUNDRY_DB_MATCH:${evidence.data.rowFingerprint}`),
     ),
   );
+  return matched ? evidence.data.browserArtifact : null;
 }
 
 function classifyOutcome(
