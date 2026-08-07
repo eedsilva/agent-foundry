@@ -27,8 +27,9 @@ export function compileRequestMarkdown(input: {
   harness: HarnessSelection;
   artifacts: StoredArtifact[];
   previewFailureEvents?: ProjectEvent[];
-  /** Workspace-relative paths of materialized browser evidence (#357). */
-  browserEvidenceFiles?: Array<{ stepId: string; path: string }>;
+  /** Failing browser steps whose screenshots were materialized into this
+   * attempt's run-context inputs (#357). */
+  browserEvidenceStepIds?: string[];
   workspacePath: string;
   toolPolicy?: TaskProfile['toolPolicy'];
 }): string {
@@ -48,10 +49,18 @@ export function compileRequestMarkdown(input: {
         )
         .join('\n\n')
     : '_No input artifacts were requested for this step._';
-  const browserEvidenceSection = input.browserEvidenceFiles?.length
+  const evidenceInputsDir = `.orchestrator/runs/${input.runId}/steps/${input.stepRunId}/attempts/${input.attemptId}/inputs/browser-evidence`;
+  const browserEvidenceSection = input.browserEvidenceStepIds?.length
     ? 'Screenshots of the failing browser steps, readable from the workspace root:\n\n' +
-      input.browserEvidenceFiles.map((file) => `- ${file.stepId}: ${file.path}`).join('\n')
-    : '_No browser evidence files were materialized for this step._';
+      input.browserEvidenceStepIds
+        .map((stepId) => `- ${stepId}: ${evidenceInputsDir}/${stepId}.png`)
+        .join('\n') +
+      '\n\nOnly the files listed above are readable. Any other evidence references inside ' +
+      'report JSON (trace, video, screenshot names with revisions and hashes) are storage ' +
+      'identifiers you cannot open.'
+    : '_No browser evidence files were materialized for this step. Evidence references inside ' +
+      'report JSON (names, revisions, hashes) are storage identifiers you cannot open; only ' +
+      'the step errors are available._';
   const previewFailureSections = input.previewFailureEvents?.length
     ? input.previewFailureEvents
         .map(

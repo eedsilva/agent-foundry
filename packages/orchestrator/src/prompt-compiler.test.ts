@@ -181,51 +181,46 @@ describe('compileRequestMarkdown feedback provenance', () => {
 });
 
 describe('browser evidence files (#357)', () => {
-  it('lists materialized evidence paths and omits the section claim when there are none', async () => {
-    const base = {
-      projectId: 'project-1',
-      runId: 'run-1',
-      stepRunId: 'step-1',
-      attemptId: 'attempt-1',
-      workflowId: 'workflow-1',
-      stack: 'node',
-      step: {
-        id: 'repair-task-browser.T1',
-        type: 'agent',
-        role: 'fixer',
-        taskKind: 'repair',
-        title: 'Repair',
-        instructions: 'Fix the failing assertion.',
-        inputArtifacts: [],
-        secretRefs: [],
-        mutatesWorkspace: true,
-        harnessTags: [],
-        profile: {},
-        maxAttempts: 2,
-        outputArtifact: 'verification.fix',
-      },
-      harness: { version: '1', combined: '', files: [] },
-      artifacts: [],
-      workspacePath: '/workspace',
-    } as never as Parameters<typeof compileRequestMarkdown>[0];
+  const repairStep: AgentStep = {
+    id: 'repair-task-browser.T1',
+    type: 'agent',
+    role: 'fixer',
+    taskKind: 'repair',
+    title: 'Repair',
+    instructions: 'Fix the failing assertion.',
+    inputArtifacts: [],
+    secretRefs: [],
+    mutatesWorkspace: true,
+    harnessTags: [],
+    profile: {},
+    maxAttempts: 2,
+    outputArtifact: 'verification.fix',
+  };
+  const base = {
+    projectId: 'project-1',
+    runId: 'run-1',
+    stepRunId: 'step-1',
+    attemptId: 'attempt-1',
+    workflowId: 'workflow-1',
+    stack: 'node',
+    step: repairStep,
+    harness: { version: '1', combined: '', files: [] },
+    artifacts: [],
+    workspacePath: '/workspace',
+  };
 
-    const withEvidence = compileRequestMarkdown({
-      ...base,
-      browserEvidenceFiles: [
-        {
-          stepId: 'open-root',
-          path: '.orchestrator/runs/run-1/steps/step-1/attempts/attempt-1/inputs/browser-evidence/open-root.png',
-        },
-      ],
-    });
-    expect(withEvidence).toContain('## Browser evidence files');
-    expect(withEvidence).toContain(
+  it('renders openable paths for materialized steps and marks report refs unreachable', () => {
+    const markdown = compileRequestMarkdown({ ...base, browserEvidenceStepIds: ['open-root'] });
+    expect(markdown).toContain('## Browser evidence files');
+    expect(markdown).toContain(
       '- open-root: .orchestrator/runs/run-1/steps/step-1/attempts/attempt-1/inputs/browser-evidence/open-root.png',
     );
+    expect(markdown).toContain('storage identifiers you cannot open');
+  });
 
-    const withoutEvidence = compileRequestMarkdown(base);
-    expect(withoutEvidence).toContain(
-      '_No browser evidence files were materialized for this step._',
-    );
+  it('states plainly when no evidence file is available instead of claiming refs', () => {
+    const markdown = compileRequestMarkdown(base);
+    expect(markdown).toContain('No browser evidence files were materialized');
+    expect(markdown).toContain('only the step errors are available');
   });
 });

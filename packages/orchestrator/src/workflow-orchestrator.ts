@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { buffer } from 'node:stream/consumers';
 import { join } from 'node:path';
 import { SpanStatusCode, type Span } from '@opentelemetry/api';
 import type {
@@ -3540,14 +3541,8 @@ export class WorkflowOrchestrator {
     try {
       const browserEvidence =
         step.taskKind === 'repair'
-          ? await this.materializeBrowserEvidence(
-              project.id,
-              runId,
-              stepRun.id,
-              attempt.id,
-              inputArtifacts,
-            )
-          : { inputFiles: [], browserEvidenceFiles: [] };
+          ? await this.materializeBrowserEvidence(project.id, inputArtifacts)
+          : { inputFiles: [], browserEvidenceStepIds: [] };
       requestMarkdown = compileRequestMarkdown({
         projectId: project.id,
         runId,
@@ -3558,7 +3553,7 @@ export class WorkflowOrchestrator {
         step,
         harness,
         artifacts: inputArtifacts,
-        browserEvidenceFiles: browserEvidence.browserEvidenceFiles,
+        browserEvidenceStepIds: browserEvidence.browserEvidenceStepIds,
         ...(step.taskKind === 'repair'
           ? {
               previewFailureEvents: [
@@ -3882,24 +3877,21 @@ export class WorkflowOrchestrator {
    * report into openable run-context files (#357). The report inlined into the
    * prompt only carries { name, revision, sha256 } references a CLI executor
    * cannot fetch; the returned files/paths make the evidence real for the
-   * fixer. Missing blobs are skipped — the prompt then simply does not claim
-   * them.
+   * fixer. A blob that cannot be fetched is skipped; the request then states
+   * explicitly that report-JSON references are unreachable identifiers.
    */
   private async materializeBrowserEvidence(
     projectId: string,
-    runId: string,
-    stepRunId: string,
-    attemptId: string,
     inputArtifacts: StoredArtifact[],
   ): Promise<{
     inputFiles: Array<{ path: string; content: Uint8Array }>;
-    browserEvidenceFiles: Array<{ stepId: string; path: string }>;
+    browserEvidenceStepIds: string[];
   }> {
     const report = inputArtifacts
       .filter((artifact) => artifact.metadata.name === 'browser-verification.report')
       .map((artifact) => BrowserVerificationReportSchema.safeParse(artifact.content))
       .find((parsed) => parsed.success)?.data;
-    if (!report) return { inputFiles: [], browserEvidenceFiles: [] };
+    if (!report) return { inputFiles: [], browserEvidenceStepIds: [] };
     const failedStepIds = new Set(
       report.steps.filter((step) => step.status === 'failed').map((step) => step.stepId),
     );
@@ -3907,22 +3899,17 @@ export class WorkflowOrchestrator {
       failedStepIds.has(shot.stepId),
     );
     const inputFiles: Array<{ path: string; content: Uint8Array }> = [];
-    const browserEvidenceFiles: Array<{ stepId: string; path: string }> = [];
+    const browserEvidenceStepIds: string[] = [];
     for (const shot of screenshots) {
       const stream = await this.artifacts.getBlobStream(projectId, shot.name, shot.revision);
       if (!stream) continue;
-      const chunks: Buffer[] = [];
-      for await (const chunk of stream) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-      const relativePath = `browser-evidence/${shot.stepId}.png`;
-      inputFiles.push({ path: relativePath, content: Buffer.concat(chunks) });
-      browserEvidenceFiles.push({
-        stepId: shot.stepId,
-        path: `.orchestrator/runs/${runId}/steps/${stepRunId}/attempts/${attemptId}/inputs/${relativePath}`,
+      inputFiles.push({
+        path: `browser-evidence/${shot.stepId}.png`,
+        content: await buffer(stream),
       });
+      browserEvidenceStepIds.push(shot.stepId);
     }
-    return { inputFiles, browserEvidenceFiles };
+    return { inputFiles, browserEvidenceStepIds };
   }
 
   private async executeCandidate(
