@@ -752,13 +752,10 @@ export class ValidationEvidenceService {
       ? BrowserTestPlanArtifactSchema.safeParse(planArtifact.content)
       : null;
     const report = BrowserVerificationReportSchema.safeParse(artifact.content);
-    if (
-      !plan?.success ||
-      !report.success ||
-      !report.data.approved ||
-      report.data.steps.some((step) => step.status !== 'passed')
-    )
-      return false;
+    // Approved may carry advisory failed steps (#441/#451); the schema already
+    // forbids passive failure evidence in an approved report, and the CRUD
+    // journey check below requires the value-bearing steps to have passed.
+    if (!plan?.success || !report.success || !report.data.approved) return false;
     try {
       const bound = validateBrowserVerificationReportBinding(report.data, {
         planArtifact: planReference,
@@ -789,12 +786,20 @@ function hasValidationCrudJourney(
     (step, index) => index > fillIndex && step.action.kind === 'click' && hasExpectedValue(step),
   );
   if (createIndex < 0) return false;
-  const listAndReloadSteps = plan.steps.filter(
+  // One post-create goto asserting the created value is the reload proof
+  // OPERATIONS.md defines ("visibly creates and reloads"); planners may or may
+  // not add a separate list step before it (#453).
+  const reloadSteps = plan.steps.filter(
     (step, index) => index > createIndex && step.action.kind === 'goto' && hasExpectedValue(step),
   );
-  if (listAndReloadSteps.length < 2) return false;
-  const reportedStepIds = new Set(report.steps.map((step) => step.stepId));
-  return listAndReloadSteps.every((step) => reportedStepIds.has(step.id));
+  if (reloadSteps.length < 1) return false;
+  // The value-bearing journey must have actually passed — advisory failures
+  // are tolerated only on steps outside it (#441).
+  const passedStepIds = new Set(
+    report.steps.filter((step) => step.status === 'passed').map((step) => step.stepId),
+  );
+  const journeySteps = [fillStep, plan.steps[createIndex]!, ...reloadSteps];
+  return journeySteps.every((step) => passedStepIds.has(step.id));
 }
 
 export function buildValidationEvidenceBundle(options: {

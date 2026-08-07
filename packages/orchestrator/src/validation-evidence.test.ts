@@ -101,10 +101,68 @@ function request(
   };
 }
 
+// Cycle-17 shape (#453): the planner asserts the pre-create empty state (fails
+// advisory when an earlier round already created a row) and collapses
+// list+reload into one post-create goto.
+const CYCLE17_PLAN_STEPS = [
+  {
+    id: 'load-home',
+    title: 'Load home and verify empty state',
+    action: { kind: 'goto', path: '/' },
+    assertions: [
+      {
+        kind: 'containsText',
+        locator: { by: 'text', text: 'No todos yet.' },
+        expected: 'No todos yet.',
+      },
+    ],
+  },
+  {
+    id: 'fill-todo',
+    title: 'Fill TODO title',
+    action: { kind: 'fill', locator: { by: 'label', label: 'Title' }, value: 'Buy milk' },
+    assertions: [],
+  },
+  {
+    id: 'create-todo',
+    title: 'Create TODO',
+    action: { kind: 'click', locator: { by: 'role', role: 'button', name: 'Add' } },
+    assertions: [
+      { kind: 'containsText', locator: { by: 'text', text: 'Buy milk' }, expected: 'Buy milk' },
+    ],
+  },
+  {
+    id: 'reload-todos',
+    title: 'Reload TODOs',
+    action: { kind: 'goto', path: '/' },
+    assertions: [
+      { kind: 'containsText', locator: { by: 'text', text: 'Buy milk' }, expected: 'Buy milk' },
+    ],
+  },
+];
+const CYCLE17_REPORT_STEPS: Array<{
+  id: string;
+  title: string;
+  status: 'passed' | 'failed';
+  error?: string;
+}> = [
+  {
+    id: 'load-home',
+    title: 'Load home and verify empty state',
+    status: 'failed' as const,
+    error: 'locator.waitFor: Timeout 10000ms exceeded.',
+  },
+  { id: 'fill-todo', title: 'Fill TODO title', status: 'passed' as const },
+  { id: 'create-todo', title: 'Create TODO', status: 'passed' as const },
+  { id: 'reload-todos', title: 'Reload TODOs', status: 'passed' as const },
+];
+
 async function setup(
   options: {
     withPreflight?: boolean;
     preflightChecks?: ValidationPreflightReport['checks'];
+    browserPlanSteps?: typeof CYCLE17_PLAN_STEPS;
+    browserReportSteps?: typeof CYCLE17_REPORT_STEPS;
   } = {},
 ) {
   const harness = makeHarness({}, undefined, { validationCampaign: campaign });
@@ -226,7 +284,7 @@ async function setup(
         id: 'todo-flow',
         title: 'TODO flow',
         viewport: { width: 1280, height: 720 },
-        steps: [
+        steps: options.browserPlanSteps ?? [
           {
             id: 'open-todos',
             title: 'Open TODO list',
@@ -340,43 +398,52 @@ async function setup(
                 url: 'http://127.0.0.1:3000/',
                 evidence: { screenshots: [] },
               },
-              steps: [
-                {
-                  stepId: 'open-todos',
-                  title: 'Open TODO list',
-                  status: 'passed' as const,
-                  durationMs: 1,
-                  observations: [],
-                },
-                {
-                  stepId: 'fill-todo',
-                  title: 'Fill TODO title',
-                  status: 'passed' as const,
-                  durationMs: 1,
-                  observations: [],
-                },
-                {
-                  stepId: 'create-todo',
-                  title: 'Create TODO',
-                  status: 'passed' as const,
-                  durationMs: 1,
-                  observations: [],
-                },
-                {
-                  stepId: 'list-todos',
-                  title: 'List TODOs after create',
-                  status: 'passed' as const,
-                  durationMs: 1,
-                  observations: [],
-                },
-                {
-                  stepId: 'reload-todos',
-                  title: 'Reload TODOs',
-                  status: 'passed' as const,
-                  durationMs: 1,
-                  observations: [],
-                },
-              ],
+              steps: options.browserReportSteps
+                ? options.browserReportSteps.map((step) => ({
+                    stepId: step.id,
+                    title: step.title,
+                    status: step.status,
+                    durationMs: 1,
+                    ...(step.error ? { error: step.error } : {}),
+                    observations: [],
+                  }))
+                : [
+                    {
+                      stepId: 'open-todos',
+                      title: 'Open TODO list',
+                      status: 'passed' as const,
+                      durationMs: 1,
+                      observations: [],
+                    },
+                    {
+                      stepId: 'fill-todo',
+                      title: 'Fill TODO title',
+                      status: 'passed' as const,
+                      durationMs: 1,
+                      observations: [],
+                    },
+                    {
+                      stepId: 'create-todo',
+                      title: 'Create TODO',
+                      status: 'passed' as const,
+                      durationMs: 1,
+                      observations: [],
+                    },
+                    {
+                      stepId: 'list-todos',
+                      title: 'List TODOs after create',
+                      status: 'passed' as const,
+                      durationMs: 1,
+                      observations: [],
+                    },
+                    {
+                      stepId: 'reload-todos',
+                      title: 'Reload TODOs',
+                      status: 'passed' as const,
+                      durationMs: 1,
+                      observations: [],
+                    },
+                  ],
             }
           : name === 'plan.current'
             ? {
@@ -816,6 +883,15 @@ describe('validation evidence publication', () => {
     await expect(evidence.publish('run-1', request('accepted'))).rejects.toThrow(
       'persisted runtime evidence',
     );
+  });
+
+  it('accepts an approved report with an advisory failure and a single reload proof (#453)', async () => {
+    const { evidence, proofs } = await setup({
+      browserPlanSteps: CYCLE17_PLAN_STEPS,
+      browserReportSteps: CYCLE17_REPORT_STEPS,
+    });
+    const result = await evidence.publish('run-1', request('accepted', proofs));
+    expect(result.bundle.outcome).toBe('accepted');
   });
 
   it('classifies an accepted run and is idempotent while redacting persisted evidence', async () => {
