@@ -82,24 +82,28 @@ describe('formatEvent', () => {
 
 describe('parseSseChunk', () => {
   it('extracts data payloads and ignores comments/heartbeats', () => {
-    const { events, rest } = parseSseChunk(
+    const { events, rest, lastId } = parseSseChunk(
       ': connected\n\nid: e1\ndata: {"type":"project.created"}\n\n: ping\n\nid: e2\ndata: {"ty',
     );
     assert.deepEqual(
       events.map((event) => event.type),
       ['project.created'],
     );
+    assert.equal(lastId, 'e1');
     assert.ok(rest.includes('id: e2'));
   });
 
   it('carries an incomplete frame over and completes it with the next chunk', () => {
     const first = parseSseChunk('id: e2\ndata: {"ty');
     assert.equal(first.events.length, 0);
+    // The resume cursor must not advance past an event that never fully arrived.
+    assert.equal(first.lastId, undefined);
     const second = parseSseChunk(first.rest + 'pe":"node.completed"}\n\n');
     assert.deepEqual(
       second.events.map((event) => event.type),
       ['node.completed'],
     );
+    assert.equal(second.lastId, 'e2');
     assert.equal(second.rest, '');
   });
 });

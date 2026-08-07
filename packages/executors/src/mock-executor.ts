@@ -95,6 +95,16 @@ export class MockAgentExecutor implements AgentExecutor {
     packageJson.name = packageJson.name ?? 'generated-mock-app';
     packageJson.private = true;
     packageJson.type = 'module';
+    // The real invariant behind the preview machinery below: overwriting the
+    // manager converts a pnpm workspace (the scaffold declares pnpm via the
+    // corepack field) to npm with no matching lockfile, which would break the
+    // preview's `npm ci`. Gate on that conversion — not on a script heuristic —
+    // so dogfood/benchmark mini-workspaces and test-seeded workspaces (both
+    // npm or manager-less) stay untouched; extra files would violate dogfood
+    // file allowlists.
+    const convertedFromPnpm =
+      typeof packageJson.packageManager === 'string' &&
+      packageJson.packageManager.startsWith('pnpm');
     packageJson.packageManager = 'npm@10';
     // These override whatever the scaffold ships rather than deferring to it.
     // The scaffold's real scripts (`next build`, `tsc -p`) need an install this
@@ -103,16 +113,7 @@ export class MockAgentExecutor implements AgentExecutor {
     // would send every mock run into repair over a missing dependency instead
     // of exercising the workflow.
     const existingScripts = (packageJson.scripts as Record<string, string> | undefined) ?? {};
-    // Only a scaffolded app workspace (pnpm dev script) gets the preview
-    // machinery below: its `dev` drives a pnpm workspace this executor never
-    // installs, so it is swapped for a zero-dependency server and given a stub
-    // lockfile so `npm run foundry`'s preview boots in mock mode (#443).
-    // Dogfood/benchmark mini-workspaces and test-seeded dev servers (e.g. the
-    // golden-flow fixture) are left alone — extra files would violate dogfood
-    // file allowlists.
-    const scaffoldDev =
-      typeof existingScripts.dev === 'string' && existingScripts.dev.includes('pnpm');
-    if (scaffoldDev) {
+    if (convertedFromPnpm) {
       // The mock never installs anything, so declared dependencies would only
       // put package.json out of sync with the stub lockfile and fail `npm ci`.
       delete packageJson.dependencies;
@@ -120,7 +121,10 @@ export class MockAgentExecutor implements AgentExecutor {
     }
     packageJson.scripts = {
       ...existingScripts,
-      ...(scaffoldDev ? { dev: 'node scripts/mock-dev-server.mjs' } : {}),
+      // The converted workspace's dev script drove a pnpm workspace this
+      // executor never installs; a zero-dependency server keeps `npm run
+      // foundry`'s preview bootable in mock mode (#443).
+      ...(convertedFromPnpm ? { dev: 'node scripts/mock-dev-server.mjs' } : {}),
       typecheck: 'node --check src/index.js',
       lint: 'node --check src/index.js',
       test: 'node --test',
@@ -132,18 +136,20 @@ export class MockAgentExecutor implements AgentExecutor {
       'database-row-match': `node -e "console.log('AGENT_FOUNDRY_DB_MATCH:${'0'.repeat(64)}')"`,
     };
     await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
-    if (scaffoldDev) {
+    if (convertedFromPnpm) {
       // A dependency-free lockfile so the preview installer's `npm ci` succeeds
       // against the mock workspace (the scaffold ships only pnpm-lock.yaml).
+      const lockName = packageJson.name;
+      const lockVersion = packageJson.version ?? '0.0.0';
       await writeFile(
         join(request.cwd, 'package-lock.json'),
         `${JSON.stringify(
           {
-            name: packageJson.name,
-            version: packageJson.version ?? '0.0.0',
+            name: lockName,
+            version: lockVersion,
             lockfileVersion: 3,
             requires: true,
-            packages: { '': { name: packageJson.name, version: packageJson.version ?? '0.0.0' } },
+            packages: { '': { name: lockName, version: lockVersion } },
           },
           null,
           2,

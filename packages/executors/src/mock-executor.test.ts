@@ -69,10 +69,10 @@ describe('MockAgentExecutor stream events', () => {
     );
   });
 
-  it('keeps a dev script a test seeded instead of clobbering it', async () => {
+  it('keeps a test-seeded dev script and adds no preview files to non-pnpm workspaces', async () => {
     await writeFile(
       join(cwd, 'package.json'),
-      JSON.stringify({ scripts: { dev: 'node server.mjs' } }),
+      JSON.stringify({ packageManager: 'npm@10', scripts: { dev: 'node server.mjs' } }),
     );
 
     await new MockAgentExecutor().execute({ ...request, cwd, mutatesWorkspace: true });
