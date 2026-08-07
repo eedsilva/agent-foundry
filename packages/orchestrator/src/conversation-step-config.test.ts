@@ -70,10 +70,30 @@ describe('conversation-step-config', () => {
     expect(withPlan.instructions).toContain('Toggle plan');
   });
 
+  it('builds a mutating repair step for captured preview failures', () => {
+    const step = buildConversationStep({
+      operationId: 'operation-repair',
+      kind: 'repair',
+      message: message({
+        content: [{ type: 'text', text: 'Preview failed with a runtime error.' }],
+      }),
+    });
+
+    expect(step).toMatchObject({
+      id: 'conversation-repair-operation-repair',
+      role: 'developer',
+      taskKind: 'repair',
+      outputArtifact: 'repair-report',
+      mutatesWorkspace: true,
+      instructions: 'Preview failed with a runtime error.',
+    });
+  });
+
   it('names the synthetic workflow id per mode', () => {
     expect(CONVERSATION_WORKFLOW_ID).toEqual({
       plan: 'conversation-plan',
       build: 'conversation-build',
+      repair: 'conversation-repair',
       'visual-edit': 'conversation-visual-edit',
     });
   });

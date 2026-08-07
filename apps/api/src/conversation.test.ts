@@ -592,6 +592,12 @@ describe('conversation API', () => {
     };
     expect(build.directExecution).toBe(true);
     expect(build.contextSources).toEqual([]);
+
+    const repairResponse = await post(baseUrl, opsPath, { kind: 'repair' });
+    expect(repairResponse.status).toBe(201);
+    expect(await repairResponse.json()).toMatchObject({
+      operation: { kind: 'repair' },
+    });
   });
 
   it('edits a completed plan proposal with revision conflict protection before Build inherits it', async () => {

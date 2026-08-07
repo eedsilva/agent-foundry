@@ -152,6 +152,10 @@ describe('conversation HTTP contracts (#36)', () => {
 
   it('parses start/decide operation requests and rejects ambiguous build gating', () => {
     expect(StartOperationRequestSchema.parse({ kind: 'plan' })).toEqual({ kind: 'plan' });
+    expect(StartOperationRequestSchema.parse({ kind: 'repair' })).toEqual({ kind: 'repair' });
+    expect(() =>
+      StartOperationRequestSchema.parse({ kind: 'repair', directExecution: true }),
+    ).toThrow();
     expect(
       StartOperationRequestSchema.parse({ kind: 'build', planOperationId: 'operation-1' }),
     ).toMatchObject({ planOperationId: 'operation-1' });
