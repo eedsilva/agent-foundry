@@ -1,4 +1,4 @@
-import { open, readFile, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { execa } from 'execa';
 import type {
   AgentExecutionRequest,
@@ -32,8 +32,6 @@ export interface CliInvocation {
   input?: string;
   outputFile?: string;
   outputDirectory?: string;
-  metadataFile?: string;
-  metadataDirectory?: string;
   environment?: NodeJS.ProcessEnv;
 }
 
@@ -71,7 +69,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
   /**
    * Providers with an incremental JSONL stdout format (Claude, Codex) override
    * this to return a per-invocation, stateful line mapper. Providers without
-   * one (mock, agy) leave it undefined — onEvent is then simply never called,
+   * one (mock) leave it undefined — onEvent is then simply never called,
    * and callers must already treat onEvent as optional.
    */
   protected createStreamMapper(): ((line: string) => ExecutorStreamEvent[]) | undefined {
@@ -105,17 +103,11 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         () => this.executeInvocation(request, invocation, startedAt, signal, onEvent),
       );
     } finally {
-      const directories = new Set(
-        [invocation.outputDirectory, invocation.metadataDirectory].filter((path): path is string =>
-          Boolean(path),
-        ),
-      );
-      await Promise.all([...directories].map((path) => rm(path, { force: true, recursive: true })));
+      if (invocation.outputDirectory) {
+        await rm(invocation.outputDirectory, { force: true, recursive: true });
+      }
       if (invocation.outputFile && !invocation.outputDirectory) {
         await rm(invocation.outputFile, { force: true });
-      }
-      if (invocation.metadataFile && !invocation.metadataDirectory) {
-        await rm(invocation.metadataFile, { force: true });
       }
     }
   }
@@ -194,10 +186,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     const response = await this.responseText(invocation, stdout);
     const output = parseAgentArtifact(this.provider, response);
     const usage = extractUsage(this.provider, stdout);
-    const metadata = invocation.metadataFile
-      ? await readBoundedFile(invocation.metadataFile, this.maxOutputBytes)
-      : '';
-    const executedModel = extractExecutedModel(this.provider, { stdout, stderr, metadata });
+    const executedModel = extractExecutedModel(this.provider, { stdout, stderr });
 
     return {
       runId: request.runId,
@@ -248,21 +237,6 @@ export abstract class BaseCliExecutor implements AgentExecutor {
         ...rateLimit,
       };
     }
-  }
-}
-
-async function readBoundedFile(path: string, maxBytes: number): Promise<string> {
-  try {
-    const file = await open(path, 'r');
-    try {
-      const buffer = Buffer.alloc(Math.max(1, maxBytes));
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-      return buffer.subarray(0, bytesRead).toString('utf8');
-    } finally {
-      await file.close();
-    }
-  } catch {
-    return '';
   }
 }
 

@@ -5,18 +5,10 @@ import { loadModelCatalog } from './catalog.js';
 const repoRoot = resolve(import.meta.dirname, '../../..');
 
 describe('model catalog', () => {
-  it('registers GLM as a metered cheap hosted model', async () => {
+  it('registers only the two product providers (#438)', async () => {
     const models = await loadModelCatalog(resolve(repoRoot, 'models/catalog.yaml'));
-    const glm = models.find((model) => model.id === 'glm-fast');
 
-    expect(glm).toMatchObject({
-      provider: 'glm',
-      model: 'GLM-4.5-Air',
-      billingMode: 'metered',
-      pricing: {
-        inputUsdPerMillionTokens: 0.2,
-        outputUsdPerMillionTokens: 1.1,
-      },
-    });
+    expect(models.length).toBeGreaterThan(0);
+    expect([...new Set(models.map((model) => model.provider))].sort()).toEqual(['claude', 'codex']);
   });
 });

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
-import { spawn, spawnSync } from 'node:child_process';
-import { createServer } from 'node:http';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -31,18 +30,6 @@ const readyFixtures = {
       }),
     },
   },
-  agy: {
-    version: { stdout: '1.1.6\n' },
-    help: {
-      stderr: '--new-project --print --print-timeout --log-file --model --sandbox --mode\n',
-    },
-    auth: { stdout: 'gemini-3.6-flash-high\ngemini-3.1-pro-low\n' },
-  },
-  opencode: {
-    version: { stdout: '1.0.0\n' },
-    help: { stdout: '--format --dir --model --agent --auto\n' },
-    auth: { status: 0 },
-  },
 };
 
 test('prints ready provider probes as contract-shaped JSON without raw authentication data', async (t) => {
@@ -55,10 +42,6 @@ test('prints ready provider probes as contract-shaped JSON without raw authentic
   assert.deepEqual(output.probes, [
     readyProbe('codex', '0.144.2', 'Codex is ready.'),
     readyProbe('claude', '2.1.207', 'Claude is ready.'),
-    readyProbe('agy', '1.1.6', 'AGY is ready.'),
-    readyProbe('opencode', '1.0.0', 'OpenCode and the Ollama endpoint are ready.', {
-      endpointReachable: true,
-    }),
   ]);
   assert.deepEqual(Object.keys(output.probes[0]).sort(), [
     'capabilities',
@@ -84,7 +67,7 @@ test('classifies missing provider CLIs as unavailable', async (t) => {
   const { probes } = JSON.parse(result.stdout);
   assert.deepEqual(
     probes.map(({ provider, status, capabilities }) => ({ provider, status, capabilities })),
-    ['codex', 'claude', 'agy', 'opencode'].map((provider) => ({
+    ['codex', 'claude'].map((provider) => ({
       provider,
       status: 'unavailable',
       capabilities: {
@@ -96,31 +79,17 @@ test('classifies missing provider CLIs as unavailable', async (t) => {
   );
 });
 
-test('accepts the legacy AGY display-name model list', async (t) => {
-  const providers = structuredClone(readyFixtures);
-  providers.agy.auth = { stdout: 'Gemini 2.5 Pro (pro)\nGemini 2.5 Flash (flash)\n' };
-  const fixture = await createFixture(t, providers);
-  const result = runDoctor(fixture, ['--json']);
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(
-    JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'agy').status,
-    'ready',
-  );
-});
-
 test('classifies providers with absent sessions as unauthenticated', async (t) => {
   const providers = structuredClone(readyFixtures);
   providers.codex.auth = { stderr: 'Not logged in\n' };
   providers.claude.auth = { stdout: JSON.stringify({ loggedIn: false, email: 'secret@test' }) };
-  providers.agy.auth = { status: 1, stderr: 'Not authenticated: private-user\n' };
   const fixture = await createFixture(t, providers);
   const result = runDoctor(fixture, ['--json']);
 
   assert.equal(result.status, 1);
   assert.deepEqual(
     JSON.parse(result.stdout).probes.map(({ status }) => status),
-    ['unauthenticated', 'unauthenticated', 'unauthenticated', 'ready'],
+    ['unauthenticated', 'unauthenticated'],
   );
   assert.doesNotMatch(result.stdout + result.stderr, /secret@test|private-user|Not logged in/);
 });
@@ -129,7 +98,6 @@ test('reports individual incompatible capabilities when required flags disappear
   const providers = structuredClone(readyFixtures);
   providers.codex.help.stdout = '--model --sandbox --ask-for-approval\n';
   providers.claude.help.stdout = '--print --output-format --model\n';
-  providers.agy.help.stderr = '--print --print-timeout --sandbox --mode\n';
   const fixture = await createFixture(t, providers);
   const result = runDoctor(fixture, ['--json']);
 
@@ -137,7 +105,7 @@ test('reports individual incompatible capabilities when required flags disappear
   const { probes } = JSON.parse(result.stdout);
   assert.deepEqual(
     probes.map(({ status }) => status),
-    ['incompatible', 'incompatible', 'incompatible', 'ready'],
+    ['incompatible', 'incompatible'],
   );
   assert.deepEqual(probes[0].capabilities, {
     nonInteractive: false,
@@ -149,11 +117,6 @@ test('reports individual incompatible capabilities when required flags disappear
     modelSelection: true,
     sandbox: false,
   });
-  assert.deepEqual(probes[2].capabilities, {
-    nonInteractive: false,
-    modelSelection: false,
-    sandbox: true,
-  });
 });
 
 test('rejects providers missing execution flags outside the representative capability labels', async (t) => {
@@ -163,14 +126,13 @@ test('rejects providers missing execution flags outside the representative capab
     '--no-session-persistence ',
     '',
   );
-  providers.agy.help.stderr = providers.agy.help.stderr.replace('--new-project ', '');
   const fixture = await createFixture(t, providers);
   const result = runDoctor(fixture, ['--json']);
 
   assert.equal(result.status, 1);
   assert.deepEqual(
     JSON.parse(result.stdout).probes.map(({ status }) => status),
-    ['incompatible', 'incompatible', 'incompatible', 'ready'],
+    ['incompatible', 'incompatible'],
   );
 });
 
@@ -179,7 +141,6 @@ test('requires exact help option tokens instead of accepting longer prefix colli
   providers.codex.help.stdout = '--json-lines --model-directory --sandbox-policy\n';
   providers.claude.help.stdout =
     '--print-timeout --output-formatting --model-directory --permission-mode-name\n';
-  providers.agy.help.stderr = '--print-timeout --model-directory --sandbox-policy --mode-name\n';
   const fixture = await createFixture(t, providers);
   const result = runDoctor(fixture, ['--json']);
 
@@ -187,100 +148,56 @@ test('requires exact help option tokens instead of accepting longer prefix colli
   const { probes } = JSON.parse(result.stdout);
   assert.deepEqual(
     probes.map(({ status }) => status),
-    ['incompatible', 'incompatible', 'incompatible', 'ready'],
+    ['incompatible', 'incompatible'],
   );
   assert.deepEqual(
     probes.map(({ capabilities }) => capabilities),
-    [
-      ...['codex', 'claude', 'agy'].map(() => ({
-        nonInteractive: false,
-        modelSelection: false,
-        sandbox: false,
-      })),
-      {
-        nonInteractive: true,
-        modelSelection: true,
-        sandbox: true,
-        endpointReachable: true,
-      },
-    ],
+    ['codex', 'claude'].map(() => ({
+      nonInteractive: false,
+      modelSelection: false,
+      sandbox: false,
+    })),
   );
-  assert.deepEqual(probes[3].capabilities, {
-    nonInteractive: true,
-    modelSelection: true,
-    sandbox: true,
-    endpointReachable: true,
-  });
-});
-
-test('rejects AGY versions older than 1.1.1', async (t) => {
-  const providers = structuredClone(readyFixtures);
-  providers.agy.version.stdout = 'agy version 1.1.0\n';
-  const fixture = await createFixture(t, providers);
-  const result = runDoctor(fixture, ['--json']);
-
-  assert.equal(result.status, 1);
-  const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'agy');
-  assert.equal(probe.status, 'incompatible');
-  assert.equal(probe.version, '1.1.0');
-  assert.equal(probe.message, 'AGY 1.1.0 is too old; 1.1.1+ is required.');
-});
-
-test('rejects an AGY prerelease at the stable 1.1.1 boundary', async (t) => {
-  const providers = structuredClone(readyFixtures);
-  providers.agy.version.stdout = 'agy version 1.1.1-beta.1\n';
-  const fixture = await createFixture(t, providers);
-  const result = runDoctor(fixture, ['--json']);
-
-  assert.equal(result.status, 1);
-  const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'agy');
-  assert.equal(probe.status, 'incompatible');
-  assert.equal(probe.version, '1.1.1-beta.1');
-  assert.equal(probe.message, 'AGY 1.1.1-beta.1 is too old; 1.1.1+ is required.');
 });
 
 test('fails closed on successful but malformed authentication responses', async (t) => {
   const providers = structuredClone(readyFixtures);
   providers.codex.auth = { stdout: 'session for codex-secret-user\n' };
   providers.claude.auth = { stdout: '{"email":"claude-secret@test"' };
-  providers.agy.auth = { stdout: 'generic successful response without aliases\n' };
   const fixture = await createFixture(t, providers);
   const result = runDoctor(fixture, ['--json']);
 
   assert.equal(result.status, 1);
   assert.deepEqual(
     JSON.parse(result.stdout).probes.map(({ status }) => status),
-    ['incompatible', 'incompatible', 'incompatible', 'ready'],
+    ['incompatible', 'incompatible'],
   );
   assert.doesNotMatch(result.stdout + result.stderr, /codex-secret-user|claude-secret@test/);
 });
 
-test('rejects deceptive successful Codex and AGY authentication near-matches', async (t) => {
+test('rejects deceptive successful Codex authentication near-matches', async (t) => {
   const providers = structuredClone(readyFixtures);
   providers.codex.auth = { stdout: 'Unable to determine whether user is logged in\n' };
-  providers.agy.auth = { stdout: 'Provider unavailable (offline)\n' };
   const fixture = await createFixture(t, providers);
   const result = runDoctor(fixture, ['--json']);
 
   assert.equal(result.status, 1);
   const probes = JSON.parse(result.stdout).probes;
   assert.equal(probes.find(({ provider }) => provider === 'codex').status, 'incompatible');
-  assert.equal(probes.find(({ provider }) => provider === 'agy').status, 'incompatible');
-  assert.doesNotMatch(result.stdout + result.stderr, /Unable to determine|Provider unavailable/);
+  assert.doesNotMatch(result.stdout + result.stderr, /Unable to determine/);
 });
 
 test('classifies unrecognized nonzero authentication failures as incompatible', async (t) => {
   const providers = structuredClone(readyFixtures);
   providers.codex.auth = { status: 2, stderr: 'unknown subcommand for codex-private-user\n' };
   providers.claude.auth = { status: 2, stderr: 'unknown subcommand for claude-private-user\n' };
-  providers.agy.auth = { status: 2, stderr: 'unknown subcommand for agy-private-user\n' };
   const fixture = await createFixture(t, providers);
   const result = runDoctor(fixture, ['--json']);
 
   assert.equal(result.status, 1);
   assert.deepEqual(
     JSON.parse(result.stdout).probes.map(({ status }) => status),
-    ['incompatible', 'incompatible', 'incompatible', 'ready'],
+    ['incompatible', 'incompatible'],
   );
   assert.doesNotMatch(result.stdout + result.stderr, /private-user|unknown subcommand/);
 });
@@ -347,8 +264,6 @@ test('prints sanitized human provider status without auth payloads or identities
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /✓ codex\s+Codex is ready\./);
   assert.match(result.stdout, /✓ claude\s+Claude is ready\./);
-  assert.match(result.stdout, /✓ agy\s+AGY is ready\./);
-  assert.match(result.stdout, /✓ opencode\s+OpenCode and the Ollama endpoint are ready\./);
   assert.doesNotMatch(
     result.stdout + result.stderr,
     /private@example\.test|private-org|Logged in using ChatGPT|Gemini 2\.5/,
@@ -394,16 +309,6 @@ test('reports unauthenticated when the identity variable is withheld from the pr
   assert.equal(probe.message, 'Claude is not authenticated.');
 });
 
-test('fails closed when the Ollama endpoint is not an HTTP URL', async (t) => {
-  const fixture = await createFixture(t, readyFixtures);
-  const result = runDoctor(fixture, ['--json'], { OLLAMA_HOST: 'file:///etc/passwd' });
-
-  assert.equal(result.status, 1);
-  const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'opencode');
-  assert.equal(probe.status, 'unavailable');
-  assert.equal(probe.capabilities.endpointReachable, false);
-});
-
 function readyProbe(provider, version, message, extraCapabilities = {}) {
   return {
     provider,
@@ -430,27 +335,6 @@ async function createFixture(t, providers) {
   await writeFile(join(root, 'harness', 'manifest.json'), '{}\n');
   await writeFile(join(root, 'models', 'catalog.yaml'), 'models: []\n');
 
-  const port = await freePort();
-  const endpoint = spawn(
-    process.execPath,
-    [
-      '-e',
-      "import('node:http').then(({createServer}) => createServer((_, response) => { response.writeHead(200, {'content-type':'application/json'}); response.end('{\\\"models\\\":[]}'); }).listen(Number(process.argv[1]), '127.0.0.1'))",
-      String(port),
-    ],
-    { stdio: 'ignore' },
-  );
-  t.after(() => endpoint.kill());
-  const ollamaHost = `http://127.0.0.1:${port}`;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    try {
-      await fetch(`${ollamaHost}/api/tags`);
-      break;
-    } catch {
-      await new Promise((resolveRetry) => setTimeout(resolveRetry, 10));
-    }
-  }
-
   await writeFile(join(root, 'provider-fixtures.json'), JSON.stringify(providers));
   // Read from cwd, not an env var: the doctor scopes the probe env to the same
   // spawn allowlist execution uses, so nothing bespoke survives into the child.
@@ -467,9 +351,6 @@ else if (provider === 'codex' && args.join(' ') === 'exec --help') command = 'he
 else if (provider === 'codex' && args.join(' ') === 'login status') command = 'auth';
 else if (provider === 'claude' && args.join(' ') === '--help') command = 'help';
 else if (provider === 'claude' && args.join(' ') === 'auth status') command = 'auth';
-else if (provider === 'agy' && args.join(' ') === '--help') command = 'help';
-else if (provider === 'agy' && args.join(' ') === 'models') command = 'auth';
-else if (provider === 'opencode' && args.join(' ') === 'run --help') command = 'help';
 else process.exit(97);
 const response = fixture?.[command] ?? { status: 1 };
 if (response.fromEnv) {
@@ -493,7 +374,7 @@ else process.exit(response.status ?? 0);
     await chmod(path, 0o755);
   }
 
-  return { root, bin, ollamaHost };
+  return { root, bin };
 }
 
 function runDoctor(fixture, args = [], extraEnv = {}) {
@@ -501,7 +382,6 @@ function runDoctor(fixture, args = [], extraEnv = {}) {
     ...process.env,
     PATH: `${fixture.bin}:/usr/bin:/bin`,
     EXECUTOR_MODE: 'real',
-    OLLAMA_HOST: fixture.ollamaHost,
     ...extraEnv,
   };
   // An explicit `undefined` withholds a variable the runner's own env may carry.
@@ -515,18 +395,4 @@ function runDoctor(fixture, args = [], extraEnv = {}) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-async function freePort() {
-  const server = createServer();
-  await new Promise((resolveServer, rejectServer) => {
-    server.once('error', rejectServer);
-    server.listen(0, '127.0.0.1', resolveServer);
-  });
-  const address = server.address();
-  const port = address.port;
-  await new Promise((resolveServer, rejectServer) =>
-    server.close((error) => (error ? rejectServer(error) : resolveServer())),
-  );
-  return port;
 }

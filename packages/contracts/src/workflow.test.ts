@@ -380,13 +380,13 @@ describe('workflow routing table', () => {
     const workflow = WorkflowDefinitionSchema.parse({
       ...BASE_WORKFLOW,
       routing: [
-        { taskKind: 'implementation', executors: ['claude', 'codex', 'agy'] },
+        { taskKind: 'implementation', executors: ['claude', 'codex'] },
         { taskKind: 'repair', executors: ['codex', 'claude'] },
       ],
     });
     expect(workflow.routing?.[0]).toEqual({
       taskKind: 'implementation',
-      executors: ['claude', 'codex', 'agy'],
+      executors: ['claude', 'codex'],
     });
   });
 
@@ -423,7 +423,11 @@ describe('workflow routing table', () => {
     ).toThrow();
   });
 
-  it('includes the hosted cheap provider as a later routing rung', () => {
-    expect(DEFAULT_ROUTING_TABLE.every((entry) => entry.executors.includes('glm'))).toBe(true);
+  it('routes every task kind through the two product executors only', () => {
+    expect(
+      DEFAULT_ROUTING_TABLE.every((entry) =>
+        entry.executors.every((executor) => executor === 'claude' || executor === 'codex'),
+      ),
+    ).toBe(true);
   });
 });

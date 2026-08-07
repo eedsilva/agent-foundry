@@ -58,7 +58,7 @@ export type ValidationPreflightReport = z.infer<typeof ValidationPreflightReport
 
 export const ValidationCanaryResultSchema = z
   .object({
-    provider: ProviderSchema.exclude(['glm', 'agy', 'mock']),
+    provider: ProviderSchema.exclude(['mock']),
     selectedModel: z.string().min(1),
     executedModel: z.string().min(1).optional(),
     status: z.enum(['passed', 'failed']),

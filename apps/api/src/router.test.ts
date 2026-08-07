@@ -135,7 +135,7 @@ describe('router dashboard + experiments API', () => {
         preferredTags: [],
       }),
       undefined,
-      { routing: { source: 'web-app-v1', executors: ['claude', 'glm', 'codex', 'agy'] } },
+      { routing: { source: 'web-app-v1', executors: ['claude', 'codex'] } },
     );
     expect(normalPlanningRoute.selected.model.id).toBe('claude-opus');
     expect(normalPlanningRoute.routingTable).toMatchObject({

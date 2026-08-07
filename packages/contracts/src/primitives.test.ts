@@ -46,12 +46,10 @@ describe('roles retired by ADR 0042', () => {
 });
 
 describe('providers', () => {
-  it('accepts OpenCode as the local Ollama executor', () => {
-    expect(ProviderSchema.parse('opencode')).toBe('opencode');
-  });
-
-  it('accepts GLM as the hosted Anthropic-compatible executor', () => {
-    expect(ProviderSchema.parse('glm')).toBe('glm');
+  it('rejects the retired executors (#438)', () => {
+    for (const retired of ['opencode', 'glm', 'agy']) {
+      expect(ProviderSchema.safeParse(retired).success).toBe(false);
+    }
   });
 });
 

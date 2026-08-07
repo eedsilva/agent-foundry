@@ -95,10 +95,6 @@ O adapter usa `read-only` para papéis não mutáveis e `workspace-write` para o
 
 O adapter usa `plan` para leitura e `acceptEdits` para mutação. Comandos shell adicionais podem depender das políticas locais da CLI. Não foi habilitado bypass global de permissões.
 
-### AGY
-
-O adapter ativa sandbox e usa `plan` ou `accept-edits`. Confirme as políticas e a versão instalada no seu ambiente.
-
 ## Dados sensíveis nos artefatos
 
 Run records podem incluir:

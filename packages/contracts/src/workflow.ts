@@ -297,12 +297,12 @@ export type RoutingTable = z.infer<typeof RoutingTableSchema>;
  * task kind only where the ordering is a decision worth writing down.
  */
 export const DEFAULT_ROUTING_TABLE: RoutingTable = [
-  { taskKind: 'planning', executors: ['claude', 'glm', 'codex', 'agy'] },
-  { taskKind: 'plan-review', executors: ['claude', 'glm', 'codex', 'agy'] },
-  { taskKind: 'implementation', executors: ['claude', 'glm', 'codex', 'agy'] },
-  { taskKind: 'code-review', executors: ['codex', 'claude', 'glm', 'agy'] },
-  { taskKind: 'repair', executors: ['codex', 'claude', 'glm', 'agy'] },
-  { taskKind: 'verification', executors: ['opencode', 'glm', 'codex', 'claude', 'agy'] },
+  { taskKind: 'planning', executors: ['claude', 'codex'] },
+  { taskKind: 'plan-review', executors: ['claude', 'codex'] },
+  { taskKind: 'implementation', executors: ['claude', 'codex'] },
+  { taskKind: 'code-review', executors: ['codex', 'claude'] },
+  { taskKind: 'repair', executors: ['codex', 'claude'] },
+  { taskKind: 'verification', executors: ['codex', 'claude'] },
 ];
 
 /**

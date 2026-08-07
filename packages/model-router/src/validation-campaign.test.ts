@@ -16,9 +16,9 @@ const capabilities = {
 
 function model(overrides: Partial<ModelDefinition> = {}): ModelDefinition {
   return {
-    id: 'opencode-ollama',
-    provider: 'opencode',
-    model: 'qwen2.5-coder:7b',
+    id: 'codex-extra',
+    provider: 'codex',
+    model: 'gpt-5.3-codex',
     billingMode: 'metered',
     enabled: true,
     requireExplicitModel: false,

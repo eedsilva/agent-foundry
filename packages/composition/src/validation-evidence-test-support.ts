@@ -21,7 +21,7 @@ export function createValidationCampaignTestExecutorRegistry(): ExecutorRegistry
   }
 
   const executor = new ValidationCampaignMockExecutor();
-  const providers = ['codex', 'claude', 'opencode', 'agy', 'glm'] as const;
+  const providers = ['codex', 'claude'] as const;
   const health: ExecutorHealth[] = providers.map((provider) => ({
     provider,
     available: true,

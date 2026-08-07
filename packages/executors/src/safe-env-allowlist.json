@@ -14,7 +14,5 @@
   "SystemRoot",
   "ComSpec",
   "USERPROFILE",
-  "APPDATA",
-  "OLLAMA_HOST",
-  "OPENCODE_CONFIG"
+  "APPDATA"
 ]

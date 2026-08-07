@@ -30,7 +30,7 @@ export const RouterDecisionLogEntrySchema = z
     modelId: PathSegmentSchema,
     // No .min(1): matches ModelDefinitionSchema.model, which catalog entries
     // can interpolate to '' when their env var is unset (models/catalog.yaml's
-    // codex/agy fast/default variants) — selectable in mock-executor-mode runs.
+    // codex fast/default variants) — selectable in mock-executor-mode runs.
     model: z.string(),
     approved: z.boolean(),
     firstPass: z.boolean(),

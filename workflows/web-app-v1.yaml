@@ -5,22 +5,19 @@ description: Plans, waits for operator approval, then implements the task graph 
 stack: nextjs
 # Which executor runs which kind of task, head of the list first (ADR 0046).
 # A table an operator can read before the run starts, rather than a six-dimension
-# score they cannot predict. Hosted providers appear everywhere because each
-# provider is an independent quota pool, and a different vendor is a genuinely
-# different attempt. Codex leads verification here so a missing local Ollama
-# process cannot hold the user-facing workflow until the agent timeout; OpenCode
-# remains a fallback for environments that have it running. `repair` and
-# `verification` lead with a different vendor from
-# `implementation` on purpose: re-reading your own work is the weakest check.
+# score they cannot predict. The product is exactly Claude + Codex (#438); each
+# is an independent quota pool and a genuinely different attempt. `repair` and
+# `verification` lead with a different vendor from `implementation` on purpose:
+# re-reading your own work is the weakest check.
 routing:
   - taskKind: planning
-    executors: [claude, glm, codex, agy]
+    executors: [claude, codex]
   - taskKind: implementation
-    executors: [claude, glm, codex, agy]
+    executors: [claude, codex]
   - taskKind: repair
-    executors: [codex, claude, glm, agy]
+    executors: [codex, claude]
   - taskKind: verification
-    executors: [codex, claude, glm, agy, opencode]
+    executors: [codex, claude]
 nodes:
   # One model call, then the operator decides. No model grades another model's
   # plan as a blocking gate (ADR 0042).

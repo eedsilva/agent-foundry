@@ -2,8 +2,6 @@ export * from './json-output.js';
 export * from './base-cli-executor.js';
 export * from './codex-executor.js';
 export * from './claude-executor.js';
-export * from './agy-executor.js';
-export * from './opencode-executor.js';
 export * from './mock-executor.js';
 export * from './registry.js';
 export * from './verifier.js';

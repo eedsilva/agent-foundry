@@ -113,7 +113,7 @@ O control plane continua local e loopback. Cada projeto greenfield ganha um repo
 flowchart LR
   U["Operador no macOS"] --> B["Builder local: Chat / Preview / Changes"]
   B --> O["Orquestrador e pipeline completo"]
-  O --> C["Codex / Claude / AGY"]
+  O --> C["Codex / Claude"]
   O --> G["Repositório Git do projeto"]
   O --> S["Sandbox de build, verifier e preview"]
   G --> L["Compose local: Next.js + Supabase"]

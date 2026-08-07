@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import { ProviderSchema } from './primitives.js';
 
-// Local OpenCode/Ollama is opt-in and has no paid-provider canary contract.
-export const ProviderCanaryProviderSchema = ProviderSchema.exclude(['mock', 'opencode']);
+export const ProviderCanaryProviderSchema = ProviderSchema.exclude(['mock']);
 export type ProviderCanaryProvider = z.infer<typeof ProviderCanaryProviderSchema>;
 
 export const ProviderProbeProviderSchema = ProviderSchema.exclude(['mock']);

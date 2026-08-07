@@ -87,43 +87,6 @@ const probes = await Promise.all([
       }
     },
   }),
-  providerProbe({
-    provider: 'agy',
-    label: 'AGY',
-    versionArgs: ['--version'],
-    helpArgs: ['--help'],
-    authArgs: ['models'],
-    minimumVersion: '1.1.1',
-    flags: {
-      nonInteractive: ['--new-project', '--print', '--print-timeout', '--log-file'],
-      modelSelection: ['--model'],
-      sandbox: ['--sandbox', '--mode'],
-    },
-    authenticationStatus(result) {
-      const output = combinedOutput(result).trim();
-      if (/^(?:Not authenticated|Authentication required)(?:: [^\r\n]+)?\.?$/i.test(output)) {
-        return false;
-      }
-      if (result.status === 0 && isAgyModelList(output)) return true;
-      return null;
-    },
-  }),
-  providerProbe({
-    provider: 'opencode',
-    label: 'OpenCode',
-    versionArgs: ['--version'],
-    helpArgs: ['run', '--help'],
-    authArgs: ['--version'],
-    flags: {
-      nonInteractive: ['--format', '--dir'],
-      modelSelection: ['--model'],
-      sandbox: ['--agent', '--auto'],
-    },
-    endpoint: true,
-    authenticationStatus(result) {
-      return result.status === 0 ? true : null;
-    },
-  }),
 ]);
 
 const providerFailures = realMode ? probes.filter((probe) => probe.status !== 'ready') : [];
@@ -217,25 +180,6 @@ async function providerProbe(definition) {
     });
   }
 
-  if (definition.endpoint) {
-    const endpoint = await probeOllamaEndpoint();
-    const endpointCapabilities = { ...capabilities, endpointReachable: endpoint.ok };
-    if (!endpoint.ok) {
-      return probeResult(definition, {
-        status: 'unavailable',
-        version,
-        capabilities: endpointCapabilities,
-        message: `${definition.label} is installed, but the Ollama endpoint is unreachable.`,
-      });
-    }
-    return probeResult(definition, {
-      status: 'ready',
-      version,
-      capabilities: endpointCapabilities,
-      message: `${definition.label} and the Ollama endpoint are ready.`,
-    });
-  }
-
   return probeResult(definition, {
     status: 'ready',
     version,
@@ -250,58 +194,6 @@ function probeResult(definition, result) {
 
 function emptyCapabilities() {
   return { nonInteractive: false, modelSelection: false, sandbox: false };
-}
-
-async function probeOllamaEndpoint() {
-  try {
-    const endpoint = ollamaEndpoint();
-    if (!endpoint) return { ok: false };
-    const response = await fetch(endpoint, {
-      signal: AbortSignal.timeout(2_000),
-    });
-    return { ok: response.ok };
-  } catch {
-    return { ok: false };
-  }
-}
-
-function ollamaHost() {
-  // Keep file-backed .env data out of the outbound endpoint request. The
-  // executor receives OLLAMA_HOST from the inherited process environment too.
-  const host = process.env.OLLAMA_HOST?.trim() || 'http://127.0.0.1:11434';
-  let normalized = host.includes('://') ? host : `http://${host}`;
-  while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
-  return normalized;
-}
-
-function ollamaEndpoint() {
-  try {
-    const base = new URL(ollamaHost());
-    const isHttpUrl = base.protocol === 'http:' || base.protocol === 'https:';
-    const hasUnsafeUrlParts =
-      !base.hostname || base.username || base.password || base.search || base.hash;
-    if (!isHttpUrl || hasUnsafeUrlParts) {
-      return undefined;
-    }
-    let pathname = base.pathname;
-    while (pathname.endsWith('/')) pathname = pathname.slice(0, -1);
-    base.pathname = `${pathname}/api/tags`;
-    return base;
-  } catch {
-    return undefined;
-  }
-}
-
-function isAgyModelList(output) {
-  const lines = output.split(/\r?\n/).map((line) => line.trim());
-  return (
-    lines.length > 0 &&
-    lines.every(
-      (line) =>
-        /^(?=[^()]*\d)[0-9A-Za-z][0-9A-Za-z ._+:/-]* \([0-9A-Za-z][0-9A-Za-z._-]*\)$/.test(line) ||
-        /^[0-9A-Za-z][0-9A-Za-z._-]*$/.test(line),
-    )
-  );
 }
 
 function run(command, args) {

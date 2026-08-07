@@ -51,24 +51,10 @@ function model(id: string, overrides: Partial<ModelDefinition> = {}): ModelDefin
 /** Catalog order deliberately contradicts every table order under test. */
 function catalog(): ModelDefinition[] {
   return [
-    model('agy-default', { provider: 'agy' }),
     model('claude-opus', { provider: 'claude' }),
     model('claude-sonnet', { provider: 'claude' }),
     model('codex-default', { provider: 'codex' }),
   ];
-}
-
-function localModel(): ModelDefinition {
-  return model('opencode-ollama', {
-    provider: 'opencode',
-    model: 'qwen2.5-coder:7b',
-    billingMode: 'metered',
-    pricing: {
-      inputUsdPerMillionTokens: 0,
-      outputUsdPerMillionTokens: 0,
-    },
-    tags: ['local', 'mechanical'],
-  });
 }
 
 const profile: TaskProfile = {
@@ -92,52 +78,16 @@ function router(models = catalog()): TableModelRouter {
 }
 
 describe('TableModelRouter', () => {
-  it('can place OpenCode on the verification rung while keeping the table deterministic', async () => {
-    const router = new TableModelRouter([localModel(), ...catalog()], new MemoryMetrics());
-    const decision = await router.route({ ...profile, taskKind: 'verification' }, undefined, {
-      routing: { source: 'web-app-v1', executors: ['opencode', 'codex'] },
-    });
-
-    expect(decision.selected.model.provider).toBe('opencode');
-    expect(decision.routingTable).toMatchObject({
-      source: 'web-app-v1',
-      taskKind: 'verification',
-      executors: ['opencode', 'codex'],
-      selectedIndex: 0,
-    });
-  });
-
-  it('selects GLM and records the constrained tier table in the route audit', async () => {
-    const decision = await router([
-      model('glm-fast', {
-        provider: 'glm',
-        model: 'GLM-4.5-Air',
-        billingMode: 'metered',
-        pricing: { inputUsdPerMillionTokens: 0.2, outputUsdPerMillionTokens: 1.1 },
-      }),
-    ]).route(profile, undefined, {
-      routing: { source: 'cheap-tier', executors: ['glm'] },
-    });
-
-    expect(decision.selected.model.provider).toBe('glm');
-    expect(decision.routingTable).toEqual({
-      source: 'cheap-tier',
-      taskKind: 'implementation',
-      executors: ['glm'],
-      selectedIndex: 0,
-    });
-  });
-
   it('selects the head of the table, not the head of the catalog', async () => {
     const decision = await router().route(profile, undefined, {
-      routing: { source: 'web-app-v1', executors: ['codex', 'claude', 'agy'] },
+      routing: { source: 'web-app-v1', executors: ['codex', 'claude'] },
     });
 
     expect(decision.selected.model.id).toBe('codex-default');
     expect(decision.routingTable).toEqual({
       source: 'web-app-v1',
       taskKind: 'implementation',
-      executors: ['codex', 'claude', 'agy'],
+      executors: ['codex', 'claude'],
       selectedIndex: 0,
     });
     // No dimension scores are computed at all — there is nothing to fit them to.
@@ -172,14 +122,14 @@ describe('TableModelRouter', () => {
 
   it('starts at the next table entry for a task retry', async () => {
     const decision = await router().route(profile, undefined, {
-      routing: { source: 'web-app-v1', executors: ['claude', 'codex', 'agy'] },
+      routing: { source: 'web-app-v1', executors: ['claude', 'codex'] },
       routingStartIndex: 1,
     });
 
     expect(decision.selected.model.provider).toBe('codex');
-    expect(decision.fallbacks.map((candidate) => candidate.model.provider)).toEqual(['agy']);
+    expect(decision.fallbacks).toEqual([]);
     expect(decision.routingTable).toMatchObject({
-      executors: ['claude', 'codex', 'agy'],
+      executors: ['claude', 'codex'],
       selectedIndex: 1,
     });
     expect(decision.rejected).toEqual(
@@ -225,16 +175,13 @@ describe('TableModelRouter', () => {
 
   it('orders fallbacks by the table and takes one model per executor', async () => {
     const decision = await router().route(profile, undefined, {
-      routing: { source: 'web-app-v1', executors: ['agy', 'claude', 'codex'] },
+      routing: { source: 'web-app-v1', executors: ['claude', 'codex'] },
     });
 
-    expect(decision.selected.model.id).toBe('agy-default');
     // `claude-opus` over `claude-sonnet` because the catalog lists it first: the
     // table picks the executor, the catalog's order picks its model.
-    expect(decision.fallbacks.map((candidate) => candidate.model.id)).toEqual([
-      'claude-opus',
-      'codex-default',
-    ]);
+    expect(decision.selected.model.id).toBe('claude-opus');
+    expect(decision.fallbacks.map((candidate) => candidate.model.id)).toEqual(['codex-default']);
   });
 
   it('rejects an executor the table does not list, naming the table', async () => {
@@ -246,7 +193,7 @@ describe('TableModelRouter', () => {
     expect(decision.fallbacks).toEqual([]);
     expect(decision.rejected).toEqual(
       expect.arrayContaining([
-        { modelId: 'agy-default', reason: expect.stringContaining('web-app-v1') },
+        { modelId: 'claude-opus', reason: expect.stringContaining('web-app-v1') },
       ]),
     );
   });
@@ -289,7 +236,7 @@ describe('TableModelRouter', () => {
     // models exist would be a worse answer than an unordered one.
     const decision = await router().route({ ...profile, taskKind: 'architecture' });
 
-    expect(decision.selected.model.id).toBe('agy-default');
+    expect(decision.selected.model.id).toBe('claude-opus');
     expect(decision.routingTable).toBeUndefined();
   });
 
@@ -345,7 +292,7 @@ describe('TableModelRouter', () => {
 
   it('fails with the table in the message when nothing is eligible', async () => {
     await expect(
-      router().route({ ...profile, allowedProviders: ['agy'] }, undefined, {
+      router().route({ ...profile, allowedProviders: ['claude'] }, undefined, {
         routing: { source: 'web-app-v1', executors: ['codex'] },
       }),
     ).rejects.toThrow(/implementation/);

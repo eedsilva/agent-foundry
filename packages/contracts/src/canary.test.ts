@@ -58,8 +58,8 @@ describe('provider canary contracts', () => {
     expect(
       ProviderProbeSchema.safeParse({
         ...report.probes[0],
-        provider: 'opencode',
-        message: 'OpenCode and the Ollama endpoint are ready.',
+        provider: 'claude',
+        message: 'Claude CLI and its endpoint are ready.',
         capabilities: { ...report.probes[0]!.capabilities, endpointReachable: true },
       }).success,
     ).toBe(true);
