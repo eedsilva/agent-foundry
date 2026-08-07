@@ -136,7 +136,9 @@ nodes:
         instructions: >-
           Produce a schemaVersion 1 declarative browser test plan that asserts this task's acceptance
           check against the running application. Use only relative app paths, supported semantic
-          locators, actions and assertions. Where the task concerns another user's data, assert the
+          locators, actions and assertions. Verify presence or content with assertions, never with
+          clicks: click and fill only interactive controls (buttons, links, inputs) the flow actually
+          operates. Where the task concerns another user's data, assert the
           denial itself: sign in as one account and confirm the other account's rows are not visible.
         inputArtifacts: [prd, plan.current, verification.report]
         outputArtifact: browser-test.plan

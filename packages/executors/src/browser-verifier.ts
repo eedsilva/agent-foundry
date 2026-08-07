@@ -637,9 +637,16 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
     });
     const steps: StepReport[] = [];
     const screenshots: CapturedScreenshot[] = [];
-    let failed = false;
+    // An advisory (active) failure no longer aborts the journey: later steps
+    // keep running so passive signals cover the whole flow and side effects
+    // the database gate depends on still happen (#451). The journey stops for
+    // a passive failure (the app is actually broken) or after two consecutive
+    // advisory failures — each one burns up to the 10s action timeout, so an
+    // unbounded cluster could eat the 60s run budget.
+    let passiveStop = false;
+    let consecutiveAdvisoryFailures = 0;
     for (const [index, step] of plan.steps.entries()) {
-      if (failed) {
+      if (passiveStop || consecutiveAdvisoryFailures >= 2) {
         steps.push({
           stepId: step.id,
           title: step.title,
@@ -657,20 +664,20 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
           await this.executeAssertion(page, assertion, prefixUrl);
         }
         await waitForQuiescence();
-        if (passiveFailureSteps.has(index)) {
-          failed = true;
-        }
+        const passiveFailure = passiveFailureSteps.has(index);
+        if (passiveFailure) passiveStop = true;
+        else consecutiveAdvisoryFailures = 0;
         steps.push({
           stepId: step.id,
           title: step.title,
-          status: failed ? 'failed' : 'passed',
+          status: passiveFailure ? 'failed' : 'passed',
           durationMs: performance.now() - startedAt,
           finalUrl: sanitizeUrl(page.url(), token),
-          ...(failed ? { error: 'Passive browser failure observed.' } : {}),
+          ...(passiveFailure ? { error: 'Passive browser failure observed.' } : {}),
           observations: [],
         });
       } catch (error) {
-        failed = true;
+        consecutiveAdvisoryFailures += 1;
         steps.push({
           stepId: step.id,
           title: step.title,
