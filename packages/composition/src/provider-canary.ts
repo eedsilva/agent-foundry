@@ -19,17 +19,11 @@ import {
   type ValidationCanaryResult,
   type ValidationModelIdentity,
 } from '@agent-foundry/contracts';
-import {
-  AgyCliExecutor,
-  ClaudeCliExecutor,
-  CodexCliExecutor,
-  OpenCodeCliExecutor,
-  createGlmEnvironment,
-} from '@agent-foundry/executors';
+import { ClaudeCliExecutor, CodexCliExecutor } from '@agent-foundry/executors';
 import { markdownCell, publishBaselinePair } from './baseline-publish.js';
 import { PROVIDER_CANARY_FIXTURES } from './provider-canary-fixtures.js';
 
-const PROVIDERS = ['codex', 'claude', 'glm', 'agy'] as const;
+const PROVIDERS = ['codex', 'claude'] as const;
 const SCENARIOS = ['planning', 'greenfield', 'repair'] as const;
 const DEFAULT_TIMEOUT_MS = 600_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
@@ -57,7 +51,7 @@ export interface ProviderCanaryDependencies {
   ): Promise<AgentExecutionResult>;
 }
 
-type ValidationCanaryProvider = 'opencode' | 'claude' | 'codex';
+type ValidationCanaryProvider = 'claude' | 'codex';
 export interface ValidationCanaryDependencies {
   execute(
     provider: ValidationCanaryProvider,
@@ -162,11 +156,12 @@ export async function freezeProviderCanaryReport(
   options: { rename?: typeof rename; rm?: typeof rm } = {},
 ): Promise<void> {
   const report = ProviderCanaryReportSchema.parse(input);
-  if (report.runs.length !== 12) {
-    throw new Error('Provider canary freeze requires exactly twelve runs.');
+  const requiredRuns = PROVIDERS.length * SCENARIOS.length;
+  if (report.runs.length !== requiredRuns) {
+    throw new Error(`Provider canary freeze requires exactly ${requiredRuns} runs.`);
   }
   if (!report.runs.every((run) => run.status === 'passed')) {
-    throw new Error('Provider canary freeze requires twelve passing runs.');
+    throw new Error(`Provider canary freeze requires ${requiredRuns} passing runs.`);
   }
   if (!report.runs.every((run) => run.executedModel)) {
     throw new Error('Provider canary freeze requires a known executed model for every run.');
@@ -230,9 +225,6 @@ function renderProviderCanaryMarkdown(report: ProviderCanaryReport): string {
   const providerNames: Record<ProviderProbe['provider'], string> = {
     codex: 'Codex',
     claude: 'Claude',
-    glm: 'GLM (Claude-compatible)',
-    agy: 'AGY',
-    opencode: 'OpenCode',
   };
   const lines = [
     '# v0.2 real provider canary baseline',
@@ -301,14 +293,11 @@ export function modelsFromEnvironment(
   return {
     codex: firstNonBlank(env.CODEX_CANARY_MODEL, env.CODEX_DEFAULT_MODEL) ?? 'gpt-5.3-codex',
     claude: firstNonBlank(env.CLAUDE_CANARY_MODEL, env.CLAUDE_BALANCED_MODEL) ?? 'sonnet',
-    glm: firstNonBlank(env.GLM_CANARY_MODEL, env.GLM_FAST_MODEL) ?? 'GLM-4.5-Air',
-    agy: firstNonBlank(env.AGY_CANARY_MODEL, env.AGY_DEFAULT_MODEL) ?? 'pro',
   };
 }
 
 export function createValidationCampaignCanaryDependencies(): ValidationCanaryDependencies {
   const executors = {
-    opencode: new OpenCodeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
     claude: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
     codex: new CodexCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, true),
   };
@@ -347,27 +336,16 @@ export async function runValidationCampaignCanary(input: {
 function isValidationCanaryProvider(
   provider: ValidationModelIdentity['provider'],
 ): provider is ValidationCanaryProvider {
-  return provider === 'opencode' || provider === 'claude' || provider === 'codex';
+  return provider === 'claude' || provider === 'codex';
 }
 
 function createProductionProviderCanaryDependencies(
   rootDir: string,
   env: NodeJS.ProcessEnv,
 ): ProviderCanaryDependencies {
-  const executors: Record<
-    ProviderCanaryProvider,
-    ClaudeCliExecutor | CodexCliExecutor | AgyCliExecutor
-  > = {
+  const executors: Record<ProviderCanaryProvider, ClaudeCliExecutor | CodexCliExecutor> = {
     codex: new CodexCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, true),
     claude: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
-    glm: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, {
-      provider: 'glm',
-      environment: createGlmEnvironment(env),
-    }),
-    agy: new AgyCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, {
-      reportConfiguredModel: true,
-      newProject: true,
-    }),
   };
 
   return {
@@ -397,48 +375,10 @@ export async function loadDoctorProbes(
     const parsed = JSON.parse(result.stdout) as { probes?: unknown };
     if (!Array.isArray(parsed.probes)) throw new Error('missing probes');
     const probes = parsed.probes.map((probe) => ProviderProbeSchema.parse(probe));
-    return [...probes, deriveGlmProbe(probes, env)];
+    return probes;
   } catch {
     throw new Error('Provider doctor did not return valid probe JSON.');
   }
-}
-
-function deriveGlmProbe(probes: ProviderProbe[], env: NodeJS.ProcessEnv): ProviderProbe {
-  const claude = probes.find((probe) => probe.provider === 'claude');
-  if (!claude) return missingProbe('glm');
-  if (claude.status === 'unavailable') {
-    return {
-      provider: 'glm',
-      status: 'unavailable',
-      capabilities: claude.capabilities,
-      message: 'GLM Claude-compatible executor is unavailable because the Claude CLI is missing.',
-    };
-  }
-  if (!Object.values(claude.capabilities).every(Boolean)) {
-    return {
-      provider: 'glm',
-      status: 'incompatible',
-      ...(claude.version ? { version: claude.version } : {}),
-      capabilities: claude.capabilities,
-      message: 'Claude CLI is missing a capability required by the GLM executor.',
-    };
-  }
-  if (!env.GLM_API_KEY?.trim()) {
-    return {
-      provider: 'glm',
-      status: 'unauthenticated',
-      ...(claude.version ? { version: claude.version } : {}),
-      capabilities: claude.capabilities,
-      message: 'GLM requires GLM_API_KEY for its Anthropic-compatible endpoint.',
-    };
-  }
-  return {
-    provider: 'glm',
-    status: 'ready',
-    ...(claude.version ? { version: claude.version } : {}),
-    capabilities: claude.capabilities,
-    message: 'GLM is configured through the Claude-compatible endpoint.',
-  };
 }
 
 async function executeCanaryScenario<

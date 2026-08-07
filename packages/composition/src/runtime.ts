@@ -6,9 +6,6 @@ import {
   StaticExecutorRegistry,
   CodexCliExecutor,
   ClaudeCliExecutor,
-  createGlmEnvironment,
-  AgyCliExecutor,
-  OpenCodeCliExecutor,
   WorkspaceVerifier,
   PlaywrightBrowserVerifier,
   NodePreviewRunner,
@@ -306,12 +303,6 @@ export async function createRuntime(
           // reveals it and the check burns a real attempt to learn that (#424).
           new CodexCliExecutor(config.maxCliOutputBytes, Boolean(config.validationCampaignId)),
           new ClaudeCliExecutor(config.maxCliOutputBytes),
-          new ClaudeCliExecutor(config.maxCliOutputBytes, {
-            provider: 'glm',
-            environment: createGlmEnvironment(env),
-          }),
-          new AgyCliExecutor(config.maxCliOutputBytes),
-          new OpenCodeCliExecutor(config.maxCliOutputBytes),
         ]));
   const executionPlane = new LocalExecutionPlane(executors, workspaces);
   const verifier = new WorkspaceVerifier({

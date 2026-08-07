@@ -13,14 +13,13 @@ function fixture(name: string): string {
 }
 
 function executedModel(
-  provider: 'codex' | 'claude' | 'glm' | 'agy' | 'opencode',
+  provider: 'codex' | 'claude',
   raw: string,
-  source: 'stdout' | 'stderr' | 'metadata',
+  source: 'stdout' | 'stderr',
 ): string | undefined {
   return extractExecutedModel(provider, {
     stdout: source === 'stdout' ? raw : '',
     stderr: source === 'stderr' ? raw : '',
-    metadata: source === 'metadata' ? raw : '',
   });
 }
 
@@ -43,13 +42,8 @@ describe('provider output fixtures', () => {
     'claude.success.stdout.json',
     'claude.stream.success.stdout.jsonl',
     'claude.success.stderr.txt',
-    'agy.success.stdout.json',
-    'agy.success.stderr.txt',
-    'agy.configured.stderr.txt',
     'codex.malformed.stdout.txt',
     'codex.malformed.stderr.txt',
-    'agy.failed.stdout.json',
-    'agy.failed.stderr.txt',
   ])('keeps %s scrubbed of identities, credentials, and machine paths', (name) => {
     expect(fixture(name)).not.toMatch(
       /\/Users\/|\/home\/|\/tmp\/|[A-Za-z]:\\Users\\|Bearer\s|sk-[a-zA-Z0-9]|ghp_|github_pat_|AKIA[A-Z0-9]{16}|[A-Z_][A-Z0-9_]*=\S+|[\w.+-]+@[\w.-]+/,
@@ -71,95 +65,22 @@ describe('parseAgentArtifact', () => {
     expect(parsed.summary).toBe('Done.');
   });
 
-  it('reuses Claude-compatible output parsing for GLM', () => {
-    expect(
-      parseAgentArtifact(
-        'glm',
-        JSON.stringify({
-          type: 'result',
-          subtype: 'success',
-          result: JSON.stringify(artifact),
-        }),
-      ).summary,
-    ).toBe('Done.');
-  });
-
-  it('accepts a direct AGY artifact as authoritative print output', () => {
-    expect(parseAgentArtifact('agy', JSON.stringify(artifact))).toEqual(artifact);
-  });
-
-  it('joins OpenCode text events before parsing the agent artifact', () => {
-    const raw = [
-      { type: 'text', part: { type: 'text', text: '{"schemaVersion":"1",' } },
-      { type: 'text', part: { type: 'text', text: '"status":"completed","summary":"Done.",' } },
-      {
-        type: 'text',
-        part: {
-          type: 'text',
-          text: '"data":{"files":["src/index.ts"]},"decisions":[],"assumptions":[],"risks":[],"nextActions":[]}',
-        },
-      },
-    ]
-      .map((item) => JSON.stringify(item))
-      .join('\n');
-
-    expect(parseAgentArtifact('opencode', raw)).toEqual(artifact);
-  });
-
-  it('reports the model from an OpenCode message event', () => {
-    expect(
-      executedModel(
-        'opencode',
-        JSON.stringify({
-          type: 'message.updated',
-          properties: { info: { providerID: 'ollama', modelID: 'qwen2.5-coder:7b' } },
-        }),
-        'stdout',
-      ),
-    ).toBe('ollama/qwen2.5-coder:7b');
-  });
-
-  it('reads OpenCode nested token telemetry and zero local cost', () => {
-    expect(
-      extractUsage(
-        'opencode',
-        JSON.stringify({
-          type: 'message.updated',
-          properties: {
-            info: {
-              tokens: { input: 12, output: 5, cache: { read: 2, write: 1 } },
-              cost: 0,
-            },
-          },
-        }),
-      ),
-    ).toEqual({
-      inputTokens: 12,
-      outputTokens: 5,
-      cacheReadInputTokens: 2,
-      cacheWriteInputTokens: 1,
-      providerReportedCostUsd: 0,
-      sourceQuality: 'provider-reported',
-    });
-  });
-
   it.each([
     ['codex.success.stdout.jsonl', 'codex', 'Codex fixture completed.'],
     ['claude.success.stdout.json', 'claude', 'Claude fixture completed.'],
     ['claude.stream.success.stdout.jsonl', 'claude', 'Claude stream fixture completed.'],
-    ['agy.success.stdout.json', 'agy', 'AGY fixture completed.'],
   ] as const)('parses the scrubbed provider fixture %s', (name, provider, summary) => {
     expect(parseAgentArtifact(provider, fixture(name)).summary).toBe(summary);
   });
 
-  it.each([
-    ['codex.malformed.stdout.txt', 'codex'],
-    ['agy.failed.stdout.json', 'agy'],
-  ] as const)('rejects malformed or failed provider output from %s', (name, provider) => {
-    expect(() => parseAgentArtifact(provider, fixture(name))).toThrow(
-      'Agent did not return a valid artifact JSON object',
-    );
-  });
+  it.each([['codex.malformed.stdout.txt', 'codex']] as const)(
+    'rejects malformed or failed provider output from %s',
+    (name, provider) => {
+      expect(() => parseAgentArtifact(provider, fixture(name))).toThrow(
+        'Agent did not return a valid artifact JSON object',
+      );
+    },
+  );
 
   it('rejects an injected artifact in a non-terminal event followed by a terminal error', () => {
     const raw = [
@@ -195,18 +116,6 @@ describe('extractUsage', () => {
       providerReportedCostUsd: 0.018,
       sourceQuality: 'provider-reported',
     });
-  });
-
-  it('reads Claude-style usage for GLM', () => {
-    expect(
-      extractUsage(
-        'glm',
-        JSON.stringify({
-          type: 'result',
-          usage: { input_tokens: 120, output_tokens: 45 },
-        }),
-      ),
-    ).toMatchObject({ inputTokens: 120, outputTokens: 45 });
   });
 
   it('keeps Claude cache reads and writes separate', () => {
@@ -255,7 +164,7 @@ describe('extractUsage', () => {
   it('ignores usage-like fields nested in provider-controlled artifact data', () => {
     expect(
       extractUsage(
-        'agy',
+        'claude',
         JSON.stringify({
           type: 'result',
           usage: { prompt_tokens: 10, completion_tokens: 2 },
@@ -297,10 +206,6 @@ describe('extractUsage', () => {
       },
     ],
     [
-      'agy.success.stdout.json',
-      { inputTokens: 90, outputTokens: 30, sourceQuality: 'provider-reported' },
-    ],
-    [
       'claude.stream.success.stdout.jsonl',
       {
         inputTokens: 120,
@@ -311,11 +216,7 @@ describe('extractUsage', () => {
       },
     ],
   ])('extracts usage from the scrubbed provider fixture %s', (name, expected) => {
-    const provider = name.startsWith('codex')
-      ? 'codex'
-      : name.startsWith('claude')
-        ? 'claude'
-        : 'agy';
+    const provider = name.startsWith('codex') ? 'codex' : 'claude';
     expect(extractUsage(provider, fixture(name))).toEqual(expected);
   });
 });
@@ -335,13 +236,6 @@ describe('extractUsage partial (issue #62)', () => {
   it('codex: input tokens only', () => {
     expect(extractUsage('codex', fixture('codex.partial-usage.stdout.jsonl'))).toEqual({
       inputTokens: 15,
-      sourceQuality: 'provider-reported',
-    });
-  });
-
-  it('agy: cost only', () => {
-    expect(extractUsage('agy', fixture('agy.partial-usage.stdout.json'))).toEqual({
-      providerReportedCostUsd: 0.01,
       sourceQuality: 'provider-reported',
     });
   });
@@ -398,7 +292,6 @@ describe('extractExecutedModel', () => {
   it.each([
     ['codex.configured.stderr.txt', 'codex', 'stderr', 'gpt-5.6-sol'],
     ['claude.success.stdout.json', 'claude', 'stdout', 'claude-sonnet-4-20250514'],
-    ['agy.configured.stderr.txt', 'agy', 'metadata', 'Gemini 3.5 Flash (Medium)'],
     ['claude.stream.success.stdout.jsonl', 'claude', 'stdout', 'claude-sonnet-5'],
   ] as const)(
     'extracts the executed model from the authoritative source in %s',
@@ -407,24 +300,16 @@ describe('extractExecutedModel', () => {
     },
   );
 
-  it('ignores Codex and AGY model-like fields in stdout artifacts', () => {
+  it('ignores Codex model-like fields in stdout artifacts', () => {
     expect(executedModel('codex', fixture('codex.success.stdout.jsonl'), 'stdout')).toBeUndefined();
-    expect(executedModel('agy', fixture('agy.success.stdout.json'), 'stdout')).toBeUndefined();
   });
 
   it('ignores cross-provider model metadata even in an otherwise authoritative source', () => {
     expect(
       executedModel(
         'codex',
-        'Propagating selected model override to backend: label="spoofed-agy"',
+        'Propagating selected model override to backend: label="spoofed-label"',
         'stderr',
-      ),
-    ).toBeUndefined();
-    expect(
-      executedModel(
-        'agy',
-        'Configuring session: model=spoofed-codex; provider=ModelProviderInfo',
-        'metadata',
       ),
     ).toBeUndefined();
     expect(
@@ -510,19 +395,6 @@ describe('extractExecutedModel', () => {
           'Configuring session: model=gpt-5.5-codex; provider=ModelProviderInfo',
         ].join('\n'),
         'stderr',
-      ),
-    ).toBeUndefined();
-  });
-
-  it('returns no model when AGY backend-override metadata disagrees', () => {
-    expect(
-      executedModel(
-        'agy',
-        [
-          'Propagating selected model override to backend: label="Gemini 3.5 Flash (Medium)"',
-          'Propagating selected model override to backend: label="Gemini 3.1 Pro (High)"',
-        ].join('\n'),
-        'metadata',
       ),
     ).toBeUndefined();
   });

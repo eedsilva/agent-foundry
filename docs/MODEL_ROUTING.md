@@ -26,7 +26,7 @@ interface TaskProfile {
     cost: number;
     reliability: number;
   };
-  allowedProviders?: Array<'codex' | 'claude' | 'agy'>;
+  allowedProviders?: Array<'codex' | 'claude'>;
   preferredTags: string[];
 }
 ```
@@ -126,9 +126,9 @@ ordenada de executores**, e a tentativa 1 pega a cabeça da lista:
 ```yaml
 routing:
   - taskKind: implementation
-    executors: [claude, codex, agy]
+    executors: [claude, codex]
   - taskKind: repair
-    executors: [codex, claude, agy]
+    executors: [codex, claude]
 ```
 
 - A tabela escolhe o **executor**; a ordem do `models/catalog.yaml` escolhe o **modelo** daquele

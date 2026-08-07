@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -8,7 +8,6 @@ import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-tr
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import type { AgentExecutionRequest, Provider } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
-import { ClaudeCliExecutor } from './claude-executor.js';
 
 function fixture(name: string): string {
   return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -23,20 +22,13 @@ class FixtureExecutor extends BaseCliExecutor {
 
   constructor(
     maxOutputBytes: number,
-    private readonly metadataFile?: string,
     readonly provider: Provider = 'codex',
-    private readonly metadataDirectory?: string,
   ) {
     super(maxOutputBytes);
   }
 
   protected async invocation(): Promise<CliInvocation> {
-    return {
-      command: this.command,
-      args: [],
-      ...(this.metadataFile ? { metadataFile: this.metadataFile } : {}),
-      ...(this.metadataDirectory ? { metadataDirectory: this.metadataDirectory } : {}),
-    };
+    return { command: this.command, args: [] };
   }
 
   protected override async responseText(
@@ -169,56 +161,6 @@ describe('BaseCliExecutor metadata', () => {
     expect(result.executedModel).toBeUndefined();
   });
 
-  it('reads bounded provider metadata and deletes the raw file after success', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'executor-metadata-test-'));
-    const metadataFile = join(directory, 'provider.metadata.log');
-    await writeFile(
-      metadataFile,
-      'Propagating selected model override to backend: label="Gemini 3.5 Flash (Medium)"',
-    );
-    execaMock.mockResolvedValueOnce({
-      exitCode: 0,
-      stderr: '',
-      stdout: JSON.stringify({
-        schemaVersion: '1',
-        status: 'completed',
-        summary: 'Done.',
-        data: {},
-        decisions: [],
-        assumptions: [],
-        risks: [],
-        nextActions: [],
-      }),
-    });
-
-    try {
-      const result = await new FixtureExecutor(1_000_000, metadataFile, 'agy', directory).execute(
-        request,
-      );
-
-      expect(result.executedModel).toBe('Gemini 3.5 Flash (Medium)');
-      await expect(access(directory)).rejects.toThrow();
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it('deletes the raw metadata file after a provider failure', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'executor-metadata-test-'));
-    const metadataFile = join(directory, 'provider.metadata.log');
-    await writeFile(metadataFile, 'raw provider diagnostics');
-    execaMock.mockResolvedValueOnce({ exitCode: 1, stderr: 'failed', stdout: '' });
-
-    try {
-      await expect(
-        new FixtureExecutor(1_000_000, metadataFile, 'codex', directory).execute(request),
-      ).rejects.toThrow();
-      await expect(access(directory)).rejects.toThrow();
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
   it('closes inherited output pipes when a CLI outlives its hard deadline', async () => {
     vi.useFakeTimers();
     const stdoutDestroy = vi.fn();
@@ -229,15 +171,10 @@ describe('BaseCliExecutor metadata', () => {
       stderr: { destroy: stderrDestroy },
       kill,
     });
-    const directory = await mkdtemp(join(tmpdir(), 'executor-metadata-test-'));
-    const metadataFile = join(directory, 'provider.metadata.log');
-    await writeFile(metadataFile, 'raw provider diagnostics');
     execaMock.mockReturnValueOnce(neverSettles);
 
     try {
-      const execution = new FixtureExecutor(1_000_000, metadataFile, 'codex', directory).execute(
-        request,
-      );
+      const execution = new FixtureExecutor(1_000_000).execute(request);
       const rejection = expect(execution).rejects.toThrow(/hard deadline/i);
       await vi.advanceTimersByTimeAsync(request.timeoutMs + 5_000);
 
@@ -245,10 +182,8 @@ describe('BaseCliExecutor metadata', () => {
       expect(kill).toHaveBeenCalledWith('SIGKILL');
       expect(stdoutDestroy).toHaveBeenCalledOnce();
       expect(stderrDestroy).toHaveBeenCalledOnce();
-      await expect(access(directory)).rejects.toThrow();
     } finally {
       vi.useRealTimers();
-      await rm(directory, { recursive: true, force: true });
     }
   });
 });
@@ -275,7 +210,7 @@ describe('BaseCliExecutor rate limit (issue #62)', () => {
   });
 
   it('keeps a rate limit reported with a non-zero exit in health()', async () => {
-    const executor = new FixtureExecutor(1_000_000, undefined, 'claude');
+    const executor = new FixtureExecutor(1_000_000, 'claude');
     execaMock.mockResolvedValueOnce({
       exitCode: 1,
       stderr: 'rate limited',
@@ -290,7 +225,7 @@ describe('BaseCliExecutor rate limit (issue #62)', () => {
   });
 
   it('keeps a rate limit reported with an error artifact in health()', async () => {
-    const executor = new RawOutputFixtureExecutor(1_000_000, undefined, 'claude');
+    const executor = new RawOutputFixtureExecutor(1_000_000, 'claude');
     execaMock.mockResolvedValueOnce({
       exitCode: 0,
       stderr: '',
@@ -475,21 +410,6 @@ describe('BaseCliExecutor environment isolation', () => {
     expect(options.env.USER).toBe('control-plane-account');
     expect(options.extendEnv).toBe(false);
   });
-
-  it('does not advertise GLM as available without its endpoint credential', async () => {
-    const callsBeforeHealthCheck = execaMock.mock.calls.length;
-    const health = await new ClaudeCliExecutor(1_000_000, {
-      provider: 'glm',
-      environment: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' },
-    }).health();
-
-    expect(health).toMatchObject({
-      provider: 'glm',
-      available: false,
-      message: 'GLM requires GLM_API_KEY for its Anthropic-compatible endpoint.',
-    });
-    expect(execaMock.mock.calls).toHaveLength(callsBeforeHealthCheck);
-  });
 });
 
 describe('BaseCliExecutor failure cause (issue #286)', () => {
@@ -500,9 +420,7 @@ describe('BaseCliExecutor failure cause (issue #286)', () => {
       stderr: '',
     });
 
-    await expect(
-      new FixtureExecutor(1_000_000, undefined, 'claude').execute(request),
-    ).rejects.toThrowError(
+    await expect(new FixtureExecutor(1_000_000, 'claude').execute(request)).rejects.toThrowError(
       expect.objectContaining({
         name: 'ProviderAuthenticationError',
         message: 'claude CLI exited with code 1: Not logged in · Please run /login',
@@ -524,9 +442,7 @@ describe('BaseCliExecutor failure cause (issue #286)', () => {
 
     // `name` is the discriminator: the subclass overrides it, so asserting the
     // base name is also asserting this did not become a ProviderAuthenticationError.
-    await expect(
-      new FixtureExecutor(1_000_000, undefined, 'claude').execute(request),
-    ).rejects.toThrowError(
+    await expect(new FixtureExecutor(1_000_000, 'claude').execute(request)).rejects.toThrowError(
       expect.objectContaining({
         name: 'ExecutionError',
         message: 'claude CLI exited with code 1: The tool call failed.',

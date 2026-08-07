@@ -1,12 +1,10 @@
-import { readFile, readdir, rm } from 'node:fs/promises';
+import { readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
-import { AgyCliExecutor } from './agy-executor.js';
 import type { CliInvocation } from './base-cli-executor.js';
-import { ClaudeCliExecutor, createGlmEnvironment } from './claude-executor.js';
+import { ClaudeCliExecutor } from './claude-executor.js';
 import { CodexCliExecutor } from './codex-executor.js';
-import { OpenCodeCliExecutor } from './opencode-executor.js';
 
 class InspectableCodexExecutor extends CodexCliExecutor {
   inspect(request: AgentExecutionRequest): Promise<CliInvocation> {
@@ -15,24 +13,6 @@ class InspectableCodexExecutor extends CodexCliExecutor {
 }
 
 class InspectableClaudeExecutor extends ClaudeCliExecutor {
-  inspect(request: AgentExecutionRequest): Promise<CliInvocation> {
-    return this.invocation(request);
-  }
-}
-
-class InspectableGlmExecutor extends ClaudeCliExecutor {
-  inspect(request: AgentExecutionRequest): Promise<CliInvocation> {
-    return this.invocation(request);
-  }
-}
-
-class InspectableAgyExecutor extends AgyCliExecutor {
-  inspect(request: AgentExecutionRequest): Promise<CliInvocation> {
-    return this.invocation(request);
-  }
-}
-
-class InspectableOpenCodeExecutor extends OpenCodeCliExecutor {
   inspect(request: AgentExecutionRequest): Promise<CliInvocation> {
     return this.invocation(request);
   }
@@ -156,145 +136,6 @@ describe('CLI executor contracts', () => {
     };
     expect(schema.properties.data).not.toHaveProperty('prefixItems');
     expect(schema.properties.data.items).toEqual({ type: 'string' });
-  });
-
-  it('reuses Claude invocation with GLM endpoint and auth overrides', async () => {
-    const invocation = await new InspectableGlmExecutor(1_000_000, {
-      provider: 'glm',
-      environment: createGlmEnvironment({ GLM_API_KEY: 'glm-test-token' }),
-    }).inspect(request({ provider: 'glm', model: 'GLM-4.5-Air', mutatesWorkspace: false }));
-
-    expect(invocation.command).toBe('claude');
-    expect(invocation.environment).toEqual({
-      ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
-      ANTHROPIC_AUTH_TOKEN: 'glm-test-token',
-    });
-    expect(invocation.args).toEqual(expect.arrayContaining(['--model', 'GLM-4.5-Air', 'plan']));
-  });
-
-  it('uses sandbox, accept-edits, model, and bounded print mode for AGY', async () => {
-    const invocation = await new InspectableAgyExecutor(1_000_000).inspect(
-      request({ provider: 'agy', model: 'example-agy-model', timeoutMs: 90_000 }),
-    );
-    expect(invocation.command).toBe('agy');
-    expect(invocation.args).not.toContain('--new-project');
-    expect(invocation.args).toEqual(
-      expect.arrayContaining([
-        '--sandbox',
-        '--mode',
-        'accept-edits',
-        '--print-timeout',
-        '90s',
-        '--model',
-        'example-agy-model',
-        '--print',
-      ]),
-    );
-    expect(invocation.args.at(-1)).toBe(
-      'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
-    );
-  });
-
-  it('uses Ollama through OpenCode with plan/build permissions', async () => {
-    const invocation = await new InspectableOpenCodeExecutor(1_000_000).inspect(
-      request({ provider: 'opencode', model: 'qwen2.5-coder:7b' }),
-    );
-
-    try {
-      expect(invocation).toMatchObject({
-        command: 'opencode',
-        args: [
-          'run',
-          '--format',
-          'json',
-          '--dir',
-          '/tmp/workspace',
-          '--model',
-          'ollama/qwen2.5-coder:7b',
-          '--agent',
-          'build',
-          'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
-        ],
-      });
-      const config = JSON.parse(
-        await readFile(invocation.environment?.OPENCODE_CONFIG ?? '', 'utf8'),
-      ) as {
-        provider: { ollama: { options: { baseURL: string } } };
-        permission: Record<string, string>;
-      };
-      expect(config.provider.ollama.options.baseURL).toBe('http://127.0.0.1:11434/v1');
-      expect(config.permission).toMatchObject({
-        '*': 'deny',
-        read: 'allow',
-        glob: 'allow',
-        grep: 'allow',
-        external_directory: 'deny',
-        edit: 'allow',
-      });
-    } finally {
-      if (invocation.outputDirectory) {
-        await rm(invocation.outputDirectory, { force: true, recursive: true });
-      }
-    }
-
-    const readOnly = await new InspectableOpenCodeExecutor(1_000_000).inspect(
-      request({ provider: 'opencode', model: 'ollama/llama3.2', mutatesWorkspace: false }),
-    );
-    try {
-      expect(readOnly.args).toEqual(
-        expect.arrayContaining(['--model', 'ollama/llama3.2', '--agent', 'plan']),
-      );
-      const config = JSON.parse(
-        await readFile(readOnly.environment?.OPENCODE_CONFIG ?? '', 'utf8'),
-      ) as { permission: Record<string, string> };
-      expect(config.permission).not.toHaveProperty('edit');
-    } finally {
-      if (readOnly.outputDirectory) {
-        await rm(readOnly.outputDirectory, { force: true, recursive: true });
-      }
-    }
-  });
-
-  it('creates an isolated AGY project only for explicit canary evidence runs', async () => {
-    const invocation = await new InspectableAgyExecutor(1_000_000, {
-      newProject: true,
-    }).inspect(request({ provider: 'agy' }));
-
-    expect(invocation.args).toContain('--new-project');
-  });
-
-  it('refuses an AGY output schema that exceeds the bounded prompt contract', async () => {
-    const before = await temporaryEntries('agent-foundry-agy-metadata-');
-    await expect(
-      new InspectableAgyExecutor(1_000_000).inspect(
-        request({
-          provider: 'agy',
-          outputSchema: { description: 'x'.repeat(32_768) },
-        }),
-      ),
-    ).rejects.toThrow(/output schema exceeds/i);
-    expect(await temporaryEntries('agent-foundry-agy-metadata-')).toEqual(before);
-  });
-
-  it('routes AGY provider metadata to its per-run file only for explicit evidence runs', async () => {
-    const invocation = await new InspectableAgyExecutor(1_000_000, {
-      reportConfiguredModel: true,
-    }).inspect(request({ provider: 'agy', model: 'Gemini 3.5 Flash (Medium)' }));
-
-    try {
-      expect(invocation.metadataFile).toMatch(
-        /^\/.*\/agent-foundry-agy-metadata-[^/]+\/agy\.metadata\.log$/,
-      );
-      expect(invocation.metadataDirectory).toBe(
-        invocation.metadataFile?.slice(0, -'/agy.metadata.log'.length),
-      );
-      expect(invocation.metadataFile?.startsWith('/tmp/workspace/')).toBe(false);
-      expect(invocation.args).toContain(invocation.metadataFile);
-    } finally {
-      if (invocation.metadataDirectory) {
-        await rm(invocation.metadataDirectory, { force: true, recursive: true });
-      }
-    }
   });
 });
 

@@ -41,7 +41,7 @@ describe('YamlWorkflowRepository', () => {
       'smoke',
     ]);
     expect(workflow.routing?.find((entry) => entry.taskKind === 'verification')?.executors).toEqual(
-      ['codex', 'claude', 'glm', 'agy', 'opencode'],
+      ['codex', 'claude'],
     );
   });
 

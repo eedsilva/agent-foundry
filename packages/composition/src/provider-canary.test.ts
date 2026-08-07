@@ -22,13 +22,12 @@ import {
 import {
   CanaryOptInError,
   freezeProviderCanaryReport,
-  loadDoctorProbes,
   modelsFromEnvironment,
   runProviderCanaries,
   type ProviderCanaryDependencies,
 } from './provider-canary.js';
 
-const providers = ['codex', 'claude', 'glm', 'agy'] as const;
+const providers = ['codex', 'claude'] as const;
 
 describe('provider canary runner', () => {
   it('refuses before probing or invoking a provider without the explicit opt-in', async () => {
@@ -84,33 +83,8 @@ describe('provider canary runner', () => {
         CODEX_DEFAULT_MODEL: '\t',
         CLAUDE_CANARY_MODEL: '',
         CLAUDE_BALANCED_MODEL: '  ',
-        GLM_CANARY_MODEL: '',
-        GLM_FAST_MODEL: '  ',
-        AGY_CANARY_MODEL: '\n',
-        AGY_DEFAULT_MODEL: '',
       }),
-    ).toEqual({ codex: 'gpt-5.3-codex', claude: 'sonnet', glm: 'GLM-4.5-Air', agy: 'pro' });
-  });
-
-  it('derives a GLM probe from Claude CLI capabilities and an explicit GLM key', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'agent-foundry-doctor-probe-'));
-    try {
-      await mkdir(join(root, 'scripts'), { recursive: true });
-      await writeFile(
-        join(root, 'scripts', 'doctor.mjs'),
-        `console.log(JSON.stringify({ probes: [{ provider: 'claude', status: 'unauthenticated', version: '2.1.207', capabilities: { nonInteractive: true, modelSelection: true, sandbox: true }, message: 'Claude is not authenticated.' }] }));\n`,
-      );
-
-      const probes = await loadDoctorProbes(root, { GLM_API_KEY: 'test-key' });
-
-      expect(probes.find((probe) => probe.provider === 'glm')).toMatchObject({
-        provider: 'glm',
-        status: 'ready',
-        version: '2.1.207',
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    ).toEqual({ codex: 'gpt-5.3-codex', claude: 'sonnet' });
   });
 
   it('records an explicit skipped run for every scenario of an unavailable provider', async () => {
@@ -137,12 +111,12 @@ describe('provider canary runner', () => {
 
     expect(invoked).toBe(false);
     expect(outcome.exitCode).toBe(1);
-    expect(outcome.report.runs).toHaveLength(12);
+    expect(outcome.report.runs).toHaveLength(6);
     expect(outcome.report.runs.every((run) => run.status === 'skipped')).toBe(true);
     expect(outcome.report.runs.every((run) => run.skipReason?.includes('unavailable'))).toBe(true);
   });
 
-  it('runs the twelve provider/scenario pairs serially in isolated temporary repositories', async () => {
+  it('runs the six provider/scenario pairs serially in isolated temporary repositories', async () => {
     const workspaces: string[] = [];
     const timeouts: number[] = [];
     const prompts: string[] = [];
@@ -170,12 +144,12 @@ describe('provider canary runner', () => {
     });
 
     expect(outcome.exitCode).toBe(0);
-    expect(outcome.report.runs).toHaveLength(12);
+    expect(outcome.report.runs).toHaveLength(6);
     expect(outcome.report.runs.every((run) => run.status === 'passed')).toBe(true);
     expect(maximumActive).toBe(1);
-    expect(new Set(workspaces).size).toBe(12);
+    expect(new Set(workspaces).size).toBe(6);
     expect(new Set(timeouts)).toEqual(new Set([600_000]));
-    expect(prompts).toHaveLength(12);
+    expect(prompts).toHaveLength(6);
     expect(prompts.every((prompt) => !/run node --test/i.test(prompt))).toBe(true);
     expect(
       prompts
@@ -433,7 +407,7 @@ describe('provider canary runner', () => {
     });
 
     expect(outcome.exitCode).toBe(1);
-    for (const provider of ['claude', 'agy'] as const) {
+    for (const provider of ['claude'] as const) {
       const repair = outcome.report.runs.find(
         (run) => run.provider === provider && run.scenario === 'repair',
       );
@@ -547,7 +521,7 @@ describe('provider canary runner', () => {
     });
 
     expect(outcome.exitCode).toBe(1);
-    expect(workspaces).toHaveLength(12);
+    expect(workspaces).toHaveLength(6);
     await expectAllRemoved(workspaces);
   });
 
@@ -582,13 +556,13 @@ describe('provider canary runner', () => {
       dependencies: fakeDependencies(async (_provider, request) => {
         await applySuccessfulMutation(request);
         const result = successfulResult(request);
-        if (request.stepId === 'agy-planning') result.output.status = 'blocked';
+        if (request.stepId === 'claude-planning') result.output.status = 'blocked';
         return result;
       }),
     });
 
     const blocked = outcome.report.runs.find(
-      (run) => run.provider === 'agy' && run.scenario === 'planning',
+      (run) => run.provider === 'claude' && run.scenario === 'planning',
     );
     expect(outcome.exitCode).toBe(1);
     expect(blocked?.status).toBe('failed');
@@ -619,17 +593,17 @@ describe('provider canary runner', () => {
 });
 
 describe('provider canary freeze', () => {
-  it('refuses any report without exactly twelve passing runs and known executed models', async () => {
+  it('refuses any report without exactly six passing runs and known executed models', async () => {
     const outcome = await successfulOutcome();
     const root = await mkdtemp(join(tmpdir(), 'agent-foundry-freeze-test-'));
 
     try {
       await expect(
         freezeProviderCanaryReport(
-          { ...outcome.report, runs: outcome.report.runs.slice(0, 8) },
+          { ...outcome.report, runs: outcome.report.runs.slice(0, 4) },
           root,
         ),
-      ).rejects.toThrow(/exactly twelve/i);
+      ).rejects.toThrow(/exactly 6 runs/i);
       await expect(
         freezeProviderCanaryReport(
           {
@@ -727,7 +701,7 @@ describe('provider canary freeze', () => {
     try {
       await expect(
         freezeProviderCanaryReport(
-          { ...outcome.report, probes: outcome.report.probes.slice(0, 2) },
+          { ...outcome.report, probes: outcome.report.probes.slice(0, 1) },
           root,
         ),
       ).rejects.toThrow(/probe/i);
@@ -787,7 +761,7 @@ describe('provider canary freeze', () => {
     }
   });
 
-  it('freezes a strict complete twelve-run matrix', async () => {
+  it('freezes a strict complete six-run matrix', async () => {
     const outcome = await successfulOutcome();
     const root = await mkdtemp(join(tmpdir(), 'agent-foundry-freeze-test-'));
     try {
@@ -898,7 +872,7 @@ function readyProbes(): ProviderProbe[] {
 }
 
 function selectedModels(): Record<ProviderCanaryProvider, string> {
-  return { codex: 'codex-model', claude: 'claude-model', glm: 'glm-model', agy: 'agy-model' };
+  return { codex: 'codex-model', claude: 'claude-model' };
 }
 
 function optedInEnvironment(): NodeJS.ProcessEnv {

@@ -267,7 +267,7 @@ describe('ProjectVersion recording hook (#40)', () => {
       providerHealth: new Map([['codex', health]]),
       // The fixture declares no table of its own, so the engine's table answers
       // and the constraint records that it did (#326).
-      routing: { source: 'default', executors: ['claude', 'glm', 'codex', 'agy'] },
+      routing: { source: 'default', executors: ['claude', 'codex'] },
     });
   });
 

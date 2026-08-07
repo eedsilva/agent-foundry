@@ -24,10 +24,7 @@ export function parseAgentArtifact(provider: Provider, raw: string): AgentArtifa
 function authoritativeArtifactCandidates(provider: Provider, raw: string): unknown[] {
   const cleaned = stripAnsi(raw).trim();
   const whole = tryParse(cleaned);
-  if (
-    (provider === 'codex' || provider === 'agy') &&
-    AgentArtifactSchema.safeParse(whole).success
-  ) {
+  if (provider === 'codex' && AgentArtifactSchema.safeParse(whole).success) {
     return [whole];
   }
 
@@ -51,28 +48,9 @@ function authoritativeArtifactCandidates(provider: Provider, raw: string): unkno
     return messages.length > 0 ? [messages.at(-1)] : [];
   }
 
-  if (provider === 'opencode') {
-    const text = documents
-      .flatMap((document) => {
-        if (document === null || typeof document !== 'object' || Array.isArray(document)) return [];
-        const record = document as Record<string, unknown>;
-        const properties = record.properties;
-        const propertyRecord =
-          properties !== null && typeof properties === 'object' && !Array.isArray(properties)
-            ? (properties as Record<string, unknown>)
-            : record;
-        const part = propertyRecord.part;
-        if (part === null || typeof part !== 'object' || Array.isArray(part)) return [];
-        const value = (part as Record<string, unknown>).text;
-        return typeof value === 'string' ? [value] : [];
-      })
-      .join('');
-    return text ? [text] : [];
-  }
-
   const terminal = terminalResult(documents);
   if (!terminal || isFailedResult(terminal)) return [];
-  if (provider === 'claude' || provider === 'glm') {
+  if (provider === 'claude') {
     return [terminal.structured_output ?? terminal.result];
   }
   return [terminal.output ?? terminal.result];
@@ -183,9 +161,9 @@ export function extractCliFailure(
   provider: Provider,
   stdout: string,
 ): { message: string; authFailure: boolean } | undefined {
-  // ponytail: Claude only — codex and agy emit no structured terminal failure
-  // record, so they keep the bare exit code. Add a branch when one gains it.
-  if (provider !== 'claude' && provider !== 'glm') return undefined;
+  // ponytail: Claude only — codex emits no structured terminal failure
+  // record, so it keeps the bare exit code. Add a branch when it gains one.
+  if (provider !== 'claude') return undefined;
 
   const terminal = terminalResult(providerDocuments(stdout));
   if (!terminal || !isFailedResult(terminal)) return undefined;
@@ -196,32 +174,13 @@ export function extractCliFailure(
 
 export function extractExecutedModel(
   provider: Provider,
-  sources: { stdout: string; stderr: string; metadata: string },
+  sources: { stdout: string; stderr: string },
 ): string | undefined {
   if (provider === 'codex') return extractSingletonCodexModel(sources.stderr);
-  if (provider === 'agy') return extractSingletonAgyModel(sources.metadata);
-  if (provider === 'opencode') return extractSingletonOpenCodeModel(sources.stdout);
-  if (provider !== 'claude' && provider !== 'glm') return undefined;
+  if (provider !== 'claude') return undefined;
 
   const documents = providerDocuments(sources.stdout);
   return extractSingletonClaudeModel(documents);
-}
-
-function extractSingletonOpenCodeModel(raw: string): string | undefined {
-  const models = new Set<string>();
-  for (const document of providerDocuments(raw)) {
-    if (document === null || typeof document !== 'object' || Array.isArray(document)) continue;
-    const properties = (document as Record<string, unknown>).properties;
-    if (properties === null || typeof properties !== 'object' || Array.isArray(properties))
-      continue;
-    const info = (properties as Record<string, unknown>).info;
-    if (info === null || typeof info !== 'object' || Array.isArray(info)) continue;
-    const record = info as Record<string, unknown>;
-    const provider = stringFrom(record, ['providerID', 'providerId']);
-    const model = stringFrom(record, ['modelID', 'modelId']);
-    if (provider && model) models.add(`${provider}/${model}`);
-  }
-  return models.size === 1 ? models.values().next().value : undefined;
 }
 
 function extractSingletonCodexModel(raw: string): string | undefined {
@@ -231,16 +190,6 @@ function extractSingletonCodexModel(raw: string): string | undefined {
       .filter((model): model is string => Boolean(model)),
   );
   if (codexConfiguredModels.size === 1) return codexConfiguredModels.values().next().value;
-  return undefined;
-}
-
-function extractSingletonAgyModel(raw: string): string | undefined {
-  const agyBackendModels = new Set(
-    [...raw.matchAll(/Propagating selected model override to backend:\s+label="([^"\r\n]+)"/g)]
-      .map((match) => match[1]?.trim())
-      .filter((model): model is string => Boolean(model)),
-  );
-  if (agyBackendModels.size === 1) return agyBackendModels.values().next().value;
   return undefined;
 }
 
@@ -300,50 +249,14 @@ function collectProviderUsage(
   const type = typeof record.type === 'string' ? record.type : '';
   const recognized =
     (provider === 'codex' && (type === 'turn.completed' || type === 'token_count')) ||
-    ((provider === 'claude' || provider === 'glm') && type === 'result') ||
-    (provider === 'agy' && type === 'result') ||
-    (provider === 'opencode' && type === 'message.updated');
+    (provider === 'claude' && type === 'result');
   if (!recognized) return;
 
   const usage = record.usage;
   if (usage !== null && typeof usage === 'object' && !Array.isArray(usage)) {
     collectUsage(usage as Record<string, unknown>, accumulator);
   }
-  if (provider === 'claude' || provider === 'glm') collectUsage(record, accumulator);
-  if (provider === 'opencode') {
-    const properties = record.properties;
-    if (properties !== null && typeof properties === 'object' && !Array.isArray(properties)) {
-      const info = (properties as Record<string, unknown>).info;
-      if (info !== null && typeof info === 'object' && !Array.isArray(info)) {
-        const infoRecord = info as Record<string, unknown>;
-        const tokens = infoRecord.tokens;
-        if (tokens !== null && typeof tokens === 'object' && !Array.isArray(tokens)) {
-          const tokenRecord = tokens as Record<string, unknown>;
-          const cache = tokenRecord.cache;
-          const cacheRecord =
-            cache !== null && typeof cache === 'object' && !Array.isArray(cache)
-              ? (cache as Record<string, unknown>)
-              : undefined;
-          collectUsage(
-            {
-              inputTokens: tokenRecord.input,
-              outputTokens: tokenRecord.output,
-              ...(cacheRecord
-                ? {
-                    cacheReadInputTokens: cacheRecord.read,
-                    cacheWriteInputTokens: cacheRecord.write,
-                  }
-                : {}),
-              costUsd: infoRecord.cost,
-            },
-            accumulator,
-          );
-        } else {
-          collectUsage(infoRecord, accumulator);
-        }
-      }
-    }
-  }
+  if (provider === 'claude') collectUsage(record, accumulator);
 }
 
 function collectUsage(record: Record<string, unknown>, accumulator: UsageAccumulator): void {
