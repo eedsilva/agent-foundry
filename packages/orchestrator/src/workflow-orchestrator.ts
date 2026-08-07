@@ -13,10 +13,7 @@ import type {
   ArtifactReference,
   ExecutableStep,
   ExecutorStreamEvent,
-  ForEachTaskStep,
   ExecutorHealth,
-  PlanTask,
-  TaskBrowserAssertion,
   PreviewSession,
   PreviewFailurePhase,
   Project,
@@ -42,7 +39,6 @@ import type {
 } from '@agent-foundry/contracts';
 import {
   AGENT_ARTIFACT_JSON_SCHEMA,
-  AgentArtifactSchema,
   BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA,
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
@@ -56,7 +52,6 @@ import {
   resolveRoutingEntry,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   GeneratedTaskGraphArtifactSchema,
-  TaskGraphArtifactSchema,
   createValidationCampaignExecution,
   VerificationReportSchema,
   ValidationDatabaseEvidenceSchema,
@@ -109,14 +104,11 @@ import {
   isRunControlFlowError,
   isTaskStepId,
   latestArtifactsByName,
-  nextReadyTask,
   normalizeApprovalDecision,
   recordRunDuration,
   recordStepRetry,
   recordTokenUsage,
   redactString,
-  browserRepairId,
-  taskStepId,
   transitionStepAttempt,
   transitionStepRun,
   transitionWorkflowRun,
@@ -145,6 +137,7 @@ import {
 } from './browser-verification-coordinator.js';
 import type { QualityObservationService } from './quality-observation-service.js';
 import type { ValidationEvidencePublisher } from './validation-evidence.js';
+import { TaskGraphRunner } from './task-graph-runner.js';
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -329,6 +322,8 @@ function capProvisioningDiagnostic(
 }
 
 export class WorkflowOrchestrator {
+  private readonly taskGraphRunner: TaskGraphRunner;
+
   constructor(
     private readonly projects: ProjectRepository,
     private readonly runs: WorkflowRunRepository,
@@ -362,7 +357,62 @@ export class WorkflowOrchestrator {
     private readonly previews?: WorkspacePreviewBooter,
     private readonly validationCampaign?: ValidationCampaignPreview,
     private readonly validationEvidence?: ValidationEvidencePublisher,
-  ) {}
+  ) {
+    this.taskGraphRunner = new TaskGraphRunner({
+      artifacts: this.artifacts,
+      events: this.events,
+      stepRuns: this.stepRuns,
+      stepAttempts: this.stepAttempts,
+      workspaces: this.workspaces,
+      clock: this.clock,
+      ids: this.ids,
+      runtime: {
+        executeStep: (input) =>
+          this.executeStep(
+            input.project,
+            input.workflow,
+            input.step,
+            input.runId,
+            input.nodeId,
+            input.signal,
+            input.iteration,
+            input.pinnedArtifacts ? [...input.pinnedArtifacts] : [],
+            input.routingStartIndex,
+          ),
+        assertExecutionMayContinue: (runId, signal) =>
+          this.assertExecutionMayContinue(runId, signal),
+        isControlFlowError: (error, signal) =>
+          isCancellation(error, signal) || isRunControlFlowError(error),
+        recordDeterministicOutcome: async (input) => {
+          await this.recordQualityOutcome(input.implementation, input.approved);
+          await this.qualityObservations?.recordDeterministic(
+            input.implementation,
+            input.report,
+            input.approved,
+          );
+          await this.appendDecisionLog(
+            input.projectId,
+            input.workflowId,
+            input.nodeId,
+            input.runId,
+            input.implementation,
+            input.approved,
+            input.iteration,
+            input.durationMs,
+          );
+        },
+        recordCompletedRepair: (input) =>
+          this.recordCompletedRepair(
+            input.runId,
+            input.nodeId,
+            input.stepId,
+            input.iteration,
+            input.signal,
+          ),
+        resetConsecutiveRepairs: (runId) => this.resetConsecutiveRepairs(runId),
+      },
+    });
+  }
 
   /**
    * Installs and boots the freshly scaffolded workspace by starting a durable
@@ -1292,7 +1342,7 @@ export class WorkflowOrchestrator {
     if (node.type === 'quality-loop')
       return this.executeQualityLoop(project, workflow, node, runId, signal);
     if (node.type === 'for-each-task')
-      return this.executeForEachTask(project, workflow, node, runId, signal);
+      return this.taskGraphRunner.run({ project, workflow, node, runId, signal });
     if (node.type === 'approval-gate')
       return this.executeApprovalGate(project, node, runId, signal);
     return this.executeStep(project, workflow, node, runId, node.id, signal);
@@ -1636,629 +1686,6 @@ export class WorkflowOrchestrator {
   private conditionApproved(artifact: StoredArtifact, node: QualityLoopStep): boolean {
     if (artifact.metadata.name !== node.approval.artifact) return false;
     return getValueAtPath(artifact.content, node.approval.path) === node.approval.equals;
-  }
-
-  private async executeForEachTask(
-    project: Project,
-    workflow: WorkflowDefinition,
-    node: ForEachTaskStep,
-    runId: string,
-    signal: AbortSignal,
-  ): Promise<StoredArtifact> {
-    return withSpan(
-      'foundry.step',
-      {
-        'foundry.step.node_id': node.id,
-        'foundry.step.id': node.id,
-        'foundry.step.type': 'for-each-task',
-      },
-      () => this.executeForEachTaskTraced(project, workflow, node, runId, signal),
-    );
-  }
-
-  /**
-   * Walks the task graph one task at a time, in dependency order, running the
-   * node's implement step per task. The graph revision read here is pinned
-   * into every task's inputs, so a replay after a pause reuses the exact same
-   * step identities and resumes at the first task that has not completed.
-   */
-  private async executeForEachTaskTraced(
-    project: Project,
-    workflow: WorkflowDefinition,
-    node: ForEachTaskStep,
-    runId: string,
-    signal: AbortSignal,
-  ): Promise<StoredArtifact> {
-    const graphArtifact = await this.artifacts.getLatest(project.id, node.taskGraphArtifact);
-    if (!graphArtifact) {
-      throw new NotFoundError(`Missing input artifact(s): ${node.taskGraphArtifact}`);
-    }
-    const parsed = TaskGraphArtifactSchema.safeParse(graphArtifact.content);
-    if (!parsed.success) {
-      throw new ExecutionError(
-        `Node ${node.id} cannot walk ${node.taskGraphArtifact}: ${formatZodIssues(parsed.error, node.taskGraphArtifact)}`,
-      );
-    }
-    const tasks = parsed.data.data.tasks;
-    validateTaskAcceptanceChannels(tasks, node);
-    // Every task reads the same input revisions — resolved once, before the
-    // first task runs. Re-reading them per task would let a sibling write
-    // change a later task's inputs, and with them its step identity.
-    const pinnedInputs = (
-      await this.loadInputArtifacts(project.id, node.implement.inputArtifacts, [
-        artifactReference(graphArtifact),
-      ])
-    ).map(artifactReference);
-    const completed = new Set<string>();
-    let latest: StoredArtifact | null = null;
-    while (completed.size < tasks.length) {
-      const task = nextReadyTask(tasks, completed);
-      if (!task) {
-        throw new ExecutionError(
-          `Node ${node.id} has no runnable task left in ${node.taskGraphArtifact} with ${completed.size}/${tasks.length} complete`,
-        );
-      }
-      latest = await this.executeTask(project, workflow, node, task, runId, signal, pinnedInputs);
-      completed.add(task.id);
-    }
-    if (!latest) throw new ExecutionError(`Node ${node.id} walked an empty task graph`);
-    return latest;
-  }
-
-  /**
-   * One task: bounded attempts of the implement step, the task's deterministic
-   * gate, then its own commit. The checkpoint taken before the first attempt is
-   * what a task that never goes green is rolled back to, so a failed task
-   * leaves nothing behind while every task committed before it survives.
-   */
-  private async executeTask(
-    project: Project,
-    workflow: WorkflowDefinition,
-    node: ForEachTaskStep,
-    task: PlanTask,
-    runId: string,
-    signal: AbortSignal,
-    pinnedInputs: ArtifactReference[],
-  ): Promise<StoredArtifact> {
-    const step = taskImplementStep(node.implement, task);
-    const maxAttempts = node.implement.maxAttempts;
-    await this.emit(project.id, 'task.started', `${task.id}: ${task.title}`, {
-      nodeId: node.id,
-      runId,
-      dedupeKey: `${runId}:task:${node.id}:${task.id}:started`,
-      data: {
-        taskId: task.id,
-        title: task.title,
-        stepId: step.id,
-        dependsOn: task.dependsOn,
-        maxAttempts,
-      },
-    });
-    const browserAcceptance = taskUsesBrowserAcceptance(task, node);
-    const qualityAttemptStride =
-      (browserAcceptance ? 2 : 1) * ((node.repair?.maxAttempts ?? 0) + 1);
-    const routing = resolveRoutingEntry(workflow.routing, workflow.id, step.taskKind);
-    const resumedFailure = await this.resumedTaskFailure(
-      project.id,
-      runId,
-      node.id,
-      task.id,
-      step.id,
-      routing,
-    );
-    const taskCheckpoint =
-      resumedFailure?.checkpoint ??
-      (await this.workspaces.checkpoint(project.id, `${node.id}-${task.id}-${runId}`));
-    let attemptCheckpoint = taskCheckpoint;
-    const startAttempt =
-      resumedFailure?.attempt ?? (await this.firstTaskAttempt(runId, node.id, step.id));
-    let routingStartIndex = resumedFailure?.routingStartIndex ?? 0;
-    if (resumedFailure?.checkpoint) {
-      await this.workspaces.rollback(project.id, resumedFailure.checkpoint);
-    }
-    let lastError: unknown;
-    try {
-      for (let attempt = startAttempt; attempt <= maxAttempts; attempt += 1) {
-        await this.assertExecutionMayContinue(runId, signal);
-        const qualityAttemptBase = (attempt - 1) * qualityAttemptStride;
-        let implementation: StoredArtifact | undefined;
-        try {
-          const artifact = await this.executeStep(
-            project,
-            workflow,
-            step,
-            runId,
-            node.id,
-            signal,
-            attempt,
-            pinnedInputs,
-            routingStartIndex,
-          );
-          implementation = artifact;
-          const repaired = await this.verifyTask(
-            project,
-            workflow,
-            node,
-            task,
-            artifact,
-            runId,
-            signal,
-            pinnedInputs,
-            qualityAttemptBase,
-          );
-          // Once deterministic checks pass, a later browser failure must not
-          // erase the implementation that the browser retry needs to inspect.
-          attemptCheckpoint = await this.workspaces.checkpoint(
-            project.id,
-            `${node.id}-${task.id}-${runId}-verified`,
-          );
-          // Only once the checks are green: the assertion boots a preview, and a
-          // preview of code that does not compile tells you nothing (#325).
-          const asserted = browserAcceptance
-            ? await this.assertTask(
-                project,
-                workflow,
-                node,
-                task,
-                runId,
-                signal,
-                pinnedInputs,
-                qualityAttemptBase,
-              )
-            : null;
-          // A browser repair edited the workspace after the checks went green, so
-          // they are no longer known to be. Re-run them, or a task could complete on
-          // a red typecheck — the one thing ADR 0045 promises cannot happen. The
-          // offset keeps this pass's step identities distinct from the first's.
-          const reverified = asserted
-            ? await this.verifyTask(
-                project,
-                workflow,
-                node,
-                task,
-                asserted,
-                runId,
-                signal,
-                pinnedInputs,
-                qualityAttemptBase + (node.repair?.maxAttempts ?? 0) + 1,
-              )
-            : null;
-          // The attempt behind the last artifact that changed the workspace is the
-          // authority on what this task committed — the repair's, when one ran, not
-          // the implementation it corrected. A task that changed nothing has no
-          // commit at all.
-          const commit = await this.commitForArtifact(
-            runId,
-            reverified ?? asserted ?? repaired ?? artifact,
-          );
-          const outcome = attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : '';
-          await this.emit(project.id, 'task.completed', `${task.id}: ${task.title}${outcome}`, {
-            nodeId: node.id,
-            runId,
-            dedupeKey: `${runId}:task:${node.id}:${task.id}:completed`,
-            data: {
-              taskId: task.id,
-              stepId: step.id,
-              attempt,
-              maxAttempts,
-              ...(commit ? { commit } : {}),
-              ...executorOutcome(artifact),
-              artifact: artifact.metadata.name,
-              revision: artifact.metadata.revision,
-            },
-          });
-          return implementation;
-        } catch (error) {
-          if (!isTaskAttemptFailure(error, signal)) throw error;
-          lastError = error;
-          await this.emit(
-            project.id,
-            'task.failed',
-            `${task.id} attempt ${attempt}/${maxAttempts} failed: ${errorMessage(error)}`,
-            {
-              nodeId: node.id,
-              runId,
-              dedupeKey: `${runId}:task:${node.id}:${task.id}:${attempt}:failed`,
-              data: {
-                taskId: task.id,
-                stepId: step.id,
-                attempt,
-                maxAttempts,
-                ...(await this.failedTaskExecutor(runId, node.id, step.id, attempt)),
-              },
-            },
-          );
-          if (!(error instanceof QualityGateError)) throw error;
-          if (attempt >= maxAttempts) throw error;
-          const nextRoutingStartIndex = nextTaskExecutorIndex(
-            routing,
-            implementation ? executorOutcome(implementation).executor : undefined,
-            routingStartIndex,
-          );
-          if (nextRoutingStartIndex === undefined) {
-            throw new ExecutionError(
-              `Task ${task.id} exhausted its executor ladder after ${attempt} attempt(s): ${errorMessage(error)}`,
-              { cause: error },
-            );
-          }
-          routingStartIndex = nextRoutingStartIndex;
-          await this.workspaces.rollback(project.id, attemptCheckpoint);
-        }
-      }
-      throw new ExecutionError(
-        `Task ${task.id} failed after ${maxAttempts} attempt(s): ${errorMessage(lastError)}`,
-      );
-    } catch (error) {
-      // Control flow — a pause, a cancellation — must keep what the task has
-      // done so far; only a real failure discards it.
-      if (isTaskAttemptFailure(error, signal)) {
-        await this.workspaces.rollback(project.id, attemptCheckpoint);
-      }
-      throw error;
-    }
-  }
-
-  /** Resume a paused quality retry from the durable failed-attempt cursor. */
-  private async resumedTaskFailure(
-    projectId: string,
-    runId: string,
-    nodeId: string,
-    taskId: string,
-    stepId: string,
-    routing: ReturnType<typeof resolveRoutingEntry>,
-  ): Promise<{ attempt: number; routingStartIndex: number; checkpoint?: string } | undefined> {
-    const terminal = (await this.events.list(projectId))
-      .filter(
-        (event) =>
-          event.runId === runId &&
-          event.nodeId === nodeId &&
-          (event.type === 'task.failed' || event.type === 'task.completed') &&
-          event.data.taskId === taskId &&
-          event.data.stepId === stepId,
-      )
-      .at(-1);
-    if (!terminal || terminal.type !== 'task.failed') return undefined;
-    const failure = terminal;
-    const failedAttempt = failure.data.attempt;
-    if (typeof failedAttempt !== 'number') return undefined;
-
-    const stepRun = (await this.stepRuns.list(runId))
-      .filter(
-        (candidate) =>
-          candidate.nodeId === nodeId &&
-          candidate.stepId === stepId &&
-          candidate.iteration === failedAttempt &&
-          !candidate.invalidatedAt,
-      )
-      .at(-1);
-    if (!stepRun || stepRun.status !== 'completed') return undefined;
-
-    const attempt = (await this.stepAttempts.list(runId, stepRun.id)).at(-1);
-    if (!attempt || attempt.status !== 'succeeded') return undefined;
-
-    const route = attempt.routeDecision?.routingTable;
-    const consumedIndex = route
-      ? route.executors.findIndex(
-          (provider, index) => index >= route.selectedIndex && provider === attempt.provider,
-        )
-      : -1;
-    let nextRoutingStartIndex = 0;
-    if (route) {
-      nextRoutingStartIndex = (consumedIndex >= 0 ? consumedIndex : route.selectedIndex) + 1;
-    } else if (routing) {
-      nextRoutingStartIndex =
-        nextTaskExecutorIndex(routing, attempt.provider, 0) ?? routing.executors.length;
-    }
-    return {
-      attempt: failedAttempt + 1,
-      routingStartIndex: nextRoutingStartIndex,
-      ...(attempt.checkpoint ? { checkpoint: attempt.checkpoint } : {}),
-    };
-  }
-
-  /**
-   * Every executor the failed attempt walked, in order, and the one it gave up
-   * on (#326). Read back from the attempt records rather than threaded down,
-   * because a step walks its whole candidate list before failing — "which
-   * executors, after which failures" is exactly the record the ticket asks for,
-   * and a failure is rare enough to afford the two reads.
-   */
-  private async failedTaskExecutor(
-    runId: string,
-    nodeId: string,
-    stepId: string,
-    iteration: number,
-  ): Promise<{ executor?: string; modelId?: string; attemptedExecutors?: string[] }> {
-    const stepRun = (await this.stepRuns.list(runId))
-      .filter(
-        (candidate) =>
-          candidate.nodeId === nodeId &&
-          candidate.stepId === stepId &&
-          (candidate.iteration ?? 1) === iteration,
-      )
-      .at(-1);
-    if (!stepRun) return {};
-    const attempts = await this.stepAttempts.list(runId, stepRun.id);
-    const last = attempts.at(-1);
-    if (!last) return {};
-    return {
-      executor: last.provider,
-      ...(last.modelId ? { modelId: last.modelId } : {}),
-      attemptedExecutors: attempts.map((attempt) => attempt.provider),
-    };
-  }
-
-  /**
-   * The task's deterministic gate (#324). The checks run against the workspace
-   * the implementation just left; a red report — never a reviewer's opinion —
-   * is what invokes repair, and the report it carries holds the failing command
-   * and its output. Exhausting `repair.maxAttempts` fails the task with the
-   * checks still red, so nothing completes on a red check.
-   *
-   * Returns the last repair artifact, or null when the checks passed without
-   * one — the caller needs it to report the commit the task actually ended on.
-   */
-  private async verifyTask(
-    project: Project,
-    workflow: WorkflowDefinition,
-    node: ForEachTaskStep,
-    task: PlanTask,
-    implementation: StoredArtifact,
-    runId: string,
-    signal: AbortSignal,
-    pinnedInputs: ArtifactReference[],
-    iterationBase = 0,
-  ): Promise<StoredArtifact | null> {
-    const { verify, repair } = node;
-    if (!verify || !repair) return null;
-    const verifyStep = taskVerifyStep(verify, task);
-    const repairStep = taskRepairStep(repair, task);
-    const maxRepairAttempts = repair.maxAttempts;
-    const startedAt = this.clock.now().getTime();
-    let repaired: StoredArtifact | null = null;
-    // A second pass over the same task needs its own iteration numbers, or it
-    // would reuse the first pass's completed steps and read a stale report.
-    for (let round = 1; ; round += 1) {
-      const iteration = iterationBase + round;
-      await this.assertExecutionMayContinue(runId, signal);
-      const report = await this.executeStep(
-        project,
-        workflow,
-        verifyStep,
-        runId,
-        node.id,
-        signal,
-        iteration,
-      );
-      const parsed = VerificationReportSchema.safeParse(report.content);
-      const approved = parsed.success && parsed.data.approved;
-      // A deterministic verdict on the model that wrote the code, which is
-      // what replaces the reviewer this node used to depend on.
-      await this.recordQualityOutcome(implementation, approved);
-      await this.qualityObservations?.recordDeterministic(implementation, report, approved);
-      await this.appendDecisionLog(
-        project.id,
-        workflow.id,
-        node.id,
-        runId,
-        implementation,
-        approved,
-        iteration,
-        this.clock.now().getTime() - startedAt,
-      );
-      if (approved) {
-        await this.resetConsecutiveRepairs(runId);
-        await this.emit(project.id, 'quality.approved', `${task.id}: ${parsed.data.summary}`, {
-          nodeId: node.id,
-          runId,
-          dedupeKey: `${runId}:task:${node.id}:${task.id}:${iteration}:approved`,
-          data: { taskId: task.id, stepId: verifyStep.id, iteration },
-        });
-        return repaired;
-      }
-      const summary = parsed.success
-        ? parsed.data.summary
-        : `${verifyStep.id} did not produce a verification report`;
-      if (round > maxRepairAttempts) {
-        throw new QualityGateError(
-          `Task ${task.id} failed verification after ${maxRepairAttempts} repair attempt(s): ${summary}`,
-          node.id,
-        );
-      }
-      await this.emit(project.id, 'quality.repair_requested', `${task.id}: ${summary}`, {
-        nodeId: node.id,
-        runId,
-        dedupeKey: `${runId}:task:${node.id}:${task.id}:${iteration}:repair_requested`,
-        data: { taskId: task.id, stepId: repairStep.id, iteration, maxRepairAttempts },
-      });
-      // The report is pinned alongside the walk's own inputs, so repair reads
-      // the exact revision that failed rather than whatever is latest.
-      repaired = await this.executeStep(
-        project,
-        workflow,
-        repairStep,
-        runId,
-        node.id,
-        signal,
-        iteration,
-        [...pinnedInputs, artifactReference(report)],
-      );
-      await this.recordCompletedRepair(runId, node.id, repairStep.id, iteration, signal);
-    }
-  }
-
-  /**
-   * The task's browser assertion (#325). Typecheck passing does not mean the
-   * feature works: the task's acceptance check becomes a declarative plan, the
-   * existing Playwright runner asserts it against a live preview, and a failed
-   * assertion reaches repair with the failing step and its captured evidence.
-   *
-   * Runs only once the deterministic checks are green, so the preview it boots
-   * is built from code that already compiles. Returns the last repair artifact,
-   * or null when nothing repaired — the caller needs it for the task's commit.
-   */
-  private async assertTask(
-    project: Project,
-    workflow: WorkflowDefinition,
-    node: ForEachTaskStep,
-    task: PlanTask,
-    runId: string,
-    signal: AbortSignal,
-    pinnedInputs: ArtifactReference[],
-    iterationBase = 0,
-  ): Promise<StoredArtifact | null> {
-    const { browser, repair } = node;
-    if (task.acceptanceMode === 'deterministic-only') return null;
-    if (!browser || !repair) {
-      if (task.acceptanceMode === 'browser-visible') {
-        throw new ExecutionError(
-          `Task ${task.id} declares browser-visible acceptance, but the workflow has no browser assertion channel`,
-        );
-      }
-      return null;
-    }
-    const planStep = taskBrowserPlanStep(browser.plan, task);
-    const checkStep = taskBrowserCheckStep(browser.check, task);
-    const repairStep = taskBrowserRepairStep(repair, browser, task);
-    const maxRepairAttempts = repair.maxAttempts;
-
-    await this.assertExecutionMayContinue(runId, signal);
-    const plan = await this.executeStep(
-      project,
-      workflow,
-      planStep,
-      runId,
-      node.id,
-      signal,
-      1,
-      pinnedInputs,
-    );
-    // A task with no user-visible surface says so rather than inventing a
-    // journey to assert. That is an answer, not a failure.
-    const declared = AgentArtifactSchema.safeParse(plan.content);
-    if (declared.success && declared.data.status === 'blocked') {
-      if (task.acceptanceMode === 'browser-visible') {
-        throw new ExecutionError(
-          `Task ${task.id} declares browser-visible acceptance, but its browser plan refused the assertion`,
-        );
-      }
-      await this.emit(
-        project.id,
-        'quality.approved',
-        `${task.id}: no browser assertion — ${declared.data.summary}`,
-        {
-          nodeId: node.id,
-          runId,
-          dedupeKey: `${runId}:task:${node.id}:${task.id}:browser:skipped`,
-          data: { taskId: task.id, stepId: planStep.id, asserted: false },
-        },
-      );
-      return null;
-    }
-
-    if (!BrowserTestPlanArtifactSchema.safeParse(plan.content).success) {
-      // Repairing the *code* cannot fix a malformed plan, and the plan is pinned
-      // unchanged for every rerun — so retrying here would burn the whole repair
-      // budget on something unfixable by construction.
-      throw new ExecutionError(
-        `Task ${task.id}: ${planStep.id} produced neither a valid browser test plan nor a "blocked" answer`,
-      );
-    }
-    const planReference = artifactReference(plan);
-    let repaired: StoredArtifact | null = null;
-    for (let round = 1; ; round += 1) {
-      const iteration = iterationBase + round;
-      await this.assertExecutionMayContinue(runId, signal);
-      const report = await this.executeStep(
-        project,
-        workflow,
-        checkStep,
-        runId,
-        node.id,
-        signal,
-        iteration,
-        [planReference],
-      );
-      const parsed = BrowserVerificationReportSchema.safeParse(report.content);
-      const approved = parsed.success && parsed.data.approved;
-      if (approved) {
-        // Same as the deterministic gate: a green result ends the streak, or
-        // one browser repair per task would march the run into the
-        // consecutive-repairs ceiling.
-        await this.resetConsecutiveRepairs(runId);
-        await this.emit(project.id, 'quality.approved', `${task.id}: ${parsed.data.summary}`, {
-          nodeId: node.id,
-          runId,
-          dedupeKey: `${runId}:task:${node.id}:${task.id}:browser:${iteration}:approved`,
-          data: { taskId: task.id, stepId: checkStep.id, iteration, asserted: true },
-        });
-        return repaired;
-      }
-      const failedStep = parsed.success
-        ? parsed.data.steps.find((step) => step.status !== 'passed')
-        : undefined;
-      const summary = parsed.success
-        ? parsed.data.summary
-        : `${checkStep.id} did not produce a browser verification report`;
-      if (round > maxRepairAttempts) {
-        throw new QualityGateError(
-          `Task ${task.id} failed its browser assertion after ${maxRepairAttempts} repair attempt(s): ${summary}`,
-          node.id,
-        );
-      }
-      await this.emit(project.id, 'quality.repair_requested', `${task.id}: ${summary}`, {
-        nodeId: node.id,
-        runId,
-        dedupeKey: `${runId}:task:${node.id}:${task.id}:browser:${iteration}:repair_requested`,
-        data: {
-          taskId: task.id,
-          stepId: repairStep.id,
-          iteration,
-          maxRepairAttempts,
-          ...(failedStep ? { failedStepId: failedStep.stepId } : {}),
-        },
-      });
-      // The plan is pinned unchanged for the rerun, and the report carries the
-      // failing step plus its screenshot/trace references.
-      repaired = await this.executeStep(
-        project,
-        workflow,
-        repairStep,
-        runId,
-        node.id,
-        signal,
-        iteration,
-        [...pinnedInputs, planReference, artifactReference(report)],
-      );
-      await this.recordCompletedRepair(runId, node.id, repairStep.id, iteration, signal);
-    }
-  }
-
-  /** The commit the attempt behind this artifact recorded, if it made one. */
-  private async commitForArtifact(
-    runId: string,
-    artifact: StoredArtifact,
-  ): Promise<string | undefined> {
-    const { stepRunId, attemptId } = artifact.metadata;
-    if (!stepRunId || !attemptId) return undefined;
-    return (await this.stepAttempts.get(runId, stepRunId, attemptId))?.commit;
-  }
-
-  /**
-   * Which attempt a replayed walk starts this task on. A completed attempt is
-   * replayed at its own number so `executeStep` reuses it instead of
-   * implementing and committing the task a second time; otherwise the walk
-   * carries on after the attempts that already failed, so a pause never
-   * refunds the bound.
-   */
-  private async firstTaskAttempt(runId: string, nodeId: string, stepId: string): Promise<number> {
-    const previous = (await this.stepRuns.list(runId)).filter(
-      (candidate) =>
-        candidate.nodeId === nodeId && candidate.stepId === stepId && !candidate.invalidatedAt,
-    );
-    const completed = previous.find((candidate) => candidate.status === 'completed');
-    if (completed) return completed.iteration ?? 1;
-    return Math.max(0, ...previous.map((candidate) => candidate.iteration ?? 0)) + 1;
   }
 
   private async executeStep(
@@ -4489,172 +3916,6 @@ function workflowUsesBrowserPlan(workflow: WorkflowDefinition, artifactName: str
  * its own StepRun, commit message, request folder and timeline entries; the
  * task's contract is appended to the instructions the workflow author wrote.
  */
-function taskImplementStep(implement: AgentStep, task: PlanTask): AgentStep {
-  return {
-    ...implement,
-    id: taskStepId(implement.id, task.id),
-    title: `${task.id}: ${task.title}`,
-    instructions: [
-      implement.instructions,
-      '',
-      `Task ${task.id}: ${task.title}`,
-      `Deliverables: ${task.deliverables.join(', ')}`,
-      `Acceptance check: ${task.acceptanceCheck}`,
-      ...(task.acceptanceMode
-        ? [`Acceptance mode: ${task.acceptanceMode}`]
-        : ['Acceptance mode: legacy graph (preserve existing workflow behavior).']),
-      ...(task.dependsOn.length > 0 ? [`Depends on: ${task.dependsOn.join(', ')}`] : []),
-      'Implement only this task. Earlier tasks are already implemented and committed in the workspace.',
-    ].join('\n'),
-  };
-}
-
-/**
- * New graphs must declare the browser channel explicitly. A missing field is
- * deliberately retained as a legacy mode so persisted pre-#393 graphs keep
- * their historical browser-plan behavior when their workflow provides it.
- */
-function taskUsesBrowserAcceptance(task: PlanTask, node: ForEachTaskStep): boolean {
-  return (
-    task.acceptanceMode === 'browser-visible' ||
-    (task.acceptanceMode === undefined && node.browser !== undefined)
-  );
-}
-
-function validateTaskAcceptanceChannels(tasks: readonly PlanTask[], node: ForEachTaskStep): void {
-  const browserTask = tasks.find((task) => task.acceptanceMode === 'browser-visible');
-  if (browserTask && !node.browser) {
-    throw new ExecutionError(
-      `Task ${browserTask.id} declares browser-visible acceptance, but the workflow has no browser assertion channel`,
-    );
-  }
-}
-
-/**
- * The executor that produced this artifact, for the per-task outcome record
- * (#326). Reads the route decision the artifact already carries rather than
- * re-deriving it.
- */
-function executorOutcome(artifact: StoredArtifact): { executor?: string; modelId?: string } {
-  const route = artifact.metadata.routeDecision;
-  if (!route) return {};
-  const ran = route.executed ?? route.selected;
-  return { executor: ran.model.provider, modelId: ran.model.id };
-}
-
-/** The task's deterministic gate, under the same per-task id rule. */
-function taskVerifyStep(verify: VerifyStep, task: PlanTask): VerifyStep {
-  return { ...verify, id: taskStepId(verify.id, task.id), title: `${task.id}: ${verify.title}` };
-}
-
-/**
- * The repair step specialised to one task. It is invoked only with a red
- * verification report in hand, so its instructions point at the failing
- * commands rather than at an opinion about the code.
- */
-function taskRepairStep(repair: AgentStep, task: PlanTask): AgentStep {
-  return {
-    ...repair,
-    id: taskStepId(repair.id, task.id),
-    // Distinct from the implement step's title: it becomes the commit subject
-    // (`agent(fixer): <taskId>: repair …`), and a repaired task therefore reads
-    // as two commits that say what each of them did.
-    title: `${task.id}: repair ${task.title}`,
-    instructions: [
-      repair.instructions,
-      '',
-      `Task ${task.id}: ${task.title}`,
-      `Acceptance check: ${task.acceptanceCheck}`,
-      'Fix the root cause of every failing command in the verification report. Do not weaken or remove a check to make it pass.',
-    ].join('\n'),
-  };
-}
-
-/**
- * The step that turns one task's acceptance check into a browser plan (#325).
- * The check is prose the planner wrote; this is where it becomes a claim a
- * browser can settle.
- */
-function taskBrowserPlanStep(plan: AgentStep, task: PlanTask): AgentStep {
-  return {
-    ...plan,
-    id: taskStepId(plan.id, task.id),
-    title: `${task.id}: ${plan.title}`,
-    instructions: [
-      plan.instructions,
-      '',
-      `Task ${task.id}: ${task.title}`,
-      `Acceptance check to assert: ${task.acceptanceCheck}`,
-      `Deliverables: ${task.deliverables.join(', ')}`,
-      'If this task has no user-visible surface to assert — a migration, a config change, a pure refactor — return status "blocked" with a one-line reason and no plan. That is a valid answer and does not fail the task.',
-    ].join('\n'),
-  };
-}
-
-/** The task's browser assertion, under the same per-task id rule. */
-function taskBrowserCheckStep(check: VerifyStep, task: PlanTask): VerifyStep {
-  return { ...check, id: taskStepId(check.id, task.id), title: `${task.id}: ${check.title}` };
-}
-
-/**
- * Repair for a failed browser assertion. It carries its own step id rather than
- * reusing the deterministic gate's, because both loops run for the same task and
- * would otherwise collide on step identity — and because a timeline that
- * distinguishes "the checks were red" from "the feature did not work" is worth
- * more than one that does not.
- */
-function taskBrowserRepairStep(
-  repair: AgentStep,
-  browser: TaskBrowserAssertion,
-  task: PlanTask,
-): AgentStep {
-  return {
-    ...repair,
-    id: taskStepId(browserRepairId(repair.id), task.id),
-    // It reads what failed — the plan and the browser report — where the
-    // declared repair step lists the deterministic gate's inputs instead.
-    inputArtifacts: [
-      ...new Set([
-        ...repair.inputArtifacts,
-        browser.plan.outputArtifact,
-        browser.check.outputArtifact,
-      ]),
-    ],
-    title: `${task.id}: repair browser assertion for ${task.title}`,
-    instructions: [
-      repair.instructions,
-      '',
-      `Task ${task.id}: ${task.title}`,
-      `Acceptance check: ${task.acceptanceCheck}`,
-      'The deterministic checks already pass; what failed is the browser assertion. Reproduce the failing step from the report and its evidence, fix the behaviour, and leave the plan unchanged for the rerun.',
-    ].join('\n'),
-  };
-}
-
-/**
- * Whether a task attempt may be retried: anything that is not the run's own
- * control flow (`isRunControlFlowError`, which lists those classes next to
- * their definitions) and not a cancellation the signal reports on its own.
- */
-function isTaskAttemptFailure(error: unknown, signal: AbortSignal): boolean {
-  return !isCancellation(error, signal) && !isRunControlFlowError(error);
-}
-
-function nextTaskExecutorIndex(
-  routing: ReturnType<typeof resolveRoutingEntry>,
-  provider: string | undefined,
-  startIndex: number,
-): number | undefined {
-  if (!routing) return undefined;
-  const consumedIndex = provider
-    ? routing.executors.findIndex(
-        (candidate, index) => index >= startIndex && candidate === provider,
-      )
-    : -1;
-  const nextIndex = (consumedIndex >= 0 ? consumedIndex : startIndex) + 1;
-  return nextIndex < routing.executors.length ? nextIndex : undefined;
-}
-
 function throwIfCancelled(signal: AbortSignal, runId: string): void {
   if (!signal.aborted) return;
   if (signal.reason instanceof EmergencyCeilingError) throw signal.reason;
