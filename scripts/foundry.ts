@@ -31,7 +31,37 @@ if (args.help || !args.prompt) {
 }
 
 let devStack: ChildProcess | undefined;
-const cleanups: Array<() => Promise<void> | void> = [];
+// One shared interface for every gate: a fresh createInterface per prompt would
+// let the first one swallow all buffered stdin and starve later prompts. Lines
+// are buffered from the start so piped answers (`printf 'a\na\n' | ...`) reach
+// gates that open after stdin already ended.
+const terminal = createInterface({ input: process.stdin, output: process.stdout });
+const bufferedAnswers: string[] = [];
+const answerWaiters: Array<(line: string | null) => void> = [];
+let stdinClosed = false;
+terminal.on('line', (line) => {
+  const waiter = answerWaiters.shift();
+  if (waiter) waiter(line);
+  else bufferedAnswers.push(line);
+});
+terminal.on('close', () => {
+  stdinClosed = true;
+  while (answerWaiters.length > 0) answerWaiters.shift()!(null);
+});
+
+/** Resolves null when stdin is closed and no piped answer remains. */
+async function ask(prompt: string): Promise<string | null> {
+  const buffered = bufferedAnswers.shift();
+  if (buffered !== undefined) {
+    process.stdout.write(`${prompt}${buffered}\n`);
+    return buffered;
+  }
+  if (stdinClosed) return null;
+  process.stdout.write(prompt);
+  return new Promise((resolve) => answerWaiters.push(resolve));
+}
+
+const cleanups: Array<() => Promise<void> | void> = [() => terminal.close()];
 process.on('SIGINT', () => void shutdown(130));
 
 async function shutdown(code: number): Promise<never> {
@@ -49,7 +79,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'content-type': 'application/json', ...init?.headers },
   });
   if (!response.ok) {
-    throw new Error(`${init?.method ?? 'GET'} ${path} -> ${response.status}: ${await response.text()}`);
+    throw new Error(
+      `${init?.method ?? 'GET'} ${path} -> ${response.status}: ${await response.text()}`,
+    );
   }
   return (await response.json()) as T;
 }
@@ -74,7 +106,9 @@ async function ensureStack(): Promise<void> {
   devStack.stderr?.on('data', () => undefined);
   devStack.on('exit', (code) => {
     if (code !== null && code !== 0) {
-      console.error(`O stack terminou com código ${code}. Rode 'npm run dev:inline' para ver o log.`);
+      console.error(
+        `O stack terminou com código ${code}. Rode 'npm run dev:inline' para ver o log.`,
+      );
       process.exit(1);
     }
   });
@@ -130,39 +164,41 @@ async function promptForDecision(
     (detail) => detail.artifact?.content?.summary,
     () => undefined,
   );
-  console.log(`\n⏸  Aprovação pendente em '${approval.nodeId}' (artefato: ${approval.artifact.name})`);
+  console.log(
+    `\n⏸  Aprovação pendente em '${approval.nodeId}' (artefato: ${approval.artifact.name})`,
+  );
   if (summary) console.log(`   Resumo: ${summary}`);
-  const readline = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    for (;;) {
-      const answer = (await readline.question('   [a]provar / [m]udanças / [c]ancelar run? ')).trim();
-      const decidedBy = process.env.USER || 'operator';
-      if (answer === 'a' || answer === '') {
-        await api(`/runs/${runId}/approvals/${approval.id}/decide`, {
-          method: 'POST',
-          body: JSON.stringify({ action: 'approve', decidedBy }),
-        });
-        console.log('   ✔ Aprovado.');
-        return;
-      }
-      if (answer === 'm') {
-        const note = (await readline.question('   O que mudar? ')).trim();
-        if (!note) continue;
-        await api(`/runs/${runId}/approvals/${approval.id}/decide`, {
-          method: 'POST',
-          body: JSON.stringify({ action: 'request-changes', decidedBy, note }),
-        });
-        console.log('   ↩ Mudanças pedidas; o run continua.');
-        return;
-      }
-      if (answer === 'c') {
-        await api(`/runs/${runId}/cancel`, { method: 'POST', body: '{}' });
-        console.log('   ✖ Cancelamento pedido.');
-        return;
-      }
+  for (;;) {
+    const raw = await ask('   [a]provar / [m]udanças / [c]ancelar run? ');
+    if (raw === null) {
+      console.log('   stdin fechado — decida esta aprovação pela UI (aba Aprovações).');
+      return;
     }
-  } finally {
-    readline.close();
+    const answer = raw.trim();
+    const decidedBy = process.env.USER || 'operator';
+    if (answer === 'a' || answer === '') {
+      await api(`/runs/${runId}/approvals/${approval.id}/decide`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'approve', decidedBy }),
+      });
+      console.log('   ✔ Aprovado.');
+      return;
+    }
+    if (answer === 'm') {
+      const note = ((await ask('   O que mudar? ')) ?? '').trim();
+      if (!note) continue;
+      await api(`/runs/${runId}/approvals/${approval.id}/decide`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'request-changes', decidedBy, note }),
+      });
+      console.log('   ↩ Mudanças pedidas; o run continua.');
+      return;
+    }
+    if (answer === 'c') {
+      await api(`/runs/${runId}/cancel`, { method: 'POST', body: '{}' });
+      console.log('   ✖ Cancelamento pedido.');
+      return;
+    }
   }
 }
 
@@ -192,7 +228,10 @@ async function main(): Promise<void> {
     const kind = statusKind(run.status);
     if (kind === 'awaiting-approval') {
       const { approvals } = await api<{
-        approvals: Array<{ request: { id: string; nodeId: string; artifact: { name: string } }; decision: unknown }>;
+        approvals: Array<{
+          request: { id: string; nodeId: string; artifact: { name: string } };
+          decision: unknown;
+        }>;
       }>(`/runs/${runId}/approvals`);
       for (const approval of pendingApprovals(approvals)) {
         if (decided.has(approval.id)) continue;
@@ -202,17 +241,24 @@ async function main(): Promise<void> {
     }
     if (kind === 'succeeded') break;
     if (kind === 'failed') {
-      console.error(`\n✖ Run terminou com status '${run.status}'. Veja o inspector na UI ou /runs/${runId}.`);
+      console.error(
+        `\n✖ Run terminou com status '${run.status}'. Veja o inspector na UI ou /runs/${runId}.`,
+      );
       await shutdown(1);
     }
     await sleep(2_000);
   }
 
   console.log('\n✔ Build concluído. Subindo o preview...');
-  const { url } = await api<{ url: string }>(`/projects/${project.id}/preview`, {
-    method: 'POST',
-    body: '{}',
-  });
+  const { url, session } = await api<{
+    url: string;
+    session: { id: string; error?: { message?: string } };
+  }>(`/projects/${project.id}/preview`, { method: 'POST', body: '{}' });
+  if (!url) {
+    console.error(`✖ Preview falhou: ${session.error?.message ?? 'sem detalhe'}`);
+    console.error(`  Logs: ${args.apiUrl}/projects/${project.id}/preview/${session.id}/logs`);
+    await shutdown(1);
+  }
   console.log(`· Preview: ${url}`);
   if (args.open) await openInBrowser(url);
 

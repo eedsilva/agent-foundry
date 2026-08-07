@@ -65,10 +65,14 @@ O orquestrador não chama um fornecedor diretamente. Ele pede uma decisão ao ro
 cp .env.example .env
 npm ci
 npm run doctor
-npm run dev:inline
+npm run foundry -- "quero um app de receitas"
 ```
 
-Abra `http://localhost:3000`.
+Um comando: sobe o stack se preciso, cria o projeto, mostra o progresso no
+terminal, transforma os gates de aprovação em prompts interativos e abre o
+preview no browser ao terminar (`--no-open` desliga; `--help` lista as opções).
+
+Para a UI completa, `npm run dev:inline` e abra `http://localhost:3000`.
 
 O modo mock cria um projeto mínimo no workspace, atravessa todos os quality gates e executa os checks configurados. Ele serve para validar a mecânica do sistema. Não mede a qualidade real dos modelos.
 
@@ -321,6 +325,7 @@ JSON
 ## Comandos
 
 ```bash
+npm run foundry -- "…"  # jornada de 1 comando: criar → construir → preview
 npm run dev             # API, worker e web
 npm run dev:inline      # API com worker embutido + web
 npm run doctor          # valida ambiente e CLIs exigidas
