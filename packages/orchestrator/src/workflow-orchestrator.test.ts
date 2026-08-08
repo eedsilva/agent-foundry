@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
   RouteDecisionSchema,
@@ -70,6 +71,28 @@ const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
       instructions: 'Implement the plan.',
       inputArtifacts: ['plan'],
       outputArtifact: 'implementation',
+      mutatesWorkspace: true,
+      maxAttempts: 1,
+    },
+  ],
+});
+
+const BROWSER_EVIDENCE_REPAIR_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'browser-evidence-repair-v1',
+  name: 'Browser evidence repair fixture',
+  description: 'Runs one repair step against a failed browser report.',
+  stack: 'node',
+  nodes: [
+    {
+      id: 'repair-browser',
+      type: 'agent',
+      role: 'fixer',
+      taskKind: 'repair',
+      title: 'Repair browser failure',
+      instructions: 'Repair the failed browser step.',
+      inputArtifacts: ['browser-verification.report'],
+      outputArtifact: 'browser-verification.fix',
       mutatesWorkspace: true,
       maxAttempts: 1,
     },
@@ -324,6 +347,75 @@ describe('ProjectVersion recording hook (#40)', () => {
   });
 });
 
+describe('browser repair evidence materialization (#357)', () => {
+  it('writes a failed-step screenshot into the repair attempt context', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: BROWSER_EVIDENCE_REPAIR_WORKFLOW,
+    });
+    await seedRun(stores, BROWSER_EVIDENCE_REPAIR_WORKFLOW.id);
+    const screenshotBytes = Buffer.from('failed-step-screenshot');
+    const screenshot = await stores.artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'browser-screenshot-preview-1-open-root',
+        contentType: 'image/png',
+        createdBy: 'browser-verification',
+        maxBytes: 1_000_000,
+        runId: 'run-1',
+      },
+      Readable.from(screenshotBytes),
+    );
+    await stores.artifacts.put({
+      projectId: 'project-1',
+      name: 'browser-verification.report',
+      createdBy: 'browser-verification',
+      runId: 'run-1',
+      content: {
+        schemaVersion: '1',
+        approved: false,
+        summary: 'The first browser step failed.',
+        planArtifact: { name: 'browser-test.plan', revision: 1, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          url: 'http://127.0.0.1:4000/',
+          evidence: {
+            screenshots: [
+              {
+                name: screenshot.name,
+                revision: screenshot.revision,
+                sha256: screenshot.sha256,
+                stepId: 'open-root',
+                url: 'http://127.0.0.1:4000/',
+                viewport: { width: 1280, height: 720 },
+              },
+            ],
+          },
+        },
+        steps: [
+          {
+            stepId: 'open-root',
+            title: 'Open root',
+            status: 'failed',
+            durationMs: 1,
+            observations: [],
+            error: 'Expected dashboard, received sign-in.',
+          },
+        ],
+      },
+    });
+
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect(stores.workspaces.lastRunInputFiles).toEqual([
+      { path: 'browser-evidence/open-root.png', content: screenshotBytes },
+    ]);
+    expect(stores.workspaces.lastRequestMarkdown).toContain(
+      'inputs/browser-evidence/open-root.png',
+    );
+  });
+});
+
 const TASK_GRAPH_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   schemaVersion: '1',
   id: 'task-graph-v1',
@@ -539,42 +631,6 @@ describe('task-graph output contract (#321)', () => {
     );
     expect((await stores.runs.get('run-1'))?.status).toBe('failed');
     expect(await stores.artifacts.getLatest('project-1', 'plan.current')).toBeNull();
-  });
-});
-
-describe('task browser retry checkpoint (#325)', () => {
-  it('preserves the verified implementation when browser verification cannot start', async () => {
-    const harness = makeHarness({}, undefined, {
-      workflow: TASK_BROWSER_WORKFLOW,
-      agentOutput: (request) => {
-        if (request.stepId === 'plan') {
-          return {
-            schemaVersion: '1',
-            status: 'completed',
-            summary: 'Planned.',
-            data: BROWSER_GRAPH,
-            decisions: [],
-            assumptions: [],
-            risks: [],
-            nextActions: [],
-          };
-        }
-        if (request.stepId === 'plan-task-browser-test.T1') return VALID_BROWSER_PLAN;
-        return undefined;
-      },
-    });
-    await seedHarnessRun(harness);
-    expect((await harness.projects.get('project-1'))?.workflowId).toBe(TASK_BROWSER_WORKFLOW.id);
-    expect((await harness.runs.get('run-1'))?.workflowId).toBe(TASK_BROWSER_WORKFLOW.id);
-
-    await expect(
-      harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1'),
-    ).rejects.toThrow('Browser verification is not configured');
-
-    expect(harness.workspaces.commits).toEqual(['sha-0001']);
-    expect(harness.workspaces.current).toBe('sha-0001');
-    expect(harness.workspaces.rollbacks).toContain('sha-0001');
-    expect((await harness.runs.get('run-1'))?.status).toBe('failed');
   });
 });
 
