@@ -2,10 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   EXECUTION_PROTOCOL_VERSION,
   ExecutionAgentRequestSchema,
-  ExecutionNetworkPolicySchema,
   ExecutionRequestSchema,
   ExecutionResultSchema,
-  NetworkPolicyEventSchema,
   WorkflowDefinitionSchema,
 } from './index.js';
 
@@ -54,7 +52,6 @@ function request(overrides: Record<string, unknown> = {}) {
     workspace: { projectId: 'project-1', ref: 'deadbeef' },
     tools: [],
     limits: { timeoutMs: 60_000 },
-    networkPolicy: { mode: 'none', allowedHosts: [] },
     secrets: [],
     ...overrides,
   };
@@ -122,72 +119,6 @@ describe('ExecutionRequestSchema', () => {
         secrets: [{ name: 'GITHUB_TOKEN', ref: 'GITHUB_TOKEN', value: 'canary-secret' }],
       }).success,
     ).toBe(false);
-  });
-});
-
-describe('ExecutionNetworkPolicySchema', () => {
-  it('defaults the purpose and normalizes exact allowlisted hostnames', () => {
-    expect(
-      ExecutionNetworkPolicySchema.parse({
-        mode: 'allowlist',
-        allowedHosts: ['Registry.NPMJS.org'],
-      }),
-    ).toEqual({
-      mode: 'allowlist',
-      allowedHosts: ['registry.npmjs.org'],
-      purpose: 'execution',
-    });
-  });
-
-  it('accepts a distinct dependency-install purpose', () => {
-    expect(
-      ExecutionNetworkPolicySchema.parse({
-        mode: 'allowlist',
-        allowedHosts: ['registry.npmjs.org'],
-        purpose: 'dependency-install',
-      }).purpose,
-    ).toBe('dependency-install');
-  });
-
-  it.each([
-    { allowedHosts: [] },
-    { allowedHosts: ['https://example.com'] },
-    { allowedHosts: ['example.com/path'] },
-    { allowedHosts: ['example.com:443'] },
-    { allowedHosts: ['*.example.com'] },
-    { allowedHosts: ['example.com.'] },
-    { allowedHosts: ['127.0.0.1'] },
-    { allowedHosts: ['::1'] },
-    { allowedHosts: ['localhost'] },
-    { allowedHosts: ['-bad.example.com'] },
-    { allowedHosts: ['bad-.example.com'] },
-    { allowedHosts: ['example.com', 'EXAMPLE.COM'] },
-  ])('rejects an unsafe allowlist $allowedHosts', ({ allowedHosts }) => {
-    expect(
-      ExecutionNetworkPolicySchema.safeParse({ mode: 'allowlist', allowedHosts }).success,
-    ).toBe(false);
-  });
-
-  it('rejects hosts in none mode', () => {
-    expect(
-      ExecutionNetworkPolicySchema.safeParse({ mode: 'none', allowedHosts: ['example.com'] })
-        .success,
-    ).toBe(false);
-  });
-
-  it('bounds observable events to policy metadata', () => {
-    const event = NetworkPolicyEventSchema.parse({
-      timestamp: '2026-07-22T12:00:00.000Z',
-      purpose: 'dependency-install',
-      protocol: 'connect',
-      decision: 'deny',
-      hostname: 'registry.npmjs.org',
-      port: 443,
-      addresses: ['169.254.169.254'],
-      reason: 'non-public address',
-    });
-    expect(event).not.toHaveProperty('url');
-    expect(event).not.toHaveProperty('headers');
   });
 });
 

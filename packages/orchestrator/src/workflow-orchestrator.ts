@@ -3377,11 +3377,10 @@ export class WorkflowOrchestrator {
           outputSchema,
         },
         workspace: { projectId: project.id, ref: workspaceRef },
-        // ponytail: tool allow-listing and network policy are shape-only until
-        // v07-sandbox-runner/v07-network-policy/v07-secret-broker enforce them.
+        // ponytail: tool allow-listing is shape-only until v07-sandbox-runner/
+        // v07-secret-broker enforce it.
         tools: [],
         limits: { timeoutMs: this.options.agentTimeoutMs },
-        networkPolicy: { mode: 'none', allowedHosts: [], purpose: 'execution' },
         secrets: this.secretStore
           ? (await this.secretStore.names(project.id)).map((name) => ({ name, ref: name }))
           : [],

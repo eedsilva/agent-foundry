@@ -1,6 +1,6 @@
 # ADR 0017: Preview network proxy with host validation and per-session tokens
 
-- Status: Accepted
+- Status: Superseded by [ADR 0057](0057-plain-docker-network-for-personal-builder.md)
 - Date: 2026-07-16
 - Owners: API and Orchestrator
 

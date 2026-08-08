@@ -81,9 +81,7 @@ do corte, porque sem eles o relatório não é acionável.
 Configure `DATA_DIR` para um caminho fora do repositório (por exemplo,
 `DATA_DIR=/tmp/agent-foundry-validation`); o padrão `.data` é recusado pelo gate de isolamento.
 
-Em um worktree novo, execute `npm install && npm run build` antes do preflight. O boundary
-`scaffold` cria sandbox com política de rede e exige o sidecar compilado em
-`packages/executors/dist/docker-network-policy-sidecar.js`; sem o build, a campanha para ali.
+Em um worktree novo, execute `npm install && npm run build` antes do preflight.
 
 ### Bundle de evidências da campanha
 

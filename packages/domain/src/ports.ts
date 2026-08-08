@@ -24,7 +24,6 @@ import type {
   ModelMetric,
   ModelOverrideRecord,
   Message,
-  NetworkPolicyEvent,
   Operation,
   PreviewHealth,
   PreviewLogEntry,
@@ -436,7 +435,6 @@ export interface CapturedScreenshot {
 
 export interface BrowserVerificationEvidence {
   screenshots: CapturedScreenshot[];
-  networkEvents?: NetworkPolicyEvent[];
   trace?: Buffer;
   video?: Buffer;
 }

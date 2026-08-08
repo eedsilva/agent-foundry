@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { PathSegmentSchema, ProviderSchema } from './primitives.js';
-import { NetworkPolicyHostnameSchema } from './network-policy.js';
 
 const BrowserOriginSchema = z.string().refine((value) => {
   try {
@@ -8,7 +7,6 @@ const BrowserOriginSchema = z.string().refine((value) => {
     return (
       (url.protocol === 'http:' || url.protocol === 'https:') &&
       !url.hostname.includes('*') &&
-      NetworkPolicyHostnameSchema.safeParse(url.hostname).success &&
       url.origin === value
     );
   } catch {

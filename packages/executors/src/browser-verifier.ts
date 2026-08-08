@@ -4,14 +4,12 @@ import { join } from 'node:path';
 import {
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
-  MAX_NETWORK_POLICY_EVENTS,
   formatZodIssues,
   isSafeBrowserPath,
   type BrowserEvidencePolicy,
   type BrowserLocator,
   type BrowserTestPlan,
   type BrowserVerificationReport,
-  type NetworkPolicyEvent,
 } from '@agent-foundry/contracts';
 import {
   RunCancelledError,
@@ -31,7 +29,6 @@ import {
   type Request,
   type Video,
 } from 'playwright';
-import { createNetworkPolicyProxy } from './network-policy-proxy.js';
 
 const ACTION_TIMEOUT_MS = 10_000;
 const SCREENSHOT_TIMEOUT_MS = 2_000;
@@ -112,7 +109,6 @@ type Observation = BrowserVerificationReport['steps'][number]['observations'][nu
 type StepReport = BrowserVerificationReport['steps'][number];
 
 export interface PlaywrightBrowserVerifierOptions {
-  createProxy?: typeof createNetworkPolicyProxy;
   createTempDir?: typeof mkdtemp;
   /**
    * Operator-only validation escape hatch for a preview that redirects to a
@@ -123,12 +119,10 @@ export interface PlaywrightBrowserVerifierOptions {
 }
 
 export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScreenshotCapturer {
-  private readonly createProxy: typeof createNetworkPolicyProxy;
   private readonly createTempDir: typeof mkdtemp;
   private readonly allowLocalRedirects: boolean;
 
   constructor(options: PlaywrightBrowserVerifierOptions = {}) {
-    this.createProxy = options.createProxy ?? createNetworkPolicyProxy;
     this.createTempDir = options.createTempDir ?? mkdtemp;
     this.allowLocalRedirects = options.allowLocalRedirects ?? false;
   }
@@ -192,37 +186,14 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
       return planValidationFailure('Allowed origin entries must be exact HTTP(S) origins.');
     }
     const allowedOrigins = new Set(allowedOriginUrls.map((origin) => origin.origin));
-    const networkEvents: NetworkPolicyEvent[] = [];
-    const previewAuthority = networkAuthority(previewUrl);
-    const allowedHosts = [
-      ...new Set(allowedOriginUrls.map((origin) => origin.hostname.toLowerCase())),
-    ];
-    const privateExceptions = new Set([previewAuthority]);
     const evidencePolicy: BrowserEvidencePolicy = input.evidencePolicy;
     const videoDir = evidencePolicy.captureVideo
       ? await this.createTempDir(join(tmpdir(), 'agent-foundry-browser-video-'))
       : undefined;
-    const proxy = await this.createProxy({
-      policy:
-        allowedHosts.length > 0
-          ? { mode: 'allowlist', purpose: 'browser', allowedHosts }
-          : { mode: 'none', purpose: 'browser', allowedHosts: [] },
-      privateExceptions,
-      allowedAuthorities: new Set(allowedOriginUrls.map(networkAuthority)),
-      onEvent: (event) => {
-        if (networkEvents.length < MAX_NETWORK_POLICY_EVENTS) networkEvents.push(event);
-      },
-    }).catch(async (error: unknown) => {
-      if (videoDir) await rm(videoDir, { recursive: true, force: true }).catch(() => undefined);
-      throw error;
-    });
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
     let tracingStarted = false;
-    const launch = chromium.launch({
-      headless: true,
-      proxy: { server: proxy.url, bypass: '<-loopback>' },
-    });
+    const launch = chromium.launch({ headless: true });
     const timeout = AbortSignal.timeout(RUN_TIMEOUT_MS);
     const combinedSignal = AbortSignal.any([signal, timeout]);
 
@@ -245,7 +216,6 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
           prefixUrl,
           token,
           allowedOrigins,
-          privateExceptions,
           input,
           previewSession,
         );
@@ -296,7 +266,6 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
         report: result.report,
         evidence: {
           ...result.evidence,
-          networkEvents,
           ...(trace ? { trace } : {}),
           ...(video ? { video } : {}),
         },
@@ -305,7 +274,6 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
       if (context) await context.close().catch(() => undefined);
       const launched = browser ?? (await launch.catch(() => undefined));
       await launched?.close().catch(() => undefined);
-      await proxy.close().catch(() => undefined);
       if (videoDir) await rm(videoDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
@@ -316,7 +284,6 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
     prefixUrl: URL,
     token: string | null,
     allowedOrigins: Set<string>,
-    privateExceptions: Set<string>,
     input: Parameters<BrowserVerifier['verify']>[0],
     previewSession: Parameters<BrowserVerifier['verify']>[0]['session'],
   ): Promise<{
@@ -585,9 +552,7 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
           const sourceIsPreview =
             source.origin === prefixUrl.origin && source.pathname.startsWith(prefixUrl.pathname);
           if (sourceIsPreview || localRedirectOrigins.has(source.origin)) {
-            const redirectUrl = new URL(redirect);
-            localRedirectOrigins.add(redirectUrl.origin);
-            privateExceptions.add(networkAuthority(redirectUrl));
+            localRedirectOrigins.add(new URL(redirect).origin);
           }
         }
         if (redirect && !permitted(redirect)) {
@@ -741,18 +706,8 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
     viewport: { width: number; height: number };
   }): Promise<Buffer | null> {
     let browser: Browser | undefined;
-    let proxy: Awaited<ReturnType<typeof createNetworkPolicyProxy>> | undefined;
     try {
-      const url = new URL(input.url);
-      proxy = await this.createProxy({
-        policy: { mode: 'none', purpose: 'browser', allowedHosts: [] },
-        privateExceptions: new Set([networkAuthority(url)]),
-        onEvent: () => undefined,
-      });
-      browser = await chromium.launch({
-        headless: true,
-        proxy: { server: proxy.url, bypass: '<-loopback>' },
-      });
+      browser = await chromium.launch({ headless: true });
       const context = await browser.newContext({ viewport: input.viewport });
       const page = await context.newPage();
       await page.goto(input.url, { timeout: ACTION_TIMEOUT_MS });
@@ -765,7 +720,6 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
       return null; // best-effort: the UI degrades to "no screenshot" rather than failing selection
     } finally {
       await browser?.close().catch(() => undefined);
-      await proxy?.close().catch(() => undefined);
     }
   }
 
@@ -916,9 +870,4 @@ function isLoopbackUrl(rawUrl: string): boolean {
   } catch {
     return false;
   }
-}
-
-function networkAuthority(url: URL): string {
-  const port = url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? '443' : '80');
-  return `${url.hostname.toLowerCase()}:${port}`;
 }

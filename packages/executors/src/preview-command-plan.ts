@@ -1,7 +1,6 @@
 import { execa } from 'execa';
 import {
   PreviewCommandPlanSchema,
-  type NetworkPolicyEvent,
   type PackageManager,
   type PreviewCommandPlan,
   type PreviewCommandResult,
@@ -107,7 +106,6 @@ export interface PreviewInstallOutcome {
   stdout: string;
   stderr: string;
   versions?: PreviewToolVersions;
-  networkEvents?: NetworkPolicyEvent[];
 }
 
 export interface PreviewInstaller {

@@ -61,15 +61,26 @@ describe('ProjectPolicySchema', () => {
     ]);
   });
 
+  it.each(['http://127.0.0.1:4100', 'http://localhost:4100', 'http://[::1]:4100'])(
+    'accepts the loopback browser origin %s (ADR 0057)',
+    (browserAllowedOrigin) => {
+      expect(
+        ProjectPolicySchema.safeParse({
+          schemaVersion: '1',
+          id: 'browser-origins',
+          version: 1,
+          browserAllowedOrigins: [browserAllowedOrigin],
+        }).success,
+      ).toBe(true);
+    },
+  );
+
   it.each([
     'https://api.example.test/path',
     'https://user:password@api.example.test',
     'https://api.example.test?token=secret',
     'https://api.example.test#fragment',
     'https://*.example.test',
-    'http://127.0.0.1:4100',
-    'http://localhost:4100',
-    'http://[::1]:4100',
     'ftp://api.example.test',
   ])('rejects non-exact browser origin %s', (browserAllowedOrigin) => {
     expect(
