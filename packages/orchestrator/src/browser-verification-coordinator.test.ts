@@ -363,18 +363,6 @@ describe('BrowserVerificationCoordinator', () => {
             ],
             trace: Buffer.from('fake trace'),
             video: Buffer.from('fake video'),
-            networkEvents: [
-              {
-                timestamp: '2026-07-22T12:00:00.000Z',
-                purpose: 'browser',
-                protocol: 'connect',
-                decision: 'deny',
-                hostname: 'metadata.example.test',
-                port: 443,
-                addresses: ['169.254.169.254'],
-                reason: 'non-public address',
-              },
-            ],
           },
         }),
       artifacts,
@@ -382,7 +370,7 @@ describe('BrowserVerificationCoordinator', () => {
 
     const result = await coordinator.verify(input, new AbortController().signal);
 
-    expect(putCalls).toHaveLength(4);
+    expect(putCalls).toHaveLength(3);
     expect(result.previewSession.evidence.screenshots).toEqual([
       {
         name: putCalls[0],
@@ -402,12 +390,6 @@ describe('BrowserVerificationCoordinator', () => {
     });
     expect(result.previewSession.evidence.video).toEqual({
       name: putCalls[2],
-      revision: 1,
-      sha256: 'c'.repeat(64),
-      sizeBytes: 128,
-    });
-    expect(result.previewSession.evidence.networkPolicy).toEqual({
-      name: putCalls[3],
       revision: 1,
       sha256: 'c'.repeat(64),
       sizeBytes: 128,

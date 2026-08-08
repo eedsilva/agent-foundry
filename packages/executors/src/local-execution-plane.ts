@@ -137,7 +137,6 @@ export class LocalExecutionPlane implements ExecutionPlane {
 function getUnsupportedLocalCapabilities(request: ExecutionRequest): string[] {
   return [
     request.tools.length > 0 ? 'tools' : undefined,
-    request.networkPolicy.mode !== 'none' ? 'networkPolicy' : undefined,
     request.secrets.some(({ name, ref }) => ref !== name) ? 'secrets' : undefined,
   ].filter((capability): capability is string => capability !== undefined);
 }

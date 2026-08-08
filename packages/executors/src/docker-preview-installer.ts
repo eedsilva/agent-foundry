@@ -1,18 +1,13 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { NetworkPolicyEvent, SandboxExec, SandboxSpec } from '@agent-foundry/contracts';
-import type { SandboxHandle, SandboxRunner } from '@agent-foundry/domain';
-import { DEFAULT_POLICY_PROXY_IMAGE, SANDBOX_WORKSPACE_PATH } from './docker-sandbox-runner.js';
+import type { SandboxExec, SandboxSpec } from '@agent-foundry/contracts';
+import type { SandboxRunner } from '@agent-foundry/domain';
+import { DEFAULT_SANDBOX_NODE_IMAGE, SANDBOX_WORKSPACE_PATH } from './docker-sandbox-runner.js';
 import type { PreviewInstaller, PreviewInstallOutcome } from './preview-command-plan.js';
 
-export interface NetworkPolicySandboxRunner extends SandboxRunner {
-  networkEvidence(sandbox: SandboxHandle): Promise<{ events: NetworkPolicyEvent[] }>;
-}
-
 export interface DockerPreviewInstallerOptions {
-  runner: NetworkPolicySandboxRunner;
+  runner: SandboxRunner;
   image?: string;
-  allowedHosts?: string[];
   timeoutMs?: number;
 }
 
@@ -41,18 +36,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export class DockerPreviewInstaller implements PreviewInstaller {
-  private readonly runner: NetworkPolicySandboxRunner;
+  private readonly runner: SandboxRunner;
   private readonly image: string;
-  private readonly allowedHosts: string[];
   private readonly timeoutMs: number;
 
   constructor(options: DockerPreviewInstallerOptions) {
     this.runner = options.runner;
-    this.image = options.image ?? DEFAULT_POLICY_PROXY_IMAGE;
-    this.allowedHosts = options.allowedHosts ?? ['registry.npmjs.org'];
-    // Installs run cold (no store mount) at --network-concurrency=1 on the
-    // policy proxy; 120s killed 3 of 4 real preflights (#422). 300s holds on a
-    // loaded host until a persistent pnpm store makes cold installs warm.
+    this.image = options.image ?? DEFAULT_SANDBOX_NODE_IMAGE;
+    // Installs run cold (no store mount); 120s killed 3 of 4 real preflights
+    // (#422). 300s holds on a loaded host until a persistent pnpm store makes
+    // cold installs warm.
     this.timeoutMs = options.timeoutMs ?? 300_000;
   }
 
@@ -67,11 +60,6 @@ export class DockerPreviewInstaller implements PreviewInstaller {
       // 1 CPU + 512 MiB scratch left a serialized cold install racing the
       // timeout (#422: exit 137 kills on real preflights).
       resources: { cpuMillis: 2_000, memoryMiB: 3_072, diskMiB: 1_024, pids: 128 },
-      network: {
-        mode: 'allowlist',
-        allowedHosts: this.allowedHosts,
-        purpose: 'dependency-install',
-      },
       mounts: [{ source: input.workspacePath, target: '/project', readOnly: false }],
       ttlMs: this.timeoutMs + 30_000,
       user: `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
@@ -82,10 +70,7 @@ export class DockerPreviewInstaller implements PreviewInstaller {
     // and its --user has no home directory.
     const install = input.plan.install;
     const viaCorepack = install.command === 'pnpm' || install.command === 'yarn';
-    const installArgs =
-      install.command === 'pnpm'
-        ? [...install.args, '--child-concurrency=1', '--network-concurrency=1']
-        : install.args;
+    const installArgs = install.args;
     const originalManifest =
       install.command === 'pnpm'
         ? await configurePnpmForHostPreview(input.workspacePath)
@@ -105,37 +90,16 @@ export class DockerPreviewInstaller implements PreviewInstaller {
     try {
       const sandbox = await this.runner.create(spec);
       try {
-        let result: Awaited<ReturnType<NetworkPolicySandboxRunner['exec']>>;
+        let result: Awaited<ReturnType<SandboxRunner['exec']>>;
         try {
           result = await this.runner.exec(sandbox, exec, input.signal);
         } catch (error) {
-          const evidence = await this.runner
-            .networkEvidence(sandbox)
-            .catch(() => ({ events: [] as NetworkPolicyEvent[] }));
           if (input.signal?.aborted) throw error;
           return {
             ok: false,
             exitCode: -1,
             stdout: '',
             stderr: error instanceof Error ? error.message : String(error),
-            networkEvents: evidence.events,
-          };
-        }
-        let evidence: Awaited<ReturnType<NetworkPolicySandboxRunner['networkEvidence']>>;
-        try {
-          evidence = await this.runner.networkEvidence(sandbox);
-        } catch (error) {
-          return {
-            ok: false,
-            exitCode: result.exitCode === 0 ? -1 : result.exitCode,
-            stdout: result.stdout,
-            stderr: [
-              result.stderr,
-              `Network evidence unavailable: ${error instanceof Error ? error.message : String(error)}`,
-            ]
-              .filter(Boolean)
-              .join('\n'),
-            networkEvents: [],
           };
         }
         return {
@@ -143,7 +107,6 @@ export class DockerPreviewInstaller implements PreviewInstaller {
           exitCode: result.exitCode,
           stdout: result.stdout,
           stderr: result.stderr,
-          networkEvents: evidence.events,
         };
       } finally {
         await this.runner.destroy(sandbox);

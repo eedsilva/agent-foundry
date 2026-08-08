@@ -1,6 +1,6 @@
 # ADR 0028: Deny-by-default network policy
 
-- Status: Accepted
+- Status: Superseded by [ADR 0057](0057-plain-docker-network-for-personal-builder.md)
 - Date: 2026-07-22
 - Owners: Safety and Executors
 

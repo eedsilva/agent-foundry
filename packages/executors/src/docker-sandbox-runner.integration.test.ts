@@ -24,7 +24,6 @@ function spec(overrides: Partial<SandboxSpec> = {}): SandboxSpec {
   return {
     image: PINNED_IMAGE,
     resources: { cpuMillis: 500, memoryMiB: 128, diskMiB: 64, pids: 32 },
-    network: { mode: 'none', allowedHosts: [], purpose: 'execution' },
     mounts: [],
     ttlMs: 60_000,
     user: '1000:1000',
@@ -73,7 +72,6 @@ describe.skipIf(!hasDocker)(
         Memory: 134217728,
         NanoCpus: 500000000,
         PidsLimit: 32,
-        NetworkMode: 'none',
         ReadonlyRootfs: true,
         Privileged: false,
         CapDrop: ['ALL'],
@@ -156,97 +154,6 @@ describe.skipIf(!hasDocker)(
         timeoutMs: 5_000,
       });
       expect(result.exitCode).not.toBe(0);
-    });
-
-    it('has no network route when network mode is none', async () => {
-      const handle = await createTracked({
-        network: { mode: 'none', allowedHosts: [], purpose: 'execution' },
-      });
-      const result = await runner.exec(handle, {
-        command: 'sh',
-        args: ['-c', 'cat /proc/net/route | wc -l'],
-        timeoutMs: 5_000,
-      });
-      expect(result.stdout.trim()).toBe('1'); // header row only, no routes
-    });
-
-    it('enforces allowlisted DNS and HTTP while blocking raw, forbidden, and metadata egress', async () => {
-      const handle = await createTracked({
-        network: {
-          mode: 'allowlist',
-          allowedHosts: ['example.com'],
-          purpose: 'execution',
-        },
-      });
-      const inspect = await execa('docker', [
-        'inspect',
-        handle.id,
-        '--format',
-        '{{.HostConfig.NetworkMode}}',
-      ]);
-      expect(inspect.stdout.trim()).toMatch(/^agent-foundry-policy-/);
-      expect(inspect.stdout.trim()).not.toBe('bridge');
-
-      const raw = await runner.exec(handle, {
-        command: 'node',
-        args: [
-          '-e',
-          "const s=require('net').connect(80,'1.1.1.1',()=>process.exit(2));s.setTimeout(1000,()=>process.exit(0));s.on('error',()=>process.exit(0))",
-        ],
-        timeoutMs: 3_000,
-      });
-      expect(raw.exitCode).toBe(0);
-
-      const allowedDns = await runner.exec(handle, {
-        command: 'node',
-        args: [
-          '-e',
-          "require('dns').lookup('example.com',(error,address)=>{if(error)throw error;console.log(address)})",
-        ],
-        timeoutMs: 5_000,
-      });
-      expect(allowedDns.exitCode).toBe(0);
-
-      const forbiddenDns = await runner.exec(handle, {
-        command: 'node',
-        args: ['-e', "require('dns').lookup('google.com',(error)=>process.exit(error?0:2))"],
-        timeoutMs: 5_000,
-      });
-      expect(forbiddenDns.exitCode).toBe(0);
-
-      const proxied = await runner.exec(handle, {
-        command: 'node',
-        args: [
-          '-e',
-          "const p=new URL(process.env.HTTP_PROXY);require('http').get({host:p.hostname,port:p.port,path:'http://example.com/',headers:{host:'example.com'}},r=>{console.log(r.statusCode);r.resume();r.on('end',()=>process.exit(r.statusCode<500?0:2))}).on('error',()=>process.exit(3))",
-        ],
-        timeoutMs: 10_000,
-      });
-      expect(proxied.exitCode).toBe(0);
-
-      const metadata = await runner.exec(handle, {
-        command: 'node',
-        args: [
-          '-e',
-          "const p=new URL(process.env.HTTP_PROXY);require('http').get({host:p.hostname,port:p.port,path:'http://169.254.169.254/latest/meta-data',headers:{host:'169.254.169.254'}},r=>{console.log(r.statusCode);r.resume();r.on('end',()=>process.exit(r.statusCode===403?0:2))}).on('error',()=>process.exit(3))",
-        ],
-        timeoutMs: 5_000,
-      });
-      expect(metadata.exitCode).toBe(0);
-
-      const evidence = await runner.networkEvidence(handle);
-      expect(evidence.events).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ protocol: 'dns', decision: 'allow', hostname: 'example.com' }),
-          expect.objectContaining({ protocol: 'dns', decision: 'deny', hostname: 'google.com' }),
-          expect.objectContaining({ protocol: 'http', decision: 'allow', hostname: 'example.com' }),
-          expect.objectContaining({
-            protocol: 'http',
-            decision: 'deny',
-            hostname: '169.254.169.254',
-          }),
-        ]),
-      );
     });
 
     it('honors a read-only bind mount', async () => {

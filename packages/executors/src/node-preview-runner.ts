@@ -115,7 +115,6 @@ export class NodePreviewRunner implements PreviewRunner {
       {
         ...plan,
         ...(outcome.versions ? { versions: outcome.versions } : {}),
-        ...(outcome.networkEvents ? { installNetworkEvents: outcome.networkEvents } : {}),
       },
       this.clock.now(),
     );

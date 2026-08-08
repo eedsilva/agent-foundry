@@ -1120,7 +1120,6 @@ export class AgentExecutorFromExecutionPlane implements AgentExecutor {
         workspace: { projectId: request.projectId, ref: 'unused' },
         tools: [],
         limits: { timeoutMs: request.timeoutMs },
-        networkPolicy: { mode: 'none', allowedHosts: [], purpose: 'execution' },
         secrets: [],
       },
       signal,

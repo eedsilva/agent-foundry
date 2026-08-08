@@ -186,25 +186,13 @@ async function canConnect(port: number): Promise<boolean> {
 }
 
 describe('NodePreviewRunner', () => {
-  it('delegates reproducible installs and records bounded network evidence', async () => {
+  it('delegates reproducible installs and records tool versions', async () => {
     const install = vi.fn<PreviewInstaller['install']>(async () => ({
       ok: true,
       exitCode: 0,
       stdout: 'installed',
       stderr: '',
       versions: { node: 'v22.0.0', packageManager: '10.0.0' },
-      networkEvents: [
-        {
-          timestamp: '2026-07-22T12:00:00.000Z',
-          purpose: 'dependency-install',
-          protocol: 'connect',
-          decision: 'allow',
-          hostname: 'registry.npmjs.org',
-          port: 443,
-          addresses: ['104.16.0.35'],
-          reason: 'allowlisted public destination',
-        },
-      ],
     }));
     const runner = new NodePreviewRunner({ installer: { install } });
     const session = await newSession('sess-policy-install');
@@ -218,8 +206,6 @@ describe('NodePreviewRunner', () => {
 
     expect(install).toHaveBeenCalledOnce();
     expect(prepared.commandPlan?.versions).toEqual({ node: 'v22.0.0', packageManager: '10.0.0' });
-    expect(prepared.commandPlan?.installNetworkEvents).toHaveLength(1);
-    expect(prepared.commandPlan?.installNetworkEvents?.[0]).not.toHaveProperty('url');
   });
 
   it('preserves installer evidence on a failed preparation', async () => {

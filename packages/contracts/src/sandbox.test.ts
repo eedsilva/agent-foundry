@@ -4,7 +4,6 @@ import { SandboxExecSchema, SandboxSnapshotPathSchema, SandboxSpecSchema } from 
 const spec = {
   image: 'ghcr.io/agent-foundry/sandbox@sha256:abc',
   resources: { cpuMillis: 500, memoryMiB: 512, diskMiB: 1024, pids: 64 },
-  network: { mode: 'none', allowedHosts: [] },
   mounts: [{ source: 'workspace', target: '/workspace', readOnly: false }],
   ttlMs: 60_000,
   user: '1000:1000',

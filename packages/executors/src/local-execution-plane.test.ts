@@ -48,7 +48,6 @@ function request(): ExecutionRequest {
     workspace: { projectId: 'project-1', ref: 'deadbeef' },
     tools: [],
     limits: { timeoutMs: 60_000 },
-    networkPolicy: { mode: 'none', allowedHosts: [], purpose: 'execution' },
     secrets: [],
   };
 }
@@ -224,11 +223,6 @@ describe('LocalExecutionPlane', () => {
     });
     const unsupportedRequests: ExecutionRequest[] = [
       { ...request(), executionId: 'tools', tools: ['shell'] },
-      {
-        ...request(),
-        executionId: 'network',
-        networkPolicy: { mode: 'allowlist', allowedHosts: ['example.com'], purpose: 'execution' },
-      },
       {
         ...request(),
         executionId: 'secrets',

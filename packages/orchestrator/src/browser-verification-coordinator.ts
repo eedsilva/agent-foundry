@@ -132,16 +132,10 @@ export class BrowserVerificationCoordinator {
     evidence: BrowserVerificationEvidence,
     input: BrowserVerificationInput,
   ): Promise<BrowserVerificationReport> {
-    if (
-      evidence.screenshots.length === 0 &&
-      !evidence.trace &&
-      !evidence.video &&
-      !evidence.networkEvents?.length
-    )
-      return report;
+    if (evidence.screenshots.length === 0 && !evidence.trace && !evidence.video) return report;
     const sessionId = report.previewSession.sessionId;
 
-    const [screenshots, trace, video, networkPolicy] = await Promise.all([
+    const [screenshots, trace, video] = await Promise.all([
       Promise.all(
         evidence.screenshots.map(async (shot) => {
           const ref = await this.putEvidenceRef(
@@ -174,18 +168,6 @@ export class BrowserVerificationCoordinator {
             evidence.video,
           )
         : Promise.resolve(undefined),
-      evidence.networkEvents?.length
-        ? this.putEvidenceRef(
-            input,
-            `browser-network-policy-${sessionId}`,
-            'application/json',
-            1_000_000,
-            Buffer.from(
-              JSON.stringify({ schemaVersion: '1', events: evidence.networkEvents }),
-              'utf8',
-            ),
-          )
-        : Promise.resolve(undefined),
     ]);
 
     return BrowserVerificationReportSchema.parse({
@@ -197,7 +179,6 @@ export class BrowserVerificationCoordinator {
           screenshots,
           ...(trace ? { trace } : {}),
           ...(video ? { video } : {}),
-          ...(networkPolicy ? { networkPolicy } : {}),
         },
       },
     });

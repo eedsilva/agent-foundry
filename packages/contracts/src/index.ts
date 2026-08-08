@@ -1,5 +1,4 @@
 export * from './primitives.js';
-export * from './network-policy.js';
 export * from './agent.js';
 export * from './benchmark.js';
 export * from './experiment.js';

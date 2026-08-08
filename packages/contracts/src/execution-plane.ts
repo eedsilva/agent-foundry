@@ -1,9 +1,7 @@
 import { z } from 'zod';
 import { AgentExecutionRequestSchema, AgentExecutionResultSchema } from './agent.js';
 import { ExecutionSecretRefSchema } from './execution-secret-ref.js';
-import { ExecutionNetworkPolicySchema } from './network-policy.js';
 
-export * from './network-policy.js';
 export { ExecutionSecretRefSchema } from './execution-secret-ref.js';
 export type { ExecutionSecretRef } from './execution-secret-ref.js';
 
@@ -35,7 +33,6 @@ export const ExecutionRequestSchema = z
     workspace: ExecutionWorkspaceSnapshotSchema,
     tools: z.array(z.string()).default([]),
     limits: ExecutionLimitsSchema,
-    networkPolicy: ExecutionNetworkPolicySchema,
     secrets: z.array(ExecutionSecretRefSchema).default([]),
   })
   .strict();

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { ExecutionNetworkPolicySchema } from './execution-plane.js';
 
 export const SandboxResourcesSchema = z
   .object({
@@ -24,7 +23,6 @@ export const SandboxSpecSchema = z
   .object({
     image: z.string().min(1),
     resources: SandboxResourcesSchema,
-    network: ExecutionNetworkPolicySchema,
     mounts: z.array(SandboxMountSchema),
     ttlMs: z.number().int().positive(),
     user: z.string().min(1),
