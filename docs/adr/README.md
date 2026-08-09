@@ -6,14 +6,10 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest: [0048 validation boundaries for the local execution plane and the opt-in Supabase data-plane harness](0048-validation-boundaries-for-execution-plane-and-supabase-harness.md).
-Latest: [0049 bounded Supabase provisioning and preserved timed-out workdirs](0049-bounded-supabase-provisioning.md).
-Latest: [0050 structured and redacted provisioning failure diagnostics](0050-structured-provisioning-failure-diagnostics.md).
-Latest: [0051 normalize JSON Schema before Claude CLI execution](0051-claude-json-schema-compatibility.md).
-Latest: [0052 operator-enabled loopback browser redirects](0052-operator-enabled-loopback-browser-redirects.md).
-Latest: [0053 validation campaign preview isolation](0053-validation-campaign-preview-isolation.md).
-Latest: [0054 enforce validation campaign run budgets](0054-validation-campaign-run-budget.md).
-Latest: [0055 redacted validation evidence bundles](0055-redacted-validation-evidence-bundles.md).
-Latest: [0056 dismantle the validation campaign bureaucracy](0056-dismantle-validation-campaign-bureaucracy.md).
-Latest: [0057 plain Docker network for the personal builder](0057-plain-docker-network-for-personal-builder.md).
-Latest: [0046 a readable executor table replaces router scoring](0046-executor-table-replaces-router-scoring.md).
+Latest accepted: [0057 plain Docker network for the personal builder](0057-plain-docker-network-for-personal-builder.md).
+
+Proposed (Harness Alignment, milestone `Harness Alignment`):
+
+- [0058 UI quality gate lives inside the browser-verification loop](0058-ui-quality-gate-in-browser-verification.md) — epic #469
+- [0059 app-shape contract in the plan artifact](0059-app-shape-contract-in-plan-artifact.md) — epic #470
+- [0060 schema-first plan artifact for the generated data model](0060-schema-first-plan-artifact.md) — epic #471
