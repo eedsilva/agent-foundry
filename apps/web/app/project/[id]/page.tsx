@@ -8,10 +8,12 @@ import {
   type ApprovalAction,
   type ApprovalGateStep,
   type ApprovalRequest,
+  type ArtifactReference,
   type ResumeBlockedResponse,
   type RetryPlanResponse,
   type StepRun,
   type StoredArtifact,
+  type WorkflowDefinition,
   isWorkflowRunStatusTerminal,
 } from '@agent-foundry/contracts';
 import {
@@ -57,6 +59,29 @@ import {
   type DecideTarget,
 } from './dialogs/decide-dialog';
 import { ArtifactViewerDialog } from './dialogs/artifact-viewer-dialog';
+
+function findStoredArtifact(
+  artifacts: StoredArtifact[] | undefined,
+  ref: ArtifactReference,
+): StoredArtifact | undefined {
+  return artifacts?.find(
+    (artifact) =>
+      artifact.metadata.name === ref.name && artifact.metadata.revision === ref.revision,
+  );
+}
+
+/** Pure lookup, deliberately taking `workflowDef` as a parameter rather than
+ * closing over component state — `nodeForRequest` below wraps it for callers
+ * that already have `workflowDef` in scope; `pendingApproval`'s useMemo calls
+ * it directly so `workflowDef` (a real dependency) governs recomputation
+ * instead of a closure that's redefined every render. */
+function findApprovalGateNode(
+  workflowDef: WorkflowDefinition | null,
+  nodeId: string,
+): ApprovalGateStep | null {
+  const node = workflowDef?.nodes.find((candidate) => candidate.id === nodeId);
+  return node && node.type === 'approval-gate' ? node : null;
+}
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -200,11 +225,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     if (!decideTarget || decideTarget.request.artifact.name !== 'browser-verification.report') {
       return null;
     }
-    const match = detail?.artifacts.find(
-      (artifact) =>
-        artifact.metadata.name === decideTarget.request.artifact.name &&
-        artifact.metadata.revision === decideTarget.request.artifact.revision,
-    );
+    const match = findStoredArtifact(detail?.artifacts, decideTarget.request.artifact);
     if (!match) return null;
     const parsed = BrowserVerificationReportSchema.safeParse(match.content);
     return parsed.success ? parsed.data : null;
@@ -213,11 +234,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     if (!decideTarget || decideTarget.request.artifact.name === 'browser-verification.report') {
       return null;
     }
-    const match = detail?.artifacts.find(
-      (artifact) =>
-        artifact.metadata.name === decideTarget.request.artifact.name &&
-        artifact.metadata.revision === decideTarget.request.artifact.revision,
-    );
+    const match = findStoredArtifact(detail?.artifacts, decideTarget.request.artifact);
     if (!match) return null;
     const parsed = AgentArtifactSchema.safeParse(match.content);
     return parsed.success ? parsed.data : null;
@@ -227,26 +244,23 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // one-summary-line lookup than decideArtifact above, which resolves once a
   // dialog is already open. Memoized like decideArtifact/decideReport so
   // re-parsing an artifact doesn't run on every ~1.5s poll tick, only when
-  // approvals/workflowDef/detail actually change. Reads workflowDef directly
-  // rather than going through nodeForRequest, whose closure identity changes
-  // every render and would defeat the memo.
+  // approvals/detail/workflowDef actually change. Calls findApprovalGateNode
+  // directly (not nodeForRequest, a closure redefined every render) so
+  // workflowDef — a real, occasionally-changing value — is what governs
+  // recomputation, satisfying exhaustive-deps without defeating the memo.
   const pendingApproval = useMemo(() => {
     const entry = approvals.find((candidate) => !candidate.decision);
     if (!entry) return null;
-    const node = workflowDef?.nodes.find((candidate) => candidate.id === entry.request.nodeId);
-    if (!node || node.type !== 'approval-gate') return null;
-    const match = detail?.artifacts.find(
-      (artifact) =>
-        artifact.metadata.name === entry.request.artifact.name &&
-        artifact.metadata.revision === entry.request.artifact.revision,
-    );
+    const node = findApprovalGateNode(workflowDef, entry.request.nodeId);
+    if (!node) return null;
+    const match = findStoredArtifact(detail?.artifacts, entry.request.artifact);
     const parsed = match ? AgentArtifactSchema.safeParse(match.content) : null;
     return {
       request: entry.request,
       node,
       summary: parsed?.success ? parsed.data.summary : entry.request.nodeId,
     };
-  }, [approvals, workflowDef, detail]);
+  }, [approvals, detail, workflowDef]);
 
   function openApprovalDetail() {
     setAdvanced(true);
@@ -308,8 +322,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   }
 
   function nodeForRequest(request: ApprovalRequest): ApprovalGateStep | null {
-    const node = workflowDef?.nodes.find((candidate) => candidate.id === request.nodeId);
-    return node && node.type === 'approval-gate' ? node : null;
+    return findApprovalGateNode(workflowDef, request.nodeId);
   }
 
   async function openDecide(
