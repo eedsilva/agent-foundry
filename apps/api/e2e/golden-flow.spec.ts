@@ -810,7 +810,10 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   await page.getByRole('button', { name: 'Selecionar elemento' }).click();
   const selected = page.frameLocator('[data-testid="preview-frame"]').locator('#simple');
   await selected.click();
-  await expect(page.getByText('src/Greeting.tsx')).toBeVisible();
+  // Scoped to the Preview region: the new Files tab (#491) also lists
+  // 'src/Greeting.tsx' in Inspector, and a bare page-wide getByText now
+  // matches both.
+  await expect(regions.preview.getByText('src/Greeting.tsx')).toBeVisible();
   await page.getByLabel('Propriedade').selectOption('backgroundColor');
   await page.getByLabel('Valor atual').fill('#eee');
   await page.getByLabel('Novo valor').fill('#ddd');
