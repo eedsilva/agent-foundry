@@ -13,3 +13,7 @@ Proposed (Harness Alignment, milestone `Harness Alignment`):
 - [0058 UI quality gate lives inside the browser-verification loop](0058-ui-quality-gate-in-browser-verification.md) — epic #469
 - [0059 app-shape contract in the plan artifact](0059-app-shape-contract-in-plan-artifact.md) — epic #470
 - [0060 schema-first plan artifact for the generated data model](0060-schema-first-plan-artifact.md) — epic #471
+
+Proposed (builder's own UI, not yet ticketed):
+
+- [0061 builder defaults to a simple two-pane view; execution detail moves behind an "Avançado" toggle](0061-builder-simple-by-default-advanced-toggle.md)
