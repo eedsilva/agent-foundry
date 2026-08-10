@@ -463,6 +463,26 @@ describe('FileWorkspaceManager.listFiles', () => {
 
     expect(await manager.listFiles(projectId)).toEqual(['README.md']);
   });
+
+  it('excludes .git internals even when there is no gitignore at all', async () => {
+    // A real, git-initialized workspace (this manager's own workspaces
+    // always are) has a .git directory nobody's own .gitignore ever
+    // mentions — without a hardcoded exclude, every raw object blob and hook
+    // sample leaks into the Files tab.
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(join(workspace, '.git', 'objects', '4f'), { recursive: true });
+    await writeFile(join(workspace, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    await writeFile(join(workspace, '.git', 'objects', '4f', '034a7e'), Buffer.from([0x78, 0x01]));
+    await writeFile(join(workspace, 'README.md'), '# hi\n');
+
+    expect(await manager.listFiles(projectId)).toEqual(['README.md']);
+  });
 });
 
 describe('FileWorkspaceManager.readWorkspaceFile', () => {
