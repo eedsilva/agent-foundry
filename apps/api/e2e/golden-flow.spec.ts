@@ -601,7 +601,8 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     'true',
   );
   await page.keyboard.press('End');
-  await expect(page.getByRole('tab', { name: 'Versões' })).toHaveAttribute('aria-selected', 'true');
+  // Last tab is 'Arquivos' since #491 added it after 'Versões'.
+  await expect(page.getByRole('tab', { name: 'Arquivos' })).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('tab', { name: 'Atividade' })).toHaveAttribute(
     'aria-selected',
