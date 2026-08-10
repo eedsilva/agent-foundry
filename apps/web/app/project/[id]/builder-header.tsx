@@ -58,9 +58,18 @@ export function BuilderHeader({
         <button
           type="button"
           aria-pressed={advanced}
-          className={cn(BTN, advanced && BTN_ACTIVE)}
+          className={cn(BTN, 'inline-flex items-center gap-1.5', advanced && BTN_ACTIVE)}
           onClick={() => onToggleAdvanced()}
         >
+          {/* BTN and RUN_BUTTON (Pausar/Retomar) are near-identical strings —
+              in its off state, BTN_ACTIVE alone gives no visual cue this is a
+              persistent switch rather than a one-off action. The dot is the
+              state-independent marker, same idiom as RuntimePill. */}
+          <span
+            data-testid="advanced-toggle-dot"
+            aria-hidden
+            className={cn('size-1.5 rounded-full', advanced ? 'bg-accent-strong' : 'bg-ink-subtle')}
+          />
           Avançado
         </button>
         {runStatus === 'running' ? (
