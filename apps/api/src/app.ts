@@ -830,6 +830,17 @@ export async function buildApp(
     };
   });
 
+  app.get('/projects/:projectId/workspace/files', async (request) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    return { files: await runtime.workspaces.listFiles(projectId) };
+  });
+
+  app.get('/projects/:projectId/workspace/files/content', async (request) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const { path } = z.object({ path: z.string().min(1) }).parse(request.query);
+    return { path, content: await runtime.workspaces.readWorkspaceFile(projectId, path) };
+  });
+
   app.get('/projects/:projectId/events/stream', async (request, reply) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
     const { cursor } = z.object({ cursor: z.string().min(1).optional() }).parse(request.query);

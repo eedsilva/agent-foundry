@@ -1,12 +1,20 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
-import type { WorkspaceManager } from '@agent-foundry/domain';
+import {
+  NotFoundError,
+  ValidationError,
+  createListabilityChecker,
+  filterListablePaths,
+  resolveWorkspaceRelativePath,
+  type WorkspaceManager,
+} from '@agent-foundry/domain';
 import {
   atomicWriteJson,
   atomicWriteText,
   ensureDir,
   exists,
+  isNotFound,
   pathFor,
   safeSegment,
 } from './fs-utils.js';
@@ -14,6 +22,38 @@ import {
 export interface FileWorkspaceManagerOptions {
   gitAuthorName: string;
   gitAuthorEmail: string;
+}
+
+/** Files-tab display cap (#491) — generous for any real source/config file,
+ * tight enough that a pathological workspace file can't be read fully into
+ * memory and serialized back over HTTP unbounded. */
+const WORKSPACE_FILE_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Recursive walk that prunes gitignored directories (node_modules, .next,
+ * dist, ...) before descending into them, rather than walking the whole
+ * tree via `readdir({recursive: true})` and discarding most of it
+ * afterward — a real generated scaffold's node_modules alone can be tens of
+ * thousands of entries.
+ */
+async function walkListableFiles(
+  root: string,
+  dir: string,
+  checker: ReturnType<typeof createListabilityChecker>,
+): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const results: string[] = [];
+  for (const entry of entries) {
+    const absolute = join(dir, entry.name);
+    const rel = relative(root, absolute);
+    if (entry.isDirectory()) {
+      if (checker.isDirectoryPrunable(rel)) continue;
+      results.push(...(await walkListableFiles(root, absolute, checker)));
+    } else if (entry.isFile() && checker.isFileListable(rel)) {
+      results.push(rel);
+    }
+  }
+  return results;
 }
 
 /**
@@ -288,5 +328,47 @@ export class FileWorkspaceManager implements WorkspaceManager {
 
   async readPrd(projectId: string): Promise<string> {
     return readFile(join(this.workspacePath(projectId), 'PRD.md'), 'utf8');
+  }
+
+  async listFiles(projectId: string): Promise<string[]> {
+    const root = this.workspacePath(projectId);
+    const checker = createListabilityChecker(await this.#readGitignore(root));
+    const filePaths = await walkListableFiles(root, root, checker);
+    return filePaths.sort();
+  }
+
+  async readWorkspaceFile(projectId: string, relativePath: string): Promise<string> {
+    const root = this.workspacePath(projectId);
+    const resolved = resolveWorkspaceRelativePath(root, relativePath);
+    if (!resolved) throw new NotFoundError(`Path escapes the workspace: ${relativePath}`);
+    const [listable] = filterListablePaths([resolved], await this.#readGitignore(root));
+    if (listable !== resolved) throw new NotFoundError(`File is not listable: ${relativePath}`);
+    const absolute = join(root, resolved);
+    // Stat and read the same open file descriptor, not the path twice: a
+    // path-based stat()-then-readFile() has a TOCTOU window where the file
+    // on disk can change (grow past the cap, get swapped) between the two
+    // calls (flagged by CodeQL js/file-system-race).
+    const handle = await open(absolute, 'r');
+    try {
+      const stats = await handle.stat();
+      if (stats.size > WORKSPACE_FILE_MAX_BYTES) {
+        throw new ValidationError(
+          `File exceeds the ${WORKSPACE_FILE_MAX_BYTES}-byte Files-tab display limit: ${relativePath}`,
+        );
+      }
+      const buffer = await handle.readFile();
+      if (buffer.includes(0)) {
+        throw new ValidationError(`File appears to be binary, not text: ${relativePath}`);
+      }
+      return buffer.toString('utf8');
+    } finally {
+      await handle.close();
+    }
+  }
+
+  async #readGitignore(root: string): Promise<string> {
+    return readFile(join(root, '.gitignore'), 'utf8').catch((error) =>
+      isNotFound(error) ? '' : Promise.reject(error),
+    );
   }
 }

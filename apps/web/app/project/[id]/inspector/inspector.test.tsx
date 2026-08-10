@@ -15,6 +15,17 @@ describe('inspectorTabFromSearch', () => {
     expect(inspectorTabFromSearch('nope')).toBe('atividade');
     expect(inspectorTabFromSearch(null)).toBe('atividade');
   });
+
+  it('accepts the arquivos tab added for #491 without disturbing the default', () => {
+    expect(inspectorTabFromSearch('arquivos')).toBe('arquivos');
+    // Every existing deep link and the unmentioned default keep working
+    // unchanged — the new tab id is additive, not a reordering.
+    expect(inspectorTabFromSearch('atividade')).toBe('atividade');
+    expect(inspectorTabFromSearch('execucao')).toBe('execucao');
+    expect(inspectorTabFromSearch('artefatos')).toBe('artefatos');
+    expect(inspectorTabFromSearch('versoes')).toBe('versoes');
+    expect(inspectorTabFromSearch(null)).toBe('atividade');
+  });
 });
 
 describe('InspectorTabs', () => {

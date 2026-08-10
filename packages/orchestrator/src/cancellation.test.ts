@@ -437,6 +437,12 @@ class FakeWorkspaces implements WorkspaceManager {
   createBranch(_projectId: string, ref: string): Promise<string> {
     return Promise.resolve(ref);
   }
+  listFiles(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+  readWorkspaceFile(): Promise<string> {
+    return Promise.reject(new Error('not used by these cancellation tests'));
+  }
 }
 
 type ExecutorBehavior = 'instant' | 'reject-on-abort' | 'resolve-on-abort';

@@ -872,6 +872,12 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.counter += 1;
     return `sha-${String(this.counter).padStart(4, '0')}`;
   }
+  listFiles(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+  readWorkspaceFile(_projectId: string, relativePath: string): Promise<string> {
+    return Promise.reject(new NotFoundError(`fake workspace has no file: ${relativePath}`));
+  }
 }
 
 export type StepBehavior =

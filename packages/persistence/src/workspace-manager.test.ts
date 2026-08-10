@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
@@ -425,5 +425,114 @@ describe('FileWorkspaceManager version primitives', () => {
 
     await expect(manager.createBranch(projectId, old, '../escape')).rejects.toThrow();
     await expect(manager.createBranch(projectId, old, 'a/../../escape')).rejects.toThrow();
+  });
+});
+
+describe('FileWorkspaceManager.listFiles', () => {
+  it('lists files recursively, respecting the project gitignore', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(join(workspace, 'src'), { recursive: true });
+    await mkdir(join(workspace, 'node_modules', 'react'), { recursive: true });
+    await writeFile(join(workspace, '.gitignore'), 'node_modules/\n');
+    await writeFile(join(workspace, 'README.md'), '# hi\n');
+    await writeFile(join(workspace, 'src', 'App.tsx'), 'export {}\n');
+    await writeFile(join(workspace, 'node_modules', 'react', 'index.js'), '// noop\n');
+
+    const files = await manager.listFiles(projectId);
+
+    expect(files).toEqual(['.gitignore', 'README.md', 'src/App.tsx']);
+  });
+
+  it('excludes .env files even when there is no gitignore at all', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, '.env'), 'SECRET=shh\n');
+    await writeFile(join(workspace, 'README.md'), '# hi\n');
+
+    expect(await manager.listFiles(projectId)).toEqual(['README.md']);
+  });
+});
+
+describe('FileWorkspaceManager.readWorkspaceFile', () => {
+  it('reads a listable file by its workspace-relative path', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(join(workspace, 'src'), { recursive: true });
+    await writeFile(join(workspace, 'src', 'App.tsx'), 'export {}\n');
+
+    await expect(manager.readWorkspaceFile(projectId, 'src/App.tsx')).resolves.toBe('export {}\n');
+  });
+
+  it('rejects a path that escapes the workspace', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await mkdir(manager.workspacePath(projectId), { recursive: true });
+
+    await expect(manager.readWorkspaceFile(projectId, '../../etc/passwd')).rejects.toThrow();
+  });
+
+  it('rejects a .env file even by direct path, mirroring listFiles', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, '.env'), 'SECRET=shh\n');
+
+    await expect(manager.readWorkspaceFile(projectId, '.env')).rejects.toThrow();
+  });
+
+  it('rejects a file over the display size cap instead of loading it fully', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, 'huge.txt'), 'x'.repeat(6 * 1024 * 1024));
+
+    await expect(manager.readWorkspaceFile(projectId, 'huge.txt')).rejects.toThrow(
+      /exceeds the .* limit/,
+    );
+  });
+
+  it('rejects a file containing a NUL byte as not text', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x00, 0x0d]));
+
+    await expect(manager.readWorkspaceFile(projectId, 'image.png')).rejects.toThrow(/binary/);
   });
 });

@@ -380,7 +380,7 @@ export function pathFor(root: string, ...segments: string[]): string {
   return join(root, ...segments.map(safeSegment));
 }
 
-function isNotFound(error: unknown): boolean {
+export function isNotFound(error: unknown): boolean {
   return isNodeError(error) && error.code === 'ENOENT';
 }
 

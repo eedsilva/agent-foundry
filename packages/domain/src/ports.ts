@@ -545,6 +545,20 @@ export interface WorkspaceManager {
   restoreTree(projectId: string, ref: string): Promise<void>;
   /** Creates a new branch at ref, independent of the current branch's HEAD. Returns ref's commit sha. */
   createBranch(projectId: string, ref: string, name: string): Promise<string>;
+  /**
+   * Workspace-relative paths of every listable file (#491's read-only Files
+   * tab) — excludes whatever the project's own `.gitignore` excludes, plus a
+   * hardcoded always-exclude (`.env*`) that applies regardless of gitignore
+   * content. Directories are not included, only files.
+   */
+  listFiles(projectId: string): Promise<string[]>;
+  /**
+   * Reads one listable file's content as UTF-8 text. `relativePath` is
+   * validated against the workspace root — a path that escapes it (traversal,
+   * absolute injection) or isn't in the filtered listing throws NotFoundError
+   * rather than serving it.
+   */
+  readWorkspaceFile(projectId: string, relativePath: string): Promise<string>;
 }
 
 /**

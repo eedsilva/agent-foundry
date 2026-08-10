@@ -11,6 +11,7 @@ export const INSPECTOR_TAB_IDS = [
   'artefatos',
   'router',
   'versoes',
+  'arquivos',
 ] as const;
 
 export type InspectorTabId = (typeof INSPECTOR_TAB_IDS)[number];

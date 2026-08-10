@@ -136,6 +136,12 @@ class FakeWorkspaces implements WorkspaceManager {
     this.createBranchCalls.push({ ref, name });
     return Promise.resolve(ref);
   }
+  listFiles(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+  readWorkspaceFile(): Promise<string> {
+    return Promise.reject(new NotFoundError('not used by ProjectVersionService'));
+  }
 }
 
 class FakeArtifacts implements ArtifactStore {
