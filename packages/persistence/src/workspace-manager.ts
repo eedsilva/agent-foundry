@@ -1,4 +1,4 @@
-import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
@@ -344,17 +344,26 @@ export class FileWorkspaceManager implements WorkspaceManager {
     const [listable] = filterListablePaths([resolved], await this.#readGitignore(root));
     if (listable !== resolved) throw new NotFoundError(`File is not listable: ${relativePath}`);
     const absolute = join(root, resolved);
-    const stats = await stat(absolute);
-    if (stats.size > WORKSPACE_FILE_MAX_BYTES) {
-      throw new ValidationError(
-        `File exceeds the ${WORKSPACE_FILE_MAX_BYTES}-byte Files-tab display limit: ${relativePath}`,
-      );
+    // Stat and read the same open file descriptor, not the path twice: a
+    // path-based stat()-then-readFile() has a TOCTOU window where the file
+    // on disk can change (grow past the cap, get swapped) between the two
+    // calls (flagged by CodeQL js/file-system-race).
+    const handle = await open(absolute, 'r');
+    try {
+      const stats = await handle.stat();
+      if (stats.size > WORKSPACE_FILE_MAX_BYTES) {
+        throw new ValidationError(
+          `File exceeds the ${WORKSPACE_FILE_MAX_BYTES}-byte Files-tab display limit: ${relativePath}`,
+        );
+      }
+      const buffer = await handle.readFile();
+      if (buffer.includes(0)) {
+        throw new ValidationError(`File appears to be binary, not text: ${relativePath}`);
+      }
+      return buffer.toString('utf8');
+    } finally {
+      await handle.close();
     }
-    const buffer = await readFile(absolute);
-    if (buffer.includes(0)) {
-      throw new ValidationError(`File appears to be binary, not text: ${relativePath}`);
-    }
-    return buffer.toString('utf8');
   }
 
   async #readGitignore(root: string): Promise<string> {
