@@ -52,6 +52,7 @@ import { ModelPinPanel } from './inspector/model-pin-panel';
 import { RouterTab, type RouteEntry } from './inspector/router-tab';
 import { RunTab } from './inspector/run-tab';
 import { VersionsTab } from './inspector/versions-tab';
+import { FilesTab } from './inspector/files-tab';
 import { RetryPlanDialog, type RetryPlanTarget } from './dialogs/retry-plan-dialog';
 import {
   DecideDialog,
@@ -458,6 +459,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             : {})}
         />
       ),
+    },
+    {
+      id: 'arquivos',
+      label: 'Arquivos',
+      content: <FilesTab projectId={id} />,
     },
   ];
 

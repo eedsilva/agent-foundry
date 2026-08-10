@@ -324,6 +324,20 @@ export async function listVersions(projectId: string, limit?: number): Promise<P
   return response.versions;
 }
 
+export async function listWorkspaceFiles(projectId: string): Promise<string[]> {
+  const response = await api<{ files: string[] }>(
+    `/projects/${encodeURIComponent(projectId)}/workspace/files`,
+  );
+  return response.files;
+}
+
+export async function readWorkspaceFile(projectId: string, path: string): Promise<string> {
+  const response = await api<{ path: string; content: string }>(
+    `/projects/${encodeURIComponent(projectId)}/workspace/files/content?path=${encodeURIComponent(path)}`,
+  );
+  return response.content;
+}
+
 export function compareVersions(
   projectId: string,
   from: string,
