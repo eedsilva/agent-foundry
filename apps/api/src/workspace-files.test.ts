@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Runtime } from '@agent-foundry/composition';
-import { NotFoundError } from '@agent-foundry/domain';
+import { NotFoundError, ValidationError } from '@agent-foundry/domain';
 import { buildApp } from './app.js';
 
 interface FakeWorkspaceService {
@@ -90,6 +90,24 @@ describe('workspace files API', () => {
 
     expect(response.statusCode, response.body).toBe(404);
     expect(response.json()).toMatchObject({ error: 'NotFoundError' });
+    await app.close();
+  });
+
+  it('400s when the service rejects a file as too large or binary', async () => {
+    const { runtime } = buildFakeRuntime({
+      readWorkspaceFile: vi
+        .fn()
+        .mockRejectedValue(new ValidationError('File exceeds the 5242880-byte display limit')),
+    });
+    const app = await buildApp(runtime);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/projects/project-1/workspace/files/content?path=huge.txt',
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'ValidationError' });
     await app.close();
   });
 

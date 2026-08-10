@@ -505,4 +505,34 @@ describe('FileWorkspaceManager.readWorkspaceFile', () => {
 
     await expect(manager.readWorkspaceFile(projectId, '.env')).rejects.toThrow();
   });
+
+  it('rejects a file over the display size cap instead of loading it fully', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, 'huge.txt'), 'x'.repeat(6 * 1024 * 1024));
+
+    await expect(manager.readWorkspaceFile(projectId, 'huge.txt')).rejects.toThrow(
+      /exceeds the .* limit/,
+    );
+  });
+
+  it('rejects a file containing a NUL byte as not text', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x00, 0x0d]));
+
+    await expect(manager.readWorkspaceFile(projectId, 'image.png')).rejects.toThrow(/binary/);
+  });
 });

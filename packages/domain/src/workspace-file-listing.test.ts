@@ -34,4 +34,30 @@ describe('filterListablePaths', () => {
     const paths = ['.env.example', '.env', 'apps/web/.env.example', 'apps/web/.env.local'];
     expect(filterListablePaths(paths, '')).toEqual(['.env.example', 'apps/web/.env.example']);
   });
+
+  it('excludes .env.sample and .env.template — no scaffold convention treats them as templates', () => {
+    // Unlike .env.example, these two names have no grounding anywhere in
+    // this repo's actual scaffold gitignore, so the blanket .env* exclude
+    // applies to them with no carve-out.
+    const paths = ['.env.sample', '.env.template', 'README.md'];
+    expect(filterListablePaths(paths, '')).toEqual(['README.md']);
+  });
+
+  it('excludes SSH/TLS private keys even when the gitignore is empty', () => {
+    const paths = [
+      'id_rsa',
+      'id_ed25519',
+      'server.key',
+      'cert.pem',
+      '.ssh/id_rsa',
+      'infra/id_rsa',
+      'README.md',
+    ];
+    expect(filterListablePaths(paths, '')).toEqual(['README.md']);
+  });
+
+  it('excludes .npmrc, .netrc, and .aws/credentials even when the gitignore is empty', () => {
+    const paths = ['.npmrc', '.netrc', '.aws/credentials', 'apps/web/.npmrc', 'README.md'];
+    expect(filterListablePaths(paths, '')).toEqual(['README.md']);
+  });
 });

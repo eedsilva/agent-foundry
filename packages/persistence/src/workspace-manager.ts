@@ -1,8 +1,9 @@
-import { readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
   NotFoundError,
+  ValidationError,
   filterListablePaths,
   resolveWorkspaceRelativePath,
   type WorkspaceManager,
@@ -21,6 +22,11 @@ export interface FileWorkspaceManagerOptions {
   gitAuthorName: string;
   gitAuthorEmail: string;
 }
+
+/** Files-tab display cap (#491) — generous for any real source/config file,
+ * tight enough that a pathological workspace file can't be read fully into
+ * memory and serialized back over HTTP unbounded. */
+const WORKSPACE_FILE_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
  * Git branch names may legitimately contain `/` for hierarchy (`branch/foo`),
@@ -312,7 +318,18 @@ export class FileWorkspaceManager implements WorkspaceManager {
     if (!resolved) throw new NotFoundError(`Path escapes the workspace: ${relativePath}`);
     const [listable] = filterListablePaths([resolved], await this.#readGitignore(root));
     if (listable !== resolved) throw new NotFoundError(`File is not listable: ${relativePath}`);
-    return readFile(join(root, resolved), 'utf8');
+    const absolute = join(root, resolved);
+    const stats = await stat(absolute);
+    if (stats.size > WORKSPACE_FILE_MAX_BYTES) {
+      throw new ValidationError(
+        `File exceeds the ${WORKSPACE_FILE_MAX_BYTES}-byte Files-tab display limit: ${relativePath}`,
+      );
+    }
+    const buffer = await readFile(absolute);
+    if (buffer.includes(0)) {
+      throw new ValidationError(`File appears to be binary, not text: ${relativePath}`);
+    }
+    return buffer.toString('utf8');
   }
 
   async #readGitignore(root: string): Promise<string> {

@@ -14,6 +14,7 @@ Proposed (Harness Alignment, milestone `Harness Alignment`):
 - [0059 app-shape contract in the plan artifact](0059-app-shape-contract-in-plan-artifact.md) — epic #470
 - [0060 schema-first plan artifact for the generated data model](0060-schema-first-plan-artifact.md) — epic #471
 
-Proposed (builder's own UI, not yet ticketed):
+Proposed (builder's own UI):
 
-- [0061 builder defaults to a simple two-pane view; execution detail moves behind an "Avançado" toggle](0061-builder-simple-by-default-advanced-toggle.md)
+- [0061 builder defaults to a simple two-pane view; execution detail moves behind an "Avançado" toggle](0061-builder-simple-by-default-advanced-toggle.md) — issue #489
+- [0062 read-only workspace-file API for the builder's Files tab](0062-workspace-files-read-only-api.md) — issue #491, epic #488, ADR 0061

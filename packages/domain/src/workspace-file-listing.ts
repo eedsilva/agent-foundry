@@ -15,11 +15,17 @@ const ignore = ignoreFactory as unknown as (patterns?: string | string[]) => Ign
  * gitignore entry leaking a secret into the Files tab (#491). A separate
  * `ignore()` instance so nothing in the project's own gitignore (not even a
  * deliberate `!.env` negation) can override it.
+ *
+ * Not an exhaustive list of every possible credential filename — a
+ * reasonable, named baseline (env files, SSH/TLS private keys, npm/AWS/netrc
+ * credential files) that can grow as gaps are found.
  */
-// `.env.example` (and the same idea under `.sample`/`.template`) is a
-// template file the golden-stack scaffold's own default .gitignore
-// deliberately un-ignores (`!.env.example`) — it holds variable names, never
-// real values, and hiding it would be an over-exclusion, not a safety win.
+// `.env.example` alone (not `.sample`/`.template`, which have no grounding
+// here) is a template file the golden-stack scaffold's own default
+// .gitignore deliberately un-ignores (`!.env.example`, see
+// FileWorkspaceManager.ensure() in packages/persistence) — it holds variable
+// names, never real values, and hiding it would be an over-exclusion, not a
+// safety win.
 const ALWAYS_EXCLUDE = ignore().add([
   '.env',
   '.env.*',
@@ -27,10 +33,28 @@ const ALWAYS_EXCLUDE = ignore().add([
   '**/.env.*',
   '!.env.example',
   '!**/.env.example',
-  '!.env.sample',
-  '!**/.env.sample',
-  '!.env.template',
-  '!**/.env.template',
+  // SSH/TLS private keys.
+  '*.pem',
+  '*.key',
+  'id_rsa',
+  'id_ed25519',
+  'id_ecdsa',
+  'id_dsa',
+  '**/*.pem',
+  '**/*.key',
+  '**/id_rsa',
+  '**/id_ed25519',
+  '**/id_ecdsa',
+  '**/id_dsa',
+  '.ssh/**',
+  '**/.ssh/**',
+  // Tool/cloud credential files.
+  '.npmrc',
+  '**/.npmrc',
+  '.netrc',
+  '**/.netrc',
+  '.aws/credentials',
+  '**/.aws/credentials',
 ]);
 
 /**
