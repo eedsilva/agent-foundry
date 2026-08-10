@@ -10,7 +10,7 @@ function makeRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest 
     runId: 'run-1',
     stepRunId: 'step-1',
     nodeId: 'plan-approval',
-    artifact: { name: 'plan.current', revision: 1 },
+    artifact: { name: 'plan.current', revision: 1, sha256: 'a'.repeat(64) },
     allowedActions: ['approve', 'reject'],
     createdAt: '2026-08-10T00:00:00.000Z',
     ...overrides,
