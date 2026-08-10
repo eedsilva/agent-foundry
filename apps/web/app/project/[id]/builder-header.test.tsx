@@ -17,35 +17,30 @@ function makeProject(): ProjectDetail['project'] {
   } as ProjectDetail['project'];
 }
 
+function renderHeader(overrides: Partial<Parameters<typeof BuilderHeader>[0]> = {}): string {
+  return renderToStaticMarkup(
+    <BuilderHeader
+      project={makeProject()}
+      runStatus={undefined}
+      advanced={false}
+      onToggleAdvanced={() => undefined}
+      onPause={() => undefined}
+      onResume={() => undefined}
+      onRetry={() => undefined}
+      {...overrides}
+    />,
+  );
+}
+
 describe('BuilderHeader advanced toggle', () => {
   it('renders as unpressed and labeled "Avançado" when advanced mode is off', () => {
-    const markup = renderToStaticMarkup(
-      <BuilderHeader
-        project={makeProject()}
-        runStatus={undefined}
-        advanced={false}
-        onToggleAdvanced={() => undefined}
-        onPause={() => undefined}
-        onResume={() => undefined}
-        onRetry={() => undefined}
-      />,
-    );
+    const markup = renderHeader({ advanced: false });
     expect(markup).toContain('Avançado');
     expect(markup).toContain('aria-pressed="false"');
   });
 
   it('renders as pressed when advanced mode is on', () => {
-    const markup = renderToStaticMarkup(
-      <BuilderHeader
-        project={makeProject()}
-        runStatus={undefined}
-        advanced={true}
-        onToggleAdvanced={() => undefined}
-        onPause={() => undefined}
-        onResume={() => undefined}
-        onRetry={() => undefined}
-      />,
-    );
+    const markup = renderHeader({ advanced: true });
     expect(markup).toContain('aria-pressed="true"');
   });
 
@@ -54,28 +49,8 @@ describe('BuilderHeader advanced toggle', () => {
     // visitor sees Avançado only in its off state, where BTN_ACTIVE alone
     // gives no visual cue this is a switch, not a one-off action like
     // Pausar/Retomar. The dot is the persistent, state-independent marker.
-    const off = renderToStaticMarkup(
-      <BuilderHeader
-        project={makeProject()}
-        runStatus="running"
-        advanced={false}
-        onToggleAdvanced={() => undefined}
-        onPause={() => undefined}
-        onResume={() => undefined}
-        onRetry={() => undefined}
-      />,
-    );
-    const on = renderToStaticMarkup(
-      <BuilderHeader
-        project={makeProject()}
-        runStatus="running"
-        advanced={true}
-        onToggleAdvanced={() => undefined}
-        onPause={() => undefined}
-        onResume={() => undefined}
-        onRetry={() => undefined}
-      />,
-    );
+    const off = renderHeader({ runStatus: 'running', advanced: false });
+    const on = renderHeader({ runStatus: 'running', advanced: true });
 
     expect(off).toContain('data-testid="advanced-toggle-dot"');
     expect(on).toContain('data-testid="advanced-toggle-dot"');
