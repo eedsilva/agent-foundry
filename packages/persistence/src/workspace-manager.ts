@@ -1,12 +1,18 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
-import type { WorkspaceManager } from '@agent-foundry/domain';
+import {
+  NotFoundError,
+  filterListablePaths,
+  resolveWorkspaceRelativePath,
+  type WorkspaceManager,
+} from '@agent-foundry/domain';
 import {
   atomicWriteJson,
   atomicWriteText,
   ensureDir,
   exists,
+  isNotFound,
   pathFor,
   safeSegment,
 } from './fs-utils.js';
@@ -288,5 +294,30 @@ export class FileWorkspaceManager implements WorkspaceManager {
 
   async readPrd(projectId: string): Promise<string> {
     return readFile(join(this.workspacePath(projectId), 'PRD.md'), 'utf8');
+  }
+
+  async listFiles(projectId: string): Promise<string[]> {
+    const root = this.workspacePath(projectId);
+    const gitignoreContent = await this.#readGitignore(root);
+    const entries = await readdir(root, { recursive: true, withFileTypes: true });
+    const filePaths = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => relative(root, join(entry.parentPath, entry.name)));
+    return filterListablePaths(filePaths, gitignoreContent).sort();
+  }
+
+  async readWorkspaceFile(projectId: string, relativePath: string): Promise<string> {
+    const root = this.workspacePath(projectId);
+    const resolved = resolveWorkspaceRelativePath(root, relativePath);
+    if (!resolved) throw new NotFoundError(`Path escapes the workspace: ${relativePath}`);
+    const [listable] = filterListablePaths([resolved], await this.#readGitignore(root));
+    if (listable !== resolved) throw new NotFoundError(`File is not listable: ${relativePath}`);
+    return readFile(join(root, resolved), 'utf8');
+  }
+
+  async #readGitignore(root: string): Promise<string> {
+    return readFile(join(root, '.gitignore'), 'utf8').catch((error) =>
+      isNotFound(error) ? '' : Promise.reject(error),
+    );
   }
 }

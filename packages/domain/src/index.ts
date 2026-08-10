@@ -10,6 +10,7 @@ export * from './redaction.js';
 export * from './secret-scan.js';
 export * from './sandbox-runner.js';
 export * from './workspace-paths.js';
+export * from './workspace-file-listing.js';
 export * from './tracing.js';
 export * from './telemetry-metrics.js';
 export * from './usage-cost.js';
