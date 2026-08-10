@@ -8,10 +8,12 @@ import {
   type ApprovalAction,
   type ApprovalGateStep,
   type ApprovalRequest,
+  type ArtifactReference,
   type ResumeBlockedResponse,
   type RetryPlanResponse,
   type StepRun,
   type StoredArtifact,
+  type WorkflowDefinition,
   isWorkflowRunStatusTerminal,
 } from '@agent-foundry/contracts';
 import {
@@ -30,6 +32,7 @@ import { latestBrowserVerificationReport } from '../../../lib/browser-verificati
 import { BuilderShell } from './builder-shell';
 import { BuilderHeader } from './builder-header';
 import { RunAlertStrip } from './run-alert-strip';
+import { useAdvancedMode } from './advanced-mode';
 import { ChatPane } from './chat-pane';
 import { PreviewPanel } from './preview-panel';
 import { useAgentStream } from './use-agent-stream';
@@ -57,8 +60,32 @@ import {
 } from './dialogs/decide-dialog';
 import { ArtifactViewerDialog } from './dialogs/artifact-viewer-dialog';
 
+function findStoredArtifact(
+  artifacts: StoredArtifact[] | undefined,
+  ref: ArtifactReference,
+): StoredArtifact | undefined {
+  return artifacts?.find(
+    (artifact) =>
+      artifact.metadata.name === ref.name && artifact.metadata.revision === ref.revision,
+  );
+}
+
+/** Pure lookup, deliberately taking `workflowDef` as a parameter rather than
+ * closing over component state — `nodeForRequest` below wraps it for callers
+ * that already have `workflowDef` in scope; `pendingApproval`'s useMemo calls
+ * it directly so `workflowDef` (a real dependency) governs recomputation
+ * instead of a closure that's redefined every render. */
+function findApprovalGateNode(
+  workflowDef: WorkflowDefinition | null,
+  nodeId: string,
+): ApprovalGateStep | null {
+  const node = workflowDef?.nodes.find((candidate) => candidate.id === nodeId);
+  return node && node.type === 'approval-gate' ? node : null;
+}
+
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const [advanced, setAdvanced] = useAdvancedMode(id);
   const [selected, setSelected] = useState<StoredArtifact | null>(null);
   const [retryPlan, setRetryPlan] = useState<RetryPlanTarget | null>(null);
   const [resumeBlocked, setResumeBlocked] = useState<ResumeBlockedResponse | null>(null);
@@ -198,11 +225,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     if (!decideTarget || decideTarget.request.artifact.name !== 'browser-verification.report') {
       return null;
     }
-    const match = detail?.artifacts.find(
-      (artifact) =>
-        artifact.metadata.name === decideTarget.request.artifact.name &&
-        artifact.metadata.revision === decideTarget.request.artifact.revision,
-    );
+    const match = findStoredArtifact(detail?.artifacts, decideTarget.request.artifact);
     if (!match) return null;
     const parsed = BrowserVerificationReportSchema.safeParse(match.content);
     return parsed.success ? parsed.data : null;
@@ -211,15 +234,38 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     if (!decideTarget || decideTarget.request.artifact.name === 'browser-verification.report') {
       return null;
     }
-    const match = detail?.artifacts.find(
-      (artifact) =>
-        artifact.metadata.name === decideTarget.request.artifact.name &&
-        artifact.metadata.revision === decideTarget.request.artifact.revision,
-    );
+    const match = findStoredArtifact(detail?.artifacts, decideTarget.request.artifact);
     if (!match) return null;
     const parsed = AgentArtifactSchema.safeParse(match.content);
     return parsed.success ? parsed.data : null;
   }, [decideTarget, detail]);
+
+  // Feeds the alert strip's awaiting_approval banner (#490) — a narrower,
+  // one-summary-line lookup than decideArtifact above, which resolves once a
+  // dialog is already open. Memoized like decideArtifact/decideReport so
+  // re-parsing an artifact doesn't run on every ~1.5s poll tick, only when
+  // approvals/detail/workflowDef actually change. Calls findApprovalGateNode
+  // directly (not nodeForRequest, a closure redefined every render) so
+  // workflowDef — a real, occasionally-changing value — is what governs
+  // recomputation, satisfying exhaustive-deps without defeating the memo.
+  const pendingApproval = useMemo(() => {
+    const entry = approvals.find((candidate) => !candidate.decision);
+    if (!entry) return null;
+    const node = findApprovalGateNode(workflowDef, entry.request.nodeId);
+    if (!node) return null;
+    const match = findStoredArtifact(detail?.artifacts, entry.request.artifact);
+    const parsed = match ? AgentArtifactSchema.safeParse(match.content) : null;
+    return {
+      request: entry.request,
+      node,
+      summary: parsed?.success ? parsed.data.summary : entry.request.nodeId,
+    };
+  }, [approvals, detail, workflowDef]);
+
+  function openApprovalDetail() {
+    setAdvanced(true);
+    selectTab('mudancas');
+  }
 
   async function retry() {
     try {
@@ -276,8 +322,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   }
 
   function nodeForRequest(request: ApprovalRequest): ApprovalGateStep | null {
-    const node = workflowDef?.nodes.find((candidate) => candidate.id === request.nodeId);
-    return node && node.type === 'approval-gate' ? node : null;
+    return findApprovalGateNode(workflowDef, request.nodeId);
   }
 
   async function openDecide(
@@ -422,6 +467,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         <BuilderHeader
           project={detail.project}
           runStatus={run?.status}
+          advanced={advanced}
+          onToggleAdvanced={() => setAdvanced(!advanced)}
           onPause={() => void pause()}
           onResume={() => void resume()}
           onRetry={() => void retry()}
@@ -434,6 +481,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             error={error}
             run={run}
             resumeBlocked={resumeBlocked}
+            pendingApproval={pendingApproval}
+            onDecide={(request, node, action) => void openDecide(request, node, action)}
+            onOpenApprovalDetail={openApprovalDetail}
             onRetry={() => void retry()}
             onShowTimeline={() => selectTab('atividade')}
           />
@@ -518,6 +568,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       inspector={
         <InspectorTabs activeTab={activeTab} onTabChange={selectTab} tabs={inspectorTabs} />
       }
+      showInspector={advanced}
     />
   );
 }

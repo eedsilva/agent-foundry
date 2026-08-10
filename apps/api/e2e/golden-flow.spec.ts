@@ -81,6 +81,14 @@ async function openInspectorTab(page: Page, label: string) {
   await expect(page.getByRole('tab', { name: label })).toHaveAttribute('aria-selected', 'true');
 }
 
+/** Inspector itself (its tabs and the "Changes" region) is hidden by default
+ * behind the "Avançado" toggle (#489); flip it on before touching Inspector. */
+async function enableAdvancedMode(page: Page) {
+  const toggle = page.getByRole('button', { name: 'Avançado' });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+}
+
 let runtime: Runtime;
 let apiClose: () => Promise<void>;
 let apiBaseUrl: string;
@@ -519,7 +527,9 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   // First visit to this route triggers Next dev's on-demand compile of the
   // project page (on top of the client-side data fetch); default 5s
   // assertion timeout is too tight for a cold compile.
-  await expect(page.getByRole('tab', { name: 'Mudanças' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('button', { name: 'Avançado' })).toBeVisible({ timeout: 30_000 });
+  await enableAdvancedMode(page);
+  await expect(page.getByRole('tab', { name: 'Mudanças' })).toBeVisible();
   await openInspectorTab(page, 'Mudanças');
   await expect(page.getByRole('heading', { name: 'Aprovações' })).toBeVisible();
 
@@ -676,6 +686,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   };
   await expect(regions.chat).toBeVisible({ timeout: 30_000 });
   await expect(regions.preview).toBeVisible();
+  await enableAdvancedMode(page);
   await expect(regions.changes).toBeVisible();
   await openInspectorTab(page, 'Mudanças');
   const decideModalHeading = page.getByRole('heading', { name: /Human diff approval/ });

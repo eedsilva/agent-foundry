@@ -4,6 +4,8 @@ import React from 'react';
 import type { WorkflowRun } from '@agent-foundry/contracts';
 import { GlassBar } from '@/components/glass-bar';
 import { StatusPill } from '@/components/status-pill';
+import { BTN, BTN_ACTIVE } from '@/lib/ui';
+import { cn } from '@/lib/utils';
 import type { ProjectDetail } from '../../../lib/api';
 
 const RUN_BUTTON =
@@ -12,12 +14,16 @@ const RUN_BUTTON =
 export function BuilderHeader({
   project,
   runStatus,
+  advanced,
+  onToggleAdvanced,
   onPause,
   onResume,
   onRetry,
 }: {
   project: ProjectDetail['project'];
   runStatus: WorkflowRun['status'] | undefined;
+  advanced: boolean;
+  onToggleAdvanced: () => void;
   onPause: () => void;
   onResume: () => void;
   onRetry: () => void;
@@ -49,6 +55,23 @@ export function BuilderHeader({
         <time className="text-ink-muted text-[12px]">
           Atualizado {new Date(project.updatedAt).toLocaleString('pt-BR')}
         </time>
+        <button
+          type="button"
+          aria-pressed={advanced}
+          className={cn(BTN, 'inline-flex items-center gap-1.5', advanced && BTN_ACTIVE)}
+          onClick={() => onToggleAdvanced()}
+        >
+          {/* BTN and RUN_BUTTON (Pausar/Retomar) are near-identical strings —
+              in its off state, BTN_ACTIVE alone gives no visual cue this is a
+              persistent switch rather than a one-off action. The dot is the
+              state-independent marker, same idiom as RuntimePill. */}
+          <span
+            data-testid="advanced-toggle-dot"
+            aria-hidden
+            className={cn('size-1.5 rounded-full', advanced ? 'bg-accent-strong' : 'bg-ink-subtle')}
+          />
+          Avançado
+        </button>
         {runStatus === 'running' ? (
           <button type="button" className={RUN_BUTTON} onClick={() => onPause()}>
             Pausar
