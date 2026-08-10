@@ -225,31 +225,28 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   // Feeds the alert strip's awaiting_approval banner (#490) — a narrower,
   // one-summary-line lookup than decideArtifact above, which resolves once a
-  // dialog is already open; this runs whenever any approval is outstanding.
-  const pendingApprovalEntry = approvals.find((entry) => !entry.decision);
-  const pendingApprovalNode = pendingApprovalEntry
-    ? nodeForRequest(pendingApprovalEntry.request)
-    : null;
-  const pendingApprovalArtifact = pendingApprovalEntry
-    ? detail?.artifacts.find(
-        (artifact) =>
-          artifact.metadata.name === pendingApprovalEntry.request.artifact.name &&
-          artifact.metadata.revision === pendingApprovalEntry.request.artifact.revision,
-      )
-    : undefined;
-  const pendingApprovalAssessment = pendingApprovalArtifact
-    ? AgentArtifactSchema.safeParse(pendingApprovalArtifact.content)
-    : null;
-  const pendingApproval =
-    pendingApprovalEntry && pendingApprovalNode
-      ? {
-          request: pendingApprovalEntry.request,
-          node: pendingApprovalNode,
-          summary: pendingApprovalAssessment?.success
-            ? pendingApprovalAssessment.data.summary
-            : pendingApprovalEntry.request.nodeId,
-        }
-      : null;
+  // dialog is already open. Memoized like decideArtifact/decideReport so
+  // re-parsing an artifact doesn't run on every ~1.5s poll tick, only when
+  // approvals/workflowDef/detail actually change. Reads workflowDef directly
+  // rather than going through nodeForRequest, whose closure identity changes
+  // every render and would defeat the memo.
+  const pendingApproval = useMemo(() => {
+    const entry = approvals.find((candidate) => !candidate.decision);
+    if (!entry) return null;
+    const node = workflowDef?.nodes.find((candidate) => candidate.id === entry.request.nodeId);
+    if (!node || node.type !== 'approval-gate') return null;
+    const match = detail?.artifacts.find(
+      (artifact) =>
+        artifact.metadata.name === entry.request.artifact.name &&
+        artifact.metadata.revision === entry.request.artifact.revision,
+    );
+    const parsed = match ? AgentArtifactSchema.safeParse(match.content) : null;
+    return {
+      request: entry.request,
+      node,
+      summary: parsed?.success ? parsed.data.summary : entry.request.nodeId,
+    };
+  }, [approvals, workflowDef, detail]);
 
   function openApprovalDetail() {
     setAdvanced(true);
