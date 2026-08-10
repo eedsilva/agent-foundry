@@ -26,13 +26,16 @@ const ignore = ignoreFactory as unknown as (patterns?: string | string[]) => Ign
 // FileWorkspaceManager.ensure() in packages/persistence) — it holds variable
 // names, never real values, and hiding it would be an over-exclusion, not a
 // safety win.
+// A slash-free pattern (or one with only a trailing slash) already matches
+// at every depth in gitignore semantics — `.env` matches `sub/dir/.env`
+// unaided. Only a pattern with a slash *in the middle* (`.aws/credentials`,
+// `.ssh/**`) is anchored to that exact path and needs an explicit `**/`
+// sibling to also match nested. Verified against the `ignore` package
+// directly, not assumed — don't re-add a blanket `**/` pass "to be safe".
 const ALWAYS_EXCLUDE = ignore().add([
   '.env',
   '.env.*',
-  '**/.env',
-  '**/.env.*',
   '!.env.example',
-  '!**/.env.example',
   // SSH/TLS private keys.
   '*.pem',
   '*.key',
@@ -40,19 +43,11 @@ const ALWAYS_EXCLUDE = ignore().add([
   'id_ed25519',
   'id_ecdsa',
   'id_dsa',
-  '**/*.pem',
-  '**/*.key',
-  '**/id_rsa',
-  '**/id_ed25519',
-  '**/id_ecdsa',
-  '**/id_dsa',
   '.ssh/**',
   '**/.ssh/**',
   // Tool/cloud credential files.
   '.npmrc',
-  '**/.npmrc',
   '.netrc',
-  '**/.netrc',
   '.aws/credentials',
   '**/.aws/credentials',
 ]);
@@ -65,4 +60,27 @@ const ALWAYS_EXCLUDE = ignore().add([
 export function filterListablePaths(paths: string[], gitignoreContent: string): string[] {
   const projectIgnore = ignore().add(gitignoreContent);
   return ALWAYS_EXCLUDE.filter(projectIgnore.filter(paths));
+}
+
+export interface WorkspaceListabilityChecker {
+  /** True when a directory (and everything under it) should be skipped
+   * without descending — lets a caller prune node_modules/.next/dist/etc.
+   * during its own traversal instead of walking them and discarding the
+   * result afterward. */
+  isDirectoryPrunable(relativeDirPath: string): boolean;
+  isFileListable(relativePath: string): boolean;
+}
+
+/**
+ * Builds the gitignore matcher once so a directory walk can query it
+ * per-entry without re-parsing the project's .gitignore on every call —
+ * the tree-walking counterpart to filterListablePaths' flat-list shape.
+ */
+export function createListabilityChecker(gitignoreContent: string): WorkspaceListabilityChecker {
+  const projectIgnore = ignore().add(gitignoreContent);
+  return {
+    isDirectoryPrunable: (relativeDirPath) => projectIgnore.ignores(`${relativeDirPath}/`),
+    isFileListable: (relativePath) =>
+      !projectIgnore.ignores(relativePath) && !ALWAYS_EXCLUDE.ignores(relativePath),
+  };
 }

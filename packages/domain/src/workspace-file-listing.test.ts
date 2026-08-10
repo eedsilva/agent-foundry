@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterListablePaths } from './workspace-file-listing.js';
+import { createListabilityChecker, filterListablePaths } from './workspace-file-listing.js';
 
 describe('filterListablePaths', () => {
   it('passes through ordinary files when the gitignore is empty', () => {
@@ -59,5 +59,32 @@ describe('filterListablePaths', () => {
   it('excludes .npmrc, .netrc, and .aws/credentials even when the gitignore is empty', () => {
     const paths = ['.npmrc', '.netrc', '.aws/credentials', 'apps/web/.npmrc', 'README.md'];
     expect(filterListablePaths(paths, '')).toEqual(['README.md']);
+  });
+});
+
+describe('createListabilityChecker', () => {
+  it('marks a gitignored directory as prunable, so a walker can skip descending into it', () => {
+    const checker = createListabilityChecker('node_modules\n.next\n');
+    expect(checker.isDirectoryPrunable('node_modules')).toBe(true);
+    expect(checker.isDirectoryPrunable('.next')).toBe(true);
+    expect(checker.isDirectoryPrunable('src')).toBe(false);
+  });
+
+  it('agrees with filterListablePaths on which files are listable', () => {
+    const gitignore = 'node_modules\n';
+    const paths = ['README.md', 'node_modules/react/index.js', '.env', '.env.example'];
+    const checker = createListabilityChecker(gitignore);
+
+    const viaChecker = paths.filter((path) => checker.isFileListable(path));
+    const viaFilter = filterListablePaths(paths, gitignore);
+
+    expect(viaChecker).toEqual(viaFilter);
+  });
+
+  it('still applies the hardcoded always-exclude to individual files, not just directories', () => {
+    const checker = createListabilityChecker('');
+    expect(checker.isFileListable('.env')).toBe(false);
+    expect(checker.isFileListable('id_rsa')).toBe(false);
+    expect(checker.isFileListable('README.md')).toBe(true);
   });
 });

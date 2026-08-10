@@ -4,6 +4,7 @@ import { execa } from 'execa';
 import {
   NotFoundError,
   ValidationError,
+  createListabilityChecker,
   filterListablePaths,
   resolveWorkspaceRelativePath,
   type WorkspaceManager,
@@ -27,6 +28,33 @@ export interface FileWorkspaceManagerOptions {
  * tight enough that a pathological workspace file can't be read fully into
  * memory and serialized back over HTTP unbounded. */
 const WORKSPACE_FILE_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Recursive walk that prunes gitignored directories (node_modules, .next,
+ * dist, ...) before descending into them, rather than walking the whole
+ * tree via `readdir({recursive: true})` and discarding most of it
+ * afterward — a real generated scaffold's node_modules alone can be tens of
+ * thousands of entries.
+ */
+async function walkListableFiles(
+  root: string,
+  dir: string,
+  checker: ReturnType<typeof createListabilityChecker>,
+): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const results: string[] = [];
+  for (const entry of entries) {
+    const absolute = join(dir, entry.name);
+    const rel = relative(root, absolute);
+    if (entry.isDirectory()) {
+      if (checker.isDirectoryPrunable(rel)) continue;
+      results.push(...(await walkListableFiles(root, absolute, checker)));
+    } else if (entry.isFile() && checker.isFileListable(rel)) {
+      results.push(rel);
+    }
+  }
+  return results;
+}
 
 /**
  * Git branch names may legitimately contain `/` for hierarchy (`branch/foo`),
@@ -304,12 +332,9 @@ export class FileWorkspaceManager implements WorkspaceManager {
 
   async listFiles(projectId: string): Promise<string[]> {
     const root = this.workspacePath(projectId);
-    const gitignoreContent = await this.#readGitignore(root);
-    const entries = await readdir(root, { recursive: true, withFileTypes: true });
-    const filePaths = entries
-      .filter((entry) => entry.isFile())
-      .map((entry) => relative(root, join(entry.parentPath, entry.name)));
-    return filterListablePaths(filePaths, gitignoreContent).sort();
+    const checker = createListabilityChecker(await this.#readGitignore(root));
+    const filePaths = await walkListableFiles(root, root, checker);
+    return filePaths.sort();
   }
 
   async readWorkspaceFile(projectId: string, relativePath: string): Promise<string> {
