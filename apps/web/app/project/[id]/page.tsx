@@ -30,6 +30,7 @@ import { latestBrowserVerificationReport } from '../../../lib/browser-verificati
 import { BuilderShell } from './builder-shell';
 import { BuilderHeader } from './builder-header';
 import { RunAlertStrip } from './run-alert-strip';
+import { useAdvancedMode } from './advanced-mode';
 import { ChatPane } from './chat-pane';
 import { PreviewPanel } from './preview-panel';
 import { useAgentStream } from './use-agent-stream';
@@ -59,6 +60,7 @@ import { ArtifactViewerDialog } from './dialogs/artifact-viewer-dialog';
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const [advanced, setAdvanced] = useAdvancedMode(id);
   const [selected, setSelected] = useState<StoredArtifact | null>(null);
   const [retryPlan, setRetryPlan] = useState<RetryPlanTarget | null>(null);
   const [resumeBlocked, setResumeBlocked] = useState<ResumeBlockedResponse | null>(null);
@@ -422,6 +424,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         <BuilderHeader
           project={detail.project}
           runStatus={run?.status}
+          advanced={advanced}
+          onToggleAdvanced={() => setAdvanced(!advanced)}
           onPause={() => void pause()}
           onResume={() => void resume()}
           onRetry={() => void retry()}
@@ -518,6 +522,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       inspector={
         <InspectorTabs activeTab={activeTab} onTabChange={selectTab} tabs={inspectorTabs} />
       }
+      showInspector={advanced}
     />
   );
 }

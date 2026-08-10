@@ -28,4 +28,34 @@ describe('BuilderShell', () => {
     expect(markup).toContain('data-testid="pane-center"');
     expect(markup).toContain('data-testid="pane-inspector"');
   });
+
+  it('omits the inspector pane entirely when showInspector is false', () => {
+    const markup = renderToStaticMarkup(
+      <BuilderShell
+        header={null}
+        alerts={null}
+        chat={<section role="region" aria-label="Chat" />}
+        center={<section role="region" aria-label="Preview" />}
+        inspector={<section role="region" aria-label="Changes" />}
+        showInspector={false}
+      />,
+    );
+    expect(markup).toContain('data-testid="pane-chat"');
+    expect(markup).toContain('data-testid="pane-center"');
+    expect(markup).not.toContain('data-testid="pane-inspector"');
+    expect(markup).not.toContain('aria-label="Changes"');
+  });
+
+  it('still renders the inspector pane when showInspector is omitted (defaults true)', () => {
+    const markup = renderToStaticMarkup(
+      <BuilderShell
+        header={null}
+        alerts={null}
+        chat={null}
+        center={null}
+        inspector={<section role="region" aria-label="Changes" />}
+      />,
+    );
+    expect(markup).toContain('data-testid="pane-inspector"');
+  });
 });

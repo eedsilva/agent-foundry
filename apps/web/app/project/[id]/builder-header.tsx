@@ -4,6 +4,8 @@ import React from 'react';
 import type { WorkflowRun } from '@agent-foundry/contracts';
 import { GlassBar } from '@/components/glass-bar';
 import { StatusPill } from '@/components/status-pill';
+import { BTN, BTN_ACTIVE } from '@/lib/ui';
+import { cn } from '@/lib/utils';
 import type { ProjectDetail } from '../../../lib/api';
 
 const RUN_BUTTON =
@@ -12,12 +14,16 @@ const RUN_BUTTON =
 export function BuilderHeader({
   project,
   runStatus,
+  advanced,
+  onToggleAdvanced,
   onPause,
   onResume,
   onRetry,
 }: {
   project: ProjectDetail['project'];
   runStatus: WorkflowRun['status'] | undefined;
+  advanced: boolean;
+  onToggleAdvanced: () => void;
   onPause: () => void;
   onResume: () => void;
   onRetry: () => void;
@@ -49,6 +55,14 @@ export function BuilderHeader({
         <time className="text-ink-muted text-[12px]">
           Atualizado {new Date(project.updatedAt).toLocaleString('pt-BR')}
         </time>
+        <button
+          type="button"
+          aria-pressed={advanced}
+          className={cn(BTN, advanced && BTN_ACTIVE)}
+          onClick={() => onToggleAdvanced()}
+        >
+          Avançado
+        </button>
         {runStatus === 'running' ? (
           <button type="button" className={RUN_BUTTON} onClick={() => onPause()}>
             Pausar
