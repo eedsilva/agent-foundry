@@ -223,6 +223,39 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     return parsed.success ? parsed.data : null;
   }, [decideTarget, detail]);
 
+  // Feeds the alert strip's awaiting_approval banner (#490) — a narrower,
+  // one-summary-line lookup than decideArtifact above, which resolves once a
+  // dialog is already open; this runs whenever any approval is outstanding.
+  const pendingApprovalEntry = approvals.find((entry) => !entry.decision);
+  const pendingApprovalNode = pendingApprovalEntry
+    ? nodeForRequest(pendingApprovalEntry.request)
+    : null;
+  const pendingApprovalArtifact = pendingApprovalEntry
+    ? detail?.artifacts.find(
+        (artifact) =>
+          artifact.metadata.name === pendingApprovalEntry.request.artifact.name &&
+          artifact.metadata.revision === pendingApprovalEntry.request.artifact.revision,
+      )
+    : undefined;
+  const pendingApprovalAssessment = pendingApprovalArtifact
+    ? AgentArtifactSchema.safeParse(pendingApprovalArtifact.content)
+    : null;
+  const pendingApproval =
+    pendingApprovalEntry && pendingApprovalNode
+      ? {
+          request: pendingApprovalEntry.request,
+          node: pendingApprovalNode,
+          summary: pendingApprovalAssessment?.success
+            ? pendingApprovalAssessment.data.summary
+            : pendingApprovalEntry.request.nodeId,
+        }
+      : null;
+
+  function openApprovalDetail() {
+    setAdvanced(true);
+    selectTab('mudancas');
+  }
+
   async function retry() {
     try {
       await retryProject(id);
@@ -438,6 +471,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             error={error}
             run={run}
             resumeBlocked={resumeBlocked}
+            pendingApproval={pendingApproval}
+            onDecide={(request, node, action) => void openDecide(request, node, action)}
+            onOpenApprovalDetail={openApprovalDetail}
             onRetry={() => void retry()}
             onShowTimeline={() => selectTab('atividade')}
           />

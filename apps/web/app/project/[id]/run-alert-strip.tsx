@@ -1,7 +1,14 @@
 'use client';
 
 import React, { type ReactNode } from 'react';
-import type { ResumeBlockedResponse, WorkflowRun } from '@agent-foundry/contracts';
+import type {
+  ApprovalAction,
+  ApprovalGateStep,
+  ApprovalRequest,
+  ResumeBlockedResponse,
+  WorkflowRun,
+} from '@agent-foundry/contracts';
+import { BTN } from '@/lib/ui';
 import { cn } from '@/lib/utils';
 
 // The title is `--ink` (17.75:1 on the glass composite), not the tone colour:
@@ -13,6 +20,16 @@ const DOT_CLASS = {
   err: 'bg-err',
   info: 'bg-info',
 } as const;
+
+/** The pending approval RunAlertStrip needs to render its banner — a
+ * narrower, pre-resolved shape (one summary line, not the full assessment
+ * ChangesTab renders) so this component doesn't re-derive artifact lookups
+ * page.tsx already computes for the Mudanças tab. */
+export type PendingApproval = {
+  request: ApprovalRequest;
+  node: ApprovalGateStep;
+  summary: string;
+};
 
 export function AlertStrip({
   tone,
@@ -79,6 +96,9 @@ export function RunAlertStrip({
   error,
   run,
   resumeBlocked,
+  pendingApproval,
+  onDecide,
+  onOpenApprovalDetail,
   onRetry,
   onShowTimeline,
 }: {
@@ -86,6 +106,9 @@ export function RunAlertStrip({
   error: string;
   run: WorkflowRun | undefined;
   resumeBlocked: ResumeBlockedResponse | null;
+  pendingApproval: PendingApproval | null;
+  onDecide: (request: ApprovalRequest, node: ApprovalGateStep, action: ApprovalAction) => void;
+  onOpenApprovalDetail: () => void;
   onRetry: () => void;
   onShowTimeline: () => void;
 }) {
@@ -95,6 +118,35 @@ export function RunAlertStrip({
         <ProjectProvisioningError error={projectError} onShowTimeline={onShowTimeline} />
       ) : null}
       {error ? <AlertStrip tone="err" title={error} /> : null}
+
+      {run?.status === 'awaiting_approval' && pendingApproval ? (
+        <AlertStrip
+          tone="warn"
+          title="Aprovação pendente"
+          detail={pendingApproval.summary}
+          actions={
+            <>
+              {pendingApproval.node.actions.map((action) => (
+                <button
+                  key={action}
+                  type="button"
+                  className={BTN}
+                  onClick={() => onDecide(pendingApproval.request, pendingApproval.node, action)}
+                >
+                  {action}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="text-ink hover:text-accent-strong font-medium underline underline-offset-2"
+                onClick={() => onOpenApprovalDetail()}
+              >
+                Ver plano completo
+              </button>
+            </>
+          }
+        />
+      ) : null}
 
       {run?.status === 'paused' ? (
         <AlertStrip
