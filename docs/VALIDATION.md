@@ -712,6 +712,30 @@ the code.
   novamente") was coming for `failing`, which per `preview-service.ts` only reaches `failing` once
   `restartCount >= maxRestarts`, i.e. after retries are already exhausted; `unhealthy` is the state that
   still retries.
+- `isPreviewSessionProxyDenied` (new, `packages/contracts/src/preview.ts`, mirrors the existing
+  `isWorkflowRunStatusTerminal` pattern in `run.ts`): a `/simplify` pass caught that
+  `previewStatusMessage`'s original draft hand-duplicated `resolveUpstream`'s `failing`/terminal denial
+  logic as a second, independently-maintained literal check with nothing enforcing the two stayed in
+  sync. The frontend now calls this shared, contracts-level predicate for that shared fact;
+  `preview-service.ts` gained a doc comment pointing back at it by name so the connection is
+  discoverable from either side. `unhealthy` stays a frontend-only stricter UX choice — `resolveUpstream`
+  does not deny it — documented as such at its call site.
+
+### Simplify findings explicitly skipped (regression risk, not laziness)
+
+- **Session polling never stops once a session reaches a terminal status.** True, but the naive fix
+  (stop rescheduling once terminal) would silently reintroduce this exact bug for any *second* preview
+  session started later in the same page view: `start()` sets a fresh session directly, and the poll
+  effect only keys on `[projectId]`, so a poll loop that permanently self-terminates on the first
+  terminal observation would never resume watching that second session's own later transitions.
+  Fixing this correctly needs the poll loop to resume on a new session, not just stop on an old one —
+  a larger, riskier change than this ticket's scope for a cost that's genuinely minor (one lightweight
+  GET every 2s on an idle, already-dead session view).
+- **`setSessionLoaded(true)` is called from both `onSession` and `onError`, and fires on every poll
+  tick.** True, but the fix (derive `sessionLoaded` from `session !== undefined` instead of a separate
+  boolean) touches every `setSession` call site in the component (`start`, `stop`, both effects) for a
+  cost that's already a no-op in practice — React skips the re-render when a state setter receives the
+  same primitive value. Not worth the blast radius for a change with no observable effect.
 
 ### Verification performed
 

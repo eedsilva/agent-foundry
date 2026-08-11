@@ -5,6 +5,7 @@ import {
   VisualEditBreakpointSchema,
   VisualEditPropertySchema,
   VisualEditSchema,
+  isPreviewSessionProxyDenied,
   PreviewFailureDiagnosticSchema,
   type VisualEditBreakpoint,
   type VisualEditClearMessage,
@@ -44,6 +45,7 @@ const VIEWPORTS = {
 type ViewportKey = keyof typeof VIEWPORTS;
 
 const TERMINAL_SESSION_STATUSES = new Set(['stopped', 'failed', 'expired']);
+const POLL_INTERVAL_MS = 2_000;
 
 export type PreviewRepairContext = { key: string; title: string; detail: string };
 
@@ -218,7 +220,11 @@ export function startPreviewSessionPolling({
 // ever embedding a URL the backend is about to reject as a raw JSON 403.
 export function previewStatusMessage(session: PreviewSession): string | null {
   if (session.status === 'running' && session.url) return null;
-  if (session.status === 'failing') return 'Preview encerrando após falha…';
+  if (isPreviewSessionProxyDenied(session.status)) return 'Preview encerrando após falha…';
+  // 'unhealthy' isn't proxy-denied by resolveUpstream (a still-set port can go
+  // on serving through a restart attempt) — hiding the iframe here is a
+  // stricter, UX-only choice: don't show a flaky preview mid-restart even
+  // when it's technically still reachable.
   if (session.status === 'unhealthy') return 'Preview instável, tentando novamente…';
   return 'Preview iniciando…';
 }
@@ -405,7 +411,7 @@ export function PreviewPanel({
         setPanelError(cause instanceof Error ? cause.message : String(cause));
         setSessionLoaded(true);
       },
-      schedule: (callback) => setTimeout(callback, 2_000),
+      schedule: (callback) => setTimeout(callback, POLL_INTERVAL_MS),
     });
   }, [projectId]);
 
@@ -415,7 +421,7 @@ export function PreviewPanel({
       getPage: (cursor) => getPreviewLogs(projectId, session.id, cursor),
       onEntries: (entries) => setLogs((current) => [...current, ...entries]),
       onError: (cause) => setPanelError(cause instanceof Error ? cause.message : String(cause)),
-      schedule: (callback) => setTimeout(callback, 2_000),
+      schedule: (callback) => setTimeout(callback, POLL_INTERVAL_MS),
     });
   }, [projectId, session]);
 

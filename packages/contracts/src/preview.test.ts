@@ -10,6 +10,7 @@ import {
   BrowserTestPlanArtifactSchema,
   BrowserTestPlanSchema,
   BrowserVerificationReportSchema,
+  isPreviewSessionProxyDenied,
   PreviewCommandPlanSchema,
   PreviewEvidenceSchema,
   PreviewFailureDiagnosticSchema,
@@ -179,6 +180,20 @@ describe('PreviewSessionSchema', () => {
       updatedAt: startedAt,
     };
     expect(PreviewSessionSchema.safeParse(expired).success).toBe(false);
+  });
+});
+
+describe('isPreviewSessionProxyDenied', () => {
+  it('denies the three domain-terminal statuses and failing, the finalizing state before them', () => {
+    for (const status of ['failing', 'stopped', 'failed', 'expired'] as const) {
+      expect(isPreviewSessionProxyDenied(status)).toBe(true);
+    }
+  });
+
+  it('allows every other status through on status grounds alone', () => {
+    for (const status of ['preparing', 'starting', 'running', 'unhealthy'] as const) {
+      expect(isPreviewSessionProxyDenied(status)).toBe(false);
+    }
   });
 });
 
