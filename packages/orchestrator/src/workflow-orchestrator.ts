@@ -185,6 +185,15 @@ const PROVISIONING_FAILURE_MESSAGE =
 /** Bounds the UI-quality judge's prompt; the report schema caps it at 20. */
 const UI_QUALITY_JUDGE_MAX_SCREENSHOTS = 10;
 
+/**
+ * The advisory judge gets its own, much shorter bound than a real agent step.
+ * Reusing `agentTimeoutMs` would let a slow judge spend up to the full step
+ * budget per browser-verify attempt, and `assertExecutionMayContinue` counts
+ * that wall clock toward the run's active-time emergency ceiling — an
+ * advisory annotation must not be able to move a ceiling, even indirectly.
+ */
+const UI_QUALITY_JUDGE_TIMEOUT_MS = 120_000;
+
 function previewFailurePhase(code: string | undefined): PreviewFailurePhase | undefined {
   switch (code) {
     case 'PREVIEW_PREPARE_FAILED':
@@ -3413,7 +3422,7 @@ export class WorkflowOrchestrator {
         executor: this.executors.get(judge.provider),
         provider: judge.provider,
         model: judge.model,
-        timeoutMs: this.options.agentTimeoutMs,
+        timeoutMs: Math.min(this.options.agentTimeoutMs, UI_QUALITY_JUDGE_TIMEOUT_MS),
         signal,
       });
     } catch {

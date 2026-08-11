@@ -920,7 +920,11 @@ describe('advisory UI-quality judge (#475)', () => {
     expect(request.provider).toBe('claude');
     expect(request.model).toBe('judge-model');
     expect(request.mutatesWorkspace).toBe(false);
-    expect(request.inputArtifacts).toHaveLength(1);
+    // Bounded well below the full agent timeout so a slow judge cannot burn
+    // the run's active-time ceiling budget.
+    expect(request.timeoutMs).toBe(60_000);
+    // The screenshots travel as files under `cwd`, not as inputArtifacts.
+    expect(request.inputArtifacts).toBeUndefined();
     expect(request.prompt).toContain('layout-coherence');
     expect(request.prompt).toContain('0-open-task.png');
 

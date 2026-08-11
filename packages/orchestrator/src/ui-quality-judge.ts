@@ -63,7 +63,9 @@ export async function evaluateUiQuality(
         mutatesWorkspace: false,
         timeoutMs: input.timeoutMs,
         outputSchema: UI_QUALITY_JUDGE_JSON_SCHEMA,
-        inputArtifacts: input.screenshotFiles.map((file) => file.ref),
+        // No `inputArtifacts`: the judge reads the screenshots as files under
+        // `cwd`, and the only consumer of that field is StepAttempt
+        // persistence, which this call deliberately bypasses.
       },
       input.signal,
     );
