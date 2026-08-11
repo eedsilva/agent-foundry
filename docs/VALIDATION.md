@@ -654,3 +654,134 @@ after the seeded workflow completes. It does not call a model or external provid
 Next.js page, preview lifecycle, source selection/edit request, workspace mutation/version services,
 browser-verification coordinator, and browser interactions are the real application paths. There is no
 image-generation or raster-editing step.
+
+## Preview panel raw-error regression (#486) — 2026-08-11
+
+### Bug found
+
+`PreviewPanel` (`apps/web/app/project/[id]/preview-panel.tsx`) fetched the active preview session
+exactly once, on mount (`getActivePreviewSession`), and never again — unlike preview logs, which
+already polled every 2s. A preview session can legitimately leave `running` at any time in the
+background: `packages/orchestrator/src/preview-service.ts`'s health-check loop can transition it to
+`failing`/`unhealthy`, and its TTL can expire (`isPreviewSessionExpired`), independent of anything the
+frontend does. `resolveUpstream` (the preview proxy's access check) denies both cases —
+`failing` explicitly, and an expired session via an inline reap-then-terminal-throw — with a 403 JSON
+body (`{"error":"PreviewAccessDeniedError","message":"..."}`).
+
+Because the panel's `<iframe>` rendered unconditionally whenever `session.url` was non-empty, and
+never refreshed that cached `session` after the first fetch, it kept pointing the iframe at a session
+the backend had since started rejecting. Since the proxy's 403 response becomes the iframe's own
+top-level document, the raw JSON literally rendered inside the "preview," indistinguishable from the
+real app failing to load. First observed live in #473's crud-heavy tracer run 2 (`docs/evidence/
+harness-alignment/defect-list.md`, defect #7): the error appeared "immediately after the plan-approval
+gate was raised," consistent with a preview started earlier that sat unrefreshed through the planning
+phase and expired before the operator looked again.
+
+### Root cause vs. the four `PreviewAccessDeniedError` throw sites named in #486
+
+Not diagnosed to one single always-firing branch — by design, since `resolveUpstream`'s four checks
+(finalizing failure, terminal status, token mismatch, no upstream port) are all legitimate reasons to
+deny a proxy request, and any of them can be the one that fires depending on exactly which background
+transition the session underwent since the frontend's stale fetch. The actual defect is upstream of all
+four: the frontend had no way to ever learn a transition happened, so whichever branch fired, the panel
+had no path to recover or explain it. Fixing at that root (not one throw site) is the same "fix at the
+shared function, not every caller" principle `CONTRIBUTING.md`/`ponytail` both call for here — the four
+branches are call sites of one root problem, not four separate bugs.
+
+That reasoning, on its own, was an argument from source-reading, not a reproduction — a code-review
+pass on this fix correctly called that out against the ticket's explicit "prioritize reproducing over
+speculating." Closed with a deterministic reproduction of the branch #473's timing detail (`error
+appeared right after the plan-approval gate was raised`) points at most directly: `preview-service.
+test.ts`'s new `'denies a presented token once the TTL passes, reaping the session inline (#486)'`
+starts a real session, advances a fake clock 61s past its 60s TTL, and asserts `resolveUpstream` throws
+`PreviewAccessDeniedError` and the session is reaped to `expired` — a real, deterministic firing of one
+of the four branches from exactly the root cause described above, not merely an inference from reading
+the code.
+
+### Fix
+
+- `startPreviewSessionPolling` (new, shares a `startPolling<T>` loop with the existing
+  `startPreviewLogPolling` rather than duplicating it): re-fetches `getActivePreviewSession` every 2s
+  for the life of the panel, replacing the old one-shot mount effect.
+- `previewStatusMessage` (new): gates the iframe on the same narrower condition `resolveUpstream`
+  actually enforces (`status === 'running' && url` — not merely "not terminal"), so `failing`/
+  `unhealthy`/no-url-yet sessions get a legible Portuguese status message instead of an iframe pointed
+  at a URL the backend is about to reject. Terminal sessions already fell through to the existing
+  "Nenhum preview em execução" empty state; that path was untouched. `failing` and `unhealthy` get
+  distinct, accurate messages — a code-review pass caught the first draft claiming a retry ("tentando
+  novamente") was coming for `failing`, which per `preview-service.ts` only reaches `failing` once
+  `restartCount >= maxRestarts`, i.e. after retries are already exhausted; `unhealthy` is the state that
+  still retries.
+- `isPreviewSessionProxyDenied` (new, `packages/contracts/src/preview.ts`, mirrors the existing
+  `isWorkflowRunStatusTerminal` pattern in `run.ts`): a `/simplify` pass caught that
+  `previewStatusMessage`'s original draft hand-duplicated `resolveUpstream`'s `failing`/terminal denial
+  logic as a second, independently-maintained literal check with nothing enforcing the two stayed in
+  sync. The frontend now calls this shared, contracts-level predicate for that shared fact;
+  `preview-service.ts` gained a doc comment pointing back at it by name so the connection is
+  discoverable from either side. `unhealthy` stays a frontend-only stricter UX choice — `resolveUpstream`
+  does not deny it — documented as such at its call site.
+
+### Simplify findings explicitly skipped (regression risk, not laziness)
+
+- **Session polling never stops once a session reaches a terminal status.** True, but the naive fix
+  (stop rescheduling once terminal) would silently reintroduce this exact bug for any *second* preview
+  session started later in the same page view: `start()` sets a fresh session directly, and the poll
+  effect only keys on `[projectId]`, so a poll loop that permanently self-terminates on the first
+  terminal observation would never resume watching that second session's own later transitions.
+  Fixing this correctly needs the poll loop to resume on a new session, not just stop on an old one —
+  a larger, riskier change than this ticket's scope for a cost that's genuinely minor (one lightweight
+  GET every 2s on an idle, already-dead session view).
+- **`setSessionLoaded(true)` is called from both `onSession` and `onError`, and fires on every poll
+  tick.** True, but the fix (derive `sessionLoaded` from `session !== undefined` instead of a separate
+  boolean) touches every `setSession` call site in the component (`start`, `stop`, both effects) for a
+  cost that's already a no-op in practice — React skips the re-render when a state setter receives the
+  same primitive value. Not worth the blast radius for a change with no observable effect.
+
+### Verification performed
+
+- TDD: `apps/web/app/project/[id]/preview-panel.test.tsx` — RED confirmed (7 new tests failing with
+  "not a function"/wrong message before either helper existed or the message-accuracy fix landed); GREEN
+  after (10/10 passing).
+- Real reproduction, not just inference: `packages/orchestrator/src/preview-service.test.ts`'s new TTL
+  test (26/26 passing in that file).
+- `npx tsc -b` clean; `npm run test:unit:fast` (166 files/1491 tests); `npx prettier --check .`;
+  `npm run lint`; `npm run architecture:check` — all clean.
+- Not run locally (CI-only per this repo's convention): `golden-flow.spec.ts` and
+  `dom-source-map.spec.ts`, both of which drive a real preview session through `Iniciar preview` to a
+  real `running` status via the fixture dev-server script — read to confirm neither hand-constructs a
+  `PreviewSession` object that would bypass the new `status === 'running'` gate; both rely on the real
+  backend flow, which already produces that exact state by the time they assert on `preview-frame`.
+
+### CI-caught regression: transient `unhealthy` blips remounted an already-good iframe
+
+The "not run locally" bet above was wrong in one specific way. `supabase-data-plane-e2e`'s
+`golden-flow.spec.ts:674` ("attach reference, plan, build, visual edit, revert, rebuild") failed twice
+in a row on PR #510, both times at the same assertion (`toHaveCSS('background-color', 'rgb(221, 221,
+221)')` on an element inside the preview iframe, `golden-flow.spec.ts:821`). First instinct was "known
+CI flake, unrelated" — `supabase-data-plane-e2e` genuinely does fail intermittently on unrelated
+branches — but checking the *exact* failure on one of those unrelated runs showed a different symptom
+entirely (`expect(locator).toBeVisible()` on a `Mudanças` tab, not an in-iframe CSS assertion). Same job
+name, different bug; re-running blind would have masked a real one.
+
+The actual cause: this test manually reaches into the iframe's own content frame
+(`frame.goto(fixtureUrl)`) and then drives several more UI steps — select an element, fill three form
+fields, click preview — a sequence that easily spans multiple 2-second poll intervals. `preview-service.
+ts`'s health-check loop can legitimately flap a session to `unhealthy` and back to `running` under load
+with nothing really wrong (`unhealthy -> running` is a normal transition in `packages/domain/src/
+preview-state.ts`'s table). Before this fix, `previewStatusMessage` treated every `unhealthy` poll
+result the same regardless of history: hide the iframe, show a status message. Doing that to an
+iframe the test had already manually navigated meant the *next* healthy poll remounted a fresh iframe
+from `session.url`, discarding the test's `frame.goto()` navigation and any in-progress interaction —
+something that could not happen before this PR, because the old code never re-examined session state
+after the first mount.
+
+Fix: `previewStatusMessage` takes a second `alreadyShown` parameter. Once a session's iframe has
+rendered successfully at least once (tracked per session id via a ref, `shownIframeSessionId`, reset
+naturally when a different session starts), a later `unhealthy` poll for that same session no longer
+blanks it. `failing` gets no such grace — per `preview-service.ts` it only fires once restarts are
+exhausted, on a one-way path to terminal, so there's nothing worth protecting.
+
+Verification: `preview-panel.test.tsx` — 3 new cases (grace granted when already shown, still denied
+when never shown, no grace extended to `failing`); 13/13 passing. `npx tsc -b`, full fast suite,
+prettier, eslint, architecture:check all clean. The actual `golden-flow.spec.ts` re-run is CI-only, per
+the same convention as the rest of this entry.

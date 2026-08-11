@@ -5,6 +5,7 @@ import {
   VisualEditBreakpointSchema,
   VisualEditPropertySchema,
   VisualEditSchema,
+  isPreviewSessionProxyDenied,
   PreviewFailureDiagnosticSchema,
   type VisualEditBreakpoint,
   type VisualEditClearMessage,
@@ -44,6 +45,7 @@ const VIEWPORTS = {
 type ViewportKey = keyof typeof VIEWPORTS;
 
 const TERMINAL_SESSION_STATUSES = new Set(['stopped', 'failed', 'expired']);
+const POLL_INTERVAL_MS = 2_000;
 
 export type PreviewRepairContext = { key: string; title: string; detail: string };
 
@@ -128,28 +130,25 @@ export function previewRepairContext(
   return null;
 }
 
-export function startPreviewLogPolling({
-  getPage,
-  onEntries,
+/** Shared shape behind both preview polling loops below: fetch, react, reschedule
+ * regardless of success or failure, stop when the caller says so. */
+function startPolling<T>({
+  fetch,
+  onResult,
   onError,
   schedule,
 }: {
-  getPage: (cursor?: number) => Promise<{ entries: PreviewLogEntry[]; nextCursor: number }>;
-  onEntries: (entries: PreviewLogEntry[]) => void;
+  fetch: () => Promise<T>;
+  onResult: (result: T) => void;
   onError: (cause: unknown) => void;
   schedule: (callback: () => void) => ReturnType<typeof setTimeout>;
 }) {
   let active = true;
-  let cursor: number | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const poll = async () => {
     try {
-      const page = await getPage(cursor);
-      if (!active) return;
-      if (page.entries.length > 0) {
-        onEntries(page.entries);
-        cursor = page.nextCursor;
-      }
+      const result = await fetch();
+      if (active) onResult(result);
     } catch (cause) {
       if (active) onError(cause);
     } finally {
@@ -161,6 +160,83 @@ export function startPreviewLogPolling({
     active = false;
     if (timer) clearTimeout(timer);
   };
+}
+
+export function startPreviewLogPolling({
+  getPage,
+  onEntries,
+  onError,
+  schedule,
+}: {
+  getPage: (cursor?: number) => Promise<{ entries: PreviewLogEntry[]; nextCursor: number }>;
+  onEntries: (entries: PreviewLogEntry[]) => void;
+  onError: (cause: unknown) => void;
+  schedule: (callback: () => void) => ReturnType<typeof setTimeout>;
+}) {
+  let cursor: number | undefined;
+  return startPolling({
+    fetch: () => getPage(cursor),
+    onResult: (page) => {
+      if (page.entries.length > 0) {
+        onEntries(page.entries);
+        cursor = page.nextCursor;
+      }
+    },
+    onError,
+    schedule,
+  });
+}
+
+// The panel fetched the session exactly once on mount and never again, so a
+// session that expired or started failing in the background (TTL,
+// health-check-triggered restart) stayed rendered as its last-known-good
+// state forever — see #486. Polling closes that gap the same way logs
+// already do.
+export function startPreviewSessionPolling({
+  getSession,
+  onSession,
+  onError,
+  schedule,
+}: {
+  getSession: () => Promise<{ session: PreviewSession | null }>;
+  onSession: (session: PreviewSession | null) => void;
+  onError: (cause: unknown) => void;
+  schedule: (callback: () => void) => ReturnType<typeof setTimeout>;
+}) {
+  return startPolling({
+    fetch: getSession,
+    onResult: (result) => onSession(result.session),
+    onError,
+    schedule,
+  });
+}
+
+// resolveUpstream (packages/orchestrator/src/preview-service.ts) denies proxy
+// access for anything other than a healthy 'running' session with a bound
+// port. 'failing' means restarts are already exhausted and the session is
+// finalizing to terminal 'failed' — no retry is coming, so its message must
+// not claim one. 'unhealthy' is still mid-restart-attempt. Gating the iframe
+// on this same narrower check (not just "not terminal") stops the panel from
+// ever embedding a URL the backend is about to reject as a raw JSON 403.
+// `alreadyShown`: has this exact session's iframe already been rendered
+// successfully at least once? 'unhealthy' -> 'running' is a legal, expected
+// transition (packages/domain/src/preview-state.ts's transition table) that
+// can flap under load without anything really being wrong. Blanking an
+// already-good iframe on every such blip forces a remount on the next
+// healthy poll, discarding whatever the iframe's own document was doing —
+// real in-CI breakage for a test that navigates the iframe's inner frame and
+// interacts with it across several seconds (multiple 2s poll intervals).
+// 'failing' gets no such grace: per preview-service.ts it only fires once
+// restarts are exhausted, on a one-way path to terminal — it never returns
+// to 'running', so there is nothing to protect by keeping the iframe up.
+export function previewStatusMessage(session: PreviewSession, alreadyShown = false): string | null {
+  if (session.status === 'running' && session.url) return null;
+  if (isPreviewSessionProxyDenied(session.status)) return 'Preview encerrando após falha…';
+  if (session.status === 'unhealthy') {
+    if (alreadyShown && session.url) return null;
+    return 'Preview instável, tentando novamente…';
+  }
+  return 'Preview iniciando…';
 }
 
 export function BlobMedia({
@@ -333,22 +409,21 @@ export function PreviewPanel({
   const [breakpoint, setBreakpoint] = useState<VisualEditBreakpoint | ''>('');
   const notifiedFailure = useRef<string | undefined>(undefined);
   const reloadedRepair = useRef<string | undefined>(undefined);
+  const shownIframeSessionId = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    let active = true;
-    getActivePreviewSession(projectId)
-      .then((result: { session: PreviewSession | null }) => {
-        if (active) setSession(result.session);
-      })
-      .catch((cause: unknown) => {
-        if (active) setPanelError(cause instanceof Error ? cause.message : String(cause));
-      })
-      .finally(() => {
-        if (active) setSessionLoaded(true);
-      });
-    return () => {
-      active = false;
-    };
+    return startPreviewSessionPolling({
+      getSession: () => getActivePreviewSession(projectId),
+      onSession: (polled) => {
+        setSession(polled);
+        setSessionLoaded(true);
+      },
+      onError: (cause) => {
+        setPanelError(cause instanceof Error ? cause.message : String(cause));
+        setSessionLoaded(true);
+      },
+      schedule: (callback) => setTimeout(callback, POLL_INTERVAL_MS),
+    });
   }, [projectId]);
 
   useEffect(() => {
@@ -357,7 +432,7 @@ export function PreviewPanel({
       getPage: (cursor) => getPreviewLogs(projectId, session.id, cursor),
       onEntries: (entries) => setLogs((current) => [...current, ...entries]),
       onError: (cause) => setPanelError(cause instanceof Error ? cause.message : String(cause)),
-      schedule: (callback) => setTimeout(callback, 2_000),
+      schedule: (callback) => setTimeout(callback, POLL_INTERVAL_MS),
     });
   }, [projectId, session]);
 
@@ -466,6 +541,10 @@ export function PreviewPanel({
     [projectId, session],
   );
 
+  const alreadyShownIframe = session !== null && shownIframeSessionId.current === session.id;
+  const statusMessage = session ? previewStatusMessage(session, alreadyShownIframe) : null;
+  if (statusMessage === null && session) shownIframeSessionId.current = session.id;
+
   const report = useMemo(
     () => (run ? latestBrowserVerificationReport(artifacts, run.id, attempts) : null),
     [artifacts, attempts, run],
@@ -567,7 +646,7 @@ export function PreviewPanel({
           />
         ) : (
           <>
-            {session.url ? (
+            {statusMessage === null ? (
               /* Scrollable region: keyboard users must be able to reach and pan
                  it (axe `scrollable-region-focusable`). */
               <div
@@ -587,7 +666,7 @@ export function PreviewPanel({
                 />
               </div>
             ) : (
-              <p className={HINT}>Preview iniciando…</p>
+              <p className={HINT}>{statusMessage}</p>
             )}
             {selectionError ? (
               <p role="alert" className={ERROR_BOX}>

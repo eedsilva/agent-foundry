@@ -15,6 +15,20 @@ export const PreviewSessionStatusSchema = z.enum([
 ]);
 export type PreviewSessionStatus = z.infer<typeof PreviewSessionStatusSchema>;
 
+// Sibling of isWorkflowRunStatusTerminal (run.ts): a session in 'failing' isn't
+// domain-terminal (it's still finalizing to 'failed'/'stopped'), but
+// resolveUpstream (packages/orchestrator/src/preview-service.ts) denies proxy
+// access to it anyway, alongside the three genuinely terminal statuses. This
+// is the single named source of truth for that fact — the frontend's own
+// access-denial UI (apps/web's PreviewPanel) reads it here rather than
+// hand-duplicating the status list, so the two layers can't silently drift
+// apart the way they did in #486.
+export function isPreviewSessionProxyDenied(status: PreviewSessionStatus): boolean {
+  return (
+    status === 'failing' || status === 'stopped' || status === 'failed' || status === 'expired'
+  );
+}
+
 export const PreviewHealthStateSchema = z.enum(['unknown', 'healthy', 'unhealthy']);
 export type PreviewHealthState = z.infer<typeof PreviewHealthStateSchema>;
 

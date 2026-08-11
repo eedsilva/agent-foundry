@@ -225,6 +225,11 @@ export class PreviewService {
     });
   }
 
+  // The 'failing' check below and the terminal check after the expiry-reap
+  // are the two status-based branches `isPreviewSessionProxyDenied`
+  // (@agent-foundry/contracts, packages/contracts/src/preview.ts) names as a
+  // single fact for other layers — apps/web's PreviewPanel reads it there
+  // rather than re-deriving this status set (see #486).
   async resolveUpstream(sessionId: string, token: string | undefined): Promise<ResolvedUpstream> {
     return this.lifecycleLock.withSessionLock(sessionId, async () => {
       const record = await this.requireSession(sessionId);
