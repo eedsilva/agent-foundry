@@ -30,3 +30,7 @@ is understood from multi-shape tracer evidence.
   operation pipeline.
 - Rubric versioning becomes part of the verification contract surface.
 - Promotion to blocking is a data-driven follow-up decision, not part of this ADR.
+- The judge is opt-in per project: an optional `uiQualityJudge` field on `ProjectPolicy`, shaped
+  `{ provider: <Provider>, model: <string> }`. Absent (the default, including
+  `policies/default.yaml`), the judge never runs. A project opts in by setting this field in its
+  own policy.

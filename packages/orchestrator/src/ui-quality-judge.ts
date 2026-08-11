@@ -70,7 +70,10 @@ export async function evaluateUiQuality(
       input.signal,
     );
     const parsed = UiQualityJudgeOutputSchema.safeParse(result.output.data);
-    if (!parsed.success) return undefined;
+    if (!parsed.success) {
+      console.warn('UI-quality judge failed: executor output did not match the judge schema');
+      return undefined;
+    }
     const validated = UiQualityJudgeResultSchema.safeParse({
       rubricVersion: input.rubric.version,
       judgeModel: result.executedModel ?? result.model,
@@ -92,8 +95,15 @@ export async function evaluateUiQuality(
         ...(file.ref.sizeBytes === undefined ? {} : { sizeBytes: file.ref.sizeBytes }),
       })),
     });
-    return validated.success ? validated.data : undefined;
-  } catch {
+    if (!validated.success) {
+      console.warn('UI-quality judge failed: assembled result did not pass contract validation');
+      return undefined;
+    }
+    return validated.data;
+  } catch (error) {
+    console.warn(
+      `UI-quality judge failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return undefined;
   }
 }
