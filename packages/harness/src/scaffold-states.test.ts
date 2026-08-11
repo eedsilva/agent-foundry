@@ -36,6 +36,7 @@ describe('empty/loading/error state components', () => {
     const pageTsx = await readFile(resolve(scaffoldRoot, 'apps/web/app/page.tsx'), 'utf8');
 
     expect(pageTsx).toContain("from '../components/empty-state'");
+    expect(pageTsx).toContain('<EmptyState');
     // The shared `text-sm text-gray-600` class also styles the unrelated
     // session.user.email paragraph, which this task must not touch. Assert
     // against the specific dead markup instead of the ambiguous class string.
