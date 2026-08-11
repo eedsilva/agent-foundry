@@ -1341,9 +1341,11 @@ export class WorkflowOrchestrator {
     resumeNodeId?: string,
   ): Promise<RunPauseSnapshot> {
     const latest = latestArtifactsByName(await this.artifacts.listMetadata(projectId));
+    const systemPromptVersion = await this.systemPrompts?.version();
     return {
       workflowHash: workflowHash(workflow),
       harnessVersion: await this.harness.version(),
+      ...(systemPromptVersion ? { systemPromptVersion } : {}),
       workspaceHead: await this.workspaces.head(projectId),
       artifactHashes: Object.fromEntries(
         [...latest.entries()].map(([name, item]) => [name, item.sha256]),
@@ -3620,6 +3622,7 @@ export class WorkflowOrchestrator {
     const route = artifact.metadata.routeDecision;
     if (!route) return;
     const executed = route.executed ?? route.selected;
+    const systemPromptVersion = await this.systemPrompts?.version();
     await this.decisionLog.append({
       schemaVersion: '1',
       id: this.ids.next(),
@@ -3630,6 +3633,7 @@ export class WorkflowOrchestrator {
       nodeId,
       workflowId,
       harnessVersion: await this.harness.version(),
+      ...(systemPromptVersion ? { systemPromptVersion } : {}),
       taskKind: route.profile.taskKind,
       category: route.profile.category,
       role: route.profile.role,

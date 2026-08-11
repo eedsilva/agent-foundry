@@ -23,6 +23,12 @@ export interface SystemPromptSelection {
 export class SystemPromptRepository {
   constructor(private readonly systemPromptsDir: string) {}
 
+  async version(): Promise<string> {
+    const manifestPath = resolve(this.systemPromptsDir, 'manifest.json');
+    const manifest = ManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
+    return manifest.version;
+  }
+
   async select(role: AgentRole): Promise<SystemPromptSelection | undefined> {
     const manifestPath = resolve(this.systemPromptsDir, 'manifest.json');
     const manifest = ManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));

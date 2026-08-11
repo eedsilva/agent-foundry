@@ -678,6 +678,7 @@ describe('per-role system-prompt wiring (#483)', () => {
         role === 'developer'
           ? { version: 'system-prompts-1', content: '# System prompt: Developer' }
           : undefined,
+      version: async () => 'system-prompts-1',
     };
     const harness = makeHarness({}, undefined, {
       workflow: SYSTEM_PROMPT_WORKFLOW,

@@ -304,6 +304,7 @@ export interface SystemPromptSelection {
  */
 export interface SystemPromptRepository {
   select(role: AgentRole): Promise<SystemPromptSelection | undefined>;
+  version(): Promise<string>;
 }
 
 export interface ExplicitModelRoute {

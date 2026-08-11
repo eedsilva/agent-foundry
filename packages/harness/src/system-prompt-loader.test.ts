@@ -42,3 +42,14 @@ describe('SystemPromptRepository.select', () => {
     }
   });
 });
+
+describe('SystemPromptRepository.version', () => {
+  it('returns the manifest version, independent of any role', async () => {
+    const repo = new SystemPromptRepository(systemPromptsDir);
+    const manifest = JSON.parse(
+      await readFile(resolve(systemPromptsDir, 'manifest.json'), 'utf8'),
+    ) as { version: string };
+
+    await expect(repo.version()).resolves.toBe(manifest.version);
+  });
+});

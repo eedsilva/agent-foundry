@@ -102,6 +102,7 @@ export const RunPauseSnapshotSchema = z
   .object({
     workflowHash: IdempotencyKeySchema,
     harnessVersion: z.string().min(1),
+    systemPromptVersion: z.string().min(1).optional(),
     workspaceHead: z.string().min(1).nullable(),
     artifactHashes: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/)),
     resumeNodeId: PathSegmentSchema.optional(),
