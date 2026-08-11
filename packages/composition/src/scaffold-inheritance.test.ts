@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FileWorkspaceManager } from '@agent-foundry/persistence';
-import { VersionedHarnessRepository } from './versioned-harness.js';
+import { VersionedHarnessRepository } from '@agent-foundry/harness';
 
 // This repo's real `harness/` directory — not a fixture.
 const harnessDir = resolve(import.meta.dirname, '../../../harness');

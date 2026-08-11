@@ -21,8 +21,5 @@
   "dependencies": {
     "@agent-foundry/domain": "0.1.0",
     "zod": "^4.1.12"
-  },
-  "devDependencies": {
-    "@agent-foundry/persistence": "0.1.0"
   }
 }
