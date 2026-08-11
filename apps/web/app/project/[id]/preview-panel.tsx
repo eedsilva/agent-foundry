@@ -128,6 +128,38 @@ export function previewRepairContext(
   return null;
 }
 
+/** Shared shape behind both preview polling loops below: fetch, react, reschedule
+ * regardless of success or failure, stop when the caller says so. */
+function startPolling<T>({
+  fetch,
+  onResult,
+  onError,
+  schedule,
+}: {
+  fetch: () => Promise<T>;
+  onResult: (result: T) => void;
+  onError: (cause: unknown) => void;
+  schedule: (callback: () => void) => ReturnType<typeof setTimeout>;
+}) {
+  let active = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const poll = async () => {
+    try {
+      const result = await fetch();
+      if (active) onResult(result);
+    } catch (cause) {
+      if (active) onError(cause);
+    } finally {
+      if (active) timer = schedule(() => void poll());
+    }
+  };
+  void poll();
+  return () => {
+    active = false;
+    if (timer) clearTimeout(timer);
+  };
+}
+
 export function startPreviewLogPolling({
   getPage,
   onEntries,
@@ -139,35 +171,25 @@ export function startPreviewLogPolling({
   onError: (cause: unknown) => void;
   schedule: (callback: () => void) => ReturnType<typeof setTimeout>;
 }) {
-  let active = true;
   let cursor: number | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const poll = async () => {
-    try {
-      const page = await getPage(cursor);
-      if (!active) return;
+  return startPolling({
+    fetch: () => getPage(cursor),
+    onResult: (page) => {
       if (page.entries.length > 0) {
         onEntries(page.entries);
         cursor = page.nextCursor;
       }
-    } catch (cause) {
-      if (active) onError(cause);
-    } finally {
-      if (active) timer = schedule(() => void poll());
-    }
-  };
-  void poll();
-  return () => {
-    active = false;
-    if (timer) clearTimeout(timer);
-  };
+    },
+    onError,
+    schedule,
+  });
 }
 
-// Mirrors startPreviewLogPolling: the panel fetched the session exactly once
-// on mount and never again, so a session that expired or started failing in
-// the background (TTL, health-check-triggered restart) stayed rendered as
-// its last-known-good state forever — see #486. Polling closes that gap the
-// same way logs already do.
+// The panel fetched the session exactly once on mount and never again, so a
+// session that expired or started failing in the background (TTL,
+// health-check-triggered restart) stayed rendered as its last-known-good
+// state forever — see #486. Polling closes that gap the same way logs
+// already do.
 export function startPreviewSessionPolling({
   getSession,
   onSession,
@@ -179,37 +201,25 @@ export function startPreviewSessionPolling({
   onError: (cause: unknown) => void;
   schedule: (callback: () => void) => ReturnType<typeof setTimeout>;
 }) {
-  let active = true;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const poll = async () => {
-    try {
-      const result = await getSession();
-      if (!active) return;
-      onSession(result.session);
-    } catch (cause) {
-      if (active) onError(cause);
-    } finally {
-      if (active) timer = schedule(() => void poll());
-    }
-  };
-  void poll();
-  return () => {
-    active = false;
-    if (timer) clearTimeout(timer);
-  };
+  return startPolling({
+    fetch: getSession,
+    onResult: (result) => onSession(result.session),
+    onError,
+    schedule,
+  });
 }
 
 // resolveUpstream (packages/orchestrator/src/preview-service.ts) denies proxy
 // access for anything other than a healthy 'running' session with a bound
-// port — including 'failing' and 'unhealthy', which aren't domain-terminal
-// but aren't servable either. Gating the iframe on this same narrower check
-// (not just "not terminal") stops the panel from ever embedding a URL the
-// backend is about to reject as a raw JSON 403.
+// port. 'failing' means restarts are already exhausted and the session is
+// finalizing to terminal 'failed' — no retry is coming, so its message must
+// not claim one. 'unhealthy' is still mid-restart-attempt. Gating the iframe
+// on this same narrower check (not just "not terminal") stops the panel from
+// ever embedding a URL the backend is about to reject as a raw JSON 403.
 export function previewStatusMessage(session: PreviewSession): string | null {
   if (session.status === 'running' && session.url) return null;
-  if (session.status === 'failing' || session.status === 'unhealthy') {
-    return 'Preview instável, tentando novamente…';
-  }
+  if (session.status === 'failing') return 'Preview encerrando após falha…';
+  if (session.status === 'unhealthy') return 'Preview instável, tentando novamente…';
   return 'Preview iniciando…';
 }
 
@@ -514,6 +524,8 @@ export function PreviewPanel({
     [projectId, session],
   );
 
+  const statusMessage = session ? previewStatusMessage(session) : null;
+
   const report = useMemo(
     () => (run ? latestBrowserVerificationReport(artifacts, run.id, attempts) : null),
     [artifacts, attempts, run],
@@ -615,7 +627,7 @@ export function PreviewPanel({
           />
         ) : (
           <>
-            {previewStatusMessage(session) === null && session.url ? (
+            {statusMessage === null ? (
               /* Scrollable region: keyboard users must be able to reach and pan
                  it (axe `scrollable-region-focusable`). */
               <div
@@ -635,7 +647,7 @@ export function PreviewPanel({
                 />
               </div>
             ) : (
-              <p className={HINT}>{previewStatusMessage(session) ?? 'Preview iniciando…'}</p>
+              <p className={HINT}>{statusMessage}</p>
             )}
             {selectionError ? (
               <p role="alert" className={ERROR_BOX}>

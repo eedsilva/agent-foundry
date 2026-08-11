@@ -370,6 +370,24 @@ describe('PreviewService durable lifecycle', () => {
     );
   });
 
+  it('denies a presented token once the TTL passes, reaping the session inline (#486)', async () => {
+    // Reproduces the backend half of #486: a session that was genuinely
+    // 'running' when the frontend first fetched it can expire in the
+    // background with no further action from anyone. resolveUpstream reaps
+    // it inline on the next request and denies access — this is intentional
+    // access-control behavior, not the bug. The bug (fixed in preview-panel.tsx)
+    // was the frontend never re-fetching to learn this had happened.
+    const built = await buildService();
+    const { session, url } = await start(built.service);
+    const token = new URL(url).searchParams.get('token')!;
+    built.clock.advance(61_000); // past the 60s ttlSeconds configured in buildService
+
+    await expect(built.service.resolveUpstream(session.id, token)).rejects.toThrow(
+      PreviewAccessDeniedError,
+    );
+    expect((await built.sessions.get(session.id))?.session.status).toBe('expired');
+  });
+
   it('terminates a never-healthy preview before persisting failure and writes a structured diagnostic', async () => {
     const runner = new FakePreviewRunner();
     runner.healthResponses = [

@@ -688,22 +688,40 @@ had no path to recover or explain it. Fixing at that root (not one throw site) i
 shared function, not every caller" principle `CONTRIBUTING.md`/`ponytail` both call for here — the four
 branches are call sites of one root problem, not four separate bugs.
 
+That reasoning, on its own, was an argument from source-reading, not a reproduction — a code-review
+pass on this fix correctly called that out against the ticket's explicit "prioritize reproducing over
+speculating." Closed with a deterministic reproduction of the branch #473's timing detail (`error
+appeared right after the plan-approval gate was raised`) points at most directly: `preview-service.
+test.ts`'s new `'denies a presented token once the TTL passes, reaping the session inline (#486)'`
+starts a real session, advances a fake clock 61s past its 60s TTL, and asserts `resolveUpstream` throws
+`PreviewAccessDeniedError` and the session is reaped to `expired` — a real, deterministic firing of one
+of the four branches from exactly the root cause described above, not merely an inference from reading
+the code.
+
 ### Fix
 
-- `startPreviewSessionPolling` (new, mirrors the existing `startPreviewLogPolling`): re-fetches
-  `getActivePreviewSession` every 2s for the life of the panel, replacing the old one-shot mount effect.
+- `startPreviewSessionPolling` (new, shares a `startPolling<T>` loop with the existing
+  `startPreviewLogPolling` rather than duplicating it): re-fetches `getActivePreviewSession` every 2s
+  for the life of the panel, replacing the old one-shot mount effect.
 - `previewStatusMessage` (new): gates the iframe on the same narrower condition `resolveUpstream`
   actually enforces (`status === 'running' && url` — not merely "not terminal"), so `failing`/
   `unhealthy`/no-url-yet sessions get a legible Portuguese status message instead of an iframe pointed
   at a URL the backend is about to reject. Terminal sessions already fell through to the existing
-  "Nenhum preview em execução" empty state; that path was untouched.
+  "Nenhum preview em execução" empty state; that path was untouched. `failing` and `unhealthy` get
+  distinct, accurate messages — a code-review pass caught the first draft claiming a retry ("tentando
+  novamente") was coming for `failing`, which per `preview-service.ts` only reaches `failing` once
+  `restartCount >= maxRestarts`, i.e. after retries are already exhausted; `unhealthy` is the state that
+  still retries.
 
 ### Verification performed
 
-- TDD: `apps/web/app/project/[id]/preview-panel.test.tsx` — RED confirmed (5 new tests failing with
-  "not a function") before either helper existed; GREEN after implementation (9/9 passing, including
-  the new `startPreviewSessionPolling`/`previewStatusMessage` suites).
-- `npx tsc -b` clean.
+- TDD: `apps/web/app/project/[id]/preview-panel.test.tsx` — RED confirmed (7 new tests failing with
+  "not a function"/wrong message before either helper existed or the message-accuracy fix landed); GREEN
+  after (10/10 passing).
+- Real reproduction, not just inference: `packages/orchestrator/src/preview-service.test.ts`'s new TTL
+  test (26/26 passing in that file).
+- `npx tsc -b` clean; `npm run test:unit:fast` (166 files/1491 tests); `npx prettier --check .`;
+  `npm run lint`; `npm run architecture:check` — all clean.
 - Not run locally (CI-only per this repo's convention): `golden-flow.spec.ts` and
   `dom-source-map.spec.ts`, both of which drive a real preview session through `Iniciar preview` to a
   real `running` status via the fixture dev-server script — read to confirm neither hand-constructs a

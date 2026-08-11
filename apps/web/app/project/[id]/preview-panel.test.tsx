@@ -126,8 +126,15 @@ describe('previewStatusMessage', () => {
   it('names the transient states resolveUpstream would still deny', () => {
     expect(previewStatusMessage(runningSession({ status: 'preparing' }))).toMatch(/iniciando/i);
     expect(previewStatusMessage(runningSession({ status: 'starting' }))).toMatch(/iniciando/i);
-    expect(previewStatusMessage(runningSession({ status: 'failing' }))).toMatch(/instável/i);
     expect(previewStatusMessage(runningSession({ status: 'unhealthy' }))).toMatch(/instável/i);
+  });
+
+  it("does not claim a retry is coming for 'failing' — restarts are already exhausted by then", () => {
+    // preview-service.ts only transitions to 'failing' once restartCount >= maxRestarts,
+    // finalizing to terminal 'failed' next; no further restart attempt happens.
+    const message = previewStatusMessage(runningSession({ status: 'failing' }));
+    expect(message).not.toMatch(/tentando novamente/i);
+    expect(message).toMatch(/falha/i);
   });
 
   it('treats a running session with no url yet as still starting, not embeddable', () => {
