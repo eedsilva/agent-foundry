@@ -6,7 +6,8 @@ import type { NextConfig } from 'next';
 // `allowedDevOrigins` covers the preview proxy: it serves this dev server
 // through the orchestrator API's own origin (127.0.0.1) rather than the
 // app's own dev port, which Next's cross-origin dev-resource guard blocks
-// by default.
+// by default. `localhost` is kept too, for `next dev` run directly without
+// the proxy in front of it.
 const config: NextConfig = { output: 'standalone', allowedDevOrigins: ['127.0.0.1', 'localhost'] };
 
 export default config;
