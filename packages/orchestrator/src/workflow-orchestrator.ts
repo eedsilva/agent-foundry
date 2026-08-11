@@ -1335,17 +1335,30 @@ export class WorkflowOrchestrator {
     return new PolicyViolationError(message);
   }
 
+  // harnessVersion and systemPromptVersion are independent audit-trail
+  // lookups (different repositories, different files) — run concurrently
+  // rather than serially, and share the assembly logic between the two
+  // call sites that record both.
+  private async versionFields(): Promise<{
+    harnessVersion: string;
+    systemPromptVersion?: string;
+  }> {
+    const [harnessVersion, systemPromptVersion] = await Promise.all([
+      this.harness.version(),
+      this.systemPrompts?.version(),
+    ]);
+    return { harnessVersion, ...(systemPromptVersion ? { systemPromptVersion } : {}) };
+  }
+
   private async pauseSnapshot(
     projectId: string,
     workflow: WorkflowDefinition,
     resumeNodeId?: string,
   ): Promise<RunPauseSnapshot> {
     const latest = latestArtifactsByName(await this.artifacts.listMetadata(projectId));
-    const systemPromptVersion = await this.systemPrompts?.version();
     return {
       workflowHash: workflowHash(workflow),
-      harnessVersion: await this.harness.version(),
-      ...(systemPromptVersion ? { systemPromptVersion } : {}),
+      ...(await this.versionFields()),
       workspaceHead: await this.workspaces.head(projectId),
       artifactHashes: Object.fromEntries(
         [...latest.entries()].map(([name, item]) => [name, item.sha256]),
@@ -3622,7 +3635,6 @@ export class WorkflowOrchestrator {
     const route = artifact.metadata.routeDecision;
     if (!route) return;
     const executed = route.executed ?? route.selected;
-    const systemPromptVersion = await this.systemPrompts?.version();
     await this.decisionLog.append({
       schemaVersion: '1',
       id: this.ids.next(),
@@ -3632,8 +3644,7 @@ export class WorkflowOrchestrator {
       runId,
       nodeId,
       workflowId,
-      harnessVersion: await this.harness.version(),
-      ...(systemPromptVersion ? { systemPromptVersion } : {}),
+      ...(await this.versionFields()),
       taskKind: route.profile.taskKind,
       category: route.profile.category,
       role: route.profile.role,

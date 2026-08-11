@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ResumeBlockedError, type SystemPromptRepository } from '@agent-foundry/domain';
+import { ResumeBlockedError } from '@agent-foundry/domain';
 import type { ProjectVersionService } from './project-version-service.js';
-import { completeRun, liveStepRun, makeHarness, makeStores, seedRun } from './testing/harness.js';
-
-const systemPrompts: SystemPromptRepository = {
-  select: () => Promise.resolve(undefined),
-  version: () => Promise.resolve('system-prompts-1'),
-};
+import {
+  completeRun,
+  liveStepRun,
+  makeHarness,
+  makeStores,
+  seedRun,
+  stubSystemPrompts as systemPrompts,
+} from './testing/harness.js';
 
 describe('pause and resume at step boundaries (#7)', () => {
   /** Runs a project to a mid-graph pause: 'plan' completed, parked before 'implement'. */

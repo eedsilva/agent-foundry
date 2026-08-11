@@ -1189,6 +1189,13 @@ export interface GateOptions {
   timeout?: { policy: 'none' | 'auto-approve' | 'auto-reject'; afterMs?: number };
 }
 
+// Opt-in fixture: makeHarness leaves systemPrompts undefined by default, so
+// tests that need the audit-trail field populated pass this explicitly.
+export const stubSystemPrompts: SystemPromptRepository = {
+  select: () => Promise.resolve(undefined),
+  version: () => Promise.resolve('system-prompts-1'),
+};
+
 export function makeHarness(
   behaviors: Record<string, StepBehavior> = {},
   existing?: Stores,

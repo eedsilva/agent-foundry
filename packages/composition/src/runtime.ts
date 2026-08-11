@@ -15,7 +15,10 @@ import {
   DockerPreviewInstaller,
   type PreviewInstaller,
 } from '@agent-foundry/executors';
-import { SystemPromptRepository, VersionedHarnessRepository } from '@agent-foundry/harness';
+import {
+  VersionedHarnessRepository,
+  VersionedSystemPromptRepository,
+} from '@agent-foundry/harness';
 import { TableModelRouter, loadModelCatalog } from '@agent-foundry/model-router';
 import {
   FileApprovalDecisionRepository,
@@ -142,7 +145,7 @@ export interface Runtime {
   workflows: YamlWorkflowRepository;
   policies: YamlPolicyRepository;
   harness: VersionedHarnessRepository;
-  systemPrompts: SystemPromptRepository;
+  systemPrompts: VersionedSystemPromptRepository;
   workspaces: FileWorkspaceManager;
   secretStore: FileSecretStore;
   router: TableModelRouter;
@@ -245,7 +248,9 @@ export async function createRuntime(
   const workflows = new YamlWorkflowRepository(config.workflowsDir);
   const policies = new YamlPolicyRepository(config.policiesDir);
   const harness = new VersionedHarnessRepository(config.harnessDir);
-  const systemPrompts = new SystemPromptRepository(join(config.harnessDir, 'system-prompts'));
+  const systemPrompts = new VersionedSystemPromptRepository(
+    join(config.harnessDir, 'system-prompts'),
+  );
   const workspaces = new FileWorkspaceManager(config.dataDir, {
     gitAuthorName: config.gitAuthorName,
     gitAuthorEmail: config.gitAuthorEmail,

@@ -9,15 +9,9 @@ import type {
   IdGenerator,
   QualityObservationRepository,
   RouterDecisionLogRepository,
-  SystemPromptRepository,
 } from '@agent-foundry/domain';
-import { completeRun, makeHarness } from './testing/harness.js';
+import { completeRun, makeHarness, stubSystemPrompts as systemPrompts } from './testing/harness.js';
 import { QualityObservationService } from './quality-observation-service.js';
-
-const systemPrompts: SystemPromptRepository = {
-  select: () => Promise.resolve(undefined),
-  version: () => Promise.resolve('system-prompts-1'),
-};
 
 const workflow: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   schemaVersion: '1',
