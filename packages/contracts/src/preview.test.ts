@@ -21,6 +21,7 @@ import {
   type PreviewSession,
 } from './preview.js';
 import { ArtifactReferenceSchema, StepAttemptSchema } from './run.js';
+import { UI_QUALITY_RUBRIC_V1 } from './ui-quality-rubric.js';
 
 const createdAt = '2026-07-14T12:00:00.000Z';
 const startedAt = '2026-07-14T12:00:05.000Z';
@@ -913,6 +914,63 @@ describe('browser verification contracts', () => {
         ],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('BrowserVerificationReportSchema uiQuality field', () => {
+  const baseReport = {
+    schemaVersion: '1',
+    approved: false,
+    summary: 'Delete failed',
+    planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+    previewSession: {
+      sessionId: 'preview-1',
+      status: 'stopped',
+      evidence: { screenshots: [] },
+    },
+    steps: [],
+  };
+
+  const validUiQuality = {
+    rubricVersion: '1',
+    judgeModel: 'claude-sonnet-5',
+    overallScore: 0.8,
+    criteria: UI_QUALITY_RUBRIC_V1.criteria.map((criterion) => ({
+      criterionId: criterion.id,
+      score: 0.8,
+      finding: 'Looks good',
+    })),
+    screenshotsReviewed: [{ name: 'delete-failure', revision: 1, sha256: 'c'.repeat(64) }],
+  };
+
+  it('parses an existing report fixture without a uiQuality field', () => {
+    expect(BrowserVerificationReportSchema.safeParse(baseReport).success).toBe(true);
+  });
+
+  it('parses the same report with a valid uiQuality field', () => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        ...baseReport,
+        uiQuality: validUiQuality,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a uiQuality field with more than 20 criteria', () => {
+    const result = BrowserVerificationReportSchema.safeParse({
+      ...baseReport,
+      uiQuality: {
+        ...validUiQuality,
+        criteria: Array.from({ length: 21 }, (_, index) => ({
+          criterionId: `criterion-${index}`,
+          score: 0.5,
+        })),
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.message.includes('at most 20'))).toBe(true);
+    }
   });
 });
 
