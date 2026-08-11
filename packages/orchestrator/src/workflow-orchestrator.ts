@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { buffer } from 'node:stream/consumers';
 import { join } from 'node:path';
 import { SpanStatusCode, type Span } from '@opentelemetry/api';
@@ -11,6 +13,7 @@ import type {
   ApprovalGateStep,
   ApprovalRequest,
   ArtifactReference,
+  BrowserVerificationReport,
   ExecutableStep,
   ExecutorStreamEvent,
   ExecutorHealth,
@@ -30,6 +33,7 @@ import type {
   StepRun,
   StoredArtifact,
   TaskProfile,
+  UiQualityJudgeResult,
   VerifyStep,
   WorkflowDefinition,
   WorkflowNode,
@@ -51,6 +55,7 @@ import {
   ProvisioningFailureDiagnosticSchema,
   resolveRoutingEntry,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  UI_QUALITY_RUBRIC_V1,
   GeneratedTaskGraphArtifactSchema,
   createValidationCampaignExecution,
   VerificationReportSchema,
@@ -138,6 +143,7 @@ import {
 import type { QualityObservationService } from './quality-observation-service.js';
 import type { ValidationEvidencePublisher } from './validation-evidence.js';
 import { TaskGraphRunner } from './task-graph-runner.js';
+import { evaluateUiQuality } from './ui-quality-judge.js';
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -175,6 +181,18 @@ class CancelledExecutionWithUsage extends RunCancelledError {
 
 const PROVISIONING_FAILURE_MESSAGE =
   'Project provisioning failed. Review the project event timeline for details.';
+
+/** Bounds the UI-quality judge's prompt; the report schema caps it at 20. */
+const UI_QUALITY_JUDGE_MAX_SCREENSHOTS = 10;
+
+/**
+ * The advisory judge gets its own, much shorter bound than a real agent step.
+ * Reusing `agentTimeoutMs` would let a slow judge spend up to the full step
+ * budget per browser-verify attempt, and `assertExecutionMayContinue` counts
+ * that wall clock toward the run's active-time emergency ceiling — an
+ * advisory annotation must not be able to move a ceiling, even indirectly.
+ */
+const UI_QUALITY_JUDGE_TIMEOUT_MS = 120_000;
 
 function previewFailurePhase(code: string | undefined): PreviewFailurePhase | undefined {
   switch (code) {
@@ -350,7 +368,7 @@ export class WorkflowOrchestrator {
     private readonly versions?: ProjectVersionService,
     private readonly browserVerification?: BrowserVerificationCoordinator,
     private readonly qualityObservations?: QualityObservationService,
-    private readonly executors?: Pick<ExecutorRegistry, 'health'>,
+    private readonly executors?: Pick<ExecutorRegistry, 'health' | 'get'>,
     private readonly secretStore?: SecretStore,
     private readonly decisionLog?: RouterDecisionLogRepository,
     private readonly generatedProjectRuntime?: GeneratedProjectRuntime,
@@ -2607,10 +2625,24 @@ export class WorkflowOrchestrator {
         );
         throwIfCancelled(signal, runId);
         await this.assertExecutionMayContinue(runId, signal);
+        // Advisory only (#475): scores the evidence the verifier already
+        // captured. `report.approved` above is final by this point and the
+        // judge never reads or rewrites it — an unconfigured or failing judge
+        // simply leaves `uiQuality` off the persisted report.
+        const uiQuality = await this.judgeUiQuality(
+          project.id,
+          runId,
+          stepRun.id,
+          attempt.id,
+          step.id,
+          policy,
+          report,
+          signal,
+        );
         artifact = await this.artifacts.put({
           projectId: project.id,
           name: step.outputArtifact,
-          content: report,
+          content: uiQuality ? { ...report, uiQuality } : report,
           createdBy: `verifier:${step.id}`,
           runId,
           stepRunId: stepRun.id,
@@ -3337,6 +3369,67 @@ export class WorkflowOrchestrator {
       browserEvidenceStepIds.push(shot.stepId);
     }
     return { inputFiles, browserEvidenceStepIds };
+  }
+
+  /**
+   * Runs the advisory UI-quality judge over a browser-verification report's
+   * screenshots (#475). Deliberately bypasses the routed agent pipeline —
+   * no StepRun, StepAttempt, candidate ranking, or checkpoint — because the
+   * judge is an annotation on an already-finished step, not a new stage in
+   * the operation pipeline (ADR 0058). A project with no `uiQualityJudge`
+   * policy never runs it; every failure degrades to `undefined`.
+   */
+  private async judgeUiQuality(
+    projectId: string,
+    runId: string,
+    stepRunId: string,
+    attemptId: string,
+    stepId: string,
+    policy: ProjectPolicy,
+    report: BrowserVerificationReport,
+    signal: AbortSignal,
+  ): Promise<UiQualityJudgeResult | undefined> {
+    const judge = policy.uiQualityJudge;
+    if (!judge || !this.executors) return undefined;
+    const screenshots = report.previewSession.evidence.screenshots.slice(
+      0,
+      UI_QUALITY_JUDGE_MAX_SCREENSHOTS,
+    );
+    if (screenshots.length === 0) return undefined;
+    let cwd: string | undefined;
+    try {
+      cwd = await mkdtemp(join(tmpdir(), 'af-ui-quality-'));
+      // The report inlines { name, revision, sha256 } references no executor
+      // can fetch; the judge needs the bytes as real files under its cwd.
+      const screenshotFiles: Array<{ stepId: string; localPath: string; ref: ArtifactReference }> =
+        [];
+      for (const [index, shot] of screenshots.entries()) {
+        const stream = await this.artifacts.getBlobStream(projectId, shot.name, shot.revision);
+        if (!stream) continue;
+        const localPath = `${index}-${shot.stepId}.png`;
+        await writeFile(join(cwd, localPath), await buffer(stream));
+        screenshotFiles.push({ stepId: shot.stepId, localPath, ref: shot });
+      }
+      return await evaluateUiQuality({
+        runId,
+        stepRunId,
+        attemptId,
+        projectId,
+        stepId,
+        cwd,
+        screenshotFiles,
+        rubric: UI_QUALITY_RUBRIC_V1,
+        executor: this.executors.get(judge.provider),
+        provider: judge.provider,
+        model: judge.model,
+        timeoutMs: Math.min(this.options.agentTimeoutMs, UI_QUALITY_JUDGE_TIMEOUT_MS),
+        signal,
+      });
+    } catch {
+      return undefined;
+    } finally {
+      if (cwd) await rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   private async executeCandidate(

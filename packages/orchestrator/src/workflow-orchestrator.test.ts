@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   RouteDecisionSchema,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  UI_QUALITY_RUBRIC_V1,
   WorkflowDefinitionSchema,
   type AgentExecutionRequest,
   type AgentExecutionResult,
   type AgentArtifact,
+  type ArtifactReference,
   type ExecutorHealth,
   type Project,
   type WorkflowDefinition,
@@ -197,8 +199,13 @@ function makeOrchestrator(
     nack: () => Promise.resolve(),
     reapExpired: () => Promise.resolve([]),
   };
-  const executors: Pick<ExecutorRegistry, 'health'> | undefined = executorHealth
-    ? { health: () => Promise.resolve(executorHealth) }
+  const executors: Pick<ExecutorRegistry, 'health' | 'get'> | undefined = executorHealth
+    ? {
+        health: () => Promise.resolve(executorHealth),
+        get: () => {
+          throw new Error('No executor registry is wired for this test.');
+        },
+      }
     : undefined;
 
   const orchestrator = new WorkflowOrchestrator(
@@ -717,5 +724,315 @@ describe('generated database sync before browser verification (#429)', () => {
     expect(applyWorkspaceMigrations.mock.invocationCallOrder[0]!).toBeLessThan(
       verify.mock.invocationCallOrder[0]!,
     );
+  });
+});
+
+describe('advisory UI-quality judge (#475)', () => {
+  const SCREENSHOT_NAME = 'browser-screenshot-preview-475-open-task';
+
+  /**
+   * Runs the browser-verification workflow once. `judge` decides only whether
+   * `policy.uiQualityJudge` is configured, so the two variants differ in
+   * nothing else — that is what makes the approved/repair comparison below
+   * meaningful.
+   */
+  async function runBrowserWorkflow(options: {
+    judge: boolean;
+    approved: boolean;
+    judgeFails?: boolean;
+    /** Overrides every criterion's score (and overallScore) uniformly. */
+    judgeScore?: number;
+  }) {
+    const judgeRequests: AgentExecutionRequest[] = [];
+    const judgeSawScreenshot: boolean[] = [];
+    /** Filled in below, before the run; the verify fake reads it at call time. */
+    const screenshots: ArtifactReference[] = [];
+
+    const judgeExecutor = {
+      execute: async (request: AgentExecutionRequest): Promise<AgentExecutionResult> => {
+        const { access } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        judgeRequests.push(request);
+        if (options.judgeFails) throw new Error('judge exploded');
+        judgeSawScreenshot.push(
+          await access(join(request.cwd, '0-open-task.png')).then(
+            () => true,
+            () => false,
+          ),
+        );
+        return {
+          runId: request.runId,
+          provider: request.provider,
+          model: request.model,
+          executedModel: 'judge-model-v9',
+          exitCode: 0,
+          durationMs: 3,
+          stdout: '',
+          stderr: '',
+          output: {
+            schemaVersion: '1',
+            status: 'completed',
+            summary: 'Judged the screenshots.',
+            data:
+              options.judgeScore !== undefined
+                ? {
+                    overallScore: options.judgeScore,
+                    criteria: UI_QUALITY_RUBRIC_V1.criteria.map((criterion) => ({
+                      criterionId: criterion.id,
+                      score: options.judgeScore!,
+                    })),
+                  }
+                : {
+                    overallScore: 0.42,
+                    criteria: [
+                      {
+                        criterionId: 'layout-coherence',
+                        score: 0.4,
+                        finding:
+                          'Header overlaps the nav on http://preview.test/?token=s3cret-value',
+                      },
+                      { criterionId: 'navigation', score: 0.9 },
+                    ],
+                  },
+            decisions: [],
+            assumptions: [],
+            risks: [],
+            nextActions: [],
+          },
+        };
+      },
+    };
+
+    const verify = vi.fn(
+      async (
+        input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
+        _signal: AbortSignal,
+        onSessionStarted?: (sessionId: string) => Promise<void>,
+      ) => {
+        await onSessionStarted?.('preview-475');
+        return {
+          schemaVersion: '1' as const,
+          approved: options.approved,
+          summary: options.approved ? 'browser approved' : 'browser rejected',
+          planArtifact: {
+            name: input.plan.metadata.name,
+            revision: input.plan.metadata.revision,
+            sha256: input.plan.metadata.sha256,
+          },
+          previewSession: {
+            sessionId: 'preview-475',
+            status: 'running' as const,
+            evidence: {
+              screenshots: screenshots.map((shot) => ({
+                ...shot,
+                stepId: 'open-task',
+                url: 'http://preview.test/',
+                viewport: { width: 1280, height: 720 },
+              })),
+            },
+          },
+          steps: [
+            {
+              stepId: 'open-task',
+              title: 'Open task',
+              status: options.approved ? ('passed' as const) : ('failed' as const),
+              durationMs: 5,
+              ...(options.approved ? {} : { error: 'Assertion failed.' }),
+              observations: [],
+            },
+          ],
+        };
+      },
+    );
+
+    const harness = makeHarness({}, undefined, {
+      workflow: TASK_BROWSER_WORKFLOW,
+      browserVerification: { verify } as never,
+      ...(options.judge
+        ? {
+            policy: {
+              ...DEFAULT_POLICY,
+              uiQualityJudge: { provider: 'claude' as const, model: 'judge-model' },
+            },
+            judgeExecutor,
+          }
+        : {}),
+      agentOutput: (request) => {
+        if (request.stepId === 'plan') {
+          return {
+            schemaVersion: '1',
+            status: 'completed',
+            summary: 'Planned.',
+            data: BROWSER_GRAPH,
+            decisions: [],
+            assumptions: [],
+            risks: [],
+            nextActions: [],
+          };
+        }
+        if (request.stepId === 'plan-task-browser-test.T1') return VALID_BROWSER_PLAN;
+        return undefined;
+      },
+    });
+    const blob = await harness.artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: SCREENSHOT_NAME,
+        contentType: 'image/png',
+        createdBy: 'browser-verifier',
+        maxBytes: 1_000_000,
+      },
+      Readable.from(Buffer.from('not-really-a-png')),
+    );
+    screenshots.push({
+      name: blob.name,
+      revision: blob.revision,
+      sha256: blob.sha256,
+      sizeBytes: blob.sizeBytes ?? 0,
+    });
+    await seedHarnessRun(harness);
+
+    const runError = await harness.orchestrator
+      .runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1')
+      .then(
+        () => undefined,
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      );
+
+    const report = await harness.artifacts.getLatest('project-1', 'browser-verification.report');
+    const run = await harness.runs.get('run-1');
+    const stepRuns = await harness.stepRuns.list('run-1');
+    const steps = await Promise.all(
+      stepRuns.map(async (step) => {
+        const attempts = await harness.stepAttempts.list('run-1', step.id);
+        return `${step.stepId}:${step.status}:${attempts.map((a) => a.status).join(',')}`;
+      }),
+    );
+    return {
+      judgeRequests,
+      judgeSawScreenshot,
+      report: report?.content as Record<string, unknown> | undefined,
+      /** Everything the judge must not be able to move. */
+      outcome: {
+        runError,
+        runStatus: run?.status,
+        approved: (report?.content as { approved?: boolean } | undefined)?.approved,
+        steps: steps.sort(),
+      },
+      /** Repair/ceiling bookkeeping the judge score must never touch. */
+      execution: run?.execution,
+      eventTypes: (await harness.events.list('project-1')).map((event) => event.type),
+    };
+  }
+
+  it('annotates the persisted report with the judge scores', async () => {
+    const result = await runBrowserWorkflow({ judge: true, approved: true });
+
+    expect(result.judgeRequests).toHaveLength(1);
+    expect(result.judgeSawScreenshot).toEqual([true]);
+    const request = result.judgeRequests[0]!;
+    expect(request.role).toBe('tester');
+    expect(request.taskKind).toBe('verification');
+    expect(request.provider).toBe('claude');
+    expect(request.model).toBe('judge-model');
+    expect(request.mutatesWorkspace).toBe(false);
+    // Bounded well below the full agent timeout so a slow judge cannot burn
+    // the run's active-time ceiling budget.
+    expect(request.timeoutMs).toBe(60_000);
+    // The screenshots travel as files under `cwd`, not as inputArtifacts.
+    expect(request.inputArtifacts).toBeUndefined();
+    expect(request.prompt).toContain('layout-coherence');
+    expect(request.prompt).toContain('0-open-task.png');
+
+    expect(result.report?.uiQuality).toEqual({
+      rubricVersion: '1',
+      judgeModel: 'judge-model-v9',
+      overallScore: 0.42,
+      criteria: [
+        {
+          criterionId: 'layout-coherence',
+          score: 0.4,
+          finding: 'Header overlaps the nav on http://preview.test/?token=[REDACTED]',
+        },
+        { criterionId: 'navigation', score: 0.9 },
+      ],
+      screenshotsReviewed: [
+        {
+          name: SCREENSHOT_NAME,
+          revision: 1,
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          sizeBytes: 16,
+        },
+      ],
+    });
+  });
+
+  it('never runs the judge for a project without a uiQualityJudge policy', async () => {
+    const result = await runBrowserWorkflow({ judge: false, approved: true });
+
+    expect(result.judgeRequests).toHaveLength(0);
+    expect(result.report?.uiQuality).toBeUndefined();
+  });
+
+  it.each([true, false])(
+    'leaves approved/repair routing identical with and without the judge (approved=%s)',
+    async (approved) => {
+      const withJudge = await runBrowserWorkflow({ judge: true, approved });
+      const withoutJudge = await runBrowserWorkflow({ judge: false, approved });
+
+      expect(withJudge.outcome.approved).toBe(approved);
+      expect(withJudge.outcome).toEqual(withoutJudge.outcome);
+      // The only difference between the two runs is the advisory annotation.
+      expect(withJudge.report?.uiQuality).toBeDefined();
+      expect(withoutJudge.report?.uiQuality).toBeUndefined();
+    },
+  );
+
+  it('persists the report unannotated when the judge executor fails', async () => {
+    const result = await runBrowserWorkflow({ judge: true, approved: true, judgeFails: true });
+    const withoutJudge = await runBrowserWorkflow({ judge: false, approved: true });
+
+    expect(result.judgeRequests).toHaveLength(1);
+    expect(result.report?.uiQuality).toBeUndefined();
+    expect(result.outcome).toEqual(withoutJudge.outcome);
+  });
+
+  it('a worst-possible judge score does not drive repair routing or the emergency ceiling', async () => {
+    // Isolates the judge score as the sole variable: the underlying browser
+    // verification is cleanly approved, and only the judge's opinion is as
+    // bad as it can get (score 0 on every criterion). Regression target:
+    // nothing downstream of `judgeUiQuality` may read the score to decide
+    // `resetConsecutiveRepairs`/`recordCompletedRepair`, trip `reachCeiling`,
+    // or fire `quality.repair_requested` — those are driven purely by
+    // `report.approved`, which the judge never rewrites (#475).
+    const result = await runBrowserWorkflow({ judge: true, approved: true, judgeScore: 0 });
+    const withoutJudge = await runBrowserWorkflow({ judge: false, approved: true });
+
+    // Sanity: the worst-case judge fixture actually happened.
+    expect(result.judgeRequests).toHaveLength(1);
+    expect(result.report?.uiQuality).toMatchObject({
+      overallScore: 0,
+      criteria: UI_QUALITY_RUBRIC_V1.criteria.map((criterion) => ({
+        criterionId: criterion.id,
+        score: 0,
+      })),
+    });
+
+    // The approve/repair outcome, run status, and step/attempt fingerprint
+    // are byte-identical to a run where the judge never ran at all.
+    expect(result.outcome).toEqual(withoutJudge.outcome);
+    expect(result.outcome.approved).toBe(true);
+
+    // resetConsecutiveRepairs (not recordCompletedRepair) is what ran: no
+    // consecutive-repair count was ever incremented by the low score.
+    expect(result.execution?.consecutiveRepairs ?? 0).toBe(0);
+    expect(result.execution?.countedRepairStepRunIds ?? []).toEqual([]);
+    // No reachCeiling trigger fired as a result of the judge score.
+    expect(result.execution?.ceiling).toBeUndefined();
+    // Only quality.approved fired; the score never produced a
+    // quality.repair_requested event.
+    expect(result.eventTypes).not.toContain('quality.repair_requested');
+    expect(result.eventTypes).toContain('quality.approved');
+    expect(result.eventTypes).toEqual(withoutJudge.eventTypes);
   });
 });

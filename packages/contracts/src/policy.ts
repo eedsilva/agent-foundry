@@ -26,6 +26,19 @@ export const DEFAULT_BROWSER_EVIDENCE_POLICY: BrowserEvidencePolicy =
   BrowserEvidencePolicySchema.parse({});
 
 /**
+ * Opts a project into the advisory UI-quality judge (#475). Absent means the
+ * judge never runs: browser verification behaves exactly as it did before the
+ * judge existed, and reports carry no `uiQuality` field.
+ */
+export const UiQualityJudgePolicySchema = z
+  .object({
+    provider: ProviderSchema,
+    model: z.string().min(1),
+  })
+  .strict();
+export type UiQualityJudgePolicy = z.infer<typeof UiQualityJudgePolicySchema>;
+
+/**
  * Hard constraints a project executes under, validated before (router,
  * stack) and after (verifier) execution. Absent optional fields mean
  * "unrestricted"; empty allowlists are rejected as almost certainly a
@@ -51,6 +64,7 @@ export const ProjectPolicySchema = z.object({
     .optional(),
   browserAllowedOrigins: z.array(BrowserOriginSchema).min(1).optional(),
   browserEvidence: BrowserEvidencePolicySchema.optional(),
+  uiQualityJudge: UiQualityJudgePolicySchema.optional(),
 });
 export type ProjectPolicy = z.infer<typeof ProjectPolicySchema>;
 

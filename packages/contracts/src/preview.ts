@@ -595,6 +595,35 @@ const BrowserObservationSchema = z
   })
   .strict();
 
+export const UiQualityCriterionScoreSchema = z
+  .object({
+    criterionId: z.string().min(1),
+    score: z.number().min(0).max(1),
+    finding: z.string().min(1).max(500).optional(),
+  })
+  .strict();
+export type UiQualityCriterionScore = z.infer<typeof UiQualityCriterionScoreSchema>;
+
+export const UiQualityJudgeResultSchema = z
+  .object({
+    rubricVersion: z.literal('1'),
+    judgeModel: z.string().min(1),
+    overallScore: z.number().min(0).max(1),
+    criteria: z.array(UiQualityCriterionScoreSchema).min(1),
+    screenshotsReviewed: z.array(ArtifactReferenceSchema).max(20),
+  })
+  .strict()
+  .superRefine((val, ctx) => {
+    if (val.criteria.length > 20) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'A UI-quality judge result may contain at most 20 criterion scores',
+        path: ['criteria'],
+      });
+    }
+  });
+export type UiQualityJudgeResult = z.infer<typeof UiQualityJudgeResultSchema>;
+
 export const BrowserVerificationReportSchema = z
   .object({
     schemaVersion: z.literal('1'),
@@ -603,6 +632,7 @@ export const BrowserVerificationReportSchema = z
     planArtifact: ArtifactReferenceSchema,
     previewSession: PreviewSessionReferenceSchema,
     planValidationError: z.string().min(1).optional(),
+    uiQuality: UiQualityJudgeResultSchema.optional(),
     steps: z.array(
       z
         .object({
