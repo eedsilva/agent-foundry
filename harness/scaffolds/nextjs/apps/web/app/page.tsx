@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { EmptyState } from '../components/empty-state';
 import { signOut } from './actions';
 
 // The web tier never queries the database (ADR 0038): it asks the API tier
@@ -39,7 +40,7 @@ export default async function HomePage() {
       <h1 className="text-xl font-semibold">Your items</h1>
       <p className="text-sm text-gray-600">{session.user.email}</p>
       {items.length === 0 ? (
-        <p className="text-sm text-gray-600">No items yet.</p>
+        <EmptyState title="No items yet" hint="Items you create will show up here." />
       ) : (
         <ul className="flex flex-col gap-2">
           {items.map((item) => (
