@@ -16,3 +16,4 @@ test-results/
 graphify-out/
 .eslintcache
 .claude/
+.scratch/
