@@ -60,6 +60,19 @@ describe('filterListablePaths', () => {
     const paths = ['.npmrc', '.netrc', '.aws/credentials', 'apps/web/.npmrc', 'README.md'];
     expect(filterListablePaths(paths, '')).toEqual(['README.md']);
   });
+
+  it('excludes .git internals even when the gitignore is empty', () => {
+    // Nobody lists `.git` in their own .gitignore — git already never tracks
+    // itself — so without this, every raw object blob and hook sample leaks
+    // into the Files tab on a real, git-initialized workspace.
+    const paths = [
+      '.git/HEAD',
+      '.git/objects/4f/034a7e',
+      '.git/hooks/pre-commit.sample',
+      'README.md',
+    ];
+    expect(filterListablePaths(paths, '')).toEqual(['README.md']);
+  });
 });
 
 describe('createListabilityChecker', () => {
@@ -68,6 +81,11 @@ describe('createListabilityChecker', () => {
     expect(checker.isDirectoryPrunable('node_modules')).toBe(true);
     expect(checker.isDirectoryPrunable('.next')).toBe(true);
     expect(checker.isDirectoryPrunable('src')).toBe(false);
+  });
+
+  it('marks .git as prunable even when the gitignore is empty, so a walker never descends into it', () => {
+    const checker = createListabilityChecker('');
+    expect(checker.isDirectoryPrunable('.git')).toBe(true);
   });
 
   it('agrees with filterListablePaths on which files are listable', () => {

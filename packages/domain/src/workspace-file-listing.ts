@@ -33,6 +33,10 @@ const ignore = ignoreFactory as unknown as (patterns?: string | string[]) => Ign
 // sibling to also match nested. Verified against the `ignore` package
 // directly, not assumed — don't re-add a blanket `**/` pass "to be safe".
 const ALWAYS_EXCLUDE = ignore().add([
+  // VCS internals. `.git/objects` alone can hold thousands of raw blobs, and
+  // nobody lists `.git` in their own .gitignore — git already never tracks
+  // itself — so nothing else here would ever prune it.
+  '.git',
   '.env',
   '.env.*',
   '!.env.example',
@@ -79,7 +83,8 @@ export interface WorkspaceListabilityChecker {
 export function createListabilityChecker(gitignoreContent: string): WorkspaceListabilityChecker {
   const projectIgnore = ignore().add(gitignoreContent);
   return {
-    isDirectoryPrunable: (relativeDirPath) => projectIgnore.ignores(`${relativeDirPath}/`),
+    isDirectoryPrunable: (relativeDirPath) =>
+      projectIgnore.ignores(`${relativeDirPath}/`) || ALWAYS_EXCLUDE.ignores(`${relativeDirPath}/`),
     isFileListable: (relativePath) =>
       !projectIgnore.ignores(relativePath) && !ALWAYS_EXCLUDE.ignores(relativePath),
   };
