@@ -122,6 +122,48 @@ nem apague revisões antigas. Se browser ou banco ainda não tiverem produzido s
 bundle deve permanecer `product-failed`/`environment-blocked` e a causa deve ser investigada antes
 de qualquer nova publicação.
 
+### Tracer de app shapes via scenario files (#474)
+
+O tracer real-mode multi-shape (issue #468/#473) originalmente exigia colar o PRD de cada shape
+manualmente num `curl -d '{"prd": "..."}'` contra um servidor `npm run dev` já rodando — cada novo
+app shape era texto de operador, não uma entrada estruturada. `scripts/tracer.ts` substitui esse
+fluxo: cada app shape é um arquivo `*.json` sob
+`examples/tracer/scenarios/` (ao lado de `examples/dogfood/tasks/` e `benchmarks/cases/` — entrada
+do harness, não evidência de saída), validado por `TracerScenarioSchema`
+(`packages/contracts/src/tracer-scenario.ts`):
+
+```json
+{
+  "id": "crud-heavy",
+  "title": "Inventory Tracker (crud-heavy)",
+  "workflowId": "web-app-v1",
+  "prompt": "<PRD markdown — vira o prd do projeto>",
+  "expectedCapabilities": ["checklist revisado por humano, não asserted em código"]
+}
+```
+
+Rodar um scenario (in-process, sem precisar de `npm run dev` nem de `curl`):
+
+```bash
+npm run tracer:run -- --scenario crud-heavy --executor-mode mock
+npm run tracer:run -- --all --executor-mode mock
+```
+
+Modo real exige `RUN_REAL_TRACER=true` mais um provider pronto (mesmo gate de
+`assertRealModeReady` usado por `scripts/dogfood.ts`/`scripts/benchmark.ts`).
+
+Adicionar um novo app shape ao tracer é criar um novo arquivo `examples/tracer/scenarios/*.json` —
+nenhuma mudança em `scripts/tracer.ts` ou `packages/composition/src/tracer.ts` é necessária. A
+prova está em `docs/evidence/harness-alignment/scenario-4-proof.md`: o 4º scenario (`toy.json`) foi
+adicionado como arquivo puro e rodou com o runner já existente.
+
+`runTracerScenario` cria o projeto e roda um único `worker.runOnce()`, o suficiente para provar que
+o *mecanismo de entrada* (arquivo → projeto → run) aceita qualquer scenario sem mudança de código.
+Isso não prova que um app shape sobrevive ao pipeline inteiro — o run para no primeiro gate
+(`plan-approval`); levar um shape além disso ainda exige decidir a aprovação manualmente (real mode)
+ou via API, fora do escopo desta issue. Ele também não reproduz o pipeline completo de report/baseline de
+`runDogfoodTask`; isso é escopo de uma nova stage do harness, fora do que #474 pediu.
+
 ### Canary real dos providers
 
 Valide versões, autenticação e flags sem invocar modelos:

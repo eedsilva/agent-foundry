@@ -26,6 +26,7 @@
     "db:migrate": "node scripts/db-migrate.mjs",
     "canary:providers": "tsx scripts/provider-canaries.ts",
     "dogfood:run": "tsx scripts/dogfood.ts",
+    "tracer:run": "tsx scripts/tracer.ts",
     "benchmark:run": "tsx scripts/benchmark.ts",
     "benchmark:freeze": "tsx scripts/benchmark.ts --freeze",
     "calibration:report": "tsx scripts/calibration-report.ts",
