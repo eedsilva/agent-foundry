@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ResumeBlockedError } from '@agent-foundry/domain';
 import type { ProjectVersionService } from './project-version-service.js';
-import { completeRun, liveStepRun, makeHarness, makeStores, seedRun } from './testing/harness.js';
+import {
+  completeRun,
+  liveStepRun,
+  makeHarness,
+  makeStores,
+  seedRun,
+  stubSystemPrompts as systemPrompts,
+} from './testing/harness.js';
 
 describe('pause and resume at step boundaries (#7)', () => {
   /** Runs a project to a mid-graph pause: 'plan' completed, parked before 'implement'. */
@@ -19,7 +26,7 @@ describe('pause and resume at step boundaries (#7)', () => {
   }
 
   it('pauses between steps, records the snapshot, and never starts the next step', async () => {
-    const harness = makeHarness({ plan: 'gated' });
+    const harness = makeHarness({ plan: 'gated' }, undefined, { systemPrompts });
     await seedRun(harness);
 
     const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
@@ -37,6 +44,7 @@ describe('pause and resume at step boundaries (#7)', () => {
     expect(run?.pause?.resumeNodeId).toBe('implement');
     expect(run?.pause?.workflowHash).toMatch(/^[a-f0-9]{64}$/);
     expect(run?.pause?.harnessVersion).toBe('harness-1');
+    expect(run?.pause?.systemPromptVersion).toBe('system-prompts-1');
     expect(run?.pause?.workspaceHead).toBe('initial-head');
     expect(run?.pause?.artifactHashes).toHaveProperty('plan');
 

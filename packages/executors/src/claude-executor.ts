@@ -37,6 +37,9 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
       claudeJsonSchema(request.outputSchema),
     ];
     if (request.model.trim()) args.push('--model', request.model);
+    if (request.systemPrompt !== undefined) {
+      args.push('--append-system-prompt', request.systemPrompt);
+    }
     args.push(request.prompt);
 
     return {

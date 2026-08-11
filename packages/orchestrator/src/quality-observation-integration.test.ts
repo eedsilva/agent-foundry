@@ -10,7 +10,7 @@ import type {
   QualityObservationRepository,
   RouterDecisionLogRepository,
 } from '@agent-foundry/domain';
-import { completeRun, makeHarness } from './testing/harness.js';
+import { completeRun, makeHarness, stubSystemPrompts as systemPrompts } from './testing/harness.js';
 import { QualityObservationService } from './quality-observation-service.js';
 
 const workflow: WorkflowDefinition = WorkflowDefinitionSchema.parse({
@@ -180,7 +180,7 @@ describe('WorkflowOrchestrator quality observations', () => {
 
   it('appends a router decision log entry for the approved iteration', async () => {
     const decisionLog = new MemoryRouterDecisionLog();
-    const harness = makeHarness({}, undefined, { workflow, decisionLog });
+    const harness = makeHarness({}, undefined, { workflow, decisionLog, systemPrompts });
 
     await completeRun(harness);
 
@@ -191,6 +191,7 @@ describe('WorkflowOrchestrator quality observations', () => {
         repairs: 0,
         workflowId: workflow.id,
         harnessVersion: harness.harnessVersion.value,
+        systemPromptVersion: 'system-prompts-1',
         taskKind: 'implementation',
         modelId: expect.any(String),
       },

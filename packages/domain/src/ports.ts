@@ -292,6 +292,21 @@ export interface HarnessRepository {
   version(): Promise<string>;
 }
 
+export interface SystemPromptSelection {
+  version: string;
+  content: string;
+}
+
+/**
+ * Sibling of `HarnessRepository` for the short, role-keyed system-prompt layer
+ * (delivered via a CLI's system-prompt-append surface, not the per-task user
+ * message). A role with no template (e.g. `fixer`) resolves to `undefined`.
+ */
+export interface SystemPromptRepository {
+  select(role: AgentRole): Promise<SystemPromptSelection | undefined>;
+  version(): Promise<string>;
+}
+
 export interface ExplicitModelRoute {
   modelId: string;
   provider: ModelDefinition['provider'];

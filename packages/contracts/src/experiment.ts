@@ -23,6 +23,7 @@ export const RouterDecisionLogEntrySchema = z
     nodeId: z.string().min(1),
     workflowId: z.string().min(1),
     harnessVersion: z.string().min(1),
+    systemPromptVersion: z.string().min(1).optional(),
     taskKind: TaskKindSchema,
     category: TaskCategorySchema,
     role: AgentRoleSchema,

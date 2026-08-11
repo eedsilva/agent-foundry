@@ -81,6 +81,13 @@ export const AgentExecutionRequestSchema = z.object({
   timeoutMs: z.number().int().positive(),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   inputArtifacts: z.array(ArtifactReferenceSchema).optional(),
+  /**
+   * Role system-prompt content (harness/system-prompts/<role>.md), delivered via
+   * each CLI's system-prompt-append surface rather than folded into `prompt`.
+   * Content only — the loader's version is a run-metadata/evidence concern.
+   * Absent when the role has no system-prompt template.
+   */
+  systemPrompt: z.string().optional(),
 });
 export type AgentExecutionRequest = z.infer<typeof AgentExecutionRequestSchema>;
 

@@ -75,6 +75,7 @@ import {
   type StepAttemptRepository,
   type StepEventRepository,
   type StepRunRepository,
+  type SystemPromptRepository,
   type Tx,
   type TransactionRunner,
   type VerificationService,
@@ -1188,6 +1189,13 @@ export interface GateOptions {
   timeout?: { policy: 'none' | 'auto-approve' | 'auto-reject'; afterMs?: number };
 }
 
+// Opt-in fixture: makeHarness leaves systemPrompts undefined by default, so
+// tests that need the audit-trail field populated pass this explicitly.
+export const stubSystemPrompts: SystemPromptRepository = {
+  select: () => Promise.resolve(undefined),
+  version: () => Promise.resolve('system-prompts-1'),
+};
+
 export function makeHarness(
   behaviors: Record<string, StepBehavior> = {},
   existing?: Stores,
@@ -1215,6 +1223,7 @@ export function makeHarness(
     cancelledWithUsage?: boolean;
     versions?: ProjectVersionService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
+    systemPrompts?: SystemPromptRepository;
   } = {},
 ) {
   const stores = existing ?? makeStores();
@@ -1432,6 +1441,7 @@ export function makeHarness(
     opts.previews,
     opts.validationCampaign,
     opts.validationEvidence,
+    opts.systemPrompts,
   );
   const service = new ProjectService(
     stores.projects,

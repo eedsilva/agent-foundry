@@ -96,12 +96,15 @@ export const IdempotencyKeySchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 /**
  * Compatibility snapshot captured when a run pauses. Resume compares each
- * field against the live system and blocks with a diagnostic on mismatch.
+ * field against the live system and blocks with a diagnostic on mismatch —
+ * except `systemPromptVersion`, which is audit-only (recorded alongside
+ * `harnessVersion` for provenance) and is not currently checked on resume.
  */
 export const RunPauseSnapshotSchema = z
   .object({
     workflowHash: IdempotencyKeySchema,
     harnessVersion: z.string().min(1),
+    systemPromptVersion: z.string().min(1).optional(),
     workspaceHead: z.string().min(1).nullable(),
     artifactHashes: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/)),
     resumeNodeId: PathSegmentSchema.optional(),

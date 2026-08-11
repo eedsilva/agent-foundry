@@ -21,6 +21,7 @@ import {
   type MetricsRepository,
   type ModelRouter,
   type SecretStore,
+  type SystemPromptRepository,
   type VerificationService,
   type WorkflowRepository,
 } from '@agent-foundry/domain';
@@ -638,6 +639,70 @@ describe('task-graph output contract (#321)', () => {
     );
     expect((await stores.runs.get('run-1'))?.status).toBe('failed');
     expect(await stores.artifacts.getLatest('project-1', 'plan.current')).toBeNull();
+  });
+});
+
+const SYSTEM_PROMPT_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'system-prompt-wiring-v1',
+  name: 'System prompt wiring fixture',
+  description: 'A developer step (has a system-prompt template) then a fixer step (does not).',
+  stack: 'node',
+  nodes: [
+    {
+      id: 'implement',
+      type: 'agent',
+      role: 'developer',
+      taskKind: 'implementation',
+      title: 'Implement',
+      instructions: 'Implement the plan.',
+      outputArtifact: 'implementation',
+    },
+    {
+      id: 'repair',
+      type: 'agent',
+      role: 'fixer',
+      taskKind: 'repair',
+      title: 'Repair',
+      instructions: 'Repair the failure.',
+      inputArtifacts: ['implementation'],
+      outputArtifact: 'implementation.fix',
+    },
+  ],
+});
+
+describe('per-role system-prompt wiring (#483)', () => {
+  it('sets systemPrompt for a role with a template, and leaves it unset for a role without one', async () => {
+    const systemPrompts: SystemPromptRepository = {
+      select: async (role) =>
+        role === 'developer'
+          ? { version: 'system-prompts-1', content: '# System prompt: Developer' }
+          : undefined,
+      version: async () => 'system-prompts-1',
+    };
+    const harness = makeHarness({}, undefined, {
+      workflow: SYSTEM_PROMPT_WORKFLOW,
+      systemPrompts,
+    });
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    const developerRequest = harness.executor.requests.find((req) => req.stepId === 'implement');
+    const fixerRequest = harness.executor.requests.find((req) => req.stepId === 'repair');
+    expect(developerRequest?.systemPrompt).toBe('# System prompt: Developer');
+    expect(fixerRequest?.systemPrompt).toBeUndefined();
+  });
+
+  it('leaves systemPrompt unset for every step when no SystemPromptRepository is injected', async () => {
+    const harness = makeHarness({}, undefined, { workflow: SYSTEM_PROMPT_WORKFLOW });
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(harness.executor.requests.every((req) => req.systemPrompt === undefined)).toBe(true);
   });
 });
 
