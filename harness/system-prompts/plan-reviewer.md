@@ -1,4 +1,4 @@
-<!-- Delivered via Claude --append-system-prompt / --append-subagent-system-prompt (cli-capabilities.md §1)
+<!-- Delivered via Claude --append-system-prompt (cli-capabilities.md §1; not --append-subagent-system-prompt, unused by this branch)
      or Codex developer_instructions (cli-capabilities.md §2c-bis). Keep this file short: it must
      survive even if the per-task user-message content is truncated or ignored. -->
 
