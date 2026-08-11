@@ -751,3 +751,37 @@ the code.
   real `running` status via the fixture dev-server script — read to confirm neither hand-constructs a
   `PreviewSession` object that would bypass the new `status === 'running'` gate; both rely on the real
   backend flow, which already produces that exact state by the time they assert on `preview-frame`.
+
+### CI-caught regression: transient `unhealthy` blips remounted an already-good iframe
+
+The "not run locally" bet above was wrong in one specific way. `supabase-data-plane-e2e`'s
+`golden-flow.spec.ts:674` ("attach reference, plan, build, visual edit, revert, rebuild") failed twice
+in a row on PR #510, both times at the same assertion (`toHaveCSS('background-color', 'rgb(221, 221,
+221)')` on an element inside the preview iframe, `golden-flow.spec.ts:821`). First instinct was "known
+CI flake, unrelated" — `supabase-data-plane-e2e` genuinely does fail intermittently on unrelated
+branches — but checking the *exact* failure on one of those unrelated runs showed a different symptom
+entirely (`expect(locator).toBeVisible()` on a `Mudanças` tab, not an in-iframe CSS assertion). Same job
+name, different bug; re-running blind would have masked a real one.
+
+The actual cause: this test manually reaches into the iframe's own content frame
+(`frame.goto(fixtureUrl)`) and then drives several more UI steps — select an element, fill three form
+fields, click preview — a sequence that easily spans multiple 2-second poll intervals. `preview-service.
+ts`'s health-check loop can legitimately flap a session to `unhealthy` and back to `running` under load
+with nothing really wrong (`unhealthy -> running` is a normal transition in `packages/domain/src/
+preview-state.ts`'s table). Before this fix, `previewStatusMessage` treated every `unhealthy` poll
+result the same regardless of history: hide the iframe, show a status message. Doing that to an
+iframe the test had already manually navigated meant the *next* healthy poll remounted a fresh iframe
+from `session.url`, discarding the test's `frame.goto()` navigation and any in-progress interaction —
+something that could not happen before this PR, because the old code never re-examined session state
+after the first mount.
+
+Fix: `previewStatusMessage` takes a second `alreadyShown` parameter. Once a session's iframe has
+rendered successfully at least once (tracked per session id via a ref, `shownIframeSessionId`, reset
+naturally when a different session starts), a later `unhealthy` poll for that same session no longer
+blanks it. `failing` gets no such grace — per `preview-service.ts` it only fires once restarts are
+exhausted, on a one-way path to terminal, so there's nothing worth protecting.
+
+Verification: `preview-panel.test.tsx` — 3 new cases (grace granted when already shown, still denied
+when never shown, no grace extended to `failing`); 13/13 passing. `npx tsc -b`, full fast suite,
+prettier, eslint, architecture:check all clean. The actual `golden-flow.spec.ts` re-run is CI-only, per
+the same convention as the rest of this entry.

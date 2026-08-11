@@ -218,14 +218,24 @@ export function startPreviewSessionPolling({
 // not claim one. 'unhealthy' is still mid-restart-attempt. Gating the iframe
 // on this same narrower check (not just "not terminal") stops the panel from
 // ever embedding a URL the backend is about to reject as a raw JSON 403.
-export function previewStatusMessage(session: PreviewSession): string | null {
+// `alreadyShown`: has this exact session's iframe already been rendered
+// successfully at least once? 'unhealthy' -> 'running' is a legal, expected
+// transition (packages/domain/src/preview-state.ts's transition table) that
+// can flap under load without anything really being wrong. Blanking an
+// already-good iframe on every such blip forces a remount on the next
+// healthy poll, discarding whatever the iframe's own document was doing —
+// real in-CI breakage for a test that navigates the iframe's inner frame and
+// interacts with it across several seconds (multiple 2s poll intervals).
+// 'failing' gets no such grace: per preview-service.ts it only fires once
+// restarts are exhausted, on a one-way path to terminal — it never returns
+// to 'running', so there is nothing to protect by keeping the iframe up.
+export function previewStatusMessage(session: PreviewSession, alreadyShown = false): string | null {
   if (session.status === 'running' && session.url) return null;
   if (isPreviewSessionProxyDenied(session.status)) return 'Preview encerrando após falha…';
-  // 'unhealthy' isn't proxy-denied by resolveUpstream (a still-set port can go
-  // on serving through a restart attempt) — hiding the iframe here is a
-  // stricter, UX-only choice: don't show a flaky preview mid-restart even
-  // when it's technically still reachable.
-  if (session.status === 'unhealthy') return 'Preview instável, tentando novamente…';
+  if (session.status === 'unhealthy') {
+    if (alreadyShown && session.url) return null;
+    return 'Preview instável, tentando novamente…';
+  }
   return 'Preview iniciando…';
 }
 
@@ -399,6 +409,7 @@ export function PreviewPanel({
   const [breakpoint, setBreakpoint] = useState<VisualEditBreakpoint | ''>('');
   const notifiedFailure = useRef<string | undefined>(undefined);
   const reloadedRepair = useRef<string | undefined>(undefined);
+  const shownIframeSessionId = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     return startPreviewSessionPolling({
@@ -530,7 +541,9 @@ export function PreviewPanel({
     [projectId, session],
   );
 
-  const statusMessage = session ? previewStatusMessage(session) : null;
+  const alreadyShownIframe = session !== null && shownIframeSessionId.current === session.id;
+  const statusMessage = session ? previewStatusMessage(session, alreadyShownIframe) : null;
+  if (statusMessage === null && session) shownIframeSessionId.current = session.id;
 
   const report = useMemo(
     () => (run ? latestBrowserVerificationReport(artifacts, run.id, attempts) : null),

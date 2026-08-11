@@ -140,6 +140,31 @@ describe('previewStatusMessage', () => {
   it('treats a running session with no url yet as still starting, not embeddable', () => {
     expect(previewStatusMessage(runningSession({ url: undefined }))).toMatch(/iniciando/i);
   });
+
+  it('does not blank an already-shown iframe for a transient unhealthy blip (#510 CI regression)', () => {
+    // preview-service.ts's health-check loop can flap a session to 'unhealthy'
+    // and back to 'running' under load without anything actually being wrong —
+    // see the transition table in packages/domain/src/preview-state.ts, where
+    // 'unhealthy' -> 'running' is a legal, expected transition. Once the panel
+    // has successfully shown a session's iframe, a poll observing that same
+    // session as merely 'unhealthy' must not hide it again: doing so remounts
+    // the iframe on the next poll, discarding any in-page state (a real CI
+    // failure in golden-flow.spec.ts's visual-edit test, which manually
+    // navigates the iframe's inner frame and expects that to survive several
+    // seconds of UI interaction — long enough to cross multiple 2s polls).
+    const unhealthy = runningSession({ status: 'unhealthy' });
+    expect(previewStatusMessage(unhealthy, true)).toBeNull();
+  });
+
+  it('still blanks an unhealthy session that has never successfully shown yet', () => {
+    const unhealthy = runningSession({ status: 'unhealthy' });
+    expect(previewStatusMessage(unhealthy, false)).toMatch(/instável/i);
+  });
+
+  it("does not extend the 'already shown' grace to failing — it never recovers to running", () => {
+    const failing = runningSession({ status: 'failing' });
+    expect(previewStatusMessage(failing, true)).not.toBeNull();
+  });
 });
 
 describe('previewRepairContext', () => {
