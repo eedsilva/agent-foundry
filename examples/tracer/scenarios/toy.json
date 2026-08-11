@@ -1,0 +1,10 @@
+{
+  "id": "toy",
+  "title": "Counter (toy — HA-0.2 proof scenario)",
+  "workflowId": "web-app-v1",
+  "prompt": "# PRD — Counter (toy)\n\n## Summary\nA single-page counter app: one button increments a number shown on screen, and the count persists across reloads.\n\n## Stack\nNext.js, TypeScript, Tailwind CSS, shadcn/ui, one isolated Supabase Docker stack. No auth.\n\n## Entities\n- **Counter**: value (integer, default 0).\n\n## Features\n1. A single page shows the current count and an \"Increment\" button.\n2. Clicking Increment adds 1 to the count and persists the new value.\n3. Reloading the page shows the last persisted count, not 0.\n\n## Out of scope\nDecrement, reset, multiple counters, auth, history of changes.\n\n## Acceptance sketch\n- Clicking Increment 3 times shows 3.\n- Reloading the page after incrementing still shows the incremented value.\n",
+  "expectedCapabilities": [
+    "Clicking Increment updates the displayed count.",
+    "The count survives a page reload."
+  ]
+}
