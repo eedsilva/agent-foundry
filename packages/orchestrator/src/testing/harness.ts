@@ -60,6 +60,7 @@ import {
   type EventStore,
   type ExecutionPlane,
   type ExecutionStatus,
+  type ExecutorRegistry,
   type HarnessRepository,
   type GeneratedProjectRuntime,
   type IdGenerator,
@@ -1208,6 +1209,8 @@ export function makeHarness(
     validationEvidence?: Pick<ValidationEvidencePublisher, 'publishFromRun'>;
     usage?: ExecutionUsage;
     executorHealth?: ExecutorHealth;
+    /** Backs `ExecutorRegistry.get`, which only the UI-quality judge uses. */
+    judgeExecutor?: Pick<AgentExecutor, 'execute'>;
     executedModel?: string;
     cancelledWithUsage?: boolean;
     versions?: ProjectVersionService;
@@ -1238,9 +1241,18 @@ export function makeHarness(
     Boolean(opts.validationCampaign),
     opts.cancelledWithUsage,
   );
-  const executorRegistry = configuredExecutorHealth
-    ? { health: async (): Promise<ExecutorHealth[]> => [configuredExecutorHealth] }
-    : undefined;
+  const judgeExecutor = opts.judgeExecutor;
+  const executorRegistry: Pick<ExecutorRegistry, 'health' | 'get'> | undefined =
+    configuredExecutorHealth || judgeExecutor
+      ? {
+          health: async (): Promise<ExecutorHealth[]> =>
+            configuredExecutorHealth ? [configuredExecutorHealth] : [],
+          get: (): AgentExecutor => {
+            if (!judgeExecutor) throw new Error('No executor is wired for this test.');
+            return judgeExecutor as AgentExecutor;
+          },
+        }
+      : undefined;
   const policies = new InMemoryPolicies(opts.policy ?? DEFAULT_POLICY);
   // Fallback recovery needs the mutating step to offer a second candidate.
   // A gate opt inserts an approval-gate node reviewing the review artifact,

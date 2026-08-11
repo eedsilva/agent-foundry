@@ -118,3 +118,36 @@ describe('BrowserEvidencePolicySchema', () => {
     expect(parsed.browserEvidence).toEqual({ captureTrace: true, captureVideo: true });
   });
 });
+
+describe('UiQualityJudgePolicySchema (#475)', () => {
+  it('leaves uiQualityJudge absent when a policy does not configure it', () => {
+    const parsed = ProjectPolicySchema.parse({ schemaVersion: '1', id: 'default', version: 1 });
+    expect(parsed.uiQualityJudge).toBeUndefined();
+  });
+
+  it('is accepted as an optional field on ProjectPolicySchema', () => {
+    const parsed = ProjectPolicySchema.parse({
+      schemaVersion: '1',
+      id: 'default',
+      version: 1,
+      uiQualityJudge: { provider: 'claude', model: 'claude-sonnet-4' },
+    });
+    expect(parsed.uiQualityJudge).toEqual({ provider: 'claude', model: 'claude-sonnet-4' });
+  });
+
+  it.each([
+    { provider: 'not-a-provider', model: 'm' },
+    { provider: 'claude', model: '' },
+    { provider: 'claude' },
+    { provider: 'claude', model: 'm', extra: true },
+  ])('rejects invalid uiQualityJudge %j', (uiQualityJudge) => {
+    expect(
+      ProjectPolicySchema.safeParse({
+        schemaVersion: '1',
+        id: 'default',
+        version: 1,
+        uiQualityJudge,
+      }).success,
+    ).toBe(false);
+  });
+});

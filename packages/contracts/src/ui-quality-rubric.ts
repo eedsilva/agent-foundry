@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AgentArtifactSchema } from './agent.js';
 
 export const UiQualityRubricCriterionSchema = z
   .object({
@@ -54,3 +55,32 @@ export const UI_QUALITY_RUBRIC_V1: UiQualityRubric = UiQualityRubricSchema.parse
     },
   ],
 });
+
+/**
+ * The shape the UI-quality judge model must emit as its artifact `data`
+ * (#475). Deliberately looser than `UiQualityJudgeResultSchema`: the judge
+ * supplies only the scores, and the orchestrator adds the rubric version,
+ * model identity, and reviewed screenshot references around them.
+ */
+export const UiQualityJudgeOutputSchema = z
+  .object({
+    overallScore: z.number(),
+    criteria: z
+      .array(
+        z
+          .object({
+            criterionId: z.string().min(1),
+            score: z.number(),
+            finding: z.string().optional(),
+          })
+          .strict(),
+      )
+      .min(1),
+  })
+  .strict();
+export type UiQualityJudgeOutput = z.infer<typeof UiQualityJudgeOutputSchema>;
+
+export const UI_QUALITY_JUDGE_JSON_SCHEMA = {
+  $id: 'https://agent-foundry.dev/schemas/ui-quality-judge-artifact-v1.json',
+  ...z.toJSONSchema(AgentArtifactSchema.extend({ data: UiQualityJudgeOutputSchema })),
+};
