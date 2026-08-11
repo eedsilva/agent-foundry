@@ -163,6 +163,56 @@ export function startPreviewLogPolling({
   };
 }
 
+// Mirrors startPreviewLogPolling: the panel fetched the session exactly once
+// on mount and never again, so a session that expired or started failing in
+// the background (TTL, health-check-triggered restart) stayed rendered as
+// its last-known-good state forever — see #486. Polling closes that gap the
+// same way logs already do.
+export function startPreviewSessionPolling({
+  getSession,
+  onSession,
+  onError,
+  schedule,
+}: {
+  getSession: () => Promise<{ session: PreviewSession | null }>;
+  onSession: (session: PreviewSession | null) => void;
+  onError: (cause: unknown) => void;
+  schedule: (callback: () => void) => ReturnType<typeof setTimeout>;
+}) {
+  let active = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const poll = async () => {
+    try {
+      const result = await getSession();
+      if (!active) return;
+      onSession(result.session);
+    } catch (cause) {
+      if (active) onError(cause);
+    } finally {
+      if (active) timer = schedule(() => void poll());
+    }
+  };
+  void poll();
+  return () => {
+    active = false;
+    if (timer) clearTimeout(timer);
+  };
+}
+
+// resolveUpstream (packages/orchestrator/src/preview-service.ts) denies proxy
+// access for anything other than a healthy 'running' session with a bound
+// port — including 'failing' and 'unhealthy', which aren't domain-terminal
+// but aren't servable either. Gating the iframe on this same narrower check
+// (not just "not terminal") stops the panel from ever embedding a URL the
+// backend is about to reject as a raw JSON 403.
+export function previewStatusMessage(session: PreviewSession): string | null {
+  if (session.status === 'running' && session.url) return null;
+  if (session.status === 'failing' || session.status === 'unhealthy') {
+    return 'Preview instável, tentando novamente…';
+  }
+  return 'Preview iniciando…';
+}
+
 export function BlobMedia({
   src,
   alt,
@@ -335,20 +385,18 @@ export function PreviewPanel({
   const reloadedRepair = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    let active = true;
-    getActivePreviewSession(projectId)
-      .then((result: { session: PreviewSession | null }) => {
-        if (active) setSession(result.session);
-      })
-      .catch((cause: unknown) => {
-        if (active) setPanelError(cause instanceof Error ? cause.message : String(cause));
-      })
-      .finally(() => {
-        if (active) setSessionLoaded(true);
-      });
-    return () => {
-      active = false;
-    };
+    return startPreviewSessionPolling({
+      getSession: () => getActivePreviewSession(projectId),
+      onSession: (polled) => {
+        setSession(polled);
+        setSessionLoaded(true);
+      },
+      onError: (cause) => {
+        setPanelError(cause instanceof Error ? cause.message : String(cause));
+        setSessionLoaded(true);
+      },
+      schedule: (callback) => setTimeout(callback, 2_000),
+    });
   }, [projectId]);
 
   useEffect(() => {
@@ -567,7 +615,7 @@ export function PreviewPanel({
           />
         ) : (
           <>
-            {session.url ? (
+            {previewStatusMessage(session) === null && session.url ? (
               /* Scrollable region: keyboard users must be able to reach and pan
                  it (axe `scrollable-region-focusable`). */
               <div
@@ -587,7 +635,7 @@ export function PreviewPanel({
                 />
               </div>
             ) : (
-              <p className={HINT}>Preview iniciando…</p>
+              <p className={HINT}>{previewStatusMessage(session) ?? 'Preview iniciando…'}</p>
             )}
             {selectionError ? (
               <p role="alert" className={ERROR_BOX}>

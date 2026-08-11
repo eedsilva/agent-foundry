@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BrowserVerificationReport, PreviewLogEntry } from '@agent-foundry/contracts';
-import { previewRepairContext, startPreviewLogPolling } from './preview-panel';
+import type {
+  BrowserVerificationReport,
+  PreviewLogEntry,
+  PreviewSession,
+} from '@agent-foundry/contracts';
+import {
+  previewRepairContext,
+  previewStatusMessage,
+  startPreviewLogPolling,
+  startPreviewSessionPolling,
+} from './preview-panel';
 
 afterEach(() => vi.useRealTimers());
 
@@ -37,6 +46,92 @@ describe('startPreviewLogPolling', () => {
     stop();
     await vi.advanceTimersByTimeAsync(2_000);
     expect(getPage).toHaveBeenCalledTimes(2);
+  });
+});
+
+function runningSession(overrides: Partial<PreviewSession> = {}): PreviewSession {
+  return {
+    id: 'preview-1',
+    workspaceRef: { projectId: 'p1', ref: 'main' },
+    status: 'running',
+    version: 1,
+    url: 'http://127.0.0.1:4000/preview/preview-1/?token=abc',
+    process: { pid: 1, port: 65000 },
+    health: { state: 'healthy', consecutiveFailures: 0 },
+    ttl: { seconds: 1800, expiresAt: '2026-07-23T00:30:00.000Z' },
+    restartCount: 0,
+    createdAt: '2026-07-23T00:00:00.000Z',
+    updatedAt: '2026-07-23T00:00:00.000Z',
+    startedAt: '2026-07-23T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('startPreviewSessionPolling', () => {
+  it('re-fetches the session on a timer, surfacing a status change the caller never asked for', async () => {
+    vi.useFakeTimers();
+    const stale = runningSession();
+    const expired = runningSession({ status: 'expired', url: undefined, process: undefined });
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce({ session: stale })
+      .mockResolvedValueOnce({ session: expired });
+    const received: (PreviewSession | null)[] = [];
+
+    const stop = startPreviewSessionPolling({
+      getSession,
+      onSession: (session) => received.push(session),
+      onError: () => undefined,
+      schedule: (callback) => setTimeout(callback, 2_000),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(getSession).toHaveBeenCalledTimes(2);
+    expect(received.map((session) => session?.status)).toEqual(['running', 'expired']);
+    stop();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(getSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps polling on a page fetch error, matching startPreviewLogPolling', async () => {
+    vi.useFakeTimers();
+    const getSession = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValueOnce({ session: runningSession() });
+    const errors: unknown[] = [];
+
+    const stop = startPreviewSessionPolling({
+      getSession,
+      onSession: () => undefined,
+      onError: (cause) => errors.push(cause),
+      schedule: (callback) => setTimeout(callback, 2_000),
+    });
+
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(getSession).toHaveBeenCalledTimes(2);
+    expect(errors).toHaveLength(1);
+    stop();
+  });
+});
+
+describe('previewStatusMessage', () => {
+  it('only clears the iframe to render for a running session with a url', () => {
+    expect(previewStatusMessage(runningSession())).toBeNull();
+  });
+
+  it('names the transient states resolveUpstream would still deny', () => {
+    expect(previewStatusMessage(runningSession({ status: 'preparing' }))).toMatch(/iniciando/i);
+    expect(previewStatusMessage(runningSession({ status: 'starting' }))).toMatch(/iniciando/i);
+    expect(previewStatusMessage(runningSession({ status: 'failing' }))).toMatch(/instável/i);
+    expect(previewStatusMessage(runningSession({ status: 'unhealthy' }))).toMatch(/instável/i);
+  });
+
+  it('treats a running session with no url yet as still starting, not embeddable', () => {
+    expect(previewStatusMessage(runningSession({ url: undefined }))).toMatch(/iniciando/i);
   });
 });
 

@@ -654,3 +654,58 @@ after the seeded workflow completes. It does not call a model or external provid
 Next.js page, preview lifecycle, source selection/edit request, workspace mutation/version services,
 browser-verification coordinator, and browser interactions are the real application paths. There is no
 image-generation or raster-editing step.
+
+## Preview panel raw-error regression (#486) — 2026-08-11
+
+### Bug found
+
+`PreviewPanel` (`apps/web/app/project/[id]/preview-panel.tsx`) fetched the active preview session
+exactly once, on mount (`getActivePreviewSession`), and never again — unlike preview logs, which
+already polled every 2s. A preview session can legitimately leave `running` at any time in the
+background: `packages/orchestrator/src/preview-service.ts`'s health-check loop can transition it to
+`failing`/`unhealthy`, and its TTL can expire (`isPreviewSessionExpired`), independent of anything the
+frontend does. `resolveUpstream` (the preview proxy's access check) denies both cases —
+`failing` explicitly, and an expired session via an inline reap-then-terminal-throw — with a 403 JSON
+body (`{"error":"PreviewAccessDeniedError","message":"..."}`).
+
+Because the panel's `<iframe>` rendered unconditionally whenever `session.url` was non-empty, and
+never refreshed that cached `session` after the first fetch, it kept pointing the iframe at a session
+the backend had since started rejecting. Since the proxy's 403 response becomes the iframe's own
+top-level document, the raw JSON literally rendered inside the "preview," indistinguishable from the
+real app failing to load. First observed live in #473's crud-heavy tracer run 2 (`docs/evidence/
+harness-alignment/defect-list.md`, defect #7): the error appeared "immediately after the plan-approval
+gate was raised," consistent with a preview started earlier that sat unrefreshed through the planning
+phase and expired before the operator looked again.
+
+### Root cause vs. the four `PreviewAccessDeniedError` throw sites named in #486
+
+Not diagnosed to one single always-firing branch — by design, since `resolveUpstream`'s four checks
+(finalizing failure, terminal status, token mismatch, no upstream port) are all legitimate reasons to
+deny a proxy request, and any of them can be the one that fires depending on exactly which background
+transition the session underwent since the frontend's stale fetch. The actual defect is upstream of all
+four: the frontend had no way to ever learn a transition happened, so whichever branch fired, the panel
+had no path to recover or explain it. Fixing at that root (not one throw site) is the same "fix at the
+shared function, not every caller" principle `CONTRIBUTING.md`/`ponytail` both call for here — the four
+branches are call sites of one root problem, not four separate bugs.
+
+### Fix
+
+- `startPreviewSessionPolling` (new, mirrors the existing `startPreviewLogPolling`): re-fetches
+  `getActivePreviewSession` every 2s for the life of the panel, replacing the old one-shot mount effect.
+- `previewStatusMessage` (new): gates the iframe on the same narrower condition `resolveUpstream`
+  actually enforces (`status === 'running' && url` — not merely "not terminal"), so `failing`/
+  `unhealthy`/no-url-yet sessions get a legible Portuguese status message instead of an iframe pointed
+  at a URL the backend is about to reject. Terminal sessions already fell through to the existing
+  "Nenhum preview em execução" empty state; that path was untouched.
+
+### Verification performed
+
+- TDD: `apps/web/app/project/[id]/preview-panel.test.tsx` — RED confirmed (5 new tests failing with
+  "not a function") before either helper existed; GREEN after implementation (9/9 passing, including
+  the new `startPreviewSessionPolling`/`previewStatusMessage` suites).
+- `npx tsc -b` clean.
+- Not run locally (CI-only per this repo's convention): `golden-flow.spec.ts` and
+  `dom-source-map.spec.ts`, both of which drive a real preview session through `Iniciar preview` to a
+  real `running` status via the fixture dev-server script — read to confirm neither hand-constructs a
+  `PreviewSession` object that would bypass the new `status === 'running'` gate; both rely on the real
+  backend flow, which already produces that exact state by the time they assert on `preview-frame`.
