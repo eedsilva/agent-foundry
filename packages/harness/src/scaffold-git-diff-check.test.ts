@@ -19,11 +19,23 @@ afterEach(async () => {
   );
 });
 
-// node_modules is locally installed and gitignored, never part of the
-// scaffold's tracked content — copying it would only slow the test down.
-function isNodeModules(source: string): boolean {
+// Mirrors versioned-harness.ts's isLocalOnly()/LOCAL_ONLY_DIRS — the
+// authoritative "what a generated project actually receives" filter. None of
+// these paths exist under the scaffold today, but it's a real installable
+// workspace a developer can `pnpm install`/`build`/`dev` against directly, so
+// they can appear locally; copying them into the temp repo would test build
+// artifacts (or a real `.env`) instead of the scaffold's tracked content.
+// Hardcoded rather than imported: isLocalOnly isn't exported, and this task
+// is scoped to a new test file only.
+const LOCAL_ONLY_DIRS = ['node_modules', '.next', 'dist', '.temp'];
+
+function isLocalOnly(source: string): boolean {
   const rel = relative(scaffoldRoot, source);
-  return rel === 'node_modules' || rel.split(sep).includes('node_modules');
+  return rel.split(sep).some((segment) => {
+    if (LOCAL_ONLY_DIRS.includes(segment)) return true;
+    if (segment.endsWith('.tsbuildinfo')) return true;
+    return segment.startsWith('.env') && segment !== '.env.example';
+  });
 }
 
 function git(args: string[], cwd: string) {
@@ -36,7 +48,7 @@ describe('the scaffold', () => {
     temporaryDirectories.push(dir);
     await cp(scaffoldRoot, dir, {
       recursive: true,
-      filter: (source) => !isNodeModules(source),
+      filter: (source) => !isLocalOnly(source),
     });
 
     expect(git(['init'], dir).status).toBe(0);
