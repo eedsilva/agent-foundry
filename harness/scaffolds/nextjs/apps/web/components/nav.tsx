@@ -6,6 +6,10 @@ export interface NavLink {
 }
 
 export function Nav({ links = [] }: { links?: NavLink[] }) {
+  if (links.length === 0) {
+    return null;
+  }
+
   return (
     <nav className="flex items-center gap-4 border-b border-border px-6 py-4">
       {links.map((link) => (

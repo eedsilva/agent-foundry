@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { EmptyState } from '../components/empty-state';
+import { Button } from '../components/ui/button';
 import { signOut } from './actions';
 
 // The web tier never queries the database (ADR 0038): it asks the API tier
@@ -36,9 +37,9 @@ export default async function HomePage() {
   const items = await fetchItems(session.access_token);
 
   return (
-    <main className="mx-auto flex max-w-sm flex-col gap-4 p-6">
+    <div className="mx-auto flex max-w-sm flex-col gap-4 p-6">
       <h1 className="text-xl font-semibold">Your items</h1>
-      <p className="text-sm text-gray-600">{session.user.email}</p>
+      <p className="text-sm text-muted-foreground">{session.user.email}</p>
       {items.length === 0 ? (
         <EmptyState title="No items yet" hint="Items you create will show up here." />
       ) : (
@@ -51,10 +52,8 @@ export default async function HomePage() {
         </ul>
       )}
       <form action={signOut}>
-        <button type="submit" className="rounded bg-black px-3 py-2 text-white">
-          Sign out
-        </button>
+        <Button type="submit">Sign out</Button>
       </form>
-    </main>
+    </div>
   );
 }
