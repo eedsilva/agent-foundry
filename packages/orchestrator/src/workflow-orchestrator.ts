@@ -85,6 +85,7 @@ import type {
   StepAttemptRepository,
   StepEventRepository,
   StepRunRepository,
+  SystemPromptRepository,
   VerificationService,
   WorkflowRunRepository,
   WorkflowRepository,
@@ -375,6 +376,7 @@ export class WorkflowOrchestrator {
     private readonly previews?: WorkspacePreviewBooter,
     private readonly validationCampaign?: ValidationCampaignPreview,
     private readonly validationEvidence?: ValidationEvidencePublisher,
+    private readonly systemPrompts?: SystemPromptRepository,
   ) {
     this.taskGraphRunner = new TaskGraphRunner({
       artifacts: this.artifacts,
@@ -2756,6 +2758,7 @@ export class WorkflowOrchestrator {
       stack: workflow.stack,
       tags: step.harnessTags,
     });
+    const systemPrompt = (await this.systemPrompts?.select(step.role))?.content;
     const profile = buildTaskProfile({ step, harness, artifacts: inputArtifacts, policy });
     const outputSchema =
       step.outputContract === 'task-graph'
@@ -2954,6 +2957,7 @@ export class WorkflowOrchestrator {
             route,
             campaign,
             harness,
+            systemPrompt,
             outputSchema,
             inputArtifacts,
             idempotencyKey,
@@ -2986,6 +2990,7 @@ export class WorkflowOrchestrator {
     route: RouteDecision,
     campaign: ValidationCampaignExecution | undefined,
     harness: HarnessSelection,
+    systemPrompt: string | undefined,
     outputSchema: Record<string, unknown>,
     inputArtifacts: StoredArtifact[],
     idempotencyKey: string,
@@ -3046,6 +3051,7 @@ export class WorkflowOrchestrator {
         signal,
         outputSchema,
         workspaceRef,
+        systemPrompt,
       );
       if (result.usage) {
         // Persist provider usage while the attempt is still running. A crash
@@ -3443,6 +3449,7 @@ export class WorkflowOrchestrator {
     signal: AbortSignal,
     outputSchema: AgentExecutionRequest['outputSchema'],
     workspaceRef: string,
+    systemPrompt: string | undefined,
   ): Promise<AgentExecutionResult> {
     await this.emit(project.id, 'agent.started', `${step.id} started on ${candidate.model.id}.`, {
       nodeId: step.id,
@@ -3468,6 +3475,7 @@ export class WorkflowOrchestrator {
           mutatesWorkspace: step.mutatesWorkspace,
           timeoutMs: this.options.agentTimeoutMs,
           outputSchema,
+          ...(systemPrompt !== undefined ? { systemPrompt } : {}),
         },
         workspace: { projectId: project.id, ref: workspaceRef },
         // ponytail: tool allow-listing is shape-only until v07-sandbox-runner/

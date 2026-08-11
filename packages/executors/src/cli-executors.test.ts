@@ -114,6 +114,76 @@ describe('CLI executor contracts', () => {
     expect(JSON.parse(invocation.args[schemaIndex + 1] ?? '')).toEqual({ type: 'object' });
   });
 
+  it('leaves Claude args untouched when systemPrompt is absent', async () => {
+    const withPrompt = await new InspectableClaudeExecutor(1_000_000).inspect(request());
+    const without = await new InspectableClaudeExecutor(1_000_000).inspect(
+      request({ systemPrompt: undefined }),
+    );
+    expect(without.args).toEqual(withPrompt.args);
+    expect(without.args).not.toContain('--append-system-prompt');
+  });
+
+  it('appends --append-system-prompt when systemPrompt is present', async () => {
+    const invocation = await new InspectableClaudeExecutor(1_000_000).inspect(
+      request({ systemPrompt: '# System prompt: Developer\n\nBe terse.' }),
+    );
+    const flagIndex = invocation.args.indexOf('--append-system-prompt');
+    expect(flagIndex).toBeGreaterThanOrEqual(0);
+    expect(invocation.args[flagIndex + 1]).toBe('# System prompt: Developer\n\nBe terse.');
+    // The prompt (last arg) must still follow, unaffected by the appended flag.
+    expect(invocation.args.at(-1)).toBe('Open the request file.');
+  });
+
+  it('leaves Codex args untouched when systemPrompt is absent', async () => {
+    // The output-file path embeds a random mkdtemp suffix per invocation, so
+    // normalize it out before comparing two separately built invocations.
+    const normalize = (invocation: CliInvocation) =>
+      invocation.args.map((arg) => (arg === invocation.outputFile ? '<outputFile>' : arg));
+    const withoutA = await new InspectableCodexExecutor(1_000_000).inspect(request());
+    const withoutB = await new InspectableCodexExecutor(1_000_000).inspect(
+      request({ systemPrompt: undefined }),
+    );
+    try {
+      expect(normalize(withoutA)).toEqual(normalize(withoutB));
+      expect(withoutA.args).not.toContain('-c');
+    } finally {
+      if (withoutA.outputDirectory)
+        await rm(withoutA.outputDirectory, { force: true, recursive: true });
+      if (withoutB.outputDirectory)
+        await rm(withoutB.outputDirectory, { force: true, recursive: true });
+    }
+  });
+
+  it('appends a -c developer_instructions TOML literal string when systemPrompt is present', async () => {
+    const content = 'Say "hi" then \\n do it — a real\nnewline, a quote " and a backslash \\.';
+    const invocation = await new InspectableCodexExecutor(1_000_000).inspect(
+      request({ systemPrompt: content }),
+    );
+    try {
+      const flagIndex = invocation.args.indexOf('-c');
+      expect(flagIndex).toBeGreaterThanOrEqual(0);
+      const value = invocation.args[flagIndex + 1];
+      expect(value).toBe(`developer_instructions='''${content}'''`);
+      // TOML literal strings do zero escape processing: the verbatim content
+      // (quote, backslash, real newline) must round-trip unchanged.
+      expect(value).toContain(content);
+    } finally {
+      if (invocation.outputDirectory) {
+        await rm(invocation.outputDirectory, { force: true, recursive: true });
+      }
+    }
+  });
+
+  it('throws a clear error when systemPrompt contains a TOML literal-string delimiter', async () => {
+    const before = await temporaryEntries('agent-foundry-codex-output-');
+    await expect(
+      new InspectableCodexExecutor(1_000_000).inspect(
+        request({ systemPrompt: "before '''  after" }),
+      ),
+    ).rejects.toThrow(/'''/);
+    expect(await temporaryEntries('agent-foundry-codex-output-')).toEqual(before);
+  });
+
   it('removes unsupported tuple keywords from nested Claude schemas', async () => {
     const invocation = await new InspectableClaudeExecutor(1_000_000).inspect(
       request({

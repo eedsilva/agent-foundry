@@ -75,6 +75,7 @@ import {
   type StepAttemptRepository,
   type StepEventRepository,
   type StepRunRepository,
+  type SystemPromptRepository,
   type Tx,
   type TransactionRunner,
   type VerificationService,
@@ -1215,6 +1216,7 @@ export function makeHarness(
     cancelledWithUsage?: boolean;
     versions?: ProjectVersionService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
+    systemPrompts?: SystemPromptRepository;
   } = {},
 ) {
   const stores = existing ?? makeStores();
@@ -1432,6 +1434,7 @@ export function makeHarness(
     opts.previews,
     opts.validationCampaign,
     opts.validationEvidence,
+    opts.systemPrompts,
   );
   const service = new ProjectService(
     stores.projects,
