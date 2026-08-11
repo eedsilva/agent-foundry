@@ -209,5 +209,12 @@ describe('#475: the UI-quality judge scores a real browser-verification run', ()
       expect(criterion.score).toBeGreaterThanOrEqual(0);
       expect(criterion.score).toBeLessThanOrEqual(1);
     }
+
+    // #475's required evidence artifact ("Judge report artifact from a real
+    // run") is this payload. Logged rather than only asserted so anyone can
+    // regenerate it on demand with `npx vitest run
+    // packages/composition/src/ui-quality-judge.integration.test.ts` instead
+    // of having to reconstruct a one-off capture step.
+    console.log('#475 uiQuality evidence:', JSON.stringify(uiQuality, null, 2));
   }, 60_000);
 });
