@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   RouteDecisionSchema,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  UI_QUALITY_RUBRIC_V1,
   WorkflowDefinitionSchema,
   type AgentExecutionRequest,
   type AgentExecutionResult,
@@ -739,6 +740,8 @@ describe('advisory UI-quality judge (#475)', () => {
     judge: boolean;
     approved: boolean;
     judgeFails?: boolean;
+    /** Overrides every criterion's score (and overallScore) uniformly. */
+    judgeScore?: number;
   }) {
     const judgeRequests: AgentExecutionRequest[] = [];
     const judgeSawScreenshot: boolean[] = [];
@@ -770,17 +773,27 @@ describe('advisory UI-quality judge (#475)', () => {
             schemaVersion: '1',
             status: 'completed',
             summary: 'Judged the screenshots.',
-            data: {
-              overallScore: 0.42,
-              criteria: [
-                {
-                  criterionId: 'layout-coherence',
-                  score: 0.4,
-                  finding: 'Header overlaps the nav on http://preview.test/?token=s3cret-value',
-                },
-                { criterionId: 'navigation', score: 0.9 },
-              ],
-            },
+            data:
+              options.judgeScore !== undefined
+                ? {
+                    overallScore: options.judgeScore,
+                    criteria: UI_QUALITY_RUBRIC_V1.criteria.map((criterion) => ({
+                      criterionId: criterion.id,
+                      score: options.judgeScore!,
+                    })),
+                  }
+                : {
+                    overallScore: 0.42,
+                    criteria: [
+                      {
+                        criterionId: 'layout-coherence',
+                        score: 0.4,
+                        finding:
+                          'Header overlaps the nav on http://preview.test/?token=s3cret-value',
+                      },
+                      { criterionId: 'navigation', score: 0.9 },
+                    ],
+                  },
             decisions: [],
             assumptions: [],
             risks: [],
@@ -906,6 +919,9 @@ describe('advisory UI-quality judge (#475)', () => {
         approved: (report?.content as { approved?: boolean } | undefined)?.approved,
         steps: steps.sort(),
       },
+      /** Repair/ceiling bookkeeping the judge score must never touch. */
+      execution: run?.execution,
+      eventTypes: (await harness.events.list('project-1')).map((event) => event.type),
     };
   }
 
@@ -979,5 +995,44 @@ describe('advisory UI-quality judge (#475)', () => {
     expect(result.judgeRequests).toHaveLength(1);
     expect(result.report?.uiQuality).toBeUndefined();
     expect(result.outcome).toEqual(withoutJudge.outcome);
+  });
+
+  it('a worst-possible judge score does not drive repair routing or the emergency ceiling', async () => {
+    // Isolates the judge score as the sole variable: the underlying browser
+    // verification is cleanly approved, and only the judge's opinion is as
+    // bad as it can get (score 0 on every criterion). Regression target:
+    // nothing downstream of `judgeUiQuality` may read the score to decide
+    // `resetConsecutiveRepairs`/`recordCompletedRepair`, trip `reachCeiling`,
+    // or fire `quality.repair_requested` — those are driven purely by
+    // `report.approved`, which the judge never rewrites (#475).
+    const result = await runBrowserWorkflow({ judge: true, approved: true, judgeScore: 0 });
+    const withoutJudge = await runBrowserWorkflow({ judge: false, approved: true });
+
+    // Sanity: the worst-case judge fixture actually happened.
+    expect(result.judgeRequests).toHaveLength(1);
+    expect(result.report?.uiQuality).toMatchObject({
+      overallScore: 0,
+      criteria: UI_QUALITY_RUBRIC_V1.criteria.map((criterion) => ({
+        criterionId: criterion.id,
+        score: 0,
+      })),
+    });
+
+    // The approve/repair outcome, run status, and step/attempt fingerprint
+    // are byte-identical to a run where the judge never ran at all.
+    expect(result.outcome).toEqual(withoutJudge.outcome);
+    expect(result.outcome.approved).toBe(true);
+
+    // resetConsecutiveRepairs (not recordCompletedRepair) is what ran: no
+    // consecutive-repair count was ever incremented by the low score.
+    expect(result.execution?.consecutiveRepairs ?? 0).toBe(0);
+    expect(result.execution?.countedRepairStepRunIds ?? []).toEqual([]);
+    // No reachCeiling trigger fired as a result of the judge score.
+    expect(result.execution?.ceiling).toBeUndefined();
+    // Only quality.approved fired; the score never produced a
+    // quality.repair_requested event.
+    expect(result.eventTypes).not.toContain('quality.repair_requested');
+    expect(result.eventTypes).toContain('quality.approved');
+    expect(result.eventTypes).toEqual(withoutJudge.eventTypes);
   });
 });
