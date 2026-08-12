@@ -29,9 +29,7 @@ export const ForeignKeyActionSchema = z.enum(['cascade', 'restrict', 'set-null']
 export type ForeignKeyAction = z.infer<typeof ForeignKeyActionSchema>;
 
 export const SchemaConstraintSchema = z.discriminatedUnion('type', [
-  z
-    .object({ type: z.literal('primary-key'), columns: z.array(PathSegmentSchema).min(1) })
-    .strict(),
+  z.object({ type: z.literal('primary-key'), columns: z.array(PathSegmentSchema).min(1) }).strict(),
   z.object({ type: z.literal('unique'), columns: z.array(PathSegmentSchema).min(1) }).strict(),
   z
     .object({

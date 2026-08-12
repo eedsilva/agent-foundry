@@ -11,7 +11,9 @@ async function readFixture(shape: string) {
   return JSON.parse(await readFile(path, 'utf8'));
 }
 
-function expectEveryTableHasRls(plan: { tables: { rls: { enabled: boolean; policies: unknown[] } }[] }) {
+function expectEveryTableHasRls(plan: {
+  tables: { rls: { enabled: boolean; policies: unknown[] } }[];
+}) {
   for (const table of plan.tables) {
     expect(table.rls.enabled).toBe(true);
     expect(table.rls.policies.length).toBeGreaterThan(0);
