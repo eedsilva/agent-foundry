@@ -1,0 +1,39 @@
+{
+  "rubricVersion": "1",
+  "judgeModel": "claude-sonnet-5",
+  "overallScore": 0.43,
+  "criteria": [
+    {
+      "criterionId": "layout-coherence",
+      "score": 0.55,
+      "finding": "Form fields are consistently spaced and aligned, but the form sits near the top of a mostly empty viewport with no vertical centering, leaving a large unbalanced dead zone below."
+    },
+    {
+      "criterionId": "navigation",
+      "score": 0.45,
+      "finding": "Only interactive elements are the two inputs, the Sign in button, and an unlabeled circular 'N' icon in the bottom-left corner with no visible affordance for what it does."
+    },
+    {
+      "criterionId": "empty-loading-error-states",
+      "score": 0.2,
+      "finding": "Screenshot is captured after a sign-in attempt but shows no error message, validation feedback, or loading indicator — just the blank form fields, giving no confirmation of what happened."
+    },
+    {
+      "criterionId": "contrast-readability",
+      "score": 0.45,
+      "finding": "Labels and input borders read fine (white on near-black), but the 'Sign in' button is nearly the same near-black shade as the page background, making it hard to perceive as clickable."
+    },
+    {
+      "criterionId": "responsive-sanity",
+      "score": 0.5,
+      "finding": "Only one desktop-width viewport is captured, so adaptive behavior can't be verified; nothing is visibly broken or overflowing at this size."
+    }
+  ],
+  "screenshotsReviewed": [
+    {
+      "name": "browser-screenshot-sign-in",
+      "revision": 1,
+      "sha256": "dcaa95c0953b6f2a59a4e13aa24bd7be30d2cc8b4a853d67a91bb36ae513f2c7"
+    }
+  ]
+}
