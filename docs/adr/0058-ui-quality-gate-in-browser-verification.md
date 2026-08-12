@@ -1,6 +1,6 @@
 # ADR 0058: UI quality gate lives inside the browser-verification loop
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-08
 - Owners: Core, UX
 - Tracked by epic #469 (build tickets #475, #477)
@@ -34,3 +34,20 @@ is understood from multi-shape tracer evidence.
   `{ provider: <Provider>, model: <string> }`. Absent (the default, including
   `policies/default.yaml`), the judge never runs. A project opts in by setting this field in its
   own policy.
+
+## Update (2026-08-12, #477)
+
+The judge is promoted to an optional blocking gate via `ProjectPolicy.uiQualityJudge.minOverallScore`
+(issue #477). This field is optional; absence keeps the judge purely advisory, preserving
+backward compatibility with every pre-#477 policy. When configured, a report whose
+`uiQuality.overallScore` falls below the threshold causes `gateOnUiQuality` to flip the existing
+`approved` field to `false`, routing the run through browser repair without adding a parallel
+gate or new event kind. Repair and emergency-ceiling mechanics are 100% reused; gate-caused
+failures are indistinguishable at those call sites from functional failures.
+
+Threshold selection is data-driven: HA-A.1's real judge run (`docs/evidence/issue-475-ui-quality-judge/judge-result.json`)
+scored the post-#476 scaffold `overallScore: 0.43`; thresholds must sit clearly below that. An
+induced-ugly integration test (`packages/composition/src/ui-quality-judge.integration.test.ts`,
+#477 describe block) demonstrates the repair loop with an example threshold of 0.3: first
+browser-verify scores 0.1 (below threshold), triggering repair, then 0.8 (above), approving the
+run. Evidence for this update is logged at `docs/evidence/issue-477-ui-judge-gate/README.md`.
