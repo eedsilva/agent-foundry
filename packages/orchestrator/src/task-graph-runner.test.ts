@@ -333,6 +333,11 @@ describe('TaskGraphRunner', () => {
     // `assertTask` must not know or care why `approved` is false: same
     // repair invocation, same `recordCompletedRepair` call, no separate
     // event kind or counting path for the ui-quality case.
+    // Builds its own TaskGraphRuntime (like 'derives a resumed attempt...'
+    // below) instead of the shared setupRunner helper this test's sibling
+    // ('reverifies deterministic checks...') uses — setupRunner hardcodes
+    // recordCompletedRepair: () => Promise.resolve(), and this test needs to
+    // observe those calls.
     const power = { on: true };
     const artifacts = new InMemoryArtifacts(power);
     const events = new InMemoryEvents(power);
@@ -359,7 +364,8 @@ describe('TaskGraphRunner', () => {
           content = browserPlan();
         } else if (input.step.id === 'assert-task.T1') {
           browserChecks += 1;
-          content = browserChecks === 1 ? uiQualityGatedBrowserReport() : browserReport(true);
+          content =
+            browserChecks === 1 ? uiQualityGatedBrowserReport() : passingUiQualityBrowserReport();
         }
         return artifacts.put({
           projectId: input.project.id,
@@ -922,6 +928,43 @@ function uiQualityGatedBrowserReport(): object {
       judgeModel: 'claude-test',
       overallScore: 0.4,
       criteria: [{ criterionId: 'layout', score: 0.4, finding: 'Cramped spacing.' }],
+      screenshotsReviewed: [],
+    },
+  };
+}
+
+/**
+ * The post-repair counterpart to `uiQualityGatedBrowserReport()`: same shape,
+ * `approved: true`, and `uiQuality.overallScore` above the gate's implied
+ * threshold — a real retry after repair would plausibly still carry a
+ * `uiQuality` block, just passing.
+ */
+function passingUiQualityBrowserReport(): object {
+  return {
+    schemaVersion: '1',
+    approved: true,
+    summary: 'Browser passed.',
+    planArtifact: { name: 'browser-test.plan', revision: 1, sha256: 'a'.repeat(64) },
+    previewSession: {
+      sessionId: 'preview-1',
+      status: 'running',
+      url: 'http://127.0.0.1:4000/',
+      evidence: { screenshots: [] },
+    },
+    steps: [
+      {
+        stepId: 'open-root',
+        title: 'Open root',
+        status: 'passed',
+        durationMs: 1,
+        observations: [],
+      },
+    ],
+    uiQuality: {
+      rubricVersion: '1',
+      judgeModel: 'claude-test',
+      overallScore: 0.8,
+      criteria: [{ criterionId: 'layout', score: 0.8 }],
       screenshotsReviewed: [],
     },
   };
