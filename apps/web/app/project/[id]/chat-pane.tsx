@@ -103,10 +103,7 @@ export function ChatPane({
   // does not affect approval semantics. Old plan artifacts have no `modules`
   // field; safeParse leaves `planModules` at an empty list for those.
   useEffect(() => {
-    if (!pendingPlanOperationId) {
-      setPlanModules(null);
-      return;
-    }
+    if (!pendingPlanOperationId) return;
     let cancelled = false;
     void getOperationProposal(id, pendingPlanOperationId)
       .then((artifact) => {

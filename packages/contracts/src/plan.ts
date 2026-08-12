@@ -117,21 +117,15 @@ export const TASK_GRAPH_ARTIFACT_JSON_SCHEMA = {
   },
 };
 
-const APP_SHAPE_FIXED_MODULE_IDS = ['auth', 'dashboard', 'storage'] as const;
-const APP_SHAPE_CRUD_MODULE_ID_PATTERN = /^crud:[a-zA-Z0-9._-]+$/;
+const APP_SHAPE_MODULE_ID_PATTERN = /^(?:auth|dashboard|storage|crud:[a-zA-Z0-9._-]+)$/;
 
-/** Module vocabulary from #473's observed-shape defect list: auth, dashboard,
- * storage, or a crud:<resource> variant. Unknown ids are rejected. */
-export const ModuleIdSchema = z
-  .string()
-  .refine(
-    (value) =>
-      (APP_SHAPE_FIXED_MODULE_IDS as readonly string[]).includes(value) ||
-      APP_SHAPE_CRUD_MODULE_ID_PATTERN.test(value),
-    {
-      message: `Module must be one of ${APP_SHAPE_FIXED_MODULE_IDS.join(', ')}, or crud:<resource>`,
-    },
-  );
+/** Module vocabulary from ADR 0059: auth, dashboard, storage, or a
+ * crud:<resource> variant. Unknown ids are rejected. Expressed as a single
+ * regex (not an enum + separate refine) so the published JSON Schema's
+ * `pattern` field actually documents the vocabulary for model consumers. */
+export const ModuleIdSchema = z.string().regex(APP_SHAPE_MODULE_ID_PATTERN, {
+  message: 'Module must be one of auth, dashboard, storage, or crud:<resource>',
+});
 export type ModuleId = z.infer<typeof ModuleIdSchema>;
 
 export const AppShapeModuleSchema = z
@@ -186,7 +180,7 @@ export const PLAN_PROPOSAL_ARTIFACT_JSON_SCHEMA = {
       path: 'data.modules[*].id',
       enforcedBy: 'PlanProposalArtifactSchema',
       description:
-        'Standard JSON Schema cannot express the crud:<resource> templated variant or cross-item uniqueness; the runtime Zod parse rejects module ids outside auth, dashboard, storage, crud:<resource>, and duplicate module ids within one plan.',
+        "Standard JSON Schema cannot express cross-item uniqueness; the runtime Zod parse rejects duplicate module ids within one plan. The module id vocabulary itself IS expressed via this schema's regex pattern.",
     },
   },
 };

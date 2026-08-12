@@ -40,7 +40,11 @@ function makeOperation(overrides: Partial<Operation> = {}): Operation {
 
 function makeConversation(operations: Operation[], messages: Message[]): ConversationPageResponse {
   return {
-    conversation: { id: 'project-1', projectId: 'project-1', createdAt: '2026-08-12T00:00:00.000Z' },
+    conversation: {
+      id: 'project-1',
+      projectId: 'project-1',
+      createdAt: '2026-08-12T00:00:00.000Z',
+    },
     messages,
     attachments: [],
     operations,

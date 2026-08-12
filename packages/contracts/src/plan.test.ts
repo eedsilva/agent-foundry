@@ -330,8 +330,6 @@ describe('app-shape contract (#478)', () => {
 
   it('publishes a model-facing JSON schema with the runtime validation marker', () => {
     expect(PLAN_PROPOSAL_ARTIFACT_JSON_SCHEMA.$id).toMatch(/plan-proposal-artifact-v1/);
-    expect(
-      PLAN_PROPOSAL_ARTIFACT_JSON_SCHEMA['x-agent-foundry-runtime-validation'],
-    ).toBeDefined();
+    expect(PLAN_PROPOSAL_ARTIFACT_JSON_SCHEMA['x-agent-foundry-runtime-validation']).toBeDefined();
   });
 });

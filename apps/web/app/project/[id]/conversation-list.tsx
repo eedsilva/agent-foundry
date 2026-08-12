@@ -96,9 +96,13 @@ export function ConversationList({
                 {operation.kind === 'plan' &&
                 pendingPlanModules?.operationId === operation.id &&
                 pendingPlanModules.modules.length > 0 ? (
-                  <span aria-label="Módulos do plano" className="mt-2 flex flex-wrap gap-1">
+                  <span
+                    role="list"
+                    aria-label="Módulos do plano"
+                    className="mt-2 flex flex-wrap gap-1"
+                  >
                     {pendingPlanModules.modules.map((module) => (
-                      <span key={module.id} className={CHIP}>
+                      <span key={module.id} role="listitem" className={CHIP}>
                         {module.id}
                       </span>
                     ))}
