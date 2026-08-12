@@ -3395,18 +3395,14 @@ export class WorkflowOrchestrator {
     const failedStepIds = new Set(
       report.steps.filter((step) => step.status === 'failed').map((step) => step.stepId),
     );
-    // Judge-reviewed screenshots only apply in the judge-only-failure case
-    // (see this function's JSDoc, #477): a functional failure already has
-    // its own screenshot via `failedStepIds` and must not pull in unrelated
-    // judge-reviewed shots.
-    const reviewedKeys =
-      failedStepIds.size === 0
-        ? new Set(
-            (report.uiQuality?.screenshotsReviewed ?? []).map(
-              (ref) => `${ref.name}@${ref.revision}`,
-            ),
-          )
-        : new Set<string>();
+    // Judge-reviewed screenshots (#477, see this function's JSDoc) are unioned
+    // in unconditionally: a report can have both an unrelated advisory step
+    // failure (`failedStepIds` non-empty, browser-verifier.ts's non-blocking
+    // "advisory" signal) and a separate judge-caused rejection in the same
+    // report, and each set names screenshots the other doesn't.
+    const reviewedKeys = new Set(
+      (report.uiQuality?.screenshotsReviewed ?? []).map((ref) => `${ref.name}@${ref.revision}`),
+    );
     const screenshots = report.previewSession.evidence.screenshots.filter(
       (shot) => failedStepIds.has(shot.stepId) || reviewedKeys.has(`${shot.name}@${shot.revision}`),
     );
