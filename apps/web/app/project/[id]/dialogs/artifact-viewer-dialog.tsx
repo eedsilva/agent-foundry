@@ -3,8 +3,10 @@
 import React from 'react';
 import { diffLines } from 'diff';
 import {
+  SchemaPlanArtifactSchema,
   TaskGraphArtifactSchema,
   VerificationReportSchema,
+  type SchemaPlan,
   type StoredArtifact,
   type TaskGraph,
   type VerificationReport,
@@ -30,6 +32,11 @@ function parseTaskGraph(content: unknown): TaskGraph | null {
   return parsed.success ? parsed.data.data : null;
 }
 
+function parseSchemaPlan(content: unknown): SchemaPlan | null {
+  const parsed = SchemaPlanArtifactSchema.safeParse(content);
+  return parsed.success ? parsed.data.data : null;
+}
+
 function TaskGraphView({ graph }: { graph: TaskGraph }) {
   return (
     <div className="flex flex-col gap-2" data-testid="task-graph-view">
@@ -43,6 +50,24 @@ function TaskGraphView({ graph }: { graph: TaskGraph }) {
           ) : null}
           <p className={HINT}>Entrega: {task.deliverables.join(', ')}</p>
           <p className={HINT}>Aceite: {task.acceptanceCheck}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SchemaPlanView({ plan }: { plan: SchemaPlan }) {
+  return (
+    <div className="flex flex-col gap-2" data-testid="schema-plan-view">
+      {plan.tables.map((table) => (
+        <div key={table.name} className="border-hairline rounded-card border px-3 py-2 text-[13px]">
+          <p className="text-ink font-medium">{table.name}</p>
+          <p className={HINT}>
+            Colunas: {table.columns.map((column) => `${column.name} (${column.type})`).join(', ')}
+          </p>
+          <p className={HINT}>
+            RLS: {table.rls.policies.map((policy) => `${policy.command} · ${policy.name}`).join(', ')}
+          </p>
         </div>
       ))}
     </div>
@@ -115,6 +140,7 @@ export function ArtifactViewerDialog({
 
   if (!selected) return null;
   const taskGraph = parseTaskGraph(selected.content);
+  const schemaPlan = parseSchemaPlan(selected.content);
 
   return (
     <Overlay
@@ -146,6 +172,8 @@ export function ArtifactViewerDialog({
           )
         ) : taskGraph ? (
           <TaskGraphView graph={taskGraph} />
+        ) : schemaPlan ? (
+          <SchemaPlanView plan={schemaPlan} />
         ) : isVerificationReport(selected.content) ? (
           <div className="flex flex-col gap-2">
             <p className="text-ink text-[13px]">{selected.content.summary}</p>

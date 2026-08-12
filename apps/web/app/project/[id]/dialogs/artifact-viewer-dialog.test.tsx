@@ -102,3 +102,67 @@ describe('ArtifactViewerDialog task graph rendering', () => {
     expect(markup).toContain('Depends on a missing task');
   });
 });
+
+describe('ArtifactViewerDialog schema plan rendering', () => {
+  it('renders a conforming schema plan as a readable table list', () => {
+    const markup = render({
+      schemaVersion: '1',
+      status: 'completed',
+      summary: 'Planned the schema.',
+      data: {
+        schemaVersion: '1',
+        tables: [
+          {
+            name: 'items',
+            columns: [
+              { name: 'id', type: 'uuid', nullable: false },
+              { name: 'name', type: 'text', nullable: false },
+            ],
+            constraints: [{ type: 'primary-key', columns: ['id'] }],
+            indexes: [],
+            rls: {
+              enabled: true,
+              policies: [{ name: 'authenticated_all', command: 'all', using: 'true' }],
+            },
+          },
+        ],
+      },
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      nextActions: [],
+    });
+
+    expect(markup).toContain('data-testid="schema-plan-view"');
+    expect(markup).toContain('items');
+    expect(markup).toContain('id (uuid)');
+    expect(markup).toContain('all · authenticated_all');
+  });
+
+  it('falls back to raw JSON for a schema plan that fails validation instead of crashing', () => {
+    const markup = render({
+      schemaVersion: '1',
+      status: 'completed',
+      summary: 'Planned the schema.',
+      data: {
+        schemaVersion: '1',
+        tables: [
+          {
+            name: 'items',
+            columns: [{ name: 'id', type: 'uuid', nullable: false }],
+            constraints: [],
+            indexes: [],
+            // No RLS declared — invalid.
+          },
+        ],
+      },
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      nextActions: [],
+    });
+
+    expect(markup).not.toContain('data-testid="schema-plan-view"');
+    expect(markup).toContain('items');
+  });
+});
