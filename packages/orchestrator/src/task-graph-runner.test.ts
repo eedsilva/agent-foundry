@@ -905,26 +905,10 @@ function browserReport(approved: boolean): object {
  */
 function uiQualityGatedBrowserReport(): object {
   return {
-    schemaVersion: '1',
+    ...browserReport(true),
     approved: false,
     summary:
       'Browser passed. UI-quality gate failed: overall score 0.40 is below the configured minimum 0.70.',
-    planArtifact: { name: 'browser-test.plan', revision: 1, sha256: 'a'.repeat(64) },
-    previewSession: {
-      sessionId: 'preview-1',
-      status: 'running',
-      url: 'http://127.0.0.1:4000/',
-      evidence: { screenshots: [] },
-    },
-    steps: [
-      {
-        stepId: 'open-root',
-        title: 'Open root',
-        status: 'passed',
-        durationMs: 1,
-        observations: [],
-      },
-    ],
     uiQuality: {
       rubricVersion: '1',
       judgeModel: 'claude-test',
@@ -943,25 +927,7 @@ function uiQualityGatedBrowserReport(): object {
  */
 function passingUiQualityBrowserReport(): object {
   return {
-    schemaVersion: '1',
-    approved: true,
-    summary: 'Browser passed.',
-    planArtifact: { name: 'browser-test.plan', revision: 1, sha256: 'a'.repeat(64) },
-    previewSession: {
-      sessionId: 'preview-1',
-      status: 'running',
-      url: 'http://127.0.0.1:4000/',
-      evidence: { screenshots: [] },
-    },
-    steps: [
-      {
-        stepId: 'open-root',
-        title: 'Open root',
-        status: 'passed',
-        durationMs: 1,
-        observations: [],
-      },
-    ],
+    ...browserReport(true),
     uiQuality: {
       rubricVersion: '1',
       judgeModel: 'claude-test',
