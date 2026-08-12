@@ -165,6 +165,20 @@ describe('previewStatusMessage', () => {
     const failing = runningSession({ status: 'failing' });
     expect(previewStatusMessage(failing, true)).not.toBeNull();
   });
+
+  it('does not blank an already-shown iframe while a restart respawns the process (starting)', () => {
+    // packages/domain/src/preview-state.ts's transition table: 'unhealthy' can
+    // go to 'starting' (node-preview-runner.ts's restart() -> spawn()
+    // transitions there), not straight back to 'running' — the health-check
+    // restart path in preview-service.ts genuinely passes through 'starting'
+    // before the respawned process is confirmed healthy again. The prior fix
+    // for the #510 CI regression only granted the already-shown grace to
+    // 'unhealthy', so a poll landing during this 'starting' leg still blanked
+    // (and on the next poll, remounted) an iframe that was already showing
+    // good content mid-interaction.
+    const starting = runningSession({ status: 'starting' });
+    expect(previewStatusMessage(starting, true)).toBeNull();
+  });
 });
 
 describe('previewRepairContext', () => {
