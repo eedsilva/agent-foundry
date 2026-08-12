@@ -108,14 +108,18 @@ export function ChatPane({
       return;
     }
     let cancelled = false;
-    void getOperationProposal(id, pendingPlanOperationId).then((artifact) => {
-      if (cancelled) return;
-      const parsed = PlanProposalArtifactSchema.safeParse(artifact.content);
-      setPlanModules({
-        operationId: pendingPlanOperationId,
-        modules: parsed.success ? parsed.data.data.modules : [],
+    void getOperationProposal(id, pendingPlanOperationId)
+      .then((artifact) => {
+        if (cancelled) return;
+        const parsed = PlanProposalArtifactSchema.safeParse(artifact.content);
+        setPlanModules({
+          operationId: pendingPlanOperationId,
+          modules: parsed.success ? parsed.data.data.modules : [],
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setPlanModules(null);
       });
-    });
     return () => {
       cancelled = true;
     };
