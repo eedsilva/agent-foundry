@@ -5,6 +5,9 @@ import {
   GeneratedTaskGraphArtifactSchema,
   TaskGraphArtifactSchema,
   TaskGraphSchema,
+  PLAN_PROPOSAL_ARTIFACT_JSON_SCHEMA,
+  AppShapeSchema,
+  PlanProposalArtifactSchema,
 } from './plan.js';
 
 const graph = {
@@ -227,5 +230,108 @@ describe('task graph contracts', () => {
   it('publishes a model-facing JSON schema with the runtime validation marker', () => {
     expect(TASK_GRAPH_ARTIFACT_JSON_SCHEMA.$id).toMatch(/task-graph-artifact-v1/);
     expect(TASK_GRAPH_ARTIFACT_JSON_SCHEMA['x-agent-foundry-runtime-validation']).toBeDefined();
+  });
+});
+
+describe('app-shape contract (#478)', () => {
+  const shape = {
+    schemaVersion: '1' as const,
+    modules: [
+      { id: 'auth', acceptanceChannel: 'browser-visible' as const },
+      { id: 'crud:items', acceptanceChannel: 'browser-visible' as const },
+    ],
+  };
+
+  it('exports the app-shape schemas', () => {
+    expect('AppShapeSchema' in contracts).toBe(true);
+    expect('PlanProposalArtifactSchema' in contracts).toBe(true);
+    expect('PLAN_PROPOSAL_ARTIFACT_JSON_SCHEMA' in contracts).toBe(true);
+  });
+
+  it('accepts the fixed module ids and crud:<resource> variants', () => {
+    expect(AppShapeSchema.parse(shape).modules.map((module) => module.id)).toEqual([
+      'auth',
+      'crud:items',
+    ]);
+    expect(
+      AppShapeSchema.parse({
+        ...shape,
+        modules: [
+          { id: 'dashboard', acceptanceChannel: 'deterministic-only' },
+          { id: 'storage', acceptanceChannel: 'deterministic-only' },
+        ],
+      }).modules.map((module) => module.id),
+    ).toEqual(['dashboard', 'storage']);
+  });
+
+  it('rejects an unknown module id', () => {
+    expect(() =>
+      AppShapeSchema.parse({
+        ...shape,
+        modules: [{ id: 'billing', acceptanceChannel: 'deterministic-only' }],
+      }),
+    ).toThrow(/Module must be one of/);
+  });
+
+  it('rejects a malformed crud module id', () => {
+    expect(() =>
+      AppShapeSchema.parse({
+        ...shape,
+        modules: [{ id: 'crud:', acceptanceChannel: 'deterministic-only' }],
+      }),
+    ).toThrow(/Module must be one of/);
+  });
+
+  it('rejects a duplicate module id', () => {
+    expect(() =>
+      AppShapeSchema.parse({
+        ...shape,
+        modules: [shape.modules[0], shape.modules[0]],
+      }),
+    ).toThrow(/Duplicate module id auth/);
+  });
+
+  it('requires an acceptance channel per module', () => {
+    expect(() =>
+      AppShapeSchema.parse({
+        ...shape,
+        modules: [{ id: 'auth' }],
+      }),
+    ).toThrow();
+  });
+
+  it('caps the module list at 50 and requires at least one module', () => {
+    expect(() => AppShapeSchema.parse({ schemaVersion: '1', modules: [] })).toThrow();
+    const modules = Array.from({ length: 51 }, (_, index) => ({
+      id: `crud:resource-${index}`,
+      acceptanceChannel: 'deterministic-only' as const,
+    }));
+    expect(() => AppShapeSchema.parse({ schemaVersion: '1', modules })).toThrow();
+  });
+
+  it('wraps the app shape in the agent artifact envelope', () => {
+    expect(
+      PlanProposalArtifactSchema.parse({
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned the module list',
+        data: shape,
+      }).data.modules,
+    ).toHaveLength(2);
+    expect(() =>
+      PlanProposalArtifactSchema.parse({
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned the module list',
+        data: { note: 'prose instead of modules' },
+      }),
+    ).toThrow();
+  });
+
+  it('publishes a model-facing JSON schema with the runtime validation marker', () => {
+    expect(PLAN_PROPOSAL_ARTIFACT_JSON_SCHEMA.$id).toMatch(/plan-proposal-artifact-v1/);
+    expect(
+      PLAN_PROPOSAL_ARTIFACT_JSON_SCHEMA['x-agent-foundry-runtime-validation'],
+    ).toBeDefined();
   });
 });
