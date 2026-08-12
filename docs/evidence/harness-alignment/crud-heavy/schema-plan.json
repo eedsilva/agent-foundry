@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "1",
+  "tables": [
+    {
+      "name": "categories",
+      "columns": [
+        { "name": "id", "type": "uuid", "nullable": false, "default": "gen_random_uuid()" },
+        { "name": "name", "type": "text", "nullable": false },
+        { "name": "description", "type": "text", "nullable": true }
+      ],
+      "constraints": [{ "type": "primary-key", "columns": ["id"] }],
+      "indexes": [],
+      "rls": {
+        "enabled": true,
+        "policies": [
+          {
+            "name": "authenticated_all",
+            "command": "all",
+            "using": "auth.role() = 'authenticated'",
+            "withCheck": "auth.role() = 'authenticated'"
+          }
+        ]
+      }
+    },
+    {
+      "name": "items",
+      "columns": [
+        { "name": "id", "type": "uuid", "nullable": false, "default": "gen_random_uuid()" },
+        { "name": "name", "type": "text", "nullable": false },
+        { "name": "sku", "type": "text", "nullable": false },
+        { "name": "category_id", "type": "uuid", "nullable": false },
+        { "name": "quantity", "type": "integer", "nullable": false, "default": "0" },
+        { "name": "reorder_threshold", "type": "integer", "nullable": false, "default": "0" }
+      ],
+      "constraints": [
+        { "type": "primary-key", "columns": ["id"] },
+        { "type": "unique", "columns": ["sku"] },
+        {
+          "type": "foreign-key",
+          "columns": ["category_id"],
+          "referencesTable": "categories",
+          "referencesColumns": ["id"],
+          "onDelete": "restrict"
+        },
+        { "type": "check", "name": "items_quantity_non_negative", "expression": "quantity >= 0" },
+        {
+          "type": "check",
+          "name": "items_reorder_threshold_non_negative",
+          "expression": "reorder_threshold >= 0"
+        }
+      ],
+      "indexes": [
+        { "name": "items_category_id_idx", "columns": ["category_id"], "unique": false }
+      ],
+      "rls": {
+        "enabled": true,
+        "policies": [
+          {
+            "name": "authenticated_all",
+            "command": "all",
+            "using": "auth.role() = 'authenticated'",
+            "withCheck": "auth.role() = 'authenticated'"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stock_adjustments",
+      "columns": [
+        { "name": "id", "type": "uuid", "nullable": false, "default": "gen_random_uuid()" },
+        { "name": "item_id", "type": "uuid", "nullable": false },
+        { "name": "delta", "type": "integer", "nullable": false },
+        { "name": "reason", "type": "text", "nullable": false },
+        { "name": "created_at", "type": "timestamptz", "nullable": false, "default": "now()" },
+        { "name": "created_by", "type": "uuid", "nullable": false }
+      ],
+      "constraints": [
+        { "type": "primary-key", "columns": ["id"] },
+        {
+          "type": "foreign-key",
+          "columns": ["item_id"],
+          "referencesTable": "items",
+          "referencesColumns": ["id"],
+          "onDelete": "cascade"
+        },
+        {
+          "type": "foreign-key",
+          "columns": ["created_by"],
+          "referencesTable": "auth.users",
+          "referencesColumns": ["id"],
+          "onDelete": "restrict"
+        }
+      ],
+      "indexes": [
+        { "name": "stock_adjustments_item_id_idx", "columns": ["item_id"], "unique": false }
+      ],
+      "rls": {
+        "enabled": true,
+        "policies": [
+          {
+            "name": "authenticated_select",
+            "command": "select",
+            "using": "auth.role() = 'authenticated'"
+          },
+          {
+            "name": "authenticated_insert_own",
+            "command": "insert",
+            "withCheck": "auth.role() = 'authenticated' AND created_by = auth.uid()"
+          }
+        ]
+      }
+    }
+  ]
+}

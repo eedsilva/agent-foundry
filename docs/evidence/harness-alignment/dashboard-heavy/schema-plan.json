@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "1",
+  "tables": [
+    {
+      "name": "sale_events",
+      "columns": [
+        { "name": "id", "type": "uuid", "nullable": false, "default": "gen_random_uuid()" },
+        { "name": "event_date", "type": "date", "nullable": false },
+        { "name": "category", "type": "text", "nullable": false },
+        { "name": "amount", "type": "numeric", "nullable": false },
+        { "name": "quantity", "type": "integer", "nullable": false },
+        { "name": "created_by", "type": "uuid", "nullable": false },
+        { "name": "created_at", "type": "timestamptz", "nullable": false, "default": "now()" }
+      ],
+      "constraints": [
+        { "type": "primary-key", "columns": ["id"] },
+        {
+          "type": "foreign-key",
+          "columns": ["created_by"],
+          "referencesTable": "auth.users",
+          "referencesColumns": ["id"],
+          "onDelete": "restrict"
+        },
+        { "type": "check", "name": "sale_events_amount_positive", "expression": "amount > 0" },
+        {
+          "type": "check",
+          "name": "sale_events_quantity_positive",
+          "expression": "quantity > 0"
+        }
+      ],
+      "indexes": [
+        { "name": "sale_events_event_date_idx", "columns": ["event_date"], "unique": false },
+        { "name": "sale_events_category_idx", "columns": ["category"], "unique": false }
+      ],
+      "rls": {
+        "enabled": true,
+        "policies": [
+          {
+            "name": "authenticated_select",
+            "command": "select",
+            "using": "auth.role() = 'authenticated'"
+          },
+          {
+            "name": "authenticated_insert_own",
+            "command": "insert",
+            "withCheck": "auth.role() = 'authenticated' AND created_by = auth.uid()"
+          }
+        ]
+      }
+    }
+  ]
+}
