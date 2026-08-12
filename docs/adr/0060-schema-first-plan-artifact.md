@@ -1,6 +1,6 @@
 # ADR 0060: Schema-first plan artifact for the generated data model
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-08
 - Owners: Core, Platform
 - Tracked by epic #471 (build tickets #480, #481)

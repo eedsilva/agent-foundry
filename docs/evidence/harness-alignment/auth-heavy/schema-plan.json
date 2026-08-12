@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1",
+  "tables": [
+    {
+      "name": "profiles",
+      "columns": [
+        { "name": "id", "type": "uuid", "nullable": false },
+        { "name": "display_name", "type": "text", "nullable": false },
+        { "name": "bio", "type": "text", "nullable": true },
+        { "name": "role", "type": "text", "nullable": false, "default": "'member'" }
+      ],
+      "constraints": [
+        { "type": "primary-key", "columns": ["id"] },
+        {
+          "type": "foreign-key",
+          "columns": ["id"],
+          "referencesTable": "auth.users",
+          "referencesColumns": ["id"],
+          "onDelete": "cascade"
+        },
+        {
+          "type": "check",
+          "name": "profiles_role_valid",
+          "expression": "role IN ('admin', 'member')"
+        }
+      ],
+      "indexes": [],
+      "rls": {
+        "enabled": true,
+        "policies": [
+          { "name": "member_select_own", "command": "select", "using": "id = auth.uid()" },
+          {
+            "name": "member_update_own",
+            "command": "update",
+            "using": "id = auth.uid()",
+            "withCheck": "id = auth.uid()"
+          },
+          { "name": "admin_select_all", "command": "select", "using": "is_admin(auth.uid())" },
+          {
+            "name": "admin_update_all",
+            "command": "update",
+            "using": "is_admin(auth.uid())",
+            "withCheck": "is_admin(auth.uid())"
+          }
+        ]
+      }
+    }
+  ]
+}

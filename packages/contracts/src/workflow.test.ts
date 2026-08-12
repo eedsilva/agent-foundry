@@ -196,6 +196,15 @@ describe('agent step outputContract', () => {
     expect(declared.outputContract).toBe('task-graph');
   });
 
+  it('accepts schema-plan', () => {
+    const declared = WorkflowNodeSchema.parse({
+      ...BASE_AGENT_STEP,
+      outputContract: 'schema-plan',
+    });
+    if (declared.type !== 'agent') throw new Error('expected agent step');
+    expect(declared.outputContract).toBe('schema-plan');
+  });
+
   it('rejects unknown contract names', () => {
     expect(() =>
       WorkflowNodeSchema.parse({ ...BASE_AGENT_STEP, outputContract: 'browser-plan' }),

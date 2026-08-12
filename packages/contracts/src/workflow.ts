@@ -26,7 +26,7 @@ const AgentStepSchema = z
     instructions: z.string().min(1),
     inputArtifacts: z.array(PathSegmentSchema).default([]),
     outputArtifact: PathSegmentSchema,
-    outputContract: z.literal('task-graph').optional(),
+    outputContract: z.enum(['task-graph', 'schema-plan']).optional(),
     secretRefs: z.array(ExecutionSecretRefSchema).default([]),
     mutatesWorkspace: z.boolean().default(false),
     harnessTags: z.array(z.string()).default([]),

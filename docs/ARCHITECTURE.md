@@ -300,6 +300,13 @@ espelho JSON Schema com o marcador de validação runtime, como no plano de test
 `plan` de `web-app-v1` declara o contrato; `dogfood-plan-v1` fica de fora por produzir artefatos de
 análise arbitrários.
 
+Da mesma forma, um passo pode declarar `outputContract: schema-plan` (issue #480, ADR 0060): o `data`
+do artefato deve conter um plano de esquema validado (`SchemaPlanSchema` em `packages/contracts`) —
+tabelas com colunas, constraints, índices e políticas de RLS por tabela. Toda tabela deve declarar RLS
+explicitamente; referências de chave estrangeira a tabelas locais desconhecidas e colunas de constraint
+desconhecidas falham a validação. Como no contrato de grafo de tarefas, uma saída fora do contrato falha
+o attempt em vez de virar revisão do artefato.
+
 ## Gate de plano
 
 `web-app-v1` chega ao plano com **uma** chamada de modelo: o nó `plan` grava `plan.current` e o nó

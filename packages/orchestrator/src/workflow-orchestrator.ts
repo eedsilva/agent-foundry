@@ -54,6 +54,8 @@ import {
   PROVISIONING_FAILURE_LOG_MAX_BYTES,
   ProvisioningFailureDiagnosticSchema,
   resolveRoutingEntry,
+  SCHEMA_PLAN_ARTIFACT_JSON_SCHEMA,
+  SchemaPlanArtifactSchema,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   UI_QUALITY_RUBRIC_V1,
   GeneratedTaskGraphArtifactSchema,
@@ -2778,9 +2780,11 @@ export class WorkflowOrchestrator {
     const outputSchema =
       step.outputContract === 'task-graph'
         ? TASK_GRAPH_ARTIFACT_JSON_SCHEMA
-        : workflowUsesBrowserPlan(workflow, step.outputArtifact)
-          ? BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA
-          : AGENT_ARTIFACT_JSON_SCHEMA;
+        : step.outputContract === 'schema-plan'
+          ? SCHEMA_PLAN_ARTIFACT_JSON_SCHEMA
+          : workflowUsesBrowserPlan(workflow, step.outputArtifact)
+            ? BROWSER_TEST_PLAN_ARTIFACT_JSON_SCHEMA
+            : AGENT_ARTIFACT_JSON_SCHEMA;
     const run = await this.requireRun(runId);
     const campaign = run.execution?.campaign;
     const explicit = await this.resolveModelPin(
@@ -3094,6 +3098,13 @@ export class WorkflowOrchestrator {
         if (!graph.success) {
           throw new Error(
             `Step ${step.id} must emit a task graph in data; output failed validation: ${formatZodIssues(graph.error, 'plan')}`,
+          );
+        }
+      } else if (step.outputContract === 'schema-plan') {
+        const schemaPlan = SchemaPlanArtifactSchema.safeParse(result.output);
+        if (!schemaPlan.success) {
+          throw new Error(
+            `Step ${step.id} must emit a schema plan in data; output failed validation: ${formatZodIssues(schemaPlan.error, 'plan')}`,
           );
         }
       }
