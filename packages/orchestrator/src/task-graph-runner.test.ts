@@ -326,6 +326,112 @@ describe('TaskGraphRunner', () => {
     ).toEqual(['T1']);
   });
 
+  it('routes a ui-quality-gated browser report through the same repair loop as a functional failure', async () => {
+    // The first `browser-verification.report` here is functionally green —
+    // every step `passed` — but `approved: false` because Task 2's
+    // `gateOnUiQuality` already flipped it for a low judge score (#477).
+    // `assertTask` must not know or care why `approved` is false: same
+    // repair invocation, same `recordCompletedRepair` call, no separate
+    // event kind or counting path for the ui-quality case.
+    const power = { on: true };
+    const artifacts = new InMemoryArtifacts(power);
+    const events = new InMemoryEvents(power);
+    const stepRuns = new InMemoryStepRuns(power);
+    const stepAttempts = new InMemoryStepAttempts(power);
+    const workspaces = new FakeWorkspaces(power);
+    await putTaskGraph(artifacts, [{ ...task('T1'), acceptanceMode: 'browser-visible' }]);
+
+    const executedSteps: string[] = [];
+    const repairPinnedArtifactNames: string[][] = [];
+    const completedRepairs: Array<{ stepId: string; iteration: number }> = [];
+    let browserChecks = 0;
+
+    const runtime: TaskGraphRuntime = {
+      executeStep: (input) => {
+        executedSteps.push(`${input.step.id}:${input.iteration ?? 0}`);
+        if (input.step.id === 'repair-task-browser.T1') {
+          repairPinnedArtifactNames.push((input.pinnedArtifacts ?? []).map((ref) => ref.name));
+        }
+        let content: object = completedArtifact(input.step);
+        if (input.step.id === 'verify-task.T1') {
+          content = verificationReport(true);
+        } else if (input.step.id === 'plan-task-browser-test.T1') {
+          content = browserPlan();
+        } else if (input.step.id === 'assert-task.T1') {
+          browserChecks += 1;
+          content = browserChecks === 1 ? uiQualityGatedBrowserReport() : browserReport(true);
+        }
+        return artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content,
+          createdBy: 'test-runtime',
+        });
+      },
+      assertExecutionMayContinue: () => Promise.resolve(),
+      isControlFlowError: () => false,
+      recordDeterministicOutcome: () => Promise.resolve(),
+      recordCompletedRepair: (input) => {
+        completedRepairs.push({ stepId: input.stepId, iteration: input.iteration });
+        return Promise.resolve();
+      },
+      resetConsecutiveRepairs: () => Promise.resolve(),
+    };
+    const runner = new TaskGraphRunner({
+      artifacts,
+      events,
+      stepRuns,
+      stepAttempts,
+      workspaces,
+      clock: new SystemClock(),
+      ids: new SequentialIds(),
+      runtime,
+    });
+    const node = browserWorkflow.nodes[0];
+    if (node?.type !== 'for-each-task') throw new Error('Expected for-each-task fixture');
+
+    await runner.run({
+      project,
+      workflow: browserWorkflow,
+      node,
+      runId: 'run-1',
+      signal: new AbortController().signal,
+    });
+
+    expect(executedSteps).toEqual([
+      'implement.T1:1',
+      'verify-task.T1:1',
+      'plan-task-browser-test.T1:1',
+      'assert-task.T1:1',
+      'repair-task-browser.T1:1',
+      'assert-task.T1:2',
+      'verify-task.T1:3',
+    ]);
+    // Repair invocation: identical mechanics to a functional-failure
+    // repair — the gated report rides along as a pinned input artifact.
+    expect(repairPinnedArtifactNames).toEqual([['browser-test.plan', 'browser-verification.report']]);
+    // recordCompletedRepair fires exactly once for the one repair round —
+    // the same call a functional-failure repair loop makes, which is what
+    // lets the existing emergency-ceiling coverage apply unchanged here.
+    expect(completedRepairs).toEqual([{ stepId: 'repair-task-browser.T1', iteration: 1 }]);
+    // No separate event kind for the ui-quality case: `quality.repair_requested`
+    // driven purely by `approved: false`, then `quality.approved` once the
+    // second, passing report lands — the loop proceeds.
+    expect(
+      events.events
+        .filter((event) => event.dedupeKey?.includes(':browser:'))
+        .map((event) => ({ type: event.type, iteration: event.data.iteration })),
+    ).toEqual([
+      { type: 'quality.repair_requested', iteration: 1 },
+      { type: 'quality.approved', iteration: 2 },
+    ]);
+    expect(
+      events.events
+        .filter((event) => event.type === 'task.completed')
+        .map((event) => event.data.taskId),
+    ).toEqual(['T1']);
+  });
+
   it('derives a resumed attempt and executor from persisted failure evidence', async () => {
     const power = { on: true };
     const artifacts = new InMemoryArtifacts(power);
@@ -778,6 +884,46 @@ function browserReport(approved: boolean): object {
         ...(approved ? {} : { error: 'Root did not load.' }),
       },
     ],
+  };
+}
+
+/**
+ * A browser-verification report shaped like Task 2's `gateOnUiQuality`
+ * output (#477): every functional step `passed`, but `approved: false`
+ * because the judge's `overallScore` fell below the configured threshold.
+ * Constructed directly (not via `gateOnUiQuality`) — this test exercises
+ * `task-graph-runner.ts`'s consumption of the field, not the gate function
+ * itself, which Task 2's unit tests already cover in isolation.
+ */
+function uiQualityGatedBrowserReport(): object {
+  return {
+    schemaVersion: '1',
+    approved: false,
+    summary:
+      'Browser passed. UI-quality gate failed: overall score 0.40 is below the configured minimum 0.70.',
+    planArtifact: { name: 'browser-test.plan', revision: 1, sha256: 'a'.repeat(64) },
+    previewSession: {
+      sessionId: 'preview-1',
+      status: 'running',
+      url: 'http://127.0.0.1:4000/',
+      evidence: { screenshots: [] },
+    },
+    steps: [
+      {
+        stepId: 'open-root',
+        title: 'Open root',
+        status: 'passed',
+        durationMs: 1,
+        observations: [],
+      },
+    ],
+    uiQuality: {
+      rubricVersion: '1',
+      judgeModel: 'claude-test',
+      overallScore: 0.4,
+      criteria: [{ criterionId: 'layout', score: 0.4, finding: 'Cramped spacing.' }],
+      screenshotsReviewed: [],
+    },
   };
 }
 
