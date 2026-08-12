@@ -215,27 +215,32 @@ export function startPreviewSessionPolling({
 // access for anything other than a healthy 'running' session with a bound
 // port. 'failing' means restarts are already exhausted and the session is
 // finalizing to terminal 'failed' — no retry is coming, so its message must
-// not claim one. 'unhealthy' is still mid-restart-attempt. Gating the iframe
-// on this same narrower check (not just "not terminal") stops the panel from
-// ever embedding a URL the backend is about to reject as a raw JSON 403.
+// not claim one. Gating the iframe on this same narrower check (not just
+// "not terminal") stops the panel from ever embedding a URL the backend is
+// about to reject as a raw JSON 403.
 // `alreadyShown`: has this exact session's iframe already been rendered
-// successfully at least once? 'unhealthy' -> 'running' is a legal, expected
-// transition (packages/domain/src/preview-state.ts's transition table) that
-// can flap under load without anything really being wrong. Blanking an
-// already-good iframe on every such blip forces a remount on the next
-// healthy poll, discarding whatever the iframe's own document was doing —
-// real in-CI breakage for a test that navigates the iframe's inner frame and
-// interacts with it across several seconds (multiple 2s poll intervals).
-// 'failing' gets no such grace: per preview-service.ts it only fires once
-// restarts are exhausted, on a one-way path to terminal — it never returns
-// to 'running', so there is nothing to protect by keeping the iframe up.
+// successfully at least once? preview-service.ts's health-check restart path
+// genuinely visits 'unhealthy' then 'starting' before returning to 'running'
+// (node-preview-runner.ts's restart() -> spawn() transitions there; see the
+// full path in packages/domain/src/preview-state.ts's transition table) —
+// a legal, expected flap under load without anything really being wrong.
+// Blanking an already-good iframe on ANY such transient, non-denied status
+// forces a remount on the next healthy poll, discarding whatever the
+// iframe's own document was doing — real in-CI breakage for a test that
+// navigates the iframe's inner frame and interacts with it across several
+// seconds (multiple 2s poll intervals). A prior fix here only special-cased
+// 'unhealthy' and missed 'starting', which is exactly this same class of
+// bug reappearing on a status the fix didn't enumerate — so the grace below
+// applies to any non-denied status once shown, not one hardcoded name at a
+// time. 'failing' gets no grace: it only fires once restarts are exhausted,
+// on a one-way path to terminal — it never returns to 'running', so there is
+// nothing to protect by keeping the iframe up (isPreviewSessionProxyDenied
+// above already denies it before this point).
 export function previewStatusMessage(session: PreviewSession, alreadyShown = false): string | null {
   if (session.status === 'running' && session.url) return null;
   if (isPreviewSessionProxyDenied(session.status)) return 'Preview encerrando após falha…';
-  if (session.status === 'unhealthy') {
-    if (alreadyShown && session.url) return null;
-    return 'Preview instável, tentando novamente…';
-  }
+  if (alreadyShown && session.url) return null;
+  if (session.status === 'unhealthy') return 'Preview instável, tentando novamente…';
   return 'Preview iniciando…';
 }
 
