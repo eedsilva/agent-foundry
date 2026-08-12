@@ -887,6 +887,8 @@ describe('advisory UI-quality judge (#475)', () => {
     judgeFails?: boolean;
     /** Overrides every criterion's score (and overallScore) uniformly. */
     judgeScore?: number;
+    /** Promotes the judge to a blocking gate (#477) at this threshold. */
+    minOverallScore?: number;
   }) {
     const judgeRequests: AgentExecutionRequest[] = [];
     const judgeSawScreenshot: boolean[] = [];
@@ -997,7 +999,13 @@ describe('advisory UI-quality judge (#475)', () => {
         ? {
             policy: {
               ...DEFAULT_POLICY,
-              uiQualityJudge: { provider: 'claude' as const, model: 'judge-model' },
+              uiQualityJudge: {
+                provider: 'claude' as const,
+                model: 'judge-model',
+                ...(options.minOverallScore === undefined
+                  ? {}
+                  : { minOverallScore: options.minOverallScore }),
+              },
             },
             judgeExecutor,
           }
@@ -1179,5 +1187,17 @@ describe('advisory UI-quality judge (#475)', () => {
     expect(result.eventTypes).not.toContain('quality.repair_requested');
     expect(result.eventTypes).toContain('quality.approved');
     expect(result.eventTypes).toEqual(withoutJudge.eventTypes);
+  });
+
+  it('flips approved to false when a configured minOverallScore is above the judge score (#477)', async () => {
+    const result = await runBrowserWorkflow({
+      judge: true,
+      approved: true,
+      judgeScore: 0.4,
+      minOverallScore: 0.8,
+    });
+
+    expect(result.report?.approved).toBe(false);
+    expect(result.outcome.approved).toBe(false);
   });
 });
