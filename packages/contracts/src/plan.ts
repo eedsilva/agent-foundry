@@ -26,18 +26,31 @@ const GeneratedPlanTaskSchema = z
 
 type TaskGraphValidationTask = { id: string; dependsOn: string[] };
 
-function validateTaskGraph(tasks: readonly TaskGraphValidationTask[], ctx: z.RefinementCtx): void {
-  const ids = new Set<string>();
-  for (const [index, task] of tasks.entries()) {
-    if (ids.has(task.id)) {
+/** Flags duplicate `id`s within an array-valued field, returning the set of
+ * ids seen so callers needing referential checks (e.g. dependency graphs)
+ * don't have to walk the array twice. */
+function rejectDuplicateIds(
+  items: readonly { id: string }[],
+  containerKey: string,
+  label: string,
+  ctx: z.RefinementCtx,
+): Set<string> {
+  const seen = new Set<string>();
+  for (const [index, item] of items.entries()) {
+    if (seen.has(item.id)) {
       ctx.addIssue({
         code: 'custom',
-        path: ['tasks', index, 'id'],
-        message: `Duplicate task id ${task.id}`,
+        path: [containerKey, index, 'id'],
+        message: `Duplicate ${label} id ${item.id}`,
       });
     }
-    ids.add(task.id);
+    seen.add(item.id);
   }
+  return seen;
+}
+
+function validateTaskGraph(tasks: readonly TaskGraphValidationTask[], ctx: z.RefinementCtx): void {
+  const ids = rejectDuplicateIds(tasks, 'tasks', 'task', ctx);
   let unknownDependency = false;
   for (const [index, task] of tasks.entries()) {
     for (const dependency of task.dependsOn) {
@@ -136,25 +149,6 @@ export const AppShapeModuleSchema = z
   .strict();
 export type AppShapeModule = z.infer<typeof AppShapeModuleSchema>;
 
-type AppShapeModuleForValidation = { id: string };
-
-function validateAppShapeModules(
-  modules: readonly AppShapeModuleForValidation[],
-  ctx: z.RefinementCtx,
-): void {
-  const seen = new Set<string>();
-  for (const [index, module] of modules.entries()) {
-    if (seen.has(module.id)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['modules', index, 'id'],
-        message: `Duplicate module id ${module.id}`,
-      });
-    }
-    seen.add(module.id);
-  }
-}
-
 // Loose: forward-only versioning per ADR 0056 — future optional fields on the
 // app-shape contract must not break parsing of already-persisted plan artifacts.
 export const AppShapeSchema = z
@@ -163,7 +157,7 @@ export const AppShapeSchema = z
     modules: z.array(AppShapeModuleSchema).min(1).max(50),
   })
   .superRefine((shape, ctx) => {
-    validateAppShapeModules(shape.modules as AppShapeModuleForValidation[], ctx);
+    rejectDuplicateIds(shape.modules, 'modules', 'module', ctx);
   });
 export type AppShape = z.infer<typeof AppShapeSchema>;
 
