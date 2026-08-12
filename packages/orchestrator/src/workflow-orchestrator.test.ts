@@ -2,6 +2,7 @@ import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
   RouteDecisionSchema,
+  SCHEMA_PLAN_ARTIFACT_JSON_SCHEMA,
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   UI_QUALITY_RUBRIC_V1,
   WorkflowDefinitionSchema,
@@ -639,6 +640,85 @@ describe('task-graph output contract (#321)', () => {
     );
     expect((await stores.runs.get('run-1'))?.status).toBe('failed');
     expect(await stores.artifacts.getLatest('project-1', 'plan.current')).toBeNull();
+  });
+});
+
+const SCHEMA_PLAN_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'schema-plan-v1',
+  name: 'Schema plan fixture',
+  description: 'A single planning step constrained to emit a schema plan.',
+  stack: 'node',
+  nodes: [
+    {
+      id: 'plan-schema',
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: 'Plan schema',
+      instructions: 'Plan the data model.',
+      outputArtifact: 'schema.current',
+      outputContract: 'schema-plan',
+      maxAttempts: 1,
+    },
+  ],
+});
+
+const VALID_SCHEMA_PLAN = {
+  schemaVersion: '1',
+  tables: [
+    {
+      name: 'items',
+      columns: [{ name: 'id', type: 'uuid', nullable: false }],
+      constraints: [{ type: 'primary-key', columns: ['id'] }],
+      indexes: [],
+      rls: {
+        enabled: true,
+        policies: [{ name: 'authenticated_all', command: 'all', using: 'true' }],
+      },
+    },
+  ],
+};
+
+describe('schema-plan output contract (#480)', () => {
+  it('requests the schema-plan JSON schema and stores a conforming plan', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: SCHEMA_PLAN_WORKFLOW,
+      output: () => ({
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned the schema.',
+        data: VALID_SCHEMA_PLAN,
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        nextActions: [],
+      }),
+    });
+    await seedRun(stores, SCHEMA_PLAN_WORKFLOW.id);
+
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await stores.runs.get('run-1'))?.status).toBe('completed');
+    expect(stores.executor.requests[0]?.outputSchema?.$id).toBe(
+      SCHEMA_PLAN_ARTIFACT_JSON_SCHEMA.$id,
+    );
+    const artifact = await stores.artifacts.getLatest('project-1', 'schema.current');
+    expect(artifact?.content).toMatchObject({ data: { tables: [{ name: 'items' }] } });
+  });
+
+  it('fails the step instead of passing prose through as schema.current', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: SCHEMA_PLAN_WORKFLOW,
+      // Default ControllableExecutor output: data is {}. Prose, not a schema plan.
+    });
+    await seedRun(stores, SCHEMA_PLAN_WORKFLOW.id);
+
+    await expect(stores.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /must emit a schema plan/,
+    );
+    expect((await stores.runs.get('run-1'))?.status).toBe('failed');
+    expect(await stores.artifacts.getLatest('project-1', 'schema.current')).toBeNull();
   });
 });
 
