@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "1",
+  "modules": [
+    { "id": "auth", "acceptanceChannel": "browser-visible" },
+    { "id": "crud:profiles", "acceptanceChannel": "browser-visible" }
+  ]
+}

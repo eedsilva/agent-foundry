@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "1",
+  "modules": [
+    { "id": "auth", "acceptanceChannel": "browser-visible" },
+    { "id": "crud:categories", "acceptanceChannel": "browser-visible" },
+    { "id": "crud:items", "acceptanceChannel": "browser-visible" },
+    { "id": "crud:stock-adjustments", "acceptanceChannel": "browser-visible" }
+  ]
+}
