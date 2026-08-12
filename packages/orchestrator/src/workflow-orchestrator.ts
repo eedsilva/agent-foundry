@@ -3374,6 +3374,11 @@ export class WorkflowOrchestrator {
    * cannot fetch; the returned files/paths make the evidence real for the
    * fixer. A blob that cannot be fetched is skipped; the request then states
    * explicitly that report-JSON references are unreachable identifiers.
+   *
+   * Also includes any screenshot named in `report.uiQuality.screenshotsReviewed`
+   * (#477): a judge-only gate flips `approved` to false while every functional
+   * step stays `passed`, so `failedStepIds` alone would hand the fixer zero
+   * screenshots even though the judge's findings reference specific ones.
    */
   private async materializeBrowserEvidence(
     projectId: string,
@@ -3390,8 +3395,17 @@ export class WorkflowOrchestrator {
     const failedStepIds = new Set(
       report.steps.filter((step) => step.status === 'failed').map((step) => step.stepId),
     );
-    const screenshots = report.previewSession.evidence.screenshots.filter((shot) =>
-      failedStepIds.has(shot.stepId),
+    // A judge-only gate (#477) can flip `approved` to false while every
+    // functional step passed, so a screenshot the judge reviewed also
+    // qualifies. `(name, revision)` — not stepId — is what identifies a
+    // screenshot in `uiQuality.screenshotsReviewed`; filtering the single
+    // `evidence.screenshots` list (rather than unioning two file lists)
+    // keeps a shot that satisfies both conditions written once.
+    const reviewedKeys = new Set(
+      (report.uiQuality?.screenshotsReviewed ?? []).map((ref) => `${ref.name}@${ref.revision}`),
+    );
+    const screenshots = report.previewSession.evidence.screenshots.filter(
+      (shot) => failedStepIds.has(shot.stepId) || reviewedKeys.has(`${shot.name}@${shot.revision}`),
     );
     const inputFiles: Array<{ path: string; content: Uint8Array }> = [];
     const browserEvidenceStepIds: string[] = [];
