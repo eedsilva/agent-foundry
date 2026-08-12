@@ -3395,15 +3395,18 @@ export class WorkflowOrchestrator {
     const failedStepIds = new Set(
       report.steps.filter((step) => step.status === 'failed').map((step) => step.stepId),
     );
-    // A judge-only gate (#477) can flip `approved` to false while every
-    // functional step passed, so a screenshot the judge reviewed also
-    // qualifies. `(name, revision)` — not stepId — is what identifies a
-    // screenshot in `uiQuality.screenshotsReviewed`; filtering the single
-    // `evidence.screenshots` list (rather than unioning two file lists)
-    // keeps a shot that satisfies both conditions written once.
-    const reviewedKeys = new Set(
-      (report.uiQuality?.screenshotsReviewed ?? []).map((ref) => `${ref.name}@${ref.revision}`),
-    );
+    // Judge-reviewed screenshots only apply in the judge-only-failure case
+    // (see this function's JSDoc, #477): a functional failure already has
+    // its own screenshot via `failedStepIds` and must not pull in unrelated
+    // judge-reviewed shots.
+    const reviewedKeys =
+      failedStepIds.size === 0
+        ? new Set(
+            (report.uiQuality?.screenshotsReviewed ?? []).map(
+              (ref) => `${ref.name}@${ref.revision}`,
+            ),
+          )
+        : new Set<string>();
     const screenshots = report.previewSession.evidence.screenshots.filter(
       (shot) => failedStepIds.has(shot.stepId) || reviewedKeys.has(`${shot.name}@${shot.revision}`),
     );

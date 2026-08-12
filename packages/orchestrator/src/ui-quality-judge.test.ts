@@ -165,6 +165,12 @@ describe('gateOnUiQuality (#477)', () => {
     expect(gateOnUiQuality(report, undefined, undefined)).toEqual(report);
   });
 
+  it('leaves the report unchanged when the judge is unavailable, even with a threshold configured', () => {
+    const report = approvedReport();
+
+    expect(gateOnUiQuality(report, undefined, 0.6)).toEqual(report);
+  });
+
   it('never flips an already-rejected report to approved, and does not touch its summary', () => {
     const report = { ...approvedReport(), approved: false, summary: 'browser rejected' };
 

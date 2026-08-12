@@ -282,7 +282,9 @@ describe('#477: a low UI-quality score gates the run, repairs, then passes', () 
     expect(scores.slice(0, 2)).toEqual([0.1, 0.8]);
     expect(scores.slice(1)).not.toContain(0.1);
 
-    const events = await runtime.events.list(projectId);
+    // Explicit limit: the default (500, most-recent-first) could silently
+    // drop the repair event out of the window on a longer run.
+    const events = await runtime.events.list(projectId, 10000);
     // task-graph-runner.ts's browser loop tags its repair events with a
     // `:browser:` dedupeKey; the deterministic verify loop's own
     // `quality.repair_requested` for the same task does not, so this filter

@@ -51,3 +51,12 @@ induced-ugly integration test (`packages/composition/src/ui-quality-judge.integr
 #477 describe block) demonstrates the repair loop with an example threshold of 0.3: first
 browser-verify scores 0.1 (below threshold), triggering repair, then 0.8 (above), approving the
 run. Evidence for this update is logged at `docs/evidence/issue-477-ui-judge-gate/README.md`.
+
+The gate is best-effort, not fail-closed: `judgeUiQuality` swallows every failure (judge outage,
+timeout, no screenshots) and returns `undefined`, and `gateOnUiQuality` leaves `approved` exactly
+as functional verification computed it when `uiQuality` is `undefined` — a judge outage never
+blocks a run. Separately, a `blocksOnFailure: true` browser-verify step (no shipped workflow
+defines one today) hard-fails the run rather than repairing on `approved: false`, whether that
+`false` came from a functional failure or from this gate — a future workflow author wiring one up
+should expect a UI-quality shortfall to be able to trigger a hard run failure there, not just a
+repair.
