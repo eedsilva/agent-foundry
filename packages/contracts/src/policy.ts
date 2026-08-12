@@ -34,6 +34,15 @@ export const UiQualityJudgePolicySchema = z
   .object({
     provider: ProviderSchema,
     model: z.string().min(1),
+    /**
+     * Promotes the judge from advisory to a blocking gate (#477, ADR 0058): a
+     * report whose uiQuality.overallScore falls below this value flips
+     * `approved` to false, routing through the same repair loop a failed
+     * functional check would. Absent (the default, including every policy
+     * that only set `provider`/`model` under #475) keeps the judge purely
+     * advisory — unchanged behavior.
+     */
+    minOverallScore: z.number().min(0).max(1).optional(),
   })
   .strict();
 export type UiQualityJudgePolicy = z.infer<typeof UiQualityJudgePolicySchema>;
