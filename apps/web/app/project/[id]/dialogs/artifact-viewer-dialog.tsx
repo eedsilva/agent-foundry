@@ -6,7 +6,9 @@ import {
   SchemaPlanArtifactSchema,
   TaskGraphArtifactSchema,
   VerificationReportSchema,
+  type SchemaConstraint,
   type SchemaPlan,
+  type RlsPolicy,
   type StoredArtifact,
   type TaskGraph,
   type VerificationReport,
@@ -56,6 +58,29 @@ function TaskGraphView({ graph }: { graph: TaskGraph }) {
   );
 }
 
+function describeConstraint(constraint: SchemaConstraint): string {
+  switch (constraint.type) {
+    case 'primary-key':
+      return `PK (${constraint.columns.join(', ')})`;
+    case 'unique':
+      return `UNIQUE (${constraint.columns.join(', ')})`;
+    case 'foreign-key':
+      return `FK (${constraint.columns.join(', ')}) → ${constraint.referencesTable}(${constraint.referencesColumns.join(', ')})`;
+    case 'check':
+      return `CHECK ${constraint.name}: ${constraint.expression}`;
+  }
+}
+
+function describeRlsPolicy(policy: RlsPolicy): string {
+  const predicate = [
+    policy.using ? `using ${policy.using}` : null,
+    policy.withCheck ? `withCheck ${policy.withCheck}` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+  return `${policy.command} · ${policy.name} (${predicate})`;
+}
+
 function SchemaPlanView({ plan }: { plan: SchemaPlan }) {
   return (
     <div className="flex flex-col gap-2" data-testid="schema-plan-view">
@@ -63,11 +88,31 @@ function SchemaPlanView({ plan }: { plan: SchemaPlan }) {
         <div key={table.name} className="border-hairline rounded-card border px-3 py-2 text-[13px]">
           <p className="text-ink font-medium">{table.name}</p>
           <p className={HINT}>
-            Colunas: {table.columns.map((column) => `${column.name} (${column.type})`).join(', ')}
+            Colunas:{' '}
+            {table.columns
+              .map(
+                (column) =>
+                  `${column.name} (${column.type}${column.nullable ? ', nullable' : ''}${column.default ? `, default ${column.default}` : ''})`,
+              )
+              .join(', ')}
           </p>
-          <p className={HINT}>
-            RLS: {table.rls.policies.map((policy) => `${policy.command} · ${policy.name}`).join(', ')}
-          </p>
+          {table.constraints.length > 0 ? (
+            <p className={HINT}>
+              Constraints: {table.constraints.map(describeConstraint).join(', ')}
+            </p>
+          ) : null}
+          {table.indexes.length > 0 ? (
+            <p className={HINT}>
+              Índices:{' '}
+              {table.indexes
+                .map(
+                  (index) =>
+                    `${index.name} (${index.columns.join(', ')}${index.unique ? ', unique' : ''})`,
+                )
+                .join(', ')}
+            </p>
+          ) : null}
+          <p className={HINT}>RLS: {table.rls.policies.map(describeRlsPolicy).join('; ')}</p>
         </div>
       ))}
     </div>

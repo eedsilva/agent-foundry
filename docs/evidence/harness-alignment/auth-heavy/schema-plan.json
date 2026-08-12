@@ -35,16 +35,12 @@
             "using": "id = auth.uid()",
             "withCheck": "id = auth.uid()"
           },
-          {
-            "name": "admin_select_all",
-            "command": "select",
-            "using": "exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')"
-          },
+          { "name": "admin_select_all", "command": "select", "using": "is_admin(auth.uid())" },
           {
             "name": "admin_update_all",
             "command": "update",
-            "using": "exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')",
-            "withCheck": "exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')"
+            "using": "is_admin(auth.uid())",
+            "withCheck": "is_admin(auth.uid())"
           }
         ]
       }

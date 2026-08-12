@@ -118,6 +118,31 @@ describe('ArtifactViewerDialog schema plan rendering', () => {
               { name: 'id', type: 'uuid', nullable: false },
               { name: 'name', type: 'text', nullable: false },
             ],
+            constraints: [
+              { type: 'primary-key', columns: ['id'] },
+              {
+                type: 'foreign-key',
+                columns: ['id'],
+                referencesTable: 'categories',
+                referencesColumns: ['id'],
+              },
+            ],
+            indexes: [{ name: 'items_name_idx', columns: ['name'], unique: false }],
+            rls: {
+              enabled: true,
+              policies: [
+                {
+                  name: 'authenticated_all',
+                  command: 'all',
+                  using: 'true',
+                  withCheck: 'true',
+                },
+              ],
+            },
+          },
+          {
+            name: 'categories',
+            columns: [{ name: 'id', type: 'uuid', nullable: false }],
             constraints: [{ type: 'primary-key', columns: ['id'] }],
             indexes: [],
             rls: {
@@ -137,6 +162,11 @@ describe('ArtifactViewerDialog schema plan rendering', () => {
     expect(markup).toContain('items');
     expect(markup).toContain('id (uuid)');
     expect(markup).toContain('all · authenticated_all');
+    expect(markup).toContain('PK (id)');
+    expect(markup).toContain('FK (id) → categories(id)');
+    expect(markup).toContain('items_name_idx');
+    expect(markup).toContain('using true');
+    expect(markup).toContain('withCheck true');
   });
 
   it('falls back to raw JSON for a schema plan that fails validation instead of crashing', () => {
