@@ -3,6 +3,7 @@ import {
   UiQualityJudgeOutputSchema,
   UiQualityJudgeResultSchema,
   type ArtifactReference,
+  type BrowserVerificationReport,
   type Provider,
   type UiQualityJudgeResult,
   type UiQualityRubric,
@@ -33,8 +34,10 @@ export interface EvaluateUiQualityInput {
 
 /**
  * Scores the browser-verification screenshots against the UI-quality rubric
- * (#475). Purely advisory: the caller merges the result into the report as
- * `uiQuality`, and nothing reads it back to decide `approved`, repair
+ * (#475). Advisory by default: the caller merges the result into the report
+ * as `uiQuality`. Only `gateOnUiQuality` below reads the score back to
+ * decide `approved`, and only when the policy configures a threshold
+ * (#477) — absent that, nothing downstream touches `approved`, repair
  * routing, or the emergency ceiling.
  *
  * Never throws. Any failure — the executor rejecting, timing out, or
@@ -106,6 +109,32 @@ export async function evaluateUiQuality(
     );
     return undefined;
   }
+}
+
+/**
+ * Promotes the judge from advisory to a blocking gate (#477, ADR 0058): when
+ * `minOverallScore` is configured and the judge's `overallScore` falls short
+ * of it, flips an approved report to `approved: false` so it routes through
+ * the same repair loop, emergency ceiling, and downstream consumers
+ * (`assertBrowserTask`, `conditionApproved`, `assertBlockingVerification`) a
+ * failed functional check already does — no new field or event kind needed.
+ *
+ * A no-op whenever there is nothing to gate on: no threshold configured, no
+ * judge result, or a report that is already `approved: false` (never flips
+ * false→true, and never double-appends the gate sentence).
+ */
+export function gateOnUiQuality(
+  report: BrowserVerificationReport,
+  uiQuality: UiQualityJudgeResult | undefined,
+  minOverallScore: number | undefined,
+): BrowserVerificationReport {
+  if (!report.approved || !uiQuality || minOverallScore === undefined) return report;
+  if (uiQuality.overallScore >= minOverallScore) return report;
+  return {
+    ...report,
+    approved: false,
+    summary: `${report.summary} UI-quality gate failed: overall score ${uiQuality.overallScore.toFixed(2)} is below the configured minimum ${minOverallScore.toFixed(2)}.`,
+  };
 }
 
 /**

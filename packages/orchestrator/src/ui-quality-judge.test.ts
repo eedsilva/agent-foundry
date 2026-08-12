@@ -3,8 +3,14 @@ import {
   UI_QUALITY_RUBRIC_V1,
   type AgentExecutionRequest,
   type AgentExecutionResult,
+  type BrowserVerificationReport,
+  type UiQualityJudgeResult,
 } from '@agent-foundry/contracts';
-import { evaluateUiQuality, type EvaluateUiQualityInput } from './ui-quality-judge.js';
+import {
+  evaluateUiQuality,
+  gateOnUiQuality,
+  type EvaluateUiQualityInput,
+} from './ui-quality-judge.js';
 
 const SCREENSHOT = {
   stepId: 'open-task',
@@ -100,5 +106,76 @@ describe('evaluateUiQuality (#475)', () => {
 
     expect(result).toBeUndefined();
     expect(calls).toBe(0);
+  });
+});
+
+/** Minimal report the schema accepts as approved. */
+function approvedReport(): BrowserVerificationReport {
+  return {
+    schemaVersion: '1',
+    approved: true,
+    summary: 'browser approved',
+    planArtifact: { name: 'browser-plan', revision: 1, sha256: 'a'.repeat(64) },
+    previewSession: { sessionId: 'preview-1', status: 'running', evidence: { screenshots: [] } },
+    steps: [
+      {
+        stepId: 'open-task',
+        title: 'Open task',
+        status: 'passed',
+        durationMs: 5,
+        observations: [],
+      },
+    ],
+  };
+}
+
+function judgeResult(overallScore: number): UiQualityJudgeResult {
+  return {
+    rubricVersion: '1',
+    judgeModel: 'judge-model-v9',
+    overallScore,
+    criteria: [{ criterionId: 'layout-coherence', score: overallScore }],
+    screenshotsReviewed: [],
+  };
+}
+
+describe('gateOnUiQuality (#477)', () => {
+  it('flips an approved report to false when the score is below the configured minimum', () => {
+    const report = approvedReport();
+
+    const gated = gateOnUiQuality(report, judgeResult(0.4), 0.6);
+
+    expect(gated.approved).toBe(false);
+    expect(gated.summary).toBe(
+      'browser approved UI-quality gate failed: overall score 0.40 is below the configured minimum 0.60.',
+    );
+  });
+
+  it('leaves the report byte-identical when the score meets the configured minimum', () => {
+    const report = approvedReport();
+
+    expect(gateOnUiQuality(report, judgeResult(0.6), 0.6)).toEqual(report);
+    expect(gateOnUiQuality(report, judgeResult(0.9), 0.6)).toEqual(report);
+  });
+
+  it('leaves the report unchanged when no minimum is configured, regardless of score', () => {
+    const report = approvedReport();
+
+    expect(gateOnUiQuality(report, judgeResult(0), undefined)).toEqual(report);
+    expect(gateOnUiQuality(report, undefined, undefined)).toEqual(report);
+  });
+
+  it('leaves the report unchanged when the judge is unavailable, even with a threshold configured', () => {
+    const report = approvedReport();
+
+    expect(gateOnUiQuality(report, undefined, 0.6)).toEqual(report);
+  });
+
+  it('never flips an already-rejected report to approved, and does not touch its summary', () => {
+    const report = { ...approvedReport(), approved: false, summary: 'browser rejected' };
+
+    const gated = gateOnUiQuality(report, judgeResult(0.9), 0.6);
+
+    expect(gated).toEqual(report);
   });
 });

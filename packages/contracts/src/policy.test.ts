@@ -150,4 +150,39 @@ describe('UiQualityJudgePolicySchema (#475)', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('parses uiQualityJudge without minOverallScore for backward compat with #475', () => {
+    const policy = ProjectPolicySchema.parse({
+      schemaVersion: '1',
+      id: 'default',
+      version: 1,
+      uiQualityJudge: { provider: 'claude', model: 'claude-sonnet-4' },
+    });
+    expect(policy.uiQualityJudge).toEqual({
+      provider: 'claude',
+      model: 'claude-sonnet-4',
+    });
+    expect(policy.uiQualityJudge?.minOverallScore).toBeUndefined();
+  });
+
+  it('parses uiQualityJudge with minOverallScore (#477)', () => {
+    const policy = ProjectPolicySchema.parse({
+      schemaVersion: '1',
+      id: 'default',
+      version: 1,
+      uiQualityJudge: { provider: 'claude', model: 'claude-sonnet-4', minOverallScore: 0.3 },
+    });
+    expect(policy.uiQualityJudge?.minOverallScore).toBe(0.3);
+  });
+
+  it.each([-0.1, 1.1])('rejects minOverallScore outside [0, 1] range: %d', (minOverallScore) => {
+    expect(
+      ProjectPolicySchema.safeParse({
+        schemaVersion: '1',
+        id: 'default',
+        version: 1,
+        uiQualityJudge: { provider: 'claude', model: 'claude-sonnet-4', minOverallScore },
+      }).success,
+    ).toBe(false);
+  });
 });

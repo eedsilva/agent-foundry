@@ -48,6 +48,14 @@ const EXPECTED_CRITERION_IDS = [
 class UiQualityJudgeExecutor implements AgentExecutor {
   readonly provider = 'mock';
   private readonly delegate = new MockAgentExecutor();
+  /** Overall scores handed back, one per judge call; the last one repeats. */
+  private readonly scores: readonly number[];
+  /** Scores actually served, in call order — the evidence #477 asserts on. */
+  readonly servedScores: Array<{ stepId: string; overallScore: number }> = [];
+
+  constructor(scores: readonly number[] = [0.82]) {
+    this.scores = scores;
+  }
 
   async execute(
     request: AgentExecutionRequest,
@@ -58,15 +66,17 @@ class UiQualityJudgeExecutor implements AgentExecutor {
       return this.delegate.execute(request, signal, onEvent);
     }
     const mockModel = `mock:${request.provider}/${request.model || 'default'}`;
+    const overallScore = this.scores[Math.min(this.servedScores.length, this.scores.length - 1)]!;
+    this.servedScores.push({ stepId: request.stepId, overallScore });
     const output = {
       schemaVersion: '1' as const,
       status: 'completed' as const,
       summary: 'Mock judge scored the screenshots.',
       data: {
-        overallScore: 0.82,
+        overallScore,
         criteria: UI_QUALITY_RUBRIC_V1.criteria.map((criterion, index) => ({
           criterionId: criterion.id,
-          score: 0.7 + index * 0.02,
+          score: Math.min(1, overallScore + index * 0.02),
           finding: `Mock finding for ${criterion.id}.`,
         })),
       },
@@ -103,7 +113,19 @@ afterEach(async () => {
   );
 });
 
-async function startJudgedRun(): Promise<{ runtime: Runtime; runId: string; projectId: string }> {
+interface JudgedRunOptions {
+  /** Judge `overallScore` per call, last value repeating (default: one 0.82). */
+  scores?: readonly number[];
+  /** `uiQualityJudge.minOverallScore` in the policy; omitted = advisory (#475). */
+  minOverallScore?: number;
+}
+
+async function startJudgedRun(options: JudgedRunOptions = {}): Promise<{
+  runtime: Runtime;
+  runId: string;
+  projectId: string;
+  judge: UiQualityJudgeExecutor;
+}> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-ui-quality-judge-'));
   temporaryDirectories.push(dataDir);
   const policiesDir = await mkdtemp(join(tmpdir(), 'agent-foundry-ui-quality-judge-policies-'));
@@ -122,6 +144,9 @@ async function startJudgedRun(): Promise<{ runtime: Runtime; runId: string; proj
       'uiQualityJudge:',
       '  provider: mock',
       '  model: ui-quality-judge-mock',
+      ...(options.minOverallScore === undefined
+        ? []
+        : [`  minOverallScore: ${options.minOverallScore}`]),
       '',
     ].join('\n'),
     'utf8',
@@ -140,9 +165,10 @@ async function startJudgedRun(): Promise<{ runtime: Runtime; runId: string; proj
   // requested provider (see packages/executors/src/registry.ts); overriding
   // it is the established way this package's tests substitute step-specific
   // mock behavior without touching production wiring.
+  const judge = new UiQualityJudgeExecutor(options.scores);
   Object.defineProperty(runtime.executors, 'executor', {
     configurable: true,
-    value: new UiQualityJudgeExecutor(),
+    value: judge,
   });
 
   const project = await runtime.projectService.create({
@@ -156,7 +182,7 @@ async function startJudgedRun(): Promise<{ runtime: Runtime; runId: string; proj
     ].join('\n\n'),
   });
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
-  return { runtime, runId: project.currentRunId, projectId: project.id };
+  return { runtime, runId: project.currentRunId, projectId: project.id, judge };
 }
 
 describe('#475: the UI-quality judge scores a real browser-verification run', () => {
@@ -216,5 +242,106 @@ describe('#475: the UI-quality judge scores a real browser-verification run', ()
     // packages/composition/src/ui-quality-judge.integration.test.ts` instead
     // of having to reconstruct a one-off capture step.
     console.log('#475 uiQuality evidence:', JSON.stringify(uiQuality, null, 2));
+  }, 60_000);
+});
+
+describe('#477: a low UI-quality score gates the run, repairs, then passes', () => {
+  it('fails the browser check on the first judge score and approves after one repair round', async () => {
+    // The judge is the only scripted thing in this run: everything else —
+    // orchestrator, task-graph-runner's browser repair loop, the gate, the
+    // artifact store, the emergency-ceiling counter — is the real code path.
+    // First browser-verify round scores 0.1 (below the policy's 0.3), every
+    // later round 0.8 (above it), so the run must repair exactly once.
+    const { runtime, runId, projectId, judge } = await startJudgedRun({
+      scores: [0.1, 0.8],
+      // 0.3: comfortably below the one real data point available — HA-A.1's
+      // real judge run scored today's shipped post-#476 scaffold 0.43
+      // (docs/evidence/issue-475-ui-quality-judge/judge-result.json) — so the
+      // fixture threshold matches the "start lenient" posture of #477.
+      minOverallScore: 0.3,
+    });
+
+    // One runOnce() drives the whole run: the browser repair loop lives
+    // inside task-graph-runner.ts's assertBrowserTask, not across worker
+    // ticks, so the induced failure and its repair both happen in here.
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, runId);
+
+    const detail = await runtime.projectService.get(projectId);
+    expect(detail.project.status).toBe('completed');
+
+    // Every judge call served the one browser-visible task's check step
+    // (`assert-task.T2` — mock-mode's fixed browser-visible task). The first
+    // is the gated round; the second is the post-repair round that approves.
+    // A third, already-passing call is expected: resuming past the
+    // diff-approval gate replays the workflow, and the browser steps are the
+    // ones that cannot be artifact-reused (they need a live preview
+    // session), so the check runs once more and passes on the repeating 0.8.
+    const scores = judge.servedScores.map((call) => call.overallScore);
+    expect(judge.servedScores.every((call) => call.stepId === 'assert-task.T2')).toBe(true);
+    expect(scores.slice(0, 2)).toEqual([0.1, 0.8]);
+    expect(scores.slice(1)).not.toContain(0.1);
+
+    // Explicit limit: the default (500, most-recent-first) could silently
+    // drop the repair event out of the window on a longer run.
+    const events = await runtime.events.list(projectId, 10000);
+    // task-graph-runner.ts's browser loop tags its repair events with a
+    // `:browser:` dedupeKey; the deterministic verify loop's own
+    // `quality.repair_requested` for the same task does not, so this filter
+    // counts only browser-assertion repairs.
+    const browserRepairs = events.filter(
+      (event) =>
+        event.type === 'quality.repair_requested' && event.dedupeKey?.includes(':browser:'),
+    );
+    expect(browserRepairs).toHaveLength(1);
+    expect(browserRepairs[0]?.message).toContain('UI-quality gate failed');
+
+    const reportArtifact = await runtime.artifacts.getLatest(
+      projectId,
+      'browser-verification.report',
+    );
+    const report: BrowserVerificationReport = BrowserVerificationReportSchema.parse(
+      reportArtifact?.content,
+    );
+    // The persisted final state is the post-repair one: approved, carrying
+    // the passing score — not the 0.1 that gated round one.
+    expect(report.approved).toBe(true);
+    expect(report.uiQuality?.overallScore).toBe(0.8);
+    expect(report.summary).not.toContain('UI-quality gate failed');
+
+    // Task 4 unit-proved the counting; this is the end-to-end confirmation
+    // that a real run increments and then resets the emergency-ceiling
+    // counter across a gate-caused repair.
+    expect((await runtime.runs.get(runId))?.execution?.consecutiveRepairs).toBe(0);
+
+    console.log(
+      '#477 gate evidence:',
+      JSON.stringify(
+        {
+          minOverallScore: 0.3,
+          judgeScores: judge.servedScores,
+          browserQualityEvents: events
+            .filter(
+              (event) =>
+                event.type.startsWith('quality.') && event.dedupeKey?.includes(':browser:'),
+            )
+            .map((event) => ({ type: event.type, dedupeKey: event.dedupeKey })),
+          browserRepairEvents: browserRepairs.map((event) => ({
+            message: event.message,
+            dedupeKey: event.dedupeKey,
+            data: event.data,
+          })),
+          finalReport: {
+            approved: report.approved,
+            summary: report.summary,
+            uiQuality: report.uiQuality,
+          },
+          consecutiveRepairs: (await runtime.runs.get(runId))?.execution?.consecutiveRepairs,
+          projectStatus: detail.project.status,
+        },
+        null,
+        2,
+      ),
+    );
   }, 60_000);
 });

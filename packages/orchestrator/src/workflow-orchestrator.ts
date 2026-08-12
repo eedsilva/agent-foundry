@@ -146,7 +146,7 @@ import {
 import type { QualityObservationService } from './quality-observation-service.js';
 import type { ValidationEvidencePublisher } from './validation-evidence.js';
 import { TaskGraphRunner } from './task-graph-runner.js';
-import { evaluateUiQuality } from './ui-quality-judge.js';
+import { evaluateUiQuality, gateOnUiQuality } from './ui-quality-judge.js';
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -2644,10 +2644,13 @@ export class WorkflowOrchestrator {
         );
         throwIfCancelled(signal, runId);
         await this.assertExecutionMayContinue(runId, signal);
-        // Advisory only (#475): scores the evidence the verifier already
-        // captured. `report.approved` above is final by this point and the
-        // judge never reads or rewrites it — an unconfigured or failing judge
-        // simply leaves `uiQuality` off the persisted report.
+        // Scores the evidence the verifier already captured. Advisory by
+        // default (#475): an unconfigured or failing judge simply leaves
+        // `uiQuality` off the persisted report. `gateOnUiQuality` below is
+        // the one seam (#477, ADR 0058) where a configured
+        // `policy.uiQualityJudge.minOverallScore` can flip `approved` to
+        // false, so every downstream consumer of this artifact's `approved`
+        // field routes through repair automatically.
         const uiQuality = await this.judgeUiQuality(
           project.id,
           runId,
@@ -2658,10 +2661,11 @@ export class WorkflowOrchestrator {
           report,
           signal,
         );
+        const gated = gateOnUiQuality(report, uiQuality, policy.uiQualityJudge?.minOverallScore);
         artifact = await this.artifacts.put({
           projectId: project.id,
           name: step.outputArtifact,
-          content: uiQuality ? { ...report, uiQuality } : report,
+          content: uiQuality ? { ...gated, uiQuality } : gated,
           createdBy: `verifier:${step.id}`,
           runId,
           stepRunId: stepRun.id,
@@ -3370,6 +3374,11 @@ export class WorkflowOrchestrator {
    * cannot fetch; the returned files/paths make the evidence real for the
    * fixer. A blob that cannot be fetched is skipped; the request then states
    * explicitly that report-JSON references are unreachable identifiers.
+   *
+   * Also includes any screenshot named in `report.uiQuality.screenshotsReviewed`
+   * (#477): a judge-only gate flips `approved` to false while every functional
+   * step stays `passed`, so `failedStepIds` alone would hand the fixer zero
+   * screenshots even though the judge's findings reference specific ones.
    */
   private async materializeBrowserEvidence(
     projectId: string,
@@ -3386,8 +3395,16 @@ export class WorkflowOrchestrator {
     const failedStepIds = new Set(
       report.steps.filter((step) => step.status === 'failed').map((step) => step.stepId),
     );
-    const screenshots = report.previewSession.evidence.screenshots.filter((shot) =>
-      failedStepIds.has(shot.stepId),
+    // Judge-reviewed screenshots (#477, see this function's JSDoc) are unioned
+    // in unconditionally: a report can have both an unrelated advisory step
+    // failure (`failedStepIds` non-empty, browser-verifier.ts's non-blocking
+    // "advisory" signal) and a separate judge-caused rejection in the same
+    // report, and each set names screenshots the other doesn't.
+    const reviewedKeys = new Set(
+      (report.uiQuality?.screenshotsReviewed ?? []).map((ref) => `${ref.name}@${ref.revision}`),
+    );
+    const screenshots = report.previewSession.evidence.screenshots.filter(
+      (shot) => failedStepIds.has(shot.stepId) || reviewedKeys.has(`${shot.name}@${shot.revision}`),
     );
     const inputFiles: Array<{ path: string; content: Uint8Array }> = [];
     const browserEvidenceStepIds: string[] = [];

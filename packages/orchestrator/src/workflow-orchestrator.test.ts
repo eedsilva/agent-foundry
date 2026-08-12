@@ -12,6 +12,7 @@ import {
   type ArtifactReference,
   type ExecutorHealth,
   type Project,
+  type StoredArtifact,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
@@ -422,6 +423,285 @@ describe('browser repair evidence materialization (#357)', () => {
     expect(stores.workspaces.lastRequestMarkdown).toContain(
       'inputs/browser-evidence/open-root.png',
     );
+  });
+
+  /**
+   * `materializeBrowserEvidence` is private; these three cases call it
+   * directly (bypassing `runProject`) so a judge-only gate (#477) doesn't
+   * need a full workflow run to exercise. The `it` above stays as an
+   * end-to-end check that the files really reach the repair attempt.
+   */
+  interface HasMaterializeBrowserEvidence {
+    materializeBrowserEvidence(
+      projectId: string,
+      inputArtifacts: StoredArtifact[],
+    ): Promise<{
+      inputFiles: Array<{ path: string; content: Uint8Array }>;
+      browserEvidenceStepIds: string[];
+    }>;
+  }
+  function materializeBrowserEvidence(
+    stores: ReturnType<typeof makeOrchestrator>,
+    projectId: string,
+    inputArtifacts: StoredArtifact[],
+  ) {
+    return (
+      stores.orchestrator as unknown as HasMaterializeBrowserEvidence
+    ).materializeBrowserEvidence(projectId, inputArtifacts);
+  }
+
+  it('includes screenshots the UI-quality judge reviewed, even when every step passed (#477)', async () => {
+    const stores = makeOrchestrator();
+    const screenshotA = await stores.artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'browser-screenshot-preview-1-open-root',
+        contentType: 'image/png',
+        createdBy: 'browser-verification',
+        maxBytes: 1_000_000,
+        runId: 'run-1',
+      },
+      Readable.from(Buffer.from('open-root-screenshot')),
+    );
+    const screenshotB = await stores.artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'browser-screenshot-preview-1-second-step',
+        contentType: 'image/png',
+        createdBy: 'browser-verification',
+        maxBytes: 1_000_000,
+        runId: 'run-1',
+      },
+      Readable.from(Buffer.from('second-step-screenshot')),
+    );
+    const report = await stores.artifacts.put({
+      projectId: 'project-1',
+      name: 'browser-verification.report',
+      createdBy: 'browser-verification',
+      runId: 'run-1',
+      content: {
+        schemaVersion: '1',
+        // Task 2's gateOnUiQuality flips this false even though every
+        // functional step below passed — the judge's score gated it.
+        approved: false,
+        summary: 'UI-quality gate failed: overall score 0.40 is below the configured minimum 0.70.',
+        planArtifact: { name: 'browser-test.plan', revision: 1, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          url: 'http://127.0.0.1:4000/',
+          evidence: {
+            screenshots: [
+              {
+                name: screenshotA.name,
+                revision: screenshotA.revision,
+                sha256: screenshotA.sha256,
+                stepId: 'open-root',
+                url: 'http://127.0.0.1:4000/',
+                viewport: { width: 1280, height: 720 },
+              },
+              {
+                name: screenshotB.name,
+                revision: screenshotB.revision,
+                sha256: screenshotB.sha256,
+                stepId: 'second-step',
+                url: 'http://127.0.0.1:4000/second',
+                viewport: { width: 1280, height: 720 },
+              },
+            ],
+          },
+        },
+        steps: [
+          {
+            stepId: 'open-root',
+            title: 'Open root',
+            status: 'passed',
+            durationMs: 1,
+            observations: [],
+          },
+          {
+            stepId: 'second-step',
+            title: 'Second step',
+            status: 'passed',
+            durationMs: 1,
+            observations: [],
+          },
+        ],
+        uiQuality: {
+          rubricVersion: '1',
+          judgeModel: 'claude-test',
+          overallScore: 0.4,
+          criteria: [{ criterionId: 'layout', score: 0.4, finding: 'Cramped spacing.' }],
+          screenshotsReviewed: [
+            { name: screenshotA.name, revision: screenshotA.revision, sha256: screenshotA.sha256 },
+            { name: screenshotB.name, revision: screenshotB.revision, sha256: screenshotB.sha256 },
+          ],
+        },
+      },
+    });
+
+    const result = await materializeBrowserEvidence(stores, 'project-1', [report]);
+
+    expect(result.inputFiles.map((file) => file.path).sort()).toEqual([
+      'browser-evidence/open-root.png',
+      'browser-evidence/second-step.png',
+    ]);
+    expect(result.browserEvidenceStepIds.sort()).toEqual(['open-root', 'second-step']);
+  });
+
+  it("keeps returning exactly the failed step's screenshot when uiQuality is absent (regression guard)", async () => {
+    const stores = makeOrchestrator();
+    const failedShot = await stores.artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'browser-screenshot-preview-1-open-root',
+        contentType: 'image/png',
+        createdBy: 'browser-verification',
+        maxBytes: 1_000_000,
+        runId: 'run-1',
+      },
+      Readable.from(Buffer.from('open-root-screenshot')),
+    );
+    const passedShot = await stores.artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'browser-screenshot-preview-1-second-step',
+        contentType: 'image/png',
+        createdBy: 'browser-verification',
+        maxBytes: 1_000_000,
+        runId: 'run-1',
+      },
+      Readable.from(Buffer.from('second-step-screenshot')),
+    );
+    const report = await stores.artifacts.put({
+      projectId: 'project-1',
+      name: 'browser-verification.report',
+      createdBy: 'browser-verification',
+      runId: 'run-1',
+      content: {
+        schemaVersion: '1',
+        approved: false,
+        summary: 'The first browser step failed.',
+        planArtifact: { name: 'browser-test.plan', revision: 1, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          url: 'http://127.0.0.1:4000/',
+          evidence: {
+            screenshots: [
+              {
+                name: failedShot.name,
+                revision: failedShot.revision,
+                sha256: failedShot.sha256,
+                stepId: 'open-root',
+                url: 'http://127.0.0.1:4000/',
+                viewport: { width: 1280, height: 720 },
+              },
+              {
+                name: passedShot.name,
+                revision: passedShot.revision,
+                sha256: passedShot.sha256,
+                stepId: 'second-step',
+                url: 'http://127.0.0.1:4000/second',
+                viewport: { width: 1280, height: 720 },
+              },
+            ],
+          },
+        },
+        steps: [
+          {
+            stepId: 'open-root',
+            title: 'Open root',
+            status: 'failed',
+            durationMs: 1,
+            observations: [],
+            error: 'Expected dashboard, received sign-in.',
+          },
+          {
+            stepId: 'second-step',
+            title: 'Second step',
+            status: 'passed',
+            durationMs: 1,
+            observations: [],
+          },
+        ],
+      },
+    });
+
+    const result = await materializeBrowserEvidence(stores, 'project-1', [report]);
+
+    expect(result.inputFiles).toEqual([
+      { path: 'browser-evidence/open-root.png', content: Buffer.from('open-root-screenshot') },
+    ]);
+    expect(result.browserEvidenceStepIds).toEqual(['open-root']);
+  });
+
+  it('writes a screenshot once when it is both a failed step and judge-reviewed (dedup)', async () => {
+    const stores = makeOrchestrator();
+    const shot = await stores.artifacts.putBlob(
+      {
+        projectId: 'project-1',
+        name: 'browser-screenshot-preview-1-open-root',
+        contentType: 'image/png',
+        createdBy: 'browser-verification',
+        maxBytes: 1_000_000,
+        runId: 'run-1',
+      },
+      Readable.from(Buffer.from('open-root-screenshot')),
+    );
+    const report = await stores.artifacts.put({
+      projectId: 'project-1',
+      name: 'browser-verification.report',
+      createdBy: 'browser-verification',
+      runId: 'run-1',
+      content: {
+        schemaVersion: '1',
+        approved: false,
+        summary: 'The first browser step failed and scored poorly.',
+        planArtifact: { name: 'browser-test.plan', revision: 1, sha256: 'a'.repeat(64) },
+        previewSession: {
+          sessionId: 'preview-1',
+          status: 'running',
+          url: 'http://127.0.0.1:4000/',
+          evidence: {
+            screenshots: [
+              {
+                name: shot.name,
+                revision: shot.revision,
+                sha256: shot.sha256,
+                stepId: 'open-root',
+                url: 'http://127.0.0.1:4000/',
+                viewport: { width: 1280, height: 720 },
+              },
+            ],
+          },
+        },
+        steps: [
+          {
+            stepId: 'open-root',
+            title: 'Open root',
+            status: 'failed',
+            durationMs: 1,
+            observations: [],
+            error: 'Expected dashboard, received sign-in.',
+          },
+        ],
+        uiQuality: {
+          rubricVersion: '1',
+          judgeModel: 'claude-test',
+          overallScore: 0.2,
+          criteria: [{ criterionId: 'layout', score: 0.2 }],
+          screenshotsReviewed: [{ name: shot.name, revision: shot.revision, sha256: shot.sha256 }],
+        },
+      },
+    });
+
+    const result = await materializeBrowserEvidence(stores, 'project-1', [report]);
+
+    expect(result.inputFiles).toEqual([
+      { path: 'browser-evidence/open-root.png', content: Buffer.from('open-root-screenshot') },
+    ]);
+    expect(result.browserEvidenceStepIds).toEqual(['open-root']);
   });
 });
 
@@ -887,6 +1167,8 @@ describe('advisory UI-quality judge (#475)', () => {
     judgeFails?: boolean;
     /** Overrides every criterion's score (and overallScore) uniformly. */
     judgeScore?: number;
+    /** Promotes the judge to a blocking gate (#477) at this threshold. */
+    minOverallScore?: number;
   }) {
     const judgeRequests: AgentExecutionRequest[] = [];
     const judgeSawScreenshot: boolean[] = [];
@@ -997,7 +1279,13 @@ describe('advisory UI-quality judge (#475)', () => {
         ? {
             policy: {
               ...DEFAULT_POLICY,
-              uiQualityJudge: { provider: 'claude' as const, model: 'judge-model' },
+              uiQualityJudge: {
+                provider: 'claude' as const,
+                model: 'judge-model',
+                ...(options.minOverallScore === undefined
+                  ? {}
+                  : { minOverallScore: options.minOverallScore }),
+              },
             },
             judgeExecutor,
           }
@@ -1179,5 +1467,17 @@ describe('advisory UI-quality judge (#475)', () => {
     expect(result.eventTypes).not.toContain('quality.repair_requested');
     expect(result.eventTypes).toContain('quality.approved');
     expect(result.eventTypes).toEqual(withoutJudge.eventTypes);
+  });
+
+  it('flips approved to false when a configured minOverallScore is above the judge score (#477)', async () => {
+    const result = await runBrowserWorkflow({
+      judge: true,
+      approved: true,
+      judgeScore: 0.4,
+      minOverallScore: 0.8,
+    });
+
+    expect(result.report?.approved).toBe(false);
+    expect(result.outcome.approved).toBe(false);
   });
 });
