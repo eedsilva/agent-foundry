@@ -415,7 +415,9 @@ describe('TaskGraphRunner', () => {
     ]);
     // Repair invocation: identical mechanics to a functional-failure
     // repair — the gated report rides along as a pinned input artifact.
-    expect(repairPinnedArtifactNames).toEqual([['browser-test.plan', 'browser-verification.report']]);
+    expect(repairPinnedArtifactNames).toEqual([
+      ['browser-test.plan', 'browser-verification.report'],
+    ]);
     // recordCompletedRepair fires exactly once for the one repair round —
     // the same call a functional-failure repair loop makes, which is what
     // lets the existing emergency-ceiling coverage apply unchanged here.
