@@ -24,7 +24,7 @@ async function fetchItems(accessToken: string): Promise<Array<{ id: string; titl
 
 export default async function HomePage() {
   // getSession is a local cookie read, not a verification — that already
-  // happened twice on this request: middleware called getUser, and the API
+  // happened twice on this request: proxy called getUser, and the API
   // tier validates the forwarded token again before touching data.
   const supabase = await createClient();
   const {

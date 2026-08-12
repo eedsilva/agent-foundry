@@ -25,8 +25,8 @@ Applies whenever the golden stack's backend is the project's isolated local Supa
 Every app ships with Supabase auth wired end to end: sign-in flow, protected routes, and session handling.
 
 - Email/password only. No OAuth, magic links, or SMTP; password reset is an administrator operation (per ADR 0007 / `docs/PRODUCT_CONTRACT.md`).
-- Use `@supabase/ssr` for session handling in `apps/web`: one cookie-backed server client (`createServerClient`, see `apps/web/lib/supabase/server.ts`) used by server components, server actions, and middleware. Sign-in and sign-up are server actions (`apps/web/app/actions.ts`), so the browser only ever talks to the web tier.
-- Protect routes in `middleware.ts` by refreshing the session and redirecting unauthenticated requests away from authenticated segments; never gate authorization in client components alone.
+- Use `@supabase/ssr` for session handling in `apps/web`: one cookie-backed server client (`createServerClient`, see `apps/web/lib/supabase/server.ts`) used by server components, server actions, and proxy. Sign-in and sign-up are server actions (`apps/web/app/actions.ts`), so the browser only ever talks to the web tier.
+- Protect routes in `proxy.ts` by refreshing the session and redirecting unauthenticated requests away from authenticated segments; never gate authorization in client components alone.
 - Store the signed-in user's id as the row owner column (`user_id uuid references auth.users(id) default auth.uid()`) so RLS policies can reference it directly.
 
 ## The authenticated request path (ADR 0038)
