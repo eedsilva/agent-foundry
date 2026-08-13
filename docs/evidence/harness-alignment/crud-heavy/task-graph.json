@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "1",
+  "goal": "Let a signed-in team track inventory across categories, items, and stock adjustments.",
+  "modules": [
+    { "id": "auth", "acceptanceChannel": "browser-visible" },
+    { "id": "crud:categories", "acceptanceChannel": "browser-visible" },
+    { "id": "crud:items", "acceptanceChannel": "browser-visible" },
+    { "id": "crud:stock-adjustments", "acceptanceChannel": "browser-visible" }
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Email/password auth and protected app shell",
+      "dependsOn": [],
+      "deliverables": [
+        "apps/web/app/(auth)/sign-in/page.tsx",
+        "apps/web/app/(auth)/sign-up/page.tsx",
+        "apps/web/middleware.ts"
+      ],
+      "acceptanceCheck": "Signed-out access to any app route redirects to sign-in; a signed-up user can sign in and reach the app shell.",
+      "acceptanceMode": "browser-visible",
+      "module": "auth"
+    },
+    {
+      "id": "T2",
+      "title": "Category list, create, edit, delete",
+      "dependsOn": ["T1"],
+      "deliverables": ["apps/web/app/categories/page.tsx", "apps/web/app/categories/actions.ts"],
+      "acceptanceCheck": "A signed-in user creates, edits, and deletes a category; deleting a category with items attached shows an inline error and does not delete it.",
+      "acceptanceMode": "browser-visible",
+      "module": "crud:categories"
+    },
+    {
+      "id": "T3",
+      "title": "Item list with filters, create/edit/delete, bulk quantity edit",
+      "dependsOn": ["T1", "T2"],
+      "deliverables": ["apps/web/app/items/page.tsx", "apps/web/app/items/actions.ts"],
+      "acceptanceCheck": "A signed-in user creates an item in a category, filters the list by category and by low-stock, and applies one quantity delta to 2+ selected items in a single bulk action.",
+      "acceptanceMode": "browser-visible",
+      "module": "crud:items"
+    },
+    {
+      "id": "T4",
+      "title": "Stock adjustment log and per-item history view",
+      "dependsOn": ["T3"],
+      "deliverables": ["apps/web/app/items/[id]/history/page.tsx"],
+      "acceptanceCheck": "Adjusting an item's quantity, single or bulk, requires a reason and appends one adjustment row per item; the item's history view lists its adjustments most recent first.",
+      "acceptanceMode": "browser-visible",
+      "module": "crud:stock-adjustments"
+    }
+  ]
+}
