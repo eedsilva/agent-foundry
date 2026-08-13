@@ -881,10 +881,7 @@ enabled = false`);
     await mkdir(workspaceDir, { recursive: true });
     const sql = 'CREATE TABLE todos (id uuid PRIMARY KEY);';
     await writeFile(join(workspaceDir, '20260806000000_create_todos.sql'), sql);
-    await writeFile(
-      join(environment.workdir, 'supabase', 'migrations', '20260806000000_create_todos.sql'),
-      sql,
-    );
+    await writeMigration(environment.workdir, '20260806000000_create_todos.sql', sql);
     command.mockClear();
 
     await expect(
