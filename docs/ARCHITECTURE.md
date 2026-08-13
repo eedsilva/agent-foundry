@@ -307,6 +307,12 @@ explicitamente; referências de chave estrangeira a tabelas locais desconhecidas
 desconhecidas falham a validação. Como no contrato de grafo de tarefas, uma saída fora do contrato falha
 o attempt em vez de virar revisão do artefato.
 
+Quando esse passo valida e é `mutatesWorkspace`, o orquestrador deriva SQL forward-only do plano
+aprovado (`generateSchemaPlanSql`, issue #481) e grava em `supabase/migrations/<timestamp>_schema_plan.sql`
+no workspace do projeto; a mesma migration aplicada pelo runtime existente (`db:reset` / `applyWorkspaceMigrations`)
+é depois conferida por consulta direta ao banco (`verifySchema`) — tabelas, colunas e RLS ausentes falham
+o passo em vez de deixar o banco divergir do plano em silêncio.
+
 ## Gate de plano
 
 `web-app-v1` chega ao plano com **uma** chamada de modelo: o nó `plan` grava `plan.current` e o nó
