@@ -244,6 +244,31 @@ export function previewStatusMessage(session: PreviewSession, alreadyShown = fal
   return 'Preview iniciando…';
 }
 
+// packages/persistence's sanitizeSession (preview-repositories.ts) strips
+// ?token= from a preview session's url on every read after the initial
+// start() response — a deliberate, tested security property: the raw token
+// must never be re-servable from disk. The session-status poll below
+// (startPreviewSessionPolling) can only ever observe that stripped url for
+// an already-running session, so `session.url` itself must keep whichever
+// url a given session id was first seen with — a later poll for the same id
+// never carries a usable one again (see #486). Pinning it once here, at the
+// point session state is set, covers every consumer of `session.url` in this
+// component (the iframe's src, and the selection flow's `previewUrl` sent to
+// resolvePreviewSelection's screenshot fallback) instead of each needing its
+// own copy of this same fix.
+export type KnownPreviewUrl = { sessionId: string; url: string };
+
+export function pinPreviewUrl(
+  session: PreviewSession,
+  known: KnownPreviewUrl | undefined,
+): { session: PreviewSession; known: KnownPreviewUrl | undefined } {
+  if (!session.url) return { session, known };
+  if (known?.sessionId === session.id) {
+    return { session: { ...session, url: known.url }, known };
+  }
+  return { session, known: { sessionId: session.id, url: session.url } };
+}
+
 export function BlobMedia({
   src,
   alt,
@@ -415,12 +440,28 @@ export function PreviewPanel({
   const notifiedFailure = useRef<string | undefined>(undefined);
   const reloadedRepair = useRef<string | undefined>(undefined);
   const shownIframeSessionId = useRef<string | undefined>(undefined);
+  const knownPreviewUrl = useRef<KnownPreviewUrl | undefined>(undefined);
+
+  // Single point where polled/started/stopped session data becomes `session`
+  // state: pins `session.url` per pinPreviewUrl's doc comment, so every
+  // consumer of `session.url` below (the iframe, and the selection flow's
+  // resolvePreviewSelection call) sees a consistently usable url rather than
+  // each needing its own fix.
+  const adoptSession = useCallback((candidate: PreviewSession | null) => {
+    if (!candidate) {
+      setSession(null);
+      return;
+    }
+    const { session: pinned, known } = pinPreviewUrl(candidate, knownPreviewUrl.current);
+    knownPreviewUrl.current = known;
+    setSession(pinned);
+  }, []);
 
   useEffect(() => {
     return startPreviewSessionPolling({
       getSession: () => getActivePreviewSession(projectId),
       onSession: (polled) => {
-        setSession(polled);
+        adoptSession(polled);
         setSessionLoaded(true);
       },
       onError: (cause) => {
@@ -429,7 +470,7 @@ export function PreviewPanel({
       },
       schedule: (callback) => setTimeout(callback, POLL_INTERVAL_MS),
     });
-  }, [projectId]);
+  }, [projectId, adoptSession]);
 
   useEffect(() => {
     if (!session || TERMINAL_SESSION_STATUSES.has(session.status)) return;
@@ -537,13 +578,13 @@ export function PreviewPanel({
           await stopPreview(projectId, session.id);
         }
         const { session: started } = await startPreview(projectId);
-        setSession(started);
+        adoptSession(started);
         setLogs([]);
       } catch (cause) {
         setPanelError(cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [projectId, session],
+    [projectId, session, adoptSession],
   );
 
   const alreadyShownIframe = session !== null && shownIframeSessionId.current === session.id;
@@ -587,7 +628,7 @@ export function PreviewPanel({
     try {
       setPanelError('');
       const { session: stopped } = await stopPreview(projectId, session.id);
-      setSession(stopped);
+      adoptSession(stopped);
     } catch (cause) {
       setPanelError(cause instanceof Error ? cause.message : String(cause));
     }

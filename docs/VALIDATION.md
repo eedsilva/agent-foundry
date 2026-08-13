@@ -785,3 +785,70 @@ Verification: `preview-panel.test.tsx` — 3 new cases (grace granted when alrea
 when never shown, no grace extended to `failing`); 13/13 passing. `npx tsc -b`, full fast suite,
 prettier, eslint, architecture:check all clean. The actual `golden-flow.spec.ts` re-run is CI-only, per
 the same convention as the rest of this entry.
+
+### Reopened: session polling fed the iframe a url with no auth token — 2026-08-13
+
+`#486` was reopened after `supabase-data-plane-e2e` kept failing deterministically on `main` post-merge
+(`PreviewAccessDeniedError: ... token mismatch` at `preview-service.ts:252`, reproduced identically on
+two separate runs) — the "token mismatch" branch named in the ticket's original scope, still unexplained
+by either fix above.
+
+Root cause, confirmed by reproducing locally and adding temporary request-level diagnostics (Cookie
+header, presented token, `Sec-Fetch-*`) rather than guessing from the stack trace alone:
+`packages/persistence/src/preview-repositories.ts`'s `sanitizeSession` strips `?token=` from a preview
+session's `url` on every read (`get`/`listActive`) and write after the initial `create` — a deliberate,
+already-tested security property (`preview-repositories.test.ts`'s `'removes raw URL tokens before
+create and update reach disk or reads'`): the raw auth token must never be re-servable once minted. The
+one-time `POST /projects/:id/preview` response is the *only* place a session's `url` ever carries a
+usable token.
+
+`startPreviewSessionPolling` (this ticket's own fix, above) re-fetches `GET /preview/active` every 2s and
+fed the result straight into the `<iframe src>` prop. The very first poll after a fresh `Iniciar preview`
+click — well within the length of `golden-flow.spec.ts`'s "attach reference..." interaction — replaced
+the good, tokened `session.url` with the same session's now-stripped one; React diffed the changed `src`
+string and forced a real iframe reload with no token. `preview-proxy.ts`'s cookie fallback
+(`pv_<sessionId>`, set on the first token-authenticated response, read back via `cookieToken ?? queryToken`)
+exists for exactly this token-less-follow-up-request case, but never rescued it here: the diagnostic Cookie
+header was absent on every proxied request observed, including ones after a `Set-Cookie` should already
+have landed — the preview host (`apps/api`) and the builder UI (`apps/web`) sit on different loopback
+hostnames in this local/e2e setup (`127.0.0.1` vs `localhost`), making the iframe a genuinely cross-site
+embed, and the request that would have carried the cookie can also simply be the one the poll's `src` swap
+cancels mid-flight before its `Set-Cookie` response is ever processed. Either way `resolveUpstream` then
+correctly denied the tokenless, cookieless request. Confirmed
+directly: added logging to `GET /preview/active` showed the persisted session sitting at
+`status: "running", url: ".../preview/<id>/"` (no query string at all) seconds after a `start()` response
+had returned that same id with `?token=...` attached. Locally this reproduced intermittently (~1-in-4
+repeats, since it is a real ~2s race against however far the test gets before the first poll lands);
+matches the CI symptom's flakier-under-load character (`supabase-data-plane-e2e` is the only CI job that
+exercises `golden-flow.spec.ts` at all, so this had no other chance to surface before merge).
+
+First fix attempt pinned only the `<iframe src>` prop at whatever url a session id was first shown with.
+An altitude-focused `/simplify` pass caught that this was a bandaid on one consumer, not the actual seam:
+`session.url` itself stayed clobbered in React state, and the panel has a second live consumer of it —
+the selection flow (`resolvePreviewSelection`, `preview-panel.tsx`) sends `previewUrl: session.url` to
+`PreviewSelectionService.captureFallbackScreenshot` (`packages/orchestrator/src/preview-selection-service.
+ts`), which navigates a real headless browser to that url for the "unsupported selection" screenshot
+fallback — the identical #486 failure mode, unfixed, in a path the iframe-only fix never touched.
+
+Fix (final): `pinPreviewUrl` (`preview-panel.tsx`) pins `session.url` itself, once, at the single point
+polled/started/stopped session data becomes `session` state (`adoptSession`, called from
+`startPreviewSessionPolling`'s `onSession`, `start()`, and `stop()` alike) — mirroring the "deliver the
+token once, out of band" shape `POST /projects/:id/preview` already returns (`{ session, url }`) and this
+component already relied on for its very first render. A `known` ref (`knownPreviewUrl`) remembers the
+first url seen for a given session id; a later poll response for the *same* id can never regress
+`session.url`, even though the poll's own `url` field is by-design token-less from then on. A newly
+*started* session (different id) still adopts its own fresh url normally. Every consumer of `session.url`
+— the iframe's `src`, and the selection flow's `previewUrl` — now shares the one fix instead of each
+needing a private copy of it. `shownIframeSessionId` (the pre-existing, unrelated "has the iframe UI been
+rendered yet" tracking behind `previewStatusMessage`'s already-shown grace) is untouched by this.
+
+Verification: `preview-panel.test.tsx` — 4 new `pinPreviewUrl` cases (first-seen url remembered, later
+stripped poll for the same id ignored, a genuinely new session's url adopted, a still-starting session
+with no url yet passed through unchanged); 18/18 passing. `npm run test:unit:fast` (171 files/1564 tests),
+`npm run check:static` (format, lint, architecture, roadmap, root `tsc -b`) all clean. Re-ran the
+previously-failing `golden-flow.spec.ts` local reproduction (real `next dev` + real API, no mocks)
+repeatedly after the fix: 0/9 runs hit the token-mismatch signature that reproduced reliably before it (a
+couple of unrelated, pre-existing timeouts elsewhere in the same spec did occur under repeated local load
+— no `PreviewAccessDeniedError` in either, a different, already-known flake class, out of scope here). The
+`supabase-data-plane-e2e` CI job itself is the authoritative verification per this repo's convention
+(Postgres+S3-backed, real Playwright browser); not re-run here.
