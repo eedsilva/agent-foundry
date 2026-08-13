@@ -1169,6 +1169,32 @@ describe('validation evidence publication', () => {
     },
   );
 
+  it('classifies a run failed by BrowserInfrastructureError as environment, not product (#526, #528)', async () => {
+    const { harness, evidence } = await setup();
+    const run = await harness.runs.get('run-1');
+    if (!run) throw new Error('run-1 was not seeded');
+    await harness.runs.update(
+      {
+        ...run,
+        status: 'failed',
+        error: {
+          // The class name is the only discriminator that survives the run
+          // boundary (BrowserInfrastructureError carries no `code`) — see
+          // packages/orchestrator/src/workflow-orchestrator.ts `runError`.
+          name: 'BrowserInfrastructureError',
+          message:
+            'browser verification never reached the app: Preview at http://127.0.0.1:59999 is unreachable: connect ECONNREFUSED',
+        },
+        updatedAt: harness.clock.now().toISOString(),
+      },
+      run.version,
+    );
+
+    const result = await evidence.publish('run-1', request('environment-blocked'));
+
+    expect(result.bundle.outcome).toBe('environment-blocked');
+  });
+
   it('preserves a completed terminal run and records publication failure for retry', async () => {
     const publishFromRun = vi.fn().mockRejectedValue(new Error('evidence store unavailable'));
     const harness = makeHarness({}, undefined, {

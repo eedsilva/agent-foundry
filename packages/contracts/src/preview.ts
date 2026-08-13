@@ -602,6 +602,7 @@ const BrowserObservationSchema = z
       'http-error',
       'uncaught-exception',
       'policy-block',
+      'preview-unreachable',
     ]),
     message: z.string().min(1),
     url: z.string().url().optional(),
@@ -646,6 +647,11 @@ export const BrowserVerificationReportSchema = z
     planArtifact: ArtifactReferenceSchema,
     previewSession: PreviewSessionReferenceSchema,
     planValidationError: z.string().min(1).optional(),
+    // Set when at least one step observation is 'preview-unreachable' (browser-verifier.ts):
+    // the preview origin itself could not be reached, as distinct from an app bug. Names the
+    // preview origin and the underlying transport cause so it is not confused with a policy
+    // block or an in-app failure.
+    infrastructureFailure: z.string().min(1).optional(),
     uiQuality: UiQualityJudgeResultSchema.optional(),
     steps: z.array(
       z
@@ -703,6 +709,13 @@ export const BrowserVerificationReportSchema = z
         code: 'custom',
         message: 'An approved browser report cannot contain a plan validation error',
         path: ['planValidationError'],
+      });
+    }
+    if (report.infrastructureFailure) {
+      context.addIssue({
+        code: 'custom',
+        message: 'An approved browser report cannot contain an infrastructure failure',
+        path: ['infrastructureFailure'],
       });
     }
     if (report.steps.length === 0) {

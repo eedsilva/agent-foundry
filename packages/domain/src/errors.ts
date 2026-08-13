@@ -72,6 +72,26 @@ export class ProviderAuthenticationError extends ExecutionError {
   override readonly name = 'ProviderAuthenticationError';
 }
 
+/**
+ * A browser check report named an unreachable preview (#526/#528): the
+ * harness never reached the app, so this is an environment fault, not a
+ * failed assertion the repair loop can fix. The subclass itself is the
+ * machine-readable discriminator — the caller (task-graph-runner.ts's task
+ * loop, which attaches `error.diagnosis` to the `task.failed` event) checks
+ * `instanceof BrowserInfrastructureError` instead of matching the message
+ * text, which is free to reword.
+ */
+export class BrowserInfrastructureError extends ExecutionError {
+  override readonly name = 'BrowserInfrastructureError';
+
+  constructor(
+    message: string,
+    readonly diagnosis: string,
+  ) {
+    super(message);
+  }
+}
+
 export class EnvironmentOperationError extends Error {
   override readonly name = 'EnvironmentOperationError';
 

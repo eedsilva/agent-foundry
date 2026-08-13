@@ -1240,7 +1240,10 @@ function automaticFailureClass(
   attempts: readonly StepAttempt[],
 ): ValidationEvidenceFailureClass {
   const errorText = `${run.error?.name ?? ''} ${run.error?.code ?? ''}`.toLowerCase();
-  if (/(?:provision|environment|docker|supabase|preview)/.test(errorText)) {
+  // 'infrastructure' covers BrowserInfrastructureError (#526, #528): the
+  // harness never reached the preview, so this is an environment fault, not
+  // a product defect — regardless of what the class happens to be named.
+  if (/(?:provision|environment|docker|supabase|preview|infrastructure)/.test(errorText)) {
     return 'environment';
   }
   const externalAttempts = attempts.filter((attempt) => attempt.provider !== 'internal');

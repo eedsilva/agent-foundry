@@ -727,7 +727,18 @@ describe('validation evidence API', () => {
       url: `/runs/${runId}/validation-evidence`,
     });
     expect(evidence.statusCode).toBe(200);
-    expect(evidence.json().bundle.outcome).toBe('product-failed');
+    // This harness builds the API with `inject` and sets `disablePreviews`, so
+    // nothing ever serves the preview origin — the run is #526 reproduced in a
+    // test. It used to reach a terminal state as `product-failed`: the browser
+    // check failed, the repair loop claimed it, and a dead preview was
+    // published to the campaign bundle as a defect in the generated app. That
+    // misattribution is exactly what #528 removes, so the honest terminal
+    // outcome here is `environment-blocked`, with
+    // `terminalState.error.name === 'BrowserInfrastructureError'`. The four
+    // outcomes themselves, `product-failed` included, stay covered by the
+    // sibling test below.
+    expect(evidence.json().bundle.outcome).toBe('environment-blocked');
+    expect(evidence.json().bundle.terminalState.error.name).toBe('BrowserInfrastructureError');
   }, 120_000);
 
   it('publishes all four outcomes, redacts evidence, and replays the same artifact', async () => {

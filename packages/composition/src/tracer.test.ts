@@ -1,9 +1,15 @@
+import { createServer, type AddressInfo } from 'node:net';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TracerScenarioSchema } from '@agent-foundry/contracts';
-import { loadTracerScenarios, runTracerScenario, runTracerScenarioToCompletion } from './tracer.js';
+import {
+  assertPreviewOriginReachable,
+  loadTracerScenarios,
+  runTracerScenario,
+  runTracerScenarioToCompletion,
+} from './tracer.js';
 
 const scenariosDir = resolve(import.meta.dirname, '../../../examples/tracer/scenarios');
 
@@ -112,4 +118,110 @@ describe('runTracerScenarioToCompletion (mock mode)', () => {
 
     expect(result.runStatus).toBe('completed');
   }, 30_000);
+});
+
+// #526: previewBaseUrl is built from API_HOST:API_PORT (runtime.ts) and
+// served by apps/api's preview proxy — a process the tracer driver never
+// starts itself. Without a preflight, a real-mode run drives Playwright at a
+// dead origin for the run's full duration before Task 1's legible
+// preview-unreachable diagnosis ever surfaces. These tests cover the probe
+// directly and its wiring into the driver; they never reach worker.runOnce()
+// so no real executor (and no real model call) is ever invoked.
+describe('assertPreviewOriginReachable (#526 preflight)', () => {
+  async function closedLoopbackPort(): Promise<number> {
+    // Bind-then-close on port 0 guarantees a free loopback port with nothing
+    // listening — same trick browser-verifier.test.ts uses for the same bug.
+    const probe = createServer();
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      probe.once('error', rejectPromise);
+      probe.listen(0, '127.0.0.1', resolvePromise);
+    });
+    const port = (probe.address() as AddressInfo).port;
+    await new Promise<void>((resolvePromise, rejectPromise) =>
+      probe.close((error) => (error ? rejectPromise(error) : resolvePromise())),
+    );
+    return port;
+  }
+
+  it('rejects naming the host and port when nothing is listening', async () => {
+    const port = await closedLoopbackPort();
+
+    await expect(assertPreviewOriginReachable('127.0.0.1', port)).rejects.toThrow(
+      new RegExp(`127\\.0\\.0\\.1:${port}`),
+    );
+  });
+
+  it('resolves when something is listening on the origin', async () => {
+    const server = createServer();
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      server.once('error', rejectPromise);
+      server.listen(0, '127.0.0.1', resolvePromise);
+    });
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      await expect(assertPreviewOriginReachable('127.0.0.1', port)).resolves.toBeUndefined();
+    } finally {
+      await new Promise<void>((resolvePromise, rejectPromise) =>
+        server.close((error) => (error ? rejectPromise(error) : resolvePromise())),
+      );
+    }
+  });
+});
+
+describe('tracer driver preflight wiring (#526)', () => {
+  const originalApiPort = process.env.API_PORT;
+  const originalApiHost = process.env.API_HOST;
+  afterEach(() => {
+    if (originalApiPort === undefined) delete process.env.API_PORT;
+    else process.env.API_PORT = originalApiPort;
+    if (originalApiHost === undefined) delete process.env.API_HOST;
+    else process.env.API_HOST = originalApiHost;
+  });
+
+  async function closedLoopbackPort(): Promise<number> {
+    const probe = createServer();
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      probe.once('error', rejectPromise);
+      probe.listen(0, '127.0.0.1', resolvePromise);
+    });
+    const port = (probe.address() as AddressInfo).port;
+    await new Promise<void>((resolvePromise, rejectPromise) =>
+      probe.close((error) => (error ? rejectPromise(error) : resolvePromise())),
+    );
+    return port;
+  }
+
+  it('runTracerScenario in real mode fails fast when nothing serves the preview origin', async () => {
+    const dataDir = await tempDir('tracer-preflight-real-');
+    process.env.API_HOST = '127.0.0.1';
+    process.env.API_PORT = String(await closedLoopbackPort());
+
+    await expect(
+      runTracerScenario(toyScenario(), { executorMode: 'real', dataDir }),
+    ).rejects.toThrow(new RegExp(`127\\.0\\.0\\.1:${process.env.API_PORT}`));
+  });
+
+  it('runTracerScenarioToCompletion in real mode fails fast the same way', async () => {
+    const dataDir = await tempDir('tracer-preflight-real-complete-');
+    process.env.API_HOST = '127.0.0.1';
+    process.env.API_PORT = String(await closedLoopbackPort());
+
+    await expect(
+      runTracerScenarioToCompletion(toyScenario(), { executorMode: 'real', dataDir }),
+    ).rejects.toThrow(new RegExp(`127\\.0\\.0\\.1:${process.env.API_PORT}`));
+  });
+
+  it('does not probe the origin in mock mode, even when nothing is listening', async () => {
+    // Mock mode fabricates browser verification entirely (mockBrowserVerificationCoordinator
+    // in runtime.ts) and never reaches the preview origin — the preflight must not
+    // fire here, or every mock-mode run (including CI, with no API server up) would break.
+    const dataDir = await tempDir('tracer-preflight-mock-');
+    process.env.API_HOST = '127.0.0.1';
+    process.env.API_PORT = String(await closedLoopbackPort());
+
+    const result = await runTracerScenario(toyScenario(), { executorMode: 'mock', dataDir });
+
+    expect(result.runStatus).toBe('awaiting_approval');
+  });
 });

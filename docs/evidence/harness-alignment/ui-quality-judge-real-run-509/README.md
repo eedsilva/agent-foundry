@@ -165,3 +165,47 @@ Not new #475/#477 scope. The judge and its (now-optional) blocking gate are
 unchanged by this PR — this only supplies the full-pipeline real-run evidence
 artifact #509 asked for, plus the small `--approve-gates` driver needed to
 produce it.
+
+## Resolution: the near-zero scores measured a Chrome error page, not app quality (#526, #528)
+
+The `net::ERR_BLOCKED_BY_CLIENT` failure noted above ("Why every score is near
+zero") was investigated and fixed by #526 (this run's specific instance) and
+#528 (the general class) on branch `fix/526-528-browser-infra`. Root cause,
+in two parts:
+
+1. **The error code was a lie.** `PlaywrightBrowserVerifier`'s route handler
+   wrapped `route.fetch()` in a bare `catch` that rewrote *every* transport
+   failure — connection refused, DNS, socket reset — into
+   `route.abort('blockedbyclient')`, the same abort code its two deliberate
+   `permitted()` policy-block branches use. Chrome then reports
+   `net::ERR_BLOCKED_BY_CLIENT` for both a genuine policy block and a
+   completely dead origin, indistinguishably. Fixed in `fix/526-528-browser-infra`
+   (#526, #528): a transport failure is now recorded as a
+   `preview-unreachable` observation with the real cause (e.g. `ECONNREFUSED`)
+   and surfaces as `infrastructureFailure` on the report; `blockedbyclient` is
+   now emitted only by the two deliberate policy-block branches.
+2. **Nothing was listening at `http://127.0.0.1:4000`.** The preview URL this
+   run's browser step navigated to is built as
+   `http://${apiHost}:${apiPort}/preview` (`packages/composition/src/runtime.ts`)
+   and is served by `apps/api`'s preview proxy — a separate HTTP server.
+   `scripts/tracer.ts` builds the runtime and drives the worker in-process; it
+   never starts that server. This run's `--data-dir`/`--policies-dir` driver
+   had no API process running alongside it, so every one of the 5
+   browser-verify attempts navigated to an origin nothing was serving. Fixed
+   in #526 (Task 3, folded into `fix/526-528-browser-infra`): the tracer
+   driver now probes the configured preview origin with a plain TCP connect
+   before a real-mode run starts, and fails in seconds — naming the origin —
+   instead of discovering it 46-60 minutes and 5 repair-loop iterations
+   later.
+
+**The screenshots this run captured were a `chrome-error://chromewebdata/`
+page, not the counter app.** The judge's near-zero scores (0.00-0.05 across
+all 5 revisions) are an accurate read of that blank error page, not a defect
+in `evaluateUiQuality()` or the rubric — see "Why every score is near zero"
+above, which already documents the judge correctly identifying the blank
+page rather than fabricating a plausible review. Nothing about the judge
+itself needed changing.
+
+A real-mode re-run against a corrected pipeline (API server actually up, so
+the browser step reaches the real app) is #527, gated on #526 merging, and
+explicitly out of scope for both #526 and this note.
