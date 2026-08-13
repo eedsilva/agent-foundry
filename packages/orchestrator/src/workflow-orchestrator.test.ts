@@ -1403,6 +1403,151 @@ describe('generated database sync before browser verification (#429)', () => {
   });
 });
 
+describe('schema drift verification before browser check (#481)', () => {
+  function schemaPlanArtifactContent(plan: unknown) {
+    return {
+      schemaVersion: '1' as const,
+      status: 'completed' as const,
+      summary: 'Planned the schema.',
+      data: plan,
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      nextActions: [],
+    };
+  }
+
+  async function harnessWithBrowserWorkflow(verifySchema: ReturnType<typeof vi.fn>) {
+    const harness = makeHarness({}, undefined, {
+      workflow: TASK_BROWSER_WORKFLOW,
+      browserVerification: {
+        verify: async (
+          input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
+          _signal: AbortSignal,
+          onSessionStarted?: (sessionId: string) => Promise<void>,
+        ) => {
+          await onSessionStarted?.('preview-481');
+          return {
+            schemaVersion: '1' as const,
+            approved: true,
+            summary: 'browser approved',
+            planArtifact: {
+              name: input.plan.metadata.name,
+              revision: input.plan.metadata.revision,
+              sha256: input.plan.metadata.sha256,
+            },
+            previewSession: {
+              sessionId: 'preview-481',
+              status: 'running' as const,
+              evidence: { screenshots: [] },
+            },
+            steps: [
+              {
+                stepId: 'open-task',
+                title: 'Open task',
+                status: 'passed' as const,
+                durationMs: 5,
+                observations: [],
+              },
+            ],
+          };
+        },
+      } as never,
+      generatedProjectRuntime: {
+        applyWorkspaceMigrations: vi.fn(async () => ({}) as never),
+        verifySchema,
+        initialize: vi.fn(async () => ({}) as never),
+        health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
+      } as never,
+      agentOutput: (request) => {
+        if (request.stepId === 'plan') {
+          return {
+            schemaVersion: '1',
+            status: 'completed',
+            summary: 'Planned.',
+            data: BROWSER_GRAPH,
+            decisions: [],
+            assumptions: [],
+            risks: [],
+            nextActions: [],
+          };
+        }
+        if (request.stepId === 'plan-task-browser-test.T1') return VALID_BROWSER_PLAN;
+        return undefined;
+      },
+    });
+    const { mkdtemp, mkdir } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-verify-'));
+    await mkdir(join(workspace, 'supabase', 'migrations'), { recursive: true });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+    return harness;
+  }
+
+  it('fails the step with an ExecutionError naming every missing table, missing column, and RLS-less table', async () => {
+    const verifySchema = vi.fn(async () => ({
+      missingTables: ['items'],
+      missingColumns: ['orders.total'],
+      tablesWithoutRls: ['legacy'],
+    }));
+    const harness = await harnessWithBrowserWorkflow(verifySchema);
+    await harness.artifacts.put({
+      projectId: 'project-1',
+      name: 'schema.current',
+      createdBy: 'test',
+      runId: 'run-1',
+      content: schemaPlanArtifactContent(VALID_SCHEMA_PLAN),
+    });
+
+    await expect(
+      harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1'),
+    ).rejects.toThrow(/items[\s\S]*orders\.total[\s\S]*legacy/);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('failed');
+    expect(verifySchema).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      tables: VALID_SCHEMA_PLAN.tables,
+    });
+  });
+
+  it('does not fail the step when verifySchema reports a clean database', async () => {
+    const verifySchema = vi.fn(async () => ({
+      missingTables: [],
+      missingColumns: [],
+      tablesWithoutRls: [],
+    }));
+    const harness = await harnessWithBrowserWorkflow(verifySchema);
+    await harness.artifacts.put({
+      projectId: 'project-1',
+      name: 'schema.current',
+      createdBy: 'test',
+      runId: 'run-1',
+      content: schemaPlanArtifactContent(VALID_SCHEMA_PLAN),
+    });
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(verifySchema).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips verification silently when no schema.current artifact exists', async () => {
+    const verifySchema = vi.fn(async () => ({
+      missingTables: ['should-not-be-checked'],
+      missingColumns: [],
+      tablesWithoutRls: [],
+    }));
+    const harness = await harnessWithBrowserWorkflow(verifySchema);
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(verifySchema).not.toHaveBeenCalled();
+  });
+});
+
 describe('advisory UI-quality judge (#475)', () => {
   const SCREENSHOT_NAME = 'browser-screenshot-preview-475-open-task';
 

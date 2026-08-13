@@ -60,6 +60,8 @@ import type {
   MigrationApproval,
   MigrationBackup,
   MigrationPreview,
+  SchemaTable,
+  SchemaVerification,
 } from '@agent-foundry/contracts';
 
 export interface ProjectRepository {
@@ -659,6 +661,11 @@ export interface GeneratedProjectRuntime {
     workspaceMigrationsDir: string;
     approval?: MigrationApproval;
   }): Promise<AppEnvironment | null>;
+  /**
+   * Compares the live database against an approved schema plan's tables.
+   * Read-only. Extra tables the plan does not name are not a failure.
+   */
+  verifySchema(input: { projectId: string; tables: SchemaTable[] }): Promise<SchemaVerification>;
   seed(input: { projectId: string; seedPath: string }): Promise<AppEnvironment>;
   health(projectId: string): Promise<AppEnvironment>;
   reset(input: {

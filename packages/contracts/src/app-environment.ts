@@ -66,6 +66,17 @@ export const MigrationApprovalSchema = z
   .strict();
 export type MigrationApproval = z.infer<typeof MigrationApprovalSchema>;
 
+/** Result of comparing a live database against an approved SchemaPlan. Extra
+ * tables the plan does not name are not a failure. */
+export const SchemaVerificationSchema = z
+  .object({
+    missingTables: z.array(z.string()),
+    missingColumns: z.array(z.string()), // "table.column"
+    tablesWithoutRls: z.array(z.string()),
+  })
+  .strict();
+export type SchemaVerification = z.infer<typeof SchemaVerificationSchema>;
+
 export const AppEnvironmentSchema = z
   .object({
     projectId: PathSegmentSchema,

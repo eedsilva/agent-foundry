@@ -2626,6 +2626,26 @@ export class WorkflowOrchestrator {
         'migrations',
       ),
     });
+    // No artifact at all means a project that predates this check, or a
+    // workflow without a schema step — nothing approved to verify against.
+    const schemaArtifact = await this.artifacts.getLatest(projectId, 'schema.current');
+    if (!schemaArtifact) return;
+    const schemaPlan = SchemaPlanArtifactSchema.safeParse(schemaArtifact.content);
+    if (!schemaPlan.success) return;
+    const verification = await this.generatedProjectRuntime.verifySchema({
+      projectId,
+      tables: schemaPlan.data.data.tables,
+    });
+    const problems = [
+      ...verification.missingTables.map((name) => `missing table "${name}"`),
+      ...verification.missingColumns.map((name) => `missing column "${name}"`),
+      ...verification.tablesWithoutRls.map((name) => `RLS not enabled on "${name}"`),
+    ];
+    if (problems.length) {
+      throw new ExecutionError(
+        `Live database does not match the approved schema plan: ${problems.join(', ')}.`,
+      );
+    }
   }
 
   private async executeBrowserVerifyStepAttempt(

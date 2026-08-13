@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
+import postgres, { type Sql } from 'postgres';
 import {
   AppEnvironmentSchema,
   FUNCTION_INVOCATION_BODY_MAX_BYTES,
@@ -31,6 +32,8 @@ import {
   type MigrationApproval,
   type MigrationBackup,
   type MigrationPreview,
+  type SchemaTable,
+  type SchemaVerification,
 } from '@agent-foundry/contracts';
 import {
   EnvironmentOperationError,
@@ -78,11 +81,19 @@ export interface SupabaseCommandResult {
 
 export type SupabaseCommand = (...args: string[]) => Promise<SupabaseCommandResult>;
 
+/** Overridable in tests so verifySchema never needs a real Postgres connection. */
+export type SchemaSqlClientFactory = (databaseUrl: string) => Sql;
+
+const defaultSqlClientFactory: SchemaSqlClientFactory = (databaseUrl) =>
+  // ponytail: fixed tiny pool; this connection is opened and closed per verifySchema call.
+  postgres(databaseUrl, { max: 1, onnotice: () => {} });
+
 export interface SupabaseGeneratedProjectRuntimeOptions {
   dataDir: string;
   command?: SupabaseCommand;
   now?: () => Date;
   initializeTimeoutMs?: number;
+  sqlClientFactory?: SchemaSqlClientFactory;
 }
 
 const defaultCommand: SupabaseCommand = (...args) => runDefaultCommand(undefined, ...args);
@@ -111,6 +122,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     ((signal: AbortSignal, ...args: string[]) => Promise<SupabaseCommandResult>) | undefined;
   readonly #now: () => Date;
   readonly #initializeTimeoutMs: number;
+  readonly #sqlClientFactory: SchemaSqlClientFactory;
   readonly #initializations = new Map<string, Promise<AppEnvironment>>();
   #configurationQueue = Promise.resolve();
 
@@ -119,6 +131,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     this.#command = options.command ?? defaultCommand;
     this.#abortableCommand = options.command ? undefined : defaultCommandWithSignal;
     this.#now = options.now ?? (() => new Date());
+    this.#sqlClientFactory = options.sqlClientFactory ?? defaultSqlClientFactory;
     this.#initializeTimeoutMs = options.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS;
     if (!Number.isInteger(this.#initializeTimeoutMs) || this.#initializeTimeoutMs <= 0) {
       throw new ValidationError('Supabase initialization timeout must be a positive integer.');
@@ -476,6 +489,75 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
   }
 
+  /**
+   * Read-only: connects to the project's live Postgres (via `supabase
+   * status`'s DB_URL, never `start`'s stdout — see credentialsFromStatus)
+   * and checks that every approved table, column, and RLS flag is really
+   * there. Extra tables the plan does not name are not a failure.
+   */
+  async verifySchema(input: {
+    projectId: string;
+    tables: SchemaTable[];
+  }): Promise<SchemaVerification> {
+    const environment = await this.#require(input.projectId);
+    const result = await this.#execute(
+      'inspect',
+      'status',
+      '--workdir',
+      environment.workdir,
+      '--output',
+      'json',
+    );
+    const databaseUrl = dbUrlFromStatus(result.stdout);
+    if (!databaseUrl) {
+      throw new EnvironmentOperationError(
+        'inspect',
+        undefined,
+        'Supabase status did not report a database connection URL.',
+      );
+    }
+    const sql = this.#sqlClientFactory(databaseUrl);
+    try {
+      const [tableRows, columnRows, rlsRows] = await Promise.all([
+        sql<{ table_name: string }[]>`
+          select table_name from information_schema.tables where table_schema = 'public'`,
+        sql<{ table_name: string; column_name: string }[]>`
+          select table_name, column_name from information_schema.columns
+          where table_schema = 'public'`,
+        sql<{ relname: string; relrowsecurity: boolean }[]>`
+          select c.relname, c.relrowsecurity from pg_class c
+          join pg_namespace n on n.oid = c.relnamespace
+          where n.nspname = 'public'`,
+      ]);
+      const existingTables = new Set(tableRows.map((row) => row.table_name));
+      const existingColumns = new Set(
+        columnRows.map((row) => `${row.table_name}.${row.column_name}`),
+      );
+      const rlsByTable = new Map(rlsRows.map((row) => [row.relname, row.relrowsecurity]));
+
+      const missingTables: string[] = [];
+      const missingColumns: string[] = [];
+      const tablesWithoutRls: string[] = [];
+      for (const table of input.tables) {
+        if (!existingTables.has(table.name)) {
+          missingTables.push(table.name);
+          continue;
+        }
+        for (const column of table.columns) {
+          if (!existingColumns.has(`${table.name}.${column.name}`)) {
+            missingColumns.push(`${table.name}.${column.name}`);
+          }
+        }
+        if (!rlsByTable.get(table.name)) {
+          tablesWithoutRls.push(table.name);
+        }
+      }
+      return { missingTables, missingColumns, tablesWithoutRls };
+    } finally {
+      await sql.end();
+    }
+  }
+
   async seed(input: { projectId: string; seedPath: string }): Promise<AppEnvironment> {
     const environment = await this.#require(input.projectId);
     await requireContainedFile(environment.workdir, input.seedPath);
@@ -825,6 +907,21 @@ function metadataPath(dataDir: string, projectId: string): string {
 // workspace/ directory by construction (ADR 0033).
 function projectEnvPath(dataDir: string, projectId: string): string {
   return join(dataDir, 'projects', projectId, '.env');
+}
+
+/** `supabase status --output json`'s DB_URL — never `start`'s stdout, which
+ * has drifted from the real connection details before (a storage E2E broke
+ * on it). */
+function dbUrlFromStatus(stdout: string): string | undefined {
+  let status: unknown;
+  try {
+    status = JSON.parse(stdout);
+  } catch {
+    return undefined;
+  }
+  if (!status || typeof status !== 'object' || Array.isArray(status)) return undefined;
+  const dbUrl = (status as Record<string, unknown>).DB_URL;
+  return typeof dbUrl === 'string' && URL.canParse(dbUrl) ? dbUrl : undefined;
 }
 
 function publicStatus(
