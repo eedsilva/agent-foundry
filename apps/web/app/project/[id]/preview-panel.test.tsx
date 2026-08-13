@@ -5,7 +5,7 @@ import type {
   PreviewSession,
 } from '@agent-foundry/contracts';
 import {
-  pinnedPreviewUrl,
+  pinPreviewUrl,
   previewRepairContext,
   previewStatusMessage,
   startPreviewLogPolling,
@@ -182,35 +182,49 @@ describe('previewStatusMessage', () => {
   });
 });
 
-describe('pinnedPreviewUrl', () => {
-  it('uses the session url the first time a session is shown', () => {
+describe('pinPreviewUrl', () => {
+  it('uses (and remembers) the session url the first time a session is seen', () => {
     const session = runningSession();
-    expect(pinnedPreviewUrl(session, undefined)).toBe(session.url);
+    const result = pinPreviewUrl(session, undefined);
+    expect(result.session.url).toBe(session.url);
+    expect(result.known).toEqual({ sessionId: session.id, url: session.url });
   });
 
-  it('keeps the first-shown url for the same session even after a later poll strips it (#486)', () => {
+  it('keeps the first-known url for the same session even after a later poll strips it (#486)', () => {
     // packages/persistence's sanitizeSession strips ?token= from a preview
     // session's url on every read after the initial start() response — a
     // deliberate, tested security property: the raw token must never be
     // re-servable from disk (see preview-repositories.test.ts). The 2s
     // session-status poll (#510) can only ever observe that stripped url for
-    // an already-running session; feeding it straight to the iframe's src
-    // forces a reload the proxy then denies as a raw token-mismatch 403.
+    // an already-running session; feeding it straight through would force a
+    // reload (iframe src, or resolvePreviewSelection's screenshot fallback)
+    // the proxy then denies as a raw token-mismatch 403.
     const session = runningSession();
     const polledLater = runningSession({
       url: 'http://127.0.0.1:4000/preview/preview-1/',
     });
-    const shown = { sessionId: session.id, url: session.url! };
-    expect(pinnedPreviewUrl(polledLater, shown)).toBe(session.url);
+    const known = { sessionId: session.id, url: session.url! };
+    const result = pinPreviewUrl(polledLater, known);
+    expect(result.session.url).toBe(session.url);
+    expect(result.known).toBe(known);
   });
 
   it('adopts the new url for a newly started session rather than the previous one', () => {
-    const shown = {
+    const known = {
       sessionId: 'preview-0',
       url: 'http://127.0.0.1:4000/preview/preview-0/?token=old',
     };
     const session = runningSession();
-    expect(pinnedPreviewUrl(session, shown)).toBe(session.url);
+    const result = pinPreviewUrl(session, known);
+    expect(result.session.url).toBe(session.url);
+    expect(result.known).toEqual({ sessionId: session.id, url: session.url });
+  });
+
+  it('passes a session with no url yet through unchanged (still starting)', () => {
+    const starting = runningSession({ status: 'starting', url: undefined, process: undefined });
+    const result = pinPreviewUrl(starting, undefined);
+    expect(result.session).toBe(starting);
+    expect(result.known).toBeUndefined();
   });
 });
 

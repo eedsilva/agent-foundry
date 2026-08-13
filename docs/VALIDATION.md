@@ -822,18 +822,33 @@ repeats, since it is a real ~2s race against however far the test gets before th
 matches the CI symptom's flakier-under-load character (`supabase-data-plane-e2e` is the only CI job that
 exercises `golden-flow.spec.ts` at all, so this had no other chance to surface before merge).
 
-Fix: `pinnedPreviewUrl` (`preview-panel.tsx`) — once an iframe has been shown for a given session id, the
-`src` it uses is frozen at whatever was first shown for that id (tracked via a ref,
-`shownIframeUrl`, alongside the existing `shownIframeSessionId`); a later poll response for the *same*
-session id can never regress it, even though its own `url` field is by-design token-less from then on. A
-newly *started* session (different id) still adopts its own fresh url normally.
+First fix attempt pinned only the `<iframe src>` prop at whatever url a session id was first shown with.
+An altitude-focused `/simplify` pass caught that this was a bandaid on one consumer, not the actual seam:
+`session.url` itself stayed clobbered in React state, and the panel has a second live consumer of it —
+the selection flow (`resolvePreviewSelection`, `preview-panel.tsx`) sends `previewUrl: session.url` to
+`PreviewSelectionService.captureFallbackScreenshot` (`packages/orchestrator/src/preview-selection-service.
+ts`), which navigates a real headless browser to that url for the "unsupported selection" screenshot
+fallback — the identical #486 failure mode, unfixed, in a path the iframe-only fix never touched.
 
-Verification: `preview-panel.test.tsx` — 3 new `pinnedPreviewUrl` cases (first-shown url used, later
-stripped poll for the same id ignored, a genuinely new session's url adopted); 17/17 passing. `npm run
-test:unit:fast` (171 files/1563 tests), `npm run check:static` (format, lint, architecture, roadmap,
-root `tsc -b`) all clean. Re-ran the previously-failing `golden-flow.spec.ts` local reproduction (real
-`next dev` + real API, no mocks) repeatedly after the fix: 0/9 runs hit the token-mismatch signature that
-reproduced reliably before it (a couple of unrelated, pre-existing timeouts elsewhere in the same spec
-did occur under repeated local load — no `PreviewAccessDeniedError` in either, a different, already-known
-flake class, out of scope here). The `supabase-data-plane-e2e` CI job itself is the authoritative
-verification per this repo's convention (Postgres+S3-backed, real Playwright browser); not re-run here.
+Fix (final): `pinPreviewUrl` (`preview-panel.tsx`) pins `session.url` itself, once, at the single point
+polled/started/stopped session data becomes `session` state (`adoptSession`, called from
+`startPreviewSessionPolling`'s `onSession`, `start()`, and `stop()` alike) — mirroring the "deliver the
+token once, out of band" shape `POST /projects/:id/preview` already returns (`{ session, url }`) and this
+component already relied on for its very first render. A `known` ref (`knownPreviewUrl`) remembers the
+first url seen for a given session id; a later poll response for the *same* id can never regress
+`session.url`, even though the poll's own `url` field is by-design token-less from then on. A newly
+*started* session (different id) still adopts its own fresh url normally. Every consumer of `session.url`
+— the iframe's `src`, and the selection flow's `previewUrl` — now shares the one fix instead of each
+needing a private copy of it. `shownIframeSessionId` (the pre-existing, unrelated "has the iframe UI been
+rendered yet" tracking behind `previewStatusMessage`'s already-shown grace) is untouched by this.
+
+Verification: `preview-panel.test.tsx` — 4 new `pinPreviewUrl` cases (first-seen url remembered, later
+stripped poll for the same id ignored, a genuinely new session's url adopted, a still-starting session
+with no url yet passed through unchanged); 18/18 passing. `npm run test:unit:fast` (171 files/1564 tests),
+`npm run check:static` (format, lint, architecture, roadmap, root `tsc -b`) all clean. Re-ran the
+previously-failing `golden-flow.spec.ts` local reproduction (real `next dev` + real API, no mocks)
+repeatedly after the fix: 0/9 runs hit the token-mismatch signature that reproduced reliably before it (a
+couple of unrelated, pre-existing timeouts elsewhere in the same spec did occur under repeated local load
+— no `PreviewAccessDeniedError` in either, a different, already-known flake class, out of scope here). The
+`supabase-data-plane-e2e` CI job itself is the authoritative verification per this repo's convention
+(Postgres+S3-backed, real Playwright browser); not re-run here.
