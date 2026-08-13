@@ -16,6 +16,7 @@ import {
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
+  MigrationApprovalRequiredError,
   SystemClock,
   type Clock,
   type ExecutorRegistry,
@@ -1429,6 +1430,185 @@ describe('generated database sync before browser verification (#429)', () => {
     expect(applyWorkspaceMigrations.mock.invocationCallOrder[0]!).toBeLessThan(
       verify.mock.invocationCallOrder[0]!,
     );
+  });
+});
+
+describe('destructive-migration approval gate (#535)', () => {
+  function browserVerifyFixture() {
+    return vi.fn(
+      async (
+        input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
+        _signal: AbortSignal,
+        onSessionStarted?: (sessionId: string) => Promise<void>,
+      ) => {
+        await onSessionStarted?.('preview-535');
+        return {
+          schemaVersion: '1' as const,
+          approved: true,
+          summary: 'browser approved',
+          planArtifact: {
+            name: input.plan.metadata.name,
+            revision: input.plan.metadata.revision,
+            sha256: input.plan.metadata.sha256,
+          },
+          previewSession: {
+            sessionId: 'preview-535',
+            status: 'running' as const,
+            evidence: { screenshots: [] },
+          },
+          steps: [
+            {
+              stepId: 'open-task',
+              title: 'Open task',
+              status: 'passed' as const,
+              durationMs: 5,
+              observations: [],
+            },
+          ],
+        };
+      },
+    );
+  }
+
+  function agentOutputFixture() {
+    return (request: AgentExecutionRequest) => {
+      if (request.stepId === 'plan') {
+        return {
+          schemaVersion: '1' as const,
+          status: 'completed' as const,
+          summary: 'Planned.',
+          data: BROWSER_GRAPH,
+          decisions: [],
+          assumptions: [],
+          risks: [],
+          nextActions: [],
+        };
+      }
+      if (request.stepId === 'plan-task-browser-test.T1') return VALID_BROWSER_PLAN;
+      return undefined;
+    };
+  }
+
+  async function destructiveHarness() {
+    const { createHash } = await import('node:crypto');
+    const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-535-migrations-'));
+    await mkdir(join(workspace, 'supabase', 'migrations'), { recursive: true });
+    await writeFile(
+      join(workspace, 'supabase', 'migrations', '0001_drop_obsolete.sql'),
+      'DROP TABLE obsolete;',
+    );
+    const destructive = [
+      {
+        migrationPath: 'supabase/migrations/0001_drop_obsolete.sql',
+        checksum: createHash('sha256').update('DROP TABLE obsolete;').digest('hex'),
+        destructiveStatements: ['DROP TABLE obsolete'],
+      },
+    ];
+
+    const applyWorkspaceMigrations = vi.fn(async (input: { approval?: unknown }) => {
+      if (!input.approval) throw new MigrationApprovalRequiredError(destructive);
+      return {} as never;
+    });
+    const backupMigration = vi.fn(async () => ({
+      path: '.foundry/migration-backups/backup.sql',
+      checksum: 'b'.repeat(64),
+      schemaChecksum: 'c'.repeat(64),
+      dataChecksum: 'd'.repeat(64),
+      createdAt: '2026-08-13T00:00:00.000Z',
+      manifestId: 'manifest-1',
+    }));
+
+    const harness = makeHarness({}, undefined, {
+      workflow: TASK_BROWSER_WORKFLOW,
+      browserVerification: { verify: browserVerifyFixture() } as never,
+      generatedProjectRuntime: {
+        applyWorkspaceMigrations,
+        backupMigration,
+        initialize: vi.fn(async () => ({}) as never),
+        health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
+      } as never,
+      agentOutput: agentOutputFixture(),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+    return { harness, applyWorkspaceMigrations, backupMigration, destructive };
+  }
+
+  it('parks the run at an approval gate naming the file and statement instead of failing the run', async () => {
+    const { harness, applyWorkspaceMigrations } = await destructiveHarness();
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+    expect(applyWorkspaceMigrations).toHaveBeenCalledTimes(1);
+    const [pending] = await harness.service.listApprovals('run-1');
+    expect(pending?.decision).toBeNull();
+    expect(pending?.request.nodeId).toMatch(/\.migration-approval$/);
+    const requested = harness.events.events.find(
+      (event) => event.type === 'run.approval_requested',
+    );
+    expect(requested?.message).toContain('0001_drop_obsolete.sql');
+    expect(requested?.message).toContain('DROP TABLE obsolete');
+  });
+
+  it('applies the batch with a fresh backup once the operator approves', async () => {
+    const { join } = await import('node:path');
+    const { harness, applyWorkspaceMigrations, backupMigration, destructive } =
+      await destructiveHarness();
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(backupMigration).toHaveBeenCalledTimes(1);
+    expect(applyWorkspaceMigrations).toHaveBeenLastCalledWith({
+      projectId: 'project-1',
+      workspaceMigrationsDir: expect.stringContaining(join('supabase', 'migrations')),
+      approval: {
+        migrationChecksum: destructive[0]!.checksum,
+        backup: {
+          path: '.foundry/migration-backups/backup.sql',
+          checksum: 'b'.repeat(64),
+          schemaChecksum: 'c'.repeat(64),
+          dataChecksum: 'd'.repeat(64),
+          createdAt: '2026-08-13T00:00:00.000Z',
+          manifestId: 'manifest-1',
+        },
+      },
+    });
+  });
+
+  it('ends the run rejected, with no migration applied, when the operator rejects', async () => {
+    const { harness, applyWorkspaceMigrations, backupMigration } = await destructiveHarness();
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'reject',
+      decidedBy: 'ed',
+      note: 'not safe to drop obsolete yet',
+    });
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('rejected');
+    expect(backupMigration).not.toHaveBeenCalled();
+    // Once when first detected, once on replay after the decision — both
+    // times without an approval, since resolveMigrationApproval throws
+    // ApprovalRejectedError before ever building one.
+    expect(applyWorkspaceMigrations).toHaveBeenCalledTimes(2);
+    expect(applyWorkspaceMigrations).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ approval: expect.anything() }),
+    );
+    const rejected = harness.events.events.find((event) => event.type === 'run.rejected');
+    expect(rejected?.message).toContain('not safe to drop obsolete yet');
   });
 });
 

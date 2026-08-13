@@ -809,7 +809,12 @@ export class ProjectService {
 
     const workflow = await this.workflows.get(run.workflowId);
     const node = workflow.nodes.find((candidate) => candidate.id === request.nodeId);
-    if (!node || node.type !== 'approval-gate') {
+    // No match at all is a dynamic gate raised mid-step rather than a
+    // static `approval-gate` workflow node — the destructive-migration gate
+    // (#535) is the first of these. It only ever offers approve/reject with
+    // no return-to-step, so it's treated as one below via optional chaining.
+    // A node that *does* exist but is the wrong type is a real caller error.
+    if (node && node.type !== 'approval-gate') {
       throw new NotFoundError(
         `Approval gate node ${request.nodeId} not found in workflow ${run.workflowId}`,
       );
@@ -820,10 +825,18 @@ export class ProjectService {
     // different caller), and the originally recorded decision must win.
     const needsReturn =
       decision.action === 'request-changes' ||
-      (decision.action === 'reject' && node.onReject === 'return-to-step');
+      (decision.action === 'reject' && node?.onReject === 'return-to-step');
 
     let updatedRun: WorkflowRun;
     if (needsReturn) {
+      // A dynamic gate never allows 'request-changes' and never sets
+      // onReject: 'return-to-step', so needsReturn is unreachable without a
+      // real node — this is a defensive invariant check, not live behavior.
+      if (!node) {
+        throw new NotFoundError(
+          `Approval gate node ${request.nodeId} not found in workflow ${run.workflowId}`,
+        );
+      }
       if (!node.returnToStepId) {
         throw new ValidationError(`Approval gate ${node.id} has no returnToStepId configured.`);
       }

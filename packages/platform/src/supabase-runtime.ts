@@ -38,6 +38,7 @@ import {
 } from '@agent-foundry/contracts';
 import {
   EnvironmentOperationError,
+  MigrationApprovalRequiredError,
   ValidationError,
   redactString,
   withSpan,
@@ -1424,7 +1425,7 @@ async function requireMigrationApproval(
   now: Date,
 ): Promise<void> {
   if (!approval) {
-    throw new ValidationError('Destructive migration requires approval and verified backup.');
+    throw new MigrationApprovalRequiredError(previews);
   }
   const parsed = MigrationApprovalSchema.parse(approval);
   const approvedChecksums = new Set([
