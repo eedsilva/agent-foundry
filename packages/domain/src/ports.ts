@@ -651,10 +651,13 @@ export interface GeneratedProjectRuntime {
     approval?: MigrationApproval;
   }): Promise<AppEnvironment>;
   /**
-   * Copies new supabase/migrations/*.sql files from the given workspace
-   * directory into the runtime environment and applies pending migrations.
-   * Returns null when the directory is absent or holds nothing new. The
-   * destructive-migration approval gate applies exactly as in migrate().
+   * Copies the supabase/migrations/*.sql files the database has not applied
+   * yet from the given workspace directory into the runtime environment and
+   * applies them. Pending-ness comes from the recorded migration history, not
+   * from file presence, so a retry after a failed apply really re-runs.
+   * Returns null when the directory is absent or every migration it holds is
+   * already applied. The destructive-migration approval gate applies exactly
+   * as in migrate().
    */
   applyWorkspaceMigrations(input: {
     projectId: string;

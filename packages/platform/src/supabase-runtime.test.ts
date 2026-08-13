@@ -148,6 +148,9 @@ function fixture(
       dataDir,
       command,
       now: () => new Date(NOW),
+      // Default to an empty fake so no test can open a real Postgres
+      // connection now that applyWorkspaceMigrations also reads the DB (#536).
+      sqlClientFactory: fakeSqlClient({}, { urls: [], ended: false }),
       ...options,
     }),
   };
@@ -825,6 +828,110 @@ enabled = false`);
       }),
     ).rejects.toThrow(EnvironmentOperationError);
     expect(command.mock.calls.map((call) => call[1])).not.toContain('repair');
+  });
+
+  it('re-runs a failed apply on retry instead of reporting nothing new (#536)', async () => {
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'migration' && args[1] === 'up') {
+        return {
+          stdout: '',
+          stderr: [
+            'Applying migration 20260806000000_create_todos.sql...',
+            'ERROR: syntax error at or near "tabel" (SQLSTATE 42601)',
+          ].join('\n'),
+          exitCode: 1,
+        };
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command, {
+      // The failed apply never reached the database, so the version stays unapplied.
+      sqlClientFactory: fakeSqlClient({ migrations: [] }, { urls: [], ended: false }),
+    });
+    const environment = await runtime.initialize({ projectId: 'project-a' });
+    const workspaceDir = join(dataDir, 'workspace-migrations');
+    await mkdir(workspaceDir, { recursive: true });
+    await writeFile(
+      join(workspaceDir, '20260806000000_create_todos.sql'),
+      'CREATE tabel todos (id uuid PRIMARY KEY);',
+    );
+    const input = { projectId: 'project-a', workspaceMigrationsDir: workspaceDir };
+
+    await expect(runtime.applyWorkspaceMigrations(input)).rejects.toThrow(
+      EnvironmentOperationError,
+    );
+    // Not null: the second call re-runs migrate(), so the destructive check and
+    // `migration up` both run again and it fails the same way rather than
+    // silently reporting nothing new.
+    await expect(runtime.applyWorkspaceMigrations(input)).rejects.toThrow(
+      EnvironmentOperationError,
+    );
+
+    const up = ['migration', 'up', '--workdir', environment.workdir, '--yes'];
+    expect(command.mock.calls.filter((call) => call.join(' ') === up.join(' '))).toHaveLength(2);
+  });
+
+  it('does not let an unapplied file already in the environment dir mask a pending migration (#536)', async () => {
+    const command = vi.fn<SupabaseCommand>(statusCommand);
+    const { runtime } = fixture(command, {
+      sqlClientFactory: fakeSqlClient({ migrations: [] }, { urls: [], ended: false }),
+    });
+    const environment = await runtime.initialize({ projectId: 'project-a' });
+    const workspaceDir = join(dataDir, 'workspace-migrations');
+    await mkdir(workspaceDir, { recursive: true });
+    const sql = 'CREATE TABLE todos (id uuid PRIMARY KEY);';
+    await writeFile(join(workspaceDir, '20260806000000_create_todos.sql'), sql);
+    await writeFile(
+      join(environment.workdir, 'supabase', 'migrations', '20260806000000_create_todos.sql'),
+      sql,
+    );
+    command.mockClear();
+
+    await expect(
+      runtime.applyWorkspaceMigrations({
+        projectId: 'project-a',
+        workspaceMigrationsDir: workspaceDir,
+      }),
+    ).resolves.toMatchObject({ projectId: 'project-a' });
+
+    expect(command.mock.calls).toContainEqual([
+      'migration',
+      'up',
+      '--workdir',
+      environment.workdir,
+      '--yes',
+    ]);
+  });
+
+  it('reports nothing new when the database already applied every workspace migration (#536)', async () => {
+    const command = vi.fn<SupabaseCommand>(statusCommand);
+    const { runtime } = fixture(command, {
+      sqlClientFactory: fakeSqlClient(
+        { migrations: [{ version: '20260726000000' }, { version: '20260806000000' }] },
+        { urls: [], ended: false },
+      ),
+    });
+    await runtime.initialize({ projectId: 'project-a' });
+    const workspaceDir = join(dataDir, 'workspace-migrations');
+    await mkdir(workspaceDir, { recursive: true });
+    await writeFile(
+      join(workspaceDir, '20260726000000_rls_baseline.sql'),
+      'CREATE TABLE profiles (id uuid PRIMARY KEY);',
+    );
+    await writeFile(
+      join(workspaceDir, '20260806000000_create_todos.sql'),
+      'CREATE TABLE todos (id uuid PRIMARY KEY);',
+    );
+    command.mockClear();
+
+    await expect(
+      runtime.applyWorkspaceMigrations({
+        projectId: 'project-a',
+        workspaceMigrationsDir: workspaceDir,
+      }),
+    ).resolves.toBeNull();
+
+    expect(command.mock.calls.map((call) => `${call[0]} ${call[1]}`)).not.toContain('migration up');
   });
 
   it('finds required destructive statements after removing SQL comments', async () => {
@@ -1740,6 +1847,7 @@ function fakeSqlClient(
     }[];
     rls?: { relname: string; relrowsecurity: boolean }[];
     policies?: { tablename: string; policyname: string }[];
+    migrations?: { version: string }[];
   },
   calls: { urls: string[]; ended: boolean },
 ): SchemaSqlClientFactory {
@@ -1751,6 +1859,7 @@ function fakeSqlClient(
       if (text.includes('information_schema.columns')) return Promise.resolve(rows.columns ?? []);
       if (text.includes('pg_policies')) return Promise.resolve(rows.policies ?? []);
       if (text.includes('pg_class')) return Promise.resolve(rows.rls ?? []);
+      if (text.includes('schema_migrations')) return Promise.resolve(rows.migrations ?? []);
       return Promise.reject(new Error(`Unexpected query: ${text}`));
     };
     const client = query as unknown as ReturnType<SchemaSqlClientFactory>;
