@@ -1436,6 +1436,23 @@ describe('generated database sync before browser verification (#429)', () => {
   });
 });
 
+/** TASK_BROWSER_WORKFLOW plus the blocking full-suite gate web-app-v1 ends on. */
+const DETERMINISTIC_FULL_SUITE_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  ...TASK_BROWSER_WORKFLOW,
+  id: 'task-deterministic-full-suite-v1',
+  nodes: [
+    ...TASK_BROWSER_WORKFLOW.nodes,
+    {
+      id: 'full-suite-verification',
+      type: 'verify',
+      title: 'Run the full repository verification suite',
+      outputArtifact: 'verification.report',
+      scripts: [],
+      blocksOnFailure: true,
+    },
+  ],
+});
+
 describe('schema drift verification before browser check (#481)', () => {
   function schemaPlanArtifactContent(plan: unknown) {
     return {
@@ -1450,9 +1467,13 @@ describe('schema drift verification before browser check (#481)', () => {
     };
   }
 
-  async function harnessWithBrowserWorkflow(verifySchema: ReturnType<typeof vi.fn>) {
+  async function harnessWithBrowserWorkflow(
+    verifySchema: ReturnType<typeof vi.fn>,
+    workflow: WorkflowDefinition = TASK_BROWSER_WORKFLOW,
+    graph: unknown = BROWSER_GRAPH,
+  ) {
     const harness = makeHarness({}, undefined, {
-      workflow: TASK_BROWSER_WORKFLOW,
+      workflow,
       browserVerification: {
         verify: async (
           input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
@@ -1498,7 +1519,7 @@ describe('schema drift verification before browser check (#481)', () => {
             schemaVersion: '1',
             status: 'completed',
             summary: 'Planned.',
-            data: BROWSER_GRAPH,
+            data: graph,
             decisions: [],
             assumptions: [],
             risks: [],
@@ -1586,6 +1607,38 @@ describe('schema drift verification before browser check (#481)', () => {
 
     expect((await harness.runs.get('run-1'))?.status).toBe('completed');
     expect(verifySchema).not.toHaveBeenCalled();
+  });
+
+  it('still runs before the blocking full-suite gate when no task is browser-visible', async () => {
+    const verifySchema = vi.fn(async () => ({
+      missingTables: ['items'],
+      missingColumns: [],
+      mismatchedColumns: [],
+      tablesWithoutRls: [],
+      missingPolicies: [],
+    }));
+    const harness = await harnessWithBrowserWorkflow(
+      verifySchema,
+      DETERMINISTIC_FULL_SUITE_WORKFLOW,
+      GENERATED_GRAPH,
+    );
+    await harness.artifacts.put({
+      projectId: 'project-1',
+      name: 'schema.current',
+      createdBy: 'test',
+      runId: 'run-1',
+      content: schemaPlanArtifactContent(VALID_SCHEMA_PLAN),
+    });
+
+    // Every task is deterministic-only, so task-graph-runner skips the browser
+    // step and its sync entirely; without the full-suite backstop the drift
+    // check would silently never run.
+    await expect(
+      harness.orchestrator.runProject('project-1', DETERMINISTIC_FULL_SUITE_WORKFLOW.id, 'run-1'),
+    ).rejects.toThrow(/does not match the approved schema plan/);
+    const stepIds = (await harness.stepRuns.list('run-1')).map((step) => step.stepId);
+    expect(stepIds).not.toContain('assert-task.T1');
+    expect(verifySchema).toHaveBeenCalledTimes(1);
   });
 });
 

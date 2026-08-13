@@ -2283,6 +2283,13 @@ export class WorkflowOrchestrator {
   ): Promise<StoredArtifact> {
     const startedAt = Date.now();
     try {
+      // The per-task browser check is the only other caller, and
+      // task-graph-runner skips that step entirely for deterministic-only
+      // tasks — so a plan without a single browser-visible task would never
+      // apply the generated migration or notice drift at all (#481). The
+      // blocking full-suite gate is the backstop that keeps a mismatch a hard
+      // failure rather than a silent no-op.
+      if (step.blocksOnFailure) await this.syncGeneratedDatabase(project.id);
       const validationDatabaseGate =
         this.validationCampaign &&
         step.blocksOnFailure &&
@@ -2628,6 +2635,12 @@ export class WorkflowOrchestrator {
    * migration still fails closed through the existing approval gate. Seed is
    * deliberately not re-run: it is not idempotent, and browser plans handle
    * an empty state.
+   *
+   * It also owns the schema drift check (#481): once the migrations are
+   * applied, the live database is compared against the approved
+   * `schema.current` plan and any mismatch fails the step. Runs before the
+   * browser check and before the blocking full-suite gate, so a plan whose
+   * tasks are all deterministic-only is still checked.
    */
   private async syncGeneratedDatabase(projectId: string): Promise<void> {
     if (!this.generatedProjectRuntime) return;
