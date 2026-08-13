@@ -560,7 +560,12 @@ export interface WorkspaceManager {
   discardDraft(projectId: string, runId: string, expectedCommit: string): Promise<void>;
   commit(projectId: string, message: string, worktree?: string): Promise<string | null>;
   head(projectId: string, worktree?: string): Promise<string | null>;
-  /** Creates an isolated git worktree of the project's workspace at HEAD (#520). */
+  /**
+   * Creates an isolated git worktree of the project's workspace at HEAD
+   * (#520). Reclaims a same-label worktree directory and/or branch left
+   * behind by a crashed or killed prior run before creating fresh (via
+   * `removeWorktree`), so a repeated label is never permanently wedged.
+   */
   createWorktree(projectId: string, label: string): Promise<void>;
   /**
    * Merges the worktree's branch back into the primary checkout. Throws on

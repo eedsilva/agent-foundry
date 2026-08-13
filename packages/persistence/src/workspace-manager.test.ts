@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
@@ -691,8 +691,32 @@ describe('FileWorkspaceManager worktree lifecycle (#520)', () => {
 
     await manager.removeWorktree(projectId, 'task-a');
 
-    await expect(readFile(join(worktreePath, 'base.txt'), 'utf8')).rejects.toThrow();
+    await expect(stat(worktreePath)).rejects.toThrow();
     await expect(manager.removeWorktree(projectId, 'task-a')).resolves.toBeUndefined();
+  });
+
+  it('createWorktree reclaims a stale branch when a prior worktree directory was removed without deleting it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await manager.createWorktree(projectId, 'task-a');
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+    // Simulates a crashed/killed run: the worktree directory is gone (e.g. via
+    // `git worktree remove`) but its branch `af/task/task-a` was never deleted.
+    await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: workspace });
+    await expect(
+      execa('git', ['rev-parse', '--verify', 'refs/heads/af/task/task-a'], { cwd: workspace }),
+    ).resolves.toBeDefined();
+
+    await expect(manager.createWorktree(projectId, 'task-a')).resolves.toBeUndefined();
+
+    const topLevel = await execa('git', ['rev-parse', '--show-toplevel'], { cwd: worktreePath });
+    expect(await realpath(topLevel.stdout.trim())).toBe(await realpath(worktreePath));
   });
 
   it('makes the primary node_modules reachable from a new worktree', async () => {
@@ -727,10 +751,53 @@ describe('FileWorkspaceManager worktree lifecycle (#520)', () => {
     const projectId = 'project-1';
     await manager.ensureGit(projectId);
     await manager.createWorktree(projectId, 'task-a');
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+    await writeFile(join(worktreePath, 'in-worktree.txt'), 'still here?\n');
+    await expect(readFile(join(worktreePath, 'in-worktree.txt'), 'utf8')).resolves.toBe(
+      'still here?\n',
+    );
 
     await manager.cleanup(projectId);
 
-    await expect(readFile(join(manager.workspacePath(projectId, 'task-a'), 'base.txt'), 'utf8')).rejects.toThrow();
+    await expect(stat(worktreePath)).rejects.toThrow();
+  });
+});
+
+describe('FileWorkspaceManager per-task git methods (#520 checkpoint/rollback/head/isClean)', () => {
+  it('checkpoint, rollback, head, and isClean operate on the worktree, not the primary, when given a worktree label', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'base.txt'), 'base\n');
+    const primaryHead = await manager.checkpoint(projectId, 'base');
+    await manager.createWorktree(projectId, 'task-a');
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+
+    expect(await manager.isClean(projectId, 'task-a')).toBe(true);
+    expect(await manager.head(projectId, 'task-a')).toBe(primaryHead);
+
+    await writeFile(join(worktreePath, 'work.txt'), 'dirty\n');
+    expect(await manager.isClean(projectId, 'task-a')).toBe(false);
+
+    const worktreeCheckpoint = await manager.checkpoint(projectId, 'wip', 'task-a');
+    expect(worktreeCheckpoint).not.toBe(primaryHead);
+    expect(await manager.head(projectId, 'task-a')).toBe(worktreeCheckpoint);
+    // The primary checkout is untouched by any worktree-scoped call above.
+    expect(await manager.head(projectId)).toBe(primaryHead);
+    expect(await manager.isClean(projectId)).toBe(true);
+
+    await writeFile(join(worktreePath, 'work.txt'), 'more changes\n');
+    expect(await manager.isClean(projectId, 'task-a')).toBe(false);
+
+    await manager.rollback(projectId, worktreeCheckpoint, 'task-a');
+
+    expect(await manager.isClean(projectId, 'task-a')).toBe(true);
+    await expect(readFile(join(worktreePath, 'work.txt'), 'utf8')).resolves.toBe('dirty\n');
   });
 });
 

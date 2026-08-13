@@ -313,6 +313,11 @@ export class FileWorkspaceManager implements WorkspaceManager {
 
   async createWorktree(projectId: string, label: string): Promise<void> {
     await this.ensureGit(projectId);
+    // Reclaims a same-label worktree directory and/or branch left behind by a
+    // crashed or killed prior run -- removeWorktree is idempotent and already
+    // swallows "not a working tree" / "branch not found", so this is a no-op
+    // the first time a label is ever used.
+    await this.removeWorktree(projectId, label);
     const primary = this.workspacePath(projectId);
     const target = this.workspacePath(projectId, label);
     const branch = `af/task/${safeSegment(label)}`;
@@ -337,9 +342,18 @@ export class FileWorkspaceManager implements WorkspaceManager {
       reject: false,
     });
     if (result.exitCode !== 0) {
+      // ponytail: `merge --abort`'s own exit code is unchecked -- it's a
+      // best-effort cleanup for the common case (an actual merge conflict, or
+      // nothing in progress). Upgrade: verify the working tree/MERGE_HEAD
+      // afterward and escalate if abort didn't clear it, if that gap bites.
       await execa('git', ['merge', '--abort'], { cwd: primary, reject: false });
       throw new ExecutionError(
         `Failed to integrate worktree "${label}": ${result.stdout}\n${result.stderr}`,
+        {
+          ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+          ...(result.stdout !== undefined ? { stdout: result.stdout } : {}),
+          ...(result.stderr !== undefined ? { stderr: result.stderr } : {}),
+        },
       );
     }
   }
