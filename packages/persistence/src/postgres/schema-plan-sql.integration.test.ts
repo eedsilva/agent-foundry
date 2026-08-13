@@ -34,7 +34,6 @@ const AUTH_STUB = `
   create table if not exists auth.users (id uuid primary key);
   create or replace function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;
   create or replace function auth.role() returns text language sql stable as $$ select null::text $$;
-  create or replace function is_admin(uuid) returns boolean language sql stable as $$ select false $$;
 `;
 
 describePostgres('generated schema-plan SQL (#481)', (ctx) => {
