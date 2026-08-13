@@ -1,9 +1,42 @@
 import { mkdtemp } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { TracerScenarioSchema, type Project, type TracerScenario } from '@agent-foundry/contracts';
 import { loadJsonDirectory } from './dogfood.js';
 import { createRuntime, type Runtime } from './runtime.js';
+
+const PREVIEW_PROBE_TIMEOUT_MS = 2_000;
+
+// #526: the runtime builds previewBaseUrl from apiHost:apiPort
+// (runtime.ts's `http://${config.apiHost}:${config.apiPort}/preview`), served
+// by apps/api's preview proxy — a separate process this driver never starts.
+// A real run whose API server isn't up used to drive a real browser at a dead
+// origin for the run's full duration before failing. This probes the origin
+// with a plain TCP connect (no HTTP semantics, no preview-token knowledge
+// needed) and fails fast, naming the origin, if nothing answers.
+export async function assertPreviewOriginReachable(host: string, port: number): Promise<void> {
+  await new Promise<void>((resolvePreflight, rejectPreflight) => {
+    const socket = createConnection({ host, port, timeout: PREVIEW_PROBE_TIMEOUT_MS });
+    const fail = (detail: string) => {
+      socket.destroy();
+      rejectPreflight(
+        new Error(
+          `Nothing is serving http://${host}:${port} (${detail}). The tracer builds preview ` +
+            `URLs against the API host/port but never starts the API server itself — start it ` +
+            `first (\`npm run dev\`, or \`npm run dev --workspace @agent-foundry/api\`) before ` +
+            `running the tracer in real mode.`,
+        ),
+      );
+    };
+    socket.once('connect', () => {
+      socket.destroy();
+      resolvePreflight();
+    });
+    socket.once('timeout', () => fail('connection timed out'));
+    socket.once('error', (error) => fail(error instanceof Error ? error.message : String(error)));
+  });
+}
 
 // The monorepo root that owns the workflows the tracer runs against —
 // independent of DATA_DIR, which is always a throwaway per-run directory.
@@ -50,6 +83,13 @@ async function startTracerRun(
     WORKER_ID: `tracer-${scenario.id}`,
     ...(options.policiesDir ? { POLICIES_DIR: options.policiesDir } : {}),
   });
+
+  // Mock mode fabricates browser verification entirely
+  // (mockBrowserVerificationCoordinator in runtime.ts) and never reaches this
+  // origin, so the probe only applies — and only matters — in real mode.
+  if (runtime.config.executorMode === 'real') {
+    await assertPreviewOriginReachable(runtime.config.apiHost, runtime.config.apiPort);
+  }
 
   const project = await runtime.projectService.create({
     name: scenario.id,
