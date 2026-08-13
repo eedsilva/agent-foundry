@@ -522,36 +522,53 @@ export interface VerificationService {
 
 export interface WorkspaceManager {
   projectRoot(projectId: string): string;
-  workspacePath(projectId: string): string;
+  /**
+   * With `worktree`, resolves to `<projectRoot>/worktrees/<worktree>` (see
+   * `createWorktree`); otherwise the primary `<projectRoot>/workspace`
+   * checkout, unchanged.
+   */
+  workspacePath(projectId: string, worktree?: string): string;
   ensure(projectId: string): Promise<void>;
   cleanup(projectId: string): Promise<void>;
   writePrd(projectId: string, prd: string): Promise<void>;
   applyScaffold(projectId: string, files: Array<{ path: string; content: string }>): Promise<void>;
-  writeRunContext(input: {
-    projectId: string;
-    runId: string;
-    stepRunId: string;
-    attemptId: string;
-    requestMarkdown: string;
-    outputSchema: Record<string, unknown>;
-    inputFiles?: Array<{ path: string; content: Uint8Array }>;
-  }): Promise<{
+  writeRunContext(
+    input: {
+      projectId: string;
+      runId: string;
+      stepRunId: string;
+      attemptId: string;
+      requestMarkdown: string;
+      outputSchema: Record<string, unknown>;
+      inputFiles?: Array<{ path: string; content: Uint8Array }>;
+    },
+    worktree?: string,
+  ): Promise<{
     requestPath: string;
     schemaPath: string;
     inputPaths: string[];
   }>;
   ensureGit(projectId: string): Promise<void>;
-  isClean(projectId: string): Promise<boolean>;
-  checkpoint(projectId: string, label: string): Promise<string>;
-  rollback(projectId: string, ref: string): Promise<void>;
+  isClean(projectId: string, worktree?: string): Promise<boolean>;
+  checkpoint(projectId: string, label: string, worktree?: string): Promise<string>;
+  rollback(projectId: string, ref: string, worktree?: string): Promise<void>;
   preserveDraft(
     projectId: string,
     runId: string,
     verifiedCheckpoint: string,
   ): Promise<{ draftBranch: string; draftCommit: string; created: boolean }>;
   discardDraft(projectId: string, runId: string, expectedCommit: string): Promise<void>;
-  commit(projectId: string, message: string): Promise<string | null>;
-  head(projectId: string): Promise<string | null>;
+  commit(projectId: string, message: string, worktree?: string): Promise<string | null>;
+  head(projectId: string, worktree?: string): Promise<string | null>;
+  /** Creates an isolated git worktree of the project's workspace at HEAD (#520). */
+  createWorktree(projectId: string, label: string): Promise<void>;
+  /**
+   * Merges the worktree's branch back into the primary checkout. Throws on
+   * conflict, leaving the primary checkout unmerged-free (`merge --abort`).
+   */
+  integrateWorktree(projectId: string, label: string): Promise<void>;
+  /** Removes the worktree and its branch. Safe to call twice. */
+  removeWorktree(projectId: string, label: string): Promise<void>;
   /** Unified diff between two commits/refs, for comparing two ProjectVersions. */
   diff(projectId: string, fromRef: string, toRef: string): Promise<string>;
   /**

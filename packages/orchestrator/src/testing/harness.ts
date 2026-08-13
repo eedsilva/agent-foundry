@@ -880,6 +880,15 @@ export class FakeWorkspaces implements WorkspaceManager {
   readWorkspaceFile(_projectId: string, relativePath: string): Promise<string> {
     return Promise.reject(new NotFoundError(`fake workspace has no file: ${relativePath}`));
   }
+  createWorktree(): Promise<void> {
+    return Promise.resolve();
+  }
+  integrateWorktree(): Promise<void> {
+    return Promise.resolve();
+  }
+  removeWorktree(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 export type StepBehavior =

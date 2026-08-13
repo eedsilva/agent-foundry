@@ -1,7 +1,8 @@
-import { open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
+  ExecutionError,
   NotFoundError,
   ValidationError,
   createListabilityChecker,
@@ -82,7 +83,10 @@ export class FileWorkspaceManager implements WorkspaceManager {
     return resolve(this.dataDir, 'projects', safeSegment(projectId));
   }
 
-  workspacePath(projectId: string): string {
+  workspacePath(projectId: string, worktree?: string): string {
+    if (worktree !== undefined) {
+      return join(this.projectRoot(projectId), 'worktrees', safeSegment(worktree));
+    }
     return join(this.projectRoot(projectId), 'workspace');
   }
 
@@ -132,20 +136,23 @@ export class FileWorkspaceManager implements WorkspaceManager {
     }
   }
 
-  async writeRunContext(input: {
-    projectId: string;
-    runId: string;
-    stepRunId: string;
-    attemptId: string;
-    requestMarkdown: string;
-    outputSchema: Record<string, unknown>;
-    inputFiles?: Array<{ path: string; content: Uint8Array }>;
-  }): Promise<{
+  async writeRunContext(
+    input: {
+      projectId: string;
+      runId: string;
+      stepRunId: string;
+      attemptId: string;
+      requestMarkdown: string;
+      outputSchema: Record<string, unknown>;
+      inputFiles?: Array<{ path: string; content: Uint8Array }>;
+    },
+    worktree?: string,
+  ): Promise<{
     requestPath: string;
     schemaPath: string;
     inputPaths: string[];
   }> {
-    const workspace = this.workspacePath(input.projectId);
+    const workspace = this.workspacePath(input.projectId, worktree);
     const runDir = join(
       workspace,
       '.orchestrator',
@@ -204,16 +211,16 @@ export class FileWorkspaceManager implements WorkspaceManager {
     }
   }
 
-  async isClean(projectId: string): Promise<boolean> {
+  async isClean(projectId: string, worktree?: string): Promise<boolean> {
     const status = await execa('git', ['status', '--porcelain'], {
-      cwd: this.workspacePath(projectId),
+      cwd: this.workspacePath(projectId, worktree),
     });
     return status.stdout === '';
   }
 
-  async checkpoint(projectId: string, label: string): Promise<string> {
+  async checkpoint(projectId: string, label: string, worktree?: string): Promise<string> {
     await this.ensureGit(projectId);
-    const cwd = this.workspacePath(projectId);
+    const cwd = this.workspacePath(projectId, worktree);
     await execa('git', ['add', '-A'], { cwd });
     const staged = await execa('git', ['diff', '--cached', '--quiet'], { cwd, reject: false });
     if (staged.exitCode !== 0) {
@@ -223,8 +230,8 @@ export class FileWorkspaceManager implements WorkspaceManager {
     return head.stdout.trim();
   }
 
-  async rollback(projectId: string, ref: string): Promise<void> {
-    const cwd = this.workspacePath(projectId);
+  async rollback(projectId: string, ref: string, worktree?: string): Promise<void> {
+    const cwd = this.workspacePath(projectId, worktree);
     await execa('git', ['reset', '--hard', ref], { cwd });
     await execa('git', ['clean', '-fd', '-e', '.orchestrator/'], { cwd });
   }
@@ -288,8 +295,8 @@ export class FileWorkspaceManager implements WorkspaceManager {
     }
   }
 
-  async commit(projectId: string, message: string): Promise<string | null> {
-    const cwd = this.workspacePath(projectId);
+  async commit(projectId: string, message: string, worktree?: string): Promise<string | null> {
+    const cwd = this.workspacePath(projectId, worktree);
     await execa('git', ['add', '-A'], { cwd });
     const staged = await execa('git', ['diff', '--cached', '--quiet'], { cwd, reject: false });
     if (staged.exitCode === 0) return null;
@@ -298,10 +305,53 @@ export class FileWorkspaceManager implements WorkspaceManager {
     return head.stdout.trim();
   }
 
-  async head(projectId: string): Promise<string | null> {
-    const cwd = this.workspacePath(projectId);
+  async head(projectId: string, worktree?: string): Promise<string | null> {
+    const cwd = this.workspacePath(projectId, worktree);
     const head = await execa('git', ['rev-parse', '--verify', 'HEAD'], { cwd, reject: false });
     return head.exitCode === 0 ? head.stdout.trim() : null;
+  }
+
+  async createWorktree(projectId: string, label: string): Promise<void> {
+    await this.ensureGit(projectId);
+    const primary = this.workspacePath(projectId);
+    const target = this.workspacePath(projectId, label);
+    const branch = `af/task/${safeSegment(label)}`;
+    await execa('git', ['worktree', 'add', '-b', branch, target, 'HEAD'], { cwd: primary });
+    const nodeModules = join(primary, 'node_modules');
+    if (await exists(nodeModules)) {
+      // ponytail: symlinks the primary's node_modules into the worktree so
+      // the per-task verify step (running the generated app's own scripts)
+      // doesn't fail on a missing dependency; every parallel worktree shares
+      // one install. Ceiling: two tasks that need divergent dependency trees
+      // will collide. Upgrade: per-worktree `npm install` if that ever
+      // happens (#520 later tasks).
+      await symlink(nodeModules, join(target, 'node_modules'), 'dir');
+    }
+  }
+
+  async integrateWorktree(projectId: string, label: string): Promise<void> {
+    const primary = this.workspacePath(projectId);
+    const branch = `af/task/${safeSegment(label)}`;
+    const result = await execa('git', ['merge', '--no-ff', '--no-edit', branch], {
+      cwd: primary,
+      reject: false,
+    });
+    if (result.exitCode !== 0) {
+      await execa('git', ['merge', '--abort'], { cwd: primary, reject: false });
+      throw new ExecutionError(
+        `Failed to integrate worktree "${label}": ${result.stdout}\n${result.stderr}`,
+      );
+    }
+  }
+
+  async removeWorktree(projectId: string, label: string): Promise<void> {
+    const primary = this.workspacePath(projectId);
+    const target = this.workspacePath(projectId, label);
+    await execa('git', ['worktree', 'remove', '--force', target], { cwd: primary, reject: false });
+    await execa('git', ['branch', '-D', `af/task/${safeSegment(label)}`], {
+      cwd: primary,
+      reject: false,
+    });
   }
 
   async diff(projectId: string, fromRef: string, toRef: string): Promise<string> {
