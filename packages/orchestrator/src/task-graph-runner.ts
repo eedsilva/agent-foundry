@@ -713,9 +713,11 @@ function artifactReference(artifact: StoredArtifact): ArtifactReference {
 
 /**
  * A mutating agent (implement, verify-repair, browser-repair) that answers
- * `blocked` never touched the workspace, so it is a failed attempt for the
- * task loop, not a completed one (#537) — unlike the browser *plan* step,
- * where `blocked` is a valid "nothing to assert" answer (see
+ * `blocked` may already have mutated the workspace before giving up, so
+ * that workspace state cannot be trusted as a complete deliverable — the
+ * attempt rolls back to its checkpoint, and this is a failed attempt for
+ * the task loop, not a completed one (#537). Unlike the browser *plan*
+ * step, where `blocked` is a valid "nothing to assert" answer (see
  * `taskBrowserPlanStep`'s prompt) and must not go through this guard. A
  * parse failure here is not this guard's business; the existing contract
  * checks downstream handle that.

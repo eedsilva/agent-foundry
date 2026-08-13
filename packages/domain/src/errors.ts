@@ -117,11 +117,13 @@ export class QualityGateError extends Error {
 
 /**
  * An implement/verify-repair/browser-repair agent answered `blocked`
- * (#537): the workspace was never mutated, so this is a failed attempt for
- * the task loop's routing ladder, not a completed one. `reason` carries the
- * agent's own explanation, mirroring `BrowserInfrastructureError.diagnosis`,
- * so a `task.failed` consumer gets it as machine-readable data instead of
- * only in the message.
+ * (#537): whatever it did to the workspace before answering cannot be
+ * trusted as a complete deliverable, and the attempt rolls back to its
+ * checkpoint — so this is a failed attempt for the task loop's routing
+ * ladder, not a completed one. `reason` carries the agent's own
+ * explanation, mirroring `BrowserInfrastructureError.diagnosis`, so a
+ * `task.failed` consumer gets it as machine-readable data instead of only
+ * in the message.
  */
 export class AgentBlockedError extends QualityGateError {
   constructor(

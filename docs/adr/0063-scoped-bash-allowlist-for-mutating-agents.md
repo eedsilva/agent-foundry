@@ -93,8 +93,8 @@ Consequences.
 - Positive: mutating Claude runs can execute the toolchain commands #537
   needed (`pnpm`, `npm`, `npx`, `node`, `git`, `docker`, `supabase`, `psql`)
   without interactive approval, while every other Bash invocation (e.g.
-  `curl`, `rm -rf`, arbitrary binaries) still requires it and is denied
-  headless.
+  `curl`, `rm -rf`, arbitrary binaries) as the literal entrypoint still
+  requires it and is denied headless.
 - Negative / operational: the allowlist is a fixed, hand-picked set. A
   generated app that legitimately needs a shell tool outside this list (e.g.
   `python`, `curl` for a smoke test) will still hit "requires approval" and

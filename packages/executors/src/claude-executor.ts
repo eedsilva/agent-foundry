@@ -5,17 +5,10 @@ import { createClaudeStreamMapper } from './claude-stream-events.js';
 /**
  * Bash allowlist for mutating runs — the toolchain this repo's generated
  * apps actually need (#537: a denied `pnpm db:types` etc. left a task's only
- * deliverable unproduced). Passed as a single `--allowedTools=` token: the
- * flag is variadic (`<tools...>`), so a space- or comma-joined *separate*
- * argv token gets greedily consumed along with the positional prompt that
- * follows it, breaking the CLI with "Input must be provided ... as a prompt
- * argument" (confirmed empirically — see docs/adr/0063).
+ * deliverable unproduced). Extend this list to cover a new binary; see
+ * docs/adr/0063 for the security tradeoffs before adding one.
  */
-const MUTATING_BASH_ALLOWLIST =
-  '--allowedTools=' +
-  ['pnpm', 'npm', 'npx', 'node', 'git', 'docker', 'supabase', 'psql']
-    .map((bin) => `Bash(${bin} *)`)
-    .join(',');
+const MUTATING_BASH_ALLOWLIST = ['pnpm', 'npm', 'npx', 'node', 'git', 'docker', 'supabase', 'psql'];
 
 function claudeJsonSchema(schema: AgentExecutionRequest['outputSchema']): string {
   if (schema === undefined) return '{}';
@@ -51,7 +44,17 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
       '--json-schema',
       claudeJsonSchema(request.outputSchema),
     ];
-    if (request.mutatesWorkspace) args.push(MUTATING_BASH_ALLOWLIST);
+    if (request.mutatesWorkspace) {
+      // Single `--allowedTools=` token, not `--allowedTools`, value: the
+      // flag is variadic (`<tools...>`), so a separate space- or
+      // comma-joined argv entry gets greedily consumed along with the
+      // positional prompt that follows it, breaking the CLI with "Input
+      // must be provided ... as a prompt argument" (confirmed empirically
+      // — see docs/adr/0063).
+      args.push(
+        '--allowedTools=' + MUTATING_BASH_ALLOWLIST.map((bin) => `Bash(${bin} *)`).join(','),
+      );
+    }
     if (request.model.trim()) args.push('--model', request.model);
     if (request.systemPrompt !== undefined) {
       args.push('--append-system-prompt', request.systemPrompt);
