@@ -48,13 +48,39 @@ auto-approves every operator gate the run parks at, recorded as `decidedBy: 'tra
 
 Host: claude CLI 2.1.229, codex CLI 0.146.1, supabase CLI 2.62.5, node v22.22.3.
 `EXECUTOR_MODE=real npm run doctor -- --json` before run 1 probed `codex` → `ready` (0.146.1) and
-`claude` → `ready` (2.1.229). Both `DATA_DIR`s were pinned outside the worktree so run artifacts could
-not be committed by accident; they are scratch directories and will not survive. This document and the
-four files beside it are the durable record.
+`claude` → `ready` (2.1.229). Both `DATA_DIR`s were scratch directories outside the worktree and are
+gone; every value this document quotes was copied out of them into the committed files listed below
+before they were discarded.
+
+### Committed sources
+
+Every timeline row, event name, decision string and sha256 below is checkable against a file in this
+directory.
+
+`run1-events.jsonl` and `run2-events.jsonl` are **filtered excerpts** of each run's `events.jsonl`,
+copied line-for-line (not re-serialised, not reformatted) and kept in original order — 22 of run 1's
+85 lines and 22 of run 2's 87. The filter was:
+
+```
+grep -E '"nodeId":"(plan-approval|schema|schema-approval)"|"type":"(project\.started|project\.failed|task\.failed)"|"dedupeKey":"[^"]*:task:task-execution:T1:started"' \
+  <DATA_DIR>/projects/<PROJECT_ID>/events.jsonl
+```
+
+— every event on the `plan-approval`, `schema` and `schema-approval` nodes, plus `project.started`,
+the first `task.started`, and the terminating `task.failed` and `project.failed`.
+
+`run1-schema-current.json`, `run1-schema-approval.json`, `run2-schema-current.json` and
+`run2-schema-approval.json` are the **content** of revision 1 of each artifact, taken from
+`<DATA_DIR>/projects/<PROJECT_ID>/artifacts/<name>/000001.json` (the artifact store keeps one file per
+revision under a directory per artifact name; each file wraps `metadata` around `content`). They are
+committed as the exact byte string the store hashes — `JSON.stringify(content)`, compact, no trailing
+newline — so `shasum -a 256 <file>` reproduces the sha256 quoted in this document and in the
+`artifact.created` event. They read best through `python3 -m json.tool <file>`.
 
 ## Run 1 — the defect
 
-The schema gate behaved exactly as ADR 0060 specifies. From the run's `events.jsonl`:
+The schema gate behaved exactly as ADR 0060 specifies. From the run's `events.jsonl`
+([`run1-events.jsonl`](run1-events.jsonl)):
 
 | Time (UTC) | Event | Node |
 |---|---|---|
@@ -66,10 +92,13 @@ The schema gate behaved exactly as ADR 0060 specifies. From the run's `events.js
 | `04:43:30.001` | `task.started` — T1 | `task-execution` |
 
 The approval event records what it reviewed: `reviewedArtifact` `schema.current` revision 1, sha256
-`a2364de4a61d68aff1fc04ed7c02801d2d27e6b2cb75276c0b3cdae4e88f3880`. The schema node's own summary read
+`a2364de4a61d68aff1fc04ed7c02801d2d27e6b2cb75276c0b3cdae4e88f3880` —
+[`run1-schema-current.json`](run1-schema-current.json), and the approval it produced is
+[`run1-schema-approval.json`](run1-schema-approval.json), sha256
+`e6e119a05483a586a24cda940054d89cac84530dedda7fe075436e7cc22d11af`. The schema node's own summary read
 "Derived the minimal data model the approved Counter plan requires: one new table, public.counter …".
-The first implementation task started 0.06s after the gate closed, and no implementation task ran before
-it.
+The `schema-approval` node completed at `04:43:29.962` and the first implementation task started
+0.04s later, at `04:43:30.001`; no implementation task ran before it.
 
 `writeSchemaPlanMigration` then wrote and committed `supabase/migrations/20260813044329_schema_plan.sql`
 into the project workspace — [`run1-schema-plan.sql`](run1-schema-plan.sql) in this directory.
@@ -118,6 +147,17 @@ pre-#529 classification. That is a deliberate fail-closed ceiling, recorded as a
 the source, because the statement scanner does not parse dollar-quoted bodies and an earlier attempt to
 teach it to do so opened two new fail-open vectors.
 
+Identifiers are matched the way Postgres resolves them: an unquoted identifier folds to lower case, a
+quoted one is taken verbatim. So `P` and `p` are the same policy, `"p"` and `p` are the same policy,
+and `"P"` and `p` are **not** — a drop of `"P"` that only `p` re-creates stays destructive.
+
+The rule change is not local to `migrate`. `destructiveStatements` is also what
+`packages/platform/src/security-lint.ts` uses, so the linter's `destructive-migration` finding now goes
+silent for a policy replace too. That is intended — the same statement pair is not a data loss in
+either caller — but it is a second, quieter place the classification moved.
+
+The exception is written into ADR 0031 as an amendment ("Amendment (2026-08-13, #529)").
+
 Commits on this branch, in order:
 
 | Commit | Change |
@@ -126,15 +166,26 @@ Commits on this branch, in order:
 | `424a3fd` | dollar-quote scanner — later reverted |
 | `1769a1c` | revert the scanner; guard the exemption on dollar quoting instead |
 | `43aae94` | widen the dollar-tag regex to `/\$[^\s$]*\$/`, so non-ASCII Postgres tags like `$é$` cannot launder a drop |
+| `f9b5761` | collapse the two destructive-filter paths into one |
+| `917b37d` | fold policy identifiers the way Postgres does, so a quoted `"P"` no longer pairs with an unquoted `p` |
 
-`sqlStatements` is byte-identical to its pre-#529 form — sha256 of the extracted function body
-`45107393c9381063` at `d0ef9ab`, at `b652edb` and at `43aae94`. Tests:
-`npx vitest run packages/platform/src/supabase-runtime.test.ts` 60/60 and
-`packages/platform/src/security-lint.test.ts` 14/14 (74 together); `npx tsc -b` exit 0.
+`sqlStatements` is byte-identical to its pre-#529 form. Reproduce with:
+
+```
+for ref in d0ef9ab b652edb 43aae94 HEAD; do
+  git show $ref:packages/platform/src/supabase-runtime.ts \
+    | awk '/^export function sqlStatements/,/^}$/' | shasum -a 256
+done
+```
+
+— `b2d1356281934c7ace21d101837000ba293326ebd328c4b5875b1371500a3f00` at every one. Tests:
+`npx vitest run packages/platform/src/supabase-runtime.test.ts` 62/62 and
+`packages/platform/src/security-lint.test.ts` 14/14 (76 together); `npx tsc -b` exit 0.
 
 ## Run 2 — the evidence run
 
-Same command, code at `43aae94`. The schema gate again preceded implementation:
+Same command, code at `43aae94`. The schema gate again preceded implementation
+([`run2-events.jsonl`](run2-events.jsonl)):
 
 | Time (UTC) | Event | Node |
 |---|---|---|
@@ -147,8 +198,10 @@ Same command, code at `43aae94`. The schema gate again preceded implementation:
 | `06:18:09.207` | `task.started` — T1 | `task-execution` |
 
 The approval reviewed `schema.current` revision 1, sha256
-`f91361a74e6020e8228ba77ff9126ec9c62bd922aae67180237cded3e84b5060`, and produced `schema.approval`
-revision 1, sha256 `1ca42720456b03b4cdef3bd89551f0991b71e29473b27b263cbc0f4a5351d7f3`.
+`f91361a74e6020e8228ba77ff9126ec9c62bd922aae67180237cded3e84b5060`
+([`run2-schema-current.json`](run2-schema-current.json)), and produced `schema.approval` revision 1,
+sha256 `1ca42720456b03b4cdef3bd89551f0991b71e29473b27b263cbc0f4a5351d7f3`
+([`run2-schema-approval.json`](run2-schema-approval.json)).
 
 `20260813061809_schema_plan.sql` was generated from that approved artifact and committed —
 [`run2-schema-plan.sql`](run2-schema-plan.sql). It contains the `drop policy if exists` /
@@ -179,7 +232,17 @@ script calls only production entry points —
 `SupabaseGeneratedProjectRuntime.applyWorkspaceMigrations` with no approval argument, exactly as
 `syncGeneratedDatabase` calls it; `.verifySchema`; the exported `destructiveStatements`; and
 `FileArtifactStore` to load `schema.current` through `SchemaPlanArtifactSchema` — but the sequencing is
-the script's, not a run's. The script was deleted after its output was captured and is not committed.
+the script's, not a run's.
+
+The script is [`run2-transcript-script.ts`](run2-transcript-script.ts) in this directory. It is a
+one-off capture tool, not part of the build or the test suite, and it needs a live Supabase stack for
+the project it is pointed at — run 2's stack is long gone, so re-running it means reproducing a run
+first. It was invoked from the worktree root as:
+
+```
+npx tsx docs/evidence/harness-alignment/schema-first/run2-transcript-script.ts \
+  <DATA_DIR> 01KZWVNGD4RM32PXWKEJXS69N6
+```
 
 The full raw output is [`run2-transcript.txt`](run2-transcript.txt) (110 lines, exit 0). #529's brief
 asked for the RLS verification and the destructive-gate transcript as two files; they were produced by
@@ -209,12 +272,14 @@ this work and filed separately; it is not part of the schema-first path.
 | 2 | The applied migration is the one generated from the approved artifact | **Met, with a caveat** — applied by a scripted invocation of the production apply path, not by the orchestrator in-run |
 | 3 | `relrowsecurity` true for every generated table and ≥1 matching `pg_policies` row per table, queried against the live stack | **Met** |
 | 4 | `verifySchema` green against that live stack | **Met**, same caveat as 2 |
-| 5 | Destructive-migration gate demonstrated in a real run, with the block recorded | **Met** — twice, and organically |
+| 5 | A destructive change is proposed and blocked pending approval in a real run, with the block recorded | **Met for "blocked", not for "pending"** — blocked twice, organically, in two real runs; but nothing was left pending, because there is no approval gate to park at ([#535](https://github.com/eedsilva/agent-foundry/issues/535)) |
 
 **Criterion 1.** Both runs reached a terminal state (`project.failed`), and in both the `schema` node
 completed and `schema-approval` was decided before the first `task.started` — see the two timelines
 above. Artifacts (`schema.current`, `schema.approval`, the decision log) were written and are recorded in
-`events.jsonl` with their sha256s.
+`events.jsonl` with their sha256s; both runs' `schema.current` and `schema.approval` contents and the
+filtered event excerpts are committed here (see "Committed sources"), so the retention is in the repo
+rather than in a scratch `DATA_DIR`.
 
 **Criterion 2.** `20260813061809_schema_plan.sql` was generated from `schema.current` revision 1 as
 approved, and committed by the orchestrator during the run under
@@ -261,12 +326,19 @@ verifySchema result: {
 
 All five drift lists empty — tables, columns, type, nullability, RLS, policy names.
 
-**Criterion 5.** Demonstrated twice, and both times by a real run rather than a contrived input:
+**Criterion 5.** The *block* is demonstrated twice, both times by a real run rather than a contrived
+input. The *pending* half of the criterion is not met and cannot be, on today's code:
 
 - Run 1 blocked on a **false positive** — the generator's own idempotent `drop policy if exists`. That
   block is recorded at `05:04:24Z` above, and it is what this branch fixes.
 - Run 2 blocked on a **genuine** destructive change an implementation agent authored,
   `drop table public.items;`, recorded at `06:52:27Z` above.
+
+Neither block left anything pending. `migrate` raises a `ValidationError`, the task fails its attempt
+and the run goes to `project.failed`; there is no operator gate to park at and nothing to approve,
+because the platform-layer approval path is never wired into the workflow's gate system. That is
+[#535](https://github.com/eedsilva/agent-foundry/issues/535) — the second half of defect #1 in
+[`../defect-list.md`](../defect-list.md) — and it is not fixed by this branch.
 
 Transcript section 1 shows the classification per file and the block, and section 4 shows it firing
 again identically after the file is restored:
@@ -311,4 +383,8 @@ The generated schema-plan migration contributes no destructive statement; the ag
 | [`run2-schema-plan.sql`](run2-schema-plan.sql) | Run 2's `20260813061809_schema_plan.sql`, same |
 | [`run2-counter-agent-authored.sql`](run2-counter-agent-authored.sql) | Run 2 T1's own `20260813062500_counter.sql` — the agent-authored migration whose `drop table public.items;` the gate refused |
 | [`run2-transcript.txt`](run2-transcript.txt) | The raw transcript: state before, gate, apply, verify, restore + gate again |
+| [`run2-transcript-script.ts`](run2-transcript-script.ts) | The one-off capture tool that produced that transcript — not part of the build or the test suite |
+| [`run1-events.jsonl`](run1-events.jsonl) / [`run2-events.jsonl`](run2-events.jsonl) | Filtered, byte-preserving excerpts of each run's `events.jsonl` — see "Committed sources" |
+| [`run1-schema-current.json`](run1-schema-current.json) / [`run2-schema-current.json`](run2-schema-current.json) | The `schema.current` revision 1 content each run's approval reviewed |
+| [`run1-schema-approval.json`](run1-schema-approval.json) / [`run2-schema-approval.json`](run2-schema-approval.json) | The `schema.approval` revision 1 content each approval produced |
 | `.gitattributes` | Exempts the transcript from whitespace checks — psql pads its columns with trailing spaces, and the transcript is committed exactly as captured |
