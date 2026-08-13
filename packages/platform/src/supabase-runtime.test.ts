@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvironmentOperationError } from '@agent-foundry/domain';
 import {
   destructiveStatements,
+  sqlStatements,
   SupabaseGeneratedProjectRuntime,
   type SchemaSqlClientFactory,
   type SupabaseCommand,
@@ -1242,6 +1243,34 @@ create policy counter_select_public on public.counter for select using (true);`;
     ]);
     expect(destructiveStatements('truncate table public.t;')).toEqual(['truncate table public.t']);
     expect(destructiveStatements('delete from public.t;')).toEqual(['delete from public.t']);
+  });
+
+  it('keeps a policy drop destructive when the create hides in a dollar-quoted do block', () => {
+    const sql = `drop policy p on public.t;
+do $$ begin if false then perform 1;
+create policy p on public.t for select using (true);
+end if; end $$;`;
+
+    expect(destructiveStatements(sql)).toEqual(['drop policy p on public.t']);
+    expect(sqlStatements(sql)).toHaveLength(2);
+  });
+
+  it('keeps a policy drop destructive when the create hides in a dollar-quoted function body', () => {
+    const sql = `drop policy p on public.t;
+create function never_called() returns void language plpgsql as $body$ begin
+create policy p on public.t for select using (true);
+end $body$;`;
+
+    expect(destructiveStatements(sql)).toEqual(['drop policy p on public.t']);
+    expect(sqlStatements(sql)).toHaveLength(2);
+  });
+
+  it('keeps a policy drop destructive when the create precedes it', () => {
+    expect(
+      destructiveStatements(
+        'create policy p on public.t for select using (true); drop policy p on public.t;',
+      ),
+    ).toEqual(['drop policy p on public.t']);
   });
 
   it('classifies the generated crud-heavy fixture SQL as non-destructive', async () => {
