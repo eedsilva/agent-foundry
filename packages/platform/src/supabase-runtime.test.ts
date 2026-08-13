@@ -1228,11 +1228,41 @@ create policy counter_select_public on public.counter for select using (true);`;
   });
 
   it('tolerates quoting, schema qualification and casing across the pair', () => {
+    // Postgres lower-cases unquoted identifiers and takes quoted ones verbatim,
+    // so `"p"`, `p` and `P` are all the same policy on the same table.
     expect(
       destructiveStatements(
         'DROP POLICY "p" ON t; create policy p on public."t" for select using (true);',
       ),
     ).toEqual([]);
+    expect(
+      destructiveStatements('drop policy P on public.T; create policy p on public.t;'),
+    ).toEqual([]);
+  });
+
+  it('keeps a policy drop destructive when only the create is case-folded', () => {
+    // `"P"` is quoted, so Postgres keeps its case: it is a different policy
+    // from the unquoted `p` the create makes, and nothing re-creates it.
+    expect(
+      destructiveStatements(
+        'DROP POLICY "P" ON t; create policy p on public.t for select using (true);',
+      ),
+    ).toEqual(['DROP POLICY "P" ON t']);
+    // The mirror case: the drop names the case-folded policy, the create keeps
+    // its case, so the dropped policy is never re-created either.
+    expect(
+      destructiveStatements(
+        'drop policy p on t; create policy "P" on public.t for select using (true);',
+      ),
+    ).toEqual(['drop policy p on t']);
+  });
+
+  it('keeps a policy drop destructive when only the table is case-folded', () => {
+    expect(
+      destructiveStatements(
+        'drop policy p on "T"; create policy p on public.t for select using (true);',
+      ),
+    ).toEqual(['drop policy p on "T"']);
   });
 
   it('keeps every other destructive statement destructive', () => {
