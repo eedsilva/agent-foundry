@@ -30,6 +30,7 @@ import type {
   WorkspaceManager,
 } from '@agent-foundry/domain';
 import {
+  BrowserInfrastructureError,
   ExecutionError,
   NotFoundError,
   QualityGateError,
@@ -270,6 +271,11 @@ export class TaskGraphRunner {
                 stepId: step.id,
                 attempt,
                 maxAttempts,
+                // Machine-readable discriminator for #528: a consumer
+                // branches on this field instead of matching the message.
+                ...(error instanceof BrowserInfrastructureError
+                  ? { infrastructureFailure: error.diagnosis }
+                  : {}),
                 ...(await this.failedTaskExecutor(runId, node.id, step.id, attempt)),
               },
             },
@@ -489,8 +495,12 @@ export class TaskGraphRunner {
       if (parsed.success && parsed.data.infrastructureFailure) {
         // A transport failure, not a quality gate: the harness never reached
         // the app, so there is nothing for a repair agent to fix (#528).
-        throw new ExecutionError(
+        // `BrowserInfrastructureError` (not plain `ExecutionError`) so the
+        // outer catch below can attach a machine-readable marker to
+        // `task.failed` instead of leaving the diagnosis only in prose.
+        throw new BrowserInfrastructureError(
           `Task ${task.id}: browser verification never reached the app: ${parsed.data.infrastructureFailure}`,
+          parsed.data.infrastructureFailure,
         );
       }
       const failedStep = parsed.success

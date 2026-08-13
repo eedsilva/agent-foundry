@@ -735,6 +735,12 @@ describe('TaskGraphRunner', () => {
     ).toHaveLength(0);
     const failed = fixture.events.events.find((event) => event.type === 'task.failed');
     expect(failed?.message).toContain('ECONNREFUSED 127.0.0.1:4000');
+    // Machine-readable discriminator (#528 review): a consumer must be able
+    // to branch on `data.infrastructureFailure` instead of regexing the
+    // human-readable message, which is free to reword.
+    expect(failed?.data.infrastructureFailure).toBe(
+      'Preview at http://127.0.0.1:4000 is unreachable: route.fetch: connect ECONNREFUSED 127.0.0.1:4000',
+    );
   });
 
   it('still enters repair for a browser check that is merely unapproved, not infrastructure-broken', async () => {
@@ -772,6 +778,12 @@ describe('TaskGraphRunner', () => {
         .filter((event) => event.type === 'quality.repair_requested')
         .map((event) => event.data.taskId),
     ).toEqual(['T1']);
+    // Rules out the new infrastructure-failure branch, rather than just
+    // asserting the ordinary repair path ran: no failure and no marker.
+    expect(fixture.events.events.some((event) => event.type === 'task.failed')).toBe(false);
+    expect(
+      fixture.events.events.every((event) => event.data.infrastructureFailure === undefined),
+    ).toBe(true);
   });
 
   it('rolls a browser startup failure back to the verified implementation', async () => {
