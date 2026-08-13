@@ -631,6 +631,96 @@ describe('TaskGraphRunner', () => {
     expect(fixture.events.events.filter((event) => event.type === 'task.failed')).toHaveLength(1);
   });
 
+  it('fails the attempt when the implement agent reports blocked (#537)', async () => {
+    // A `blocked` implement artifact never touched the workspace — it must
+    // not sail through verification and complete the task with no
+    // deliverable produced.
+    const fixture = await setupRunner(workflow, [task('T1')], (input, artifacts) =>
+      artifacts.put({
+        projectId: input.project.id,
+        name: input.step.outputArtifact,
+        content: blockedArtifact('Needs the payments API key, which is not in the workspace.'),
+        createdBy: 'test-runtime',
+      }),
+    );
+
+    await expect(fixture.run()).rejects.toThrow(
+      'Needs the payments API key, which is not in the workspace.',
+    );
+
+    expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+      0,
+    );
+    const failed = fixture.events.events.find((event) => event.type === 'task.failed');
+    expect(failed?.message).toContain('Needs the payments API key, which is not in the workspace.');
+    // Machine-readable discriminator mirroring #528's `infrastructureFailure`
+    // field: a consumer branches on `data.blockedReason` instead of
+    // regexing the human-readable message.
+    expect(failed?.data.blockedReason).toBe(
+      'Needs the payments API key, which is not in the workspace.',
+    );
+  });
+
+  it('retries a blocked implement attempt on the next executor and still completes (#537)', async () => {
+    // The guard must not break the existing attempt ladder: a blocked first
+    // attempt rolls back and retries on the next executor exactly like any
+    // other quality-gate failure.
+    let implementations = 0;
+    const fixture = await setupRunner(retryWorkflow, [task('T1')], (input, artifacts) => {
+      const content =
+        input.step.type === 'verify'
+          ? verificationReport(true)
+          : input.step.id === 'implement.T1'
+            ? (implementations += 1) === 1
+              ? blockedArtifact('First executor cannot proceed.')
+              : completedArtifact(input.step)
+            : completedArtifact(input.step);
+      return artifacts.put({
+        projectId: input.project.id,
+        name: input.step.outputArtifact,
+        content,
+        createdBy: 'test-runtime',
+      });
+    });
+
+    await fixture.run();
+
+    expect(implementations).toBe(2);
+    expect(
+      fixture.events.events
+        .filter((event) => event.type === 'task.failed')
+        .map((event) => event.data.attempt),
+    ).toEqual([1]);
+    expect(
+      fixture.events.events.find((event) => event.type === 'task.completed')?.data.attempt,
+    ).toBe(2);
+  });
+
+  it('fails the attempt when the verify-repair agent reports blocked (#537)', async () => {
+    const fixture = await setupRunner(gatedWorkflow, [task('T1')], (input, artifacts) => {
+      const content =
+        input.step.type === 'verify'
+          ? verificationReport(false)
+          : input.step.id === 'repair-task.T1'
+            ? blockedArtifact('Cannot fix without secrets access.')
+            : completedArtifact(input.step);
+      return artifacts.put({
+        projectId: input.project.id,
+        name: input.step.outputArtifact,
+        content,
+        createdBy: 'test-runtime',
+      });
+    });
+
+    await expect(fixture.run()).rejects.toThrow('Cannot fix without secrets access.');
+
+    expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+      0,
+    );
+    const failed = fixture.events.events.find((event) => event.type === 'task.failed');
+    expect(failed?.data.blockedReason).toBe('Cannot fix without secrets access.');
+  });
+
   it('runs the browser channel only for browser-visible tasks', async () => {
     const browserPlans: string[] = [];
     const fixture = await setupRunner(
@@ -680,6 +770,38 @@ describe('TaskGraphRunner', () => {
     expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
       0,
     );
+  });
+
+  it('completes a task whose browser plan blocks assertion outside browser-visible acceptance (#537)', async () => {
+    // #537's guard must not reach the browser *plan* step: "blocked" there
+    // is a valid "nothing to assert" answer (see taskBrowserPlanStep's
+    // prompt), not a failed attempt — existing behaviour this fix must keep
+    // green.
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: undefined }],
+      (input, artifacts) => {
+        const content =
+          input.step.type === 'verify'
+            ? verificationReport(true)
+            : input.step.id === 'plan-task-browser-test.T1'
+              ? blockedArtifact()
+              : completedArtifact(input.step);
+        return artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content,
+          createdBy: 'test-runtime',
+        });
+      },
+    );
+
+    await fixture.run();
+
+    expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+      1,
+    );
+    expect(fixture.events.events.some((event) => event.type === 'task.failed')).toBe(false);
   });
 
   it('rejects a malformed browser plan without spending the repair budget', async () => {
@@ -1033,11 +1155,11 @@ function passingUiQualityBrowserReport(): object {
   };
 }
 
-function blockedArtifact(): object {
+function blockedArtifact(summary = 'No browser surface.'): object {
   return {
     schemaVersion: '1',
     status: 'blocked',
-    summary: 'No browser surface.',
+    summary,
     decisions: [],
     assumptions: [],
     risks: [],

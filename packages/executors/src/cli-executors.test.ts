@@ -95,6 +95,24 @@ describe('CLI executor contracts', () => {
     expect(invocation.args).toContain('plan');
     expect(invocation.args).toContain('--json-schema');
     expect(invocation.args).toContain('sonnet');
+    // Read-only runs get no Bash allowlist — there is nothing to pre-approve.
+    expect(invocation.args.some((arg) => arg.startsWith('--allowedTools'))).toBe(false);
+    expect(invocation.args.at(-1)).toBe('Open the request file.');
+  });
+
+  it('pre-approves a scoped Bash allowlist for mutating Claude runs', async () => {
+    const invocation = await new InspectableClaudeExecutor(1_000_000).inspect(
+      request({ provider: 'claude', model: 'sonnet', mutatesWorkspace: true }),
+    );
+    expect(invocation.args).toContain('acceptEdits');
+    // A single `--allowedTools=` token, not two separate argv entries: the
+    // flag is variadic, so a bare `--allowedTools <value>` pair would
+    // swallow the positional prompt that follows it (verified against the
+    // real CLI — see docs/adr/0063).
+    expect(invocation.args).toContain(
+      '--allowedTools=Bash(pnpm *),Bash(npm *),Bash(npx *),Bash(node *),Bash(git *),Bash(docker *),Bash(supabase *),Bash(psql *)',
+    );
+    expect(invocation.args.filter((arg) => arg.startsWith('--allowedTools'))).toHaveLength(1);
     expect(invocation.args.at(-1)).toBe('Open the request file.');
   });
 

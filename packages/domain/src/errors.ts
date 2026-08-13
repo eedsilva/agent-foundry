@@ -134,6 +134,26 @@ export class QualityGateError extends Error {
   }
 }
 
+/**
+ * An implement/verify-repair/browser-repair agent answered `blocked`
+ * (#537): whatever it did to the workspace before answering cannot be
+ * trusted as a complete deliverable, and the attempt rolls back to its
+ * checkpoint — so this is a failed attempt for the task loop's routing
+ * ladder, not a completed one. `reason` carries the agent's own
+ * explanation, mirroring `BrowserInfrastructureError.diagnosis`, so a
+ * `task.failed` consumer gets it as machine-readable data instead of only
+ * in the message.
+ */
+export class AgentBlockedError extends QualityGateError {
+  constructor(
+    message: string,
+    nodeId: string,
+    readonly reason: string,
+  ) {
+    super(message, nodeId);
+  }
+}
+
 /** Signals Task 4 to preserve failed work and converge the run terminally. */
 export class EmergencyCeilingError extends Error {
   override readonly name = 'EmergencyCeilingError';
