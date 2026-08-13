@@ -529,19 +529,18 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
       const request = route.request();
       const url = request.url();
       const stepIndex = requestSteps.get(request) ?? activeStepIndex;
+      // A deliberate policy block always aborts 'blockedbyclient' and is
+      // never confused with a transport failure below: it never reaches
+      // route.fetch(), so it can never fall into the catch block.
+      if (!permitted(url)) {
+        observe(
+          { kind: 'policy-block', message: `Blocked request to ${sanitizeUrl(url, token)}`, url },
+          stepIndex,
+        );
+        await route.abort('blockedbyclient').catch(() => undefined);
+        return;
+      }
       try {
-        if (!permitted(url)) {
-          observe(
-            {
-              kind: 'policy-block',
-              message: `Blocked request to ${sanitizeUrl(url, token)}`,
-              url,
-            },
-            stepIndex,
-          );
-          await route.abort('blockedbyclient');
-          return;
-        }
         const response = await route.fetch({ maxRedirects: 0, timeout: 0 });
         const location = [301, 302, 303, 307, 308].includes(response.status())
           ? response.headers().location
@@ -564,12 +563,20 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
             },
             stepIndex,
           );
-          await route.abort('blockedbyclient');
+          await route.abort('blockedbyclient').catch(() => undefined);
           return;
         }
         await route.fulfill({ response });
-      } catch {
-        await route.abort('blockedbyclient').catch(() => undefined);
+      } catch (error) {
+        // A real transport failure (connection refused, DNS, socket reset) is
+        // never laundered into the 'blockedbyclient' code the policy blocks
+        // above use — that would misattribute broken infrastructure as a
+        // deliberate security decision (#526, #528). Report the real cause,
+        // scoped to whether the preview origin itself was unreachable.
+        const kind =
+          new URL(url).origin === prefixUrl.origin ? 'preview-unreachable' : 'request-failed';
+        observe({ kind, message: redact(errorMessage(error), token), url }, stepIndex);
+        await route.abort('failed').catch(() => undefined);
       }
     });
     await context.routeWebSocket('**/*', async (webSocket) => {
@@ -675,6 +682,12 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
     // and the operator walkthrough (#398).
     const failedSteps = steps.filter((step) => step.status === 'failed').length;
     const approved = !passiveFailure;
+    // Names the preview origin and the underlying transport cause so a
+    // reachability failure can never be read as an in-app bug or a policy
+    // decision (#526, #528).
+    const infrastructureFailure = runObservations.find(
+      ({ observation }) => observation.kind === 'preview-unreachable',
+    )?.observation.message;
     return {
       report: BrowserVerificationReportSchema.parse({
         schemaVersion: '1',
@@ -686,6 +699,11 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
           : `${failedSteps} browser step failure(s) and ${runObservations.length} passive failure(s).`,
         planArtifact: input.planArtifact,
         previewSession,
+        ...(infrastructureFailure
+          ? {
+              infrastructureFailure: `Preview at ${prefixUrl.origin} is unreachable: ${infrastructureFailure}`,
+            }
+          : {}),
         steps,
       }),
       evidence: { screenshots },

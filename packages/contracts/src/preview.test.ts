@@ -989,6 +989,70 @@ describe('BrowserVerificationReportSchema uiQuality field', () => {
   });
 });
 
+describe('BrowserVerificationReportSchema infrastructureFailure field', () => {
+  const unreachableStep = {
+    stepId: 'open',
+    title: 'Open fixture',
+    status: 'failed' as const,
+    durationMs: 1,
+    observations: [
+      {
+        kind: 'preview-unreachable' as const,
+        message: 'connect ECONNREFUSED 127.0.0.1:59999',
+        timestamp: createdAt,
+      },
+    ],
+  };
+
+  const baseReport = {
+    schemaVersion: '1',
+    approved: false,
+    summary: 'Preview unreachable',
+    planArtifact: { name: 'browser-test.plan', revision: 2, sha256: 'a'.repeat(64) },
+    previewSession: {
+      sessionId: 'preview-1',
+      status: 'stopped',
+      evidence: { screenshots: [] },
+    },
+    steps: [unreachableStep],
+  };
+
+  it('parses an existing report fixture without an infrastructureFailure field', () => {
+    expect(BrowserVerificationReportSchema.safeParse(baseReport).success).toBe(true);
+  });
+
+  it('accepts a preview-unreachable observation kind and an infrastructureFailure summary', () => {
+    const result = BrowserVerificationReportSchema.safeParse({
+      ...baseReport,
+      infrastructureFailure:
+        'Preview at http://127.0.0.1:59999 is unreachable: connect ECONNREFUSED 127.0.0.1:59999',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.steps[0]?.observations[0]?.kind).toBe('preview-unreachable');
+      expect(result.data.infrastructureFailure).toContain('unreachable');
+    }
+  });
+
+  it('rejects an empty-string infrastructureFailure', () => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({ ...baseReport, infrastructureFailure: '' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects an approved report carrying an infrastructureFailure', () => {
+    expect(
+      BrowserVerificationReportSchema.safeParse({
+        ...baseReport,
+        approved: true,
+        steps: [],
+        infrastructureFailure: 'Preview at http://127.0.0.1:59999 is unreachable: refused',
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('PreviewSelectionResultSchema', () => {
   it('accepts a resolved result with a file and no candidates/screenshot', () => {
     const result = PreviewSelectionResultSchema.parse({

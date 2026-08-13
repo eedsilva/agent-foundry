@@ -2018,6 +2018,117 @@ describe('PlaywrightBrowserVerifier', () => {
     expect(evidence.video).toBeInstanceOf(Buffer);
     expect(evidence.video!.byteLength).toBeGreaterThan(0);
   });
+
+  describe('preview transport failures (#526, #528)', () => {
+    it('reports a closed preview port as preview-unreachable, not a policy block', async () => {
+      // A bind-then-close on port 0 guarantees a free loopback port with
+      // nothing listening — route.fetch() must throw ECONNREFUSED here.
+      const probe = createServer(() => undefined);
+      await new Promise<void>((resolve, reject) => {
+        probe.once('error', reject);
+        probe.listen(0, '127.0.0.1', resolve);
+      });
+      const address = probe.address() as AddressInfo;
+      const origin = `http://127.0.0.1:${address.port}`;
+      await new Promise<void>((resolve, reject) =>
+        probe.close((error) => (error ? reject(error) : resolve())),
+      );
+
+      const report = await verify(
+        origin,
+        plan([
+          {
+            id: 'open',
+            title: 'Open fixture',
+            action: { kind: 'goto', path: '/' },
+            assertions: [],
+          },
+        ]),
+      );
+
+      expect(report.approved).toBe(false);
+      expect(report.infrastructureFailure).toBeDefined();
+      expect(report.infrastructureFailure).toContain(origin);
+
+      const observations = report.steps.flatMap((step) => step.observations);
+      const unreachable = observations.find(({ kind }) => kind === 'preview-unreachable');
+      expect(unreachable?.message).toMatch(/ECONNREFUSED/);
+      expect(observations.some(({ message }) => message.includes('ERR_BLOCKED_BY_CLIENT'))).toBe(
+        false,
+      );
+      expectRedacted(report);
+    });
+
+    it('captures a screenshot of the rendered app and reports no infrastructure failure when the preview is reachable', async () => {
+      const origin = await serve((_request, response) => {
+        response.setHeader('content-type', 'text/html');
+        response.end('<h1>Fixture is up</h1>');
+      });
+
+      const { report, evidence } = await routePolicyTestVerifier.verify(
+        {
+          planArtifact: PLAN_ARTIFACT,
+          planContent: artifact(
+            plan([
+              {
+                id: 'open',
+                title: 'Open fixture',
+                action: { kind: 'goto', path: '/' },
+                assertions: [
+                  {
+                    kind: 'visible',
+                    locator: { by: 'role', role: 'heading', name: 'Fixture is up' },
+                  },
+                ],
+              },
+            ]),
+          ),
+          session: session(origin),
+          allowedOrigins: [],
+          evidencePolicy: DEFAULT_BROWSER_EVIDENCE_POLICY,
+        },
+        new AbortController().signal,
+      );
+
+      expect(report.approved).toBe(true);
+      expect(report.infrastructureFailure).toBeUndefined();
+      expect(evidence.screenshots.length).toBeGreaterThan(0);
+      expect(evidence.screenshots[0]?.buffer.subarray(0, 8).toString('hex')).toBe(
+        '89504e470d0a1a0a', // PNG magic bytes
+      );
+    });
+
+    it('still reports a genuinely policy-blocked request as blockedbyclient, not preview-unreachable', async () => {
+      const forbiddenOrigin = await serve((_request, response) => response.end('forbidden'));
+      const origin = await serve((_request, response) => {
+        response.setHeader('content-type', 'text/html');
+        response.end(`<img src="${forbiddenOrigin}/sentinel"><h1>Fixture</h1>`);
+      });
+
+      const report = await verify(
+        origin,
+        plan([
+          {
+            id: 'open',
+            title: 'Open fixture',
+            action: { kind: 'goto', path: '/' },
+            assertions: [
+              { kind: 'visible', locator: { by: 'role', role: 'heading', name: 'Fixture' } },
+            ],
+          },
+        ]),
+      );
+
+      expect(report.approved).toBe(false);
+      expect(report.infrastructureFailure).toBeUndefined();
+      const observations = report.steps.flatMap((step) => step.observations);
+      expect(observations.some(({ kind }) => kind === 'policy-block')).toBe(true);
+      expect(observations.some(({ kind }) => kind === 'preview-unreachable')).toBe(false);
+      expect(observations.some(({ message }) => message.includes('ERR_BLOCKED_BY_CLIENT'))).toBe(
+        true,
+      );
+    });
+  });
 }, BROWSER_TEST_TIMEOUT_MS);
 
 describe('captureSelectionScreenshot', () => {
