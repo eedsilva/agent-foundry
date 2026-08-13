@@ -2,16 +2,19 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvironmentOperationError } from '@agent-foundry/domain';
 import {
+  destructiveStatements,
   SupabaseGeneratedProjectRuntime,
   type SchemaSqlClientFactory,
   type SupabaseCommand,
 } from './supabase-runtime.js';
 import {
   FunctionArtifactSchema,
+  generateSchemaPlanSql,
+  SchemaPlanSchema,
   type FunctionArtifact,
   type SchemaTable,
 } from '@agent-foundry/contracts';
@@ -1186,6 +1189,186 @@ SELECT '-- not a comment'; DROP TABLE quoted_line_marker;`,
     if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
     expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
     expect(rejection.diagnostic).not.toContain('�');
+  });
+});
+
+describe('destructiveStatements policy replace (#529)', () => {
+  // Verbatim migration from the failed #529 real-mode run
+  // (20260813044329_schema_plan.sql), which fell over on
+  // "Destructive migration requires approval and verified backup."
+  const SCHEMA_PLAN_MIGRATION = `create table if not exists public.counter ( id integer not null default 1, value integer not null default 0, updated_at timestamptz not null default now(), primary key (id), constraint counter_singleton check (id = 1) );
+alter table public.counter enable row level security;
+drop policy if exists counter_select_public on public.counter;
+create policy counter_select_public on public.counter for select using (true);`;
+
+  it('treats a drop/create pair for the same policy as non-destructive', () => {
+    expect(destructiveStatements(SCHEMA_PLAN_MIGRATION)).toEqual([]);
+  });
+
+  it('keeps a policy drop with no matching create destructive', () => {
+    expect(destructiveStatements('drop policy if exists p on public.t;')).toEqual([
+      'drop policy if exists p on public.t',
+    ]);
+  });
+
+  it('keeps a policy drop destructive when the create names a different policy', () => {
+    expect(
+      destructiveStatements(
+        'drop policy if exists p on public.t; create policy q on public.t for select using (true);',
+      ),
+    ).toEqual(['drop policy if exists p on public.t']);
+  });
+
+  it('keeps a policy drop destructive when the create targets a different table', () => {
+    expect(
+      destructiveStatements(
+        'drop policy if exists p on public.t; create policy p on public.other for select using (true);',
+      ),
+    ).toEqual(['drop policy if exists p on public.t']);
+  });
+
+  it('tolerates quoting, schema qualification and casing across the pair', () => {
+    // Postgres lower-cases unquoted identifiers and takes quoted ones verbatim,
+    // so `"p"`, `p` and `P` are all the same policy on the same table.
+    expect(
+      destructiveStatements(
+        'DROP POLICY "p" ON t; create policy p on public."t" for select using (true);',
+      ),
+    ).toEqual([]);
+    expect(
+      destructiveStatements('drop policy P on public.T; create policy p on public.t;'),
+    ).toEqual([]);
+  });
+
+  it('keeps a policy drop destructive when only the create is case-folded', () => {
+    // `"P"` is quoted, so Postgres keeps its case: it is a different policy
+    // from the unquoted `p` the create makes, and nothing re-creates it.
+    expect(
+      destructiveStatements(
+        'DROP POLICY "P" ON t; create policy p on public.t for select using (true);',
+      ),
+    ).toEqual(['DROP POLICY "P" ON t']);
+    // The mirror case: the drop names the case-folded policy, the create keeps
+    // its case, so the dropped policy is never re-created either.
+    expect(
+      destructiveStatements(
+        'drop policy p on t; create policy "P" on public.t for select using (true);',
+      ),
+    ).toEqual(['drop policy p on t']);
+  });
+
+  it('keeps a policy drop destructive when only the table is case-folded', () => {
+    expect(
+      destructiveStatements(
+        'drop policy p on "T"; create policy p on public.t for select using (true);',
+      ),
+    ).toEqual(['drop policy p on "T"']);
+  });
+
+  it('keeps every other destructive statement destructive', () => {
+    expect(destructiveStatements('drop table public.t;')).toEqual(['drop table public.t']);
+    expect(destructiveStatements('alter table public.t drop column c;')).toEqual([
+      'alter table public.t drop column c',
+    ]);
+    expect(destructiveStatements('truncate table public.t;')).toEqual(['truncate table public.t']);
+    expect(destructiveStatements('delete from public.t;')).toEqual(['delete from public.t']);
+  });
+
+  it('keeps a policy drop destructive when the create hides in a dollar-quoted do block', () => {
+    const sql = `drop policy p on public.t;
+do $$ begin if false then perform 1;
+create policy p on public.t for select using (true);
+end if; end $$;`;
+
+    expect(destructiveStatements(sql)).toEqual(['drop policy p on public.t']);
+  });
+
+  it('keeps a policy drop destructive when the create hides in a dollar-quoted function body', () => {
+    const sql = `drop policy p on public.t;
+create function never_called() returns void language plpgsql as $body$ begin
+create policy p on public.t for select using (true);
+end $body$;`;
+
+    expect(destructiveStatements(sql)).toEqual(['drop policy p on public.t']);
+  });
+
+  it('reports a drop inside a dollar-quoted do block, which runs at migrate time', () => {
+    expect(destructiveStatements('do $$ begin perform 1; drop table public.t; end $$;')).toContain(
+      'drop table public.t',
+    );
+  });
+
+  it('keeps a policy drop destructive when the hiding tag is non-ASCII', () => {
+    // Postgres dollar tags follow unquoted-identifier rules, which admit
+    // non-ASCII letters, so `$é$` is a valid tag the guard has to see.
+    const sql = `drop policy p on public.t;
+create function f() returns void language plpgsql as $é$ begin
+perform 1;
+create policy p on public.t for select using (true);
+end $é$;`;
+
+    expect(destructiveStatements(sql)).toEqual(['drop policy p on public.t']);
+  });
+
+  it('keeps statements after a dollar sign inside a quoted identifier visible', () => {
+    expect(
+      destructiveStatements(`create table "we $x$ ird" (id int);
+create table public.users (id int, user_id uuid);
+drop table public.users;`),
+    ).toEqual(['drop table public.users']);
+  });
+
+  it('withholds the exemption from any migration containing a dollar-quoted body', () => {
+    // Known ceiling: dollar quoting disables the policy-replace exemption
+    // wholesale, so this pure replace still demands approval (fail-closed).
+    expect(
+      destructiveStatements(`do $$ begin perform 1; end $$;
+drop policy p on public.t;
+create policy p on public.t for select using (true);`),
+    ).toEqual(['drop policy p on public.t']);
+  });
+
+  it('keeps a policy drop destructive when the create precedes it', () => {
+    expect(
+      destructiveStatements(
+        'create policy p on public.t for select using (true); drop policy p on public.t;',
+      ),
+    ).toEqual(['drop policy p on public.t']);
+  });
+
+  it('classifies the generated crud-heavy fixture SQL as non-destructive', async () => {
+    const plan = SchemaPlanSchema.parse(
+      JSON.parse(
+        await readFile(
+          resolve(
+            import.meta.dirname,
+            '../../../docs/evidence/harness-alignment/crud-heavy/schema-plan.json',
+          ),
+          'utf8',
+        ),
+      ),
+    );
+
+    expect(destructiveStatements(generateSchemaPlanSql(plan))).toEqual([]);
+  });
+
+  it('migrates a policy-replace migration without approval', async () => {
+    const { command, runtime } = fixture();
+    const environment = await runtime.initialize({ projectId: 'project-a' });
+    const migrationPath = await writeMigration(
+      environment.workdir,
+      '20260813044329_schema_plan.sql',
+      SCHEMA_PLAN_MIGRATION,
+    );
+
+    await expect(runtime.migrate({ projectId: 'project-a', migrationPath })).resolves.toBeDefined();
+    expect(command.mock.calls).toContainEqual([
+      'migration',
+      'up',
+      '--workdir',
+      environment.workdir,
+      '--yes',
+    ]);
   });
 });
 

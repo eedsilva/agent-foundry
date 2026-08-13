@@ -1309,6 +1309,37 @@ function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+// ponytail: an unqualified table always resolves to `public`, so a migration
+// that first redirects `search_path` pairs the wrong tables; and any migration
+// containing anything shaped `$…$` forfeits the exemption wholesale, because
+// `sqlStatements` does not know dollar quoting and splits inside `do $$ … $$`
+// and function bodies — text that never executes would otherwise read as a
+// top-level `create policy` and exempt a real drop. Dollar tags admit
+// non-ASCII letters, so that guard is deliberately wider than the real syntax
+// and trips on `values($1,$2)` too, which then needs approval even for a pure
+// policy replace. `generateSchemaPlanSql` never emits dollar quoting.
+// Upgrade path for both is a real SQL parser.
+const DOLLAR_QUOTED = /\$[^\s$]*\$/;
+const SQL_IDENTIFIER = String.raw`(?:"[^"]*"|[A-Za-z_][A-Za-z0-9_$]*)`;
+const POLICY_TARGET = String.raw`(?<policy>${SQL_IDENTIFIER})\s+ON\s+(?:(?<schema>${SQL_IDENTIFIER})\s*\.\s*)?(?<table>${SQL_IDENTIFIER})`;
+const DROP_POLICY_RE = new RegExp(
+  String.raw`^DROP\s+POLICY\s+(?:IF\s+EXISTS\s+)?${POLICY_TARGET}`,
+  'i',
+);
+const CREATE_POLICY_RE = new RegExp(String.raw`^CREATE\s+POLICY\s+${POLICY_TARGET}`, 'i');
+
+// Postgres folds an *unquoted* identifier to lower case and takes a *quoted*
+// one verbatim, so `"P"` and `p` are two different policies while `"p"`, `p`
+// and `P` are one.
+function foldIdentifier(value: string): string {
+  return value.startsWith('"') ? value.slice(1, -1) : value.toLowerCase();
+}
+
+function policyKey(match: RegExpMatchArray): string {
+  const { policy = '', schema = 'public', table = '' } = match.groups ?? {};
+  return `${foldIdentifier(schema)}.${foldIdentifier(table)}:${foldIdentifier(policy)}`;
+}
+
 export function destructiveStatements(sql: string): string[] {
   const statements = sqlStatements(sql);
   const destructivePatterns = [
@@ -1317,9 +1348,24 @@ export function destructiveStatements(sql: string): string[] {
     /^DELETE\s+FROM\b/i,
     /^ALTER\s+TABLE\b[\s\S]*\bDROP\s+COLUMN\b/i,
   ];
-  return statements.filter((statement) =>
-    destructivePatterns.some((pattern) => pattern.test(statement)),
-  );
+  // A policy a *later* statement re-creates is a replace, not a removal: it
+  // destroys no data and leaves the table protected once applied (#529). A
+  // create that precedes the drop is a net removal and stays destructive.
+  //
+  // Fail-closed: the map stays empty, so nothing is exempt, for a migration
+  // containing dollar quoting (see the ponytail note on DOLLAR_QUOTED).
+  const recreated = new Map<string, number>();
+  if (!DOLLAR_QUOTED.test(sql)) {
+    statements.forEach((statement, index) => {
+      const created = statement.match(CREATE_POLICY_RE);
+      if (created) recreated.set(policyKey(created), index);
+    });
+  }
+  return statements.filter((statement, index) => {
+    const dropped = statement.match(DROP_POLICY_RE);
+    if (dropped && (recreated.get(policyKey(dropped)) ?? -1) > index) return false;
+    return destructivePatterns.some((pattern) => pattern.test(statement));
+  });
 }
 
 export function sqlStatements(sql: string): string[] {

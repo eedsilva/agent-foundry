@@ -1,0 +1,110 @@
+## 0. STATE BEFORE
+     relname     | relrowsecurity 
+-----------------+----------------
+ storage_uploads | t
+(1 row)
+    tablename    |         policyname          |  cmd   |                   qual                   
+-----------------+-----------------------------+--------+------------------------------------------
+ storage_uploads | storage_upload_owner_select | SELECT | (owner_id = ( SELECT auth.uid() AS uid))
+(1 row)
+    version     
+----------------
+ 00000000000000
+(1 row)
+
+## 1. GATE — batch refused as the run left it
+  20260726000000_rls_baseline.sql: (none)
+  20260813061809_schema_plan.sql: (none)
+  20260813062500_counter.sql: drop table public.items
+  pruned stale unapplied environment copy: 20260726000000_rls_baseline.sql
+  pruned stale unapplied environment copy: 20260813061809_schema_plan.sql
+  pruned stale unapplied environment copy: 20260813062500_counter.sql
+error constructor: ValidationError
+error message: Destructive migration requires approval and verified backup.
+
+## 2. APPLY — the artifact-derived migration alone
+moved /private/tmp/claude-501/-Users-edsilva-Documents-ed-agent-foundry/08f4b3a1-522a-4777-a581-7c39630a4d3e/scratchpad/529-datadir2/projects/01KZWVNGD4RM32PXWKEJXS69N6/workspace/supabase/migrations/20260813062500_counter.sql -> /private/tmp/claude-501/-Users-edsilva-Documents-ed-agent-foundry/08f4b3a1-522a-4777-a581-7c39630a4d3e/scratchpad/529-datadir2/projects/01KZWVNGD4RM32PXWKEJXS69N6/workspace/supabase/_quarantine_20260813062500_counter.sql
+  pruned stale unapplied environment copy: 20260726000000_rls_baseline.sql
+  pruned stale unapplied environment copy: 20260813061809_schema_plan.sql
+  pruned stale unapplied environment copy: 20260813062500_counter.sql
+applyWorkspaceMigrations result: {
+  projectId: '01KZWVNGD4RM32PXWKEJXS69N6',
+  composeProjectName: 'supabase_01KZWVNGD4RM32PXWKEJXS69N6',
+  workdir: '/private/tmp/claude-501/-Users-edsilva-Documents-ed-agent-foundry/08f4b3a1-522a-4777-a581-7c39630a4d3e/scratchpad/529-datadir2/projects/01KZWVNGD4RM32PXWKEJXS69N6/environment',
+  network: 'supabase_01KZWVNGD4RM32PXWKEJXS69N6_network',
+  volumes: [ 'supabase_01KZWVNGD4RM32PXWKEJXS69N6_db_data' ],
+  ports: { api: 23840, graphql: 23840, studio: 23843, mail: 23844 },
+  endpoints: {
+    api: 'http://127.0.0.1:23840',
+    graphql: 'http://127.0.0.1:23840/graphql/v1',
+    studio: 'http://127.0.0.1:23843',
+    mail: 'http://127.0.0.1:23844'
+  },
+  health: { state: 'healthy', checkedAt: '2026-08-13T06:07:20.605Z' },
+  createdAt: '2026-08-13T06:07:20.605Z',
+  updatedAt: '2026-08-13T11:48:27.144Z'
+}
+    version     
+----------------
+ 00000000000000
+ 20260726000000
+ 20260813061809
+(3 rows)
+
+## 3. VERIFY — verifySchema green + RLS by query
+loaded schema.current revision 1, tables: counter
+verifySchema result: {
+  "missingTables": [],
+  "missingColumns": [],
+  "mismatchedColumns": [],
+  "tablesWithoutRls": [],
+  "missingPolicies": []
+}
+-- independent raw SQL, not via verifySchema --
+     relname     | relrowsecurity 
+-----------------+----------------
+ counter         | t
+ items           | t
+ storage_uploads | t
+(3 rows)
+    tablename    |         policyname          |  cmd   |                   qual                   
+-----------------+-----------------------------+--------+------------------------------------------
+ counter         | counter_select_public       | SELECT | true
+ items           | items_delete_owner          | DELETE | (user_id = ( SELECT auth.uid() AS uid))
+ items           | items_insert_owner          | INSERT | 
+ items           | items_select_owner          | SELECT | (user_id = ( SELECT auth.uid() AS uid))
+ items           | items_update_owner          | UPDATE | (user_id = ( SELECT auth.uid() AS uid))
+ storage_uploads | storage_upload_owner_select | SELECT | (owner_id = ( SELECT auth.uid() AS uid))
+(6 rows)
+     table_name     | column_name  |        data_type         | is_nullable 
+--------------------+--------------+--------------------------+-------------
+ counter            | id           | integer                  | NO
+ counter            | value        | integer                  | NO
+ counter            | updated_at   | timestamp with time zone | NO
+ items              | id           | uuid                     | NO
+ items              | user_id      | uuid                     | NO
+ items              | title        | text                     | NO
+ items              | created_at   | timestamp with time zone | NO
+ storage_scan_queue | object_name  | text                     | YES
+ storage_scan_queue | owner_id     | uuid                     | YES
+ storage_scan_queue | media_type   | text                     | YES
+ storage_scan_queue | size_bytes   | bigint                   | YES
+ storage_scan_queue | scan_status  | USER-DEFINED             | YES
+ storage_scan_queue | retain_until | timestamp with time zone | YES
+ storage_scan_queue | exported_at  | timestamp with time zone | YES
+ storage_scan_queue | created_at   | timestamp with time zone | YES
+ storage_uploads    | object_name  | text                     | NO
+ storage_uploads    | owner_id     | uuid                     | NO
+ storage_uploads    | media_type   | text                     | NO
+ storage_uploads    | size_bytes   | bigint                   | NO
+ storage_uploads    | scan_status  | USER-DEFINED             | NO
+ storage_uploads    | retain_until | timestamp with time zone | NO
+ storage_uploads    | exported_at  | timestamp with time zone | YES
+ storage_uploads    | created_at   | timestamp with time zone | NO
+(23 rows)
+
+## 4. RESTORE + GATE AGAIN
+restored /private/tmp/claude-501/-Users-edsilva-Documents-ed-agent-foundry/08f4b3a1-522a-4777-a581-7c39630a4d3e/scratchpad/529-datadir2/projects/01KZWVNGD4RM32PXWKEJXS69N6/workspace/supabase/_quarantine_20260813062500_counter.sql -> /private/tmp/claude-501/-Users-edsilva-Documents-ed-agent-foundry/08f4b3a1-522a-4777-a581-7c39630a4d3e/scratchpad/529-datadir2/projects/01KZWVNGD4RM32PXWKEJXS69N6/workspace/supabase/migrations/20260813062500_counter.sql
+error constructor: ValidationError
+error message: Destructive migration requires approval and verified backup.
+workspace migrations dir now contains: 20260726000000_rls_baseline.sql, 20260813061809_schema_plan.sql, 20260813062500_counter.sql
