@@ -1698,17 +1698,17 @@ async function atomicWrite(path: string, value: string | Buffer): Promise<void> 
 /** The migration version `supabase migration up` was applying when it failed
  * on a duplicate-object error, or undefined when the failure is anything else.
  * 42P07/42710/42701 are Postgres's duplicate table/object/column codes. */
-/** A migration file's version: the leading filename component before the
- * first `_`, e.g. `20260806000000_create_todos.sql` → `20260806000000`. */
-function migrationVersion(name: string): string {
-  return name.replace(/\.sql$/, '').split('_')[0]!;
-}
-
 function alreadyAppliedMigrationVersion(error: unknown): string | undefined {
   if (!(error instanceof EnvironmentOperationError)) return undefined;
   if (!/already exists \(SQLSTATE (?:42P07|42710|42701)\)/.test(error.diagnostic)) return undefined;
   const applying = [...error.diagnostic.matchAll(/Applying migration (\d+)_[\w.-]*\.sql/g)];
   return applying.at(-1)?.[1];
+}
+
+/** A migration file's version: the leading filename component before the
+ * first `_`, e.g. `20260806000000_create_todos.sql` → `20260806000000`. */
+function migrationVersion(name: string): string {
+  return name.replace(/\.sql$/, '').split('_')[0]!;
 }
 
 function operationError(
