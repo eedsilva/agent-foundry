@@ -16,6 +16,7 @@ async function expectModuleMappedGraph(shape: string, moduleIds: string[]) {
   const graph = GeneratedTaskGraphSchema.parse(await readShapeFixture(shape, 'task-graph.json'));
   expect(appShape.modules.map((module) => module.id)).toEqual(moduleIds);
   expect(graph.modules.map((module) => module.id)).toEqual(moduleIds);
+  expect(graph.modules).toEqual(appShape.modules);
   const referencedModules = new Set(graph.tasks.map((task) => task.module));
   expect([...referencedModules].sort()).toEqual([...moduleIds].sort());
 }

@@ -90,7 +90,8 @@ describe('task graph contracts', () => {
         modules: [{ id: 'crud:issues', acceptanceChannel: 'browser-visible' as const }],
         tasks: graph.tasks.map((task, index) => ({
           ...task,
-          acceptanceMode: index === 0 ? ('deterministic-only' as const) : ('browser-visible' as const),
+          acceptanceMode:
+            index === 0 ? ('deterministic-only' as const) : ('browser-visible' as const),
           module: 'crud:issues',
         })),
       },

@@ -12,7 +12,7 @@ The `data` object should contain:
 - `schemaVersion`: the literal string `'1'`.
 - `modules`: the app-shape contract (ADR 0059). A non-empty array of objects with
   `id` (`auth`, `dashboard`, `storage`, or `crud:<resource>`) and `acceptanceChannel`
-  (`deterministic-only` or `browser-visible`). Vary the app's *shape* through this
+  (`deterministic-only` or `browser-visible`). Vary the app's _shape_ through this
   list — never invent a new stack or framework.
 - `tasks`: the machine-executed task graph. Each task is an object with exactly
   `id` (stable, e.g. `T1`), `title`, `dependsOn` (array of task ids), `deliverables`

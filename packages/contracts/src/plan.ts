@@ -190,7 +190,10 @@ export type TaskGraphArtifact = z.infer<typeof TaskGraphArtifactSchema>;
 /** Output contract for new planners: every task must declare its acceptance
  * channel and owning module, and the graph must carry the app-shape module
  * list those references resolve against (ADR 0059 / #479). */
-export const GeneratedTaskGraphSchema = createTaskGraphSchema(GeneratedPlanTaskSchema, MODULE_LIST_SCHEMA);
+export const GeneratedTaskGraphSchema = createTaskGraphSchema(
+  GeneratedPlanTaskSchema,
+  MODULE_LIST_SCHEMA,
+);
 export type GeneratedTaskGraph = z.infer<typeof GeneratedTaskGraphSchema>;
 
 export const GeneratedTaskGraphArtifactSchema = AgentArtifactSchema.extend({
