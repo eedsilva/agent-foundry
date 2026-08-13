@@ -705,6 +705,75 @@ describe('TaskGraphRunner', () => {
     expect(repairs).toBe(0);
   });
 
+  it('fails an infrastructure-unreachable browser check without spending the repair budget', async () => {
+    let repairs = 0;
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }],
+      (input, artifacts) => {
+        if (input.step.id === 'repair-task-browser.T1') repairs += 1;
+        let content: object = completedArtifact(input.step);
+        if (input.step.id === 'verify-task.T1') content = verificationReport(true);
+        else if (input.step.id === 'plan-task-browser-test.T1') content = browserPlan();
+        else if (input.step.id === 'assert-task.T1') content = infrastructureFailureBrowserReport();
+        return artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content,
+          createdBy: 'test-runtime',
+        });
+      },
+    );
+
+    await expect(fixture.run()).rejects.toThrow(
+      /browser verification never reached the app.*ECONNREFUSED 127\.0\.0\.1:4000/s,
+    );
+
+    expect(repairs).toBe(0);
+    expect(
+      fixture.events.events.filter((event) => event.type === 'quality.repair_requested'),
+    ).toHaveLength(0);
+    const failed = fixture.events.events.find((event) => event.type === 'task.failed');
+    expect(failed?.message).toContain('ECONNREFUSED 127.0.0.1:4000');
+  });
+
+  it('still enters repair for a browser check that is merely unapproved, not infrastructure-broken', async () => {
+    // #528's other direction: `approved: false` with no `infrastructureFailure`
+    // must not be mistaken for a harness failure — the repair loop runs
+    // exactly as it does today.
+    let repairs = 0;
+    let browserChecks = 0;
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }],
+      (input, artifacts) => {
+        if (input.step.id === 'repair-task-browser.T1') repairs += 1;
+        let content: object = completedArtifact(input.step);
+        if (input.step.id === 'verify-task.T1') content = verificationReport(true);
+        else if (input.step.id === 'plan-task-browser-test.T1') content = browserPlan();
+        else if (input.step.id === 'assert-task.T1') {
+          browserChecks += 1;
+          content = browserReport(browserChecks > 1);
+        }
+        return artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content,
+          createdBy: 'test-runtime',
+        });
+      },
+    );
+
+    await fixture.run();
+
+    expect(repairs).toBe(1);
+    expect(
+      fixture.events.events
+        .filter((event) => event.type === 'quality.repair_requested')
+        .map((event) => event.data.taskId),
+    ).toEqual(['T1']);
+  });
+
   it('rolls a browser startup failure back to the verified implementation', async () => {
     const fixture = await setupRunner(
       browserWorkflow,
@@ -892,6 +961,20 @@ function browserReport(approved: boolean): object {
         ...(approved ? {} : { error: 'Root did not load.' }),
       },
     ],
+  };
+}
+
+/**
+ * A browser-verification report shaped like Task 1's `PlaywrightBrowserVerifier`
+ * output when the preview origin itself could not be reached (#526/#528): the
+ * harness never got far enough to run any assertion, so `infrastructureFailure`
+ * is set alongside `approved: false`.
+ */
+function infrastructureFailureBrowserReport(): object {
+  return {
+    ...browserReport(false),
+    infrastructureFailure:
+      'Preview at http://127.0.0.1:4000 is unreachable: route.fetch: connect ECONNREFUSED 127.0.0.1:4000',
   };
 }
 

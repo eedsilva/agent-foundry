@@ -486,6 +486,13 @@ export class TaskGraphRunner {
         });
         return repaired;
       }
+      if (parsed.success && parsed.data.infrastructureFailure) {
+        // A transport failure, not a quality gate: the harness never reached
+        // the app, so there is nothing for a repair agent to fix (#528).
+        throw new ExecutionError(
+          `Task ${task.id}: browser verification never reached the app: ${parsed.data.infrastructureFailure}`,
+        );
+      }
       const failedStep = parsed.success
         ? parsed.data.steps.find((candidate) => candidate.status !== 'passed')
         : undefined;
