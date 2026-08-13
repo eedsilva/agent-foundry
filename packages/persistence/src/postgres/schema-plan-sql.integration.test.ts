@@ -6,6 +6,7 @@ import {
   SchemaPlanSchema,
 } from '@agent-foundry/contracts';
 import { expect, it } from 'vitest';
+import type { PostgresDb } from './client.js';
 import { describePostgres } from './testing.js';
 
 const FIXTURE_SHAPES = ['crud-heavy', 'dashboard-heavy', 'auth-heavy'] as const;
@@ -19,13 +20,37 @@ async function loadPlan(shape: (typeof FIXTURE_SHAPES)[number]) {
 }
 
 // Fixtures reference Supabase's auth schema, which a plain Postgres doesn't have.
-// The stub belongs here, not in the generator.
-const AUTH_STUB = `
-  create schema if not exists auth;
-  create table if not exists auth.users (id uuid primary key);
-  create or replace function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;
-  create or replace function auth.role() returns text language sql stable as $$ select null::text $$;
-`;
+// The stub belongs here, not in the generator. Against a real Supabase database
+// (the supabase-data-plane-e2e job) these objects already exist and the
+// connecting role has no CREATE on `auth`, so each one is created only when
+// missing — the same suite then proves the SQL against both databases.
+async function ensureAuthObjects(sql: PostgresDb) {
+  const [present] = await sql<
+    { has_schema: boolean; has_users: boolean; has_uid: boolean; has_role: boolean }[]
+  >`
+    select
+      exists (select 1 from pg_namespace where nspname = 'auth') as has_schema,
+      to_regclass('auth.users') is not null as has_users,
+      exists (
+        select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'auth' and p.proname = 'uid'
+      ) as has_uid,
+      exists (
+        select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'auth' and p.proname = 'role'
+      ) as has_role`;
+  const statements = [
+    present?.has_schema ? '' : 'create schema auth;',
+    present?.has_users ? '' : 'create table auth.users (id uuid primary key);',
+    present?.has_uid
+      ? ''
+      : 'create function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;',
+    present?.has_role
+      ? ''
+      : 'create function auth.role() returns text language sql stable as $$ select null::text $$;',
+  ].filter(Boolean);
+  if (statements.length > 0) await sql.unsafe(statements.join('\n'));
+}
 
 describePostgres('generated schema-plan SQL (#481)', (ctx) => {
   for (const shape of FIXTURE_SHAPES) {
@@ -34,7 +59,7 @@ describePostgres('generated schema-plan SQL (#481)', (ctx) => {
       const plan = await loadPlan(shape);
       const generated = generateSchemaPlanSql(plan);
 
-      await sql.unsafe(AUTH_STUB);
+      await ensureAuthObjects(sql);
       await sql.unsafe(generated);
       await sql.unsafe(generated); // idempotence
 
