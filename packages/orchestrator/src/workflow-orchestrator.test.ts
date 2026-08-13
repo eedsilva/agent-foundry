@@ -1168,10 +1168,7 @@ describe('schema-plan migration write (#481)', () => {
     const files = await migrationNames(workspace);
     expect(files).toHaveLength(1);
     expect(files[0]).toMatch(/^\d{14}_schema_plan\.sql$/);
-    const content = await readFile(
-      join(workspace, 'supabase', 'migrations', files[0]!),
-      'utf8',
-    );
+    const content = await readFile(join(workspace, 'supabase', 'migrations', files[0]!), 'utf8');
     expect(content).toContain('create table if not exists public.items');
     expect(content).toContain('alter table public.items enable row level security;');
     // The orchestrator owns the commit, since no mutating step does.
@@ -1273,14 +1270,13 @@ describe('schema-plan migration write (#481)', () => {
     harness.workspaces.workspacePath = () => workspace;
     await seedHarnessRun(harness);
 
-    await expect(runApprovingGates(harness)).rejects.toThrow(/already exists with different content/);
+    await expect(runApprovingGates(harness)).rejects.toThrow(
+      /already exists with different content/,
+    );
 
     const files = await migrationNames(workspace);
     expect(files).toHaveLength(1);
-    const content = await readFile(
-      join(workspace, 'supabase', 'migrations', files[0]!),
-      'utf8',
-    );
+    const content = await readFile(join(workspace, 'supabase', 'migrations', files[0]!), 'utf8');
     expect(content).toContain('create table if not exists public.items ( id uuid not null,');
     expect(content).not.toContain('title text not null');
   });

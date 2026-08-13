@@ -307,11 +307,16 @@ explicitamente; referências de chave estrangeira a tabelas locais desconhecidas
 desconhecidas falham a validação. Como no contrato de grafo de tarefas, uma saída fora do contrato falha
 o attempt em vez de virar revisão do artefato.
 
-Quando esse passo valida e é `mutatesWorkspace`, o orquestrador deriva SQL forward-only do plano
-aprovado (`generateSchemaPlanSql`, issue #481) e grava em `supabase/migrations/<timestamp>_schema_plan.sql`
-no workspace do projeto; a mesma migration aplicada pelo runtime existente (`db:reset` / `applyWorkspaceMigrations`)
-é depois conferida por consulta direta ao banco (`verifySchema`) — tabelas, colunas e RLS ausentes falham
-o passo em vez de deixar o banco divergir do plano em silêncio.
+O passo que produz o plano é read-only: `mutatesWorkspace` também concede escrita no workspace inteiro
+ao executor, e um papel de planejamento não precisa disso. Quem grava é o **gate de aprovação** (issue
+#481): aprovado o artefato, o orquestrador deriva SQL forward-only (`generateSchemaPlanSql`), grava em
+`supabase/migrations/<timestamp>_schema_plan.sql` no workspace do projeto e commita ele mesmo. Rejeitar
+não deixa DDL para trás. A mesma migration é aplicada pelo runtime existente
+(`db:reset` / `applyWorkspaceMigrations`) e conferida por consulta direta ao banco (`verifySchema`) —
+tabelas, colunas (tipo e nulidade), RLS e cada política aprovada ausentes falham o passo em vez de deixar
+o banco divergir do plano em silêncio. Constraints e índices ficam fora do escopo da conferência. A
+conferência roda antes do check de browser e antes do gate bloqueante `full-suite-verification`, para
+que um plano só com tarefas `deterministic-only` também seja verificado.
 
 ## Gate de plano
 

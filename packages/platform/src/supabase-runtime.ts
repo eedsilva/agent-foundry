@@ -525,9 +525,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       const [tableRows, columnRows, rlsRows, policyRows] = await Promise.all([
         sql<{ table_name: string }[]>`
           select table_name from information_schema.tables where table_schema = 'public'`,
-        sql<
-          { table_name: string; column_name: string; data_type: string; is_nullable: string }[]
-        >`
+        sql<{ table_name: string; column_name: string; data_type: string; is_nullable: string }[]>`
           select table_name, column_name, data_type, is_nullable
           from information_schema.columns where table_schema = 'public'`,
         sql<{ relname: string; relrowsecurity: boolean }[]>`

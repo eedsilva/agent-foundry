@@ -1652,9 +1652,7 @@ describe('verifySchema (#481)', () => {
     });
     await runtime.initialize({ projectId: 'project-a' });
 
-    expect(
-      await runtime.verifySchema({ projectId: 'project-a', tables: [VERIFY_TABLE] }),
-    ).toEqual({
+    expect(await runtime.verifySchema({ projectId: 'project-a', tables: [VERIFY_TABLE] })).toEqual({
       missingTables: [],
       missingColumns: [],
       mismatchedColumns: [],

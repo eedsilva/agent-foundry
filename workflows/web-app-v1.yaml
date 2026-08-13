@@ -63,7 +63,9 @@ nodes:
     title: Derive the database schema the approved plan requires
     instructions: >-
       Derive the data model the approved plan requires: tables, columns, constraints in DB terms,
-      indexes, and a per-table RLS policy. Every table declares RLS explicitly. Prefer the smallest
+      indexes, and the RLS policies each table needs. Every table declares RLS explicitly. Every
+      policy expression must be valid at migration time: reference only built-ins and objects this
+      same schema plan creates, never a function or table a later task will add. Prefer the smallest
       schema that satisfies the plan. Reference auth.users for ownership columns rather than
       inventing a users table.
     inputArtifacts: [prd, plan.current]
