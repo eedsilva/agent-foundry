@@ -2086,10 +2086,19 @@ export class WorkflowOrchestrator {
     const existing = (await readdir(dir))
       .filter((name) => name.endsWith('_schema_plan.sql'))
       .sort();
-    const latest = existing.at(-1);
-    if (latest && (await readFile(join(dir, latest), 'utf8')) === sql) return;
+    const latestName = existing.at(-1);
+    const latestContent = latestName ? await readFile(join(dir, latestName), 'utf8') : undefined;
+    if (latestContent === sql) return;
     const timestamp = this.clock.now().toISOString().slice(0, 19).replace(/[-:T]/g, '');
-    await writeFile(join(dir, `${timestamp}_schema_plan.sql`), sql);
+    const filename = `${timestamp}_schema_plan.sql`;
+    // Clock ticks are expected to separate two differing plans; a same-second
+    // collision would otherwise silently clobber the prior migration in place.
+    if (filename === latestName) {
+      throw new Error(
+        `Schema-plan migration ${filename} already exists with different content; the clock did not advance between two differing schema plans.`,
+      );
+    }
+    await writeFile(join(dir, filename), sql);
   }
 
   private async commitAgentWorkspace(
@@ -3128,7 +3137,11 @@ export class WorkflowOrchestrator {
             `Step ${step.id} must emit a schema plan in data; output failed validation: ${formatZodIssues(schemaPlan.error, 'plan')}`,
           );
         }
-        await this.writeSchemaPlanMigration(project.id, schemaPlan.data.data);
+        // Ungated, this write would land on disk with no commit/rollback for a
+        // non-mutating step — dirty forever, or misattributed to a later commit.
+        if (step.mutatesWorkspace) {
+          await this.writeSchemaPlanMigration(project.id, schemaPlan.data.data);
+        }
       }
       const executionRoute: RouteDecision = {
         ...route,

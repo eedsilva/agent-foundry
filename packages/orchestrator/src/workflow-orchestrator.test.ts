@@ -964,10 +964,6 @@ const VALID_SCHEMA_PLAN = {
 
 describe('schema-plan output contract (#480)', () => {
   it('requests the schema-plan JSON schema and stores a conforming plan', async () => {
-    const { mkdtemp } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-    const workspace = await mkdtemp(join(tmpdir(), 'wf-480-schema-plan-'));
     const stores = makeOrchestrator(undefined, undefined, undefined, {
       workflow: SCHEMA_PLAN_WORKFLOW,
       output: () => ({
@@ -981,7 +977,6 @@ describe('schema-plan output contract (#480)', () => {
         nextActions: [],
       }),
     });
-    stores.workspaces.workspacePath = () => workspace;
     await seedRun(stores, SCHEMA_PLAN_WORKFLOW.id);
 
     await stores.orchestrator.runProject('project-1', undefined, 'run-1');
@@ -1020,6 +1015,15 @@ class IncrementingClock implements Clock {
     const value = new Date(this.current);
     this.current += 1500;
     return value;
+  }
+}
+
+/** Stuck on one instant, to force two steps into the same migration filename
+ * — reproduces two schema-plan steps landing in the same clock second. */
+class FrozenClock implements Clock {
+  constructor(private readonly instant: Date) {}
+  now(): Date {
+    return this.instant;
   }
 }
 
@@ -1194,6 +1198,58 @@ describe('schema-plan migration write (#481)', () => {
     expect(firstContent).not.toBe(secondContent);
     expect(firstContent).toContain('create table if not exists public.items ( id uuid not null,');
     expect(secondContent).toContain('title text not null');
+  });
+
+  it('does not write a migration for a non-mutating schema-plan step', async () => {
+    const { mkdtemp, access } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-non-mutating-'));
+
+    const harness = makeHarness({}, undefined, {
+      workflow: SCHEMA_PLAN_WORKFLOW,
+      agentOutput: () => schemaPlanOutput(VALID_SCHEMA_PLAN),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    // Unmutated: no commit/rollback owns this step's writes, so nothing should
+    // ever touch disk — not even to create the directory.
+    await expect(access(join(workspace, 'supabase', 'migrations'))).rejects.toThrow();
+  });
+
+  it('fails loudly instead of clobbering a prior migration on a same-second timestamp collision', async () => {
+    const { mkdtemp, readdir, readFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-collision-'));
+
+    const stores = makeStores(new FrozenClock(new Date('2026-08-12T00:00:00.000Z')));
+    const harness = makeHarness({}, stores, {
+      workflow: SCHEMA_PLAN_TWO_STEP_WORKFLOW,
+      agentOutput: (request) =>
+        schemaPlanOutput(
+          request.stepId === 'plan-schema-2' ? REVISED_SCHEMA_PLAN : VALID_SCHEMA_PLAN,
+        ),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /already exists with different content/,
+    );
+
+    const migrationsDir = join(workspace, 'supabase', 'migrations');
+    const files = (await readdir(migrationsDir)).filter((name) =>
+      name.endsWith('_schema_plan.sql'),
+    );
+    expect(files).toHaveLength(1);
+    const content = await readFile(join(migrationsDir, files[0]!), 'utf8');
+    expect(content).toContain('create table if not exists public.items ( id uuid not null,');
+    expect(content).not.toContain('title text not null');
   });
 });
 
