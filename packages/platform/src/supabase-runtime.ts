@@ -1309,6 +1309,22 @@ function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+// ponytail: identifiers are compared case-folded even when quoted, so `"P"` and
+// `p` count as the same policy; swap in a real identifier normaliser if a
+// generator ever emits case-significant quoted names.
+const SQL_IDENTIFIER = String.raw`(?:"[^"]*"|[A-Za-z_][A-Za-z0-9_$]*)`;
+const POLICY_TARGET = String.raw`(${SQL_IDENTIFIER})\s+ON\s+(?:(${SQL_IDENTIFIER})\s*\.\s*)?(${SQL_IDENTIFIER})`;
+const DROP_POLICY = new RegExp(
+  String.raw`^DROP\s+POLICY\s+(?:IF\s+EXISTS\s+)?${POLICY_TARGET}`,
+  'i',
+);
+const CREATE_POLICY = new RegExp(String.raw`^CREATE\s+POLICY\s+${POLICY_TARGET}`, 'i');
+
+function policyKey(match: RegExpMatchArray): string {
+  const fold = (value: string) => value.replaceAll('"', '').toLowerCase();
+  return `${fold(match[2] ?? 'public')}.${fold(match[3]!)}:${fold(match[1]!)}`;
+}
+
 export function destructiveStatements(sql: string): string[] {
   const statements = sqlStatements(sql);
   const destructivePatterns = [
@@ -1317,9 +1333,19 @@ export function destructiveStatements(sql: string): string[] {
     /^DELETE\s+FROM\b/i,
     /^ALTER\s+TABLE\b[\s\S]*\bDROP\s+COLUMN\b/i,
   ];
-  return statements.filter((statement) =>
-    destructivePatterns.some((pattern) => pattern.test(statement)),
+  // A policy the same migration re-creates is a replace, not a removal: it
+  // destroys no data and leaves the table protected once applied (#529).
+  const replaced = new Set(
+    statements
+      .map((statement) => statement.match(CREATE_POLICY))
+      .filter((match) => match !== null)
+      .map(policyKey),
   );
+  return statements.filter((statement) => {
+    const dropped = statement.match(DROP_POLICY);
+    if (dropped && replaced.has(policyKey(dropped))) return false;
+    return destructivePatterns.some((pattern) => pattern.test(statement));
+  });
 }
 
 export function sqlStatements(sql: string): string[] {
