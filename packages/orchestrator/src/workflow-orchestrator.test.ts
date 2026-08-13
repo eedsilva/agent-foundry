@@ -1508,10 +1508,18 @@ describe('destructive-migration approval gate (#535)', () => {
       },
     ];
 
-    const applyWorkspaceMigrations = vi.fn(async (input: { approval?: unknown }) => {
-      if (!input.approval) throw new MigrationApprovalRequiredError(destructive);
-      return {} as never;
+    // applyWorkspaceMigrations copies pending files into the runtime's
+    // private workdir before ever failing (packages/platform's real
+    // behavior) — so a real destructive batch can never be applied by
+    // calling applyWorkspaceMigrations a second time with the resolved
+    // approval: nothing is "fresh" left to copy and it silently no-ops.
+    // This mock throws unconditionally, the same way the real one always
+    // fails on a first, unapproved call, so a fix that re-calls
+    // applyWorkspaceMigrations instead of migrate() on retry is caught here.
+    const applyWorkspaceMigrations = vi.fn(async () => {
+      throw new MigrationApprovalRequiredError(destructive);
     });
+    const migrate = vi.fn(async () => ({}) as never);
     const backupMigration = vi.fn(async () => ({
       path: '.foundry/migration-backups/backup.sql',
       checksum: 'b'.repeat(64),
@@ -1526,6 +1534,7 @@ describe('destructive-migration approval gate (#535)', () => {
       browserVerification: { verify: browserVerifyFixture() } as never,
       generatedProjectRuntime: {
         applyWorkspaceMigrations,
+        migrate,
         backupMigration,
         initialize: vi.fn(async () => ({}) as never),
         health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
@@ -1534,7 +1543,7 @@ describe('destructive-migration approval gate (#535)', () => {
     });
     harness.workspaces.workspacePath = () => workspace;
     await seedHarnessRun(harness);
-    return { harness, applyWorkspaceMigrations, backupMigration, destructive };
+    return { harness, applyWorkspaceMigrations, migrate, backupMigration, destructive };
   }
 
   it('parks the run at an approval gate naming the file and statement instead of failing the run', async () => {
@@ -1554,9 +1563,8 @@ describe('destructive-migration approval gate (#535)', () => {
     expect(requested?.message).toContain('DROP TABLE obsolete');
   });
 
-  it('applies the batch with a fresh backup once the operator approves', async () => {
-    const { join } = await import('node:path');
-    const { harness, applyWorkspaceMigrations, backupMigration, destructive } =
+  it('applies the batch with a fresh backup once the operator approves, without re-copying already-staged files', async () => {
+    const { harness, applyWorkspaceMigrations, migrate, backupMigration, destructive } =
       await destructiveHarness();
 
     await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
@@ -1569,9 +1577,16 @@ describe('destructive-migration approval gate (#535)', () => {
 
     expect((await harness.runs.get('run-1'))?.status).toBe('completed');
     expect(backupMigration).toHaveBeenCalledTimes(1);
-    expect(applyWorkspaceMigrations).toHaveBeenLastCalledWith({
+    // Once per run attempt (park, then replay) — applyWorkspaceMigrations is
+    // never retried with the resolved approval attached: that retry would
+    // find the destructive file already staged from the first (failed)
+    // attempt and silently no-op instead of applying it. Applying happens
+    // by calling migrate() directly with the approval instead.
+    expect(applyWorkspaceMigrations).toHaveBeenCalledTimes(2);
+    expect(migrate).toHaveBeenCalledTimes(1);
+    expect(migrate).toHaveBeenCalledWith({
       projectId: 'project-1',
-      workspaceMigrationsDir: expect.stringContaining(join('supabase', 'migrations')),
+      migrationPath: destructive[0]!.migrationPath,
       approval: {
         migrationChecksum: destructive[0]!.checksum,
         backup: {
@@ -1587,7 +1602,8 @@ describe('destructive-migration approval gate (#535)', () => {
   });
 
   it('ends the run rejected, with no migration applied, when the operator rejects', async () => {
-    const { harness, applyWorkspaceMigrations, backupMigration } = await destructiveHarness();
+    const { harness, applyWorkspaceMigrations, migrate, backupMigration } =
+      await destructiveHarness();
 
     await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
     const [pending] = await harness.service.listApprovals('run-1');
@@ -1600,13 +1616,11 @@ describe('destructive-migration approval gate (#535)', () => {
 
     expect((await harness.runs.get('run-1'))?.status).toBe('rejected');
     expect(backupMigration).not.toHaveBeenCalled();
+    expect(migrate).not.toHaveBeenCalled();
     // Once when first detected, once on replay after the decision — both
-    // times without an approval, since resolveMigrationApproval throws
-    // ApprovalRejectedError before ever building one.
+    // times through applyWorkspaceMigrations, since resolveMigrationApproval
+    // throws ApprovalRejectedError before ever reaching migrate().
     expect(applyWorkspaceMigrations).toHaveBeenCalledTimes(2);
-    expect(applyWorkspaceMigrations).toHaveBeenLastCalledWith(
-      expect.not.objectContaining({ approval: expect.anything() }),
-    );
     const rejected = harness.events.events.find((event) => event.type === 'run.rejected');
     expect(rejected?.message).toContain('not safe to drop obsolete yet');
   });

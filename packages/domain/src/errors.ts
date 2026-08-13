@@ -258,6 +258,8 @@ export class ApprovalRequiredError extends Error {
   constructor(
     readonly runId: string,
     readonly nodeId: string,
+    /** Gate-specific detail folded into the run.approval_requested message. */
+    readonly detail?: string,
   ) {
     super(`Workflow run ${runId} is awaiting an approval decision at ${nodeId}.`);
   }

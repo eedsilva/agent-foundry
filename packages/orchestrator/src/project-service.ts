@@ -72,7 +72,7 @@ import {
   traceContextField,
   transitionWorkflowRun,
 } from '@agent-foundry/domain';
-import { policyHash, workflowHash } from './idempotency.js';
+import { isMigrationApprovalGateId, policyHash, workflowHash } from './idempotency.js';
 import type { QualityObservationService } from './quality-observation-service.js';
 
 const RUN_PROJECT_MAX_ATTEMPTS = 2;
@@ -808,17 +808,26 @@ export class ProjectService {
     }
 
     const workflow = await this.workflows.get(run.workflowId);
-    const node = workflow.nodes.find((candidate) => candidate.id === request.nodeId);
-    // No match at all is a dynamic gate raised mid-step rather than a
-    // static `approval-gate` workflow node — the destructive-migration gate
-    // (#535) is the first of these. It only ever offers approve/reject with
-    // no return-to-step, so it's treated as one below via optional chaining.
-    // A node that *does* exist but is the wrong type is a real caller error.
-    if (node && node.type !== 'approval-gate') {
-      throw new NotFoundError(
+    const nodeNotFound = () =>
+      new NotFoundError(
         `Approval gate node ${request.nodeId} not found in workflow ${run.workflowId}`,
       );
+    // A dynamic gate (#535's destructive-migration approval) is raised
+    // mid-step rather than declared as a static `approval-gate` workflow
+    // node, so its reserved id shape is authoritative — never looked up in
+    // `workflow.nodes`, which a same-named real node could otherwise shadow.
+    // It only ever offers approve/reject with no return-to-step.
+    const dynamicGate = isMigrationApprovalGateId(request.nodeId);
+    const found = dynamicGate
+      ? undefined
+      : workflow.nodes.find((candidate) => candidate.id === request.nodeId);
+    if (!dynamicGate && (!found || found.type !== 'approval-gate')) {
+      throw nodeNotFound();
     }
+    // Narrowed separately from `found` so TS carries the discriminated
+    // `approval-gate` type across the guard above, which it can't do
+    // through a condition that also depends on `dynamicGate`.
+    const node = found?.type === 'approval-gate' ? found : undefined;
 
     // Everything below acts on the settled `decision` record, not `input` —
     // on the crash-recovery path the retry's input may differ (e.g. a
@@ -832,11 +841,7 @@ export class ProjectService {
       // A dynamic gate never allows 'request-changes' and never sets
       // onReject: 'return-to-step', so needsReturn is unreachable without a
       // real node — this is a defensive invariant check, not live behavior.
-      if (!node) {
-        throw new NotFoundError(
-          `Approval gate node ${request.nodeId} not found in workflow ${run.workflowId}`,
-        );
-      }
+      if (!node) throw nodeNotFound();
       if (!node.returnToStepId) {
         throw new ValidationError(`Approval gate ${node.id} has no returnToStepId configured.`);
       }

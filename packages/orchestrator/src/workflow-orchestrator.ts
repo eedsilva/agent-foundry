@@ -140,6 +140,7 @@ import type { ProjectVersionService } from './project-version-service.js';
 import { buildTaskProfile } from './task-profiler.js';
 import {
   approvalGateIdempotencyKey,
+  migrationApprovalGateId,
   policyHash,
   stepIdempotencyKey,
   workflowHash,
@@ -636,7 +637,7 @@ export class WorkflowOrchestrator {
       }
       if (error instanceof ApprovalRequiredError) {
         throwIfCancelled(signal, run.id);
-        await this.finalizeApproval(run.id, projectId, error.nodeId);
+        await this.finalizeApproval(run.id, projectId, error.nodeId, error.detail);
         return;
       }
       if (error instanceof ApprovalRejectedError) {
@@ -1247,7 +1248,12 @@ export class WorkflowOrchestrator {
     );
   }
 
-  private async finalizeApproval(runId: string, projectId: string, nodeId: string): Promise<void> {
+  private async finalizeApproval(
+    runId: string,
+    projectId: string,
+    nodeId: string,
+    detail?: string,
+  ): Promise<void> {
     let run = await this.stopActiveExecution(runId);
     if (run.status === 'running') {
       run = await this.runs.update(
@@ -1256,7 +1262,10 @@ export class WorkflowOrchestrator {
       );
     }
     await this.syncProjectSummary(run, nodeId);
-    await this.emit(projectId, 'run.approval_requested', `Awaiting approval at ${nodeId}.`, {
+    const message = detail
+      ? `Awaiting approval at ${nodeId}:\n${detail}`
+      : `Awaiting approval at ${nodeId}.`;
+    await this.emit(projectId, 'run.approval_requested', message, {
       runId,
       nodeId,
     });
@@ -2695,7 +2704,6 @@ export class WorkflowOrchestrator {
     runId: string,
     nodeId: string,
     signal: AbortSignal,
-    approval?: MigrationApproval,
   ): Promise<void> {
     const workspaceMigrationsDir = join(
       this.workspaces.workspacePath(project.id),
@@ -2706,18 +2714,31 @@ export class WorkflowOrchestrator {
       await this.generatedProjectRuntime!.applyWorkspaceMigrations({
         projectId: project.id,
         workspaceMigrationsDir,
-        ...(approval ? { approval } : {}),
       });
     } catch (error) {
       if (!(error instanceof MigrationApprovalRequiredError)) throw error;
-      const resolved = await this.resolveMigrationApproval(
+      const approval = await this.resolveMigrationApproval(
         project,
         runId,
         nodeId,
         signal,
         error.destructive,
       );
-      await this.applyGeneratedMigrations(project, runId, nodeId, signal, resolved);
+      // applyWorkspaceMigrations copies pending files into the runtime's
+      // private workdir *before* migrate() can reject them (#535 simplify
+      // review): they're already staged, so calling it again here would
+      // find nothing left to copy and silently no-op instead of applying
+      // the now-approved batch. migrate() with the resolved approval
+      // applies directly; `migration up` covers every pending file
+      // regardless of which single path is named.
+      // ponytail: skips applyWorkspaceMigrations's #446 already-applied
+      // reconcile retry for this one call — add here too if a destructive
+      // migration ever needs it.
+      await this.generatedProjectRuntime!.migrate({
+        projectId: project.id,
+        migrationPath: error.destructive.at(-1)!.migrationPath,
+        approval,
+      });
     }
   }
 
@@ -2743,7 +2764,7 @@ export class WorkflowOrchestrator {
     signal: AbortSignal,
     destructive: MigrationPreview[],
   ): Promise<MigrationApproval> {
-    const gateNodeId = `${nodeId}.migration-approval`;
+    const gateNodeId = migrationApprovalGateId(nodeId);
     throwIfCancelled(signal, runId);
     const summary = destructive
       .flatMap((preview) =>
@@ -2820,13 +2841,7 @@ export class WorkflowOrchestrator {
         })
         .catch(() => undefined);
       throwIfCancelled(signal, runId);
-      await this.emit(
-        project.id,
-        'run.approval_requested',
-        `Destructive migration requires approval at ${gateNodeId}:\n${summary}`,
-        { runId, nodeId: gateNodeId, data: { destructive } },
-      );
-      throw new ApprovalRequiredError(runId, gateNodeId);
+      throw new ApprovalRequiredError(runId, gateNodeId, summary);
     }
 
     const request = await this.approvalRequests.getForStepRun(runId, stepRun.id);
@@ -2838,7 +2853,7 @@ export class WorkflowOrchestrator {
     }
     const decision = normalizeApprovalDecision(await this.approvalDecisions.get(runId, request.id));
     throwIfCancelled(signal, runId);
-    if (!decision) throw new ApprovalRequiredError(runId, gateNodeId);
+    if (!decision) throw new ApprovalRequiredError(runId, gateNodeId, summary);
     if (decision.action === 'reject') {
       throw new ApprovalRejectedError(
         runId,
@@ -2847,9 +2862,12 @@ export class WorkflowOrchestrator {
         decision.note ?? summary,
       );
     }
-    if (decision.action === 'request-changes') {
+    if (decision.action !== 'approve') {
+      // Only 'approve'/'reject' are ever offered (allowedActions above), so
+      // this is an ApprovalAction variant this gate doesn't support rather
+      // than a reachable 'request-changes' path.
       throw new ExecutionError(
-        `Migration approval gate ${gateNodeId} decision 'request-changes' was not applied before replay`,
+        `Migration approval gate ${gateNodeId} decision '${decision.action}' is not supported`,
       );
     }
 
