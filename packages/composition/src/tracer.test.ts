@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TracerScenarioSchema } from '@agent-foundry/contracts';
-import { loadTracerScenarios, runTracerScenario } from './tracer.js';
+import { loadTracerScenarios, runTracerScenario, runTracerScenarioToCompletion } from './tracer.js';
 
 const scenariosDir = resolve(import.meta.dirname, '../../../examples/tracer/scenarios');
 
@@ -94,4 +94,22 @@ describe('runTracerScenario (mock mode)', () => {
 
     expect(result.runStatus).toBe('awaiting_approval');
   });
+});
+
+describe('runTracerScenarioToCompletion (mock mode)', () => {
+  it('auto-approves every operator gate and drives the run to a terminal status', async () => {
+    // #509: scripts/tracer.ts only proved a single runOnce() reaches the
+    // plan-approval gate. Producing UI-quality-judge evidence needs a run
+    // that actually reaches browser verification, past that gate — this is
+    // the small driver (mirrors testing-helpers.ts's approveAllGates, kept
+    // separate since that one is explicitly test-only surface).
+    const dataDir = await tempDir('tracer-complete-');
+
+    const result = await runTracerScenarioToCompletion(toyScenario(), {
+      executorMode: 'mock',
+      dataDir,
+    });
+
+    expect(result.runStatus).toBe('completed');
+  }, 30_000);
 });
