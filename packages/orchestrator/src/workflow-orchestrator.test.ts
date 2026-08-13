@@ -17,6 +17,7 @@ import {
 } from '@agent-foundry/contracts';
 import {
   SystemClock,
+  type Clock,
   type ExecutorRegistry,
   type HarnessRepository,
   type JobQueue,
@@ -45,6 +46,7 @@ import {
   SequentialIds,
   ControllableExecutor,
   makeHarness,
+  makeStores,
   seedRun as seedHarnessRun,
 } from './testing/harness.js';
 import type { ProjectVersionService } from './project-version-service.js';
@@ -962,6 +964,10 @@ const VALID_SCHEMA_PLAN = {
 
 describe('schema-plan output contract (#480)', () => {
   it('requests the schema-plan JSON schema and stores a conforming plan', async () => {
+    const { mkdtemp } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-480-schema-plan-'));
     const stores = makeOrchestrator(undefined, undefined, undefined, {
       workflow: SCHEMA_PLAN_WORKFLOW,
       output: () => ({
@@ -975,6 +981,7 @@ describe('schema-plan output contract (#480)', () => {
         nextActions: [],
       }),
     });
+    stores.workspaces.workspacePath = () => workspace;
     await seedRun(stores, SCHEMA_PLAN_WORKFLOW.id);
 
     await stores.orchestrator.runProject('project-1', undefined, 'run-1');
@@ -999,6 +1006,194 @@ describe('schema-plan output contract (#480)', () => {
     );
     expect((await stores.runs.get('run-1'))?.status).toBe('failed');
     expect(await stores.artifacts.getLatest('project-1', 'schema.current')).toBeNull();
+  });
+});
+
+/** now() advances every call, so two steps in one run always land on distinct
+ * migration timestamps — a real clock ticking within one test run cannot. */
+class IncrementingClock implements Clock {
+  private current: number;
+  constructor(start: Date) {
+    this.current = start.getTime();
+  }
+  now(): Date {
+    const value = new Date(this.current);
+    this.current += 1500;
+    return value;
+  }
+}
+
+const SCHEMA_PLAN_MUTATING_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'schema-plan-migration-v1',
+  name: 'Schema plan migration fixture',
+  description: 'A single mutating step constrained to emit a schema plan.',
+  stack: 'node',
+  nodes: [
+    {
+      id: 'plan-schema',
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: 'Plan schema',
+      instructions: 'Plan the data model.',
+      outputArtifact: 'schema.current',
+      outputContract: 'schema-plan',
+      mutatesWorkspace: true,
+      maxAttempts: 1,
+    },
+  ],
+});
+
+const SCHEMA_PLAN_TWO_STEP_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'schema-plan-migration-repeat-v1',
+  name: 'Schema plan migration repeat fixture',
+  description: 'Two sequential mutating steps, each constrained to emit a schema plan.',
+  stack: 'node',
+  nodes: [
+    {
+      id: 'plan-schema-1',
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: 'Plan schema (first)',
+      instructions: 'Plan the data model.',
+      outputArtifact: 'schema.current',
+      outputContract: 'schema-plan',
+      mutatesWorkspace: true,
+      maxAttempts: 1,
+    },
+    {
+      id: 'plan-schema-2',
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: 'Plan schema (second)',
+      instructions: 'Revise the data model.',
+      inputArtifacts: ['schema.current'],
+      outputArtifact: 'schema.current.revision',
+      outputContract: 'schema-plan',
+      mutatesWorkspace: true,
+      maxAttempts: 1,
+    },
+  ],
+});
+
+const REVISED_SCHEMA_PLAN = {
+  schemaVersion: '1',
+  tables: [
+    {
+      name: 'items',
+      columns: [
+        { name: 'id', type: 'uuid', nullable: false },
+        { name: 'title', type: 'text', nullable: false },
+      ],
+      constraints: [{ type: 'primary-key', columns: ['id'] }],
+      indexes: [],
+      rls: {
+        enabled: true,
+        policies: [{ name: 'authenticated_all', command: 'all', using: 'true' }],
+      },
+    },
+  ],
+};
+
+function schemaPlanOutput(data: unknown): AgentExecutionResult['output'] {
+  return {
+    schemaVersion: '1',
+    status: 'completed',
+    summary: 'Planned the schema.',
+    data,
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    nextActions: [],
+  };
+}
+
+describe('schema-plan migration write (#481)', () => {
+  it('writes the generated schema-plan SQL into supabase/migrations on a successful step', async () => {
+    const { mkdtemp, readdir, readFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-'));
+
+    const harness = makeHarness({}, undefined, {
+      workflow: SCHEMA_PLAN_MUTATING_WORKFLOW,
+      agentOutput: () => schemaPlanOutput(VALID_SCHEMA_PLAN),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    const migrationsDir = join(workspace, 'supabase', 'migrations');
+    const files = (await readdir(migrationsDir)).filter((name) =>
+      name.endsWith('_schema_plan.sql'),
+    );
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/^\d{14}_schema_plan\.sql$/);
+    const content = await readFile(join(migrationsDir, files[0]!), 'utf8');
+    expect(content).toContain('create table if not exists public.items');
+    expect(content).toContain('alter table public.items enable row level security;');
+  });
+
+  it('writes no second file when a repeated schema-plan step emits identical SQL', async () => {
+    const { mkdtemp, readdir } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-repeat-'));
+
+    const stores = makeStores(new IncrementingClock(new Date('2026-08-12T00:00:00.000Z')));
+    const harness = makeHarness({}, stores, {
+      workflow: SCHEMA_PLAN_TWO_STEP_WORKFLOW,
+      agentOutput: () => schemaPlanOutput(VALID_SCHEMA_PLAN),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    const migrationsDir = join(workspace, 'supabase', 'migrations');
+    const files = (await readdir(migrationsDir)).filter((name) =>
+      name.endsWith('_schema_plan.sql'),
+    );
+    expect(files).toHaveLength(1);
+  });
+
+  it('writes a second file and leaves the first untouched when the schema plan changes', async () => {
+    const { mkdtemp, readdir, readFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-change-'));
+
+    const stores = makeStores(new IncrementingClock(new Date('2026-08-12T00:00:00.000Z')));
+    const harness = makeHarness({}, stores, {
+      workflow: SCHEMA_PLAN_TWO_STEP_WORKFLOW,
+      agentOutput: (request) =>
+        schemaPlanOutput(
+          request.stepId === 'plan-schema-2' ? REVISED_SCHEMA_PLAN : VALID_SCHEMA_PLAN,
+        ),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    const migrationsDir = join(workspace, 'supabase', 'migrations');
+    const files = (await readdir(migrationsDir))
+      .filter((name) => name.endsWith('_schema_plan.sql'))
+      .sort();
+    expect(files).toHaveLength(2);
+    const firstContent = await readFile(join(migrationsDir, files[0]!), 'utf8');
+    const secondContent = await readFile(join(migrationsDir, files[1]!), 'utf8');
+    expect(firstContent).not.toBe(secondContent);
+    expect(firstContent).toContain('create table if not exists public.items ( id uuid not null,');
+    expect(secondContent).toContain('title text not null');
   });
 });
 

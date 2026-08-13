@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { buffer } from 'node:stream/consumers';
 import { join } from 'node:path';
@@ -29,6 +29,7 @@ import type {
   RunPauseSnapshot,
   RunRetryDirective,
   RouteDecision,
+  SchemaPlan,
   StepAttempt,
   StepRun,
   StoredArtifact,
@@ -49,6 +50,7 @@ import {
   DEFAULT_BROWSER_EVIDENCE_POLICY,
   EXECUTION_PROTOCOL_VERSION,
   formatZodIssues,
+  generateSchemaPlanSql,
   isWorkflowRunStatusTerminal,
   PROVISIONING_FAILURE_CONTEXT_MAX_BYTES,
   PROVISIONING_FAILURE_LOG_MAX_BYTES,
@@ -2075,6 +2077,21 @@ export class WorkflowOrchestrator {
     }
   }
 
+  /** Forward-only: an applied migration is never rewritten, so an unchanged
+   * plan writes nothing and a changed one gets a new timestamped file. */
+  private async writeSchemaPlanMigration(projectId: string, plan: SchemaPlan): Promise<void> {
+    const sql = generateSchemaPlanSql(plan);
+    const dir = join(this.workspaces.workspacePath(projectId), 'supabase', 'migrations');
+    await mkdir(dir, { recursive: true });
+    const existing = (await readdir(dir))
+      .filter((name) => name.endsWith('_schema_plan.sql'))
+      .sort();
+    const latest = existing.at(-1);
+    if (latest && (await readFile(join(dir, latest), 'utf8')) === sql) return;
+    const timestamp = this.clock.now().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    await writeFile(join(dir, `${timestamp}_schema_plan.sql`), sql);
+  }
+
   private async commitAgentWorkspace(
     projectId: string,
     step: AgentStep,
@@ -3111,6 +3128,7 @@ export class WorkflowOrchestrator {
             `Step ${step.id} must emit a schema plan in data; output failed validation: ${formatZodIssues(schemaPlan.error, 'plan')}`,
           );
         }
+        await this.writeSchemaPlanMigration(project.id, schemaPlan.data.data);
       }
       const executionRoute: RouteDecision = {
         ...route,
