@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvironmentOperationError } from '@agent-foundry/domain';
 import {
   destructiveStatements,
-  sqlStatements,
   SupabaseGeneratedProjectRuntime,
   type SchemaSqlClientFactory,
   type SupabaseCommand,
@@ -1252,7 +1251,6 @@ create policy p on public.t for select using (true);
 end if; end $$;`;
 
     expect(destructiveStatements(sql)).toEqual(['drop policy p on public.t']);
-    expect(sqlStatements(sql)).toHaveLength(2);
   });
 
   it('keeps a policy drop destructive when the create hides in a dollar-quoted function body', () => {
@@ -1262,7 +1260,30 @@ create policy p on public.t for select using (true);
 end $body$;`;
 
     expect(destructiveStatements(sql)).toEqual(['drop policy p on public.t']);
-    expect(sqlStatements(sql)).toHaveLength(2);
+  });
+
+  it('reports a drop inside a dollar-quoted do block, which runs at migrate time', () => {
+    expect(destructiveStatements('do $$ begin perform 1; drop table public.t; end $$;')).toContain(
+      'drop table public.t',
+    );
+  });
+
+  it('keeps statements after a dollar sign inside a quoted identifier visible', () => {
+    expect(
+      destructiveStatements(`create table "we $x$ ird" (id int);
+create table public.users (id int, user_id uuid);
+drop table public.users;`),
+    ).toEqual(['drop table public.users']);
+  });
+
+  it('withholds the exemption from any migration containing a dollar-quoted body', () => {
+    // Known ceiling: dollar quoting disables the policy-replace exemption
+    // wholesale, so this pure replace still demands approval (fail-closed).
+    expect(
+      destructiveStatements(`do $$ begin perform 1; end $$;
+drop policy p on public.t;
+create policy p on public.t for select using (true);`),
+    ).toEqual(['drop policy p on public.t']);
   });
 
   it('keeps a policy drop destructive when the create precedes it', () => {

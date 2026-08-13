@@ -1310,10 +1310,12 @@ function sha256(value: string | Buffer): string {
 }
 
 // ponytail: identifiers are compared case-folded even when quoted, so `"P"` and
-// `p` count as the same policy, and an unqualified table always resolves to
+// `p` count as the same policy; an unqualified table always resolves to
 // `public`, so a migration that first redirects `search_path` pairs the wrong
-// tables; swap in a real identifier normaliser plus `search_path` tracking if a
-// generator ever emits case-significant quoted names or moves `search_path`.
+// tables; and any migration containing a dollar-quoted body forfeits the
+// exemption wholesale, so even a pure policy replace there needs approval.
+// Upgrade path for all three is a real SQL parser.
+const DOLLAR_QUOTED = /\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$/;
 const SQL_IDENTIFIER = String.raw`(?:"[^"]*"|[A-Za-z_][A-Za-z0-9_$]*)`;
 const POLICY_TARGET = String.raw`(${SQL_IDENTIFIER})\s+ON\s+(?:(${SQL_IDENTIFIER})\s*\.\s*)?(${SQL_IDENTIFIER})`;
 const DROP_POLICY = new RegExp(
@@ -1335,6 +1337,16 @@ export function destructiveStatements(sql: string): string[] {
     /^DELETE\s+FROM\b/i,
     /^ALTER\s+TABLE\b[\s\S]*\bDROP\s+COLUMN\b/i,
   ];
+  // `sqlStatements` does not know dollar quoting, so it splits inside `do $$ …
+  // $$` and function bodies: text that never executes would otherwise read as a
+  // top-level `create policy` and exempt a real drop. Give up the exemption for
+  // the whole migration instead — `generateSchemaPlanSql` never emits dollar
+  // quoting, and everything else stays as destructive as it was before #529.
+  if (DOLLAR_QUOTED.test(sql)) {
+    return statements.filter((statement) =>
+      destructivePatterns.some((pattern) => pattern.test(statement)),
+    );
+  }
   // A policy a *later* statement re-creates is a replace, not a removal: it
   // destroys no data and leaves the table protected once applied (#529). A
   // create that precedes the drop is a net removal and stays destructive.
@@ -1349,9 +1361,6 @@ export function destructiveStatements(sql: string): string[] {
     return destructivePatterns.some((pattern) => pattern.test(statement));
   });
 }
-
-// Opening delimiter of a dollar-quoted string: `$$`, `$body$`, `$x$`.
-const DOLLAR_TAG = /\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/y;
 
 export function sqlStatements(sql: string): string[] {
   // ponytail: quote-aware required-pattern scanner; add a SQL parser if syntax coverage expands.
@@ -1376,20 +1385,6 @@ export function sqlStatements(sql: string): string[] {
       quoted = true;
       statement += character;
       continue;
-    }
-    // A dollar-quoted body (`do $$ … $$`, a function body) is one opaque
-    // literal: its semicolons must not split statements, or its text would be
-    // scanned as top-level SQL (#529).
-    if (character === '$' && !/[A-Za-z0-9_$]/.test(sql[index - 1] ?? '')) {
-      DOLLAR_TAG.lastIndex = index;
-      const tag = DOLLAR_TAG.exec(sql)?.[0];
-      if (tag) {
-        const close = sql.indexOf(tag, index + tag.length);
-        const end = close === -1 ? sql.length : close + tag.length;
-        statement += sql.slice(index, end);
-        index = end - 1;
-        continue;
-      }
     }
     if (character === '-' && next === '-') {
       index += 2;
