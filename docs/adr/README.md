@@ -6,7 +6,7 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest accepted: [0063 scoped Bash allowlist for mutating Claude executor runs](0063-scoped-bash-allowlist-for-mutating-agents.md).
+Latest accepted: [0064 destructive migrations classified by effect, not by the DROP keyword](0064-destructive-migrations-classified-by-effect.md).
 
 Proposed (Harness Alignment, milestone `Harness Alignment`):
 
