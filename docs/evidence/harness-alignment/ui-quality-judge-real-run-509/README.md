@@ -170,8 +170,8 @@ produce it.
 
 The `net::ERR_BLOCKED_BY_CLIENT` failure noted above ("Why every score is near
 zero") was investigated and fixed by #526 (this run's specific instance) and
-#528 (the general class), branches `fix/526-528-browser-infra` and
-`fix/526-tracer-preview`. Root cause, in two parts:
+#528 (the general class) on branch `fix/526-528-browser-infra`. Root cause,
+in two parts:
 
 1. **The error code was a lie.** `PlaywrightBrowserVerifier`'s route handler
    wrapped `route.fetch()` in a bare `catch` that rewrote *every* transport
@@ -180,7 +180,7 @@ zero") was investigated and fixed by #526 (this run's specific instance) and
    `permitted()` policy-block branches use. Chrome then reports
    `net::ERR_BLOCKED_BY_CLIENT` for both a genuine policy block and a
    completely dead origin, indistinguishably. Fixed in `fix/526-528-browser-infra`
-   (commit `bb6b2bd`): a transport failure is now recorded as a
+   (#526, #528): a transport failure is now recorded as a
    `preview-unreachable` observation with the real cause (e.g. `ECONNREFUSED`)
    and surfaces as `infrastructureFailure` on the report; `blockedbyclient` is
    now emitted only by the two deliberate policy-block branches.
@@ -192,10 +192,11 @@ zero") was investigated and fixed by #526 (this run's specific instance) and
    never starts that server. This run's `--data-dir`/`--policies-dir` driver
    had no API process running alongside it, so every one of the 5
    browser-verify attempts navigated to an origin nothing was serving. Fixed
-   in `fix/526-tracer-preview`: the tracer driver now probes the configured
-   preview origin with a plain TCP connect before a real-mode run starts, and
-   fails in seconds — naming the origin — instead of discovering it 46-60
-   minutes and 5 repair-loop iterations later.
+   in #526 (Task 3, folded into `fix/526-528-browser-infra`): the tracer
+   driver now probes the configured preview origin with a plain TCP connect
+   before a real-mode run starts, and fails in seconds — naming the origin —
+   instead of discovering it 46-60 minutes and 5 repair-loop iterations
+   later.
 
 **The screenshots this run captured were a `chrome-error://chromewebdata/`
 page, not the counter app.** The judge's near-zero scores (0.00-0.05 across
@@ -206,5 +207,5 @@ page rather than fabricating a plausible review. Nothing about the judge
 itself needed changing.
 
 A real-mode re-run against a corrected pipeline (API server actually up, so
-the browser step reaches the real app) is #527, gated on `fix/526-tracer-preview`
-merging, and explicitly out of scope for both #526 and this note.
+the browser step reaches the real app) is #527, gated on #526 merging, and
+explicitly out of scope for both #526 and this note.
