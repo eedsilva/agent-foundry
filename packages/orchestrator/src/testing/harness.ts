@@ -735,8 +735,10 @@ export class FakeWorkspaces implements WorkspaceManager {
   projectRoot(projectId: string): string {
     return `/fake/${projectId}`;
   }
-  workspacePath(projectId: string): string {
-    return `/fake/${projectId}/workspace`;
+  workspacePath(projectId: string, worktree?: string): string {
+    return worktree !== undefined
+      ? `/fake/${projectId}/worktrees/${worktree}`
+      : `/fake/${projectId}/workspace`;
   }
   ensure(): Promise<void> {
     return Promise.resolve();
@@ -760,14 +762,17 @@ export class FakeWorkspaces implements WorkspaceManager {
     return Promise.resolve();
   }
   lastRequestMarkdown: string | undefined;
-  writeRunContext(input: {
-    projectId: string;
-    runId: string;
-    stepRunId: string;
-    attemptId: string;
-    requestMarkdown: string;
-    inputFiles?: Array<{ path: string; content: Uint8Array }>;
-  }): Promise<{
+  writeRunContext(
+    input: {
+      projectId: string;
+      runId: string;
+      stepRunId: string;
+      attemptId: string;
+      requestMarkdown: string;
+      inputFiles?: Array<{ path: string; content: Uint8Array }>;
+    },
+    worktree?: string,
+  ): Promise<{
     requestPath: string;
     schemaPath: string;
     inputPaths: string[];
@@ -777,7 +782,7 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.lastRunInputFiles = input.inputFiles ?? [];
     this.lastInputPaths = (input.inputFiles ?? []).map(
       ({ path }) =>
-        `${this.workspacePath(input.projectId)}/.orchestrator/runs/${input.runId}/steps/${input.stepRunId}/attempts/${input.attemptId}/inputs/${path}`,
+        `${this.workspacePath(input.projectId, worktree)}/.orchestrator/runs/${input.runId}/steps/${input.stepRunId}/attempts/${input.attemptId}/inputs/${path}`,
     );
     return Promise.resolve({
       requestPath: 'request.md',
@@ -793,7 +798,7 @@ export class FakeWorkspaces implements WorkspaceManager {
   isClean(): Promise<boolean> {
     return Promise.resolve(!this.dirty);
   }
-  checkpoint(): Promise<string> {
+  checkpoint(_projectId?: string, _label?: string, _worktree?: string): Promise<string> {
     checkPower(this.power);
     this.onBeforeCheckpoint?.();
     if (this.dirty) {
@@ -804,7 +809,7 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.onAfterCheckpoint?.();
     return Promise.resolve(this.current);
   }
-  rollback(_projectId: string, ref: string): Promise<void> {
+  rollback(_projectId: string, ref: string, _worktree?: string): Promise<void> {
     checkPower(this.power);
     this.rollbacks.push(ref);
     this.current = ref;
@@ -837,7 +842,7 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.drafts.splice(this.drafts.indexOf(draftBranch), 1);
     return Promise.resolve();
   }
-  commit(): Promise<string | null> {
+  commit(_projectId?: string, _message?: string, _worktree?: string): Promise<string | null> {
     checkPower(this.power);
     if (!this.dirty) return Promise.resolve(null);
     this.onBeforeCommit?.();
@@ -851,7 +856,7 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.onAfterCommit?.();
     return Promise.resolve(this.current);
   }
-  head(): Promise<string | null> {
+  head(_projectId?: string, _worktree?: string): Promise<string | null> {
     return Promise.resolve(this.current);
   }
   diff(_projectId: string, fromRef: string, toRef: string): Promise<string> {

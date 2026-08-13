@@ -60,6 +60,12 @@ export interface TaskGraphStepExecution {
   iteration?: number;
   pinnedArtifacts?: readonly ArtifactReference[];
   routingStartIndex?: number;
+  /**
+   * Worktree label (#520) the step's execution and git operations run
+   * against instead of the primary checkout. Unset today — the parallel
+   * scheduler that assigns one per concurrent task lands separately.
+   */
+  worktree?: string;
 }
 
 export interface TaskGraphRuntime {

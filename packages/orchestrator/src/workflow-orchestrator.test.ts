@@ -10,6 +10,7 @@ import {
   type AgentExecutionResult,
   type AgentArtifact,
   type ArtifactReference,
+  type ExecutableStep,
   type ExecutorHealth,
   type Project,
   type StoredArtifact,
@@ -78,6 +79,28 @@ const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
       title: 'Implement',
       instructions: 'Implement the plan.',
       inputArtifacts: ['plan'],
+      outputArtifact: 'implementation',
+      mutatesWorkspace: true,
+      maxAttempts: 1,
+    },
+  ],
+});
+
+/** One mutating step with no input artifacts, so `executeStep` can be called directly (#520). */
+const WORKTREE_PLUMBING_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'worktree-plumbing-v1',
+  name: 'Worktree plumbing fixture',
+  description: 'A single mutating step, called directly to prove worktree threading (#520).',
+  stack: 'node',
+  nodes: [
+    {
+      id: 'implement',
+      type: 'agent',
+      role: 'developer',
+      taskKind: 'implementation',
+      title: 'Implement',
+      instructions: 'Implement the plan.',
       outputArtifact: 'implementation',
       mutatesWorkspace: true,
       maxAttempts: 1,
@@ -2170,5 +2193,94 @@ describe('advisory UI-quality judge (#475)', () => {
 
     expect(result.report?.approved).toBe(false);
     expect(result.outcome.approved).toBe(false);
+  });
+});
+
+describe('worktree-label threading (#520 task 4)', () => {
+  /**
+   * `executeStep` is private; this cast lets the test call it directly with
+   * an explicit worktree label, bypassing the (still worktree-blind)
+   * `runProject` graph walk and the for-each-task scheduler that assigns
+   * labels (#520 task 5, not yet landed).
+   */
+  interface HasExecuteStep {
+    executeStep(
+      project: Project,
+      workflow: WorkflowDefinition,
+      step: ExecutableStep,
+      runId: string,
+      nodeId: string,
+      signal: AbortSignal,
+      iteration?: number,
+      pinnedArtifacts?: ArtifactReference[],
+      routingStartIndex?: number,
+      worktree?: string,
+    ): Promise<StoredArtifact>;
+  }
+
+  it("a step given a worktree label checkpoints and commits inside the worktree, not the primary checkout", async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: WORKTREE_PLUMBING_WORKFLOW,
+    });
+    await seedRun(stores, WORKTREE_PLUMBING_WORKFLOW.id);
+    const project = await stores.projects.get('project-1');
+    const step = WORKTREE_PLUMBING_WORKFLOW.nodes[0] as ExecutableStep;
+
+    const checkpointSpy = vi.spyOn(stores.workspaces, 'checkpoint');
+    const commitSpy = vi.spyOn(stores.workspaces, 'commit');
+    const workspacePathSpy = vi.spyOn(stores.workspaces, 'workspacePath');
+    const writeRunContextSpy = vi.spyOn(stores.workspaces, 'writeRunContext');
+
+    const artifact = await (stores.orchestrator as unknown as HasExecuteStep).executeStep(
+      project!,
+      WORKTREE_PLUMBING_WORKFLOW,
+      step,
+      'run-1',
+      'implement',
+      new AbortController().signal,
+      undefined,
+      [],
+      undefined,
+      'task-a',
+    );
+
+    expect(artifact.metadata.name).toBe('implementation');
+    // The step's own checkpoint/rollback bracketing and its commit after the
+    // agent runs must all carry the worktree label through to
+    // WorkspaceManager, never silently falling back to the primary checkout.
+    expect(checkpointSpy.mock.calls.length).toBeGreaterThan(0);
+    for (const call of checkpointSpy.mock.calls) expect(call[2]).toBe('task-a');
+    expect(commitSpy.mock.calls.length).toBeGreaterThan(0);
+    for (const call of commitSpy.mock.calls) expect(call[2]).toBe('task-a');
+    // The prompt-rendered workspace path and the run-context write (which
+    // the agent's cwd resolves relative to) must target the same worktree.
+    expect(workspacePathSpy).toHaveBeenCalledWith('project-1', 'task-a');
+    expect(writeRunContextSpy.mock.calls[0]?.[1]).toBe('task-a');
+  });
+
+  it('omits the worktree label entirely when the caller passes none, reproducing today’s behaviour', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: WORKTREE_PLUMBING_WORKFLOW,
+    });
+    await seedRun(stores, WORKTREE_PLUMBING_WORKFLOW.id);
+    const project = await stores.projects.get('project-1');
+    const step = WORKTREE_PLUMBING_WORKFLOW.nodes[0] as ExecutableStep;
+
+    const checkpointSpy = vi.spyOn(stores.workspaces, 'checkpoint');
+    const commitSpy = vi.spyOn(stores.workspaces, 'commit');
+
+    await (stores.orchestrator as unknown as HasExecuteStep).executeStep(
+      project!,
+      WORKTREE_PLUMBING_WORKFLOW,
+      step,
+      'run-1',
+      'implement',
+      new AbortController().signal,
+    );
+
+    expect(checkpointSpy.mock.calls.length).toBeGreaterThan(0);
+    for (const call of checkpointSpy.mock.calls) expect(call[2]).toBeUndefined();
+    expect(commitSpy.mock.calls.length).toBeGreaterThan(0);
+    for (const call of commitSpy.mock.calls) expect(call[2]).toBeUndefined();
   });
 });

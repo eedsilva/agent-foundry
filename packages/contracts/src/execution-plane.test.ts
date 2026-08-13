@@ -4,6 +4,7 @@ import {
   ExecutionAgentRequestSchema,
   ExecutionRequestSchema,
   ExecutionResultSchema,
+  ExecutionWorkspaceSnapshotSchema,
   WorkflowDefinitionSchema,
 } from './index.js';
 
@@ -117,6 +118,35 @@ describe('ExecutionRequestSchema', () => {
       ExecutionRequestSchema.safeParse({
         ...request(),
         secrets: [{ name: 'GITHUB_TOKEN', ref: 'GITHUB_TOKEN', value: 'canary-secret' }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('ExecutionWorkspaceSnapshotSchema', () => {
+  it('round-trips without a worktree label, unchanged', () => {
+    const snapshot = ExecutionWorkspaceSnapshotSchema.parse({
+      projectId: 'project-1',
+      ref: 'deadbeef',
+    });
+    expect(snapshot).toEqual({ projectId: 'project-1', ref: 'deadbeef' });
+  });
+
+  it('round-trips with a worktree label', () => {
+    const snapshot = ExecutionWorkspaceSnapshotSchema.parse({
+      projectId: 'project-1',
+      ref: 'deadbeef',
+      worktree: 'task-a',
+    });
+    expect(snapshot.worktree).toBe('task-a');
+  });
+
+  it('rejects a worktree label that is not a safe path segment', () => {
+    expect(
+      ExecutionWorkspaceSnapshotSchema.safeParse({
+        projectId: 'project-1',
+        ref: 'deadbeef',
+        worktree: '../escape',
       }).success,
     ).toBe(false);
   });

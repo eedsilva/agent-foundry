@@ -407,6 +407,7 @@ export class WorkflowOrchestrator {
             input.iteration,
             input.pinnedArtifacts ? [...input.pinnedArtifacts] : [],
             input.routingStartIndex,
+            input.worktree,
           ),
         assertExecutionMayContinue: (runId, signal) =>
           this.assertExecutionMayContinue(runId, signal),
@@ -1760,6 +1761,7 @@ export class WorkflowOrchestrator {
     iteration?: number,
     pinnedArtifacts: ArtifactReference[] = [],
     routingStartIndex?: number,
+    worktree?: string,
   ): Promise<StoredArtifact> {
     return withSpan(
       'foundry.step',
@@ -1779,6 +1781,7 @@ export class WorkflowOrchestrator {
           iteration,
           pinnedArtifacts,
           routingStartIndex,
+          worktree,
         ),
     );
   }
@@ -1793,6 +1796,7 @@ export class WorkflowOrchestrator {
     iteration?: number,
     pinnedArtifacts: ArtifactReference[] = [],
     routingStartIndex?: number,
+    worktree?: string,
   ): Promise<StoredArtifact> {
     throwIfCancelled(signal, runId);
     await this.assertExecutionMayContinue(runId, signal);
@@ -1894,6 +1898,7 @@ export class WorkflowOrchestrator {
         idempotencyKey,
         outputIdempotencyKey,
         preserve: directive?.mode === 'preserve',
+        ...(worktree !== undefined ? { worktree } : {}),
       });
       if (reused) {
         this.assertBlockingVerification(step, reused);
@@ -1902,7 +1907,7 @@ export class WorkflowOrchestrator {
     } else if (directive.checkpoint && step.type === 'agent' && step.mutatesWorkspace) {
       // A retried mutable step starts from the checkpoint its original
       // attempt recorded, not from whatever the workspace drifted to.
-      await this.workspaces.rollback(project.id, directive.checkpoint);
+      await this.workspaces.rollback(project.id, directive.checkpoint, worktree);
     }
 
     const timestamp = this.clock.now().toISOString();
@@ -1939,6 +1944,7 @@ export class WorkflowOrchestrator {
               ...(iteration ? { iteration } : {}),
               ...(routingStartIndex !== undefined ? { routingStartIndex } : {}),
               targetedRetry: isRetryTarget && directive?.mode === 'preserve',
+              ...(worktree !== undefined ? { worktree } : {}),
             })
           : await this.executeVerifyStep(
               project,
@@ -1951,6 +1957,7 @@ export class WorkflowOrchestrator {
               outputIdempotencyKey,
               iteration,
               browserPlan ?? undefined,
+              worktree,
             );
       this.assertBlockingVerification(step, artifact);
       stepRun = await this.stepRuns.update(
@@ -1995,6 +2002,7 @@ export class WorkflowOrchestrator {
     idempotencyKey: string;
     outputIdempotencyKey: string;
     preserve: boolean;
+    worktree?: string | undefined;
   }): Promise<StoredArtifact | null> {
     const {
       project,
@@ -2005,6 +2013,7 @@ export class WorkflowOrchestrator {
       idempotencyKey,
       outputIdempotencyKey,
       preserve,
+      worktree,
     } = input;
     const siblings = (await this.stepRuns.list(runId)).filter(
       (candidate) =>
@@ -2043,7 +2052,7 @@ export class WorkflowOrchestrator {
         if (last) {
           const commit =
             step.type === 'agent' && step.mutatesWorkspace
-              ? await this.commitAgentWorkspace(project.id, step, last.checkpoint)
+              ? await this.commitAgentWorkspace(project.id, step, last.checkpoint, worktree)
               : null;
           const succeeded = transitionStepAttempt(last, 'succeeded', this.clock.now(), {
             ...(commit ? { commit } : {}),
@@ -2131,17 +2140,22 @@ export class WorkflowOrchestrator {
     projectId: string,
     step: AgentStep,
     checkpoint?: string | null,
+    worktree?: string,
   ): Promise<string | null> {
     let commitError: unknown;
     let commitFailed = false;
     try {
-      const commit = await this.workspaces.commit(projectId, `agent(${step.role}): ${step.title}`);
+      const commit = await this.workspaces.commit(
+        projectId,
+        `agent(${step.role}): ${step.title}`,
+        worktree,
+      );
       if (commit) return commit;
     } catch (error) {
       commitError = error;
       commitFailed = true;
     }
-    const head = await this.workspaces.head(projectId);
+    const head = await this.workspaces.head(projectId, worktree);
     if (checkpoint && head && head !== checkpoint) return head;
     if (commitFailed) throw commitError;
     return null;
@@ -2220,8 +2234,13 @@ export class WorkflowOrchestrator {
     idempotencyKey: string,
     iteration?: number,
     browserPlan?: StoredArtifact,
+    worktree?: string,
   ): Promise<StoredArtifact> {
     if (browserPlan) {
+      // Browser-visible acceptance drives a live preview session, which is
+      // always booted from the primary checkout (bootWorkspacePreview) — so
+      // the browser check itself stays on the primary checkout regardless of
+      // which worktree the step that produced the plan ran in.
       return this.executeBrowserVerifyStep(
         project,
         workflow,
@@ -2279,6 +2298,7 @@ export class WorkflowOrchestrator {
           idempotencyKey,
           attempt,
           span,
+          worktree,
         ),
     );
   }
@@ -2293,6 +2313,7 @@ export class WorkflowOrchestrator {
     idempotencyKey: string,
     attempt: StepAttempt,
     span: Span,
+    worktree?: string,
   ): Promise<StoredArtifact> {
     const startedAt = Date.now();
     try {
@@ -2351,7 +2372,7 @@ export class WorkflowOrchestrator {
       };
       const report = await this.verifier.verify(
         {
-          workspacePath: this.workspaces.workspacePath(project.id),
+          workspacePath: this.workspaces.workspacePath(project.id, worktree),
           scripts: step.scripts,
           autofixScripts: step.autofixScripts,
           optionalScripts,
@@ -2368,6 +2389,7 @@ export class WorkflowOrchestrator {
         const checkpoint = await this.workspaces.checkpoint(
           project.id,
           `${step.id}-${runId}-verified`,
+          worktree,
         );
         await this.updateExecution(runId, (run) => ({
           ...(run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
@@ -3070,6 +3092,7 @@ export class WorkflowOrchestrator {
       iteration?: number;
       routingStartIndex?: number;
       targetedRetry?: boolean;
+      worktree?: string;
     },
   ): Promise<StoredArtifact> {
     const {
@@ -3080,6 +3103,7 @@ export class WorkflowOrchestrator {
       iteration: loopIteration,
       routingStartIndex,
       targetedRetry = false,
+      worktree,
     } = options;
     const harness = await this.harness.select({
       role: step.role,
@@ -3187,7 +3211,7 @@ export class WorkflowOrchestrator {
     // Explicit pins are already validated by the router.
     const candidates = explicit ? [route.selected] : [route.selected, ...route.fallbacks];
     const checkpoint = step.mutatesWorkspace
-      ? await this.workspaces.checkpoint(project.id, `${step.id}-${runId}`)
+      ? await this.workspaces.checkpoint(project.id, `${step.id}-${runId}`, worktree)
       : null;
     if (checkpoint) {
       await this.emit(
@@ -3209,7 +3233,7 @@ export class WorkflowOrchestrator {
       if (!candidate) continue;
       throwIfCancelled(signal, runId);
       if (index > 0) recordStepRetry();
-      if (checkpoint && index > 0) await this.workspaces.rollback(project.id, checkpoint);
+      if (checkpoint && index > 0) await this.workspaces.rollback(project.id, checkpoint, worktree);
 
       const timestamp = this.clock.now().toISOString();
       const attempt: StepAttempt = {
@@ -3294,13 +3318,14 @@ export class WorkflowOrchestrator {
             idempotencyKey,
             profile,
             span,
+            worktree,
           ),
       );
       if (outcome.status === 'succeeded') return outcome.artifact;
       lastError = outcome.error;
     }
 
-    if (checkpoint) await this.workspaces.rollback(project.id, checkpoint);
+    if (checkpoint) await this.workspaces.rollback(project.id, checkpoint, worktree);
     throw lastError instanceof Error
       ? lastError
       : new ExecutionError(`All candidates failed for step ${step.id}`);
@@ -3327,6 +3352,7 @@ export class WorkflowOrchestrator {
     idempotencyKey: string,
     profile: TaskProfile,
     span: Span,
+    worktree?: string,
   ): Promise<
     { status: 'succeeded'; artifact: StoredArtifact } | { status: 'failed'; error: unknown }
   > {
@@ -3358,19 +3384,22 @@ export class WorkflowOrchestrator {
               ].filter((event): event is ProjectEvent => event !== undefined),
             }
           : {}),
-        workspacePath: this.workspaces.workspacePath(project.id),
+        workspacePath: this.workspaces.workspacePath(project.id, worktree),
         toolPolicy: profile.toolPolicy,
       });
-      await this.workspaces.writeRunContext({
-        projectId: project.id,
-        runId,
-        stepRunId: stepRun.id,
-        attemptId: attempt.id,
-        requestMarkdown,
-        outputSchema,
-        inputFiles: browserEvidence.inputFiles,
-      });
-      const workspaceRef = checkpoint ?? (await this.workspaces.head(project.id)) ?? runId;
+      await this.workspaces.writeRunContext(
+        {
+          projectId: project.id,
+          runId,
+          stepRunId: stepRun.id,
+          attemptId: attempt.id,
+          requestMarkdown,
+          outputSchema,
+          inputFiles: browserEvidence.inputFiles,
+        },
+        worktree,
+      );
+      const workspaceRef = checkpoint ?? (await this.workspaces.head(project.id, worktree)) ?? runId;
       const result = await this.executeCandidate(
         project,
         step,
@@ -3383,6 +3412,7 @@ export class WorkflowOrchestrator {
         outputSchema,
         workspaceRef,
         systemPrompt,
+        worktree,
       );
       if (result.usage) {
         // Persist provider usage while the attempt is still running. A crash
@@ -3445,7 +3475,7 @@ export class WorkflowOrchestrator {
       let commit: string | null = null;
       if (step.mutatesWorkspace) {
         try {
-          commit = await this.commitAgentWorkspace(project.id, step, checkpoint);
+          commit = await this.commitAgentWorkspace(project.id, step, checkpoint, worktree);
         } catch (error) {
           attempt = await this.stepAttempts.update(
             transitionStepAttempt(attempt, 'failed', this.clock.now(), {
@@ -3525,7 +3555,7 @@ export class WorkflowOrchestrator {
           }),
           attempt.version,
         );
-        if (checkpoint) await this.workspaces.rollback(project.id, checkpoint);
+        if (checkpoint) await this.workspaces.rollback(project.id, checkpoint, worktree);
         throw signal.reason;
       }
       if (isCancellation(error, signal)) {
@@ -3535,7 +3565,7 @@ export class WorkflowOrchestrator {
           }),
           attempt.version,
         );
-        if (checkpoint) await this.workspaces.rollback(project.id, checkpoint);
+        if (checkpoint) await this.workspaces.rollback(project.id, checkpoint, worktree);
         throw error instanceof RunCancelledError ? error : new RunCancelledError(runId);
       }
       let failureArtifact: StoredArtifact | undefined;
@@ -3804,6 +3834,7 @@ export class WorkflowOrchestrator {
     outputSchema: AgentExecutionRequest['outputSchema'],
     workspaceRef: string,
     systemPrompt: string | undefined,
+    worktree?: string,
   ): Promise<AgentExecutionResult> {
     await this.emit(project.id, 'agent.started', `${step.id} started on ${candidate.model.id}.`, {
       nodeId: step.id,
@@ -3831,7 +3862,11 @@ export class WorkflowOrchestrator {
           outputSchema,
           ...(systemPrompt !== undefined ? { systemPrompt } : {}),
         },
-        workspace: { projectId: project.id, ref: workspaceRef },
+        workspace: {
+          projectId: project.id,
+          ref: workspaceRef,
+          ...(worktree !== undefined ? { worktree } : {}),
+        },
         // ponytail: tool allow-listing is shape-only until v07-sandbox-runner/
         // v07-secret-broker enforce it.
         tools: [],

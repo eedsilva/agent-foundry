@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AgentExecutionRequestSchema, AgentExecutionResultSchema } from './agent.js';
 import { ExecutionSecretRefSchema } from './execution-secret-ref.js';
+import { PathSegmentSchema } from './primitives.js';
 
 export { ExecutionSecretRefSchema } from './execution-secret-ref.js';
 export type { ExecutionSecretRef } from './execution-secret-ref.js';
@@ -11,6 +12,13 @@ export const ExecutionWorkspaceSnapshotSchema = z
   .object({
     projectId: z.string().min(1),
     ref: z.string().min(1),
+    /**
+     * The isolation-unit label (#520), never a host path: only
+     * `FileWorkspaceManager` knows a label resolves to
+     * `<projectRoot>/worktrees/<worktree>`. A future remote execution plane
+     * is free to interpret it its own way.
+     */
+    worktree: PathSegmentSchema.optional(),
   })
   .strict();
 export type ExecutionWorkspaceSnapshot = z.infer<typeof ExecutionWorkspaceSnapshotSchema>;
