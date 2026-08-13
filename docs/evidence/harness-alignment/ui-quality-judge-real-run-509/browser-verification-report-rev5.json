@@ -1,0 +1,143 @@
+{
+  "schemaVersion": "1",
+  "approved": false,
+  "summary": "2 browser step failure(s) and 2 passive failure(s).",
+  "planArtifact": {
+    "name": "browser-test.plan",
+    "revision": 2,
+    "sha256": "74eea8ca546f63747855e715349bf5cc726f9b180d3a7ade50af9e4b2706c47e"
+  },
+  "previewSession": {
+    "sessionId": "01KZW9QX7280DE28N40HSARMER",
+    "status": "running",
+    "url": "http://127.0.0.1:4000/preview/01KZW9QX7280DE28N40HSARMER/",
+    "evidence": {
+      "screenshots": [
+        {
+          "name": "browser-screenshot-01KZW9QX7280DE28N40HSARMER-open-counter",
+          "revision": 1,
+          "sha256": "3878570f4a62a0d65f57cf1754e0269e56ec797f4e36e26b44c172eb6e800401",
+          "sizeBytes": 4254,
+          "stepId": "open-counter",
+          "url": "chrome-error://chromewebdata/",
+          "viewport": {
+            "width": 1280,
+            "height": 720
+          }
+        },
+        {
+          "name": "browser-screenshot-01KZW9QX7280DE28N40HSARMER-open-items-signed-out",
+          "revision": 1,
+          "sha256": "3878570f4a62a0d65f57cf1754e0269e56ec797f4e36e26b44c172eb6e800401",
+          "sizeBytes": 4254,
+          "stepId": "open-items-signed-out",
+          "url": "chrome-error://chromewebdata/",
+          "viewport": {
+            "width": 1280,
+            "height": 720
+          }
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "stepId": "open-counter",
+      "title": "Open the public counter page",
+      "status": "failed",
+      "durationMs": 48.71741700032726,
+      "error": "page.goto: net::ERR_BLOCKED_BY_CLIENT at http://127.0.0.1:4000/preview/01KZW9QX7280DE28N40HSARMER/?token=[REDACTED]\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:4000/preview/01KZW9QX7280DE28N40HSARMER/?token=[REDACTED]\", waiting until \"load\"\u001b[22m\n",
+      "observations": [
+        {
+          "kind": "request-failed",
+          "message": "net::ERR_BLOCKED_BY_CLIENT: http://127.0.0.1:4000/preview/01KZW9QX7280DE28N40HSARMER/",
+          "url": "http://127.0.0.1:4000/preview/01KZW9QX7280DE28N40HSARMER/",
+          "timestamp": "2026-08-13T00:53:30.970Z"
+        }
+      ]
+    },
+    {
+      "stepId": "open-items-signed-out",
+      "title": "Open items without a session",
+      "status": "failed",
+      "durationMs": 24.67291700001806,
+      "finalUrl": "chrome-error://chromewebdata/",
+      "error": "page.goto: net::ERR_BLOCKED_BY_CLIENT at http://127.0.0.1:4000/preview/01KZW9QX7280DE28N40HSARMER/items\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:4000/preview/01KZW9QX7280DE28N40HSARMER/items\", waiting until \"load\"\u001b[22m\n",
+      "observations": [
+        {
+          "kind": "request-failed",
+          "message": "net::ERR_BLOCKED_BY_CLIENT: http://127.0.0.1:4000/preview/01KZW9QX7280DE28N40HSARMER/items",
+          "url": "http://127.0.0.1:4000/preview/01KZW9QX7280DE28N40HSARMER/items",
+          "timestamp": "2026-08-13T00:53:31.121Z"
+        }
+      ]
+    },
+    {
+      "stepId": "fill-owner-email",
+      "title": "Enter the owner email",
+      "status": "skipped",
+      "durationMs": 0,
+      "observations": []
+    },
+    {
+      "stepId": "fill-owner-password",
+      "title": "Enter the owner password",
+      "status": "skipped",
+      "durationMs": 0,
+      "observations": []
+    },
+    {
+      "stepId": "assert-tenant-isolation",
+      "title": "Sign in and verify only the owner items are visible",
+      "status": "skipped",
+      "durationMs": 0,
+      "observations": []
+    }
+  ],
+  "uiQuality": {
+    "rubricVersion": "1",
+    "judgeModel": "claude-haiku-4-5-20251001",
+    "overallScore": 0.02,
+    "criteria": [
+      {
+        "criterionId": "layout-coherence",
+        "score": 0,
+        "finding": "Both screenshots show a completely blank white page \u2014 no elements, spacing, or hierarchy to evaluate; the app appears to have failed to render any content."
+      },
+      {
+        "criterionId": "navigation",
+        "score": 0,
+        "finding": "No interactive elements (links, buttons, menus) are visible in either screenshot, so no navigation path can be identified."
+      },
+      {
+        "criterionId": "empty-loading-error-states",
+        "score": 0,
+        "finding": "No loading spinner, error message, or intentional empty-state UI is present; the page is simply blank, which reads as a rendering failure rather than a designed empty state."
+      },
+      {
+        "criterionId": "contrast-readability",
+        "score": 0,
+        "finding": "There is no text or content rendered on either screenshot to assess for contrast or legibility."
+      },
+      {
+        "criterionId": "responsive-sanity",
+        "score": 0.1,
+        "finding": "Cannot assess responsive behavior since no layout content rendered in either capture; the blank canvas itself shows no overflow or broken elements, but this is likely because nothing loaded at all."
+      }
+    ],
+    "screenshotsReviewed": [
+      {
+        "name": "browser-screenshot-01KZW9QX7280DE28N40HSARMER-open-counter",
+        "revision": 1,
+        "sha256": "3878570f4a62a0d65f57cf1754e0269e56ec797f4e36e26b44c172eb6e800401",
+        "sizeBytes": 4254
+      },
+      {
+        "name": "browser-screenshot-01KZW9QX7280DE28N40HSARMER-open-items-signed-out",
+        "revision": 1,
+        "sha256": "3878570f4a62a0d65f57cf1754e0269e56ec797f4e36e26b44c172eb6e800401",
+        "sizeBytes": 4254
+      }
+    ]
+  }
+}
