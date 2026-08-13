@@ -2766,11 +2766,16 @@ export class WorkflowOrchestrator {
   ): Promise<MigrationApproval> {
     const gateNodeId = migrationApprovalGateId(nodeId);
     throwIfCancelled(signal, runId);
-    const summary = destructive
-      .flatMap((preview) =>
+    // requireMigrationApproval refuses the whole pending migration batch,
+    // not just the destructive file(s) — say so, since an operator seeing
+    // only the statements below would otherwise assume a clean sibling
+    // migration in the same batch already went through (#535).
+    const summary = [
+      'This holds the entire pending migration batch, not just the file(s) below:',
+      ...destructive.flatMap((preview) =>
         preview.destructiveStatements.map((statement) => `${preview.migrationPath}: ${statement}`),
-      )
-      .join('\n');
+      ),
+    ].join('\n');
 
     let stepRun = (await this.stepRuns.list(runId)).find(
       (candidate) =>

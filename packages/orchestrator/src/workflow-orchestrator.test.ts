@@ -1561,6 +1561,7 @@ describe('destructive-migration approval gate (#535)', () => {
     );
     expect(requested?.message).toContain('0001_drop_obsolete.sql');
     expect(requested?.message).toContain('DROP TABLE obsolete');
+    expect(requested?.message).toMatch(/entire pending migration batch/);
   });
 
   it('applies the batch with a fresh backup once the operator approves, without re-copying already-staged files', async () => {
