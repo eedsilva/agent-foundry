@@ -252,9 +252,11 @@ export function previewStatusMessage(session: PreviewSession, alreadyShown = fal
 // an already-running session, so once shown, the iframe must keep using
 // whichever url it was first shown with — a later poll for the same session
 // id never carries a usable one again (see #486).
+export type ShownPreview = { sessionId: string; url: string };
+
 export function pinnedPreviewUrl(
   session: PreviewSession,
-  shown: { sessionId: string; url: string } | undefined,
+  shown: ShownPreview | undefined,
 ): string | undefined {
   if (shown?.sessionId === session.id) return shown.url;
   return session.url;
@@ -430,8 +432,7 @@ export function PreviewPanel({
   const [breakpoint, setBreakpoint] = useState<VisualEditBreakpoint | ''>('');
   const notifiedFailure = useRef<string | undefined>(undefined);
   const reloadedRepair = useRef<string | undefined>(undefined);
-  const shownIframeSessionId = useRef<string | undefined>(undefined);
-  const shownIframeUrl = useRef<{ sessionId: string; url: string } | undefined>(undefined);
+  const shownIframe = useRef<ShownPreview | undefined>(undefined);
 
   useEffect(() => {
     return startPreviewSessionPolling({
@@ -563,12 +564,11 @@ export function PreviewPanel({
     [projectId, session],
   );
 
-  const alreadyShownIframe = session !== null && shownIframeSessionId.current === session.id;
+  const alreadyShownIframe = session !== null && shownIframe.current?.sessionId === session.id;
   const statusMessage = session ? previewStatusMessage(session, alreadyShownIframe) : null;
-  const iframeUrl = session ? pinnedPreviewUrl(session, shownIframeUrl.current) : undefined;
-  if (statusMessage === null && session) {
-    shownIframeSessionId.current = session.id;
-    if (iframeUrl) shownIframeUrl.current = { sessionId: session.id, url: iframeUrl };
+  const iframeUrl = session ? pinnedPreviewUrl(session, shownIframe.current) : undefined;
+  if (statusMessage === null && session && iframeUrl) {
+    shownIframe.current = { sessionId: session.id, url: iframeUrl };
   }
 
   const report = useMemo(

@@ -806,7 +806,15 @@ usable token.
 fed the result straight into the `<iframe src>` prop. The very first poll after a fresh `Iniciar preview`
 click — well within the length of `golden-flow.spec.ts`'s "attach reference..." interaction — replaced
 the good, tokened `session.url` with the same session's now-stripped one; React diffed the changed `src`
-string and forced a real iframe reload with no token, which `resolveUpstream` correctly denied. Confirmed
+string and forced a real iframe reload with no token. `preview-proxy.ts`'s cookie fallback
+(`pv_<sessionId>`, set on the first token-authenticated response, read back via `cookieToken ?? queryToken`)
+exists for exactly this token-less-follow-up-request case, but never rescued it here: the diagnostic Cookie
+header was absent on every proxied request observed, including ones after a `Set-Cookie` should already
+have landed — the preview host (`apps/api`) and the builder UI (`apps/web`) sit on different loopback
+hostnames in this local/e2e setup (`127.0.0.1` vs `localhost`), making the iframe a genuinely cross-site
+embed, and the request that would have carried the cookie can also simply be the one the poll's `src` swap
+cancels mid-flight before its `Set-Cookie` response is ever processed. Either way `resolveUpstream` then
+correctly denied the tokenless, cookieless request. Confirmed
 directly: added logging to `GET /preview/active` showed the persisted session sitting at
 `status: "running", url: ".../preview/<id>/"` (no query string at all) seconds after a `start()` response
 had returned that same id with `?token=...` attached. Locally this reproduced intermittently (~1-in-4
