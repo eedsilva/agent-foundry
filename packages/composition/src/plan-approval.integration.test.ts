@@ -83,17 +83,26 @@ describe('#297: a minimal no-auth PRD reaches operator approval without a repair
 
   it('approve advances the run past the gate', async () => {
     const { runtime, runId } = await startStatusAppRun('plan-approval-approve-worker');
-    const [pending] = await runtime.projectService.listApprovals(runId);
 
-    const { run } = await runtime.projectService.decideApproval(runId, pending!.request.id, {
-      action: 'approve',
-      decidedBy: 'ed',
-    });
-    expect(run.status).toBe('queued');
-    expect(await runtime.worker.runOnce()).toBe(true);
+    async function approveNextGate(expectedNodeId: string): Promise<void> {
+      const pending = (await runtime.projectService.listApprovals(runId)).find(
+        (entry) => !entry.decision,
+      );
+      expect(pending?.request.nodeId).toBe(expectedNodeId);
+      const { run } = await runtime.projectService.decideApproval(runId, pending!.request.id, {
+        action: 'approve',
+        decidedBy: 'ed',
+      });
+      expect(run.status).toBe('queued');
+      expect(await runtime.worker.runOnce()).toBe(true);
+    }
 
-    // Past the gate means into the task loop: the implement step now runs once
-    // per planned task, under `implement.<taskId>`.
+    // Approving the plan runs the schema step and parks on its own gate (#481);
+    // approving that one is what actually enters the task loop, where the
+    // implement step runs once per planned task under `implement.<taskId>`.
+    await approveNextGate('plan-approval');
+    await approveNextGate('schema-approval');
+
     const stepIds = (await runtime.stepRuns.list(runId)).map((step) => step.stepId);
     expect(stepIds.some((stepId) => stepId.startsWith('implement.'))).toBe(true);
   }, 30_000);
