@@ -4,6 +4,10 @@
 - Date: 2026-07-27
 - Owners: Core
 - Builds on ADR 0039 (task-graph contract) and ADR 0042 (operator approves the plan)
+- Superseded on the sequential-walk point by ADR 0064 (#520): "One git checkout means one task at
+  a time; parallel tasks would need worktrees and are not in this change" (below) no longer holds
+  — see ADR 0064 for the worktree-per-task design that replaces it. The rest of this ADR's
+  decision stands.
 
 ## Context
 

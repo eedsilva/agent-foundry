@@ -9,7 +9,7 @@ A validated dependency graph whose tasks define deliverables, blockers, and an a
 _Avoid_: Task list, implementation plan
 
 **Task Graph Execution**:
-The dependency-ordered progression of a Task Graph. A task completes only after its implementation and declared acceptance channel succeed; failure stops dependent tasks while preserving tasks already completed.
+The dependency-ordered progression of a Task Graph. A task completes only after its implementation and declared acceptance channel succeed; failure stops dependent tasks while preserving tasks already completed. Independent tasks may run concurrently, each isolated in its own git worktree identified by a path-segment-safe label rather than a host path.
 _Avoid_: Task loop, batch execution
 
 **Schema Plan**:
