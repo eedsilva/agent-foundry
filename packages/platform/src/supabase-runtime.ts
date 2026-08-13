@@ -1339,24 +1339,23 @@ export function destructiveStatements(sql: string): string[] {
     /^DELETE\s+FROM\b/i,
     /^ALTER\s+TABLE\b[\s\S]*\bDROP\s+COLUMN\b/i,
   ];
-  // `sqlStatements` does not know dollar quoting, so it splits inside `do $$ …
-  // $$` and function bodies: text that never executes would otherwise read as a
-  // top-level `create policy` and exempt a real drop. Give up the exemption for
-  // the whole migration instead — `generateSchemaPlanSql` never emits dollar
-  // quoting, and everything else stays as destructive as it was before #529.
-  if (DOLLAR_QUOTED.test(sql)) {
-    return statements.filter((statement) =>
-      destructivePatterns.some((pattern) => pattern.test(statement)),
-    );
-  }
   // A policy a *later* statement re-creates is a replace, not a removal: it
   // destroys no data and leaves the table protected once applied (#529). A
   // create that precedes the drop is a net removal and stays destructive.
+  //
+  // The map stays empty — so nothing is exempt — when the migration contains
+  // dollar quoting. `sqlStatements` does not know dollar quoting, so it splits
+  // inside `do $$ … $$` and function bodies: text that never executes would
+  // otherwise read as a top-level `create policy` and exempt a real drop.
+  // `generateSchemaPlanSql` never emits dollar quoting, and everything else
+  // stays as destructive as it was before #529.
   const recreated = new Map<string, number>();
-  statements.forEach((statement, index) => {
-    const created = statement.match(CREATE_POLICY);
-    if (created) recreated.set(policyKey(created), index);
-  });
+  if (!DOLLAR_QUOTED.test(sql)) {
+    statements.forEach((statement, index) => {
+      const created = statement.match(CREATE_POLICY);
+      if (created) recreated.set(policyKey(created), index);
+    });
+  }
   return statements.filter((statement, index) => {
     const dropped = statement.match(DROP_POLICY);
     if (dropped && (recreated.get(policyKey(dropped)) ?? -1) > index) return false;
