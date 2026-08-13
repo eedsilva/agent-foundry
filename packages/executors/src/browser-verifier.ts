@@ -571,11 +571,32 @@ export class PlaywrightBrowserVerifier implements BrowserVerifier, SelectionScre
         // A real transport failure (connection refused, DNS, socket reset) is
         // never laundered into the 'blockedbyclient' code the policy blocks
         // above use — that would misattribute broken infrastructure as a
-        // deliberate security decision (#526, #528). Report the real cause,
-        // scoped to whether the preview origin itself was unreachable.
+        // deliberate security decision (#526, #528). Report the real cause.
+        //
+        // 'preview-unreachable' is reserved for the narrow case that phrase
+        // actually describes — the preview itself could not be connected
+        // to — not any failed request that happens to target its origin.
+        // The orchestrator turns infrastructureFailure into a non-retryable
+        // run kill that bypasses the repair loop (#528), so a transient
+        // blip on one sub-resource of an otherwise-loading page (a
+        // detached-frame fulfill, a cancelled navigation, one flaky
+        // ECONNRESET) must not be misread as the preview being down: it
+        // must stay 'request-failed' and keep the ordinary repair-loop
+        // behaviour. Requiring both a navigation request (the preview's own
+        // document, not an asset it references) and connect-level error
+        // text is the narrowest rule that still fires for the closed-port
+        // case this was written for (#526's reproduction: `route.fetch:
+        // connect ECONNREFUSED` on the initial goto).
+        const message = errorMessage(error);
+        const isConnectFailure =
+          /ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|socket hang up/i.test(message);
         const kind =
-          new URL(url).origin === prefixUrl.origin ? 'preview-unreachable' : 'request-failed';
-        observe({ kind, message: redact(errorMessage(error), token), url }, stepIndex);
+          request.isNavigationRequest() &&
+          new URL(url).origin === prefixUrl.origin &&
+          isConnectFailure
+            ? 'preview-unreachable'
+            : 'request-failed';
+        observe({ kind, message: redact(message, token), url }, stepIndex);
         await route.abort('failed').catch(() => undefined);
       }
     });

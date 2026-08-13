@@ -2128,6 +2128,44 @@ describe('PlaywrightBrowserVerifier', () => {
         true,
       );
     });
+
+    it('does not classify a sub-resource transport blip on an otherwise-loaded page as an infrastructure failure', async () => {
+      // Same preview origin as the main document (permitted, so it never hits
+      // the policy-block branch), but the socket is torn down mid-request —
+      // a transient blip, not the preview itself being unreachable. Since
+      // the orchestrator turns infrastructureFailure into a non-retryable
+      // run kill (#528), this must stay 'request-failed' and go through the
+      // ordinary repair loop like any other passive failure.
+      const origin = await serve((request, response) => {
+        if (request.url === '/preview/preview-1/broken-image.png') {
+          request.socket.destroy();
+          return;
+        }
+        response.setHeader('content-type', 'text/html');
+        response.end(
+          '<h1>Fixture</h1><img src="/preview/preview-1/broken-image.png" alt="broken">',
+        );
+      });
+
+      const report = await verify(
+        origin,
+        plan([
+          {
+            id: 'open',
+            title: 'Open fixture',
+            action: { kind: 'goto', path: '/' },
+            assertions: [
+              { kind: 'visible', locator: { by: 'role', role: 'heading', name: 'Fixture' } },
+            ],
+          },
+        ]),
+      );
+
+      expect(report.infrastructureFailure).toBeUndefined();
+      const observations = report.steps.flatMap((step) => step.observations);
+      expect(observations.some(({ kind }) => kind === 'preview-unreachable')).toBe(false);
+      expect(observations.some(({ kind }) => kind === 'request-failed')).toBe(true);
+    });
   });
 }, BROWSER_TEST_TIMEOUT_MS);
 
