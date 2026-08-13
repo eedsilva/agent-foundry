@@ -16,9 +16,11 @@ import {
   type ApprovalDecision,
   type ApprovalRequest,
   type ArtifactMetadata,
+  type ArtifactReference,
   type Attachment,
   type ChangeRequest,
   type Conversation,
+  type ExecutableStep,
   type ExecutionRequest,
   type ExecutionResult,
   type ExecutionUsage,
@@ -720,6 +722,8 @@ export class FakeWorkspaces implements WorkspaceManager {
   readonly checkpoints: string[] = [];
   readonly commits: string[] = [];
   readonly rollbacks: string[] = [];
+  /** Parallel to `rollbacks`: which worktree each one targeted, if any (#520). */
+  readonly rollbackWorktrees: Array<string | undefined> = [];
   readonly cleanups: string[] = [];
   readonly drafts: string[] = [];
   readonly draftCommits = new Map<string, string>();
@@ -809,9 +813,10 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.onAfterCheckpoint?.();
     return Promise.resolve(this.current);
   }
-  rollback(_projectId: string, ref: string, _worktree?: string): Promise<void> {
+  rollback(_projectId: string, ref: string, worktree?: string): Promise<void> {
     checkPower(this.power);
     this.rollbacks.push(ref);
+    this.rollbackWorktrees.push(worktree);
     this.current = ref;
     this.dirty = false;
     return Promise.resolve();
@@ -1503,6 +1508,27 @@ export function makeHarness(
 }
 
 export type Harness = ReturnType<typeof makeHarness>;
+
+/**
+ * `WorkflowOrchestrator.executeStep` is private; casting through this lets a
+ * test drive one step directly with an explicit worktree label, bypassing both
+ * the (still worktree-blind) `runProject` graph walk and the for-each-task
+ * scheduler that assigns labels (#520 task 5, not yet landed).
+ */
+export interface HasExecuteStep {
+  executeStep(
+    project: Project,
+    workflow: WorkflowDefinition,
+    step: ExecutableStep,
+    runId: string,
+    nodeId: string,
+    signal: AbortSignal,
+    iteration?: number,
+    pinnedArtifacts?: ArtifactReference[],
+    routingStartIndex?: number,
+    worktree?: string,
+  ): Promise<StoredArtifact>;
+}
 
 export async function seedRun(harness: Harness): Promise<void> {
   const now = harness.clock.now().toISOString();

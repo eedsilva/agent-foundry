@@ -2,10 +2,17 @@ import { describe, expect, it } from 'vitest';
 import {
   WorkflowDefinitionSchema,
   type AgentArtifact,
+  type ExecutableStep,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import { EmergencyCeilingError, type Clock, transitionWorkflowRun } from '@agent-foundry/domain';
-import { makeHarness, makeStores, seedRun, type Stores } from './testing/harness.js';
+import {
+  makeHarness,
+  makeStores,
+  seedRun,
+  type HasExecuteStep,
+  type Stores,
+} from './testing/harness.js';
 
 const START = Date.parse('2026-07-16T12:00:00.000Z');
 
@@ -740,6 +747,65 @@ describe('emergency ceiling accounting', () => {
     expect((await stores.runs.get('run-1'))?.execution?.lastVerifiedCheckpoint).toBe(
       'initial-head',
     );
+  });
+
+  it('advances the verified checkpoint only for a primary-checkout verification (#520)', async () => {
+    // lastVerifiedCheckpoint is run-level: preserveDraft, discardDraft and
+    // ProjectService.getDraft all read it and act on the primary checkout,
+    // with no worktree of their own. A sha from a task worktree would send a
+    // ceiling rollback (reset --hard + clean -fd) into the primary checkout at
+    // an unmerged af/task/<label> commit, so a worktree-scoped verify must
+    // leave the anchor alone.
+    const verifiedCheckpointAfterVerify = async (
+      worktree?: string,
+    ): Promise<string | undefined> => {
+      const stores = makeStores();
+      const harness = makeHarness({}, stores, {
+        workflow: VERIFY_ONLY,
+        verification: () => {
+          stores.workspaces.current = 'verified-head';
+          return {
+            schemaVersion: '1',
+            approved: true,
+            packageManager: 'npm',
+            summary: 'approved',
+            commands: [],
+            createdAt: new Date().toISOString(),
+          };
+        },
+      });
+      await seedRun(harness);
+      const seeded = (await stores.runs.get('run-1'))!;
+      await stores.runs.update(
+        {
+          ...seeded,
+          execution: {
+            activeElapsedMs: 0,
+            consecutiveRepairs: 0,
+            lastVerifiedCheckpoint: 'primary-head',
+          },
+        },
+        seeded.version,
+      );
+      // runProject has no way to originate a label yet (#520 task 5 owns the
+      // scheduler), so the step is driven directly.
+      await (harness.orchestrator as unknown as HasExecuteStep).executeStep(
+        (await stores.projects.get('project-1'))!,
+        harness.workflow,
+        harness.workflow.nodes[0] as ExecutableStep,
+        'run-1',
+        'verify',
+        new AbortController().signal,
+        undefined,
+        [],
+        undefined,
+        worktree,
+      );
+      return (await stores.runs.get('run-1'))?.execution?.lastVerifiedCheckpoint;
+    };
+
+    expect(await verifiedCheckpointAfterVerify('task-a')).toBe('primary-head');
+    expect(await verifiedCheckpointAfterVerify()).toBe('verified-head');
   });
 
   it('counts fail-safe wall time while a persisted run remains running across restart', async () => {

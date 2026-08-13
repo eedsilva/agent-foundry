@@ -1906,7 +1906,12 @@ export class WorkflowOrchestrator {
       }
     } else if (directive.checkpoint && step.type === 'agent' && step.mutatesWorkspace) {
       // A retried mutable step starts from the checkpoint its original
-      // attempt recorded, not from whatever the workspace drifted to.
+      // attempt recorded, not from whatever the workspace drifted to. The
+      // checkpoint was taken in *this* retry's `worktree`, which relies on
+      // task-5 labels being derived from task id + run id: stable for the
+      // whole run, so a retry lands in the same worktree as the attempt it
+      // resumes. A label that varied per attempt would roll back the wrong
+      // checkout here.
       await this.workspaces.rollback(project.id, directive.checkpoint, worktree);
     }
 
@@ -2391,10 +2396,22 @@ export class WorkflowOrchestrator {
           `${step.id}-${runId}-verified`,
           worktree,
         );
-        await this.updateExecution(runId, (run) => ({
-          ...(run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
-          lastVerifiedCheckpoint: checkpoint,
-        }));
+        // lastVerifiedCheckpoint is a run-level field: the emergency-ceiling
+        // draft (preserveDraft/rollback in WorkspaceManager) reads and resets
+        // it entirely against the primary checkout, with no worktree
+        // parameter of its own. A per-task worktree sha is not a valid value
+        // for that field under any of its consumers — recording one would
+        // point the draft branch and a ceiling rollback at unmerged,
+        // eventually-gc'd task work instead of the primary's own history. So
+        // a worktree-scoped verify simply doesn't advance the run's ceiling
+        // anchor; the anchor keeps whatever the last primary-scoped verified
+        // checkpoint was, exactly the pre-#520 meaning.
+        if (worktree === undefined) {
+          await this.updateExecution(runId, (run) => ({
+            ...(run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 }),
+            lastVerifiedCheckpoint: checkpoint,
+          }));
+        }
       }
       const artifact = await this.artifacts.put({
         projectId: project.id,
@@ -3399,7 +3416,8 @@ export class WorkflowOrchestrator {
         },
         worktree,
       );
-      const workspaceRef = checkpoint ?? (await this.workspaces.head(project.id, worktree)) ?? runId;
+      const workspaceRef =
+        checkpoint ?? (await this.workspaces.head(project.id, worktree)) ?? runId;
       const result = await this.executeCandidate(
         project,
         step,
