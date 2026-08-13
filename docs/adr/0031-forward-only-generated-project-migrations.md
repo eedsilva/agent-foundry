@@ -35,6 +35,14 @@ Follow-up: [#538](https://github.com/eedsilva/agent-foundry/issues/538) asks the
 
 Evidence: [`docs/evidence/harness-alignment/schema-first/`](../evidence/harness-alignment/schema-first/README.md), issue [#529](https://github.com/eedsilva/agent-foundry/issues/529).
 
+## Amendment (2026-08-13, #535)
+
+The approval contract above was never wired into a real run: `syncGeneratedDatabase` called `applyWorkspaceMigrations` with no `approval` argument and no workflow node raised a gate for a pending destructive migration, so a destructive batch hard-failed the run (`project.failed`) with no recovery path — the review-and-backup contract existed only as an unreachable code path.
+
+The orchestrator now parks the run at an approval gate the same way the static `plan-approval`/`schema-approval` workflow nodes do, built from the same StepRun/ApprovalRequest/ApprovalDecision machinery but keyed off a synthetic node id (since the gate fires mid-step rather than as a declared graph node). Approving builds the backup and applies with `migrate()` directly; rejecting ends the run. The operator-visible message names the offending file and statement and states that the whole pending batch is held, not just those files.
+
+Evidence: issue [#535](https://github.com/eedsilva/agent-foundry/issues/535).
+
 ## Validation and rollback
 
 Adapter tests cover preview detection, schema-plus-data backup creation and provenance, changed SQL/backup rejection, batch approval, and the absence of `migration down`. Roll back application code only when it remains compatible with the current schema. Otherwise roll forward the application or explicitly restore the chosen backup while the project is stopped.

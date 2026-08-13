@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { ArtifactTooLargeError, PreviewAccessDeniedError } from './errors.js';
+import {
+  ArtifactTooLargeError,
+  MigrationApprovalRequiredError,
+  PreviewAccessDeniedError,
+} from './errors.js';
 
 describe('PreviewAccessDeniedError', () => {
   it('carries the session id and reason in a readable message', () => {
@@ -17,5 +21,21 @@ describe('ArtifactTooLargeError', () => {
     const error = new ArtifactTooLargeError(1_024);
     expect(error.name).toBe('ArtifactTooLargeError');
     expect(error.message).toContain('1024');
+  });
+});
+
+describe('MigrationApprovalRequiredError', () => {
+  it('carries the destructive previews that triggered it', () => {
+    const destructive = [
+      {
+        migrationPath: 'supabase/migrations/0001_drop.sql',
+        checksum: 'a'.repeat(64),
+        destructiveStatements: ['DROP TABLE tasks'],
+      },
+    ];
+    const error = new MigrationApprovalRequiredError(destructive);
+    expect(error.name).toBe('MigrationApprovalRequiredError');
+    expect(error.destructive).toBe(destructive);
+    expect(error.message).toMatch(/approval and verified backup/);
   });
 });

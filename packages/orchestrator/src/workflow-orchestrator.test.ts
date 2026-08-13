@@ -16,6 +16,7 @@ import {
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
+  MigrationApprovalRequiredError,
   SystemClock,
   type Clock,
   type ExecutorRegistry,
@@ -1429,6 +1430,200 @@ describe('generated database sync before browser verification (#429)', () => {
     expect(applyWorkspaceMigrations.mock.invocationCallOrder[0]!).toBeLessThan(
       verify.mock.invocationCallOrder[0]!,
     );
+  });
+});
+
+describe('destructive-migration approval gate (#535)', () => {
+  function browserVerifyFixture() {
+    return vi.fn(
+      async (
+        input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
+        _signal: AbortSignal,
+        onSessionStarted?: (sessionId: string) => Promise<void>,
+      ) => {
+        await onSessionStarted?.('preview-535');
+        return {
+          schemaVersion: '1' as const,
+          approved: true,
+          summary: 'browser approved',
+          planArtifact: {
+            name: input.plan.metadata.name,
+            revision: input.plan.metadata.revision,
+            sha256: input.plan.metadata.sha256,
+          },
+          previewSession: {
+            sessionId: 'preview-535',
+            status: 'running' as const,
+            evidence: { screenshots: [] },
+          },
+          steps: [
+            {
+              stepId: 'open-task',
+              title: 'Open task',
+              status: 'passed' as const,
+              durationMs: 5,
+              observations: [],
+            },
+          ],
+        };
+      },
+    );
+  }
+
+  function agentOutputFixture() {
+    return (request: AgentExecutionRequest) => {
+      if (request.stepId === 'plan') {
+        return {
+          schemaVersion: '1' as const,
+          status: 'completed' as const,
+          summary: 'Planned.',
+          data: BROWSER_GRAPH,
+          decisions: [],
+          assumptions: [],
+          risks: [],
+          nextActions: [],
+        };
+      }
+      if (request.stepId === 'plan-task-browser-test.T1') return VALID_BROWSER_PLAN;
+      return undefined;
+    };
+  }
+
+  async function destructiveHarness() {
+    const { createHash } = await import('node:crypto');
+    const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-535-migrations-'));
+    await mkdir(join(workspace, 'supabase', 'migrations'), { recursive: true });
+    await writeFile(
+      join(workspace, 'supabase', 'migrations', '0001_drop_obsolete.sql'),
+      'DROP TABLE obsolete;',
+    );
+    const destructive = [
+      {
+        migrationPath: 'supabase/migrations/0001_drop_obsolete.sql',
+        checksum: createHash('sha256').update('DROP TABLE obsolete;').digest('hex'),
+        destructiveStatements: ['DROP TABLE obsolete'],
+      },
+    ];
+
+    // applyWorkspaceMigrations copies pending files into the runtime's
+    // private workdir before ever failing (packages/platform's real
+    // behavior) — so a real destructive batch can never be applied by
+    // calling applyWorkspaceMigrations a second time with the resolved
+    // approval: nothing is "fresh" left to copy and it silently no-ops.
+    // This mock throws unconditionally, the same way the real one always
+    // fails on a first, unapproved call, so a fix that re-calls
+    // applyWorkspaceMigrations instead of migrate() on retry is caught here.
+    const applyWorkspaceMigrations = vi.fn(async () => {
+      throw new MigrationApprovalRequiredError(destructive);
+    });
+    const migrate = vi.fn(async () => ({}) as never);
+    const backupMigration = vi.fn(async () => ({
+      path: '.foundry/migration-backups/backup.sql',
+      checksum: 'b'.repeat(64),
+      schemaChecksum: 'c'.repeat(64),
+      dataChecksum: 'd'.repeat(64),
+      createdAt: '2026-08-13T00:00:00.000Z',
+      manifestId: 'manifest-1',
+    }));
+
+    const harness = makeHarness({}, undefined, {
+      workflow: TASK_BROWSER_WORKFLOW,
+      browserVerification: { verify: browserVerifyFixture() } as never,
+      generatedProjectRuntime: {
+        applyWorkspaceMigrations,
+        migrate,
+        backupMigration,
+        initialize: vi.fn(async () => ({}) as never),
+        health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
+      } as never,
+      agentOutput: agentOutputFixture(),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+    return { harness, applyWorkspaceMigrations, migrate, backupMigration, destructive };
+  }
+
+  it('parks the run at an approval gate naming the file and statement instead of failing the run', async () => {
+    const { harness, applyWorkspaceMigrations } = await destructiveHarness();
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+    expect(applyWorkspaceMigrations).toHaveBeenCalledTimes(1);
+    const [pending] = await harness.service.listApprovals('run-1');
+    expect(pending?.decision).toBeNull();
+    expect(pending?.request.nodeId).toMatch(/\.migration-approval$/);
+    const requested = harness.events.events.find(
+      (event) => event.type === 'run.approval_requested',
+    );
+    expect(requested?.message).toContain('0001_drop_obsolete.sql');
+    expect(requested?.message).toContain('DROP TABLE obsolete');
+    expect(requested?.message).toMatch(/entire pending migration batch/);
+  });
+
+  it('applies the batch with a fresh backup once the operator approves, without re-copying already-staged files', async () => {
+    const { harness, applyWorkspaceMigrations, migrate, backupMigration, destructive } =
+      await destructiveHarness();
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(backupMigration).toHaveBeenCalledTimes(1);
+    // Once per run attempt (park, then replay) — applyWorkspaceMigrations is
+    // never retried with the resolved approval attached: that retry would
+    // find the destructive file already staged from the first (failed)
+    // attempt and silently no-op instead of applying it. Applying happens
+    // by calling migrate() directly with the approval instead.
+    expect(applyWorkspaceMigrations).toHaveBeenCalledTimes(2);
+    expect(migrate).toHaveBeenCalledTimes(1);
+    expect(migrate).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      migrationPath: destructive[0]!.migrationPath,
+      approval: {
+        migrationChecksum: destructive[0]!.checksum,
+        backup: {
+          path: '.foundry/migration-backups/backup.sql',
+          checksum: 'b'.repeat(64),
+          schemaChecksum: 'c'.repeat(64),
+          dataChecksum: 'd'.repeat(64),
+          createdAt: '2026-08-13T00:00:00.000Z',
+          manifestId: 'manifest-1',
+        },
+      },
+    });
+  });
+
+  it('ends the run rejected, with no migration applied, when the operator rejects', async () => {
+    const { harness, applyWorkspaceMigrations, migrate, backupMigration } =
+      await destructiveHarness();
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'reject',
+      decidedBy: 'ed',
+      note: 'not safe to drop obsolete yet',
+    });
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('rejected');
+    expect(backupMigration).not.toHaveBeenCalled();
+    expect(migrate).not.toHaveBeenCalled();
+    // Once when first detected, once on replay after the decision — both
+    // times through applyWorkspaceMigrations, since resolveMigrationApproval
+    // throws ApprovalRejectedError before ever reaching migrate().
+    expect(applyWorkspaceMigrations).toHaveBeenCalledTimes(2);
+    const rejected = harness.events.events.find((event) => event.type === 'run.rejected');
+    expect(rejected?.message).toContain('not safe to drop obsolete yet');
   });
 });
 

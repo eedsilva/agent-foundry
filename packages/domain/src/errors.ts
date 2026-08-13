@@ -1,4 +1,8 @@
-import type { ApprovalDecision, EnvironmentLifecycleOperation } from '@agent-foundry/contracts';
+import type {
+  ApprovalDecision,
+  EnvironmentLifecycleOperation,
+  MigrationPreview,
+} from '@agent-foundry/contracts';
 
 export class NotFoundError extends Error {
   override readonly name = 'NotFoundError';
@@ -6,6 +10,21 @@ export class NotFoundError extends Error {
 
 export class ValidationError extends Error {
   override readonly name = 'ValidationError';
+}
+
+/**
+ * A destructive migration was attempted with no approval at all — distinct
+ * from ValidationError's other `requireMigrationApproval` failures (stale or
+ * mismatched approval), which are real rejections, not "ask the operator"
+ * (#535). Carries the destructive previews so the caller can build an
+ * approval-gate request without re-scanning the migration files.
+ */
+export class MigrationApprovalRequiredError extends Error {
+  override readonly name = 'MigrationApprovalRequiredError';
+
+  constructor(readonly destructive: MigrationPreview[]) {
+    super('Destructive migration requires approval and verified backup.');
+  }
 }
 
 export class IdempotencyConflictError extends Error {
@@ -239,6 +258,8 @@ export class ApprovalRequiredError extends Error {
   constructor(
     readonly runId: string,
     readonly nodeId: string,
+    /** Gate-specific detail folded into the run.approval_requested message. */
+    readonly detail?: string,
   ) {
     super(`Workflow run ${runId} is awaiting an approval decision at ${nodeId}.`);
   }

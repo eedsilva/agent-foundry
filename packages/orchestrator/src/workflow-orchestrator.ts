@@ -17,6 +17,8 @@ import type {
   ExecutableStep,
   ExecutorStreamEvent,
   ExecutorHealth,
+  MigrationApproval,
+  MigrationPreview,
   PreviewSession,
   PreviewFailurePhase,
   Project,
@@ -52,6 +54,7 @@ import {
   formatZodIssues,
   generateSchemaPlanSql,
   isWorkflowRunStatusTerminal,
+  MigrationApprovalSchema,
   PROVISIONING_FAILURE_CONTEXT_MAX_BYTES,
   PROVISIONING_FAILURE_LOG_MAX_BYTES,
   ProvisioningFailureDiagnosticSchema,
@@ -102,6 +105,7 @@ import {
   EnvironmentOperationError,
   ExecutionError,
   LeaseLostError,
+  MigrationApprovalRequiredError,
   NotFoundError,
   PolicyViolationError,
   ProviderAuthenticationError,
@@ -136,6 +140,7 @@ import type { ProjectVersionService } from './project-version-service.js';
 import { buildTaskProfile } from './task-profiler.js';
 import {
   approvalGateIdempotencyKey,
+  migrationApprovalGateId,
   policyHash,
   stepIdempotencyKey,
   workflowHash,
@@ -632,7 +637,7 @@ export class WorkflowOrchestrator {
       }
       if (error instanceof ApprovalRequiredError) {
         throwIfCancelled(signal, run.id);
-        await this.finalizeApproval(run.id, projectId, error.nodeId);
+        await this.finalizeApproval(run.id, projectId, error.nodeId, error.detail);
         return;
       }
       if (error instanceof ApprovalRejectedError) {
@@ -1243,7 +1248,12 @@ export class WorkflowOrchestrator {
     );
   }
 
-  private async finalizeApproval(runId: string, projectId: string, nodeId: string): Promise<void> {
+  private async finalizeApproval(
+    runId: string,
+    projectId: string,
+    nodeId: string,
+    detail?: string,
+  ): Promise<void> {
     let run = await this.stopActiveExecution(runId);
     if (run.status === 'running') {
       run = await this.runs.update(
@@ -1252,7 +1262,10 @@ export class WorkflowOrchestrator {
       );
     }
     await this.syncProjectSummary(run, nodeId);
-    await this.emit(projectId, 'run.approval_requested', `Awaiting approval at ${nodeId}.`, {
+    const message = detail
+      ? `Awaiting approval at ${nodeId}:\n${detail}`
+      : `Awaiting approval at ${nodeId}.`;
+    await this.emit(projectId, 'run.approval_requested', message, {
       runId,
       nodeId,
     });
@@ -2289,7 +2302,9 @@ export class WorkflowOrchestrator {
       // apply the generated migration or notice drift at all (#481). The
       // blocking full-suite gate is the backstop that keeps a mismatch a hard
       // failure rather than a silent no-op.
-      if (step.blocksOnFailure) await this.syncGeneratedDatabase(project.id);
+      if (step.blocksOnFailure) {
+        await this.syncGeneratedDatabase(project, runId, stepRun.nodeId, signal);
+      }
       const validationDatabaseGate =
         this.validationCampaign &&
         step.blocksOnFailure &&
@@ -2632,9 +2647,9 @@ export class WorkflowOrchestrator {
    * the schema must be applied there before a browser walks the app (#429:
    * "Could not find the table 'public.todos'"). The runtime copies new files
    * into its environment and applies pending migrations; a destructive
-   * migration still fails closed through the existing approval gate. Seed is
-   * deliberately not re-run: it is not idempotent, and browser plans handle
-   * an empty state.
+   * migration parks the run at an approval gate instead of failing it
+   * outright (#535). Seed is deliberately not re-run: it is not idempotent,
+   * and browser plans handle an empty state.
    *
    * It also owns the schema drift check (#481): once the migrations are
    * applied, the live database is compared against the approved
@@ -2642,24 +2657,22 @@ export class WorkflowOrchestrator {
    * browser check and before the blocking full-suite gate, so a plan whose
    * tasks are all deterministic-only is still checked.
    */
-  private async syncGeneratedDatabase(projectId: string): Promise<void> {
+  private async syncGeneratedDatabase(
+    project: Project,
+    runId: string,
+    nodeId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     if (!this.generatedProjectRuntime) return;
-    await this.generatedProjectRuntime.applyWorkspaceMigrations({
-      projectId,
-      workspaceMigrationsDir: join(
-        this.workspaces.workspacePath(projectId),
-        'supabase',
-        'migrations',
-      ),
-    });
+    await this.applyGeneratedMigrations(project, runId, nodeId, signal);
     // No artifact at all means a project that predates this check, or a
     // workflow without a schema step — nothing approved to verify against.
-    const schemaArtifact = await this.artifacts.getLatest(projectId, 'schema.current');
+    const schemaArtifact = await this.artifacts.getLatest(project.id, 'schema.current');
     if (!schemaArtifact) return;
     const schemaPlan = SchemaPlanArtifactSchema.safeParse(schemaArtifact.content);
     if (!schemaPlan.success) return;
     const verification = await this.generatedProjectRuntime.verifySchema({
-      projectId,
+      projectId: project.id,
       tables: schemaPlan.data.data.tables,
     });
     const problems = [
@@ -2674,6 +2687,227 @@ export class WorkflowOrchestrator {
         `Live database does not match the approved schema plan: ${problems.join(', ')}.`,
       );
     }
+  }
+
+  /**
+   * Applies pending workspace migrations, parking the run at an approval
+   * gate when the batch contains a destructive statement instead of letting
+   * `applyWorkspaceMigrations` throw the run into `project.failed` (#535:
+   * the gate existed in the platform layer but no caller ever wired it up).
+   * Reused across the batch: the same `destructive` checksums keep failing
+   * `applyWorkspaceMigrations` until an approval that covers all of them is
+   * built and passed back in, so this recurses at most twice in practice
+   * (once to discover the gate, once to apply with the resolved approval).
+   */
+  private async applyGeneratedMigrations(
+    project: Project,
+    runId: string,
+    nodeId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const workspaceMigrationsDir = join(
+      this.workspaces.workspacePath(project.id),
+      'supabase',
+      'migrations',
+    );
+    try {
+      await this.generatedProjectRuntime!.applyWorkspaceMigrations({
+        projectId: project.id,
+        workspaceMigrationsDir,
+      });
+    } catch (error) {
+      if (!(error instanceof MigrationApprovalRequiredError)) throw error;
+      const approval = await this.resolveMigrationApproval(
+        project,
+        runId,
+        nodeId,
+        signal,
+        error.destructive,
+      );
+      // applyWorkspaceMigrations copies pending files into the runtime's
+      // private workdir *before* migrate() can reject them (#535 simplify
+      // review): they're already staged, so calling it again here would
+      // find nothing left to copy and silently no-op instead of applying
+      // the now-approved batch. migrate() with the resolved approval
+      // applies directly; `migration up` covers every pending file
+      // regardless of which single path is named.
+      // ponytail: skips applyWorkspaceMigrations's #446 already-applied
+      // reconcile retry for this one call — add here too if a destructive
+      // migration ever needs it.
+      await this.generatedProjectRuntime!.migrate({
+        projectId: project.id,
+        migrationPath: error.destructive.at(-1)!.migrationPath,
+        approval,
+      });
+    }
+  }
+
+  /**
+   * Parks the run at an approval gate for a destructive migration batch, the
+   * way the `plan-approval` and `schema-approval` workflow nodes already do
+   * (executeApprovalGateTraced) — reusing the same StepRun / ApprovalRequest
+   * / ApprovalDecision machinery so decisions replay and resume identically.
+   * The gate isn't a workflow-graph node (it fires mid-step, only when a
+   * migration turns out destructive), so it's keyed off a synthetic node id
+   * derived from the enclosing step instead of a static `node.id`.
+   *
+   * Resolves once an 'approve' decision is recorded, building a fresh backup
+   * and MigrationApproval to hand back to the caller. Throws
+   * ApprovalRequiredError while undecided and ApprovalRejectedError on
+   * rejection — both already understood by the run loop's control-flow
+   * handling (isRunControlFlowError) and by TaskGraphRunner's retry loop.
+   */
+  private async resolveMigrationApproval(
+    project: Project,
+    runId: string,
+    nodeId: string,
+    signal: AbortSignal,
+    destructive: MigrationPreview[],
+  ): Promise<MigrationApproval> {
+    const gateNodeId = migrationApprovalGateId(nodeId);
+    throwIfCancelled(signal, runId);
+    // requireMigrationApproval refuses the whole pending migration batch,
+    // not just the destructive file(s) — say so, since an operator seeing
+    // only the statements below would otherwise assume a clean sibling
+    // migration in the same batch already went through (#535).
+    const summary = [
+      'This holds the entire pending migration batch, not just the file(s) below:',
+      ...destructive.flatMap((preview) =>
+        preview.destructiveStatements.map((statement) => `${preview.migrationPath}: ${statement}`),
+      ),
+    ].join('\n');
+
+    let stepRun = (await this.stepRuns.list(runId)).find(
+      (candidate) =>
+        candidate.nodeId === gateNodeId &&
+        candidate.stepId === gateNodeId &&
+        !candidate.invalidatedAt,
+    );
+    throwIfCancelled(signal, runId);
+
+    if (!stepRun) {
+      const previewArtifact = await this.artifacts.put({
+        projectId: project.id,
+        name: 'migration.destructive-preview',
+        content: { schemaVersion: '1', migrations: destructive },
+        createdBy: `migration-approval:${gateNodeId}`,
+        runId,
+      });
+      throwIfCancelled(signal, runId);
+      const idempotencyKey = approvalGateIdempotencyKey({
+        runId,
+        nodeId: gateNodeId,
+        artifact: artifactReference(previewArtifact),
+      });
+
+      const timestamp = this.clock.now().toISOString();
+      stepRun = {
+        id: this.ids.next(),
+        runId,
+        nodeId: gateNodeId,
+        stepId: gateNodeId,
+        stepType: 'approval-gate',
+        idempotencyKey,
+        status: 'pending',
+        version: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      await this.stepRuns.create(stepRun);
+      throwIfCancelled(signal, runId);
+      stepRun = await this.stepRuns.update(
+        transitionStepRun(stepRun, 'running', this.clock.now()),
+        stepRun.version,
+      );
+      throwIfCancelled(signal, runId);
+      await this.setCurrentStep(runId, stepRun, gateNodeId, signal);
+
+      const approvalRequestId = this.ids.next();
+      throwIfCancelled(signal, runId);
+      const approvalRequest: ApprovalRequest = {
+        id: approvalRequestId,
+        runId,
+        stepRunId: stepRun.id,
+        nodeId: gateNodeId,
+        artifact: artifactReference(previewArtifact),
+        allowedActions: ['approve', 'reject'],
+        createdAt: this.clock.now().toISOString(),
+      };
+      await this.approvalRequests.create(approvalRequest);
+      throwIfCancelled(signal, runId);
+      await this.stepEvents
+        .append({
+          id: this.ids.next(),
+          runId,
+          stepRunId: stepRun.id,
+          createdAt: this.clock.now().toISOString(),
+          type: 'approval',
+          approvalRequestId,
+        })
+        .catch(() => undefined);
+      throwIfCancelled(signal, runId);
+      throw new ApprovalRequiredError(runId, gateNodeId, summary);
+    }
+
+    const request = await this.approvalRequests.getForStepRun(runId, stepRun.id);
+    throwIfCancelled(signal, runId);
+    if (!request) {
+      throw new ExecutionError(
+        `Migration approval gate ${gateNodeId} has a pending StepRun but no ApprovalRequest`,
+      );
+    }
+    const decision = normalizeApprovalDecision(await this.approvalDecisions.get(runId, request.id));
+    throwIfCancelled(signal, runId);
+    if (!decision) throw new ApprovalRequiredError(runId, gateNodeId, summary);
+    if (decision.action === 'reject') {
+      throw new ApprovalRejectedError(
+        runId,
+        gateNodeId,
+        decision.decidedBy,
+        decision.note ?? summary,
+      );
+    }
+    if (decision.action !== 'approve') {
+      // Only 'approve'/'reject' are ever offered (allowedActions above), so
+      // this is an ApprovalAction variant this gate doesn't support rather
+      // than a reachable 'request-changes' path.
+      throw new ExecutionError(
+        `Migration approval gate ${gateNodeId} decision '${decision.action}' is not supported`,
+      );
+    }
+
+    const backup = await this.generatedProjectRuntime!.backupMigration({
+      projectId: project.id,
+      backupPath: `.foundry/migration-backups/${stepRun.id}.sql`,
+    });
+    throwIfCancelled(signal, runId);
+    const [first, ...rest] = destructive;
+    const approval = MigrationApprovalSchema.parse({
+      migrationChecksum: first!.checksum,
+      ...(rest.length ? { migrationChecksums: rest.map((preview) => preview.checksum) } : {}),
+      backup,
+    });
+
+    if (stepRun.status !== 'completed') {
+      await this.stepRuns.update(
+        transitionStepRun(stepRun, 'completed', this.clock.now()),
+        stepRun.version,
+      );
+      throwIfCancelled(signal, runId);
+      await this.clearCurrentStep(runId, signal);
+      throwIfCancelled(signal, runId);
+      await this.emit(
+        project.id,
+        'run.approval_decided',
+        `Migration approval at ${gateNodeId} approved.`,
+        {
+          nodeId: gateNodeId,
+          runId,
+          data: { decidedBy: decision.decidedBy },
+        },
+      );
+    }
+    return approval;
   }
 
   private async executeBrowserVerifyStepAttempt(
@@ -2694,7 +2928,7 @@ export class WorkflowOrchestrator {
     try {
       let artifact = await this.findArtifactByKey(project.id, step.outputArtifact, idempotencyKey);
       if (!artifact) {
-        await this.syncGeneratedDatabase(project.id);
+        await this.syncGeneratedDatabase(project, runId, stepRun.nodeId, signal);
         const report = await browserVerification.verify(
           {
             projectId: project.id,

@@ -60,6 +60,24 @@ export function stepIdempotencyKey(input: {
   );
 }
 
+/**
+ * Node id for a destructive-migration approval gate (#535): synthetic, since
+ * it's raised mid-step rather than declared as a static `approval-gate`
+ * workflow node. One format, one place, same as `taskStepId`/`isTaskStepId`
+ * in packages/domain/src/task-graph.ts — `decideApproval` uses the
+ * recognizer to treat it as dynamic authoritatively, not by inferring
+ * "dynamic" from a `workflow.nodes.find` miss.
+ */
+const MIGRATION_APPROVAL_GATE_SUFFIX = '.migration-approval';
+
+export function migrationApprovalGateId(stepNodeId: string): string {
+  return `${stepNodeId}${MIGRATION_APPROVAL_GATE_SUFFIX}`;
+}
+
+export function isMigrationApprovalGateId(nodeId: string): boolean {
+  return nodeId.endsWith(MIGRATION_APPROVAL_GATE_SUFFIX);
+}
+
 export function workflowHash(workflow: WorkflowDefinition): string {
   return sha256(stableStringify(workflow));
 }
