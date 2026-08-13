@@ -105,7 +105,9 @@ describe('#297: a minimal no-auth PRD reaches operator approval without a repair
 
     const stepIds = (await runtime.stepRuns.list(runId)).map((step) => step.stepId);
     expect(stepIds.some((stepId) => stepId.startsWith('implement.'))).toBe(true);
-  }, 30_000);
+    // Two gates and three agent steps of real mock-mode work; 30s was enough
+    // for one gate but times out under whole-suite CPU contention.
+  }, 60_000);
 
   it('reject ends the run with the operator reason recorded', async () => {
     const { runtime, projectId, runId } = await startStatusAppRun('plan-approval-reject-worker');
