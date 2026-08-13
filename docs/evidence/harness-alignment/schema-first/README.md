@@ -125,6 +125,10 @@ tables in `public` were `storage_uploads|t` only, policies were
 `storage_uploads|storage_upload_owner_select` only, and `supabase_migrations.schema_migrations` held
 `00000000000000` only — the scaffold baseline, untouched.
 
+Unlike run 2's equivalent state, which is committed as section 0 of the transcript, this one is
+recorded here from the session that ran it and has no committed capture: run 1's stack was stopped to
+free Docker resources before run 2 started, so those queries can no longer be repeated.
+
 This is the first half of defect #1 in [`../defect-list.md`](../defect-list.md) (HA-0.1), which called
 out `DROP POLICY IF EXISTS` explicitly. The second half of that defect — the `.migrate()` approval path
 existing at the platform layer but never wired into the workflow's gate system — is still open as
