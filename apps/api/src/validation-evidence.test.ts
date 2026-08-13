@@ -707,17 +707,20 @@ describe('validation evidence API', () => {
     const runId = project.currentRunId!;
 
     expect(await runtime.worker.runOnce()).toBe(true);
-    const pending = (await runtime.projectService.listApprovals(runId)).find(
-      (entry) => !entry.decision,
-    );
-    expect(pending).toBeDefined();
-    const decision = await app.inject({
-      method: 'POST',
-      url: `/runs/${runId}/approvals/${pending!.request.id}/decide`,
-      payload: { action: 'approve', decidedBy: 'public-workflow-test' },
-    });
-    expect(decision.statusCode).toBe(202);
-    expect(await runtime.worker.runOnce()).toBe(true);
+    // Approving the plan runs the schema step and parks on its own gate (#481).
+    for (const nodeId of ['plan-approval', 'schema-approval']) {
+      const pending = (await runtime.projectService.listApprovals(runId)).find(
+        (entry) => !entry.decision,
+      );
+      expect(pending?.request.nodeId).toBe(nodeId);
+      const decision = await app.inject({
+        method: 'POST',
+        url: `/runs/${runId}/approvals/${pending!.request.id}/decide`,
+        payload: { action: 'approve', decidedBy: 'public-workflow-test' },
+      });
+      expect(decision.statusCode).toBe(202);
+      expect(await runtime.worker.runOnce()).toBe(true);
+    }
 
     const evidence = await app.inject({
       method: 'GET',
