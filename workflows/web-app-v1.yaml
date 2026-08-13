@@ -69,7 +69,10 @@ nodes:
     inputArtifacts: [prd, plan.current]
     outputArtifact: schema.current
     outputContract: schema-plan
-    mutatesWorkspace: true
+    # Read-only, like `plan`: this flag also grants the executor edit rights
+    # over the whole workspace. The orchestrator writes and commits the
+    # generated migration itself, once the gate below approves.
+    mutatesWorkspace: false
     harnessTags: [planning, web]
     profile:
       complexity: 4

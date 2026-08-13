@@ -54,7 +54,10 @@ describe('YamlWorkflowRepository', () => {
     expect(schema?.type === 'agent' && schema.outputContract).toBe('schema-plan');
     expect(schema?.type === 'agent' && schema.outputArtifact).toBe('schema.current');
     expect(schema?.type === 'agent' && schema.inputArtifacts).toEqual(['prd', 'plan.current']);
-    expect(schema?.type === 'agent' && schema.mutatesWorkspace).toBe(true);
+    // Read-only like `plan`: mutatesWorkspace also grants the executor edit
+    // rights over the whole workspace, and a planning role has no business
+    // with them. The orchestrator writes the migration after the gate.
+    expect(schema?.type === 'agent' && schema.mutatesWorkspace).toBe(false);
 
     const schemaApproval = workflow.nodes.find((node) => node.id === 'schema-approval');
     expect(schemaApproval?.type).toBe('approval-gate');

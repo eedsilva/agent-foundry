@@ -1545,6 +1545,16 @@ export class WorkflowOrchestrator {
       );
     }
 
+    // An approved schema plan becomes a migration here, after the gate, so the
+    // planning step that produced it never needs workspace-write and a rejected
+    // plan leaves no DDL behind for a later run to apply (#481). Any other
+    // gated artifact fails this parse and is left alone.
+    const approvedSchemaPlan = SchemaPlanArtifactSchema.safeParse(reviewed.content);
+    if (approvedSchemaPlan.success) {
+      await this.writeSchemaPlanMigration(project.id, approvedSchemaPlan.data.data);
+      throwIfCancelled(signal, runId);
+    }
+
     const artifact = await this.artifacts.put({
       projectId: project.id,
       name: node.outputArtifact,
@@ -2078,7 +2088,9 @@ export class WorkflowOrchestrator {
   }
 
   /** Forward-only: an applied migration is never rewritten, so an unchanged
-   * plan writes nothing and a changed one gets a new timestamped file. */
+   * plan writes nothing and a changed one gets a new timestamped file. The
+   * orchestrator commits it itself — the step that produced the plan is
+   * read-only and has no commit of its own to ride on. */
   private async writeSchemaPlanMigration(projectId: string, plan: SchemaPlan): Promise<void> {
     const sql = generateSchemaPlanSql(plan);
     const dir = join(this.workspaces.workspacePath(projectId), 'supabase', 'migrations');
@@ -2099,6 +2111,7 @@ export class WorkflowOrchestrator {
       );
     }
     await writeFile(join(dir, filename), sql);
+    await this.workspaces.commit(projectId, `schema: approved schema plan migration ${filename}`);
   }
 
   private async commitAgentWorkspace(
@@ -3157,11 +3170,9 @@ export class WorkflowOrchestrator {
             `Step ${step.id} must emit a schema plan in data; output failed validation: ${formatZodIssues(schemaPlan.error, 'plan')}`,
           );
         }
-        // Ungated, this write would land on disk with no commit/rollback for a
-        // non-mutating step — dirty forever, or misattributed to a later commit.
-        if (step.mutatesWorkspace) {
-          await this.writeSchemaPlanMigration(project.id, schemaPlan.data.data);
-        }
+        // The migration itself is written by the approval gate, not here: a
+        // planning role must stay read-only, and a plan the operator rejects
+        // must leave nothing behind (#481).
       }
       const executionRoute: RouteDecision = {
         ...route,

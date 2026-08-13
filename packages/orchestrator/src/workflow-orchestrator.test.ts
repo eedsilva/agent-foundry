@@ -1027,62 +1027,73 @@ class FrozenClock implements Clock {
   }
 }
 
-const SCHEMA_PLAN_MUTATING_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+/** The planning step is read-only, exactly like web-app-v1's `schema` node:
+ * the orchestrator, not the agent, writes and commits the migration, and only
+ * once the operator has approved the plan. */
+function schemaPlanNodes(suffix: string, extra: Record<string, unknown> = {}) {
+  return [
+    {
+      id: `plan-schema${suffix}`,
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: `Plan schema${suffix}`,
+      instructions: 'Plan the data model.',
+      outputArtifact: `schema.current${suffix}`,
+      outputContract: 'schema-plan',
+      mutatesWorkspace: false,
+      maxAttempts: 1,
+      ...extra,
+    },
+    {
+      id: `schema-approval${suffix}`,
+      type: 'approval-gate',
+      title: `Operator schema approval${suffix}`,
+      artifact: `schema.current${suffix}`,
+      outputArtifact: `schema.approval${suffix}`,
+      actions: ['approve', 'reject'],
+      onReject: 'end',
+    },
+  ];
+}
+
+const SCHEMA_PLAN_GATED_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   schemaVersion: '1',
   id: 'schema-plan-migration-v1',
   name: 'Schema plan migration fixture',
-  description: 'A single mutating step constrained to emit a schema plan.',
+  description: 'One read-only schema-plan step behind an operator approval gate.',
   stack: 'node',
-  nodes: [
-    {
-      id: 'plan-schema',
-      type: 'agent',
-      role: 'planner',
-      taskKind: 'planning',
-      title: 'Plan schema',
-      instructions: 'Plan the data model.',
-      outputArtifact: 'schema.current',
-      outputContract: 'schema-plan',
-      mutatesWorkspace: true,
-      maxAttempts: 1,
-    },
-  ],
+  nodes: schemaPlanNodes(''),
 });
 
-const SCHEMA_PLAN_TWO_STEP_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+const SCHEMA_PLAN_TWO_GATE_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   schemaVersion: '1',
   id: 'schema-plan-migration-repeat-v1',
   name: 'Schema plan migration repeat fixture',
-  description: 'Two sequential mutating steps, each constrained to emit a schema plan.',
+  description: 'Two read-only schema-plan steps, each behind its own approval gate.',
   stack: 'node',
   nodes: [
-    {
-      id: 'plan-schema-1',
-      type: 'agent',
-      role: 'planner',
-      taskKind: 'planning',
-      title: 'Plan schema (first)',
-      instructions: 'Plan the data model.',
-      outputArtifact: 'schema.current',
-      outputContract: 'schema-plan',
-      mutatesWorkspace: true,
-      maxAttempts: 1,
-    },
-    {
-      id: 'plan-schema-2',
-      type: 'agent',
-      role: 'planner',
-      taskKind: 'planning',
-      title: 'Plan schema (second)',
-      instructions: 'Revise the data model.',
-      inputArtifacts: ['schema.current'],
-      outputArtifact: 'schema.current.revision',
-      outputContract: 'schema-plan',
-      mutatesWorkspace: true,
-      maxAttempts: 1,
-    },
+    ...schemaPlanNodes('-1'),
+    ...schemaPlanNodes('-2', { inputArtifacts: ['schema.current-1'] }),
   ],
 });
+
+/** Runs the project, approving every gate it parks at, until it terminates. */
+async function runApprovingGates(
+  harness: ReturnType<typeof makeHarness>,
+  runId = 'run-1',
+): Promise<void> {
+  await harness.orchestrator.runProject('project-1', undefined, runId);
+  for (;;) {
+    const pending = (await harness.service.listApprovals(runId)).find((entry) => !entry.decision);
+    if (!pending) return;
+    await harness.service.decideApproval(runId, pending.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, runId);
+  }
+}
 
 const REVISED_SCHEMA_PLAN = {
   schemaVersion: '1',
@@ -1117,66 +1128,113 @@ function schemaPlanOutput(data: unknown): AgentExecutionResult['output'] {
 }
 
 describe('schema-plan migration write (#481)', () => {
-  it('writes the generated schema-plan SQL into supabase/migrations on a successful step', async () => {
-    const { mkdtemp, readdir, readFile } = await import('node:fs/promises');
+  async function migrationNames(workspace: string): Promise<string[]> {
+    const { readdir } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    return (await readdir(join(workspace, 'supabase', 'migrations')))
+      .filter((name) => name.endsWith('_schema_plan.sql'))
+      .sort();
+  }
+
+  it('writes and commits the migration only once the operator approves the plan', async () => {
+    const { mkdtemp, access, readFile } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
     const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-'));
 
     const harness = makeHarness({}, undefined, {
-      workflow: SCHEMA_PLAN_MUTATING_WORKFLOW,
+      workflow: SCHEMA_PLAN_GATED_WORKFLOW,
+      agentOutput: () => schemaPlanOutput(VALID_SCHEMA_PLAN),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    const commit = vi.spyOn(harness.workspaces, 'commit');
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    // Parked on the gate: the planning step is read-only, so nothing may exist
+    // on disk yet — not even the directory.
+    expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+    await expect(access(join(workspace, 'supabase', 'migrations'))).rejects.toThrow();
+
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    const files = await migrationNames(workspace);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/^\d{14}_schema_plan\.sql$/);
+    const content = await readFile(
+      join(workspace, 'supabase', 'migrations', files[0]!),
+      'utf8',
+    );
+    expect(content).toContain('create table if not exists public.items');
+    expect(content).toContain('alter table public.items enable row level security;');
+    // The orchestrator owns the commit, since no mutating step does.
+    expect(commit).toHaveBeenCalledWith('project-1', expect.stringContaining(files[0]!));
+  });
+
+  it('writes nothing when the operator rejects the schema plan', async () => {
+    const { mkdtemp, access } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-rejected-'));
+
+    const harness = makeHarness({}, undefined, {
+      workflow: SCHEMA_PLAN_GATED_WORKFLOW,
       agentOutput: () => schemaPlanOutput(VALID_SCHEMA_PLAN),
     });
     harness.workspaces.workspacePath = () => workspace;
     await seedHarnessRun(harness);
 
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'reject',
+      decidedBy: 'ed',
+      note: 'wrong data model',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
-    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
-    const migrationsDir = join(workspace, 'supabase', 'migrations');
-    const files = (await readdir(migrationsDir)).filter((name) =>
-      name.endsWith('_schema_plan.sql'),
-    );
-    expect(files).toHaveLength(1);
-    expect(files[0]).toMatch(/^\d{14}_schema_plan\.sql$/);
-    const content = await readFile(join(migrationsDir, files[0]!), 'utf8');
-    expect(content).toContain('create table if not exists public.items');
-    expect(content).toContain('alter table public.items enable row level security;');
+    expect((await harness.runs.get('run-1'))?.status).toBe('rejected');
+    // Rejected DDL must not survive in the workspace: a later run would apply
+    // it, and verifySchema tolerates extra tables by design.
+    await expect(access(join(workspace, 'supabase', 'migrations'))).rejects.toThrow();
   });
 
   it('writes no second file when a repeated schema-plan step emits identical SQL', async () => {
-    const { mkdtemp, readdir } = await import('node:fs/promises');
+    const { mkdtemp } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
     const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-repeat-'));
 
     const stores = makeStores(new IncrementingClock(new Date('2026-08-12T00:00:00.000Z')));
     const harness = makeHarness({}, stores, {
-      workflow: SCHEMA_PLAN_TWO_STEP_WORKFLOW,
+      workflow: SCHEMA_PLAN_TWO_GATE_WORKFLOW,
       agentOutput: () => schemaPlanOutput(VALID_SCHEMA_PLAN),
     });
     harness.workspaces.workspacePath = () => workspace;
     await seedHarnessRun(harness);
 
-    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await runApprovingGates(harness);
 
     expect((await harness.runs.get('run-1'))?.status).toBe('completed');
-    const migrationsDir = join(workspace, 'supabase', 'migrations');
-    const files = (await readdir(migrationsDir)).filter((name) =>
-      name.endsWith('_schema_plan.sql'),
-    );
-    expect(files).toHaveLength(1);
+    expect(await migrationNames(workspace)).toHaveLength(1);
   });
 
   it('writes a second file and leaves the first untouched when the schema plan changes', async () => {
-    const { mkdtemp, readdir, readFile } = await import('node:fs/promises');
+    const { mkdtemp, readFile } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
     const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-change-'));
 
     const stores = makeStores(new IncrementingClock(new Date('2026-08-12T00:00:00.000Z')));
     const harness = makeHarness({}, stores, {
-      workflow: SCHEMA_PLAN_TWO_STEP_WORKFLOW,
+      workflow: SCHEMA_PLAN_TWO_GATE_WORKFLOW,
       agentOutput: (request) =>
         schemaPlanOutput(
           request.stepId === 'plan-schema-2' ? REVISED_SCHEMA_PLAN : VALID_SCHEMA_PLAN,
@@ -1185,13 +1243,11 @@ describe('schema-plan migration write (#481)', () => {
     harness.workspaces.workspacePath = () => workspace;
     await seedHarnessRun(harness);
 
-    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await runApprovingGates(harness);
 
     expect((await harness.runs.get('run-1'))?.status).toBe('completed');
     const migrationsDir = join(workspace, 'supabase', 'migrations');
-    const files = (await readdir(migrationsDir))
-      .filter((name) => name.endsWith('_schema_plan.sql'))
-      .sort();
+    const files = await migrationNames(workspace);
     expect(files).toHaveLength(2);
     const firstContent = await readFile(join(migrationsDir, files[0]!), 'utf8');
     const secondContent = await readFile(join(migrationsDir, files[1]!), 'utf8');
@@ -1200,36 +1256,15 @@ describe('schema-plan migration write (#481)', () => {
     expect(secondContent).toContain('title text not null');
   });
 
-  it('does not write a migration for a non-mutating schema-plan step', async () => {
-    const { mkdtemp, access } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-non-mutating-'));
-
-    const harness = makeHarness({}, undefined, {
-      workflow: SCHEMA_PLAN_WORKFLOW,
-      agentOutput: () => schemaPlanOutput(VALID_SCHEMA_PLAN),
-    });
-    harness.workspaces.workspacePath = () => workspace;
-    await seedHarnessRun(harness);
-
-    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-
-    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
-    // Unmutated: no commit/rollback owns this step's writes, so nothing should
-    // ever touch disk — not even to create the directory.
-    await expect(access(join(workspace, 'supabase', 'migrations'))).rejects.toThrow();
-  });
-
   it('fails loudly instead of clobbering a prior migration on a same-second timestamp collision', async () => {
-    const { mkdtemp, readdir, readFile } = await import('node:fs/promises');
+    const { mkdtemp, readFile } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
     const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-collision-'));
 
     const stores = makeStores(new FrozenClock(new Date('2026-08-12T00:00:00.000Z')));
     const harness = makeHarness({}, stores, {
-      workflow: SCHEMA_PLAN_TWO_STEP_WORKFLOW,
+      workflow: SCHEMA_PLAN_TWO_GATE_WORKFLOW,
       agentOutput: (request) =>
         schemaPlanOutput(
           request.stepId === 'plan-schema-2' ? REVISED_SCHEMA_PLAN : VALID_SCHEMA_PLAN,
@@ -1238,16 +1273,14 @@ describe('schema-plan migration write (#481)', () => {
     harness.workspaces.workspacePath = () => workspace;
     await seedHarnessRun(harness);
 
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      /already exists with different content/,
-    );
+    await expect(runApprovingGates(harness)).rejects.toThrow(/already exists with different content/);
 
-    const migrationsDir = join(workspace, 'supabase', 'migrations');
-    const files = (await readdir(migrationsDir)).filter((name) =>
-      name.endsWith('_schema_plan.sql'),
-    );
+    const files = await migrationNames(workspace);
     expect(files).toHaveLength(1);
-    const content = await readFile(join(migrationsDir, files[0]!), 'utf8');
+    const content = await readFile(
+      join(workspace, 'supabase', 'migrations', files[0]!),
+      'utf8',
+    );
     expect(content).toContain('create table if not exists public.items ( id uuid not null,');
     expect(content).not.toContain('title text not null');
   });
