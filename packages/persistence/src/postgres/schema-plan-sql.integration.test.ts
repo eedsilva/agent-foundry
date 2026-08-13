@@ -1,6 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { generateSchemaPlanSql, SchemaPlanSchema, type ColumnType } from '@agent-foundry/contracts';
+import {
+  generateSchemaPlanSql,
+  POSTGRES_DATA_TYPE,
+  SchemaPlanSchema,
+} from '@agent-foundry/contracts';
 import { expect, it } from 'vitest';
 import { describePostgres } from './testing.js';
 
@@ -13,19 +17,6 @@ async function loadPlan(shape: (typeof FIXTURE_SHAPES)[number]) {
   );
   return SchemaPlanSchema.parse(JSON.parse(await readFile(path, 'utf8')));
 }
-
-// Postgres reports these under information_schema.columns.data_type, distinct
-// from the short type names the schema plan uses.
-const EXPECTED_DATA_TYPE: Record<ColumnType, string> = {
-  uuid: 'uuid',
-  text: 'text',
-  integer: 'integer',
-  numeric: 'numeric',
-  boolean: 'boolean',
-  timestamptz: 'timestamp with time zone',
-  date: 'date',
-  jsonb: 'jsonb',
-};
 
 // Fixtures reference Supabase's auth schema, which a plain Postgres doesn't have.
 // The stub belongs here, not in the generator.
@@ -58,7 +49,7 @@ describePostgres('generated schema-plan SQL (#481)', (ctx) => {
             select data_type, is_nullable from information_schema.columns
             where table_schema = 'public' and table_name = ${table.name} and column_name = ${column.name}`;
           expect(columnRow?.data_type, `${table.name}.${column.name} data type`).toBe(
-            EXPECTED_DATA_TYPE[column.type],
+            POSTGRES_DATA_TYPE[column.type],
           );
           expect(columnRow?.is_nullable, `${table.name}.${column.name} nullability`).toBe(
             column.nullable ? 'YES' : 'NO',

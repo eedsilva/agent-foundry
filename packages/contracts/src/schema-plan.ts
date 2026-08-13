@@ -15,6 +15,20 @@ export const ColumnTypeSchema = z.enum([
 ]);
 export type ColumnType = z.infer<typeof ColumnTypeSchema>;
 
+/** What `information_schema.columns.data_type` reports for each planned type —
+ * Postgres spells several of them out. Shared by the drift check and the
+ * generator's real-Postgres integration test. */
+export const POSTGRES_DATA_TYPE: Record<ColumnType, string> = {
+  uuid: 'uuid',
+  text: 'text',
+  integer: 'integer',
+  numeric: 'numeric',
+  boolean: 'boolean',
+  timestamptz: 'timestamp with time zone',
+  date: 'date',
+  jsonb: 'jsonb',
+};
+
 export const SchemaColumnSchema = z
   .object({
     name: PathSegmentSchema,

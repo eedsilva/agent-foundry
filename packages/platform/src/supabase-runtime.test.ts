@@ -1549,8 +1549,14 @@ describe('function invocation', () => {
 function fakeSqlClient(
   rows: {
     tables?: { table_name: string }[];
-    columns?: { table_name: string; column_name: string }[];
+    columns?: {
+      table_name: string;
+      column_name: string;
+      data_type: string;
+      is_nullable: string;
+    }[];
     rls?: { relname: string; relrowsecurity: boolean }[];
+    policies?: { tablename: string; policyname: string }[];
   },
   calls: { urls: string[]; ended: boolean },
 ): SchemaSqlClientFactory {
@@ -1560,6 +1566,7 @@ function fakeSqlClient(
       const text = strings.join(' ');
       if (text.includes('information_schema.tables')) return Promise.resolve(rows.tables ?? []);
       if (text.includes('information_schema.columns')) return Promise.resolve(rows.columns ?? []);
+      if (text.includes('pg_policies')) return Promise.resolve(rows.policies ?? []);
       if (text.includes('pg_class')) return Promise.resolve(rows.rls ?? []);
       return Promise.reject(new Error(`Unexpected query: ${text}`));
     };
@@ -1589,8 +1596,12 @@ describe('verifySchema (#481)', () => {
       sqlClientFactory: fakeSqlClient(
         {
           tables: [{ table_name: 'items' }, { table_name: 'operator_helper_table' }],
-          columns: [{ table_name: 'items', column_name: 'id' }], // "title" missing
+          // "title" missing
+          columns: [
+            { table_name: 'items', column_name: 'id', data_type: 'uuid', is_nullable: 'NO' },
+          ],
           rls: [{ relname: 'items', relrowsecurity: false }],
+          policies: [{ tablename: 'items', policyname: 'authenticated_all' }],
         },
         calls,
       ),
@@ -1614,9 +1625,113 @@ describe('verifySchema (#481)', () => {
     expect(verification).toEqual({
       missingTables: ['missing_table'],
       missingColumns: ['items.title'],
+      mismatchedColumns: [],
       tablesWithoutRls: ['items'],
+      missingPolicies: [],
     });
     expect(calls.ended).toBe(true);
+  });
+
+  it('reports an approved policy that no longer exists on its table', async () => {
+    const calls = { urls: [], ended: false };
+    const { runtime } = fixture(undefined, {
+      sqlClientFactory: fakeSqlClient(
+        {
+          tables: [{ table_name: 'items' }],
+          columns: [
+            { table_name: 'items', column_name: 'id', data_type: 'uuid', is_nullable: 'NO' },
+            { table_name: 'items', column_name: 'title', data_type: 'text', is_nullable: 'NO' },
+          ],
+          rls: [{ relname: 'items', relrowsecurity: true }],
+          // RLS on with zero policies is deny-all, and indistinguishable from
+          // correct until the policy names themselves are checked.
+          policies: [],
+        },
+        calls,
+      ),
+    });
+    await runtime.initialize({ projectId: 'project-a' });
+
+    expect(
+      await runtime.verifySchema({ projectId: 'project-a', tables: [VERIFY_TABLE] }),
+    ).toEqual({
+      missingTables: [],
+      missingColumns: [],
+      mismatchedColumns: [],
+      tablesWithoutRls: [],
+      missingPolicies: ['items.authenticated_all'],
+    });
+  });
+
+  it('reports a column whose data type or nullability drifted from the plan', async () => {
+    const calls = { urls: [], ended: false };
+    const { runtime } = fixture(undefined, {
+      sqlClientFactory: fakeSqlClient(
+        {
+          tables: [{ table_name: 'items' }],
+          columns: [
+            { table_name: 'items', column_name: 'id', data_type: 'text', is_nullable: 'NO' },
+            { table_name: 'items', column_name: 'title', data_type: 'text', is_nullable: 'YES' },
+          ],
+          rls: [{ relname: 'items', relrowsecurity: true }],
+          policies: [{ tablename: 'items', policyname: 'authenticated_all' }],
+        },
+        calls,
+      ),
+    });
+    await runtime.initialize({ projectId: 'project-a' });
+
+    const verification = await runtime.verifySchema({
+      projectId: 'project-a',
+      tables: [VERIFY_TABLE],
+    });
+
+    expect(verification.missingColumns).toEqual([]);
+    expect(verification.mismatchedColumns).toEqual([
+      'items.id is text not null, plan requires uuid not null',
+      'items.title is text null, plan requires text not null',
+    ]);
+  });
+
+  it('accepts a plan column whose Postgres type name is spelled out', async () => {
+    const calls = { urls: [], ended: false };
+    const { runtime } = fixture(undefined, {
+      sqlClientFactory: fakeSqlClient(
+        {
+          tables: [{ table_name: 'events' }],
+          columns: [
+            {
+              table_name: 'events',
+              column_name: 'created_at',
+              data_type: 'timestamp with time zone',
+              is_nullable: 'NO',
+            },
+          ],
+          rls: [{ relname: 'events', relrowsecurity: true }],
+          policies: [{ tablename: 'events', policyname: 'events_all' }],
+        },
+        calls,
+      ),
+    });
+    await runtime.initialize({ projectId: 'project-a' });
+
+    const verification = await runtime.verifySchema({
+      projectId: 'project-a',
+      tables: [
+        {
+          name: 'events',
+          columns: [{ name: 'created_at', type: 'timestamptz', nullable: false }],
+          constraints: [],
+          indexes: [],
+          rls: {
+            enabled: true,
+            policies: [{ name: 'events_all', command: 'all', using: 'true' }],
+          },
+        },
+      ],
+    });
+
+    expect(verification.mismatchedColumns).toEqual([]);
   });
 
   it('connects using the DB_URL that `supabase status --output json` reports, never `start`s stdout', async () => {
@@ -1668,6 +1783,23 @@ describe('verifySchema (#481)', () => {
 
     await expect(runtime.verifySchema({ projectId: 'project-a', tables: [] })).rejects.toThrow(
       EnvironmentOperationError,
+    );
+  });
+
+  it('rejects a DB_URL that parses but is not a Postgres URL', async () => {
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'status') {
+        // CLI output drift: any parseable URL used to be accepted and handed
+        // straight to the Postgres driver.
+        return { stdout: JSON.stringify({ DB_URL: 'http://127.0.0.1:54322' }), exitCode: 0 };
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+    await runtime.initialize({ projectId: 'project-a' });
+
+    await expect(runtime.verifySchema({ projectId: 'project-a', tables: [] })).rejects.toThrow(
+      /did not report a database connection URL/,
     );
   });
 });

@@ -23,6 +23,7 @@ import {
   MigrationBackupSchema,
   MigrationPreviewSchema,
   PathSegmentSchema,
+  POSTGRES_DATA_TYPE,
   type AppEnvironment,
   type DestructiveEnvironmentConfirmation,
   type EnvironmentLifecycleOperation,
@@ -492,8 +493,11 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   /**
    * Read-only: connects to the project's live Postgres (via `supabase
    * status`'s DB_URL, never `start`'s stdout — see credentialsFromStatus)
-   * and checks that every approved table, column, and RLS flag is really
-   * there. Extra tables the plan does not name are not a failure.
+   * and checks that every approved table is really there, with the planned
+   * columns at the planned type and nullability, RLS on, and every approved
+   * policy present (RLS on with no policy is deny-all, not correct).
+   * Constraints and indexes are out of scope. Extra tables the plan does not
+   * name are not a failure.
    */
   async verifySchema(input: {
     projectId: string;
@@ -518,41 +522,72 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
     const sql = this.#sqlClientFactory(databaseUrl);
     try {
-      const [tableRows, columnRows, rlsRows] = await Promise.all([
+      const [tableRows, columnRows, rlsRows, policyRows] = await Promise.all([
         sql<{ table_name: string }[]>`
           select table_name from information_schema.tables where table_schema = 'public'`,
-        sql<{ table_name: string; column_name: string }[]>`
-          select table_name, column_name from information_schema.columns
-          where table_schema = 'public'`,
+        sql<
+          { table_name: string; column_name: string; data_type: string; is_nullable: string }[]
+        >`
+          select table_name, column_name, data_type, is_nullable
+          from information_schema.columns where table_schema = 'public'`,
         sql<{ relname: string; relrowsecurity: boolean }[]>`
           select c.relname, c.relrowsecurity from pg_class c
           join pg_namespace n on n.oid = c.relnamespace
           where n.nspname = 'public'`,
+        sql<{ tablename: string; policyname: string }[]>`
+          select tablename, policyname from pg_policies where schemaname = 'public'`,
       ]);
       const existingTables = new Set(tableRows.map((row) => row.table_name));
-      const existingColumns = new Set(
-        columnRows.map((row) => `${row.table_name}.${row.column_name}`),
+      const existingColumns = new Map(
+        columnRows.map((row) => [`${row.table_name}.${row.column_name}`, row]),
       );
       const rlsByTable = new Map(rlsRows.map((row) => [row.relname, row.relrowsecurity]));
+      const existingPolicies = new Set(
+        policyRows.map((row) => `${row.tablename}.${row.policyname}`),
+      );
 
       const missingTables: string[] = [];
       const missingColumns: string[] = [];
+      const mismatchedColumns: string[] = [];
       const tablesWithoutRls: string[] = [];
+      const missingPolicies: string[] = [];
       for (const table of input.tables) {
         if (!existingTables.has(table.name)) {
           missingTables.push(table.name);
           continue;
         }
         for (const column of table.columns) {
-          if (!existingColumns.has(`${table.name}.${column.name}`)) {
-            missingColumns.push(`${table.name}.${column.name}`);
+          const reference = `${table.name}.${column.name}`;
+          const live = existingColumns.get(reference);
+          if (!live) {
+            missingColumns.push(reference);
+            continue;
+          }
+          const expectedType = POSTGRES_DATA_TYPE[column.type];
+          const liveNullable = live.is_nullable === 'YES';
+          if (live.data_type !== expectedType || liveNullable !== column.nullable) {
+            mismatchedColumns.push(
+              `${reference} is ${live.data_type} ${liveNullable ? 'null' : 'not null'}, ` +
+                `plan requires ${expectedType} ${column.nullable ? 'null' : 'not null'}`,
+            );
           }
         }
         if (!rlsByTable.get(table.name)) {
           tablesWithoutRls.push(table.name);
         }
+        for (const policy of table.rls.policies) {
+          if (!existingPolicies.has(`${table.name}.${policy.name}`)) {
+            missingPolicies.push(`${table.name}.${policy.name}`);
+          }
+        }
       }
-      return { missingTables, missingColumns, tablesWithoutRls };
+      return {
+        missingTables,
+        missingColumns,
+        mismatchedColumns,
+        tablesWithoutRls,
+        missingPolicies,
+      };
     } finally {
       await sql.end();
     }
@@ -911,7 +946,9 @@ function projectEnvPath(dataDir: string, projectId: string): string {
 
 /** `supabase status --output json`'s DB_URL — never `start`'s stdout, which
  * has drifted from the real connection details before (a storage E2E broke
- * on it). */
+ * on it). CLI output drift is the risk here, so anything that is not a
+ * Postgres URL is treated as absent and fails with the caller's clear
+ * message rather than being handed to the driver. */
 function dbUrlFromStatus(stdout: string): string | undefined {
   let status: unknown;
   try {
@@ -921,7 +958,9 @@ function dbUrlFromStatus(stdout: string): string | undefined {
   }
   if (!status || typeof status !== 'object' || Array.isArray(status)) return undefined;
   const dbUrl = (status as Record<string, unknown>).DB_URL;
-  return typeof dbUrl === 'string' && URL.canParse(dbUrl) ? dbUrl : undefined;
+  if (typeof dbUrl !== 'string' || !URL.canParse(dbUrl)) return undefined;
+  const { protocol } = new URL(dbUrl);
+  return protocol === 'postgres:' || protocol === 'postgresql:' ? dbUrl : undefined;
 }
 
 function publicStatus(

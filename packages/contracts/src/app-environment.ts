@@ -67,15 +67,19 @@ export const MigrationApprovalSchema = z
 export type MigrationApproval = z.infer<typeof MigrationApprovalSchema>;
 
 /** Result of comparing a live database against an approved SchemaPlan. Extra
- * tables the plan does not name are not a failure. */
-export const SchemaVerificationSchema = z
-  .object({
-    missingTables: z.array(z.string()),
-    missingColumns: z.array(z.string()), // "table.column"
-    tablesWithoutRls: z.array(z.string()),
-  })
-  .strict();
-export type SchemaVerification = z.infer<typeof SchemaVerificationSchema>;
+ * tables the plan does not name are not a failure. A plain type, not a Zod
+ * object: it is produced by our own runtime and never crosses a parse
+ * boundary. */
+export interface SchemaVerification {
+  missingTables: string[];
+  /** "table.column" */
+  missingColumns: string[];
+  /** "table.column is <actual>, plan requires <expected>" */
+  mismatchedColumns: string[];
+  tablesWithoutRls: string[];
+  /** "table.policy" — RLS on with no policy is deny-all, not correct. */
+  missingPolicies: string[];
+}
 
 export const AppEnvironmentSchema = z
   .object({

@@ -2652,7 +2652,9 @@ export class WorkflowOrchestrator {
     const problems = [
       ...verification.missingTables.map((name) => `missing table "${name}"`),
       ...verification.missingColumns.map((name) => `missing column "${name}"`),
+      ...verification.mismatchedColumns.map((detail) => `mismatched column ${detail}`),
       ...verification.tablesWithoutRls.map((name) => `RLS not enabled on "${name}"`),
+      ...verification.missingPolicies.map((name) => `missing RLS policy "${name}"`),
     ];
     if (problems.length) {
       throw new ExecutionError(

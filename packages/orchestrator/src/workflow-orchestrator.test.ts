@@ -1519,11 +1519,13 @@ describe('schema drift verification before browser check (#481)', () => {
     return harness;
   }
 
-  it('fails the step with an ExecutionError naming every missing table, missing column, and RLS-less table', async () => {
+  it('fails the step with an ExecutionError naming every drift the verification found', async () => {
     const verifySchema = vi.fn(async () => ({
       missingTables: ['items'],
       missingColumns: ['orders.total'],
+      mismatchedColumns: ['orders.qty is text not null, plan requires integer not null'],
       tablesWithoutRls: ['legacy'],
+      missingPolicies: ['orders.orders_owner'],
     }));
     const harness = await harnessWithBrowserWorkflow(verifySchema);
     await harness.artifacts.put({
@@ -1536,7 +1538,9 @@ describe('schema drift verification before browser check (#481)', () => {
 
     await expect(
       harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1'),
-    ).rejects.toThrow(/items[\s\S]*orders\.total[\s\S]*legacy/);
+    ).rejects.toThrow(
+      /items[\s\S]*orders\.total[\s\S]*orders\.qty[\s\S]*legacy[\s\S]*orders_owner/,
+    );
 
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
     expect(verifySchema).toHaveBeenCalledWith({
@@ -1549,7 +1553,9 @@ describe('schema drift verification before browser check (#481)', () => {
     const verifySchema = vi.fn(async () => ({
       missingTables: [],
       missingColumns: [],
+      mismatchedColumns: [],
       tablesWithoutRls: [],
+      missingPolicies: [],
     }));
     const harness = await harnessWithBrowserWorkflow(verifySchema);
     await harness.artifacts.put({
@@ -1570,7 +1576,9 @@ describe('schema drift verification before browser check (#481)', () => {
     const verifySchema = vi.fn(async () => ({
       missingTables: ['should-not-be-checked'],
       missingColumns: [],
+      mismatchedColumns: [],
       tablesWithoutRls: [],
+      missingPolicies: [],
     }));
     const harness = await harnessWithBrowserWorkflow(verifySchema);
 
