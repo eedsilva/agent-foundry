@@ -32,7 +32,7 @@ const EXPECTED_MESSAGE = 'Destructive migration requires approval and verified b
 async function main(): Promise<void> {
   const [dataDir, projectId] = process.argv.slice(2);
   if (!dataDir || !projectId) {
-    throw new Error('Usage: tsx 529-destructive-gate-demo.ts <dataDir> <projectId>');
+    throw new Error('Usage: tsx run2-transcript-script.ts <dataDir> <projectId>');
   }
 
   const runtime = new SupabaseGeneratedProjectRuntime({ dataDir });

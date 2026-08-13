@@ -58,16 +58,17 @@ Every timeline row, event name, decision string and sha256 below is checkable ag
 directory.
 
 `run1-events.jsonl` and `run2-events.jsonl` are **filtered excerpts** of each run's `events.jsonl`,
-copied line-for-line (not re-serialised, not reformatted) and kept in original order — 22 of run 1's
-85 lines and 22 of run 2's 87. The filter was:
+copied line-for-line (not re-serialised, not reformatted) and kept in original order — 29 of run 1's
+85 lines and 29 of run 2's 87. The filter was:
 
 ```
-grep -E '"nodeId":"(plan-approval|schema|schema-approval)"|"type":"(project\.started|project\.failed|task\.failed)"|"dedupeKey":"[^"]*:task:task-execution:T1:started"' \
+grep -E '"nodeId":"(plan-approval|schema|schema-approval)"|"type":"(project\.started|project\.failed|task\.failed)"|"dedupeKey":"[^"]*:task:task-execution:T[12]:|"type":"agent\.completed","createdAt":"[^"]+","nodeId":"implement\.T[12]"' \
   <DATA_DIR>/projects/<PROJECT_ID>/events.jsonl
 ```
 
-— every event on the `plan-approval`, `schema` and `schema-approval` nodes, plus `project.started`,
-the first `task.started`, and the terminating `task.failed` and `project.failed`.
+— every event on the `plan-approval`, `schema` and `schema-approval` nodes; every `task.started`,
+`quality.approved` and `task.completed` for T1 and T2, and each of those two tasks' own
+`agent.completed`; plus `project.started` and the terminating `task.failed` and `project.failed`.
 
 `run1-schema-current.json`, `run1-schema-approval.json`, `run2-schema-current.json` and
 `run2-schema-approval.json` are the **content** of revision 1 of each artifact, taken from
@@ -126,13 +127,16 @@ tables in `public` were `storage_uploads|t` only, policies were
 
 This is the first half of defect #1 in [`../defect-list.md`](../defect-list.md) (HA-0.1), which called
 out `DROP POLICY IF EXISTS` explicitly. The second half of that defect — the `.migrate()` approval path
-existing at the platform layer but never wired into the workflow's gate system — is still open, and it
-is what stops both runs described here.
+existing at the platform layer but never wired into the workflow's gate system — is still open as
+[#535](https://github.com/eedsilva/agent-foundry/issues/535), and it is what stops both runs described
+here.
 
-**A separate defect, recorded and not fixed here:** `implement.T2`'s agent returned `status: 'blocked'`
-— every command it needed (`pnpm db:types`, `pnpm typecheck`, `supabase --version`,
-`docker exec … psql`) was refused by the session's Bash permission policy — and yet `verify-task.T2`
-approved and `task.completed` fired. Filed separately; it is not a schema-first defect.
+**A separate defect, recorded and not fixed here
+([#537](https://github.com/eedsilva/agent-foundry/issues/537)):** `implement.T2`'s agent returned
+`status: 'blocked'` at `04:51:22.326` — every command it needed (`pnpm db:types`, `pnpm typecheck`,
+`supabase --version`, `docker exec … psql`) was refused by the session's Bash permission policy — and
+yet `quality.approved` fired for T2 at `04:51:27.857` and `task.completed` at `04:51:28.160`. All three
+events are in [`run1-events.jsonl`](run1-events.jsonl). It is not a schema-first defect.
 
 ## The fix
 
@@ -210,7 +214,10 @@ below).
 
 The run still failed, and this time correctly. T1's own agent-authored migration
 `20260813062500_counter.sql` — [`run2-counter-agent-authored.sql`](run2-counter-agent-authored.sql) —
-ends with `drop table public.items;`, removing the scaffold's demo table. That is genuinely destructive,
+ends with `drop table public.items;`, removing the scaffold's demo table. (The `062500` in that
+filename is a name the agent chose, not a write time: T1 completed at `06:23:32`, and its
+`agent.completed` at `06:23:25` in [`run2-events.jsonl`](run2-events.jsonl) names
+`supabase/migrations/20260813062500_counter.sql` as one of the two deliverables it wrote.) That is genuinely destructive,
 and the gate is right to refuse it without an operator approval:
 
 ```
@@ -262,7 +269,8 @@ The `pruned stale unapplied environment copy:` lines in sections 1 and 2 are the
 migration files that the crashed run's own copy loop had already staged into the environment migrations
 directory. Without that, `applyWorkspaceMigrations` no-ops on a retry after a crashed run, because its
 freshness check compares filenames already present in that directory. That is a third defect, found by
-this work and filed separately; it is not part of the schema-first path.
+this work and filed as [#536](https://github.com/eedsilva/agent-foundry/issues/536); it is not part of
+the schema-first path.
 
 ## Acceptance criteria, one by one
 
@@ -360,7 +368,8 @@ The generated schema-plan migration contributes no destructive statement; the ag
   Neither run got there. This is blocked by the second half of defect #1 in
   [`../defect-list.md`](../defect-list.md) — the platform-layer approval path is never wired into the
   workflow's gate system, so a destructive migration is an unrecoverable `ValidationError` rather than an
-  operator gate. Tracked separately; not fixed by this branch.
+  operator gate. Tracked as [#535](https://github.com/eedsilva/agent-foundry/issues/535); not fixed by
+  this branch.
 - **Criteria 2 and 4 by an in-run code path.** They rest on a scripted invocation of the production
   functions, described above. The alternative was re-rolling real runs until an implementation agent
   happened not to author a legitimate `drop` — which the harness cannot currently pass at all.

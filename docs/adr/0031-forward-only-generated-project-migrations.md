@@ -31,6 +31,8 @@ A migration containing dollar quoting (`$$`, `$tag$`) forfeits the exemption who
 
 Two consequences worth recording. The exemption matches policy name and table only, never the command or the qualifier, so a replace that changes a policy's predicate passes unreviewed; creating a permissive policy was never gated in the first place, so this adds no exposure the gate previously prevented. And `destructiveStatements` also feeds the security linter (`packages/platform/src/security-lint.ts`), so its `destructive-migration` finding likewise goes silent for a policy replace.
 
+Follow-up: [#538](https://github.com/eedsilva/agent-foundry/issues/538) asks the wider question this exception raises — classify by what a statement destroys rather than by the `DROP` keyword, so the exception falls out of the rule instead of sitting beside it.
+
 Evidence: [`docs/evidence/harness-alignment/schema-first/`](../evidence/harness-alignment/schema-first/README.md), issue [#529](https://github.com/eedsilva/agent-foundry/issues/529).
 
 ## Validation and rollback
