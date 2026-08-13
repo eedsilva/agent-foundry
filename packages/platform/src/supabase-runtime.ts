@@ -82,7 +82,9 @@ export interface SupabaseCommandResult {
 
 export type SupabaseCommand = (...args: string[]) => Promise<SupabaseCommandResult>;
 
-/** Overridable in tests so verifySchema never needs a real Postgres connection. */
+/** Overridable in tests so the database reads — verifySchema's inspection and
+ * applyWorkspaceMigrations' migration-history lookup — never need a real
+ * Postgres connection. */
 export type SchemaSqlClientFactory = (databaseUrl: string) => Sql;
 
 const defaultSqlClientFactory: SchemaSqlClientFactory = (databaseUrl) =>
@@ -448,10 +450,19 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     } catch {
       return null;
     }
+    // Nothing to apply stays as cheap as a missing directory: the freshness
+    // read below needs a running stack, and this path must not start throwing
+    // where it used to return null.
+    if (names.length === 0) return null;
     const targetDir = join(environment.workdir, 'supabase', 'migrations');
     await mkdir(targetDir, { recursive: true });
-    const existing = new Set(await readdir(targetDir));
-    const fresh = names.filter((name) => !existing.has(name));
+    // Freshness comes from the database's own history, never from file
+    // presence in targetDir: a failed `migration up` leaves the copies
+    // behind, so file-presence dedup reported "nothing new" forever and a
+    // retry silently applied nothing (#536). The copy still happens — the
+    // CLI reads the files off disk — it just no longer decides anything.
+    const applied = await this.#appliedMigrationVersions(environment);
+    const fresh = names.filter((name) => !applied.has(migrationVersion(name)));
     if (fresh.length === 0) return null;
     for (const name of fresh) {
       await copyFile(join(input.workspaceMigrationsDir, name), join(targetDir, name));
@@ -490,20 +501,9 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
   }
 
-  /**
-   * Read-only: connects to the project's live Postgres (via `supabase
-   * status`'s DB_URL, never `start`'s stdout — see credentialsFromStatus)
-   * and checks that every approved table is really there, with the planned
-   * columns at the planned type and nullability, RLS on, and every approved
-   * policy present (RLS on with no policy is deny-all, not correct).
-   * Constraints and indexes are out of scope. Extra tables the plan does not
-   * name are not a failure.
-   */
-  async verifySchema(input: {
-    projectId: string;
-    tables: SchemaTable[];
-  }): Promise<SchemaVerification> {
-    const environment = await this.#require(input.projectId);
+  /** The project's live Postgres URL, from `supabase status`'s DB_URL and
+   * never `start`'s stdout (see credentialsFromStatus). */
+  async #databaseUrl(environment: AppEnvironment): Promise<string> {
     const result = await this.#execute(
       'inspect',
       'status',
@@ -520,7 +520,38 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
         'Supabase status did not report a database connection URL.',
       );
     }
-    const sql = this.#sqlClientFactory(databaseUrl);
+    return databaseUrl;
+  }
+
+  /** Versions the CLI has recorded as applied. supabase_migrations.schema_migrations
+   * is created by the CLI's own bootstrap, so a started stack always has it —
+   * `migration up` and `migration list` read it unconditionally too. */
+  async #appliedMigrationVersions(environment: AppEnvironment): Promise<Set<string>> {
+    const sql = this.#sqlClientFactory(await this.#databaseUrl(environment));
+    try {
+      const rows = await sql<{ version: string }[]>`
+        select version from supabase_migrations.schema_migrations`;
+      return new Set(rows.map((row) => row.version));
+    } finally {
+      await sql.end();
+    }
+  }
+
+  /**
+   * Read-only: connects to the project's live Postgres (via `supabase
+   * status`'s DB_URL, never `start`'s stdout — see credentialsFromStatus)
+   * and checks that every approved table is really there, with the planned
+   * columns at the planned type and nullability, RLS on, and every approved
+   * policy present (RLS on with no policy is deny-all, not correct).
+   * Constraints and indexes are out of scope. Extra tables the plan does not
+   * name are not a failure.
+   */
+  async verifySchema(input: {
+    projectId: string;
+    tables: SchemaTable[];
+  }): Promise<SchemaVerification> {
+    const environment = await this.#require(input.projectId);
+    const sql = this.#sqlClientFactory(await this.#databaseUrl(environment));
     try {
       const [tableRows, columnRows, rlsRows, policyRows] = await Promise.all([
         sql<{ table_name: string }[]>`
@@ -1678,6 +1709,12 @@ function alreadyAppliedMigrationVersion(error: unknown): string | undefined {
   if (!/already exists \(SQLSTATE (?:42P07|42710|42701)\)/.test(error.diagnostic)) return undefined;
   const applying = [...error.diagnostic.matchAll(/Applying migration (\d+)_[\w.-]*\.sql/g)];
   return applying.at(-1)?.[1];
+}
+
+/** A migration file's version: the leading filename component before the
+ * first `_`, e.g. `20260806000000_create_todos.sql` → `20260806000000`. */
+function migrationVersion(name: string): string {
+  return name.replace(/\.sql$/, '').split('_')[0]!;
 }
 
 function operationError(
