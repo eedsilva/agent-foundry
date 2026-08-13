@@ -1253,18 +1253,21 @@ function arrivalGate(
   });
   let arrivals = 0;
   let arrivalsWhenOpened = 0;
-  const timer = setTimeout(() => {
+  let isOpen = false;
+  // Latches: arrivals after the gate opened are sequential ones, and counting
+  // them would let a serialized pool report the concurrency it never had.
+  const openNow = (): void => {
+    if (isOpen) return;
+    isOpen = true;
     arrivalsWhenOpened = arrivals;
+    clearTimeout(timer);
     open();
-  }, timeoutMs);
+  };
+  const timer = setTimeout(openNow, timeoutMs);
   return {
     async arrive(): Promise<void> {
       arrivals += 1;
-      if (arrivals >= count) {
-        arrivalsWhenOpened = arrivals;
-        clearTimeout(timer);
-        open();
-      }
+      if (arrivals >= count) openNow();
       await opened;
     },
     get arrivalsWhenOpened(): number {
