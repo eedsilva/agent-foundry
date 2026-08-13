@@ -20,6 +20,8 @@ describe('YamlWorkflowRepository', () => {
     expect(workflow.nodes.map((node) => node.id)).toEqual([
       'plan',
       'plan-approval',
+      'schema',
+      'schema-approval',
       'task-execution',
       'full-suite-verification',
       'release-assessment',
@@ -42,6 +44,37 @@ describe('YamlWorkflowRepository', () => {
     ]);
     expect(workflow.routing?.find((entry) => entry.taskKind === 'verification')?.executors).toEqual(
       ['codex', 'claude'],
+    );
+
+    // Task 4 (#481): the schema step sits between plan-approval and
+    // task-execution, gated the same way the plan is, and its migration is
+    // already in supabase/migrations/ by the time implement/repair run.
+    const schema = workflow.nodes.find((node) => node.id === 'schema');
+    expect(schema?.type).toBe('agent');
+    expect(schema?.type === 'agent' && schema.outputContract).toBe('schema-plan');
+    expect(schema?.type === 'agent' && schema.outputArtifact).toBe('schema.current');
+    expect(schema?.type === 'agent' && schema.inputArtifacts).toEqual(['prd', 'plan.current']);
+    expect(schema?.type === 'agent' && schema.mutatesWorkspace).toBe(true);
+
+    const schemaApproval = workflow.nodes.find((node) => node.id === 'schema-approval');
+    expect(schemaApproval?.type).toBe('approval-gate');
+    expect(schemaApproval?.type === 'approval-gate' && schemaApproval.artifact).toBe(
+      'schema.current',
+    );
+    expect(schemaApproval?.type === 'approval-gate' && schemaApproval.outputArtifact).toBe(
+      'schema.approval',
+    );
+    expect(schemaApproval?.type === 'approval-gate' && schemaApproval.actions).toEqual([
+      'approve',
+      'reject',
+    ]);
+    expect(schemaApproval?.type === 'approval-gate' && schemaApproval.onReject).toBe('end');
+
+    expect(
+      taskExecution?.type === 'for-each-task' && taskExecution.implement.inputArtifacts,
+    ).toEqual(['prd', 'plan.current', 'schema.current']);
+    expect(taskExecution?.type === 'for-each-task' && taskExecution.repair?.inputArtifacts).toEqual(
+      ['prd', 'plan.current', 'verification.report', 'schema.current'],
     );
   });
 

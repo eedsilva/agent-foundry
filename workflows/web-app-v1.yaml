@@ -53,6 +53,38 @@ nodes:
     actions: [approve, reject]
     onReject: end
 
+  # The schema is planned and approved before any task touches the workspace,
+  # so every implement/repair step sees one authoritative data model instead
+  # of each task inventing its own tables (#481).
+  - id: schema
+    type: agent
+    role: planner
+    taskKind: planning
+    title: Derive the database schema the approved plan requires
+    instructions: >-
+      Derive the data model the approved plan requires: tables, columns, constraints in DB terms,
+      indexes, and a per-table RLS policy. Every table declares RLS explicitly. Prefer the smallest
+      schema that satisfies the plan. Reference auth.users for ownership columns rather than
+      inventing a users table.
+    inputArtifacts: [prd, plan.current]
+    outputArtifact: schema.current
+    outputContract: schema-plan
+    mutatesWorkspace: true
+    harnessTags: [planning, web]
+    profile:
+      complexity: 4
+      risk: 3
+      preferredTags: [planning, reasoning]
+    maxAttempts: 3
+
+  - id: schema-approval
+    type: approval-gate
+    title: Operator schema approval
+    artifact: schema.current
+    outputArtifact: schema.approval
+    actions: [approve, reject]
+    onReject: end
+
   # One task at a time, in dependency order, each with its own commit. A failing
   # task costs that task; the tasks committed before it survive.
   - id: task-execution
@@ -69,7 +101,10 @@ nodes:
         Inspect the workspace, then implement exactly the task described below. Include configuration,
         migrations or schemas when needed, meaningful tests, error handling, and developer documentation.
         Run the relevant checks. Do not replace real behavior with placeholders merely to make tests green.
-      inputArtifacts: [prd, plan.current]
+        The approved schema plan is authoritative and its migration already exists in
+        supabase/migrations/: implement against those tables, do not invent or redefine them; add a
+        new migration only for something the schema plan does not cover.
+      inputArtifacts: [prd, plan.current, schema.current]
       outputArtifact: implementation.report
       mutatesWorkspace: true
       harnessTags: [coding, nextjs, typescript]
@@ -109,7 +144,7 @@ nodes:
       instructions: >-
         Read the failed command output in the verification report, reproduce the failure, and fix its root
         cause. Never remove a meaningful check, reduce test coverage, or paper over a type error.
-      inputArtifacts: [prd, plan.current, verification.report]
+      inputArtifacts: [prd, plan.current, verification.report, schema.current]
       outputArtifact: verification.fix
       mutatesWorkspace: true
       harnessTags: [repair, coding, testing]
