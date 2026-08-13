@@ -93,7 +93,7 @@ O adapter usa `read-only` para papéis não mutáveis e `workspace-write` para o
 
 ### Claude Code
 
-O adapter usa `plan` para leitura e `acceptEdits` para mutação. Comandos shell adicionais podem depender das políticas locais da CLI. Não foi habilitado bypass global de permissões.
+O adapter usa `plan` para leitura e `acceptEdits` para mutação. `acceptEdits` só auto-aprova a família Edit/Write — Bash continua exigindo aprovação, e o modo headless (`-p`) não tem TTY para concedê-la, então todo comando shell seria negado por padrão (#537). Para runs mutantes, o adapter passa `--allowedTools` com uma allowlist restrita ao toolchain que os apps gerados por este repositório de fato usam: `pnpm`, `npm`, `npx`, `node`, `git`, `docker`, `supabase`, `psql`. Runs de leitura (`plan`) não recebem allowlist. Continua sem bypass global de permissões (`--dangerously-skip-permissions`) — comandos fora da allowlist permanecem negados. Como o executor roda a CLI direto no host sem sandbox (ADR-0025), o escopo dessa allowlist é a única contenção até existir um sandbox de execução; ver ADR-0063.
 
 ## Dados sensíveis nos artefatos
 
