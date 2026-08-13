@@ -161,8 +161,7 @@ export function extractCliFailure(
   provider: Provider,
   stdout: string,
 ): { message: string; authFailure: boolean } | undefined {
-  // ponytail: Claude only — codex emits no structured terminal failure
-  // record, so it keeps the bare exit code. Add a branch when it gains one.
+  if (provider === 'codex') return extractCodexFailure(stdout);
   if (provider !== 'claude') return undefined;
 
   const terminal = terminalResult(providerDocuments(stdout));
@@ -170,6 +169,79 @@ export function extractCliFailure(
   const message = stringFrom(terminal, ['result']);
   if (!message) return undefined;
   return { message, authFailure: terminal.subtype === 'authentication_failed' };
+}
+
+/**
+ * Codex's terminal failure record (#482 Test 2): the last `turn.failed`
+ * record's `error.message`, falling back to the last bare `type: "error"`
+ * record's `message` when no turn failed outright. Either message may itself
+ * be a JSON-encoded envelope — unwrap it to `error.message` when it parses
+ * that way, otherwise take it as prose as-is. `authFailure` keys on that
+ * envelope's structure (`status === 401` or `error.type ===
+ * 'authentication_error'`), never on prose, so a 400 invalid-model failure
+ * doesn't read as an auth failure.
+ */
+function extractCodexFailure(
+  stdout: string,
+): { message: string; authFailure: boolean } | undefined {
+  const documents = providerDocuments(stdout);
+  const rawMessage =
+    lastRecordMessage(documents, 'turn.failed') ?? lastRecordMessage(documents, 'error');
+  if (!rawMessage) return undefined;
+
+  const envelope = codexEnvelope(rawMessage);
+  const message = envelope ? nestedStringFrom(envelope, 'error', 'message') : undefined;
+  return {
+    message: message ?? rawMessage,
+    authFailure: envelope !== undefined && isCodexAuthEnvelope(envelope),
+  };
+}
+
+/** The last record of `type` with a usable failure message, or undefined. */
+function lastRecordMessage(
+  documents: unknown[],
+  type: 'turn.failed' | 'error',
+): string | undefined {
+  const records = documents.filter(
+    (document): document is Record<string, unknown> =>
+      document !== null &&
+      typeof document === 'object' &&
+      !Array.isArray(document) &&
+      (document as Record<string, unknown>).type === type,
+  );
+  for (const record of records.reverse()) {
+    const message =
+      type === 'error'
+        ? stringFrom(record, ['message'])
+        : nestedStringFrom(record, 'error', 'message');
+    if (message) return message;
+  }
+  return undefined;
+}
+
+/** `record[outerKey][innerKey]` as a trimmed string, or undefined. */
+function nestedStringFrom(
+  record: Record<string, unknown>,
+  outerKey: string,
+  innerKey: string,
+): string | undefined {
+  const outer = record[outerKey];
+  if (outer === null || typeof outer !== 'object' || Array.isArray(outer)) return undefined;
+  return stringFrom(outer as Record<string, unknown>, [innerKey]);
+}
+
+/** Parses `raw` as a JSON error envelope, or undefined when it is plain prose. */
+function codexEnvelope(raw: string): Record<string, unknown> | undefined {
+  const parsed = tryParse(raw);
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  return parsed as Record<string, unknown>;
+}
+
+function isCodexAuthEnvelope(envelope: Record<string, unknown>): boolean {
+  if (numberFrom(envelope, ['status']) === 401) return true;
+  const error = envelope.error;
+  if (error === null || typeof error !== 'object' || Array.isArray(error)) return false;
+  return (error as Record<string, unknown>).type === 'authentication_error';
 }
 
 export function extractExecutedModel(

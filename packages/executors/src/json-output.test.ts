@@ -286,6 +286,100 @@ describe('extractCliFailure (issue #286)', () => {
       extractCliFailure('claude', fixture('claude.stream.success.stdout.jsonl')),
     ).toBeUndefined();
   });
+
+  describe('codex (#482 Test 2 / #520)', () => {
+    it('unwraps a JSON-envelope message from the last turn.failed record', () => {
+      const stdout = [
+        JSON.stringify({ type: 'turn.started' }),
+        JSON.stringify({
+          type: 'turn.failed',
+          error: {
+            message: JSON.stringify({
+              type: 'error',
+              status: 400,
+              error: {
+                type: 'invalid_request_error',
+                message: "The 'x' model is not supported when using Codex with a ChatGPT account.",
+              },
+            }),
+          },
+        }),
+      ].join('\n');
+
+      expect(extractCliFailure('codex', stdout)).toEqual({
+        message: "The 'x' model is not supported when using Codex with a ChatGPT account.",
+        authFailure: false,
+      });
+    });
+
+    it('falls back to a bare type: "error" record when there is no turn.failed', () => {
+      const stdout = JSON.stringify({ type: 'error', message: 'Rate limited, try again later.' });
+
+      expect(extractCliFailure('codex', stdout)).toEqual({
+        message: 'Rate limited, try again later.',
+        authFailure: false,
+      });
+    });
+
+    it('flags a 401 envelope as an authentication failure', () => {
+      const stdout = JSON.stringify({
+        type: 'turn.failed',
+        error: {
+          message: JSON.stringify({
+            type: 'error',
+            status: 401,
+            error: { type: 'authentication_error', message: 'Unauthorized.' },
+          }),
+        },
+      });
+
+      expect(extractCliFailure('codex', stdout)).toEqual({
+        message: 'Unauthorized.',
+        authFailure: true,
+      });
+    });
+
+    it('prefers the last turn.failed record over an earlier type: "error" record, and a 400 invalid-model envelope is not an auth failure', () => {
+      const stdout = [
+        JSON.stringify({ type: 'error', message: 'stale error, superseded' }),
+        JSON.stringify({
+          type: 'turn.failed',
+          error: {
+            message: JSON.stringify({
+              type: 'error',
+              status: 400,
+              error: {
+                type: 'invalid_request_error',
+                message: "The 'x' model is not supported when using Codex with a ChatGPT account.",
+              },
+            }),
+          },
+        }),
+      ].join('\n');
+
+      expect(extractCliFailure('codex', stdout)).toEqual({
+        message: "The 'x' model is not supported when using Codex with a ChatGPT account.",
+        authFailure: false,
+      });
+    });
+
+    it('returns undefined for a clean turn.completed stream', () => {
+      expect(extractCliFailure('codex', fixture('codex.success.stdout.jsonl'))).toBeUndefined();
+    });
+
+    it('skips malformed JSON lines instead of throwing', () => {
+      const stdout = [
+        'not json at all {{{',
+        JSON.stringify({ type: 'error', message: 'Rate limited, try again later.' }),
+      ].join('\n');
+
+      expect(() => extractCliFailure('codex', stdout)).not.toThrow();
+      expect(extractCliFailure('codex', stdout)).toEqual({
+        message: 'Rate limited, try again later.',
+        authFailure: false,
+      });
+    });
+  });
 });
 
 describe('extractExecutedModel', () => {
