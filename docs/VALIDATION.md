@@ -785,3 +785,47 @@ Verification: `preview-panel.test.tsx` — 3 new cases (grace granted when alrea
 when never shown, no grace extended to `failing`); 13/13 passing. `npx tsc -b`, full fast suite,
 prettier, eslint, architecture:check all clean. The actual `golden-flow.spec.ts` re-run is CI-only, per
 the same convention as the rest of this entry.
+
+### Reopened: session polling fed the iframe a url with no auth token — 2026-08-13
+
+`#486` was reopened after `supabase-data-plane-e2e` kept failing deterministically on `main` post-merge
+(`PreviewAccessDeniedError: ... token mismatch` at `preview-service.ts:252`, reproduced identically on
+two separate runs) — the "token mismatch" branch named in the ticket's original scope, still unexplained
+by either fix above.
+
+Root cause, confirmed by reproducing locally and adding temporary request-level diagnostics (Cookie
+header, presented token, `Sec-Fetch-*`) rather than guessing from the stack trace alone:
+`packages/persistence/src/preview-repositories.ts`'s `sanitizeSession` strips `?token=` from a preview
+session's `url` on every read (`get`/`listActive`) and write after the initial `create` — a deliberate,
+already-tested security property (`preview-repositories.test.ts`'s `'removes raw URL tokens before
+create and update reach disk or reads'`): the raw auth token must never be re-servable once minted. The
+one-time `POST /projects/:id/preview` response is the *only* place a session's `url` ever carries a
+usable token.
+
+`startPreviewSessionPolling` (this ticket's own fix, above) re-fetches `GET /preview/active` every 2s and
+fed the result straight into the `<iframe src>` prop. The very first poll after a fresh `Iniciar preview`
+click — well within the length of `golden-flow.spec.ts`'s "attach reference..." interaction — replaced
+the good, tokened `session.url` with the same session's now-stripped one; React diffed the changed `src`
+string and forced a real iframe reload with no token, which `resolveUpstream` correctly denied. Confirmed
+directly: added logging to `GET /preview/active` showed the persisted session sitting at
+`status: "running", url: ".../preview/<id>/"` (no query string at all) seconds after a `start()` response
+had returned that same id with `?token=...` attached. Locally this reproduced intermittently (~1-in-4
+repeats, since it is a real ~2s race against however far the test gets before the first poll lands);
+matches the CI symptom's flakier-under-load character (`supabase-data-plane-e2e` is the only CI job that
+exercises `golden-flow.spec.ts` at all, so this had no other chance to surface before merge).
+
+Fix: `pinnedPreviewUrl` (`preview-panel.tsx`) — once an iframe has been shown for a given session id, the
+`src` it uses is frozen at whatever was first shown for that id (tracked via a ref,
+`shownIframeUrl`, alongside the existing `shownIframeSessionId`); a later poll response for the *same*
+session id can never regress it, even though its own `url` field is by-design token-less from then on. A
+newly *started* session (different id) still adopts its own fresh url normally.
+
+Verification: `preview-panel.test.tsx` — 3 new `pinnedPreviewUrl` cases (first-shown url used, later
+stripped poll for the same id ignored, a genuinely new session's url adopted); 17/17 passing. `npm run
+test:unit:fast` (171 files/1563 tests), `npm run check:static` (format, lint, architecture, roadmap,
+root `tsc -b`) all clean. Re-ran the previously-failing `golden-flow.spec.ts` local reproduction (real
+`next dev` + real API, no mocks) repeatedly after the fix: 0/9 runs hit the token-mismatch signature that
+reproduced reliably before it (a couple of unrelated, pre-existing timeouts elsewhere in the same spec
+did occur under repeated local load — no `PreviewAccessDeniedError` in either, a different, already-known
+flake class, out of scope here). The `supabase-data-plane-e2e` CI job itself is the authoritative
+verification per this repo's convention (Postgres+S3-backed, real Playwright browser); not re-run here.

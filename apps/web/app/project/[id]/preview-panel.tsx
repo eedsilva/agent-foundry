@@ -244,6 +244,22 @@ export function previewStatusMessage(session: PreviewSession, alreadyShown = fal
   return 'Preview iniciando…';
 }
 
+// packages/persistence's sanitizeSession (preview-repositories.ts) strips
+// ?token= from a preview session's url on every read after the initial
+// start() response — a deliberate, tested security property: the raw token
+// must never be re-servable from disk. The session-status poll below
+// (startPreviewSessionPolling) can only ever observe that stripped url for
+// an already-running session, so once shown, the iframe must keep using
+// whichever url it was first shown with — a later poll for the same session
+// id never carries a usable one again (see #486).
+export function pinnedPreviewUrl(
+  session: PreviewSession,
+  shown: { sessionId: string; url: string } | undefined,
+): string | undefined {
+  if (shown?.sessionId === session.id) return shown.url;
+  return session.url;
+}
+
 export function BlobMedia({
   src,
   alt,
@@ -415,6 +431,7 @@ export function PreviewPanel({
   const notifiedFailure = useRef<string | undefined>(undefined);
   const reloadedRepair = useRef<string | undefined>(undefined);
   const shownIframeSessionId = useRef<string | undefined>(undefined);
+  const shownIframeUrl = useRef<{ sessionId: string; url: string } | undefined>(undefined);
 
   useEffect(() => {
     return startPreviewSessionPolling({
@@ -548,7 +565,11 @@ export function PreviewPanel({
 
   const alreadyShownIframe = session !== null && shownIframeSessionId.current === session.id;
   const statusMessage = session ? previewStatusMessage(session, alreadyShownIframe) : null;
-  if (statusMessage === null && session) shownIframeSessionId.current = session.id;
+  const iframeUrl = session ? pinnedPreviewUrl(session, shownIframeUrl.current) : undefined;
+  if (statusMessage === null && session) {
+    shownIframeSessionId.current = session.id;
+    if (iframeUrl) shownIframeUrl.current = { sessionId: session.id, url: iframeUrl };
+  }
 
   const report = useMemo(
     () => (run ? latestBrowserVerificationReport(artifacts, run.id, attempts) : null),
@@ -664,7 +685,7 @@ export function PreviewPanel({
                   ref={iframeRef}
                   data-testid="preview-frame"
                   className="bg-surface border-hairline rounded-control block border"
-                  src={session.url}
+                  src={iframeUrl}
                   width={VIEWPORTS[viewport].width}
                   height={VIEWPORTS[viewport].height}
                   title="Preview do aplicativo"

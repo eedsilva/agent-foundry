@@ -5,6 +5,7 @@ import type {
   PreviewSession,
 } from '@agent-foundry/contracts';
 import {
+  pinnedPreviewUrl,
   previewRepairContext,
   previewStatusMessage,
   startPreviewLogPolling,
@@ -178,6 +179,38 @@ describe('previewStatusMessage', () => {
     // good content mid-interaction.
     const starting = runningSession({ status: 'starting' });
     expect(previewStatusMessage(starting, true)).toBeNull();
+  });
+});
+
+describe('pinnedPreviewUrl', () => {
+  it('uses the session url the first time a session is shown', () => {
+    const session = runningSession();
+    expect(pinnedPreviewUrl(session, undefined)).toBe(session.url);
+  });
+
+  it('keeps the first-shown url for the same session even after a later poll strips it (#486)', () => {
+    // packages/persistence's sanitizeSession strips ?token= from a preview
+    // session's url on every read after the initial start() response — a
+    // deliberate, tested security property: the raw token must never be
+    // re-servable from disk (see preview-repositories.test.ts). The 2s
+    // session-status poll (#510) can only ever observe that stripped url for
+    // an already-running session; feeding it straight to the iframe's src
+    // forces a reload the proxy then denies as a raw token-mismatch 403.
+    const session = runningSession();
+    const polledLater = runningSession({
+      url: 'http://127.0.0.1:4000/preview/preview-1/',
+    });
+    const shown = { sessionId: session.id, url: session.url! };
+    expect(pinnedPreviewUrl(polledLater, shown)).toBe(session.url);
+  });
+
+  it('adopts the new url for a newly started session rather than the previous one', () => {
+    const shown = {
+      sessionId: 'preview-0',
+      url: 'http://127.0.0.1:4000/preview/preview-0/?token=old',
+    };
+    const session = runningSession();
+    expect(pinnedPreviewUrl(session, shown)).toBe(session.url);
   });
 });
 
