@@ -30,6 +30,7 @@ import type {
   WorkspaceManager,
 } from '@agent-foundry/domain';
 import {
+  AgentBlockedError,
   BrowserInfrastructureError,
   ExecutionError,
   NotFoundError,
@@ -211,6 +212,11 @@ export class TaskGraphRunner {
             pinnedArtifacts: pinnedInputs,
             routingStartIndex,
           });
+          assertAgentNotBlocked(implementation, {
+            taskId: task.id,
+            stepId: step.id,
+            nodeId: node.id,
+          });
           const repaired = await this.verifyTask(
             input,
             task,
@@ -276,6 +282,10 @@ export class TaskGraphRunner {
                 ...(error instanceof BrowserInfrastructureError
                   ? { infrastructureFailure: error.diagnosis }
                   : {}),
+                // Machine-readable discriminator for #537, mirroring
+                // #528's `infrastructureFailure` above: a consumer branches
+                // on this field instead of matching the message.
+                ...(error instanceof AgentBlockedError ? { blockedReason: error.reason } : {}),
                 ...(await this.failedTaskExecutor(runId, node.id, step.id, attempt)),
               },
             },
@@ -537,6 +547,7 @@ export class TaskGraphRunner {
         iteration,
         pinnedArtifacts: [...pinnedInputs, planReference, artifactReference(report)],
       });
+      assertAgentNotBlocked(repaired, { taskId: task.id, stepId: repairStep.id, nodeId: node.id });
       await this.dependencies.runtime.recordCompletedRepair({
         runId,
         nodeId: node.id,
@@ -629,6 +640,7 @@ export class TaskGraphRunner {
         iteration,
         pinnedArtifacts: [...pinnedInputs, artifactReference(report)],
       });
+      assertAgentNotBlocked(repaired, { taskId: task.id, stepId: repairStep.id, nodeId: node.id });
       await this.dependencies.runtime.recordCompletedRepair({
         runId,
         nodeId: node.id,
@@ -697,6 +709,28 @@ function artifactReference(artifact: StoredArtifact): ArtifactReference {
     revision: artifact.metadata.revision,
     sha256: artifact.metadata.sha256,
   };
+}
+
+/**
+ * A mutating agent (implement, verify-repair, browser-repair) that answers
+ * `blocked` never touched the workspace, so it is a failed attempt for the
+ * task loop, not a completed one (#537) — unlike the browser *plan* step,
+ * where `blocked` is a valid "nothing to assert" answer (see
+ * `taskBrowserPlanStep`'s prompt) and must not go through this guard. A
+ * parse failure here is not this guard's business; the existing contract
+ * checks downstream handle that.
+ */
+function assertAgentNotBlocked(
+  artifact: StoredArtifact,
+  context: { taskId: string; stepId: string; nodeId: string },
+): void {
+  const parsed = AgentArtifactSchema.safeParse(artifact.content);
+  if (!parsed.success || parsed.data.status !== 'blocked') return;
+  throw new AgentBlockedError(
+    `Task ${context.taskId}: ${context.stepId} reported blocked: ${parsed.data.summary}`,
+    context.nodeId,
+    parsed.data.summary,
+  );
 }
 
 function taskImplementStep(implement: AgentStep, task: PlanTask): AgentStep {
