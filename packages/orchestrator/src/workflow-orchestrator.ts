@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { buffer } from 'node:stream/consumers';
 import { join } from 'node:path';
@@ -29,6 +29,7 @@ import type {
   RunPauseSnapshot,
   RunRetryDirective,
   RouteDecision,
+  SchemaPlan,
   StepAttempt,
   StepRun,
   StoredArtifact,
@@ -49,6 +50,7 @@ import {
   DEFAULT_BROWSER_EVIDENCE_POLICY,
   EXECUTION_PROTOCOL_VERSION,
   formatZodIssues,
+  generateSchemaPlanSql,
   isWorkflowRunStatusTerminal,
   PROVISIONING_FAILURE_CONTEXT_MAX_BYTES,
   PROVISIONING_FAILURE_LOG_MAX_BYTES,
@@ -1543,6 +1545,16 @@ export class WorkflowOrchestrator {
       );
     }
 
+    // An approved schema plan becomes a migration here, after the gate, so the
+    // planning step that produced it never needs workspace-write and a rejected
+    // plan leaves no DDL behind for a later run to apply (#481). Any other
+    // gated artifact fails this parse and is left alone.
+    const approvedSchemaPlan = SchemaPlanArtifactSchema.safeParse(reviewed.content);
+    if (approvedSchemaPlan.success) {
+      await this.writeSchemaPlanMigration(project.id, approvedSchemaPlan.data.data);
+      throwIfCancelled(signal, runId);
+    }
+
     const artifact = await this.artifacts.put({
       projectId: project.id,
       name: node.outputArtifact,
@@ -2075,6 +2087,33 @@ export class WorkflowOrchestrator {
     }
   }
 
+  /** Forward-only: an applied migration is never rewritten, so an unchanged
+   * plan writes nothing and a changed one gets a new timestamped file. The
+   * orchestrator commits it itself — the step that produced the plan is
+   * read-only and has no commit of its own to ride on. */
+  private async writeSchemaPlanMigration(projectId: string, plan: SchemaPlan): Promise<void> {
+    const sql = generateSchemaPlanSql(plan);
+    const dir = join(this.workspaces.workspacePath(projectId), 'supabase', 'migrations');
+    await mkdir(dir, { recursive: true });
+    const existing = (await readdir(dir))
+      .filter((name) => name.endsWith('_schema_plan.sql'))
+      .sort();
+    const latestName = existing.at(-1);
+    const latestContent = latestName ? await readFile(join(dir, latestName), 'utf8') : undefined;
+    if (latestContent === sql) return;
+    const timestamp = this.clock.now().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    const filename = `${timestamp}_schema_plan.sql`;
+    // Clock ticks are expected to separate two differing plans; a same-second
+    // collision would otherwise silently clobber the prior migration in place.
+    if (filename === latestName) {
+      throw new Error(
+        `Schema-plan migration ${filename} already exists with different content; the clock did not advance between two differing schema plans.`,
+      );
+    }
+    await writeFile(join(dir, filename), sql);
+    await this.workspaces.commit(projectId, `schema: approved schema plan migration ${filename}`);
+  }
+
   private async commitAgentWorkspace(
     projectId: string,
     step: AgentStep,
@@ -2244,6 +2283,13 @@ export class WorkflowOrchestrator {
   ): Promise<StoredArtifact> {
     const startedAt = Date.now();
     try {
+      // The per-task browser check is the only other caller, and
+      // task-graph-runner skips that step entirely for deterministic-only
+      // tasks — so a plan without a single browser-visible task would never
+      // apply the generated migration or notice drift at all (#481). The
+      // blocking full-suite gate is the backstop that keeps a mismatch a hard
+      // failure rather than a silent no-op.
+      if (step.blocksOnFailure) await this.syncGeneratedDatabase(project.id);
       const validationDatabaseGate =
         this.validationCampaign &&
         step.blocksOnFailure &&
@@ -2589,6 +2635,12 @@ export class WorkflowOrchestrator {
    * migration still fails closed through the existing approval gate. Seed is
    * deliberately not re-run: it is not idempotent, and browser plans handle
    * an empty state.
+   *
+   * It also owns the schema drift check (#481): once the migrations are
+   * applied, the live database is compared against the approved
+   * `schema.current` plan and any mismatch fails the step. Runs before the
+   * browser check and before the blocking full-suite gate, so a plan whose
+   * tasks are all deterministic-only is still checked.
    */
   private async syncGeneratedDatabase(projectId: string): Promise<void> {
     if (!this.generatedProjectRuntime) return;
@@ -2600,6 +2652,28 @@ export class WorkflowOrchestrator {
         'migrations',
       ),
     });
+    // No artifact at all means a project that predates this check, or a
+    // workflow without a schema step — nothing approved to verify against.
+    const schemaArtifact = await this.artifacts.getLatest(projectId, 'schema.current');
+    if (!schemaArtifact) return;
+    const schemaPlan = SchemaPlanArtifactSchema.safeParse(schemaArtifact.content);
+    if (!schemaPlan.success) return;
+    const verification = await this.generatedProjectRuntime.verifySchema({
+      projectId,
+      tables: schemaPlan.data.data.tables,
+    });
+    const problems = [
+      ...verification.missingTables.map((name) => `missing table "${name}"`),
+      ...verification.missingColumns.map((name) => `missing column "${name}"`),
+      ...verification.mismatchedColumns.map((detail) => `mismatched column ${detail}`),
+      ...verification.tablesWithoutRls.map((name) => `RLS not enabled on "${name}"`),
+      ...verification.missingPolicies.map((name) => `missing RLS policy "${name}"`),
+    ];
+    if (problems.length) {
+      throw new ExecutionError(
+        `Live database does not match the approved schema plan: ${problems.join(', ')}.`,
+      );
+    }
   }
 
   private async executeBrowserVerifyStepAttempt(
@@ -3111,6 +3185,9 @@ export class WorkflowOrchestrator {
             `Step ${step.id} must emit a schema plan in data; output failed validation: ${formatZodIssues(schemaPlan.error, 'plan')}`,
           );
         }
+        // The migration itself is written by the approval gate, not here: a
+        // planning role must stay read-only, and a plan the operator rejects
+        // must leave nothing behind (#481).
       }
       const executionRoute: RouteDecision = {
         ...route,

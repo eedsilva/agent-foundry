@@ -639,7 +639,10 @@ describe('runtime composition', () => {
     ).toMatchObject({
       status: 'queued',
     });
-  }, 30_000);
+    // The schema step and its gate (#481) added an agent step and a gate to the
+    // complete-workflow path; 30s clears it in isolation but not under
+    // whole-suite CPU contention.
+  }, 60_000);
 
   it('blocks before diff approval when the full suite is red', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-full-suite-failed-'));

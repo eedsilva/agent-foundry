@@ -15,3 +15,7 @@ _Avoid_: Task loop, batch execution
 **Schema Plan**:
 A validated, operator-reviewable data-model artifact — tables, columns, constraints, indexes, and per-table RLS policies — that implementation tasks receive as input instead of inventing tables ad hoc. Reviewed and approved before implementation tasks execute.
 _Avoid_: Data model doc, migration plan
+
+**Generated Migration**:
+The forward-only SQL file (`supabase/migrations/<timestamp>_schema_plan.sql`) the orchestrator derives from an approved Schema Plan and writes into the project workspace. Implementation and repair tasks treat it as authoritative and add migrations of their own only for what the Schema Plan doesn't cover — never to redefine a table it already planned.
+_Avoid_: Hand-written migration, schema migration

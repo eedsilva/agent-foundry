@@ -17,6 +17,7 @@ import {
 } from '@agent-foundry/contracts';
 import {
   SystemClock,
+  type Clock,
   type ExecutorRegistry,
   type HarnessRepository,
   type JobQueue,
@@ -45,6 +46,7 @@ import {
   SequentialIds,
   ControllableExecutor,
   makeHarness,
+  makeStores,
   seedRun as seedHarnessRun,
 } from './testing/harness.js';
 import type { ProjectVersionService } from './project-version-service.js';
@@ -1002,6 +1004,284 @@ describe('schema-plan output contract (#480)', () => {
   });
 });
 
+/** now() advances every call, so two steps in one run always land on distinct
+ * migration timestamps — a real clock ticking within one test run cannot. */
+class IncrementingClock implements Clock {
+  private current: number;
+  constructor(start: Date) {
+    this.current = start.getTime();
+  }
+  now(): Date {
+    const value = new Date(this.current);
+    this.current += 1500;
+    return value;
+  }
+}
+
+/** Stuck on one instant, to force two steps into the same migration filename
+ * — reproduces two schema-plan steps landing in the same clock second. */
+class FrozenClock implements Clock {
+  constructor(private readonly instant: Date) {}
+  now(): Date {
+    return this.instant;
+  }
+}
+
+/** The planning step is read-only, exactly like web-app-v1's `schema` node:
+ * the orchestrator, not the agent, writes and commits the migration, and only
+ * once the operator has approved the plan. */
+function schemaPlanNodes(suffix: string, extra: Record<string, unknown> = {}) {
+  return [
+    {
+      id: `plan-schema${suffix}`,
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: `Plan schema${suffix}`,
+      instructions: 'Plan the data model.',
+      outputArtifact: `schema.current${suffix}`,
+      outputContract: 'schema-plan',
+      mutatesWorkspace: false,
+      maxAttempts: 1,
+      ...extra,
+    },
+    {
+      id: `schema-approval${suffix}`,
+      type: 'approval-gate',
+      title: `Operator schema approval${suffix}`,
+      artifact: `schema.current${suffix}`,
+      outputArtifact: `schema.approval${suffix}`,
+      actions: ['approve', 'reject'],
+      onReject: 'end',
+    },
+  ];
+}
+
+const SCHEMA_PLAN_GATED_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'schema-plan-migration-v1',
+  name: 'Schema plan migration fixture',
+  description: 'One read-only schema-plan step behind an operator approval gate.',
+  stack: 'node',
+  nodes: schemaPlanNodes(''),
+});
+
+const SCHEMA_PLAN_TWO_GATE_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'schema-plan-migration-repeat-v1',
+  name: 'Schema plan migration repeat fixture',
+  description: 'Two read-only schema-plan steps, each behind its own approval gate.',
+  stack: 'node',
+  nodes: [
+    ...schemaPlanNodes('-1'),
+    ...schemaPlanNodes('-2', { inputArtifacts: ['schema.current-1'] }),
+  ],
+});
+
+/** Runs the project, approving every gate it parks at, until it terminates. */
+async function runApprovingGates(
+  harness: ReturnType<typeof makeHarness>,
+  runId = 'run-1',
+): Promise<void> {
+  await harness.orchestrator.runProject('project-1', undefined, runId);
+  for (;;) {
+    const pending = (await harness.service.listApprovals(runId)).find((entry) => !entry.decision);
+    if (!pending) return;
+    await harness.service.decideApproval(runId, pending.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, runId);
+  }
+}
+
+const REVISED_SCHEMA_PLAN = {
+  schemaVersion: '1',
+  tables: [
+    {
+      name: 'items',
+      columns: [
+        { name: 'id', type: 'uuid', nullable: false },
+        { name: 'title', type: 'text', nullable: false },
+      ],
+      constraints: [{ type: 'primary-key', columns: ['id'] }],
+      indexes: [],
+      rls: {
+        enabled: true,
+        policies: [{ name: 'authenticated_all', command: 'all', using: 'true' }],
+      },
+    },
+  ],
+};
+
+function schemaPlanOutput(data: unknown): AgentExecutionResult['output'] {
+  return {
+    schemaVersion: '1',
+    status: 'completed',
+    summary: 'Planned the schema.',
+    data,
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    nextActions: [],
+  };
+}
+
+describe('schema-plan migration write (#481)', () => {
+  async function migrationNames(workspace: string): Promise<string[]> {
+    const { readdir } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    return (await readdir(join(workspace, 'supabase', 'migrations')))
+      .filter((name) => name.endsWith('_schema_plan.sql'))
+      .sort();
+  }
+
+  it('writes and commits the migration only once the operator approves the plan', async () => {
+    const { mkdtemp, access, readFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-'));
+
+    const harness = makeHarness({}, undefined, {
+      workflow: SCHEMA_PLAN_GATED_WORKFLOW,
+      agentOutput: () => schemaPlanOutput(VALID_SCHEMA_PLAN),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    const commit = vi.spyOn(harness.workspaces, 'commit');
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    // Parked on the gate: the planning step is read-only, so nothing may exist
+    // on disk yet — not even the directory.
+    expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+    await expect(access(join(workspace, 'supabase', 'migrations'))).rejects.toThrow();
+
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    const files = await migrationNames(workspace);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/^\d{14}_schema_plan\.sql$/);
+    const content = await readFile(join(workspace, 'supabase', 'migrations', files[0]!), 'utf8');
+    expect(content).toContain('create table if not exists public.items');
+    expect(content).toContain('alter table public.items enable row level security;');
+    // The orchestrator owns the commit, since no mutating step does.
+    expect(commit).toHaveBeenCalledWith('project-1', expect.stringContaining(files[0]!));
+  });
+
+  it('writes nothing when the operator rejects the schema plan', async () => {
+    const { mkdtemp, access } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-rejected-'));
+
+    const harness = makeHarness({}, undefined, {
+      workflow: SCHEMA_PLAN_GATED_WORKFLOW,
+      agentOutput: () => schemaPlanOutput(VALID_SCHEMA_PLAN),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'reject',
+      decidedBy: 'ed',
+      note: 'wrong data model',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('rejected');
+    // Rejected DDL must not survive in the workspace: a later run would apply
+    // it, and verifySchema tolerates extra tables by design.
+    await expect(access(join(workspace, 'supabase', 'migrations'))).rejects.toThrow();
+  });
+
+  it('writes no second file when a repeated schema-plan step emits identical SQL', async () => {
+    const { mkdtemp } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-repeat-'));
+
+    const stores = makeStores(new IncrementingClock(new Date('2026-08-12T00:00:00.000Z')));
+    const harness = makeHarness({}, stores, {
+      workflow: SCHEMA_PLAN_TWO_GATE_WORKFLOW,
+      agentOutput: () => schemaPlanOutput(VALID_SCHEMA_PLAN),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+
+    await runApprovingGates(harness);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(await migrationNames(workspace)).toHaveLength(1);
+  });
+
+  it('writes a second file and leaves the first untouched when the schema plan changes', async () => {
+    const { mkdtemp, readFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-change-'));
+
+    const stores = makeStores(new IncrementingClock(new Date('2026-08-12T00:00:00.000Z')));
+    const harness = makeHarness({}, stores, {
+      workflow: SCHEMA_PLAN_TWO_GATE_WORKFLOW,
+      agentOutput: (request) =>
+        schemaPlanOutput(
+          request.stepId === 'plan-schema-2' ? REVISED_SCHEMA_PLAN : VALID_SCHEMA_PLAN,
+        ),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+
+    await runApprovingGates(harness);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    const migrationsDir = join(workspace, 'supabase', 'migrations');
+    const files = await migrationNames(workspace);
+    expect(files).toHaveLength(2);
+    const firstContent = await readFile(join(migrationsDir, files[0]!), 'utf8');
+    const secondContent = await readFile(join(migrationsDir, files[1]!), 'utf8');
+    expect(firstContent).not.toBe(secondContent);
+    expect(firstContent).toContain('create table if not exists public.items ( id uuid not null,');
+    expect(secondContent).toContain('title text not null');
+  });
+
+  it('fails loudly instead of clobbering a prior migration on a same-second timestamp collision', async () => {
+    const { mkdtemp, readFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-plan-collision-'));
+
+    const stores = makeStores(new FrozenClock(new Date('2026-08-12T00:00:00.000Z')));
+    const harness = makeHarness({}, stores, {
+      workflow: SCHEMA_PLAN_TWO_GATE_WORKFLOW,
+      agentOutput: (request) =>
+        schemaPlanOutput(
+          request.stepId === 'plan-schema-2' ? REVISED_SCHEMA_PLAN : VALID_SCHEMA_PLAN,
+        ),
+    });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+
+    await expect(runApprovingGates(harness)).rejects.toThrow(
+      /already exists with different content/,
+    );
+
+    const files = await migrationNames(workspace);
+    expect(files).toHaveLength(1);
+    const content = await readFile(join(workspace, 'supabase', 'migrations', files[0]!), 'utf8');
+    expect(content).toContain('create table if not exists public.items ( id uuid not null,');
+    expect(content).not.toContain('title text not null');
+  });
+});
+
 const SYSTEM_PROMPT_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
   schemaVersion: '1',
   id: 'system-prompt-wiring-v1',
@@ -1149,6 +1429,212 @@ describe('generated database sync before browser verification (#429)', () => {
     expect(applyWorkspaceMigrations.mock.invocationCallOrder[0]!).toBeLessThan(
       verify.mock.invocationCallOrder[0]!,
     );
+  });
+});
+
+/** TASK_BROWSER_WORKFLOW plus the blocking full-suite gate web-app-v1 ends on. */
+const DETERMINISTIC_FULL_SUITE_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  ...TASK_BROWSER_WORKFLOW,
+  id: 'task-deterministic-full-suite-v1',
+  nodes: [
+    ...TASK_BROWSER_WORKFLOW.nodes,
+    {
+      id: 'full-suite-verification',
+      type: 'verify',
+      title: 'Run the full repository verification suite',
+      outputArtifact: 'verification.report',
+      scripts: [],
+      blocksOnFailure: true,
+    },
+  ],
+});
+
+describe('schema drift verification before browser check (#481)', () => {
+  function schemaPlanArtifactContent(plan: unknown) {
+    return {
+      schemaVersion: '1' as const,
+      status: 'completed' as const,
+      summary: 'Planned the schema.',
+      data: plan,
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      nextActions: [],
+    };
+  }
+
+  async function harnessWithBrowserWorkflow(
+    verifySchema: ReturnType<typeof vi.fn>,
+    workflow: WorkflowDefinition = TASK_BROWSER_WORKFLOW,
+    graph: unknown = BROWSER_GRAPH,
+  ) {
+    const harness = makeHarness({}, undefined, {
+      workflow,
+      browserVerification: {
+        verify: async (
+          input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
+          _signal: AbortSignal,
+          onSessionStarted?: (sessionId: string) => Promise<void>,
+        ) => {
+          await onSessionStarted?.('preview-481');
+          return {
+            schemaVersion: '1' as const,
+            approved: true,
+            summary: 'browser approved',
+            planArtifact: {
+              name: input.plan.metadata.name,
+              revision: input.plan.metadata.revision,
+              sha256: input.plan.metadata.sha256,
+            },
+            previewSession: {
+              sessionId: 'preview-481',
+              status: 'running' as const,
+              evidence: { screenshots: [] },
+            },
+            steps: [
+              {
+                stepId: 'open-task',
+                title: 'Open task',
+                status: 'passed' as const,
+                durationMs: 5,
+                observations: [],
+              },
+            ],
+          };
+        },
+      } as never,
+      generatedProjectRuntime: {
+        applyWorkspaceMigrations: vi.fn(async () => ({}) as never),
+        verifySchema,
+        initialize: vi.fn(async () => ({}) as never),
+        health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
+      } as never,
+      agentOutput: (request) => {
+        if (request.stepId === 'plan') {
+          return {
+            schemaVersion: '1',
+            status: 'completed',
+            summary: 'Planned.',
+            data: graph,
+            decisions: [],
+            assumptions: [],
+            risks: [],
+            nextActions: [],
+          };
+        }
+        if (request.stepId === 'plan-task-browser-test.T1') return VALID_BROWSER_PLAN;
+        return undefined;
+      },
+    });
+    const { mkdtemp, mkdir } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const workspace = await mkdtemp(join(tmpdir(), 'wf-481-schema-verify-'));
+    await mkdir(join(workspace, 'supabase', 'migrations'), { recursive: true });
+    harness.workspaces.workspacePath = () => workspace;
+    await seedHarnessRun(harness);
+    return harness;
+  }
+
+  it('fails the step with an ExecutionError naming every drift the verification found', async () => {
+    const verifySchema = vi.fn(async () => ({
+      missingTables: ['items'],
+      missingColumns: ['orders.total'],
+      mismatchedColumns: ['orders.qty is text not null, plan requires integer not null'],
+      tablesWithoutRls: ['legacy'],
+      missingPolicies: ['orders.orders_owner'],
+    }));
+    const harness = await harnessWithBrowserWorkflow(verifySchema);
+    await harness.artifacts.put({
+      projectId: 'project-1',
+      name: 'schema.current',
+      createdBy: 'test',
+      runId: 'run-1',
+      content: schemaPlanArtifactContent(VALID_SCHEMA_PLAN),
+    });
+
+    await expect(
+      harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1'),
+    ).rejects.toThrow(
+      /items[\s\S]*orders\.total[\s\S]*orders\.qty[\s\S]*legacy[\s\S]*orders_owner/,
+    );
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('failed');
+    expect(verifySchema).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      tables: VALID_SCHEMA_PLAN.tables,
+    });
+  });
+
+  it('does not fail the step when verifySchema reports a clean database', async () => {
+    const verifySchema = vi.fn(async () => ({
+      missingTables: [],
+      missingColumns: [],
+      mismatchedColumns: [],
+      tablesWithoutRls: [],
+      missingPolicies: [],
+    }));
+    const harness = await harnessWithBrowserWorkflow(verifySchema);
+    await harness.artifacts.put({
+      projectId: 'project-1',
+      name: 'schema.current',
+      createdBy: 'test',
+      runId: 'run-1',
+      content: schemaPlanArtifactContent(VALID_SCHEMA_PLAN),
+    });
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(verifySchema).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips verification silently when no schema.current artifact exists', async () => {
+    const verifySchema = vi.fn(async () => ({
+      missingTables: ['should-not-be-checked'],
+      missingColumns: [],
+      mismatchedColumns: [],
+      tablesWithoutRls: [],
+      missingPolicies: [],
+    }));
+    const harness = await harnessWithBrowserWorkflow(verifySchema);
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(verifySchema).not.toHaveBeenCalled();
+  });
+
+  it('still runs before the blocking full-suite gate when no task is browser-visible', async () => {
+    const verifySchema = vi.fn(async () => ({
+      missingTables: ['items'],
+      missingColumns: [],
+      mismatchedColumns: [],
+      tablesWithoutRls: [],
+      missingPolicies: [],
+    }));
+    const harness = await harnessWithBrowserWorkflow(
+      verifySchema,
+      DETERMINISTIC_FULL_SUITE_WORKFLOW,
+      GENERATED_GRAPH,
+    );
+    await harness.artifacts.put({
+      projectId: 'project-1',
+      name: 'schema.current',
+      createdBy: 'test',
+      runId: 'run-1',
+      content: schemaPlanArtifactContent(VALID_SCHEMA_PLAN),
+    });
+
+    // Every task is deterministic-only, so task-graph-runner skips the browser
+    // step and its sync entirely; without the full-suite backstop the drift
+    // check would silently never run.
+    await expect(
+      harness.orchestrator.runProject('project-1', DETERMINISTIC_FULL_SUITE_WORKFLOW.id, 'run-1'),
+    ).rejects.toThrow(/does not match the approved schema plan/);
+    const stepIds = (await harness.stepRuns.list('run-1')).map((step) => step.stepId);
+    expect(stepIds).not.toContain('assert-task.T1');
+    expect(verifySchema).toHaveBeenCalledTimes(1);
   });
 });
 

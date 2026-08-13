@@ -5,8 +5,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvironmentOperationError } from '@agent-foundry/domain';
-import { SupabaseGeneratedProjectRuntime, type SupabaseCommand } from './supabase-runtime.js';
-import { FunctionArtifactSchema, type FunctionArtifact } from '@agent-foundry/contracts';
+import {
+  SupabaseGeneratedProjectRuntime,
+  type SchemaSqlClientFactory,
+  type SupabaseCommand,
+} from './supabase-runtime.js';
+import {
+  FunctionArtifactSchema,
+  type FunctionArtifact,
+  type SchemaTable,
+} from '@agent-foundry/contracts';
 import { GENERATED_STORAGE_MIGRATION, generatedStorageMigration } from './supabase-storage.js';
 
 const NOW = new Date('2026-07-22T12:00:00.000Z');
@@ -129,7 +137,7 @@ function configPort(config: string, section: string, key: string): number {
 
 function fixture(
   command = vi.fn<SupabaseCommand>(statusCommand),
-  options: { initializeTimeoutMs?: number } = {},
+  options: { initializeTimeoutMs?: number; sqlClientFactory?: SchemaSqlClientFactory } = {},
 ) {
   return {
     command,
@@ -1532,5 +1540,264 @@ describe('function invocation', () => {
     await expect(
       runtime.invokeFunction({ projectId: 'invoke-project-4', functionName: 'hello' }),
     ).rejects.toThrow(/no deployed version/);
+  });
+});
+
+// verifySchema is exercised against a fake SQL client, mirroring the
+// mocked-execa idiom the rest of this suite already uses for `supabase` —
+// its actual queries have never run against a real Postgres/Supabase stack.
+function fakeSqlClient(
+  rows: {
+    tables?: { table_name: string }[];
+    columns?: {
+      table_name: string;
+      column_name: string;
+      data_type: string;
+      is_nullable: string;
+    }[];
+    rls?: { relname: string; relrowsecurity: boolean }[];
+    policies?: { tablename: string; policyname: string }[];
+  },
+  calls: { urls: string[]; ended: boolean },
+): SchemaSqlClientFactory {
+  return (databaseUrl: string) => {
+    calls.urls.push(databaseUrl);
+    const query = (strings: TemplateStringsArray): Promise<unknown[]> => {
+      const text = strings.join(' ');
+      if (text.includes('information_schema.tables')) return Promise.resolve(rows.tables ?? []);
+      if (text.includes('information_schema.columns')) return Promise.resolve(rows.columns ?? []);
+      if (text.includes('pg_policies')) return Promise.resolve(rows.policies ?? []);
+      if (text.includes('pg_class')) return Promise.resolve(rows.rls ?? []);
+      return Promise.reject(new Error(`Unexpected query: ${text}`));
+    };
+    const client = query as unknown as ReturnType<SchemaSqlClientFactory>;
+    (client as unknown as { end: () => Promise<void> }).end = async () => {
+      calls.ended = true;
+    };
+    return client;
+  };
+}
+
+const VERIFY_TABLE: SchemaTable = {
+  name: 'items',
+  columns: [
+    { name: 'id', type: 'uuid', nullable: false },
+    { name: 'title', type: 'text', nullable: false },
+  ],
+  constraints: [],
+  indexes: [],
+  rls: { enabled: true, policies: [{ name: 'authenticated_all', command: 'all', using: 'true' }] },
+};
+
+describe('verifySchema (#481)', () => {
+  it('reports missing tables, missing columns, and RLS-less tables, ignoring extra tables the plan does not name', async () => {
+    const calls = { urls: [], ended: false };
+    const { runtime } = fixture(undefined, {
+      sqlClientFactory: fakeSqlClient(
+        {
+          tables: [{ table_name: 'items' }, { table_name: 'operator_helper_table' }],
+          // "title" missing
+          columns: [
+            { table_name: 'items', column_name: 'id', data_type: 'uuid', is_nullable: 'NO' },
+          ],
+          rls: [{ relname: 'items', relrowsecurity: false }],
+          policies: [{ tablename: 'items', policyname: 'authenticated_all' }],
+        },
+        calls,
+      ),
+    });
+    await runtime.initialize({ projectId: 'project-a' });
+
+    const verification = await runtime.verifySchema({
+      projectId: 'project-a',
+      tables: [
+        VERIFY_TABLE,
+        {
+          name: 'missing_table',
+          columns: [{ name: 'id', type: 'uuid', nullable: false }],
+          constraints: [],
+          indexes: [],
+          rls: { enabled: true, policies: [{ name: 'all', command: 'all', using: 'true' }] },
+        },
+      ],
+    });
+
+    expect(verification).toEqual({
+      missingTables: ['missing_table'],
+      missingColumns: ['items.title'],
+      mismatchedColumns: [],
+      tablesWithoutRls: ['items'],
+      missingPolicies: [],
+    });
+    expect(calls.ended).toBe(true);
+  });
+
+  it('reports an approved policy that no longer exists on its table', async () => {
+    const calls = { urls: [], ended: false };
+    const { runtime } = fixture(undefined, {
+      sqlClientFactory: fakeSqlClient(
+        {
+          tables: [{ table_name: 'items' }],
+          columns: [
+            { table_name: 'items', column_name: 'id', data_type: 'uuid', is_nullable: 'NO' },
+            { table_name: 'items', column_name: 'title', data_type: 'text', is_nullable: 'NO' },
+          ],
+          rls: [{ relname: 'items', relrowsecurity: true }],
+          // RLS on with zero policies is deny-all, and indistinguishable from
+          // correct until the policy names themselves are checked.
+          policies: [],
+        },
+        calls,
+      ),
+    });
+    await runtime.initialize({ projectId: 'project-a' });
+
+    expect(await runtime.verifySchema({ projectId: 'project-a', tables: [VERIFY_TABLE] })).toEqual({
+      missingTables: [],
+      missingColumns: [],
+      mismatchedColumns: [],
+      tablesWithoutRls: [],
+      missingPolicies: ['items.authenticated_all'],
+    });
+  });
+
+  it('reports a column whose data type or nullability drifted from the plan', async () => {
+    const calls = { urls: [], ended: false };
+    const { runtime } = fixture(undefined, {
+      sqlClientFactory: fakeSqlClient(
+        {
+          tables: [{ table_name: 'items' }],
+          columns: [
+            { table_name: 'items', column_name: 'id', data_type: 'text', is_nullable: 'NO' },
+            { table_name: 'items', column_name: 'title', data_type: 'text', is_nullable: 'YES' },
+          ],
+          rls: [{ relname: 'items', relrowsecurity: true }],
+          policies: [{ tablename: 'items', policyname: 'authenticated_all' }],
+        },
+        calls,
+      ),
+    });
+    await runtime.initialize({ projectId: 'project-a' });
+
+    const verification = await runtime.verifySchema({
+      projectId: 'project-a',
+      tables: [VERIFY_TABLE],
+    });
+
+    expect(verification.missingColumns).toEqual([]);
+    expect(verification.mismatchedColumns).toEqual([
+      'items.id is text not null, plan requires uuid not null',
+      'items.title is text null, plan requires text not null',
+    ]);
+  });
+
+  it('accepts a plan column whose Postgres type name is spelled out', async () => {
+    const calls = { urls: [], ended: false };
+    const { runtime } = fixture(undefined, {
+      sqlClientFactory: fakeSqlClient(
+        {
+          tables: [{ table_name: 'events' }],
+          columns: [
+            {
+              table_name: 'events',
+              column_name: 'created_at',
+              data_type: 'timestamp with time zone',
+              is_nullable: 'NO',
+            },
+          ],
+          rls: [{ relname: 'events', relrowsecurity: true }],
+          policies: [{ tablename: 'events', policyname: 'events_all' }],
+        },
+        calls,
+      ),
+    });
+    await runtime.initialize({ projectId: 'project-a' });
+
+    const verification = await runtime.verifySchema({
+      projectId: 'project-a',
+      tables: [
+        {
+          name: 'events',
+          columns: [{ name: 'created_at', type: 'timestamptz', nullable: false }],
+          constraints: [],
+          indexes: [],
+          rls: {
+            enabled: true,
+            policies: [{ name: 'events_all', command: 'all', using: 'true' }],
+          },
+        },
+      ],
+    });
+
+    expect(verification.mismatchedColumns).toEqual([]);
+  });
+
+  it('connects using the DB_URL that `supabase status --output json` reports, never `start`s stdout', async () => {
+    const calls = { urls: [], ended: false };
+    const { runtime } = fixture(undefined, {
+      sqlClientFactory: fakeSqlClient(
+        { tables: [{ table_name: 'items' }], columns: [], rls: [] },
+        calls,
+      ),
+    });
+    await runtime.initialize({ projectId: 'project-a' });
+
+    await runtime.verifySchema({ projectId: 'project-a', tables: [] });
+
+    expect(calls.urls).toEqual([
+      expect.stringMatching(/^postgresql:\/\/postgres:db-secret@127\.0\.0\.1:\d+\/postgres$/),
+    ]);
+  });
+
+  it('closes the connection even when a query rejects', async () => {
+    const calls = { urls: [], ended: false };
+    const { runtime } = fixture(undefined, {
+      sqlClientFactory: () => {
+        const query = () => Promise.reject(new Error('connection dropped'));
+        const client = query as unknown as ReturnType<SchemaSqlClientFactory>;
+        (client as unknown as { end: () => Promise<void> }).end = async () => {
+          calls.ended = true;
+        };
+        return client;
+      },
+    });
+    await runtime.initialize({ projectId: 'project-a' });
+
+    await expect(runtime.verifySchema({ projectId: 'project-a', tables: [] })).rejects.toThrow(
+      'connection dropped',
+    );
+    expect(calls.ended).toBe(true);
+  });
+
+  it('fails clearly when supabase status reports no database connection URL', async () => {
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'status') {
+        return { stdout: JSON.stringify({ API_URL: 'http://127.0.0.1:54321' }), exitCode: 0 };
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+    await runtime.initialize({ projectId: 'project-a' });
+
+    await expect(runtime.verifySchema({ projectId: 'project-a', tables: [] })).rejects.toThrow(
+      EnvironmentOperationError,
+    );
+  });
+
+  it('rejects a DB_URL that parses but is not a Postgres URL', async () => {
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      if (args[0] === 'status') {
+        // CLI output drift: any parseable URL used to be accepted and handed
+        // straight to the Postgres driver.
+        return { stdout: JSON.stringify({ DB_URL: 'http://127.0.0.1:54322' }), exitCode: 0 };
+      }
+      return statusCommand(...args);
+    });
+    const { runtime } = fixture(command);
+    await runtime.initialize({ projectId: 'project-a' });
+
+    await expect(runtime.verifySchema({ projectId: 'project-a', tables: [] })).rejects.toThrow(
+      /did not report a database connection URL/,
+    );
   });
 });

@@ -4,6 +4,7 @@ Applies whenever the golden stack's backend is the project's isolated local Supa
 
 ## Migrations
 
+- When the project has an approved schema plan, its migration (`supabase/migrations/<timestamp>_schema_plan.sql`) is already generated and present in the workspace before implementation starts — do not hand-write it or redefine a table it already declares. Add a migration of your own only for what the schema plan does not cover.
 - Forward-only. Never edit an applied migration; add a new one.
 - One file per change under `supabase/migrations/<timestamp>_<name>.sql`, timestamp `YYYYMMDDHHMMSS`.
 - Postgres DDL is transactional by default; only wrap a migration in explicit `begin;`/`commit;` when the statement set specifically requires it.
