@@ -27,6 +27,7 @@ authority.
 ## Consequences
 
 - New (or extended) plan artifact contract; destructive-migration approval keeps its
-  existing gate.
+  existing gate, narrowed by ADR 0031's 2026-08-13 amendment (#529) so that the generated
+  migration's own idempotent `drop policy` / `create policy` pair is not a destructive change.
 - Implementation tasks receive the schema as input context instead of inventing tables.
 - Repair loops for data-model defects move from post-build to pre-build review.
