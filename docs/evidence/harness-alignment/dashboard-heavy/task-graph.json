@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "1",
+  "goal": "Let a signed-in user explore seeded sales performance by day, category, and date range.",
+  "modules": [
+    { "id": "auth", "acceptanceChannel": "browser-visible" },
+    { "id": "dashboard", "acceptanceChannel": "browser-visible" },
+    { "id": "crud:sale-events", "acceptanceChannel": "browser-visible" }
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Email/password auth and protected app shell",
+      "dependsOn": [],
+      "deliverables": ["apps/web/app/(auth)/sign-in/page.tsx", "apps/web/middleware.ts"],
+      "acceptanceCheck": "Signed-out access to any app route redirects to sign-in; a signed-up user can sign in and reach the dashboard shell.",
+      "acceptanceMode": "browser-visible",
+      "module": "auth"
+    },
+    {
+      "id": "T2",
+      "title": "Sale-event seeding, manual entry, and event list",
+      "dependsOn": ["T1"],
+      "deliverables": ["apps/web/app/events/page.tsx", "apps/web/app/events/actions.ts"],
+      "acceptanceCheck": "A signed-in user seeds ~90 days of sale events across the 5 categories, adds one manual event, and sees it in the paginated event list, most recent first.",
+      "acceptanceMode": "browser-visible",
+      "module": "crud:sale-events"
+    },
+    {
+      "id": "T3",
+      "title": "Date-range filter, totals chart, and top-5-category breakdown",
+      "dependsOn": ["T1", "T2"],
+      "deliverables": ["apps/web/app/dashboard/page.tsx", "apps/web/app/dashboard/charts.tsx"],
+      "acceptanceCheck": "Changing the date-range picker (default last 30 days) re-scopes the totals chart and the top-5-category breakdown, and a manual event added inside the range is reflected after a refresh.",
+      "acceptanceMode": "browser-visible",
+      "module": "dashboard"
+    }
+  ]
+}

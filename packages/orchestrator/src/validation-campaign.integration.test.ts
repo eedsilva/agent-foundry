@@ -547,6 +547,7 @@ const taskRetryPlan: AgentArtifact = {
   data: {
     schemaVersion: '1',
     goal: 'Ship the TODO slice',
+    modules: [{ id: 'crud:todos', acceptanceChannel: 'deterministic-only' }],
     tasks: [
       {
         id: 'T1',
@@ -555,6 +556,7 @@ const taskRetryPlan: AgentArtifact = {
         deliverables: ['src/db.ts'],
         acceptanceCheck: 'Rows persist',
         acceptanceMode: 'deterministic-only',
+        module: 'crud:todos',
       },
       {
         id: 'T2',
@@ -563,6 +565,7 @@ const taskRetryPlan: AgentArtifact = {
         deliverables: ['src/list.ts'],
         acceptanceCheck: 'The list returns the stored rows',
         acceptanceMode: 'deterministic-only',
+        module: 'crud:todos',
       },
     ],
   },

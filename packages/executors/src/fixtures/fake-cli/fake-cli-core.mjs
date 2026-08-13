@@ -188,6 +188,7 @@ export function buildArtifact(identity, options = {}) {
         ? {
             schemaVersion: '1',
             goal: `${label} plan for ${identity.stepId}`,
+            modules: [{ id: 'crud:project', acceptanceChannel: 'deterministic-only' }],
             tasks: [
               {
                 id: 'T1',
@@ -196,6 +197,7 @@ export function buildArtifact(identity, options = {}) {
                 deliverables: ['package.json', 'src/index.js'],
                 acceptanceCheck: 'npm test passes in the generated workspace',
                 acceptanceMode: 'deterministic-only',
+                module: 'crud:project',
               },
               {
                 id: 'T2',
@@ -204,6 +206,7 @@ export function buildArtifact(identity, options = {}) {
                 deliverables: ['src/index.js'],
                 acceptanceCheck: 'createProject queues a valid project',
                 acceptanceMode: t2AcceptanceMode,
+                module: 'crud:project',
               },
             ],
           }

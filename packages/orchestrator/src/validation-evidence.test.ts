@@ -474,6 +474,12 @@ async function setup(
                 summary: 'Three-task TODO plan.',
                 data: {
                   schemaVersion: '1' as const,
+                  modules: [
+                    { id: 'crud:todos', acceptanceChannel: 'browser-visible' as const },
+                    ...(options.fourthTask
+                      ? [{ id: 'auth', acceptanceChannel: 'deterministic-only' as const }]
+                      : []),
+                  ],
                   tasks: [
                     {
                       id: 'persistent-storage',
@@ -482,6 +488,7 @@ async function setup(
                       deliverables: ['persistent TODO storage'],
                       acceptanceCheck: 'TODOs survive reload.',
                       acceptanceMode: 'deterministic-only' as const,
+                      module: 'crud:todos',
                     },
                     {
                       id: 'create-list-api',
@@ -490,6 +497,7 @@ async function setup(
                       deliverables: ['create/list API behavior'],
                       acceptanceCheck: 'The API returns the stored TODO.',
                       acceptanceMode: 'deterministic-only' as const,
+                      module: 'crud:todos',
                     },
                     {
                       id: 'visible-todo-flow',
@@ -498,6 +506,7 @@ async function setup(
                       deliverables: ['visible create/list/reload behavior'],
                       acceptanceCheck: 'A user can create, list, and reload a TODO.',
                       acceptanceMode: 'browser-visible' as const,
+                      module: 'crud:todos',
                     },
                     ...(options.fourthTask
                       ? [
@@ -508,6 +517,7 @@ async function setup(
                             deliverables: ['public route middleware exclusion'],
                             acceptanceCheck: 'Unauthenticated requests reach public routes.',
                             acceptanceMode: 'deterministic-only' as const,
+                            module: 'auth',
                           },
                         ]
                       : []),

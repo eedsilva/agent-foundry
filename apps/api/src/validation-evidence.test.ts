@@ -425,6 +425,7 @@ async function seedAcceptedProof(
                 summary: 'Three-task TODO plan.',
                 data: {
                   schemaVersion: '1' as const,
+                  modules: [{ id: 'crud:todos', acceptanceChannel: 'browser-visible' as const }],
                   tasks: [
                     {
                       id: 'persistent-storage',
@@ -433,6 +434,7 @@ async function seedAcceptedProof(
                       deliverables: ['persistent TODO storage'],
                       acceptanceCheck: 'TODOs survive reload.',
                       acceptanceMode: 'deterministic-only' as const,
+                      module: 'crud:todos',
                     },
                     {
                       id: 'create-list-api',
@@ -441,6 +443,7 @@ async function seedAcceptedProof(
                       deliverables: ['create/list API behavior'],
                       acceptanceCheck: 'The API returns the stored TODO.',
                       acceptanceMode: 'deterministic-only' as const,
+                      module: 'crud:todos',
                     },
                     {
                       id: 'visible-todo-flow',
@@ -449,6 +452,7 @@ async function seedAcceptedProof(
                       deliverables: ['visible create/list/reload behavior'],
                       acceptanceCheck: 'A user can create, list, and reload a TODO.',
                       acceptanceMode: 'browser-visible' as const,
+                      module: 'crud:todos',
                     },
                   ],
                 },

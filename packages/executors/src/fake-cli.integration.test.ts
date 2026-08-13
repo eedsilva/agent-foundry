@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  GeneratedTaskGraphArtifactSchema,
   type AgentExecutionRequest,
 } from '@agent-foundry/contracts';
 import { ClaudeCliExecutor } from './claude-executor.js';
@@ -141,6 +142,12 @@ describe('fake provider CLIs', () => {
       data: { schemaVersion: '1', tasks: expect.any(Array) },
     });
     expect(result.usage?.inputTokens).toBeGreaterThan(0);
+    // The fake CLI's task-graph fixture must satisfy the same schema the
+    // real planner's output is validated against (#479) — every task
+    // carries its module, and the graph carries the module list.
+    const parsed = GeneratedTaskGraphArtifactSchema.parse(result.output);
+    expect(parsed.data.modules.length).toBeGreaterThan(0);
+    expect(parsed.data.tasks.every((task) => typeof task.module === 'string')).toBe(true);
   });
 
   it('round-trips an implementation step through the fake claude CLI and mutates the workspace', async () => {

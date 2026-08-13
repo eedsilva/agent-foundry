@@ -29,11 +29,15 @@ nodes:
     instructions: >-
       Analyze the PRD, identify missing or contradictory requirements, define scope boundaries,
       user journeys, acceptance criteria, dependencies, milestones, and a dependency-aware task graph.
-      Every task must include acceptanceMode: deterministic-only or browser-visible. Use deterministic-only
-      for migrations, configuration, refactors, and backend work whose acceptance is fully covered by
-      generated-app checks. Use browser-visible only when a user-visible journey, rendered state,
-      navigation, or denial must be asserted in the running app. Never infer the mode from free-text at
-      execution time. Optimize for a small shippable first version rather than an imaginary perfect platform.
+      First declare the app-shape module list: each module is auth, dashboard, storage, or
+      crud:<resource>, with an acceptanceChannel of deterministic-only or browser-visible (ADR 0059).
+      Then tag every task with the single module id it belongs to — every module must own at least one
+      task, and no task may name a module you did not declare. Every task must include acceptanceMode:
+      deterministic-only or browser-visible. Use deterministic-only for migrations, configuration,
+      refactors, and backend work whose acceptance is fully covered by generated-app checks. Use
+      browser-visible only when a user-visible journey, rendered state, navigation, or denial must be
+      asserted in the running app. Never infer the mode from free-text at execution time. Optimize for a
+      small shippable first version rather than an imaginary perfect platform.
     inputArtifacts: [prd]
     outputArtifact: plan.current
     outputContract: task-graph

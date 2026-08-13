@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "1",
+  "goal": "Let members manage their own profile and let admins manage the member directory, with RLS enforcing the role boundary.",
+  "modules": [
+    { "id": "auth", "acceptanceChannel": "browser-visible" },
+    { "id": "crud:profiles", "acceptanceChannel": "browser-visible" }
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Auth with member-default sign-up and an admin bootstrap step",
+      "dependsOn": [],
+      "deliverables": [
+        "apps/web/app/(auth)/sign-in/page.tsx",
+        "apps/web/app/(auth)/sign-up/page.tsx",
+        "scripts/bootstrap-admin.ts"
+      ],
+      "acceptanceCheck": "A new sign-up defaults to the member role; running the bootstrap step promotes the first signed-up user to admin.",
+      "acceptanceMode": "browser-visible",
+      "module": "auth"
+    },
+    {
+      "id": "T2",
+      "title": "Own-profile edit, admin member directory and detail, role change, RLS",
+      "dependsOn": ["T1"],
+      "deliverables": [
+        "apps/web/app/profile/page.tsx",
+        "apps/web/app/members/page.tsx",
+        "apps/web/app/members/[id]/page.tsx"
+      ],
+      "acceptanceCheck": "A member edits their own display name and bio and cannot reach /members; an admin lists members, opens a member's detail, and changes their role; a member's direct database read of another profile is rejected by RLS.",
+      "acceptanceMode": "browser-visible",
+      "module": "crud:profiles"
+    }
+  ]
+}
