@@ -197,26 +197,24 @@ function extractCodexFailure(
   };
 }
 
-/** The last record of `type` with a usable failure message, or undefined. */
+/** The last record of `type`'s failure message, or undefined. */
 function lastRecordMessage(
   documents: unknown[],
   type: 'turn.failed' | 'error',
 ): string | undefined {
-  const records = documents.filter(
-    (document): document is Record<string, unknown> =>
-      document !== null &&
-      typeof document === 'object' &&
-      !Array.isArray(document) &&
-      (document as Record<string, unknown>).type === type,
-  );
-  for (const record of records.reverse()) {
-    const message =
-      type === 'error'
-        ? stringFrom(record, ['message'])
-        : nestedStringFrom(record, 'error', 'message');
-    if (message) return message;
-  }
-  return undefined;
+  const last = documents
+    .filter(
+      (document): document is Record<string, unknown> =>
+        document !== null &&
+        typeof document === 'object' &&
+        !Array.isArray(document) &&
+        (document as Record<string, unknown>).type === type,
+    )
+    .at(-1);
+  if (!last) return undefined;
+  return type === 'error'
+    ? stringFrom(last, ['message'])
+    : nestedStringFrom(last, 'error', 'message');
 }
 
 /** `record[outerKey][innerKey]` as a trimmed string, or undefined. */
