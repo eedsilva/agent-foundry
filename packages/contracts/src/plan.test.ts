@@ -3,6 +3,7 @@ import * as contracts from './index.js';
 import {
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   GeneratedTaskGraphArtifactSchema,
+  GeneratedTaskGraphSchema,
   TaskGraphArtifactSchema,
   TaskGraphSchema,
   PLAN_PROPOSAL_ARTIFACT_JSON_SCHEMA,
@@ -71,7 +72,7 @@ describe('task graph contracts', () => {
     ).toThrow();
   });
 
-  it('requires acceptance modes from new planner output while retaining historical reads', () => {
+  it('requires acceptance modes and a module per task from new planner output while retaining historical reads', () => {
     expect(() =>
       GeneratedTaskGraphArtifactSchema.parse({
         schemaVersion: '1',
@@ -80,20 +81,22 @@ describe('task graph contracts', () => {
         data: graph,
       }),
     ).toThrow(/acceptanceMode/);
-    expect(
-      GeneratedTaskGraphArtifactSchema.parse({
-        schemaVersion: '1',
-        status: 'completed',
-        summary: 'Planned the MVP',
-        data: {
-          ...graph,
-          tasks: graph.tasks.map((task, index) => ({
-            ...task,
-            acceptanceMode: index === 0 ? 'deterministic-only' : 'browser-visible',
-          })),
-        },
-      }).data.tasks,
-    ).toHaveLength(2);
+    const parsed = GeneratedTaskGraphArtifactSchema.parse({
+      schemaVersion: '1',
+      status: 'completed',
+      summary: 'Planned the MVP',
+      data: {
+        ...graph,
+        modules: [{ id: 'crud:issues', acceptanceChannel: 'browser-visible' as const }],
+        tasks: graph.tasks.map((task, index) => ({
+          ...task,
+          acceptanceMode: index === 0 ? ('deterministic-only' as const) : ('browser-visible' as const),
+          module: 'crud:issues',
+        })),
+      },
+    });
+    expect(parsed.data.tasks).toHaveLength(2);
+    expect(parsed.data.tasks.map((task) => task.module)).toEqual(['crud:issues', 'crud:issues']);
   });
 
   it('rejects a malformed graph', () => {
@@ -230,6 +233,91 @@ describe('task graph contracts', () => {
   it('publishes a model-facing JSON schema with the runtime validation marker', () => {
     expect(TASK_GRAPH_ARTIFACT_JSON_SCHEMA.$id).toMatch(/task-graph-artifact-v1/);
     expect(TASK_GRAPH_ARTIFACT_JSON_SCHEMA['x-agent-foundry-runtime-validation']).toBeDefined();
+  });
+});
+
+describe('module-to-task-group mapping (#479)', () => {
+  const shapedGraph = {
+    schemaVersion: '1' as const,
+    modules: [
+      { id: 'auth', acceptanceChannel: 'browser-visible' as const },
+      { id: 'crud:issues', acceptanceChannel: 'browser-visible' as const },
+    ],
+    tasks: [
+      {
+        id: 'T1',
+        title: 'Auth and protected shell',
+        deliverables: ['apps/web/middleware.ts'],
+        acceptanceCheck: 'Signed-out access redirects to sign-in',
+        acceptanceMode: 'browser-visible' as const,
+        module: 'auth',
+      },
+      {
+        id: 'T2',
+        title: 'List issues in the UI',
+        dependsOn: ['T1'],
+        deliverables: ['apps/web/app/issues/page.tsx'],
+        acceptanceCheck: 'Visiting /issues renders the seeded issue titles',
+        acceptanceMode: 'browser-visible' as const,
+        module: 'crud:issues',
+      },
+    ],
+  };
+
+  it('accepts a graph whose modules map 1:1 onto task groups', () => {
+    const parsed = GeneratedTaskGraphSchema.parse(shapedGraph);
+    expect(parsed.modules.map((module) => module.id)).toEqual(['auth', 'crud:issues']);
+    expect(parsed.tasks.map((task) => task.module)).toEqual(['auth', 'crud:issues']);
+  });
+
+  it('rejects a task referencing a module outside the modules list', () => {
+    expect(() =>
+      GeneratedTaskGraphSchema.parse({
+        ...shapedGraph,
+        tasks: [{ ...shapedGraph.tasks[0], module: 'dashboard' }, shapedGraph.tasks[1]],
+      }),
+    ).toThrow(/references unknown module dashboard/);
+  });
+
+  it('rejects a module with no tasks referencing it', () => {
+    expect(() =>
+      GeneratedTaskGraphSchema.parse({
+        ...shapedGraph,
+        modules: [
+          ...shapedGraph.modules,
+          { id: 'storage', acceptanceChannel: 'deterministic-only' as const },
+        ],
+      }),
+    ).toThrow(/Module storage has no tasks/);
+  });
+
+  it('rejects a duplicate module id in the modules list', () => {
+    expect(() =>
+      GeneratedTaskGraphSchema.parse({
+        ...shapedGraph,
+        modules: [shapedGraph.modules[0], shapedGraph.modules[0]],
+        tasks: [
+          { ...shapedGraph.tasks[0], module: 'auth' },
+          { ...shapedGraph.tasks[1], module: 'auth' },
+        ],
+      }),
+    ).toThrow(/Duplicate module id auth/);
+  });
+
+  it('lets two tasks share one module (a task-group larger than one task)', () => {
+    const parsed = GeneratedTaskGraphSchema.parse({
+      ...shapedGraph,
+      modules: [shapedGraph.modules[1]],
+      tasks: [
+        { ...shapedGraph.tasks[0], module: 'crud:issues', dependsOn: [] },
+        shapedGraph.tasks[1],
+      ],
+    });
+    expect(parsed.tasks.every((task) => task.module === 'crud:issues')).toBe(true);
+  });
+
+  it('keeps historical graphs without a modules list readable and unvalidated for module mapping', () => {
+    expect(TaskGraphSchema.parse(graph).modules).toBeUndefined();
   });
 });
 
