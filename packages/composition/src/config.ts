@@ -38,6 +38,14 @@ const ConfigSchema = z
     RUN_WORKER_INLINE: booleanFromEnv,
     AUTO_INSTALL_DEPENDENCIES: booleanFromEnv,
     ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: booleanFromEnv,
+    // How many plan tasks a for-each-task node may run at once, each in its
+    // own git worktree (#520). The default is 1 because the constraint is the
+    // agent account, not the machine: one ChatGPT login means one shared
+    // 5-hour/weekly rate-limit pool, and N parallel Codex sessions drain it N
+    // times as fast. Raise it only against an account with known headroom.
+    // The ceiling of 8 is the same reasoning — past it the run runs out of
+    // rate limit long before it runs out of cores.
+    MAX_PARALLEL_TASKS: z.coerce.number().int().min(1).max(8).default(1),
     AGENT_TIMEOUT_MS: z.coerce.number().int().positive().default(1_200_000),
     SUPABASE_PROVISIONING_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
     VERIFICATION_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
@@ -125,6 +133,7 @@ export interface RuntimeConfig {
   runWorkerInline: boolean;
   autoInstallDependencies: boolean;
   allowUnsafeRemoteRealExecution: boolean;
+  maxParallelTasks: number;
   agentTimeoutMs: number;
   supabaseProvisioningTimeoutMs: number;
   verificationTimeoutMs: number;
@@ -223,6 +232,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     runWorkerInline: parsed.RUN_WORKER_INLINE,
     autoInstallDependencies: parsed.AUTO_INSTALL_DEPENDENCIES,
     allowUnsafeRemoteRealExecution: parsed.ALLOW_UNSAFE_REMOTE_REAL_EXECUTION,
+    maxParallelTasks: parsed.MAX_PARALLEL_TASKS,
     agentTimeoutMs: parsed.AGENT_TIMEOUT_MS,
     supabaseProvisioningTimeoutMs: parsed.SUPABASE_PROVISIONING_TIMEOUT_MS,
     verificationTimeoutMs: parsed.VERIFICATION_TIMEOUT_MS,

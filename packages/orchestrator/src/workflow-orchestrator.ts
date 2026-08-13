@@ -158,6 +158,8 @@ import { evaluateUiQuality, gateOnUiQuality } from './ui-quality-judge.js';
 interface OrchestratorOptions {
   agentTimeoutMs: number;
   cancelPollIntervalMs: number;
+  /** Concurrent plan tasks a for-each-task node may run (#520). Omitted means 1. */
+  maxParallelTasks?: number;
 }
 
 interface DecisionLogEntry {
@@ -395,6 +397,9 @@ export class WorkflowOrchestrator {
       workspaces: this.workspaces,
       clock: this.clock,
       ids: this.ids,
+      ...(options.maxParallelTasks !== undefined
+        ? { maxParallelTasks: options.maxParallelTasks }
+        : {}),
       runtime: {
         executeStep: (input) =>
           this.executeStep(

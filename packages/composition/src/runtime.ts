@@ -403,7 +403,11 @@ export async function createRuntime(
     workspaces,
     clock,
     ids,
-    { agentTimeoutMs: config.agentTimeoutMs, cancelPollIntervalMs: config.cancelPollIntervalMs },
+    {
+      agentTimeoutMs: config.agentTimeoutMs,
+      cancelPollIntervalMs: config.cancelPollIntervalMs,
+      maxParallelTasks: config.maxParallelTasks,
+    },
     modelOverrides,
     projectVersionService,
     browserVerification,

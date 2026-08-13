@@ -890,13 +890,25 @@ export class FakeWorkspaces implements WorkspaceManager {
   readWorkspaceFile(_projectId: string, relativePath: string): Promise<string> {
     return Promise.reject(new NotFoundError(`fake workspace has no file: ${relativePath}`));
   }
-  createWorktree(): Promise<void> {
+  /** Worktree lifecycle in call order, `${operation}:${label}` (#520). */
+  readonly worktreeOps: string[] = [];
+  /** Labels created but not yet removed — empty once a run has settled. */
+  readonly liveWorktrees = new Set<string>();
+  onIntegrateWorktree?: ((label: string) => void | Promise<void>) | undefined;
+  createWorktree(_projectId: string, label: string): Promise<void> {
+    checkPower(this.power);
+    this.worktreeOps.push(`create:${label}`);
+    this.liveWorktrees.add(label);
     return Promise.resolve();
   }
-  integrateWorktree(): Promise<void> {
-    return Promise.resolve();
+  async integrateWorktree(_projectId: string, label: string): Promise<void> {
+    checkPower(this.power);
+    this.worktreeOps.push(`integrate:${label}`);
+    await this.onIntegrateWorktree?.(label);
   }
-  removeWorktree(): Promise<void> {
+  removeWorktree(_projectId: string, label: string): Promise<void> {
+    this.worktreeOps.push(`remove:${label}`);
+    this.liveWorktrees.delete(label);
     return Promise.resolve();
   }
 }

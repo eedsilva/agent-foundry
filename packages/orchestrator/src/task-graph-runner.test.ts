@@ -8,7 +8,7 @@ import type {
   WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import { WorkflowDefinitionSchema } from '@agent-foundry/contracts';
-import { SystemClock } from '@agent-foundry/domain';
+import { ExecutionError, SystemClock } from '@agent-foundry/domain';
 import {
   FakeWorkspaces,
   InMemoryArtifacts,
@@ -934,7 +934,386 @@ describe('TaskGraphRunner', () => {
     expect(fixture.workspaces.current).toBe('sha-0001');
     expect(fixture.workspaces.rollbacks).toContain('sha-0001');
   });
+
+  describe('bounded parallel frontier (#520)', () => {
+    it('touches no worktree and records no parallelism at the default cap', async () => {
+      const fixture = await setupRunner(workflow, [task('T1'), task('T2')], (input, artifacts) =>
+        artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content: completedArtifact(input.step),
+          createdBy: 'test-runtime',
+        }),
+      );
+
+      await fixture.run();
+
+      expect(fixture.workspaces.worktreeOps).toEqual([]);
+      expect(
+        fixture.events.events
+          .filter((event) => event.type === 'task.started')
+          .map((event) => event.data.parallelism),
+      ).toEqual([undefined, undefined]);
+    });
+
+    it('starts every independent task before any of them completes', async () => {
+      const gate = arrivalGate(3);
+      const startedTasks: string[] = [];
+      const fixture = await setupRunner(
+        workflow,
+        [task('T1'), task('T2'), task('T3')],
+        async (input, artifacts) => {
+          startedTasks.push(taskIdOf(input.step.id));
+          await gate.arrive();
+          return artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content: completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          });
+        },
+        3,
+      );
+
+      await fixture.run();
+
+      // The gate only opens once three callers are inside it, so this is
+      // three tasks genuinely in flight at the same moment, not three
+      // sequential starts observed after the fact.
+      expect(gate.arrivalsWhenOpened).toBe(3);
+      expect([...startedTasks].sort()).toEqual(['T1', 'T2', 'T3']);
+      expect(
+        fixture.events.events
+          .filter((event) => event.type === 'task.started')
+          .map((event) => event.data.parallelism),
+      ).toEqual([3, 3, 3]);
+      expect(fixture.workspaces.liveWorktrees.size).toBe(0);
+    });
+
+    it('never runs more tasks at once than the cap allows', async () => {
+      const concurrency = concurrencyMeter();
+      const fixture = await setupRunner(
+        workflow,
+        ['T1', 'T2', 'T3', 'T4', 'T5'].map((id) => task(id)),
+        async (input, artifacts) => {
+          const done = concurrency.enter();
+          await yieldToTimers();
+          done();
+          return artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content: completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          });
+        },
+        2,
+      );
+
+      await fixture.run();
+
+      expect(concurrency.peak).toBe(2);
+      expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+        5,
+      );
+    });
+
+    it('clamps a cap above the supported ceiling instead of trusting its caller', async () => {
+      const concurrency = concurrencyMeter();
+      const fixture = await setupRunner(
+        workflow,
+        Array.from({ length: 12 }, (_value, index) => task(`T${index + 1}`)),
+        async (input, artifacts) => {
+          const done = concurrency.enter();
+          await yieldToTimers();
+          done();
+          return artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content: completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          });
+        },
+        99,
+      );
+
+      await fixture.run();
+
+      expect(concurrency.peak).toBe(8);
+    });
+
+    it('holds a dependent task back until its blocker has completed', async () => {
+      const completedWhenStarted = new Map<string, string[]>();
+      const fixture = await setupRunner(
+        workflow,
+        [task('T1'), task('T2', ['T1']), task('T3')],
+        async (input, artifacts, stores) => {
+          completedWhenStarted.set(
+            taskIdOf(input.step.id),
+            stores.workspaces.worktreeOps
+              .filter((operation) => operation.startsWith('integrate:'))
+              .map((operation) => taskIdOf(operation)),
+          );
+          await yieldToTimers();
+          return artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content: completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          });
+        },
+        3,
+      );
+
+      await fixture.run();
+
+      // T2 may only start once T1 has already merged back; T3 has no blocker
+      // and starts against an empty frontier alongside T1.
+      expect(completedWhenStarted.get('T2')).toContain('T1');
+      expect(completedWhenStarted.get('T1')).toEqual([]);
+      expect(completedWhenStarted.get('T3')).toEqual([]);
+    });
+
+    it('merges one worktree into the primary checkout at a time', async () => {
+      const merges = concurrencyMeter();
+      const fixture = await setupRunner(
+        workflow,
+        [task('T1'), task('T2'), task('T3')],
+        async (input, artifacts) => {
+          await yieldToTimers();
+          return artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content: completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          });
+        },
+        3,
+      );
+      fixture.workspaces.onIntegrateWorktree = async () => {
+        const done = merges.enter();
+        await yieldToTimers();
+        done();
+      };
+
+      await fixture.run();
+
+      expect(merges.peak).toBe(1);
+      expect(merges.entries).toBe(3);
+    });
+
+    it('fails only the conflicting task when integration cannot merge, and retries it', async () => {
+      let conflicts = 0;
+      const fixture = await setupRunner(
+        retryWorkflow,
+        [task('T1'), task('T2')],
+        (input, artifacts) =>
+          artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content:
+              input.step.type === 'verify'
+                ? verificationReport(true)
+                : completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          }),
+        2,
+      );
+      fixture.workspaces.onIntegrateWorktree = (label) => {
+        if (!label.endsWith('T2') || conflicts > 0) return;
+        conflicts += 1;
+        throw new ExecutionError(`Failed to integrate worktree "${label}": CONFLICT (content)`);
+      };
+
+      await fixture.run();
+
+      expect(conflicts).toBe(1);
+      // The conflict is one failed attempt of T2, not a failed run: T1 lands
+      // untouched and T2's existing attempt ladder retries it.
+      expect(
+        fixture.events.events
+          .filter((event) => event.type === 'task.failed')
+          .map((event) => ({ taskId: event.data.taskId, attempt: event.data.attempt })),
+      ).toEqual([{ taskId: 'T2', attempt: 1 }]);
+      expect(
+        fixture.events.events
+          .filter((event) => event.type === 'task.completed')
+          .map((event) => ({ taskId: event.data.taskId, attempt: event.data.attempt }))
+          .sort((left, right) => String(left.taskId).localeCompare(String(right.taskId))),
+      ).toEqual([
+        { taskId: 'T1', attempt: 1 },
+        { taskId: 'T2', attempt: 2 },
+      ]);
+      // The retry re-forks from the primary, so it re-plans against the tree
+      // its conflicting sibling has already landed in.
+      expect(
+        fixture.workspaces.worktreeOps.filter((operation) => operation.endsWith('T2')),
+      ).toEqual([
+        'create:run-1-task-execution-T2',
+        'integrate:run-1-task-execution-T2',
+        'create:run-1-task-execution-T2',
+        'integrate:run-1-task-execution-T2',
+        'remove:run-1-task-execution-T2',
+      ]);
+      expect(fixture.workspaces.liveWorktrees.size).toBe(0);
+    });
+
+    it('never runs a browser-visible task alongside another task', async () => {
+      const active = new Set<string>();
+      const companions = new Set<string>();
+      const fixture = await setupRunner(
+        browserWorkflow,
+        [task('T1'), { ...task('T2'), acceptanceMode: 'browser-visible' }, task('T3')],
+        async (input, artifacts) => {
+          const taskId = taskIdOf(input.step.id);
+          active.add(taskId);
+          if (taskId === 'T2') {
+            for (const other of active) if (other !== 'T2') companions.add(other);
+          } else if (active.has('T2')) {
+            companions.add(taskId);
+          }
+          await yieldToTimers();
+          active.delete(taskId);
+          let content: object = completedArtifact(input.step);
+          if (input.step.id.startsWith('verify-task.')) content = verificationReport(true);
+          if (input.step.id.startsWith('plan-task-browser-test.')) content = browserPlan();
+          if (input.step.id.startsWith('assert-task.')) content = browserReport(true);
+          return artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content,
+            createdBy: 'test-runtime',
+          });
+        },
+        3,
+      );
+
+      await fixture.run();
+
+      expect([...companions]).toEqual([]);
+      // A browser-visible task drives a preview session bound to the primary
+      // checkout, so it runs there with no worktree of its own.
+      expect(fixture.workspaces.worktreeOps.some((operation) => operation.endsWith('T2'))).toBe(
+        false,
+      );
+      expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+        3,
+      );
+    });
+
+    it('removes every worktree when a task fails, and lets its siblings settle', async () => {
+      const settled: string[] = [];
+      const fixture = await setupRunner(
+        workflow,
+        [task('T1'), task('T2')],
+        async (input, artifacts) => {
+          const taskId = taskIdOf(input.step.id);
+          await yieldToTimers();
+          if (taskId === 'T1') {
+            settled.push('T1');
+            throw new Error('provider failed');
+          }
+          settled.push('T2');
+          return artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content: completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          });
+        },
+        2,
+      );
+
+      await expect(fixture.run()).rejects.toThrow('provider failed');
+
+      expect([...settled].sort()).toEqual(['T1', 'T2']);
+      expect(fixture.workspaces.liveWorktrees.size).toBe(0);
+      expect(
+        fixture.workspaces.worktreeOps
+          .filter((operation) => operation.startsWith('remove:'))
+          .sort(),
+      ).toEqual(['remove:run-1-task-execution-T1', 'remove:run-1-task-execution-T2']);
+    });
+  });
 });
+
+/**
+ * Opens once `count` callers are simultaneously inside it, so a test can prove
+ * real concurrency instead of inferring it from timing. The timeout is a
+ * failure valve, not a schedule: if the pool serializes, the gate opens with
+ * fewer arrivals and `arrivalsWhenOpened` fails the assertion rather than
+ * hanging until vitest's own timeout.
+ */
+function arrivalGate(
+  count: number,
+  timeoutMs = 500,
+): { arrive: () => Promise<void>; readonly arrivalsWhenOpened: number } {
+  let open = (): void => {};
+  const opened = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  let arrivals = 0;
+  let arrivalsWhenOpened = 0;
+  const timer = setTimeout(() => {
+    arrivalsWhenOpened = arrivals;
+    open();
+  }, timeoutMs);
+  return {
+    async arrive(): Promise<void> {
+      arrivals += 1;
+      if (arrivals >= count) {
+        arrivalsWhenOpened = arrivals;
+        clearTimeout(timer);
+        open();
+      }
+      await opened;
+    },
+    get arrivalsWhenOpened(): number {
+      return arrivalsWhenOpened;
+    },
+  };
+}
+
+/** High-water mark of a critical section, for "the cap held" assertions. */
+function concurrencyMeter(): {
+  enter: () => () => void;
+  readonly peak: number;
+  readonly entries: number;
+} {
+  let active = 0;
+  let peak = 0;
+  let entries = 0;
+  return {
+    enter(): () => void {
+      active += 1;
+      entries += 1;
+      peak = Math.max(peak, active);
+      return () => {
+        active -= 1;
+      };
+    },
+    get peak(): number {
+      return peak;
+    },
+    get entries(): number {
+      return entries;
+    },
+  };
+}
+
+/** Yields past the microtask queue so pending work can genuinely interleave. */
+function yieldToTimers(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** `implement.T1` / `integrate:run-1-task-execution-T1` -> `T1`. */
+function taskIdOf(value: string): string {
+  return (
+    value
+      .slice(value.lastIndexOf('.') + 1)
+      .split('-')
+      .at(-1) ?? value
+  );
+}
 
 async function setupRunner(
   workflowDefinition: WorkflowDefinition,
@@ -947,6 +1326,7 @@ async function setupRunner(
       workspaces: FakeWorkspaces;
     },
   ) => Promise<StoredArtifact>,
+  maxParallelTasks?: number,
 ): Promise<{
   run: () => Promise<StoredArtifact>;
   events: InMemoryEvents;
@@ -976,6 +1356,7 @@ async function setupRunner(
     clock: new SystemClock(),
     ids: new SequentialIds(),
     runtime,
+    ...(maxParallelTasks !== undefined ? { maxParallelTasks } : {}),
   });
   const node = workflowDefinition.nodes[0];
   if (node?.type !== 'for-each-task') throw new Error('Expected for-each-task fixture');

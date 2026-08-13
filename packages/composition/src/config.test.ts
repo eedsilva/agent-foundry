@@ -119,6 +119,23 @@ describe('Supabase provisioning configuration', () => {
   });
 });
 
+describe('parallel task pool configuration', () => {
+  it('runs one task at a time unless an operator opts in', () => {
+    expect(loadRuntimeConfig(base).maxParallelTasks).toBe(1);
+  });
+
+  it('honors a cap inside the supported window', () => {
+    expect(loadRuntimeConfig({ ...base, MAX_PARALLEL_TASKS: '3' }).maxParallelTasks).toBe(3);
+  });
+
+  it('rejects a cap outside the supported window or a non-numeric value', () => {
+    expect(() => loadRuntimeConfig({ ...base, MAX_PARALLEL_TASKS: '9' })).toThrow();
+    expect(() => loadRuntimeConfig({ ...base, MAX_PARALLEL_TASKS: '0' })).toThrow();
+    expect(() => loadRuntimeConfig({ ...base, MAX_PARALLEL_TASKS: '2.5' })).toThrow();
+    expect(() => loadRuntimeConfig({ ...base, MAX_PARALLEL_TASKS: 'lots' })).toThrow();
+  });
+});
+
 describe('artifact retention configuration', () => {
   it('defaults artifact size and retention limits', () => {
     expect(loadRuntimeConfig(base)).toMatchObject({
