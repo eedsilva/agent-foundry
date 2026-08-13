@@ -1312,10 +1312,12 @@ function sha256(value: string | Buffer): string {
 // ponytail: identifiers are compared case-folded even when quoted, so `"P"` and
 // `p` count as the same policy; an unqualified table always resolves to
 // `public`, so a migration that first redirects `search_path` pairs the wrong
-// tables; and any migration containing a dollar-quoted body forfeits the
-// exemption wholesale, so even a pure policy replace there needs approval.
+// tables; and any migration containing anything shaped `$…$` forfeits the
+// exemption wholesale — dollar tags admit non-ASCII letters, so the guard is
+// deliberately wider than the real syntax and trips on `values($1,$2)` too,
+// which then needs approval even for a pure policy replace.
 // Upgrade path for all three is a real SQL parser.
-const DOLLAR_QUOTED = /\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$/;
+const DOLLAR_QUOTED = /\$[^\s$]*\$/;
 const SQL_IDENTIFIER = String.raw`(?:"[^"]*"|[A-Za-z_][A-Za-z0-9_$]*)`;
 const POLICY_TARGET = String.raw`(${SQL_IDENTIFIER})\s+ON\s+(?:(${SQL_IDENTIFIER})\s*\.\s*)?(${SQL_IDENTIFIER})`;
 const DROP_POLICY = new RegExp(

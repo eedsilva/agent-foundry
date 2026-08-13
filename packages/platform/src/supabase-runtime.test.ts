@@ -1268,6 +1268,18 @@ end $body$;`;
     );
   });
 
+  it('keeps a policy drop destructive when the hiding tag is non-ASCII', () => {
+    // Postgres dollar tags follow unquoted-identifier rules, which admit
+    // non-ASCII letters, so `$é$` is a valid tag the guard has to see.
+    const sql = `drop policy p on public.t;
+create function f() returns void language plpgsql as $é$ begin
+perform 1;
+create policy p on public.t for select using (true);
+end $é$;`;
+
+    expect(destructiveStatements(sql)).toEqual(['drop policy p on public.t']);
+  });
+
   it('keeps statements after a dollar sign inside a quoted identifier visible', () => {
     expect(
       destructiveStatements(`create table "we $x$ ird" (id int);
