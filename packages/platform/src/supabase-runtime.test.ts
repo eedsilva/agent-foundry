@@ -905,10 +905,11 @@ enabled = false`);
 
   it('reports nothing new when the database already applied every workspace migration (#536)', async () => {
     const command = vi.fn<SupabaseCommand>(statusCommand);
+    const calls = { urls: [] as string[], ended: false };
     const { runtime } = fixture(command, {
       sqlClientFactory: fakeSqlClient(
         { migrations: [{ version: '20260726000000' }, { version: '20260806000000' }] },
-        { urls: [], ended: false },
+        calls,
       ),
     });
     await runtime.initialize({ projectId: 'project-a' });
@@ -932,6 +933,27 @@ enabled = false`);
     ).resolves.toBeNull();
 
     expect(command.mock.calls.map((call) => `${call[0]} ${call[1]}`)).not.toContain('migration up');
+    expect(calls.ended).toBe(true);
+  });
+
+  it('reports nothing new for an empty workspace migrations dir without touching the stack (#536)', async () => {
+    const command = vi.fn<SupabaseCommand>(statusCommand);
+    const { runtime } = fixture(command);
+    await runtime.initialize({ projectId: 'project-a' });
+    const workspaceDir = join(dataDir, 'workspace-migrations');
+    await mkdir(workspaceDir, { recursive: true });
+    command.mockClear();
+
+    await expect(
+      runtime.applyWorkspaceMigrations({
+        projectId: 'project-a',
+        workspaceMigrationsDir: workspaceDir,
+      }),
+    ).resolves.toBeNull();
+
+    // Nothing to apply must stay as cheap as the missing-directory case: no
+    // `status`, no database connection, and so no throw when the stack is down.
+    expect(command.mock.calls).toEqual([]);
   });
 
   it('finds required destructive statements after removing SQL comments', async () => {

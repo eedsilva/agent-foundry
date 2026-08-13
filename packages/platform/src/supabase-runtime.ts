@@ -82,7 +82,9 @@ export interface SupabaseCommandResult {
 
 export type SupabaseCommand = (...args: string[]) => Promise<SupabaseCommandResult>;
 
-/** Overridable in tests so verifySchema never needs a real Postgres connection. */
+/** Overridable in tests so the database reads — verifySchema's inspection and
+ * applyWorkspaceMigrations' migration-history lookup — never need a real
+ * Postgres connection. */
 export type SchemaSqlClientFactory = (databaseUrl: string) => Sql;
 
 const defaultSqlClientFactory: SchemaSqlClientFactory = (databaseUrl) =>
@@ -448,6 +450,10 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     } catch {
       return null;
     }
+    // Nothing to apply stays as cheap as a missing directory: the freshness
+    // read below needs a running stack, and this path must not start throwing
+    // where it used to return null.
+    if (names.length === 0) return null;
     const targetDir = join(environment.workdir, 'supabase', 'migrations');
     await mkdir(targetDir, { recursive: true });
     // Freshness comes from the database's own history, never from file
