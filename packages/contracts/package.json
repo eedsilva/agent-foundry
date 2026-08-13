@@ -19,6 +19,7 @@
     "dist"
   ],
   "dependencies": {
+    "yaml": "^2.8.1",
     "zod": "^4.1.12"
   }
 }
