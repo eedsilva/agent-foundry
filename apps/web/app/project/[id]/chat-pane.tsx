@@ -4,12 +4,14 @@ import React, { useEffect, useState, type FormEvent } from 'react';
 import type {
   AgentArtifact,
   AgentStreamEvent,
+  AppShapeModule,
   ChangeRequest,
   ConversationPageResponse,
   KnowledgeFile,
   Operation,
   OperationKind,
 } from '@agent-foundry/contracts';
+import { PlanProposalArtifactSchema } from '@agent-foundry/contracts';
 import {
   classifyMessage,
   decideChangeRequest,
@@ -83,6 +85,42 @@ export function ChatPane({
   const [pendingChangeRequest, setPendingChangeRequest] = useState<ChangeRequest | null>(null);
   const [proposalEditor, setProposalEditor] = useState<ProposalEditorState | null>(null);
   const [repairingPreview, setRepairingPreview] = useState(false);
+  const [planModules, setPlanModules] = useState<{
+    operationId: string;
+    modules: AppShapeModule[];
+  } | null>(null);
+
+  const pendingPlanOperation = conversation?.operations.find(
+    (operation) =>
+      operation.kind === 'plan' &&
+      operation.approval?.status === 'pending' &&
+      operation.artifactReferences.length > 0,
+  );
+  const pendingPlanOperationId = pendingPlanOperation?.id;
+  const pendingPlanRevision = pendingPlanOperation?.artifactReferences[0]?.revision;
+
+  // Renders the module list next to the approve/reject buttons — render-only,
+  // does not affect approval semantics. Old plan artifacts have no `modules`
+  // field; safeParse leaves `planModules` at an empty list for those.
+  useEffect(() => {
+    if (!pendingPlanOperationId) return;
+    let cancelled = false;
+    void getOperationProposal(id, pendingPlanOperationId)
+      .then((artifact) => {
+        if (cancelled) return;
+        const parsed = PlanProposalArtifactSchema.safeParse(artifact.content);
+        setPlanModules({
+          operationId: pendingPlanOperationId,
+          modules: parsed.success ? parsed.data.data.modules : [],
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setPlanModules(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, pendingPlanOperationId, pendingPlanRevision]);
 
   async function classifyConversationPrompt(prompt: string) {
     try {
@@ -268,6 +306,7 @@ export function ChatPane({
           onDecide={(operationId, action) => void decide(operationId, action)}
           onCancelRun={onCancelRun}
           onOpenArtifactRef={onOpenArtifactRef}
+          pendingPlanModules={planModules}
         />
         <KnowledgeFiles
           projectId={id}

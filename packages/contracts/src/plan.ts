@@ -26,18 +26,31 @@ const GeneratedPlanTaskSchema = z
 
 type TaskGraphValidationTask = { id: string; dependsOn: string[] };
 
-function validateTaskGraph(tasks: readonly TaskGraphValidationTask[], ctx: z.RefinementCtx): void {
-  const ids = new Set<string>();
-  for (const [index, task] of tasks.entries()) {
-    if (ids.has(task.id)) {
+/** Flags duplicate `id`s within an array-valued field, returning the set of
+ * ids seen so callers needing referential checks (e.g. dependency graphs)
+ * don't have to walk the array twice. */
+function rejectDuplicateIds(
+  items: readonly { id: string }[],
+  containerKey: string,
+  label: string,
+  ctx: z.RefinementCtx,
+): Set<string> {
+  const seen = new Set<string>();
+  for (const [index, item] of items.entries()) {
+    if (seen.has(item.id)) {
       ctx.addIssue({
         code: 'custom',
-        path: ['tasks', index, 'id'],
-        message: `Duplicate task id ${task.id}`,
+        path: [containerKey, index, 'id'],
+        message: `Duplicate ${label} id ${item.id}`,
       });
     }
-    ids.add(task.id);
+    seen.add(item.id);
   }
+  return seen;
+}
+
+function validateTaskGraph(tasks: readonly TaskGraphValidationTask[], ctx: z.RefinementCtx): void {
+  const ids = rejectDuplicateIds(tasks, 'tasks', 'task', ctx);
   let unknownDependency = false;
   for (const [index, task] of tasks.entries()) {
     for (const dependency of task.dependsOn) {
@@ -113,6 +126,55 @@ export const TASK_GRAPH_ARTIFACT_JSON_SCHEMA = {
       enforcedBy: 'GeneratedTaskGraphArtifactSchema',
       description:
         'Standard JSON Schema cannot express referential integrity; the runtime Zod parse rejects duplicate task ids, dependencies on unknown task ids, and dependency cycles.',
+    },
+  },
+};
+
+const APP_SHAPE_MODULE_ID_PATTERN = /^(?:auth|dashboard|storage|crud:[a-zA-Z0-9._-]+)$/;
+
+/** Module vocabulary from ADR 0059: auth, dashboard, storage, or a
+ * crud:<resource> variant. Unknown ids are rejected. Expressed as a single
+ * regex (not an enum + separate refine) so the published JSON Schema's
+ * `pattern` field actually documents the vocabulary for model consumers. */
+export const ModuleIdSchema = z.string().regex(APP_SHAPE_MODULE_ID_PATTERN, {
+  message: 'Module must be one of auth, dashboard, storage, or crud:<resource>',
+});
+export type ModuleId = z.infer<typeof ModuleIdSchema>;
+
+export const AppShapeModuleSchema = z
+  .object({
+    id: ModuleIdSchema,
+    acceptanceChannel: TaskAcceptanceModeSchema,
+  })
+  .strict();
+export type AppShapeModule = z.infer<typeof AppShapeModuleSchema>;
+
+// Loose: forward-only versioning per ADR 0056 — future optional fields on the
+// app-shape contract must not break parsing of already-persisted plan artifacts.
+export const AppShapeSchema = z
+  .looseObject({
+    schemaVersion: z.literal('1'),
+    modules: z.array(AppShapeModuleSchema).min(1).max(50),
+  })
+  .superRefine((shape, ctx) => {
+    rejectDuplicateIds(shape.modules, 'modules', 'module', ctx);
+  });
+export type AppShape = z.infer<typeof AppShapeSchema>;
+
+export const PlanProposalArtifactSchema = AgentArtifactSchema.extend({
+  data: AppShapeSchema,
+});
+export type PlanProposalArtifact = z.infer<typeof PlanProposalArtifactSchema>;
+
+export const PLAN_PROPOSAL_ARTIFACT_JSON_SCHEMA = {
+  $id: 'https://agent-foundry.dev/schemas/plan-proposal-artifact-v1.json',
+  ...z.toJSONSchema(PlanProposalArtifactSchema),
+  'x-agent-foundry-runtime-validation': {
+    moduleVocabulary: {
+      path: 'data.modules[*].id',
+      enforcedBy: 'PlanProposalArtifactSchema',
+      description:
+        "Standard JSON Schema cannot express cross-item uniqueness; the runtime Zod parse rejects duplicate module ids within one plan. The module id vocabulary itself IS expressed via this schema's regex pattern.",
     },
   },
 };

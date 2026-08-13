@@ -1,6 +1,6 @@
 # ADR 0059: App-shape contract in the plan artifact
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-08
 - Owners: Core
 - Tracked by epic #470 (build tickets #478, #479)

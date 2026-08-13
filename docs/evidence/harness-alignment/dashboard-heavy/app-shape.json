@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1",
+  "modules": [
+    { "id": "auth", "acceptanceChannel": "browser-visible" },
+    { "id": "dashboard", "acceptanceChannel": "browser-visible" },
+    { "id": "crud:sale-events", "acceptanceChannel": "browser-visible" }
+  ]
+}

@@ -3,6 +3,7 @@
 import React from 'react';
 import type {
   AgentStreamEvent,
+  AppShapeModule,
   ConversationPageResponse,
   Message,
   Operation,
@@ -44,6 +45,7 @@ export function ConversationList({
   onDecide,
   onCancelRun,
   onOpenArtifactRef,
+  pendingPlanModules,
 }: {
   projectId: string;
   conversation: ConversationPageResponse | null;
@@ -58,6 +60,7 @@ export function ConversationList({
   onDecide: (operationId: string, action: 'approve' | 'reject') => void;
   onCancelRun: (runId: string) => void;
   onOpenArtifactRef: (name: string, revision: number) => void;
+  pendingPlanModules: { operationId: string; modules: AppShapeModule[] } | null;
 }) {
   const messages = conversation?.messages ?? [];
   if (messages.length === 0) {
@@ -90,6 +93,21 @@ export function ConversationList({
                   {operation.kind}
                   {operation.approval ? `, ${operation.approval.status}` : ''}
                 </span>
+                {operation.kind === 'plan' &&
+                pendingPlanModules?.operationId === operation.id &&
+                pendingPlanModules.modules.length > 0 ? (
+                  <span
+                    role="list"
+                    aria-label="Módulos do plano"
+                    className="mt-2 flex flex-wrap gap-1"
+                  >
+                    {pendingPlanModules.modules.map((module) => (
+                      <span key={module.id} role="listitem" className={CHIP}>
+                        {module.id}
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
                 {operation.kind === 'plan' && operation.approval?.status === 'pending' ? (
                   <span className="mt-2 flex flex-wrap gap-2">
                     {operation.artifactReferences.length > 0 ? (
