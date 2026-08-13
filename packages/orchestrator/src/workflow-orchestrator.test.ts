@@ -745,12 +745,22 @@ const VALID_GRAPH = {
 
 const GENERATED_GRAPH = {
   ...VALID_GRAPH,
-  tasks: VALID_GRAPH.tasks.map((task) => ({ ...task, acceptanceMode: 'deterministic-only' })),
+  modules: [{ id: 'crud:work', acceptanceChannel: 'deterministic-only' as const }],
+  tasks: VALID_GRAPH.tasks.map((task) => ({
+    ...task,
+    acceptanceMode: 'deterministic-only' as const,
+    module: 'crud:work',
+  })),
 };
 
 const BROWSER_GRAPH = {
   ...VALID_GRAPH,
-  tasks: VALID_GRAPH.tasks.map((task) => ({ ...task, acceptanceMode: 'browser-visible' })),
+  modules: [{ id: 'crud:work', acceptanceChannel: 'browser-visible' as const }],
+  tasks: VALID_GRAPH.tasks.map((task) => ({
+    ...task,
+    acceptanceMode: 'browser-visible' as const,
+    module: 'crud:work',
+  })),
 };
 
 const TASK_BROWSER_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({

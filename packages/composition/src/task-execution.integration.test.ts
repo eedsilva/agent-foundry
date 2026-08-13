@@ -73,6 +73,7 @@ function task(
     dependsOn,
     deliverables: [`src/${id}.ts`],
     acceptanceCheck: `${id} behaves`,
+    module: 'crud:work',
     ...(acceptanceMode ? { acceptanceMode } : {}),
   };
 }
@@ -103,11 +104,15 @@ class TaskGraphExecutor implements AgentExecutor {
       data: {
         schemaVersion: '1' as const,
         goal: 'Fixture plan',
+        ...(request.outputSchema?.$id === TASK_GRAPH_ARTIFACT_JSON_SCHEMA.$id
+          ? { modules: [{ id: 'crud:work', acceptanceChannel: 'deterministic-only' as const }] }
+          : {}),
         tasks:
           request.outputSchema?.$id === TASK_GRAPH_ARTIFACT_JSON_SCHEMA.$id
             ? this.options.tasks.map((task) => ({
                 ...task,
                 acceptanceMode: task.acceptanceMode ?? 'deterministic-only',
+                module: task.module ?? 'crud:work',
               }))
             : this.options.tasks,
       },
