@@ -209,3 +209,11 @@ itself needed changing.
 A real-mode re-run against a corrected pipeline (API server actually up, so
 the browser step reaches the real app) is #527, gated on #526 merging, and
 explicitly out of scope for both #526 and this note.
+
+**That re-run has since happened**, and confirms the reading above: with the
+API server up and sharing the tracer's `DATA_DIR`, the preview loaded and the
+same judge scored the rendered app `0.55` — against the 0.00–0.05 recorded
+here — with findings that describe what is actually on screen. See
+[`../ui-quality-judge-rendered-app-527/README.md`](../ui-quality-judge-rendered-app-527/README.md).
+The rubric discriminates a working UI from a broken one; the near-zero scores
+on this page measured a Chrome error page, nothing more.

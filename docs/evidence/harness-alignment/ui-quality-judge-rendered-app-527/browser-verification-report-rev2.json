@@ -1,0 +1,136 @@
+{
+  "metadata": {
+    "projectId": "01KZXZ25Q9FEZPC9PTY8ZM0DZ8",
+    "name": "browser-verification.report",
+    "revision": 2,
+    "contentType": "application/json",
+    "createdAt": "2026-08-13T17:35:17.814Z",
+    "createdBy": "verifier:assert-task.T6",
+    "runId": "01KZXZ25QBGDF0HFAWEHSDJGPH",
+    "stepRunId": "01KZY31Z41Z0CYWM216D8XBXQ5",
+    "attemptId": "01KZY31Z602719X6E0X27YXR8H",
+    "idempotencyKey": "1f7187f40d35fe29dbf30d3ea3a3ea17edf0fc415dbb209a42d5e58d2ec1f2d9",
+    "sha256": "30ef0ceb92815fd11f8886997e503f538b16115c6f0ff050059e326e6556f051"
+  },
+  "content": {
+    "schemaVersion": "1",
+    "approved": true,
+    "summary": "All browser verification steps passed.",
+    "planArtifact": {
+      "name": "browser-test.plan",
+      "revision": 2,
+      "sha256": "1d0251a4768d8ef568dc62b32463cc93e960fa2308b1937d6a83c47f0144672c"
+    },
+    "previewSession": {
+      "sessionId": "01KZY3200VZG12KJK4P79DAXR5",
+      "status": "running",
+      "url": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+      "evidence": {
+        "screenshots": [
+          {
+            "name": "browser-screenshot-01KZY3200VZG12KJK4P79DAXR5-open-counter",
+            "revision": 1,
+            "sha256": "3c25974ea8888f641a0e9ec8c08a1015c1a3ecb60fb04b73381eefbef53d8ad5",
+            "sizeBytes": 7373,
+            "stepId": "open-counter",
+            "url": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+            "viewport": {
+              "width": 375,
+              "height": 667
+            }
+          },
+          {
+            "name": "browser-screenshot-01KZY3200VZG12KJK4P79DAXR5-increment-once",
+            "revision": 1,
+            "sha256": "ff008469f8162cb58c0eaad9af5fb7818a68f90b199ffb1b03834417ee006468",
+            "sizeBytes": 6373,
+            "stepId": "increment-once",
+            "url": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+            "viewport": {
+              "width": 375,
+              "height": 667
+            }
+          },
+          {
+            "name": "browser-screenshot-01KZY3200VZG12KJK4P79DAXR5-increment-twice",
+            "revision": 1,
+            "sha256": "aa34676050348d15e4b2e9ec24fde5a63193dec9986423825aee7d4b40a4a0f5",
+            "sizeBytes": 7149,
+            "stepId": "increment-twice",
+            "url": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+            "viewport": {
+              "width": 375,
+              "height": 667
+            }
+          },
+          {
+            "name": "browser-screenshot-01KZY3200VZG12KJK4P79DAXR5-increment-thrice",
+            "revision": 1,
+            "sha256": "df6273fbcddc665e3b1d646ce6d4c2e3773a14fdda7241332e560893b52dcf0d",
+            "sizeBytes": 7322,
+            "stepId": "increment-thrice",
+            "url": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+            "viewport": {
+              "width": 375,
+              "height": 667
+            }
+          },
+          {
+            "name": "browser-screenshot-01KZY3200VZG12KJK4P79DAXR5-reload-persisted-count",
+            "revision": 1,
+            "sha256": "df6273fbcddc665e3b1d646ce6d4c2e3773a14fdda7241332e560893b52dcf0d",
+            "sizeBytes": 7322,
+            "stepId": "reload-persisted-count",
+            "url": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+            "viewport": {
+              "width": 375,
+              "height": 667
+            }
+          }
+        ]
+      }
+    },
+    "steps": [
+      {
+        "stepId": "open-counter",
+        "title": "Open the public counter",
+        "status": "passed",
+        "durationMs": 1060.6124999998137,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+        "observations": []
+      },
+      {
+        "stepId": "increment-once",
+        "title": "Increment the counter once",
+        "status": "passed",
+        "durationMs": 586.7133750002831,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+        "observations": []
+      },
+      {
+        "stepId": "increment-twice",
+        "title": "Increment the counter twice",
+        "status": "passed",
+        "durationMs": 459.13529100082815,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+        "observations": []
+      },
+      {
+        "stepId": "increment-thrice",
+        "title": "Increment the counter three times",
+        "status": "passed",
+        "durationMs": 765.0335410004482,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+        "observations": []
+      },
+      {
+        "stepId": "reload-persisted-count",
+        "title": "Reload and verify persistence",
+        "status": "passed",
+        "durationMs": 629.7672920003533,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY3200VZG12KJK4P79DAXR5/",
+        "observations": []
+      }
+    ]
+  }
+}

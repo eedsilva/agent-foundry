@@ -1,0 +1,227 @@
+{
+  "metadata": {
+    "projectId": "01KZXZ25Q9FEZPC9PTY8ZM0DZ8",
+    "name": "browser-verification.report",
+    "revision": 1,
+    "contentType": "application/json",
+    "createdAt": "2026-08-13T17:06:21.797Z",
+    "createdBy": "verifier:assert-task.T4",
+    "runId": "01KZXZ25QBGDF0HFAWEHSDJGPH",
+    "stepRunId": "01KZY1B881VK3GF41WW23CT4BD",
+    "attemptId": "01KZY1B89834V23Q3FTEKN5K8Y",
+    "idempotencyKey": "51a65395536eede11cacc92459274b5f80572da633797ffc9dcdf6ec3b414cb1",
+    "sha256": "2315c83abe15b807dcfb53619e72859b59b64247e7c5bb081992f430b7ca72eb"
+  },
+  "content": {
+    "schemaVersion": "1",
+    "approved": true,
+    "summary": "Passive signals clean; 1 advisory browser step failure(s) recorded.",
+    "planArtifact": {
+      "name": "browser-test.plan",
+      "revision": 1,
+      "sha256": "65777f9e1851a6004755b4ca15ac80418f4c26a387b98bacb8c762e977f9baf4"
+    },
+    "previewSession": {
+      "sessionId": "01KZY1B9XHFWWCA6ZNH8NVVH9S",
+      "status": "running",
+      "url": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/",
+      "evidence": {
+        "screenshots": [
+          {
+            "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-open-public-root",
+            "revision": 1,
+            "sha256": "5d0ee91c2ce2444b69dba1a60b90d6bef5db6b5f0093ee09f761173353cfd7da",
+            "sizeBytes": 15710,
+            "stepId": "open-public-root",
+            "url": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/",
+            "viewport": {
+              "width": 1280,
+              "height": 720
+            }
+          },
+          {
+            "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-protect-items-route",
+            "revision": 1,
+            "sha256": "157a2fbefb477477f0a4d39109c1684b90c8456105d40e1e7214dbbab342b357",
+            "sizeBytes": 9065,
+            "stepId": "protect-items-route",
+            "url": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/sign-in",
+            "viewport": {
+              "width": 1280,
+              "height": 720
+            }
+          },
+          {
+            "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-open-sign-in",
+            "revision": 1,
+            "sha256": "157a2fbefb477477f0a4d39109c1684b90c8456105d40e1e7214dbbab342b357",
+            "sizeBytes": 9065,
+            "stepId": "open-sign-in",
+            "url": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/sign-in",
+            "viewport": {
+              "width": 1280,
+              "height": 720
+            }
+          },
+          {
+            "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-fill-email",
+            "revision": 1,
+            "sha256": "15ae35f713bc888a0a4b26b5fb01d4ea1393e008d584ad4884addb86dbcccd22",
+            "sizeBytes": 11524,
+            "stepId": "fill-email",
+            "url": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/sign-in",
+            "viewport": {
+              "width": 1280,
+              "height": 720
+            }
+          },
+          {
+            "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-fill-password",
+            "revision": 1,
+            "sha256": "e64178f9cf4b7c7a0ac2e56fc4325b9d7345eeaafa5d5e9c1bc8a2d8caab37ed",
+            "sizeBytes": 11822,
+            "stepId": "fill-password",
+            "url": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/sign-in",
+            "viewport": {
+              "width": 1280,
+              "height": 720
+            }
+          },
+          {
+            "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-submit-and-assert-tenancy",
+            "revision": 1,
+            "sha256": "f0d334d9899254cce4ea9aca1c15c8038fc60962b26fcf2ca9b700b852d7393e",
+            "sizeBytes": 11825,
+            "stepId": "submit-and-assert-tenancy",
+            "url": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/sign-in?error=Invalid+login+credentials",
+            "viewport": {
+              "width": 1280,
+              "height": 720
+            }
+          }
+        ]
+      }
+    },
+    "steps": [
+      {
+        "stepId": "open-public-root",
+        "title": "Open the root path anonymously",
+        "status": "passed",
+        "durationMs": 1264.0236249999143,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/",
+        "observations": []
+      },
+      {
+        "stepId": "protect-items-route",
+        "title": "Redirect anonymous visitors away from items",
+        "status": "passed",
+        "durationMs": 880.7060420000926,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/sign-in",
+        "observations": []
+      },
+      {
+        "stepId": "open-sign-in",
+        "title": "Open the sign-in page",
+        "status": "passed",
+        "durationMs": 641.393875000067,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/sign-in",
+        "observations": []
+      },
+      {
+        "stepId": "fill-email",
+        "title": "Enter the first account's email",
+        "status": "passed",
+        "durationMs": 76.24254099978134,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/sign-in",
+        "observations": []
+      },
+      {
+        "stepId": "fill-password",
+        "title": "Enter the first account's password",
+        "status": "passed",
+        "durationMs": 102.20387500012293,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/sign-in",
+        "observations": []
+      },
+      {
+        "stepId": "submit-and-assert-tenancy",
+        "title": "Sign in, see own rows, and never the other account's row",
+        "status": "failed",
+        "durationMs": 10876.71716699982,
+        "finalUrl": "http://127.0.0.1:4527/preview/01KZY1B9XHFWWCA6ZNH8NVVH9S/sign-in?error=Invalid+login+credentials",
+        "error": "locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('First item') to be visible\u001b[22m\n",
+        "observations": []
+      }
+    ],
+    "uiQuality": {
+      "rubricVersion": "1",
+      "judgeModel": "claude-haiku-4-5-20251001",
+      "overallScore": 0.55,
+      "criteria": [
+        {
+          "criterionId": "layout-coherence",
+          "score": 0.55,
+          "finding": "Sign-in form has consistent label/input/button spacing and alignment, but the public root page shows a heading and description referencing a counter and 'Increment button' that never renders — the described interactive element is absent, leaving a large empty page with no visual hierarchy anchor."
+        },
+        {
+          "criterionId": "navigation",
+          "score": 0.35,
+          "finding": "No header, logo, nav links, or breadcrumbs appear in any screenshot. The protected-route redirect to sign-in happens silently with no banner explaining why the user landed there, and there's no visible path back to the public page."
+        },
+        {
+          "criterionId": "empty-loading-error-states",
+          "score": 0.5,
+          "finding": "The 'Invalid login credentials' error is rendered in a clear, distinctly colored line above the submit button, which is good. However, no loading/pending indicator is visible on submit, and the counter page's missing button is an unstated empty/broken state rather than an explicit placeholder."
+        },
+        {
+          "criterionId": "contrast-readability",
+          "score": 0.8,
+          "finding": "Form labels and input text are near-black on white (strong contrast); the error message uses a readable red. The counter page's descriptive paragraph uses a lighter gray that is legible but noticeably lower contrast than the rest of the UI."
+        },
+        {
+          "criterionId": "responsive-sanity",
+          "score": 0.5,
+          "finding": "All six screenshots appear to be the same desktop viewport size, so no evidence is available to confirm or refute behavior at narrower breakpoints; cannot verify responsive layout adaptation from this evidence alone."
+        }
+      ],
+      "screenshotsReviewed": [
+        {
+          "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-open-public-root",
+          "revision": 1,
+          "sha256": "5d0ee91c2ce2444b69dba1a60b90d6bef5db6b5f0093ee09f761173353cfd7da",
+          "sizeBytes": 15710
+        },
+        {
+          "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-protect-items-route",
+          "revision": 1,
+          "sha256": "157a2fbefb477477f0a4d39109c1684b90c8456105d40e1e7214dbbab342b357",
+          "sizeBytes": 9065
+        },
+        {
+          "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-open-sign-in",
+          "revision": 1,
+          "sha256": "157a2fbefb477477f0a4d39109c1684b90c8456105d40e1e7214dbbab342b357",
+          "sizeBytes": 9065
+        },
+        {
+          "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-fill-email",
+          "revision": 1,
+          "sha256": "15ae35f713bc888a0a4b26b5fb01d4ea1393e008d584ad4884addb86dbcccd22",
+          "sizeBytes": 11524
+        },
+        {
+          "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-fill-password",
+          "revision": 1,
+          "sha256": "e64178f9cf4b7c7a0ac2e56fc4325b9d7345eeaafa5d5e9c1bc8a2d8caab37ed",
+          "sizeBytes": 11822
+        },
+        {
+          "name": "browser-screenshot-01KZY1B9XHFWWCA6ZNH8NVVH9S-submit-and-assert-tenancy",
+          "revision": 1,
+          "sha256": "f0d334d9899254cce4ea9aca1c15c8038fc60962b26fcf2ca9b700b852d7393e",
+          "sizeBytes": 11825
+        }
+      ]
+    }
+  }
+}
