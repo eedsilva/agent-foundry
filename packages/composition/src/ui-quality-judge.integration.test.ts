@@ -245,6 +245,53 @@ describe('#475: the UI-quality judge scores a real browser-verification run', ()
   }, 60_000);
 });
 
+describe('#548: a below-threshold golden-flow score routes through browser repair', () => {
+  it('emits quality.repair_requested for a 0.8 score under a 0.9 threshold, then approves after repair', async () => {
+    // Mirrors PR #552's fake-CLI golden-flow numbers (0.8 below a 0.9 gate),
+    // but drives them through the real browser-verification repair loop used
+    // in production instead of the e2e fixture, which has no repair node.
+    const { runtime, runId, projectId, judge } = await startJudgedRun({
+      scores: [0.8, 0.95],
+      minOverallScore: 0.9,
+    });
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, runId);
+
+    const detail = await runtime.projectService.get(projectId);
+    expect(detail.project.status).toBe('completed');
+
+    const scores = judge.servedScores.map((call) => call.overallScore);
+    expect(scores.slice(0, 2)).toEqual([0.8, 0.95]);
+
+    const events = await runtime.events.list(projectId, 10000);
+    const browserRepairs = events.filter(
+      (event) =>
+        event.type === 'quality.repair_requested' && event.dedupeKey?.includes(':browser:'),
+    );
+    expect(browserRepairs).toHaveLength(1);
+    expect(browserRepairs[0]?.message).toContain(
+      'UI-quality gate failed: overall score 0.80 is below the configured minimum 0.90.',
+    );
+    expect(browserRepairs[0]?.data).toMatchObject({
+      taskId: 'T2',
+      stepId: 'repair-task-browser.T2',
+      iteration: 1,
+      maxRepairAttempts: 2,
+    });
+
+    const reportArtifact = await runtime.artifacts.getLatest(
+      projectId,
+      'browser-verification.report',
+    );
+    const report: BrowserVerificationReport = BrowserVerificationReportSchema.parse(
+      reportArtifact?.content,
+    );
+    expect(report.approved).toBe(true);
+    expect(report.uiQuality?.overallScore).toBe(0.95);
+  }, 60_000);
+});
+
 describe('#477: a low UI-quality score gates the run, repairs, then passes', () => {
   it('fails the browser check on the first judge score and approves after one repair round', async () => {
     // The judge is the only scripted thing in this run: everything else —
