@@ -4,6 +4,8 @@ import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  UI_QUALITY_JUDGE_JSON_SCHEMA,
+  UI_QUALITY_RUBRIC_V1,
   GeneratedTaskGraphArtifactSchema,
   type AgentExecutionRequest,
 } from '@agent-foundry/contracts';
@@ -100,6 +102,28 @@ describe('fake provider CLIs', () => {
       timeoutMs: 30_000,
       ...overrides,
     };
+  }
+
+  function uiQualityJudgePrompt(): string {
+    const criteria = UI_QUALITY_RUBRIC_V1.criteria
+      .map((criterion) => `- ${criterion.id} (${criterion.title}): ${criterion.description}`)
+      .join('\n');
+    return [
+      'You are judging the visual quality of a web application that was just exercised by an automated browser test.',
+      '',
+      'Review these screenshot files, relative to your working directory:',
+      '- 0-load-root.png (browser step "load-root")',
+      '',
+      `Score the UI against every criterion of rubric version ${UI_QUALITY_RUBRIC_V1.version}:`,
+      criteria,
+      '',
+      'Rules:',
+      '- Emit exactly one entry in "criteria" per rubric criterion, using the criterion id verbatim.',
+      '- "score" and "overallScore" are numbers from 0 (unusable) to 1 (excellent).',
+      '- "finding" is optional, at most 500 characters, and should name the concrete problem you saw.',
+      '- Judge only what the screenshots show. Do not modify any file.',
+      '- This assessment is advisory. It does not pass or fail the run.',
+    ].join('\n');
   }
 
   it('reports a healthy version for both fake CLIs', async () => {
@@ -215,4 +239,67 @@ describe('fake provider CLIs', () => {
     expect(result.output).toMatchObject({ status: 'completed', approved: true });
     await expect(readFile(join(readOnlyWorkspace, 'package.json'), 'utf8')).rejects.toThrow();
   });
+
+  // #548: the UI-quality judge (packages/orchestrator/src/ui-quality-judge.ts)
+  // calls executor.execute() directly with a raw prompt that never references
+  // a REQUEST.md — there is no per-step run context on disk for it, unlike
+  // every other caller above. Codex carries the schema by appending "Output
+  // JSON Schema:" to stdin; Claude carries it through --json-schema. Both
+  // fake provider shims must recognize this same bare judge prompt.
+  it.each([
+    ['codex', () => new CodexCliExecutor(1_000_000)],
+    ['claude', () => new ClaudeCliExecutor(1_000_000)],
+  ] as const)(
+    'answers the UI-quality judge prompt with all rubric criteria through fake %s',
+    async (provider, createExecutor) => {
+      const executor = createExecutor();
+
+      const result = await executor.execute(
+        request({
+          stepId: 'browser-verify.T2',
+          role: 'tester',
+          taskKind: 'verification',
+          mutatesWorkspace: false,
+          provider,
+          prompt: uiQualityJudgePrompt(),
+          outputSchema: UI_QUALITY_JUDGE_JSON_SCHEMA,
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      const data = (result.output as { data: unknown }).data as {
+        overallScore: number;
+        criteria: Array<{ criterionId: string; score: number }>;
+      };
+      expect(data.overallScore).toBe(0.8);
+      expect(data.criteria.map((criterion) => criterion.criterionId)).toEqual(
+        UI_QUALITY_RUBRIC_V1.criteria.map((criterion) => criterion.id),
+      );
+      for (const criterion of data.criteria) {
+        expect(criterion.score).toBe(0.8);
+      }
+    },
+  );
+
+  it.each([
+    ['codex', () => new CodexCliExecutor(1_000_000)],
+    ['claude', () => new ClaudeCliExecutor(1_000_000)],
+  ] as const)(
+    'keeps missing REQUEST.md strict for ordinary schemas through fake %s',
+    async (provider, createExecutor) => {
+      await expect(
+        createExecutor().execute(
+          request({
+            stepId: 'plan',
+            role: 'planner',
+            taskKind: 'planning',
+            mutatesWorkspace: false,
+            provider,
+            prompt: 'Return the ordinary task-graph artifact for this planning request.',
+            outputSchema: TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+          }),
+        ),
+      ).rejects.toThrow(`${provider} CLI exited with code 1`);
+    },
+  );
 });

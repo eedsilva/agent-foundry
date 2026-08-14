@@ -12,14 +12,13 @@ const TASK_GRAPH_SCHEMA_ID = 'https://agent-foundry.dev/schemas/task-graph-artif
 const BROWSER_PLAN_SCHEMA_ID =
   'https://agent-foundry.dev/schemas/browser-test-plan-artifact-v1.json';
 const SCHEMA_PLAN_SCHEMA_ID = 'https://agent-foundry.dev/schemas/schema-plan-artifact-v1.json';
+/** Matches UI_QUALITY_JUDGE_JSON_SCHEMA.$id (packages/contracts/src/ui-quality-rubric.ts).
+ * Hardcoded rather than imported: this file is Node-only and cannot depend on
+ * workspace packages (see the file-header comment). The runtime integration
+ * test asserts these ids stay equal to the rubric, so a rename fails rather
+ * than drifting silently. */
 const UI_QUALITY_JUDGE_SCHEMA_ID =
   'https://agent-foundry.dev/schemas/ui-quality-judge-artifact-v1.json';
-/** Mirrors UI_QUALITY_RUBRIC_V1's criterion ids (packages/contracts/src/
- * ui-quality-rubric.ts); duplicated because this file is node-only and cannot
- * import workspace packages. runtime.integration.test.ts asserts the two lists
- * stay equal, so a rubric rename fails there rather than drifting silently. A
- * passing score, so a deterministic run never routes into repair should a
- * project ever configure `minOverallScore`. */
 const UI_QUALITY_CRITERION_IDS = [
   'layout-coherence',
   'navigation',
@@ -33,9 +32,9 @@ const UI_QUALITY_SCORE = 0.8;
  * required field so a prompt-compiler format change fails loudly at this
  * boundary instead of silently downstream (format owner:
  * packages/orchestrator/src/prompt-compiler.ts compileRequestMarkdown). */
-export async function resolveRequest(prompt) {
+export async function resolveRequest(prompt, options = {}) {
   const match = prompt.match(/\.orchestrator\/runs\/\S+\/REQUEST\.md/);
-  if (!match) throw new Error('fake CLI: prompt does not reference a REQUEST.md');
+  if (!match) return resolveAdHocRequest(prompt, options);
   const requestPath = join(process.cwd(), match[0]);
   const markdown = await readFile(requestPath, 'utf8');
   const field = (label) => {
@@ -61,6 +60,43 @@ export async function resolveRequest(prompt) {
     mutationAllowed: field('Workspace mutation allowed') === 'yes',
     outputSchemaId,
   };
+}
+
+/**
+ * Handles callers with no run context on disk (#548) — currently only the
+ * UI-quality judge (packages/orchestrator/src/ui-quality-judge.ts), which
+ * calls executor.execute() directly with a free-text prompt instead of
+ * routing through prompt-compiler's REQUEST.md convention. The only channel
+ * still carrying the output schema is the prompt itself: codex's invocation
+ * (packages/executors/src/output-schema-prompt.ts) always appends "Output
+ * JSON Schema:" plus the schema JSON to the prompt when one is set. Claude
+ * passes its schema as a separate `--json-schema` CLI arg instead, so its
+ * fake shim forwards that JSON here explicitly.
+ */
+function resolveAdHocRequest(prompt, options = {}) {
+  const schemaMatch = prompt.match(/Output JSON Schema:\n(\{[\s\S]*\})$/);
+  const outputSchemaId =
+    (typeof options.outputSchemaJson === 'string'
+      ? safeParseSchemaId(options.outputSchemaJson)
+      : undefined) ?? (schemaMatch ? safeParseSchemaId(schemaMatch[1]) : undefined);
+  if (outputSchemaId !== UI_QUALITY_JUDGE_SCHEMA_ID) {
+    throw new Error('fake CLI: prompt does not reference a REQUEST.md');
+  }
+  return {
+    stepId: 'ad-hoc',
+    role: 'tester',
+    taskKind: 'verification',
+    mutationAllowed: false,
+    outputSchemaId,
+  };
+}
+
+function safeParseSchemaId(json) {
+  try {
+    return JSON.parse(json).$id;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -248,18 +284,10 @@ export function buildArtifact(identity, options = {}) {
             }
           : identity.outputSchemaId === UI_QUALITY_JUDGE_SCHEMA_ID
             ? {
-                // #549 turned the judge on in policies/default.yaml, so every
-                // deterministic browser verification now asks for a score too.
-                // Without this branch the generic payload below fails the judge
-                // schema and every run logs a judge failure it can do nothing
-                // about.
-                // ponytail: reachable from MockAgentExecutor only. The fake CLI
-                // binaries route through resolveRequest, and the judge's prompt
-                // references no REQUEST.md, so they would throw before reaching
-                // here. Harmless today because respond() leaves T2
-                // deterministic-only and the pipeline regression never browser-
-                // verifies; give the fake CLIs a second identity path if that
-                // ever changes.
+                // Fixture value (#548/#549), not a real judgment: the fake CLI
+                // never looks at the screenshots. Keep this deterministic and
+                // above the shipped advisory-only score so mock runs exercise
+                // the judge without entering the repair loop.
                 overallScore: UI_QUALITY_SCORE,
                 criteria: UI_QUALITY_CRITERION_IDS.map((criterionId) => ({
                   criterionId,
@@ -293,8 +321,8 @@ export function buildArtifact(identity, options = {}) {
   };
 }
 
-export async function respond(prompt) {
-  const identity = await resolveRequest(prompt);
+export async function respond(prompt, options = {}) {
+  const identity = await resolveRequest(prompt, options);
   if (identity.mutationAllowed && ['implementation', 'repair'].includes(identity.taskKind)) {
     await mutateWorkspace(process.cwd(), identity.stepId, 'fake');
   }
