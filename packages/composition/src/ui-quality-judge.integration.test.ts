@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type {
   AgentExecutionRequest,
@@ -35,15 +35,10 @@ const EXPECTED_CRITERION_IDS = [
 ];
 
 /**
- * MockAgentExecutor's shared deterministic core (fake-cli-core.mjs) has no
- * branch for the judge's output schema (it only special-cases the browser
- * test plan and task graph schemas), so a bare mock run never produces
- * judge-shaped output and `evaluateUiQuality` degrades to `undefined`. This
- * wrapper adds exactly that branch and otherwise delegates to the real
- * MockAgentExecutor unchanged, mirroring the BrowserPlanExecutor /
- * ReleaseAssessmentExecutor pattern in runtime.integration.test.ts rather
- * than teaching the shared fixture (also used by the real-mode fake CLI
- * binaries) about a judge-only concern.
+ * #477 needs a scripted score sequence (fail, repair, pass). The shared
+ * fake-cli core returns one fixed judge score by design, so this wrapper keeps
+ * the older repair-loop evidence deterministic while delegating every
+ * non-judge request to MockAgentExecutor unchanged.
  */
 class UiQualityJudgeExecutor implements AgentExecutor {
   readonly provider = 'mock';
@@ -353,8 +348,9 @@ describe('#477: a low UI-quality score gates the run, repairs, then passes', () 
  * hand-scripted mock. Routes only judge-schema requests to a real
  * `ClaudeCliExecutor` pointed at the checked-in fake CLI via `PATH`; every
  * other step (task graph, implement, verify, the browser check itself)
- * still runs through the proven `MockAgentExecutor` path, isolating exactly
- * the seam #548 fixes.
+ * still runs through the proven `MockAgentExecutor` path. Judge requests pass
+ * through bare, matching evaluateUiQuality's real provider invocation: no
+ * REQUEST.md exists in the screenshot-only cwd.
  */
 class RealJudgeExecutor implements AgentExecutor {
   readonly provider = 'mock';
@@ -367,7 +363,7 @@ class RealJudgeExecutor implements AgentExecutor {
     onEvent?: (event: ExecutorStreamEvent) => void,
   ): Promise<AgentExecutionResult> {
     if (request.outputSchema?.['$id'] === UI_QUALITY_JUDGE_JSON_SCHEMA.$id) {
-      return this.realDelegate.execute(await withFakeCliRequestContext(request), signal, onEvent);
+      return this.realDelegate.execute(request, signal, onEvent);
     }
     return this.mockDelegate.execute(request, signal, onEvent);
   }
@@ -375,52 +371,6 @@ class RealJudgeExecutor implements AgentExecutor {
   health(): Promise<ExecutorHealth> {
     return this.mockDelegate.health();
   }
-}
-
-/**
- * The judge's real call (`evaluateUiQuality` /
- * `WorkflowOrchestrator.judgeUiQuality` in
- * packages/orchestrator/src/ui-quality-judge.ts and workflow-orchestrator.ts,
- * both out of scope for this task) sends a bespoke prompt over a bare
- * screenshots-only cwd by design (ADR 0058: it bypasses the routed agent
- * pipeline, so no StepRun/StepAttempt REQUEST.md is ever written for it).
- * The shared fake-cli fixture's `resolveRequest`
- * (packages/executors/src/fixtures/fake-cli/fake-cli-core.mjs), however,
- * unconditionally expects every prompt to reference a
- * `.orchestrator/runs/.../REQUEST.md` — the convention prompt-compiler.ts
- * gives every *other* step. This helper reproduces just enough of that
- * convention inside the judge's real cwd, entirely on the test side, so the
- * real subprocess spawn can resolve identity without touching orchestrator
- * or the shared fixture.
- */
-async function withFakeCliRequestContext(
-  request: AgentExecutionRequest,
-): Promise<AgentExecutionRequest> {
-  const relativeRequestPath = `.orchestrator/runs/${request.runId}/steps/${request.stepRunId}/attempts/${request.attemptId}/REQUEST.md`;
-  const requestPath = join(request.cwd, relativeRequestPath);
-  await mkdir(dirname(requestPath), { recursive: true });
-  await writeFile(
-    requestPath,
-    [
-      `- Step: ${request.stepId}`,
-      `- Role: ${request.role}`,
-      `- Task kind: ${request.taskKind}`,
-      `- Workspace mutation allowed: ${request.mutatesWorkspace ? 'yes' : 'no'}`,
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-  if (request.outputSchema) {
-    await writeFile(
-      join(dirname(requestPath), 'output.schema.json'),
-      JSON.stringify(request.outputSchema),
-      'utf8',
-    );
-  }
-  return {
-    ...request,
-    prompt: `${request.prompt}\n\nOpen and follow ${relativeRequestPath} exactly.`,
-  };
 }
 
 async function startRealJudgedRun(
