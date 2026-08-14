@@ -97,7 +97,7 @@ async function enableAdvancedMode(page: Page) {
 let runtime: Runtime;
 let apiClose: () => Promise<void>;
 let apiBaseUrl: string;
-let webProcess: ChildProcess;
+let webProcess: ChildProcess | undefined;
 let webBaseUrl: string;
 const dirs: string[] = [];
 const originalPath = process.env.PATH;
@@ -185,20 +185,24 @@ test.beforeAll(async () => {
   const app = await buildApp(runtime);
   apiBaseUrl = await app.listen({ host: '127.0.0.1', port: apiPort });
   apiClose = () => app.close();
-
-  webProcess = spawn('npx', ['next', 'dev', '-p', String(webPort)], {
-    cwd: resolve(REPO_ROOT, 'apps/web'),
-    env: { ...process.env, NEXT_PUBLIC_API_URL: apiBaseUrl, PORT: String(webPort) },
-    stdio: 'pipe',
-  });
-  await waitForHttp(webBaseUrl, 60_000);
 });
 
 test.afterAll(async () => {
-  webProcess.kill();
+  webProcess?.kill();
   await Promise.all([apiClose(), ...dirs.map((dir) => rm(dir, { recursive: true, force: true }))]);
   process.env.PATH = originalPath;
 });
+
+async function ensureWebAppStarted(): Promise<void> {
+  if (webProcess && webProcess.exitCode === null && !webProcess.killed) return;
+  const webPort = new URL(webBaseUrl).port;
+  webProcess = spawn('npx', ['next', 'dev', '-p', webPort], {
+    cwd: resolve(REPO_ROOT, 'apps/web'),
+    env: { ...process.env, NEXT_PUBLIC_API_URL: apiBaseUrl, PORT: webPort },
+    stdio: 'pipe',
+  });
+  await waitForHttp(webBaseUrl, 60_000);
+}
 
 async function createProject(policyId = GOLDEN_POLICY_ID): Promise<string> {
   const response = await fetch(`${apiBaseUrl}/projects`, {
@@ -559,6 +563,7 @@ test('golden flow: below-threshold UI quality score blocks browser approval', as
 test('golden flow: change request, preview, browser tests, diff approval, axe', async ({
   page,
 }) => {
+  await ensureWebAppStarted();
   const projectId = await createProject();
   await seedWorkspaceAndPlan(projectId);
   expect(await runtime.worker.runOnce()).toBe(true);
@@ -745,6 +750,7 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
 test('golden flow: attach reference, plan, build, visual edit, revert, rebuild', async ({
   page,
 }) => {
+  await ensureWebAppStarted();
   const projectId = await createProject();
   await seedWorkspaceAndPlan(projectId);
   await mkdir(join(runtime.workspaces.workspacePath(projectId), 'src'));
@@ -1045,6 +1051,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
 test('router dashboard shows decisions and filters, an experiment can be registered, and export is PII-free', async ({
   page,
 }) => {
+  await ensureWebAppStarted();
   const projectId = await createProject();
   const run = await getRun(projectId);
   await seedRouterDecisions(projectId, run.id);
