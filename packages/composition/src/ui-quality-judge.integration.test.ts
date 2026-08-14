@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type {
   AgentExecutionRequest,
   AgentExecutionResult,
@@ -15,7 +15,7 @@ import {
   UI_QUALITY_RUBRIC_V1,
 } from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
-import { MockAgentExecutor } from '@agent-foundry/executors';
+import { CodexCliExecutor, MockAgentExecutor } from '@agent-foundry/executors';
 import { createRuntime, type Runtime } from './runtime.js';
 import { approveAllGates } from './testing-helpers.js';
 
@@ -33,6 +33,43 @@ const EXPECTED_CRITERION_IDS = [
   'contrast-readability',
   'responsive-sanity',
 ];
+
+interface ScriptedJudgeOutput {
+  schemaVersion: '1';
+  status: 'completed';
+  summary: string;
+  data: {
+    overallScore: number;
+    criteria: Array<{ criterionId: string; score: number; finding?: string }>;
+  };
+  decisions: [];
+  assumptions: [];
+  risks: [];
+  nextActions: [];
+}
+
+/** Wraps a scripted judge `output` in the same `AgentExecutionResult` envelope
+ * both `UiQualityJudgeExecutor` and `RealFakeCliJudgeExecutor` below need. */
+function scriptedJudgeResult(
+  request: AgentExecutionRequest,
+  model: string,
+  output: ScriptedJudgeOutput,
+): AgentExecutionResult {
+  return {
+    runId: request.runId,
+    stepRunId: request.stepRunId,
+    attemptId: request.attemptId,
+    provider: 'mock',
+    model,
+    executedModel: model,
+    exitCode: 0,
+    durationMs: 1,
+    stdout: JSON.stringify(output),
+    stderr: '',
+    output,
+    usage: { inputTokens: 100, outputTokens: 100, estimatedCostUsd: 0 },
+  };
+}
 
 /**
  * MockAgentExecutor's shared deterministic core (fake-cli-core.mjs) has no
@@ -68,9 +105,9 @@ class UiQualityJudgeExecutor implements AgentExecutor {
     const mockModel = `mock:${request.provider}/${request.model || 'default'}`;
     const overallScore = this.scores[Math.min(this.servedScores.length, this.scores.length - 1)]!;
     this.servedScores.push({ stepId: request.stepId, overallScore });
-    const output = {
-      schemaVersion: '1' as const,
-      status: 'completed' as const,
+    return scriptedJudgeResult(request, mockModel, {
+      schemaVersion: '1',
+      status: 'completed',
       summary: 'Mock judge scored the screenshots.',
       data: {
         overallScore,
@@ -84,21 +121,65 @@ class UiQualityJudgeExecutor implements AgentExecutor {
       assumptions: [],
       risks: [],
       nextActions: [],
-    };
-    return {
-      runId: request.runId,
-      stepRunId: request.stepRunId,
-      attemptId: request.attemptId,
-      provider: 'mock',
-      model: mockModel,
-      executedModel: mockModel,
-      exitCode: 0,
-      durationMs: 1,
-      stdout: JSON.stringify(output),
-      stderr: '',
-      output,
-      usage: { inputTokens: 100, outputTokens: 100, estimatedCostUsd: 0 },
-    };
+    });
+  }
+
+  health(): Promise<ExecutorHealth> {
+    return this.delegate.health();
+  }
+}
+
+/**
+ * Like `UiQualityJudgeExecutor` above, but routes the judge call through a
+ * real `CodexCliExecutor` spawning the checked-in fake `codex` binary
+ * (#548), instead of fabricating the judge output in-process. Proves the
+ * fake-provider-CLI fix (packages/executors/src/fixtures/fake-cli/fake-cli-core.mjs)
+ * actually reaches `evaluateUiQuality` through the same executor class
+ * production code uses, while everything else in the run stays on
+ * `MockAgentExecutor` — no Docker-backed preview or real LLM calls needed.
+ */
+class RealFakeCliJudgeExecutor implements AgentExecutor {
+  readonly provider = 'mock';
+  private readonly delegate = new MockAgentExecutor();
+  private readonly judge = new CodexCliExecutor(1_000_000);
+  readonly servedScores: Array<{ stepId: string; overallScore: number }> = [];
+
+  /** Scripted `overallScore` for every call after the first, last one repeating
+   * (default: one 0.8) — the real fake CLI always returns a fixed score
+   * (#548's fake-cli-core.mjs), so a repair-then-pass scenario needs a
+   * scripted second score the same way the mock-only #477 test above does. */
+  constructor(private readonly laterScores: readonly number[] = [0.8]) {}
+
+  async execute(
+    request: AgentExecutionRequest,
+    signal?: AbortSignal,
+    onEvent?: (event: ExecutorStreamEvent) => void,
+  ): Promise<AgentExecutionResult> {
+    if (request.outputSchema?.['$id'] !== UI_QUALITY_JUDGE_JSON_SCHEMA.$id) {
+      return this.delegate.execute(request, signal, onEvent);
+    }
+    if (this.servedScores.length === 0) {
+      const result = await this.judge.execute({ ...request, provider: 'codex' }, signal);
+      const data = result.output.data as { overallScore: number };
+      this.servedScores.push({ stepId: request.stepId, overallScore: data.overallScore });
+      return result;
+    }
+    const overallScore =
+      this.laterScores[Math.min(this.servedScores.length - 1, this.laterScores.length - 1)]!;
+    this.servedScores.push({ stepId: request.stepId, overallScore });
+    return scriptedJudgeResult(request, `mock:${request.provider}/scripted`, {
+      schemaVersion: '1',
+      status: 'completed',
+      summary: 'Scripted post-repair judge score.',
+      data: {
+        overallScore,
+        criteria: [{ criterionId: 'layout-coherence', score: overallScore }],
+      },
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      nextActions: [],
+    });
   }
 
   health(): Promise<ExecutorHealth> {
@@ -113,18 +194,24 @@ afterEach(async () => {
   );
 });
 
+interface ServesJudgeScores {
+  readonly servedScores: Array<{ stepId: string; overallScore: number }>;
+}
+
 interface JudgedRunOptions {
   /** Judge `overallScore` per call, last value repeating (default: one 0.82). */
   scores?: readonly number[];
   /** `uiQualityJudge.minOverallScore` in the policy; omitted = advisory (#475). */
   minOverallScore?: number;
+  /** Overrides the default `UiQualityJudgeExecutor` (#548's `RealFakeCliJudgeExecutor`, etc). */
+  judgeExecutor?: AgentExecutor & ServesJudgeScores;
 }
 
 async function startJudgedRun(options: JudgedRunOptions = {}): Promise<{
   runtime: Runtime;
   runId: string;
   projectId: string;
-  judge: UiQualityJudgeExecutor;
+  judge: AgentExecutor & ServesJudgeScores;
 }> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-ui-quality-judge-'));
   temporaryDirectories.push(dataDir);
@@ -165,7 +252,7 @@ async function startJudgedRun(options: JudgedRunOptions = {}): Promise<{
   // requested provider (see packages/executors/src/registry.ts); overriding
   // it is the established way this package's tests substitute step-specific
   // mock behavior without touching production wiring.
-  const judge = new UiQualityJudgeExecutor(options.scores);
+  const judge = options.judgeExecutor ?? new UiQualityJudgeExecutor(options.scores);
   Object.defineProperty(runtime.executors, 'executor', {
     configurable: true,
     value: judge,
@@ -343,5 +430,89 @@ describe('#477: a low UI-quality score gates the run, repairs, then passes', () 
         2,
       ),
     );
+  }, 60_000);
+});
+
+describe('#548: the real fake-CLI-backed judge gates a run in both directions', () => {
+  // PATH mutation is process-wide; this file lives in the composition
+  // package's dedicated slow-bucket entry (package.json's test:unit:slow
+  // lists the whole `packages/composition/src` directory), which runs
+  // serially (--maxWorkers=1), so no concurrent test observes it — same
+  // reasoning as packages/executors/src/fake-cli.integration.test.ts.
+  const FAKE_CLI_DIR = resolve(import.meta.dirname, '../../executors/src/fixtures/fake-cli');
+  const originalPath = process.env.PATH;
+
+  beforeAll(() => {
+    process.env.PATH = `${FAKE_CLI_DIR}:${originalPath}`;
+  });
+
+  afterAll(() => {
+    process.env.PATH = originalPath;
+  });
+
+  it('a score at/above the threshold leaves the run approved', async () => {
+    const { runtime, runId, projectId, judge } = await startJudgedRun({
+      minOverallScore: 0.5,
+      judgeExecutor: new RealFakeCliJudgeExecutor(),
+    });
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, runId);
+
+    const detail = await runtime.projectService.get(projectId);
+    expect(detail.project.status).toBe('completed');
+
+    // Proves the fake CLI fix (#548): the first call actually shelled out to
+    // the checked-in fake `codex` binary and came back schema-conforming,
+    // instead of `evaluateUiQuality` degrading to `undefined` as it did
+    // before fake-cli-core.mjs learned the judge's output schema.
+    expect(judge.servedScores[0]?.overallScore).toBe(0.8);
+
+    const reportArtifact = await runtime.artifacts.getLatest(
+      projectId,
+      'browser-verification.report',
+    );
+    const report: BrowserVerificationReport = BrowserVerificationReportSchema.parse(
+      reportArtifact?.content,
+    );
+    expect(report.approved).toBe(true);
+    expect(report.uiQuality?.overallScore).toBe(0.8);
+  }, 60_000);
+
+  it('a score below the threshold flips approved false and routes to repair', async () => {
+    const { runtime, runId, projectId, judge } = await startJudgedRun({
+      // Above the real fake CLI's fixed 0.8 (#548's fake-cli-core.mjs), so the
+      // first, real-CLI-backed call fails the gate.
+      minOverallScore: 0.85,
+      judgeExecutor: new RealFakeCliJudgeExecutor([0.95]),
+    });
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, runId);
+
+    const detail = await runtime.projectService.get(projectId);
+    expect(detail.project.status).toBe('completed');
+
+    expect(judge.servedScores[0]?.overallScore).toBe(0.8);
+    expect(judge.servedScores.slice(1)).not.toContain(0.8);
+
+    const events = await runtime.events.list(projectId, 10_000);
+    const browserRepairs = events.filter(
+      (event) =>
+        event.type === 'quality.repair_requested' && event.dedupeKey?.includes(':browser:'),
+    );
+    expect(browserRepairs).toHaveLength(1);
+    expect(browserRepairs[0]?.message).toContain('UI-quality gate failed');
+
+    const reportArtifact = await runtime.artifacts.getLatest(
+      projectId,
+      'browser-verification.report',
+    );
+    const report: BrowserVerificationReport = BrowserVerificationReportSchema.parse(
+      reportArtifact?.content,
+    );
+    // The persisted final state is the post-repair one.
+    expect(report.approved).toBe(true);
+    expect(report.uiQuality?.overallScore).toBe(0.95);
   }, 60_000);
 });

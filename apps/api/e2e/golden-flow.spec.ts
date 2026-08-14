@@ -9,17 +9,24 @@ import type { AgentExecutor } from '@agent-foundry/domain';
 import type {
   AgentExecutionRequest,
   AgentExecutionResult,
+  BrowserVerificationReport,
   ExecutorHealth,
   OperationKind,
   RouterDecisionLogEntry,
   TaskProfile,
 } from '@agent-foundry/contracts';
+import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
 import { buildApp } from '../src/app.js';
 import { reserveEphemeralPort, waitForHttp } from './support.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
 const FIXTURE_SCRIPT = resolve(REPO_ROOT, 'packages/executors/src/fixtures/preview-dev-server.mjs');
 const REFERENCE_IMAGE = resolve(import.meta.dirname, 'fixtures/design-reference.png');
+const UI_QUALITY_POLICY_ID = 'golden-flow-ui-quality-fixture';
+const UI_QUALITY_POLICY_FIXTURE = resolve(
+  import.meta.dirname,
+  `fixtures/${UI_QUALITY_POLICY_ID}.yaml`,
+);
 const BUILDER_SCREENSHOT = resolve(
   REPO_ROOT,
   'test-results/issue-43-knowledge-builder-desktop.png',
@@ -95,17 +102,42 @@ let apiBaseUrl: string;
 let webProcess: ChildProcess;
 let webBaseUrl: string;
 const dirs: string[] = [];
+// #548: EXECUTOR_MODE: 'real' below spawns the real ClaudeCliExecutor /
+// CodexCliExecutor classes, which resolve the `claude` / `codex` command by
+// name on PATH. The suite ran no agent step before the UI-quality judge
+// policy below was added — golden-flow-e2e-v1.yaml has no 'agent' node —
+// so nothing previously required these to resolve to anything at all.
+// Prepending the checked-in fake CLIs (same fixtures fake-cli.integration.test.ts
+// uses) makes this self-contained rather than depending on an external PATH.
+const FAKE_CLI_DIR = resolve(REPO_ROOT, 'packages/executors/src/fixtures/fake-cli');
+const originalPath = process.env.PATH;
 
 test.beforeAll(async () => {
-  const [dataDir, workflowsDir] = await Promise.all([
+  process.env.PATH = `${FAKE_CLI_DIR}:${originalPath}`;
+  const [dataDir, workflowsDir, policiesDir] = await Promise.all([
     mkdtemp(join(tmpdir(), 'agent-foundry-golden-e2e-data-')),
     mkdtemp(join(tmpdir(), 'agent-foundry-golden-e2e-wf-')),
+    mkdtemp(join(tmpdir(), 'agent-foundry-golden-e2e-policies-')),
   ]);
-  dirs.push(dataDir, workflowsDir);
+  dirs.push(dataDir, workflowsDir, policiesDir);
   await writeFile(
     join(workflowsDir, 'golden-flow-e2e-v1.yaml'),
     await readFile(resolve(import.meta.dirname, 'fixtures/golden-flow-e2e-v1.yaml'), 'utf8'),
   );
+  await Promise.all([
+    // The 'default' policy every other test in this file relies on implicitly
+    // (createProject's policyId default) — copied from the repo's checked-in
+    // policies/default.yaml so overriding POLICIES_DIR below changes nothing
+    // for them, and can't silently drift from it.
+    writeFile(
+      join(policiesDir, 'default.yaml'),
+      await readFile(resolve(REPO_ROOT, 'policies/default.yaml'), 'utf8'),
+    ),
+    writeFile(
+      join(policiesDir, `${UI_QUALITY_POLICY_ID}.yaml`),
+      await readFile(UI_QUALITY_POLICY_FIXTURE, 'utf8'),
+    ),
+  ]);
 
   const [apiPort, webPort] = await Promise.all([reserveEphemeralPort(), reserveEphemeralPort()]);
   // Reserve the web port up front so its origin can be passed as WEB_ORIGIN
@@ -129,6 +161,7 @@ test.beforeAll(async () => {
       REPO_ROOT,
       DATA_DIR: dataDir,
       WORKFLOWS_DIR: workflowsDir,
+      POLICIES_DIR: policiesDir,
       EXECUTOR_MODE: 'real',
       API_HOST: '127.0.0.1',
       API_PORT: String(apiPort),
@@ -155,10 +188,11 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   webProcess.kill();
+  process.env.PATH = originalPath;
   await Promise.all([apiClose(), ...dirs.map((dir) => rm(dir, { recursive: true, force: true }))]);
 });
 
-async function createProject(): Promise<string> {
+async function createProject(policyId?: string): Promise<string> {
   const response = await fetch(`${apiBaseUrl}/projects`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -166,6 +200,7 @@ async function createProject(): Promise<string> {
       name: 'Golden flow E2E',
       prd: 'x'.repeat(60),
       workflowId: 'golden-flow-e2e-v1',
+      ...(policyId ? { policyId } : {}),
     }),
   });
   expect(response.status).toBe(202);
@@ -501,13 +536,29 @@ async function latestOperationRequest(projectId: string, kind: OperationKind): P
 test('golden flow: change request, preview, browser tests, diff approval, axe', async ({
   page,
 }) => {
-  const projectId = await createProject();
+  const projectId = await createProject(UI_QUALITY_POLICY_ID);
   await seedWorkspaceAndPlan(projectId);
   expect(await runtime.worker.runOnce()).toBe(true);
   await stopProvisionedPreview(projectId);
 
   const run = await getRun(projectId);
   expect(run.status).toBe('awaiting_approval');
+
+  // #548: the fixture policy's uiQualityJudge ran against the fake provider
+  // CLI (packages/executors/src/fixtures/fake-cli/fake-cli-core.mjs) during
+  // verify-browser above. Before that fixture learned the judge's output
+  // schema, evaluateUiQuality always degraded to `undefined` here and this
+  // field never landed on the report.
+  const reportArtifact = await runtime.artifacts.getLatest(
+    projectId,
+    'browser-verification.report',
+  );
+  const report: BrowserVerificationReport = BrowserVerificationReportSchema.parse(
+    reportArtifact?.content,
+  );
+  expect(report.approved).toBe(true);
+  expect(report.uiQuality?.overallScore).toBeGreaterThanOrEqual(0.5);
+
   const firstBuildCommit = await runtime.workspaces.checkpoint(
     projectId,
     'golden-flow first build',

@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  UI_QUALITY_JUDGE_JSON_SCHEMA,
   GeneratedTaskGraphArtifactSchema,
   type AgentExecutionRequest,
 } from '@agent-foundry/contracts';
@@ -214,5 +215,54 @@ describe('fake provider CLIs', () => {
 
     expect(result.output).toMatchObject({ status: 'completed', approved: true });
     await expect(readFile(join(readOnlyWorkspace, 'package.json'), 'utf8')).rejects.toThrow();
+  });
+
+  // #548: the UI-quality judge (packages/orchestrator/src/ui-quality-judge.ts)
+  // calls executor.execute() directly with a raw prompt that never references
+  // a REQUEST.md — there is no per-step run context on disk for it, unlike
+  // every other caller above. Codex still receives the schema: its invocation
+  // (output-schema-prompt.ts) always appends "Output JSON Schema:" plus the
+  // schema JSON to the stdin prompt, which is the only channel the fake CLI
+  // has to recognize this request without a REQUEST.md to read.
+  it('answers the UI-quality judge prompt with a schema-conforming payload through the fake codex CLI', async () => {
+    const executor = new CodexCliExecutor(1_000_000);
+
+    const result = await executor.execute(
+      request({
+        stepId: 'browser-verify.T2',
+        role: 'tester',
+        taskKind: 'verification',
+        mutatesWorkspace: false,
+        provider: 'codex',
+        prompt: [
+          'You are judging the visual quality of a web application that was just exercised by an automated browser test.',
+          '',
+          'Review these screenshot files, relative to your working directory:',
+          '- 0-load-root.png (browser step "load-root")',
+          '',
+          'Score the UI against every criterion of rubric version 1:',
+          '- layout-coherence (Layout coherence): Elements are visually organized.',
+          '',
+          'Rules:',
+          '- Emit exactly one entry in "criteria" per rubric criterion, using the criterion id verbatim.',
+          '- "score" and "overallScore" are numbers from 0 (unusable) to 1 (excellent).',
+        ].join('\n'),
+        outputSchema: UI_QUALITY_JUDGE_JSON_SCHEMA,
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const data = (result.output as { data: unknown }).data as {
+      overallScore: number;
+      criteria: Array<{ criterionId: string; score: number }>;
+    };
+    expect(typeof data.overallScore).toBe('number');
+    expect(data.overallScore).toBeGreaterThanOrEqual(0);
+    expect(data.overallScore).toBeLessThanOrEqual(1);
+    expect(data.criteria.length).toBeGreaterThan(0);
+    for (const criterion of data.criteria) {
+      expect(typeof criterion.criterionId).toBe('string');
+      expect(typeof criterion.score).toBe('number');
+    }
   });
 });

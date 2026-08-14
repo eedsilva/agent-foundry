@@ -1,0 +1,18 @@
+schemaVersion: '1'
+id: golden-flow-ui-quality-fixture
+version: 1
+forbiddenDependencies: []
+uiQualityJudge:
+  # Must stay codex: the fake CLI (fake-cli-core.mjs's resolveAdHocRequest)
+  # recognizes this ad hoc, REQUEST.md-less prompt only via the "Output JSON
+  # Schema:" block codex's invocation appends (output-schema-prompt.ts).
+  # Claude passes its schema as a separate --json-schema CLI arg instead,
+  # which never reaches the fake CLI — an ad hoc claude request still throws
+  # "prompt does not reference a REQUEST.md", reintroducing #548's bug.
+  provider: codex
+  model: fake-judge-model
+  # Fixture value (#548), not the shipped production number (see the sibling
+  # issue for that decision) — comfortably below the fake CLI's fixed 0.8
+  # (packages/executors/src/fixtures/fake-cli/fake-cli-core.mjs), so the
+  # golden journey's judge call stays advisory and the run stays approved.
+  minOverallScore: 0.5
