@@ -11,8 +11,11 @@ export function buildArtifact(
   identity: Pick<FakeCliIdentity, 'stepId' | 'role' | 'taskKind'> & {
     outputSchemaId?: string | undefined;
   },
-  options?: { label?: string; t2AcceptanceMode?: string },
+  options?: { label?: string; t2AcceptanceMode?: string; uiQualityScore?: number },
 ): unknown;
-export function respond(prompt: string): Promise<unknown>;
+export function respond(
+  prompt: string,
+  options?: { outputSchemaJson?: string | undefined },
+): Promise<unknown>;
 export function readStdin(): Promise<string>;
 export function argValue(argv: string[], flag: string): string | undefined;

@@ -152,49 +152,46 @@ describe('fake provider CLIs', () => {
     expect(parsed.data.tasks.every((task) => typeof task.module === 'string')).toBe(true);
   });
 
-  it('round-trips a UI-quality judge step through the fake claude CLI into a schema-conforming payload (#548)', async () => {
-    await seedRequestFiles(
-      workspace,
-      'run-1',
-      'step-judge',
-      'attempt-judge',
-      {
-        stepId: 'verify-browser',
-        taskKind: 'verification',
-        role: 'tester',
-        mutationAllowed: false,
-      },
-      UI_QUALITY_JUDGE_JSON_SCHEMA,
-    );
-    const executor = new ClaudeCliExecutor(1_000_000);
+  it('round-trips a bare UI-quality judge request through both fake subprocess CLIs (#548)', async () => {
+    const cases = [
+      { provider: 'claude' as const, executor: new ClaudeCliExecutor(1_000_000) },
+      { provider: 'codex' as const, executor: new CodexCliExecutor(1_000_000) },
+    ];
 
-    const result = await executor.execute(
-      request({
-        stepRunId: 'step-judge',
-        attemptId: 'attempt-judge',
-        stepId: 'verify-browser',
-        role: 'tester',
-        taskKind: 'verification',
-        mutatesWorkspace: false,
-        outputSchema: UI_QUALITY_JUDGE_JSON_SCHEMA,
-      }),
-    );
-
-    expect(result.exitCode).toBe(0);
-    const parsed = UiQualityJudgeOutputSchema.safeParse((result.output as { data: unknown }).data);
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.overallScore).toBeGreaterThanOrEqual(0);
-      expect(parsed.data.overallScore).toBeLessThanOrEqual(1);
-      expect(parsed.data.criteria.map((criterion) => criterion.criterionId).sort()).toEqual(
-        [
-          'contrast-readability',
-          'empty-loading-error-states',
-          'layout-coherence',
-          'navigation',
-          'responsive-sanity',
-        ].sort(),
+    for (const { provider, executor } of cases) {
+      const result = await executor.execute(
+        request({
+          stepRunId: `step-judge-${provider}`,
+          attemptId: `attempt-judge-${provider}`,
+          stepId: 'verify-browser',
+          role: 'tester',
+          taskKind: 'verification',
+          provider,
+          mutatesWorkspace: false,
+          prompt:
+            'Score the browser screenshots against the UI-quality rubric. Return only the required JSON object.',
+          outputSchema: UI_QUALITY_JUDGE_JSON_SCHEMA,
+        }),
       );
+
+      expect(result.exitCode).toBe(0);
+      const parsed = UiQualityJudgeOutputSchema.safeParse(
+        (result.output as { data: unknown }).data,
+      );
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.overallScore).toBeGreaterThanOrEqual(0);
+        expect(parsed.data.overallScore).toBeLessThanOrEqual(1);
+        expect(parsed.data.criteria.map((criterion) => criterion.criterionId).sort()).toEqual(
+          [
+            'contrast-readability',
+            'empty-loading-error-states',
+            'layout-coherence',
+            'navigation',
+            'responsive-sanity',
+          ].sort(),
+        );
+      }
     }
   });
 

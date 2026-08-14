@@ -20,9 +20,8 @@ const UI_QUALITY_JUDGE_SCHEMA_ID =
  * boundary instead of silently downstream (format owner:
  * packages/orchestrator/src/prompt-compiler.ts compileRequestMarkdown). */
 export async function resolveRequest(prompt) {
-  const match = prompt.match(/\.orchestrator\/runs\/\S+\/REQUEST\.md/);
-  if (!match) throw new Error('fake CLI: prompt does not reference a REQUEST.md');
-  const requestPath = join(process.cwd(), match[0]);
+  const requestPath = requestPathFromPrompt(prompt);
+  if (!requestPath) throw new Error('fake CLI: prompt does not reference a REQUEST.md');
   const markdown = await readFile(requestPath, 'utf8');
   const field = (label) => {
     const value = markdown.match(new RegExp(`^- ${label}: (.+)$`, 'm'))?.[1]?.trim();
@@ -47,6 +46,45 @@ export async function resolveRequest(prompt) {
     mutationAllowed: field('Workspace mutation allowed') === 'yes',
     outputSchemaId,
   };
+}
+
+function requestPathFromPrompt(prompt) {
+  const match = prompt.match(/\.orchestrator\/runs\/\S+\/REQUEST\.md/);
+  return match ? join(process.cwd(), match[0]) : undefined;
+}
+
+function schemaIdFromJson(schemaJson) {
+  if (!schemaJson) return undefined;
+  try {
+    const schema = JSON.parse(schemaJson);
+    return typeof schema?.$id === 'string' ? schema.$id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function schemaIdFromCodexPrompt(prompt) {
+  const marker = 'Output JSON Schema:\n';
+  const index = prompt.lastIndexOf(marker);
+  return index === -1 ? undefined : schemaIdFromJson(prompt.slice(index + marker.length).trim());
+}
+
+async function resolveInvocation(prompt, options = {}) {
+  if (requestPathFromPrompt(prompt)) return resolveRequest(prompt);
+
+  const outputSchemaId =
+    schemaIdFromJson(options.outputSchemaJson) ?? schemaIdFromCodexPrompt(prompt);
+  if (outputSchemaId === UI_QUALITY_JUDGE_SCHEMA_ID) {
+    return {
+      stepId: 'ui-quality-judge',
+      role: 'tester',
+      taskKind: 'verification',
+      mutationAllowed: false,
+      outputSchemaId,
+    };
+  }
+
+  throw new Error('fake CLI: prompt does not reference a REQUEST.md');
 }
 
 /**
@@ -280,8 +318,8 @@ export function buildArtifact(identity, options = {}) {
   };
 }
 
-export async function respond(prompt) {
-  const identity = await resolveRequest(prompt);
+export async function respond(prompt, options = {}) {
+  const identity = await resolveInvocation(prompt, options);
   if (identity.mutationAllowed && ['implementation', 'repair'].includes(identity.taskKind)) {
     await mutateWorkspace(process.cwd(), identity.stepId, 'fake');
   }
