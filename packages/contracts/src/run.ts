@@ -155,6 +155,14 @@ export const RunExecutionStateSchema = z
     activeElapsedMs: z.number().int().nonnegative(),
     activeSince: z.string().datetime().optional(),
     consecutiveRepairs: z.number().int().nonnegative(),
+    /**
+     * Per-task repair streaks, set only while a parallel task pool is running
+     * (#520). N concurrent tasks interleave into one run-level streak, so the
+     * flat `consecutiveRepairs` above is the *worst* of these rather than
+     * their sum. Absent at the default cap of 1, where the run-level counter
+     * already means "repairs since the last approval".
+     */
+    consecutiveRepairsByTask: z.record(z.string(), z.number().int().nonnegative()).optional(),
     countedRepairStepRunIds: z.array(PathSegmentSchema).max(10).optional(),
     lastVerifiedCheckpoint: z.string().min(1).optional(),
     ceiling: z

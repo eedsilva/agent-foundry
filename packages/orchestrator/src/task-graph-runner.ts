@@ -124,8 +124,14 @@ export interface TaskGraphRuntime {
     stepId: string;
     iteration: number;
     signal: AbortSignal;
+    /**
+     * Which task's repair ladder this round belongs to (#520). Passed only
+     * when the pool is engaged; absent, the counter stays the single run-level
+     * streak it has always been.
+     */
+    scope?: string;
   }): Promise<void>;
-  resetConsecutiveRepairs(runId: string): Promise<void>;
+  resetConsecutiveRepairs(runId: string, scope?: string): Promise<void>;
 }
 
 export interface TaskGraphRunnerDependencies {
@@ -373,7 +379,11 @@ export class TaskGraphRunner {
     const browserAcceptance = taskUsesBrowserAcceptance(task, node);
     const qualityAttemptStride =
       (browserAcceptance ? 2 : 1) * ((node.repair?.maxAttempts ?? 0) + 1);
-    const resumedFailure = await this.resumedTaskFailure(
+    // Per-task repair streak key, so N concurrent ladders don't share one
+    // run-level counter. `pool.parallelism` is set only when the cap is > 1
+    // (Ruling 2), which keeps the default path's counter byte-identical.
+    const repairScope = pool.parallelism !== undefined ? `${node.id}:${task.id}` : undefined;
+    const resumed = await this.resumedTaskState(
       project.id,
       runId,
       node.id,
@@ -381,6 +391,7 @@ export class TaskGraphRunner {
       step.id,
       routing,
     );
+    const resumedFailure = resumed.failure;
     // A resumed checkpoint is a sha in the primary checkout, left by an
     // earlier process. A freshly forked worktree already starts at the
     // primary's current HEAD, so there is nothing there to roll back to.
@@ -393,6 +404,12 @@ export class TaskGraphRunner {
         `${node.id}-${task.id}-${runId}`,
         worktree,
       ));
+    // Only ever read on the primary path — a worktree is torn down whole, never
+    // rolled back — so the extra `checkpoint` round-trips that maintain it are
+    // skipped when the task is isolated. Nothing is lost by that: every
+    // workspace-mutating step commits inside its own worktree
+    // (`commitAgentWorkspace`), and an approved verify checkpoints it again,
+    // so `af/task/<label>` already carries the work `integrate()` merges.
     let attemptCheckpoint = taskCheckpoint;
     const startAttempt =
       resumedFailure?.attempt ?? (await this.firstTaskAttempt(runId, node.id, step.id));
@@ -408,8 +425,19 @@ export class TaskGraphRunner {
     // conflict on the same task converts to a `QualityGateError` and does
     // spend an attempt, so a pathologically conflicting task still terminates.
     let conflictRetries = 0;
+    // Allowances an *earlier process* already spent on this task, replayed from
+    // the timeline. Ruling 13 keeps the allowance itself fresh per call; this
+    // only restores the ladder those conflicts extended, without which a resume
+    // that lands on an attempt beyond `maxAttempts` skips the loop body
+    // entirely and fails the task with a bare `undefined`. Always 0 on the
+    // default path, which never forks a worktree and so never conflicts.
+    const priorConflictRetries = resumed.conflictRetries;
     try {
-      for (let attempt = startAttempt; attempt <= maxAttempts + conflictRetries; attempt += 1) {
+      for (
+        let attempt = startAttempt;
+        attempt <= maxAttempts + priorConflictRetries + conflictRetries;
+        attempt += 1
+      ) {
         await this.dependencies.runtime.assertExecutionMayContinue(runId, signal);
         const qualityAttemptBase = (attempt - 1) * qualityAttemptStride;
         let implementation: StoredArtifact | undefined;
@@ -438,14 +466,16 @@ export class TaskGraphRunner {
             pinnedInputs,
             qualityAttemptBase,
             worktree,
+            repairScope,
           );
-          attemptCheckpoint = await this.dependencies.workspaces.checkpoint(
-            project.id,
-            `${node.id}-${task.id}-${runId}-verified`,
-            worktree,
-          );
+          if (worktree === undefined) {
+            attemptCheckpoint = await this.dependencies.workspaces.checkpoint(
+              project.id,
+              `${node.id}-${task.id}-${runId}-verified`,
+            );
+          }
           const asserted = browserAcceptance
-            ? await this.assertTask(input, task, pinnedInputs, qualityAttemptBase)
+            ? await this.assertTask(input, task, pinnedInputs, qualityAttemptBase, repairScope)
             : null;
           const reverified = asserted
             ? await this.verifyTask(
@@ -455,6 +485,7 @@ export class TaskGraphRunner {
                 pinnedInputs,
                 qualityAttemptBase + (node.repair?.maxAttempts ?? 0) + 1,
                 worktree,
+                repairScope,
               )
             : null;
           const commit = await this.commitForArtifact(
@@ -479,9 +510,11 @@ export class TaskGraphRunner {
               {
                 nodeId: node.id,
                 runId,
-                // Distinct from the ordinary `:${attempt}:failed` key: this
-                // attempt number is reused by the retry, so the two events
-                // would otherwise collide.
+                // `:conflict` is the discriminator, not a collision guard: the
+                // retry increments `attempt` (Ruling 14 — the number feeds
+                // `iteration`, `qualityAttemptBase` and several dedupe keys),
+                // so this key is what tells a replay that *this* attempt ended
+                // in a merge race rather than a red gate.
                 dedupeKey: `${runId}:task:${node.id}:${task.id}:${attempt}:conflict`,
                 data: {
                   taskId: task.id,
@@ -497,11 +530,6 @@ export class TaskGraphRunner {
               },
             );
             await pool.isolation.fork();
-            attemptCheckpoint = await this.dependencies.workspaces.checkpoint(
-              project.id,
-              `${node.id}-${task.id}-${runId}`,
-              worktree,
-            );
             continue;
           }
           const outcome = attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : '';
@@ -551,7 +579,7 @@ export class TaskGraphRunner {
             },
           );
           if (!(error instanceof QualityGateError)) throw error;
-          if (attempt >= maxAttempts + conflictRetries) throw error;
+          if (attempt >= maxAttempts + priorConflictRetries + conflictRetries) throw error;
           const nextRoutingStartIndex = nextTaskExecutorIndex(
             routing,
             implementation ? executorOutcome(implementation).executor : undefined,
@@ -570,11 +598,6 @@ export class TaskGraphRunner {
             // both discards the failed attempt and picks up any sibling that
             // landed meanwhile — a rollback first would only be undone by it.
             await pool.isolation.fork();
-            attemptCheckpoint = await this.dependencies.workspaces.checkpoint(
-              project.id,
-              `${node.id}-${task.id}-${runId}`,
-              worktree,
-            );
           } else {
             await this.dependencies.workspaces.rollback(project.id, attemptCheckpoint);
           }
@@ -595,27 +618,40 @@ export class TaskGraphRunner {
     }
   }
 
-  private async resumedTaskFailure(
+  /**
+   * What an earlier process already spent on this task, replayed from the
+   * timeline: the quality failure to resume from (if any), and how many
+   * conflict allowances it burned.
+   */
+  private async resumedTaskState(
     projectId: string,
     runId: string,
     nodeId: string,
     taskId: string,
     stepId: string,
     routing: ReturnType<typeof resolveRoutingEntry>,
-  ): Promise<{ attempt: number; routingStartIndex: number; checkpoint?: string } | undefined> {
-    const terminal = (await this.dependencies.events.list(projectId))
-      .filter(
-        (event) =>
-          event.runId === runId &&
-          event.nodeId === nodeId &&
-          (event.type === 'task.failed' || event.type === 'task.completed') &&
-          event.data.taskId === taskId &&
-          event.data.stepId === stepId,
-      )
-      .at(-1);
-    if (!terminal || terminal.type !== 'task.failed') return undefined;
+  ): Promise<{
+    conflictRetries: number;
+    failure?: { attempt: number; routingStartIndex: number; checkpoint?: string };
+  }> {
+    const terminals = (await this.dependencies.events.list(projectId)).filter(
+      (event) =>
+        event.runId === runId &&
+        event.nodeId === nodeId &&
+        (event.type === 'task.failed' || event.type === 'task.completed') &&
+        event.data.taskId === taskId &&
+        event.data.stepId === stepId,
+    );
+    const conflictRetries = terminals.filter(
+      (event) => event.data.mergeConflict !== undefined,
+    ).length;
+    // A `task.failed` carrying `mergeConflict` is a scheduling collision, not a
+    // quality failure: Ruling 12 says it must not advance the executor ladder,
+    // which is exactly what resuming *from* it would do.
+    const terminal = terminals.filter((event) => event.data.mergeConflict === undefined).at(-1);
+    if (!terminal || terminal.type !== 'task.failed') return { conflictRetries };
     const failedAttempt = terminal.data.attempt;
-    if (typeof failedAttempt !== 'number') return undefined;
+    if (typeof failedAttempt !== 'number') return { conflictRetries };
 
     const stepRun = (await this.dependencies.stepRuns.list(runId))
       .filter(
@@ -626,10 +662,10 @@ export class TaskGraphRunner {
           !candidate.invalidatedAt,
       )
       .at(-1);
-    if (!stepRun || stepRun.status !== 'completed') return undefined;
+    if (!stepRun || stepRun.status !== 'completed') return { conflictRetries };
 
     const attempt = (await this.dependencies.stepAttempts.list(runId, stepRun.id)).at(-1);
-    if (!attempt || attempt.status !== 'succeeded') return undefined;
+    if (!attempt || attempt.status !== 'succeeded') return { conflictRetries };
 
     const route = attempt.routeDecision?.routingTable;
     const consumedIndex = route
@@ -645,9 +681,12 @@ export class TaskGraphRunner {
         nextTaskExecutorIndex(routing, attempt.provider, 0) ?? routing.executors.length;
     }
     return {
-      attempt: failedAttempt + 1,
-      routingStartIndex: nextRoutingStartIndex,
-      ...(attempt.checkpoint ? { checkpoint: attempt.checkpoint } : {}),
+      conflictRetries,
+      failure: {
+        attempt: failedAttempt + 1,
+        routingStartIndex: nextRoutingStartIndex,
+        ...(attempt.checkpoint ? { checkpoint: attempt.checkpoint } : {}),
+      },
     };
   }
 
@@ -700,6 +739,8 @@ export class TaskGraphRunner {
     task: PlanTask,
     pinnedInputs: readonly ArtifactReference[],
     iterationBase = 0,
+    /** Per-task repair-streak key (#520); absent at the default cap of 1. */
+    scope?: string,
   ): Promise<StoredArtifact | null> {
     const { project, workflow, node, runId, signal } = input;
     if (task.acceptanceMode === 'deterministic-only') return null;
@@ -770,7 +811,7 @@ export class TaskGraphRunner {
       const parsed = BrowserVerificationReportSchema.safeParse(report.content);
       const approved = parsed.success && parsed.data.approved;
       if (approved) {
-        await this.dependencies.runtime.resetConsecutiveRepairs(runId);
+        await this.dependencies.runtime.resetConsecutiveRepairs(runId, scope);
         await this.emit(project.id, 'quality.approved', `${task.id}: ${parsed.data.summary}`, {
           nodeId: node.id,
           runId,
@@ -831,6 +872,7 @@ export class TaskGraphRunner {
         stepId: repairStep.id,
         iteration,
         signal,
+        ...(scope !== undefined ? { scope } : {}),
       });
     }
   }
@@ -846,6 +888,8 @@ export class TaskGraphRunner {
     pinnedInputs: readonly ArtifactReference[],
     iterationBase = 0,
     worktree?: string,
+    /** Per-task repair-streak key (#520); absent at the default cap of 1. */
+    scope?: string,
   ): Promise<StoredArtifact | null> {
     const { project, workflow, node, runId, signal } = input;
     if (!node.verify || !node.repair) return null;
@@ -880,7 +924,7 @@ export class TaskGraphRunner {
         durationMs: this.dependencies.clock.now().getTime() - startedAt,
       });
       if (approved) {
-        await this.dependencies.runtime.resetConsecutiveRepairs(runId);
+        await this.dependencies.runtime.resetConsecutiveRepairs(runId, scope);
         await this.emit(project.id, 'quality.approved', `${task.id}: ${parsed.data.summary}`, {
           nodeId: node.id,
           runId,
@@ -927,6 +971,7 @@ export class TaskGraphRunner {
         stepId: repairStep.id,
         iteration,
         signal,
+        ...(scope !== undefined ? { scope } : {}),
       });
     }
   }

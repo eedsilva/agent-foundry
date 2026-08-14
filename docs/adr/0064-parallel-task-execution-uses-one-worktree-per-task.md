@@ -87,10 +87,21 @@ add -b af/task/<label> <path> HEAD` from the primary checkout, so a same-label b
 left behind by a crashed prior run is reclaimed instead of permanently wedging the next run of
 that label. If the primary checkout has a `node_modules`, it is symlinked into the new worktree —
 a fresh worktree otherwise has none, and the per-task verify step runs the generated app's own
-scripts against it. This is a deliberate, marked ceiling (`ponytail:` comment in
-`workspace-manager.ts`): every parallel worktree shares one install, and two tasks that need
-divergent dependency trees would collide; a per-worktree `npm install` is the upgrade path if that
-ever happens. `integrateWorktree` runs `git merge --no-ff --no-edit af/task/<label>` from the
+scripts against it. That symlink is a *tracked-file hazard*, not only a shared-install one:
+`.gitignore`'s `node_modules/` is a directory-only pattern and git never treats a symlink as a
+directory, so `checkpoint`'s `git add -A` would stage it, commit it onto `af/task/<label>` on the
+first checkpoint after a fork, and `integrateWorktree` would merge it into the primary — replacing
+the real install with a symlink pointing at itself and writing an absolute host path into the
+generated project's history. `createWorktree` therefore adds `node_modules` (no trailing slash, so
+it matches a symlink too) to the repository's `info/exclude` before creating the symlink. Git
+resolves that file against `$GIT_COMMON_DIR`, so one write covers the primary and every worktree,
+including projects scaffolded before this fix and scaffolds that ship their own `.gitignore`; a
+per-worktree `.git/worktrees/<name>/info/exclude` is *not* read by git (verified against real
+git), which is why the exclusion is deliberately shared rather than per-worktree. The remaining
+ceiling is the shared install itself (`ponytail:` comment in `workspace-manager.ts`): every
+parallel worktree shares one `node_modules`, and two tasks that need divergent dependency trees
+would collide; a per-worktree `npm install` is the upgrade path if that ever happens.
+`integrateWorktree` runs `git merge --no-ff --no-edit af/task/<label>` from the
 primary checkout and, on nonzero exit, runs `git merge --abort` before throwing an
 `ExecutionError` naming the label and git's stdout/stderr — the primary checkout is never left
 mid-merge. `removeWorktree` (`git worktree remove --force`, then `git branch -D`) is idempotent,
@@ -207,7 +218,10 @@ worktree-scoped sha they were never designed to accept.
   itself.
 - Negative / operational: parallel worktrees share a single `node_modules` install by symlink, a
   named ceiling — two concurrent tasks needing divergent dependency trees will collide, and the
-  fix (per-worktree installs) is deferred until that actually happens.
+  fix (per-worktree installs) is deferred until that actually happens. The symlink is kept out of
+  git by a `node_modules` line in the repository's shared `info/exclude`, written by
+  `createWorktree`; the directory-only `node_modules/` in the project's `.gitignore` does not
+  match a symlink and is not sufficient on its own.
 - Negative / operational: integration is serialized by construction, so raising the cap speeds up
   implementation and per-task verification, not the merge step — a task graph with many small,
   frequently-conflicting tasks benefits less from a higher cap than one with few, large,

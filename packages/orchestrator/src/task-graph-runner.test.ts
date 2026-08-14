@@ -1271,10 +1271,12 @@ describe('TaskGraphRunner', () => {
       // the time the fork runs.
       expect(targetsAtFork).toEqual([['task-execution-T1-run-1-fork@primary']]);
       // And every later checkpoint targets the worktree, not the primary.
+      // There is no post-verify checkpoint on this path: its only consumer is
+      // the primary-checkout rollback, and an isolated task is torn down whole
+      // instead of rolled back (#520 final review, Minor 7).
       expect(fixture.workspaces.checkpointTargets).toEqual([
         'task-execution-T1-run-1-fork@primary',
         'task-execution-T1-run-1@run-1-task-execution-T1',
-        'task-execution-T1-run-1-verified@run-1-task-execution-T1',
       ]);
     });
 
@@ -1473,6 +1475,87 @@ describe('TaskGraphRunner', () => {
           .sort(),
       ).toEqual(['remove:run-1-task-execution-T1', 'remove:run-1-task-execution-T2']);
     });
+
+    it('scopes the repair streak per task when pooled, and leaves it unscoped at the default cap', async () => {
+      // The emergency ceiling counts *consecutive* repairs against one
+      // run-level number. Under a pool that number is the interleaving of N
+      // ladders, so it has to be keyed by task; at the default cap it must
+      // stay exactly the unkeyed counter it has always been.
+      const redOnce = (): ((input: TaskGraphStepExecution) => boolean) => {
+        const seen = new Set<string>();
+        return (input) => {
+          const first = !seen.has(input.step.id);
+          seen.add(input.step.id);
+          return !first;
+        };
+      };
+      const build = (cap?: number): ReturnType<typeof setupRunner> => {
+        const approved = redOnce();
+        return setupRunner(
+          gatedWorkflow,
+          [task('T1'), task('T2')],
+          (input, artifacts) =>
+            artifacts.put({
+              projectId: input.project.id,
+              name: input.step.outputArtifact,
+              content:
+                input.step.type === 'verify'
+                  ? verificationReport(approved(input))
+                  : completedArtifact(input.step),
+              createdBy: 'test-runtime',
+            }),
+          cap,
+        );
+      };
+
+      const pooled = await build(2);
+      await pooled.run();
+      const serial = await build();
+      await serial.run();
+
+      expect([...pooled.repairScopes].sort()).toEqual(['task-execution:T1', 'task-execution:T2']);
+      expect([...pooled.resetScopes].sort()).toEqual(['task-execution:T1', 'task-execution:T2']);
+      expect(serial.repairScopes).toEqual([undefined, undefined]);
+      expect(serial.resetScopes).toEqual([undefined, undefined]);
+    });
+
+    it('gives a resumed task back the attempt an earlier merge race earned it', async () => {
+      // Attempt 1 lost a merge race (which extends the ladder rather than
+      // spending it), attempt 2 failed a gate for real, and the process died
+      // during attempt 3. The resume has to know the ladder was extended:
+      // deriving the bound from a fresh conflict counter leaves
+      // `3 <= 2 + 0` false, skips the loop body entirely, and fails the task
+      // with a message ending in `undefined`.
+      const fixture = await setupResumedTask({
+        terminals: [{ attempt: 1, mergeConflict: 'CONFLICT (content): src/t1.ts' }, { attempt: 2 }],
+        completedIteration: 2,
+      });
+
+      await fixture.run();
+
+      expect(fixture.implementations).toEqual([{ iteration: 3, routingStartIndex: 1 }]);
+      expect(
+        fixture.events.events.find((event) => event.type === 'task.completed')?.data.attempt,
+      ).toBe(3);
+    });
+
+    it('never resumes an executor ladder from a merge-conflict failure', async () => {
+      // The crash landed between the conflict event and the retry's own
+      // terminal, so the last `task.failed` on the timeline is the conflict.
+      // Ruling 12 forbids a conflict advancing the executor ladder, in-process
+      // or on resume — so the retry must start on the same rung, not the next.
+      const fixture = await setupResumedTask({
+        terminals: [{ attempt: 1, mergeConflict: 'CONFLICT (content): src/t1.ts' }],
+        completedIteration: 1,
+      });
+
+      await fixture.run();
+
+      // `routingStartIndex: 0` is the assertion: the conflict terminal must not
+      // consume a rung. The iteration is the ordinary idempotent-replay one —
+      // attempt 1's stepRun completed, so the resume re-enters it.
+      expect(fixture.implementations).toEqual([{ iteration: 1, routingStartIndex: 0 }]);
+    });
   });
 });
 
@@ -1575,20 +1658,32 @@ async function setupRunner(
   events: InMemoryEvents;
   stepAttempts: InMemoryStepAttempts;
   workspaces: FakeWorkspaces;
+  /** Repair-streak scope of each `recordCompletedRepair` call (#520). */
+  repairScopes: Array<string | undefined>;
+  /** Repair-streak scope of each `resetConsecutiveRepairs` call (#520). */
+  resetScopes: Array<string | undefined>;
 }> {
   const power = { on: true };
   const artifacts = new InMemoryArtifacts(power);
   const events = new InMemoryEvents(power);
   const stepAttempts = new InMemoryStepAttempts(power);
   const workspaces = new FakeWorkspaces(power);
+  const repairScopes: Array<string | undefined> = [];
+  const resetScopes: Array<string | undefined> = [];
   await putTaskGraph(artifacts, tasks);
   const runtime: TaskGraphRuntime = {
     executeStep: (input) => executeStep(input, artifacts, { stepAttempts, workspaces }),
     assertExecutionMayContinue: () => Promise.resolve(),
     isControlFlowError: () => false,
     recordDeterministicOutcome: () => Promise.resolve(),
-    recordCompletedRepair: () => Promise.resolve(),
-    resetConsecutiveRepairs: () => Promise.resolve(),
+    recordCompletedRepair: (input) => {
+      repairScopes.push(input.scope);
+      return Promise.resolve();
+    },
+    resetConsecutiveRepairs: (_runId, scope) => {
+      resetScopes.push(scope);
+      return Promise.resolve();
+    },
   };
   const runner = new TaskGraphRunner({
     artifacts,
@@ -1615,6 +1710,141 @@ async function setupRunner(
     events,
     stepAttempts,
     workspaces,
+    repairScopes,
+    resetScopes,
+  };
+}
+
+/**
+ * A task-graph run resumed from a timeline an earlier process left behind
+ * (#520): `terminals` are the `task.failed` events it wrote, and
+ * `completedIteration` is the attempt whose stepRun and stepAttempt made it to
+ * disk before the crash. Always pooled — the conflict terminals it exists to
+ * exercise only occur when a worktree is being merged.
+ */
+async function setupResumedTask(input: {
+  terminals: Array<{ attempt: number; mergeConflict?: string }>;
+  completedIteration: number;
+}): Promise<{
+  run: () => Promise<StoredArtifact>;
+  events: InMemoryEvents;
+  implementations: Array<{ iteration: number | undefined; routingStartIndex: number | undefined }>;
+}> {
+  const power = { on: true };
+  const artifacts = new InMemoryArtifacts(power);
+  const events = new InMemoryEvents(power);
+  const stepRuns = new InMemoryStepRuns(power);
+  const stepAttempts = new InMemoryStepAttempts(power);
+  const workspaces = new FakeWorkspaces(power);
+  const implementations: Array<{
+    iteration: number | undefined;
+    routingStartIndex: number | undefined;
+  }> = [];
+  await putTaskGraph(artifacts, [task('T1')]);
+  for (const [index, terminal] of input.terminals.entries()) {
+    await events.append({
+      id: `event-${index + 1}`,
+      projectId: project.id,
+      type: 'task.failed',
+      createdAt: `2026-08-07T12:0${index}:00.000Z`,
+      nodeId: 'task-execution',
+      runId: 'run-1',
+      message: `T1 attempt ${terminal.attempt} failed.`,
+      data: {
+        taskId: 'T1',
+        stepId: 'implement.T1',
+        attempt: terminal.attempt,
+        ...(terminal.mergeConflict !== undefined ? { mergeConflict: terminal.mergeConflict } : {}),
+      },
+    });
+  }
+  await stepRuns.create({
+    id: 'step-run-1',
+    runId: 'run-1',
+    nodeId: 'task-execution',
+    stepId: 'implement.T1',
+    stepType: 'agent',
+    iteration: input.completedIteration,
+    status: 'completed',
+    version: 1,
+    createdAt: '2026-08-07T12:00:00.000Z',
+    updatedAt: '2026-08-07T12:00:01.000Z',
+    startedAt: '2026-08-07T12:00:00.000Z',
+    completedAt: '2026-08-07T12:00:01.000Z',
+  });
+  await stepAttempts.create({
+    id: 'attempt-1',
+    runId: 'run-1',
+    stepRunId: 'step-run-1',
+    sequence: 1,
+    executorKind: 'agent',
+    provider: 'claude',
+    model: 'claude-sonnet',
+    status: 'succeeded',
+    version: 1,
+    createdAt: '2026-08-07T12:00:00.000Z',
+    updatedAt: '2026-08-07T12:00:01.000Z',
+    startedAt: '2026-08-07T12:00:00.000Z',
+    completedAt: '2026-08-07T12:00:01.000Z',
+    checkpoint: 'checkpoint-1',
+    context: {
+      projectId: project.id,
+      workflowId: retryWorkflow.id,
+      nodeId: 'task-execution',
+      stepId: 'implement.T1',
+      iteration: input.completedIteration,
+    },
+    inputArtifacts: [],
+    outputArtifacts: [],
+  });
+  const runtime: TaskGraphRuntime = {
+    executeStep(execution: TaskGraphStepExecution): Promise<StoredArtifact> {
+      if (execution.step.id === 'implement.T1') {
+        implementations.push({
+          iteration: execution.iteration,
+          routingStartIndex: execution.routingStartIndex,
+        });
+      }
+      return artifacts.put({
+        projectId: execution.project.id,
+        name: execution.step.outputArtifact,
+        content:
+          execution.step.type === 'verify'
+            ? verificationReport(true)
+            : completedArtifact(execution.step),
+        createdBy: 'test-runtime',
+      });
+    },
+    assertExecutionMayContinue: () => Promise.resolve(),
+    isControlFlowError: () => false,
+    recordDeterministicOutcome: () => Promise.resolve(),
+    recordCompletedRepair: () => Promise.resolve(),
+    resetConsecutiveRepairs: () => Promise.resolve(),
+  };
+  const runner = new TaskGraphRunner({
+    artifacts,
+    events,
+    stepRuns,
+    stepAttempts,
+    workspaces,
+    clock: new SystemClock(),
+    ids: new SequentialIds(),
+    runtime,
+    maxParallelTasks: 2,
+  });
+  const node = retryWorkflow.nodes[0];
+  if (node?.type !== 'for-each-task') throw new Error('Expected for-each-task fixture');
+  return {
+    run: () =>
+      runner.run({
+        project,
+        workflow: retryWorkflow,
+        node,
+        runId: 'run-1',
+        signal: new AbortController().signal,
+      }),
+    events,
+    implementations,
   };
 }
 

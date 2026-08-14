@@ -2271,6 +2271,64 @@ describe('worktree-label threading (#520 task 4)', () => {
     for (const call of commitSpy.mock.calls) expect(call[2]).toBeUndefined();
   });
 
+  it('refuses a blocking verify gate inside a worktree instead of checking the wrong database', async () => {
+    // `syncGeneratedDatabase` applies the *workspace's* pending migrations to
+    // the one shared generated database and checks it against the approved
+    // schema plan — both run-level, both reading the primary checkout with no
+    // worktree. Running it for a worktree-scoped gate verifies a database that
+    // never saw the task's own migration; threading the worktree in would push
+    // one task's unmerged migration onto every sibling. Neither is acceptable
+    // silently (#520 final review, Minor 5).
+    const workflow = WorkflowDefinitionSchema.parse({
+      schemaVersion: '1',
+      id: 'blocking-verify-v1',
+      name: 'Blocking verify fixture',
+      description: 'One blocking deterministic gate, called directly with a worktree label.',
+      stack: 'node',
+      nodes: [
+        {
+          id: 'full-suite',
+          type: 'verify',
+          title: 'Full suite',
+          outputArtifact: 'verification.report',
+          blocksOnFailure: true,
+        },
+      ],
+    });
+    const stores = makeOrchestrator(undefined, undefined, undefined, { workflow });
+    await seedRun(stores, workflow.id);
+    const project = await stores.projects.get('project-1');
+    const step = workflow.nodes[0] as ExecutableStep;
+
+    await expect(
+      (stores.orchestrator as unknown as HasExecuteStep).executeStep(
+        project!,
+        workflow,
+        step,
+        'run-1',
+        'full-suite',
+        new AbortController().signal,
+        undefined,
+        [],
+        undefined,
+        'task-a',
+      ),
+    ).rejects.toThrow('blocksOnFailure');
+
+    // The same gate on the primary checkout gets past the guard and on to the
+    // verifier — this fixture has none, which is exactly how far it must get.
+    await expect(
+      (stores.orchestrator as unknown as HasExecuteStep).executeStep(
+        project!,
+        workflow,
+        step,
+        'run-1',
+        'full-suite',
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow('verify is not used by this fixture');
+  });
+
   it('rolls the worktree back, not the primary checkout, when every candidate fails', async () => {
     const harness = makeHarness(
       { implement: { kind: 'fail-always', error: () => new Error('agent exploded') } },

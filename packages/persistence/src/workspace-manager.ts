@@ -345,8 +345,51 @@ export class FileWorkspaceManager implements WorkspaceManager {
       // one install. Ceiling: two tasks that need divergent dependency trees
       // will collide. Upgrade: per-worktree `npm install` if that ever
       // happens (#520 later tasks).
+      await this.#excludeNodeModules(primary);
       await symlink(nodeModules, join(target, 'node_modules'), 'dir');
     }
+  }
+
+  /**
+   * Keeps the shared-install symlink above out of git.
+   *
+   * `.gitignore`'s `node_modules/` is a *directory-only* pattern and git never
+   * treats a symlink as a directory, so without this the symlink is untracked
+   * rather than ignored: `checkpoint`'s `git add -A` stages it, commits it onto
+   * `af/task/<label>` on the very first checkpoint after a fork, and
+   * `integrateWorktree` merges it into the primary — replacing the primary's
+   * real install with a symlink pointing at itself, breaking every later task's
+   * verify, and writing an absolute host path into the generated project's
+   * history.
+   *
+   * `info/exclude` rather than `.gitignore`: git resolves it against
+   * `$GIT_COMMON_DIR`, so one write covers the primary and every worktree,
+   * including projects scaffolded before this fix and scaffolds that ship
+   * their own `.gitignore` (a per-worktree `.git/worktrees/<name>/info/exclude`
+   * is *not* read — verified against real git). The primary's own
+   * `node_modules` is a real directory that `node_modules/` already ignores,
+   * so this changes nothing there.
+   */
+  async #excludeNodeModules(primary: string): Promise<void> {
+    const commonDir = (
+      await execa('git', ['rev-parse', '--git-common-dir'], { cwd: primary })
+    ).stdout.trim();
+    const excludePath = join(
+      isAbsolute(commonDir) ? commonDir : join(primary, commonDir),
+      'info',
+      'exclude',
+    );
+    const current = await readFile(excludePath, 'utf8').catch((error) =>
+      isNotFound(error) ? '' : Promise.reject(error),
+    );
+    if (current.split('\n').includes('node_modules')) return;
+    // ponytail: read-then-write with no lock. The bytes written are a pure
+    // function of the bytes read and `atomicWriteText` renames into place, so
+    // two racing writers produce the same file and the loser is a no-op.
+    // Ceiling: a concurrent *third-party* edit of info/exclude would be lost.
+    // Upgrade: route this through the scheduler's primary-checkout lock.
+    const separator = current === '' || current.endsWith('\n') ? '' : '\n';
+    await atomicWriteText(excludePath, `${current}${separator}node_modules\n`);
   }
 
   async integrateWorktree(projectId: string, label: string): Promise<void> {

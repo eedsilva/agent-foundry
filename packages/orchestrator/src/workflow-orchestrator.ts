@@ -443,8 +443,9 @@ export class WorkflowOrchestrator {
             input.stepId,
             input.iteration,
             input.signal,
+            input.scope,
           ),
-        resetConsecutiveRepairs: (runId) => this.resetConsecutiveRepairs(runId),
+        resetConsecutiveRepairs: (runId, scope) => this.resetConsecutiveRepairs(runId, scope),
       },
     });
   }
@@ -919,6 +920,7 @@ export class WorkflowOrchestrator {
     stepId: string,
     iteration: number,
     signal: AbortSignal,
+    scope?: string,
   ): Promise<void> {
     await this.assertExecutionMayContinue(runId, signal);
     const repair = (await this.stepRuns.list(runId))
@@ -934,22 +936,54 @@ export class WorkflowOrchestrator {
     const updated = await this.updateExecution(runId, (run) => {
       const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
       const countedRepairStepRunIds = execution.countedRepairStepRunIds ?? [];
-      return countedRepairStepRunIds.includes(repair.id)
-        ? execution
-        : {
-            ...execution,
-            consecutiveRepairs: execution.consecutiveRepairs + 1,
-            countedRepairStepRunIds: [...countedRepairStepRunIds, repair.id].slice(-10),
-          };
+      if (countedRepairStepRunIds.includes(repair.id)) return execution;
+      const counted = [...countedRepairStepRunIds, repair.id].slice(-10);
+      if (scope === undefined) {
+        return {
+          ...execution,
+          consecutiveRepairs: execution.consecutiveRepairs + 1,
+          countedRepairStepRunIds: counted,
+        };
+      }
+      // Under a parallel pool (#520) the run-level streak is the interleaving
+      // of N independent repair ladders: eight tasks each needing two repairs
+      // before their first approval reach 10 with no approval between them and
+      // trip an emergency ceiling no single task came near, while one task's
+      // approval zeroes a sibling that is genuinely running away. So the streak
+      // is counted per task, and the flat field keeps the worst of them — which
+      // leaves the ceiling check and every existing consumer untouched.
+      const byTask = { ...(execution.consecutiveRepairsByTask ?? {}) };
+      byTask[scope] = (byTask[scope] ?? 0) + 1;
+      return {
+        ...execution,
+        consecutiveRepairs: Math.max(...Object.values(byTask)),
+        consecutiveRepairsByTask: byTask,
+        countedRepairStepRunIds: counted,
+      };
     });
     if ((updated.execution?.consecutiveRepairs ?? 0) >= 10) {
       await this.reachCeiling(runId, 'consecutive-repairs', signal);
     }
   }
 
-  private async resetConsecutiveRepairs(runId: string): Promise<void> {
+  private async resetConsecutiveRepairs(runId: string, scope?: string): Promise<void> {
     await this.updateExecution(runId, (run) => {
       const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      if (scope !== undefined) {
+        // A scoped approval clears only its own task's streak; a sibling's
+        // runaway keeps counting. `countedRepairStepRunIds` is left alone —
+        // it is a replay-dedupe window over stepRun ids, not part of the
+        // streak, and the ids in it are not attributable to a scope here.
+        const byTask = { ...(execution.consecutiveRepairsByTask ?? {}) };
+        if (!(scope in byTask)) return execution;
+        delete byTask[scope];
+        const remaining = Object.values(byTask);
+        return {
+          ...execution,
+          consecutiveRepairs: remaining.length ? Math.max(...remaining) : 0,
+          consecutiveRepairsByTask: byTask,
+        };
+      }
       return execution.consecutiveRepairs === 0 && !execution.countedRepairStepRunIds?.length
         ? execution
         : { ...execution, consecutiveRepairs: 0, countedRepairStepRunIds: [] };
@@ -2334,6 +2368,20 @@ export class WorkflowOrchestrator {
       // blocking full-suite gate is the backstop that keeps a mismatch a hard
       // failure rather than a silent no-op.
       if (step.blocksOnFailure) {
+        // `syncGeneratedDatabase` applies the *workspace's* pending migrations
+        // to the one shared generated database and then checks it against the
+        // approved schema plan. Both halves are run-level: it reads
+        // `workspacePath(project.id)` with no worktree, so a worktree-scoped
+        // blocking gate would verify against a database that never saw the
+        // task's own migration — and threading the worktree in would be worse,
+        // pushing one task's unmerged migration onto every sibling's database.
+        // Refused loudly instead of silently wrong; today's `verify-task` in
+        // web-app-v1.yaml does not set `blocksOnFailure`, so nothing hits this.
+        if (worktree !== undefined) {
+          throw new ExecutionError(
+            `Verify step ${step.id} sets blocksOnFailure but is running in worktree "${worktree}": the generated database is shared across worktrees, so a per-task migration and schema check is not supported. Run the blocking gate on the primary checkout.`,
+          );
+        }
         await this.syncGeneratedDatabase(project, runId, stepRun.nodeId, signal);
       }
       const validationDatabaseGate =

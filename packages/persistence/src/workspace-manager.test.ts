@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
@@ -787,6 +787,44 @@ describe('FileWorkspaceManager worktree lifecycle (#520)', () => {
     await expect(
       readFile(join(worktreePath, 'node_modules', 'left-pad', 'index.js'), 'utf8'),
     ).resolves.toBe('module.exports = 1;\n');
+  });
+
+  it('never commits or merges the worktree node_modules symlink back into the primary install', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(join(workspace, 'node_modules', 'left-pad'), { recursive: true });
+    await writeFile(
+      join(workspace, 'node_modules', 'left-pad', 'index.js'),
+      'module.exports = 1;\n',
+    );
+
+    await manager.createWorktree(projectId, 'task-a');
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+    // The scheduler's very first act after forking: a checkpoint whose only
+    // candidate change is the symlink `createWorktree` just made.
+    await manager.checkpoint(projectId, 'fork', 'task-a');
+    await writeFile(join(worktreePath, 'feature.txt'), 'feature\n');
+    await manager.checkpoint(projectId, 'work', 'task-a');
+    await manager.integrateWorktree(projectId, 'task-a');
+
+    const tree = await execa('git', ['ls-tree', '-r', '--name-only', 'HEAD'], { cwd: workspace });
+    expect(tree.stdout.split('\n')).not.toContain('node_modules');
+    expect(await manager.isClean(projectId)).toBe(true);
+    // The primary's install survived the merge as a real directory.
+    const primaryNodeModules = await lstat(join(workspace, 'node_modules'));
+    expect(primaryNodeModules.isSymbolicLink()).toBe(false);
+    expect(primaryNodeModules.isDirectory()).toBe(true);
+    await expect(
+      readFile(join(workspace, 'node_modules', 'left-pad', 'index.js'), 'utf8'),
+    ).resolves.toBe('module.exports = 1;\n');
+    // And the task's actual work still landed.
+    await expect(readFile(join(workspace, 'feature.txt'), 'utf8')).resolves.toBe('feature\n');
   });
 
   it('cleanup removes worktrees along with the workspace since they live under projectRoot', async () => {
