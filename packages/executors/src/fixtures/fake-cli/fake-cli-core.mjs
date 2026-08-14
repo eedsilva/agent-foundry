@@ -24,6 +24,7 @@ const UI_QUALITY_JUDGE_CRITERION_IDS = [
   'contrast-readability',
   'responsive-sanity',
 ];
+const UI_QUALITY_SCORE = 0.8;
 
 /** Parses the persisted REQUEST.md the prompt points at. Throws on a missing
  * required field so a prompt-compiler format change fails loudly at this
@@ -281,14 +282,14 @@ export function buildArtifact(identity, options = {}) {
             }
           : identity.outputSchemaId === UI_QUALITY_JUDGE_SCHEMA_ID
             ? {
-                // Fixture value (#548), not a real judgment: the fake CLI
-                // never looks at the screenshots. Deterministic and fixed on
-                // purpose so tests control the gate outcome via the policy's
-                // minOverallScore instead of this score.
-                overallScore: 0.8,
+                // Fixture value (#548/#549), not a real judgment: the fake CLI
+                // never looks at the screenshots. Keep this deterministic and
+                // above the shipped advisory-only score so mock runs exercise
+                // the judge without entering the repair loop.
+                overallScore: UI_QUALITY_SCORE,
                 criteria: UI_QUALITY_JUDGE_CRITERION_IDS.map((criterionId) => ({
                   criterionId,
-                  score: 0.8,
+                  score: UI_QUALITY_SCORE,
                 })),
               }
             : {
