@@ -76,7 +76,7 @@ function resolveAdHocRequest(prompt, options = {}) {
     (typeof options.outputSchemaJson === 'string'
       ? safeParseSchemaId(options.outputSchemaJson)
       : undefined) ?? (schemaMatch ? safeParseSchemaId(schemaMatch[1]) : undefined);
-  if (!outputSchemaId) {
+  if (outputSchemaId !== UI_QUALITY_JUDGE_SCHEMA_ID) {
     throw new Error('fake CLI: prompt does not reference a REQUEST.md');
   }
   return {

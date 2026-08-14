@@ -5,7 +5,10 @@ export interface FakeCliIdentity {
   mutationAllowed: boolean;
   outputSchemaId?: string | undefined;
 }
-export function resolveRequest(prompt: string): Promise<FakeCliIdentity>;
+export function resolveRequest(
+  prompt: string,
+  options?: { outputSchemaJson?: string | undefined },
+): Promise<FakeCliIdentity>;
 export function mutateWorkspace(cwd: string, stepId: string, label?: string): Promise<void>;
 export function buildArtifact(
   identity: Pick<FakeCliIdentity, 'stepId' | 'role' | 'taskKind'> & {

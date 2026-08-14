@@ -280,4 +280,26 @@ describe('fake provider CLIs', () => {
       }
     },
   );
+
+  it.each([
+    ['codex', () => new CodexCliExecutor(1_000_000)],
+    ['claude', () => new ClaudeCliExecutor(1_000_000)],
+  ] as const)(
+    'keeps missing REQUEST.md strict for ordinary schemas through fake %s',
+    async (provider, createExecutor) => {
+      await expect(
+        createExecutor().execute(
+          request({
+            stepId: 'plan',
+            role: 'planner',
+            taskKind: 'planning',
+            mutatesWorkspace: false,
+            provider,
+            prompt: 'Return the ordinary task-graph artifact for this planning request.',
+            outputSchema: TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+          }),
+        ),
+      ).rejects.toThrow(`${provider} CLI exited with code 1`);
+    },
+  );
 });
