@@ -6,9 +6,11 @@ import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import type { AgentExecutor } from '@agent-foundry/domain';
+import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
 import type {
   AgentExecutionRequest,
   AgentExecutionResult,
+  BrowserVerificationReport,
   ExecutorHealth,
   OperationKind,
   RouterDecisionLogEntry,
@@ -31,6 +33,9 @@ const FIRST_BUILD_DIFF_SCREENSHOT = resolve(
 const ROUTER_SCREENSHOT = resolve(REPO_ROOT, 'test-results/router-dashboard-desktop.png');
 const HOME_SCREENSHOT = resolve(REPO_ROOT, 'test-results/home-desktop.png');
 const VERSIONS_SCREENSHOT = resolve(REPO_ROOT, 'test-results/project-versions-desktop.png');
+const FAKE_CLI_DIR = resolve(REPO_ROOT, 'packages/executors/src/fixtures/fake-cli');
+const GOLDEN_POLICY_ID = 'golden-flow-ui-quality';
+const BLOCKING_POLICY_ID = 'golden-flow-ui-quality-blocking';
 
 /**
  * Whole-page axe scan. Until Task 7 this was scoped to
@@ -95,17 +100,52 @@ let apiBaseUrl: string;
 let webProcess: ChildProcess;
 let webBaseUrl: string;
 const dirs: string[] = [];
+const originalPath = process.env.PATH;
 
 test.beforeAll(async () => {
-  const [dataDir, workflowsDir] = await Promise.all([
+  const [dataDir, workflowsDir, policiesDir] = await Promise.all([
     mkdtemp(join(tmpdir(), 'agent-foundry-golden-e2e-data-')),
     mkdtemp(join(tmpdir(), 'agent-foundry-golden-e2e-wf-')),
+    mkdtemp(join(tmpdir(), 'agent-foundry-golden-e2e-policies-')),
   ]);
-  dirs.push(dataDir, workflowsDir);
+  dirs.push(dataDir, workflowsDir, policiesDir);
+  process.env.PATH = `${FAKE_CLI_DIR}:${originalPath}`;
   await writeFile(
     join(workflowsDir, 'golden-flow-e2e-v1.yaml'),
     await readFile(resolve(import.meta.dirname, 'fixtures/golden-flow-e2e-v1.yaml'), 'utf8'),
   );
+  await Promise.all([
+    writeFile(
+      join(policiesDir, `${GOLDEN_POLICY_ID}.yaml`),
+      [
+        "schemaVersion: '1'",
+        `id: ${GOLDEN_POLICY_ID}`,
+        'version: 1',
+        'forbiddenDependencies: []',
+        'uiQualityJudge:',
+        '  provider: claude',
+        '  model: fake-judge',
+        '  minOverallScore: 0.3',
+        '',
+      ].join('\n'),
+      'utf8',
+    ),
+    writeFile(
+      join(policiesDir, `${BLOCKING_POLICY_ID}.yaml`),
+      [
+        "schemaVersion: '1'",
+        `id: ${BLOCKING_POLICY_ID}`,
+        'version: 1',
+        'forbiddenDependencies: []',
+        'uiQualityJudge:',
+        '  provider: claude',
+        '  model: fake-judge',
+        '  minOverallScore: 0.9',
+        '',
+      ].join('\n'),
+      'utf8',
+    ),
+  ]);
 
   const [apiPort, webPort] = await Promise.all([reserveEphemeralPort(), reserveEphemeralPort()]);
   // Reserve the web port up front so its origin can be passed as WEB_ORIGIN
@@ -129,6 +169,7 @@ test.beforeAll(async () => {
       REPO_ROOT,
       DATA_DIR: dataDir,
       WORKFLOWS_DIR: workflowsDir,
+      POLICIES_DIR: policiesDir,
       EXECUTOR_MODE: 'real',
       API_HOST: '127.0.0.1',
       API_PORT: String(apiPort),
@@ -156,9 +197,10 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   webProcess.kill();
   await Promise.all([apiClose(), ...dirs.map((dir) => rm(dir, { recursive: true, force: true }))]);
+  process.env.PATH = originalPath;
 });
 
-async function createProject(): Promise<string> {
+async function createProject(policyId = GOLDEN_POLICY_ID): Promise<string> {
   const response = await fetch(`${apiBaseUrl}/projects`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -166,6 +208,7 @@ async function createProject(): Promise<string> {
       name: 'Golden flow E2E',
       prd: 'x'.repeat(60),
       workflowId: 'golden-flow-e2e-v1',
+      policyId,
     }),
   });
   expect(response.status).toBe(202);
@@ -498,6 +541,21 @@ async function latestOperationRequest(projectId: string, kind: OperationKind): P
   return readFile(join(runPath, request), 'utf8');
 }
 
+test('golden flow: below-threshold UI quality score blocks browser approval', async () => {
+  const projectId = await createProject(BLOCKING_POLICY_ID);
+  await seedWorkspaceAndPlan(projectId);
+  expect(await runtime.worker.runOnce()).toBe(true);
+  await stopProvisionedPreview(projectId);
+
+  const artifact = await runtime.artifacts.getLatest(projectId, 'browser-verification.report');
+  const report: BrowserVerificationReport = BrowserVerificationReportSchema.parse(
+    artifact?.content,
+  );
+  expect(report.uiQuality?.overallScore).toBe(0.8);
+  expect(report.approved).toBe(false);
+  expect(report.summary).toContain('UI-quality gate failed');
+});
+
 test('golden flow: change request, preview, browser tests, diff approval, axe', async ({
   page,
 }) => {
@@ -505,6 +563,19 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   await seedWorkspaceAndPlan(projectId);
   expect(await runtime.worker.runOnce()).toBe(true);
   await stopProvisionedPreview(projectId);
+
+  const browserArtifact = await runtime.artifacts.getLatest(
+    projectId,
+    'browser-verification.report',
+  );
+  const browserReport: BrowserVerificationReport = BrowserVerificationReportSchema.parse(
+    browserArtifact?.content,
+  );
+  expect(browserReport.approved).toBe(true);
+  expect(browserReport.uiQuality).toMatchObject({
+    overallScore: 0.8,
+    judgeModel: 'fake-judge',
+  });
 
   const run = await getRun(projectId);
   expect(run.status).toBe('awaiting_approval');

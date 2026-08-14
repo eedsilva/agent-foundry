@@ -5,6 +5,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   GeneratedTaskGraphArtifactSchema,
+  UI_QUALITY_JUDGE_JSON_SCHEMA,
+  UiQualityJudgeOutputSchema,
   type AgentExecutionRequest,
 } from '@agent-foundry/contracts';
 import { ClaudeCliExecutor } from './claude-executor.js';
@@ -185,6 +187,62 @@ describe('fake provider CLIs', () => {
     expect(packageJson.scripts.test).toBe('node --test');
     const indexSource = await readFile(join(workspace, 'src', 'index.js'), 'utf8');
     expect(indexSource).toContain('lastStep = "implement.T1"');
+  });
+
+  it('returns judge-shaped output for the UI-quality output schema', async () => {
+    await seedRequestFiles(
+      workspace,
+      'run-1',
+      'step-judge',
+      'attempt-judge',
+      { stepId: 'assert-task', taskKind: 'verification', role: 'tester', mutationAllowed: false },
+      UI_QUALITY_JUDGE_JSON_SCHEMA,
+    );
+    const executor = new ClaudeCliExecutor(1_000_000);
+
+    const result = await executor.execute(
+      request({
+        stepRunId: 'step-judge',
+        attemptId: 'attempt-judge',
+        stepId: 'assert-task',
+        role: 'tester',
+        taskKind: 'verification',
+        mutatesWorkspace: false,
+        outputSchema: UI_QUALITY_JUDGE_JSON_SCHEMA,
+      }),
+    );
+
+    const judgeOutput = UiQualityJudgeOutputSchema.parse(result.output.data);
+    expect(judgeOutput.overallScore).toBe(0.8);
+    expect(judgeOutput.criteria.map((criterion) => criterion.criterionId)).toEqual([
+      'layout-coherence',
+      'navigation',
+      'empty-loading-error-states',
+      'contrast-readability',
+      'responsive-sanity',
+    ]);
+  });
+
+  it('returns judge-shaped output when the judge prompt has no REQUEST.md', async () => {
+    const executor = new ClaudeCliExecutor(1_000_000);
+
+    const result = await executor.execute(
+      request({
+        stepId: 'assert-task',
+        role: 'tester',
+        taskKind: 'verification',
+        mutatesWorkspace: false,
+        prompt: [
+          'You are judging the visual quality of a web application that was just exercised by an automated browser test.',
+          '',
+          'Review these screenshot files, relative to your working directory:',
+          '- .orchestrator/runs/run-1/screenshots/open-root.png (browser step "open-root")',
+        ].join('\n'),
+        outputSchema: UI_QUALITY_JUDGE_JSON_SCHEMA,
+      }),
+    );
+
+    expect(UiQualityJudgeOutputSchema.parse(result.output.data).overallScore).toBe(0.8);
   });
 
   it('does not write workspace files on a read-only step', async () => {
