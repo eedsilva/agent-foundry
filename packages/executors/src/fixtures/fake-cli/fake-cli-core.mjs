@@ -14,10 +14,12 @@ const BROWSER_PLAN_SCHEMA_ID =
 const SCHEMA_PLAN_SCHEMA_ID = 'https://agent-foundry.dev/schemas/schema-plan-artifact-v1.json';
 /** Matches UI_QUALITY_JUDGE_JSON_SCHEMA.$id (packages/contracts/src/ui-quality-rubric.ts).
  * Hardcoded rather than imported: this file is Node-only and cannot depend on
- * workspace packages (see the file-header comment). */
+ * workspace packages (see the file-header comment). The runtime integration
+ * test asserts these ids stay equal to the rubric, so a rename fails rather
+ * than drifting silently. */
 const UI_QUALITY_JUDGE_SCHEMA_ID =
   'https://agent-foundry.dev/schemas/ui-quality-judge-artifact-v1.json';
-const UI_QUALITY_JUDGE_CRITERION_IDS = [
+const UI_QUALITY_CRITERION_IDS = [
   'layout-coherence',
   'navigation',
   'empty-loading-error-states',
@@ -287,7 +289,7 @@ export function buildArtifact(identity, options = {}) {
                 // above the shipped advisory-only score so mock runs exercise
                 // the judge without entering the repair loop.
                 overallScore: UI_QUALITY_SCORE,
-                criteria: UI_QUALITY_JUDGE_CRITERION_IDS.map((criterionId) => ({
+                criteria: UI_QUALITY_CRITERION_IDS.map((criterionId) => ({
                   criterionId,
                   score: UI_QUALITY_SCORE,
                 })),
