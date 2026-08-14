@@ -5,6 +5,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
   GeneratedTaskGraphArtifactSchema,
+  UI_QUALITY_JUDGE_JSON_SCHEMA,
+  UiQualityJudgeOutputSchema,
   type AgentExecutionRequest,
 } from '@agent-foundry/contracts';
 import { ClaudeCliExecutor } from './claude-executor.js';
@@ -148,6 +150,49 @@ describe('fake provider CLIs', () => {
     const parsed = GeneratedTaskGraphArtifactSchema.parse(result.output);
     expect(parsed.data.modules.length).toBeGreaterThan(0);
     expect(parsed.data.tasks.every((task) => typeof task.module === 'string')).toBe(true);
+  });
+
+  it('round-trips a UI-quality judge step through the fake claude CLI into a schema-conforming payload (#548)', async () => {
+    await seedRequestFiles(
+      workspace,
+      'run-1',
+      'step-judge',
+      'attempt-judge',
+      { stepId: 'verify-browser', taskKind: 'verification', role: 'tester', mutationAllowed: false },
+      UI_QUALITY_JUDGE_JSON_SCHEMA,
+    );
+    const executor = new ClaudeCliExecutor(1_000_000);
+
+    const result = await executor.execute(
+      request({
+        stepRunId: 'step-judge',
+        attemptId: 'attempt-judge',
+        stepId: 'verify-browser',
+        role: 'tester',
+        taskKind: 'verification',
+        mutatesWorkspace: false,
+        outputSchema: UI_QUALITY_JUDGE_JSON_SCHEMA,
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const parsed = UiQualityJudgeOutputSchema.safeParse(
+      (result.output as { data: unknown }).data,
+    );
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.overallScore).toBeGreaterThanOrEqual(0);
+      expect(parsed.data.overallScore).toBeLessThanOrEqual(1);
+      expect(parsed.data.criteria.map((criterion) => criterion.criterionId).sort()).toEqual(
+        [
+          'contrast-readability',
+          'empty-loading-error-states',
+          'layout-coherence',
+          'navigation',
+          'responsive-sanity',
+        ].sort(),
+      );
+    }
   });
 
   it('round-trips an implementation step through the fake claude CLI and mutates the workspace', async () => {
