@@ -233,7 +233,13 @@ export function buildArtifact(identity, options = {}) {
               ],
             }
           : identity.outputSchemaId === UI_QUALITY_JUDGE_SCHEMA_ID
-            ? {
+            ? // Fixed score: `respond()` calls this with no options, so a real
+              // subprocess CLI call can never vary it. Any shipped
+              // policies/*.yaml `minOverallScore` above this constant makes
+              // every mock-mode run and the real-mode pipeline regression
+              // gate the UI-quality check and exhaust the browser repair
+              // loop, since the score can never improve on retry.
+              {
                 overallScore: options.uiQualityScore ?? 0.5,
                 criteria: [
                   'layout-coherence',

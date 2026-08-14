@@ -508,16 +508,22 @@ describe('#548: the golden journey drives the gate through the real fake-CLI sub
     );
     expect(report.approved).toBe(true);
     expect(report.uiQuality?.overallScore).toBeGreaterThanOrEqual(0.1);
+    // Pins this to the real subprocess, not MockAgentExecutor: the real path's
+    // judgeModel is the bare configured model id, while the mock path's is
+    // always prefixed `mock:<provider>/<model>` — so if RealJudgeExecutor's
+    // `$id` match ever silently stopped routing to the real delegate, this
+    // assertion (not just the score) would catch it.
+    expect(report.uiQuality?.judgeModel).toBe('ui-quality-judge-real-test');
   }, 60_000);
 
   it('flips approved false and triggers a repair when the real judge scores below a strict threshold', async () => {
     const { runtime, runId, projectId } = await startRealJudgedRun(0.9);
     expect(await runtime.worker.runOnce()).toBe(true);
-    // Unlike the lenient case above, `runOnce()` alone only drives the run
-    // up to the plan-approval gate (task execution — and so the browser
-    // check this test asserts on — has not happened yet); approving it here
-    // (as #475/#477 above already do) is what lets the browser repair loop
-    // actually run and exhaust its attempts within this same call.
+    // `runOnce()` alone only drives the run up to the plan-approval gate —
+    // task execution, and so the browser check this test asserts on, hasn't
+    // happened yet. Approving it here (as #475/#477 above already do) is
+    // what lets the browser repair loop actually run and exhaust its
+    // attempts within this same call.
     await approveAllGates(runtime, runId);
 
     const reportArtifact = await runtime.artifacts.getLatest(
