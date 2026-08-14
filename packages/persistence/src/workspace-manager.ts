@@ -1,4 +1,4 @@
-import { open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { open, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
@@ -190,13 +190,28 @@ export class FileWorkspaceManager implements WorkspaceManager {
       cwd,
       reject: false,
     });
+    // `git rev-parse --show-toplevel` reports a fully resolved path, so this
+    // has to compare against the *realpath* of the workspace, not `resolve()`,
+    // which only normalizes `..` and leaves symlinks alone. Under a symlinked
+    // data dir (macOS puts `/var/...` behind `/private/var/...`) the two never
+    // matched, so every single call re-ran `git init` — harmless-looking, but
+    // `git init` rewrites `.git/config`, which is the write that collides
+    // under a parallel pool (#520).
+    const workspaceRealPath = await realpath(cwd).catch(() => resolve(cwd));
     const ownsRepository =
-      topLevel.exitCode === 0 && resolve(topLevel.stdout.trim()) === resolve(cwd);
+      topLevel.exitCode === 0 && resolve(topLevel.stdout.trim()) === workspaceRealPath;
     if (!ownsRepository) {
       await execa('git', ['init'], { cwd });
+      // Written once, at init, and never re-applied: `git config` takes
+      // `.git/config.lock` and does not retry, so a second concurrent writer
+      // exits non-zero and `execa` throws. Every worktree-scoped `checkpoint`
+      // routes through this method against the *primary* repo (#520), so
+      // re-writing the identity on each call turned a parallel pool into an
+      // intermittent "could not lock config file" run failure. After the
+      // first call this method is a single `rev-parse` read.
+      await execa('git', ['config', 'user.name', this.options.gitAuthorName], { cwd });
+      await execa('git', ['config', 'user.email', this.options.gitAuthorEmail], { cwd });
     }
-    await execa('git', ['config', 'user.name', this.options.gitAuthorName], { cwd });
-    await execa('git', ['config', 'user.email', this.options.gitAuthorEmail], { cwd });
 
     const head = await execa('git', ['rev-parse', '--verify', 'HEAD'], { cwd, reject: false });
     if (head.exitCode !== 0) {

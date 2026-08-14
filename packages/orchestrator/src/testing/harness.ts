@@ -724,6 +724,12 @@ export class FakeWorkspaces implements WorkspaceManager {
   readonly rollbacks: string[] = [];
   /** Parallel to `rollbacks`: which worktree each one targeted, if any (#520). */
   readonly rollbackWorktrees: Array<string | undefined> = [];
+  /**
+   * Parallel to `checkpoints`: `${label}@${worktree ?? 'primary'}` (#520), so a
+   * test can tell a worktree-scoped checkpoint from a primary one. The shas in
+   * `checkpoints` cannot — one `current` stands in for every checkout.
+   */
+  readonly checkpointTargets: string[] = [];
   readonly cleanups: string[] = [];
   readonly drafts: string[] = [];
   readonly draftCommits = new Map<string, string>();
@@ -802,7 +808,7 @@ export class FakeWorkspaces implements WorkspaceManager {
   isClean(): Promise<boolean> {
     return Promise.resolve(!this.dirty);
   }
-  checkpoint(_projectId?: string, _label?: string, _worktree?: string): Promise<string> {
+  checkpoint(_projectId?: string, label?: string, worktree?: string): Promise<string> {
     checkPower(this.power);
     this.onBeforeCheckpoint?.();
     if (this.dirty) {
@@ -810,6 +816,7 @@ export class FakeWorkspaces implements WorkspaceManager {
       this.dirty = false;
     }
     this.checkpoints.push(this.current);
+    this.checkpointTargets.push(`${label ?? ''}@${worktree ?? 'primary'}`);
     this.onAfterCheckpoint?.();
     return Promise.resolve(this.current);
   }
@@ -895,8 +902,10 @@ export class FakeWorkspaces implements WorkspaceManager {
   /** Labels created but not yet removed — empty once a run has settled. */
   readonly liveWorktrees = new Set<string>();
   onIntegrateWorktree?: ((label: string) => void | Promise<void>) | undefined;
+  onCreateWorktree?: ((label: string) => void) | undefined;
   createWorktree(_projectId: string, label: string): Promise<void> {
     checkPower(this.power);
+    this.onCreateWorktree?.(label);
     this.worktreeOps.push(`create:${label}`);
     this.liveWorktrees.add(label);
     return Promise.resolve();

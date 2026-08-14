@@ -209,11 +209,18 @@ export class TaskGraphRunner {
    * dependency-ready frontier, each task in its own worktree, races the
    * in-flight set, and refills as each settles.
    *
-   * Every operation that touches the *primary* checkout — forking a worktree
-   * off HEAD, merging one back, removing one — runs through a single promise
-   * chain. Two concurrent merges into one checkout is the corruption case this
-   * whole change exists to avoid, and `git worktree add/remove` contend on the
-   * same index besides.
+   * The primary checkout's *branch and worktree bookkeeping* — forking off
+   * HEAD, merging back, removing — runs through a single promise chain. Two
+   * concurrent merges into one checkout is the corruption case this whole
+   * change exists to avoid, and `worktree add`/`worktree remove` race each
+   * other on `.git/worktrees/` besides.
+   *
+   * It is *not* true that nothing else touches the primary: a worktree-scoped
+   * `checkpoint` still calls `ensureGit` against the primary repo. That path
+   * is safe because `ensureGit` is a single read after first use — see the
+   * comment on its config writes in `FileWorkspaceManager` — and deliberately
+   * not because it holds this lock, which would serialize every task's
+   * checkpoints against every merge.
    *
    * A failing task fails the node, but only after the siblings already in
    * flight have settled: `runPooledTask` never rejects, so the race here never
@@ -244,7 +251,10 @@ export class TaskGraphRunner {
           // with no worktree: drain what is in flight first, then take the
           // slot by itself. A deliberate limitation, recorded in the ADR.
           const solo = taskUsesBrowserAcceptance(task, node);
-          if (solo && inFlight.size > 0) break;
+          // `continue`, not `break`: the solo task waits for the drain, but
+          // non-solo tasks behind it in declaration order can still fill the
+          // remaining slots meanwhile.
+          if (solo && inFlight.size > 0) continue;
           const isolation = solo ? undefined : this.taskIsolation(input, task, withPrimary);
           running.add(task.id);
           inFlight.set(task.id, {
@@ -391,8 +401,15 @@ export class TaskGraphRunner {
       await this.dependencies.workspaces.rollback(project.id, resumedCheckpoint);
     }
     let lastError: unknown;
+    // A merge conflict is a scheduling collision, not a fault in the work, so
+    // it must not be charged to the quality budget: each allowance granted
+    // *extends* the ladder rather than shortening it, and neither the executor
+    // rung nor the failure counter moves. Bounded, not a loop — a second
+    // conflict on the same task converts to a `QualityGateError` and does
+    // spend an attempt, so a pathologically conflicting task still terminates.
+    let conflictRetries = 0;
     try {
-      for (let attempt = startAttempt; attempt <= maxAttempts; attempt += 1) {
+      for (let attempt = startAttempt; attempt <= maxAttempts + conflictRetries; attempt += 1) {
         await this.dependencies.runtime.assertExecutionMayContinue(runId, signal);
         const qualityAttemptBase = (attempt - 1) * qualityAttemptStride;
         let implementation: StoredArtifact | undefined;
@@ -444,7 +461,49 @@ export class TaskGraphRunner {
             runId,
             reverified ?? asserted ?? repaired ?? implementation,
           );
-          await this.integrateTask(pool.isolation, task, node.id);
+          const conflict = pool.isolation ? await mergeConflict(pool.isolation) : undefined;
+          if (conflict !== undefined && pool.isolation) {
+            if (conflictRetries >= CONFLICT_RETRY_ALLOWANCE) {
+              // Out of allowance: from here a conflict is an ordinary attempt
+              // failure and goes down the ladder below like a red gate.
+              throw new QualityGateError(
+                `Task ${task.id} could not be merged into the workspace: ${errorMessage(conflict)}`,
+                node.id,
+              );
+            }
+            conflictRetries += 1;
+            await this.emit(
+              project.id,
+              'task.failed',
+              `${task.id} attempt ${attempt} lost a merge race; retrying against the merged workspace`,
+              {
+                nodeId: node.id,
+                runId,
+                // Distinct from the ordinary `:${attempt}:failed` key: this
+                // attempt number is reused by the retry, so the two events
+                // would otherwise collide.
+                dedupeKey: `${runId}:task:${node.id}:${task.id}:${attempt}:conflict`,
+                data: {
+                  taskId: task.id,
+                  stepId: step.id,
+                  attempt,
+                  maxAttempts,
+                  // Machine-readable discriminator, mirroring #528's
+                  // `infrastructureFailure` and #537's `blockedReason`: this
+                  // is how an operator tells a conflict retry from a quality
+                  // retry without matching the message.
+                  mergeConflict: errorMessage(conflict),
+                },
+              },
+            );
+            await pool.isolation.fork();
+            attemptCheckpoint = await this.dependencies.workspaces.checkpoint(
+              project.id,
+              `${node.id}-${task.id}-${runId}`,
+              worktree,
+            );
+            continue;
+          }
           const outcome = attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : '';
           await this.emit(project.id, 'task.completed', `${task.id}: ${task.title}${outcome}`, {
             nodeId: node.id,
@@ -492,7 +551,7 @@ export class TaskGraphRunner {
             },
           );
           if (!(error instanceof QualityGateError)) throw error;
-          if (attempt >= maxAttempts) throw error;
+          if (attempt >= maxAttempts + conflictRetries) throw error;
           const nextRoutingStartIndex = nextTaskExecutorIndex(
             routing,
             implementation ? executorOutcome(implementation).executor : undefined,
@@ -505,18 +564,19 @@ export class TaskGraphRunner {
             );
           }
           routingStartIndex = nextRoutingStartIndex;
-          await this.dependencies.workspaces.rollback(project.id, attemptCheckpoint, worktree);
           if (pool.isolation) {
-            // Re-fork so the retry starts from the primary's current HEAD.
-            // After a lost merge race that HEAD already carries the sibling
-            // that beat this task, so the retry re-plans against the merged
-            // tree instead of re-running the same conflict.
+            // Re-fork instead of rolling back. `createWorktree` destroys and
+            // recreates the worktree from the primary's current HEAD, which
+            // both discards the failed attempt and picks up any sibling that
+            // landed meanwhile — a rollback first would only be undone by it.
             await pool.isolation.fork();
             attemptCheckpoint = await this.dependencies.workspaces.checkpoint(
               project.id,
               `${node.id}-${task.id}-${runId}`,
               worktree,
             );
+          } else {
+            await this.dependencies.workspaces.rollback(project.id, attemptCheckpoint);
           }
         }
       }
@@ -524,32 +584,14 @@ export class TaskGraphRunner {
         `Task ${task.id} failed after ${maxAttempts} attempt(s): ${errorMessage(lastError)}`,
       );
     } catch (error) {
-      if (this.isTaskAttemptFailure(error, signal)) {
-        await this.dependencies.workspaces.rollback(project.id, attemptCheckpoint, worktree);
+      // Only the primary checkout is rolled back here. A worktree is torn down
+      // whole by the scheduler's `finally`, so there is nothing to restore —
+      // and rolling one back would throw if the failure *was* a re-fork that
+      // left no worktree behind, replacing the real error with a git one.
+      if (worktree === undefined && this.isTaskAttemptFailure(error, signal)) {
+        await this.dependencies.workspaces.rollback(project.id, attemptCheckpoint);
       }
       throw error;
-    }
-  }
-
-  /**
-   * Merging into the primary is the last thing an attempt does. A conflict is
-   * this task's failure, not the run's: raised as a `QualityGateError` so the
-   * existing attempt ladder fails and retries it exactly as it does a red
-   * quality gate, after the conflicting sibling has already landed.
-   */
-  private async integrateTask(
-    isolation: TaskIsolation | undefined,
-    task: PlanTask,
-    nodeId: string,
-  ): Promise<void> {
-    if (!isolation) return;
-    try {
-      await isolation.integrate();
-    } catch (error) {
-      throw new QualityGateError(
-        `Task ${task.id} could not be merged into the workspace: ${errorMessage(error)}`,
-        nodeId,
-      );
     }
   }
 
@@ -947,6 +989,24 @@ export class TaskGraphRunner {
  * bypassed the config schema still cannot start an unbounded pool.
  */
 const MAX_PARALLEL_TASKS = 8;
+
+/**
+ * Merge conflicts a task may retry without spending a quality attempt. One is
+ * enough: the retry re-forks from the merged tree, so the collision it lost is
+ * gone. A task that conflicts twice is conflicting on its own content, and the
+ * second one falls through to the ordinary attempt ladder.
+ */
+const CONFLICT_RETRY_ALLOWANCE = 1;
+
+/** The merge failure, or `undefined` when the worktree landed cleanly. */
+async function mergeConflict(isolation: TaskIsolation): Promise<unknown> {
+  try {
+    await isolation.integrate();
+    return undefined;
+  } catch (error) {
+    return error ?? new ExecutionError('Worktree integration failed without an error');
+  }
+}
 
 function effectiveParallelism(requested: number | undefined): number {
   if (requested === undefined || !Number.isFinite(requested)) return 1;

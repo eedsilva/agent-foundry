@@ -103,14 +103,46 @@ critical section: only one `integrateWorktree` call runs at a time, regardless o
 execute concurrently. Two concurrent merges into a single checkout is exactly the corruption this
 ticket exists to prevent; nothing about `git worktree` or `git merge` makes that safe unsupervised.
 
-**A merge conflict on integration is a task failure, not a run failure.** When `integrateWorktree`
-throws, the scheduler fails that task's current attempt — emits `task.failed`, discards the
-worktree — the same way a `QualityGateError` fails an attempt today, and the task re-enters the
-existing per-task attempt ladder (ADR 0043's `implement.maxAttempts`). The retry runs after the
+**A merge conflict on integration is a task failure, not a run failure — and not a quality
+failure.** When `integrateWorktree` throws, the scheduler re-forks that task's worktree from the
+primary's now-merged HEAD and re-runs the task, emitting a `task.failed` carrying a `mergeConflict`
+field so an operator can tell a conflict retry from a quality retry. The retry runs after the
 conflicting sibling has already landed, so it plans and implements against the merged tree rather
 than the stale fork point. Tasks that already integrated before the conflict keep their commits;
 ADR 0043's guarantee — a failed attempt rolls back only that attempt's own checkpoint — holds
-unchanged, because the checkpoint being rolled back lives entirely inside the discarded worktree.
+unchanged, because the checkpoint being discarded lives entirely inside the re-forked worktree.
+
+Crucially the retry does **not** consume a rung of ADR 0043's `implement.maxAttempts` ladder and
+does **not** advance the executor: a conflict is a scheduling collision between two tasks, not a
+fault in either task's work, and charging it to the quality budget would let a lost merge race
+spend an attempt — and switch agent — before anything had been attempted on the real problem. The
+allowance is bounded at one conflict retry per task (`CONFLICT_RETRY_ALLOWANCE`,
+`packages/orchestrator/src/task-graph-runner.ts`); a second conflict on the same task is no longer
+a collision but a property of its own content, and converts to a `QualityGateError` that does spend
+an attempt, so a pathologically conflicting task still terminates.
+
+**Labels are unique per in-flight task by construction.** The scheduler derives a worktree label as
+`<runId>-<nodeId>-<taskId>`, all three `PathSegment`-safe by schema. Uniqueness matters more than it
+looks: `createWorktree` reclaims a stale label by *destroying* it, so two concurrent forks on one
+label would silently delete each other's work rather than erroring. The guarantee comes from the
+frontier, not from the string — `readyTasks(tasks, completed, running)` never dispatches a task id
+already in flight, so any two simultaneously live tasks differ in `taskId` and therefore in label.
+`runId` and `nodeId` are constant within one scheduler call; they buy cross-run and cross-node
+separation on disk, not in-flight uniqueness. The label carries no attempt or retry component, so it
+is stable across every retry of a task within a run — which the retry-directive rollback in
+`WorkflowOrchestrator` depends on, and which is what lets a conflict retry re-fork by simply asking
+for the same label again.
+
+**A resumed run reuses labels deliberately.** A resumed run keeps its `runId`, so a crashed
+attempt's `<projectRoot>/worktrees/<label>` directory and `af/task/<label>` branch are still on
+disk under exactly the label the resumed task will ask for. `createWorktree`'s destructive reclaim
+discards that dead attempt's commits and restarts from the primary's current HEAD — which is the
+correct base, and is precisely the state the old `resumedFailure.checkpoint` rollback existed to
+produce. That is why the scheduler ignores a resumed checkpoint for an isolated task: the sha names
+a commit in the *primary* checkout left by a previous process, the fresh worktree already starts at
+the primary's current HEAD, and rolling a worktree back to it would be either a no-op or wrong. The
+resumed attempt number and routing index are still honoured, so the ladder resumes on the right
+rung.
 
 **Failure detection reads exit code and `--json` stdout JSONL, never `stderr`.** `extractCliFailure`
 (`packages/executors/src/json-output.ts`) gained a Codex branch (`extractCodexFailure`) that scans

@@ -1103,11 +1103,13 @@ describe('TaskGraphRunner', () => {
 
     it('fails only the conflicting task when integration cannot merge, and retries it', async () => {
       let conflicts = 0;
+      const implementRoutes: Array<number | undefined> = [];
       const fixture = await setupRunner(
         retryWorkflow,
         [task('T1'), task('T2')],
-        (input, artifacts) =>
-          artifacts.put({
+        (input, artifacts) => {
+          if (input.step.id === 'implement.T2') implementRoutes.push(input.routingStartIndex);
+          return artifacts.put({
             projectId: input.project.id,
             name: input.step.outputArtifact,
             content:
@@ -1115,7 +1117,8 @@ describe('TaskGraphRunner', () => {
                 ? verificationReport(true)
                 : completedArtifact(input.step),
             createdBy: 'test-runtime',
-          }),
+          });
+        },
         2,
       );
       fixture.workspaces.onIntegrateWorktree = (label) => {
@@ -1127,13 +1130,21 @@ describe('TaskGraphRunner', () => {
       await fixture.run();
 
       expect(conflicts).toBe(1);
-      // The conflict is one failed attempt of T2, not a failed run: T1 lands
-      // untouched and T2's existing attempt ladder retries it.
+      // The conflict is T2's alone: T1 lands untouched and T2 retries.
       expect(
         fixture.events.events
           .filter((event) => event.type === 'task.failed')
           .map((event) => ({ taskId: event.data.taskId, attempt: event.data.attempt })),
       ).toEqual([{ taskId: 'T2', attempt: 1 }]);
+      // A conflict is a scheduling collision, not the executor's fault: the
+      // retry stays on the same rung of the routing ladder rather than
+      // burning one on a merge race.
+      expect(implementRoutes).toEqual([0, 0]);
+      // ...and it is reported as a conflict, not as a generic failure, so an
+      // operator can tell it from a quality retry.
+      expect(
+        fixture.events.events.find((event) => event.type === 'task.failed')?.data.mergeConflict,
+      ).toContain('CONFLICT (content)');
       expect(
         fixture.events.events
           .filter((event) => event.type === 'task.completed')
@@ -1200,6 +1211,230 @@ describe('TaskGraphRunner', () => {
       );
     });
 
+    it('lets a task behind a waiting browser-visible one still take a slot', async () => {
+      // The solo guard makes the browser-visible task wait for a drain; it
+      // must not also stall the tasks declared after it.
+      const concurrency = concurrencyMeter();
+      const fixture = await setupRunner(
+        browserWorkflow,
+        [task('T1'), { ...task('T2'), acceptanceMode: 'browser-visible' }, task('T3')],
+        async (input, artifacts) => {
+          const solo = taskIdOf(input.step.id) === 'T2';
+          const done = solo ? undefined : concurrency.enter();
+          await yieldToTimers();
+          done?.();
+          let content: object = completedArtifact(input.step);
+          if (input.step.id.startsWith('verify-task.')) content = verificationReport(true);
+          if (input.step.id.startsWith('plan-task-browser-test.')) content = browserPlan();
+          if (input.step.id.startsWith('assert-task.')) content = browserReport(true);
+          return artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content,
+            createdBy: 'test-runtime',
+          });
+        },
+        3,
+      );
+
+      await fixture.run();
+
+      expect(concurrency.peak).toBe(2);
+    });
+
+    it('checkpoints the primary before forking, then checkpoints the worktree', async () => {
+      const targetsAtFork: string[][] = [];
+      const fixture = await setupRunner(
+        gatedWorkflow,
+        [task('T1')],
+        (input, artifacts) =>
+          artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content:
+              input.step.type === 'verify'
+                ? verificationReport(true)
+                : completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          }),
+        2,
+      );
+      fixture.workspaces.onCreateWorktree = () => {
+        targetsAtFork.push([...fixture.workspaces.checkpointTargets]);
+      };
+
+      await fixture.run();
+
+      // `git worktree add` forks from HEAD, not from the working tree, so
+      // uncommitted primary work is invisible to the task unless it is
+      // committed first. The primary checkpoint must already have happened by
+      // the time the fork runs.
+      expect(targetsAtFork).toEqual([['task-execution-T1-run-1-fork@primary']]);
+      // And every later checkpoint targets the worktree, not the primary.
+      expect(fixture.workspaces.checkpointTargets).toEqual([
+        'task-execution-T1-run-1-fork@primary',
+        'task-execution-T1-run-1@run-1-task-execution-T1',
+        'task-execution-T1-run-1-verified@run-1-task-execution-T1',
+      ]);
+    });
+
+    it('spends no quality attempt on a merge race', async () => {
+      // A conflict costs an attempt *number* but not a rung of the quality
+      // budget: with maxAttempts 2, a task that loses one merge race must
+      // still get two real attempts at the work itself.
+      let implementations = 0;
+      let conflicts = 0;
+      const fixture = await setupRunner(
+        retryWorkflow,
+        [task('T1')],
+        (input, artifacts) => {
+          if (input.step.id === 'implement.T1') implementations += 1;
+          return artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content:
+              input.step.type === 'verify'
+                ? // Red for the whole of attempt 2, green either side.
+                  verificationReport(implementations !== 2)
+                : completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          });
+        },
+        2,
+      );
+      fixture.workspaces.onIntegrateWorktree = (label) => {
+        if (conflicts > 0) return;
+        conflicts += 1;
+        throw new ExecutionError(`Failed to integrate worktree "${label}": CONFLICT (content)`);
+      };
+
+      await fixture.run();
+
+      // Attempt 1 lost the race, attempt 2 failed the gate for real, attempt 3
+      // passed. Charging the conflict to the budget would have failed the run
+      // at attempt 2 with only one real attempt spent.
+      expect(implementations).toBe(3);
+      expect(
+        fixture.events.events.find((event) => event.type === 'task.completed')?.data.attempt,
+      ).toBe(3);
+      expect(
+        fixture.events.events
+          .filter((event) => event.type === 'task.failed')
+          .map((event) => ({
+            attempt: event.data.attempt,
+            conflict: event.data.mergeConflict !== undefined,
+          })),
+      ).toEqual([
+        { attempt: 1, conflict: true },
+        { attempt: 2, conflict: false },
+      ]);
+    });
+
+    it('bounds the conflict allowance so a task that always conflicts still terminates', async () => {
+      let conflicts = 0;
+      const fixture = await setupRunner(
+        retryWorkflow,
+        [task('T1')],
+        (input, artifacts) =>
+          artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content:
+              input.step.type === 'verify'
+                ? verificationReport(true)
+                : completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          }),
+        2,
+      );
+      fixture.workspaces.onIntegrateWorktree = (label) => {
+        conflicts += 1;
+        throw new ExecutionError(`Failed to integrate worktree "${label}": CONFLICT (content)`);
+      };
+
+      await expect(fixture.run()).rejects.toThrow('could not be merged into the workspace');
+
+      // Exactly one free retry; after that a conflict is an ordinary attempt
+      // failure and the ladder terminates the task.
+      expect(
+        fixture.events.events.filter((event) => event.data.mergeConflict !== undefined),
+      ).toHaveLength(1);
+      expect(conflicts).toBeLessThanOrEqual(4);
+      expect(fixture.workspaces.liveWorktrees.size).toBe(0);
+    });
+
+    it('cancels in-flight siblings through the signal without orphaning a worktree', async () => {
+      // The brief's other failure path: not a task failing, but the run being
+      // cancelled. A control-flow error must skip the rollback and the
+      // task.failed event, and still tear every worktree down.
+      class Cancelled extends Error {}
+      const controller = new AbortController();
+      const power = { on: true };
+      const artifacts = new InMemoryArtifacts(power);
+      const events = new InMemoryEvents(power);
+      const workspaces = new FakeWorkspaces(power);
+      await putTaskGraph(artifacts, [task('T1'), task('T2')]);
+      const implementations: string[] = [];
+      const gate = arrivalGate(2);
+
+      const runtime: TaskGraphRuntime = {
+        async executeStep(input: TaskGraphStepExecution): Promise<StoredArtifact> {
+          implementations.push(input.step.id);
+          // The gate opens only once both tasks are inside their implement
+          // step, so the cancel lands with two genuinely in-flight siblings
+          // rather than before the second one ever started.
+          await gate.arrive();
+          controller.abort();
+          return artifacts.put({
+            projectId: input.project.id,
+            name: input.step.outputArtifact,
+            content: completedArtifact(input.step),
+            createdBy: 'test-runtime',
+          });
+        },
+        assertExecutionMayContinue: (_runId, signal) =>
+          signal.aborted ? Promise.reject(new Cancelled('run cancelled')) : Promise.resolve(),
+        isControlFlowError: (error) => error instanceof Cancelled,
+        recordDeterministicOutcome: () => Promise.resolve(),
+        recordCompletedRepair: () => Promise.resolve(),
+        resetConsecutiveRepairs: () => Promise.resolve(),
+      };
+      const runner = new TaskGraphRunner({
+        artifacts,
+        events,
+        stepRuns: new InMemoryStepRuns(power),
+        stepAttempts: new InMemoryStepAttempts(power),
+        workspaces,
+        clock: new SystemClock(),
+        ids: new SequentialIds(),
+        runtime,
+        maxParallelTasks: 2,
+      });
+      const node = gatedWorkflow.nodes[0];
+      if (node?.type !== 'for-each-task') throw new Error('Expected for-each-task fixture');
+
+      await expect(
+        runner.run({
+          project,
+          workflow: gatedWorkflow,
+          node,
+          runId: 'run-1',
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow(Cancelled);
+
+      // Both siblings ran and both were allowed to settle — neither was
+      // abandoned mid-flight by the race.
+      expect(implementations.sort()).toEqual(['implement.T1', 'implement.T2']);
+      expect(workspaces.liveWorktrees.size).toBe(0);
+      expect(
+        workspaces.worktreeOps.filter((operation) => operation.startsWith('remove:')).sort(),
+      ).toEqual(['remove:run-1-task-execution-T1', 'remove:run-1-task-execution-T2']);
+      // A cancellation is not a task failure: no failure event, no rollback.
+      expect(events.events.filter((event) => event.type === 'task.failed')).toEqual([]);
+      expect(workspaces.rollbacks).toEqual([]);
+    });
+
     it('removes every worktree when a task fails, and lets its siblings settle', async () => {
       const settled: string[] = [];
       const fixture = await setupRunner(
@@ -1227,6 +1462,11 @@ describe('TaskGraphRunner', () => {
 
       expect([...settled].sort()).toEqual(['T1', 'T2']);
       expect(fixture.workspaces.liveWorktrees.size).toBe(0);
+      // An isolated task is never rolled back: the scheduler tears the whole
+      // worktree down instead, so no rollback can be aimed at a checkout that
+      // is about to stop existing.
+      expect(fixture.workspaces.rollbacks).toEqual([]);
+      expect(fixture.workspaces.rollbackWorktrees).toEqual([]);
       expect(
         fixture.workspaces.worktreeOps
           .filter((operation) => operation.startsWith('remove:'))

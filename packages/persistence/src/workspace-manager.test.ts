@@ -63,6 +63,53 @@ describe('FileWorkspaceManager.isClean', () => {
   });
 });
 
+describe('FileWorkspaceManager.ensureGit', () => {
+  it('writes the git identity only when it initializes the repository', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    await manager.ensureGit('project-1');
+    const workspace = manager.workspacePath('project-1');
+    const configPath = join(workspace, '.git', 'config');
+    const beforeMtime = (await stat(configPath)).mtimeMs;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Rewriting the same value still takes `.git/config.lock` and still
+    // rewrites the file, so an unchanged mtime is the evidence that no second
+    // write happened at all — which is what makes concurrent worktree
+    // checkpoints safe (#520).
+    await manager.ensureGit('project-1');
+
+    expect((await stat(configPath)).mtimeMs).toBe(beforeMtime);
+    const name = await execa('git', ['config', 'user.name'], { cwd: workspace });
+    expect(name.stdout.trim()).toBe('Test Agent');
+  });
+
+  it('survives concurrent checkpoints from parallel task worktrees (#520)', async () => {
+    // `checkpoint(projectId, label, worktree)` calls `ensureGit` against the
+    // primary repo whatever worktree it targets. While `ensureGit` rewrote the
+    // git identity on every call, two of these racing lost `.git/config.lock`
+    // and failed the run.
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const labels = ['a', 'b', 'c', 'd'];
+    await manager.ensureGit('project-1');
+    for (const label of labels) await manager.createWorktree('project-1', label);
+
+    const checkpoints = await Promise.all(
+      labels.map((label) => manager.checkpoint('project-1', label, label)),
+    );
+
+    expect(checkpoints).toHaveLength(4);
+    expect(checkpoints.every((sha) => /^[0-9a-f]{40}$/.test(sha))).toBe(true);
+  });
+});
+
 describe('FileWorkspaceManager nested repository boundary', () => {
   it('initializes a workspace repository instead of using an ancestor checkout', async () => {
     const dataDir = await mkdtemp(join(process.cwd(), '.workspace-manager-'));
