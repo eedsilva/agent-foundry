@@ -1,7 +1,8 @@
-import { open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { open, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { execa } from 'execa';
 import {
+  ExecutionError,
   NotFoundError,
   ValidationError,
   createListabilityChecker,
@@ -82,7 +83,10 @@ export class FileWorkspaceManager implements WorkspaceManager {
     return resolve(this.dataDir, 'projects', safeSegment(projectId));
   }
 
-  workspacePath(projectId: string): string {
+  workspacePath(projectId: string, worktree?: string): string {
+    if (worktree !== undefined) {
+      return join(this.projectRoot(projectId), 'worktrees', safeSegment(worktree));
+    }
     return join(this.projectRoot(projectId), 'workspace');
   }
 
@@ -132,20 +136,23 @@ export class FileWorkspaceManager implements WorkspaceManager {
     }
   }
 
-  async writeRunContext(input: {
-    projectId: string;
-    runId: string;
-    stepRunId: string;
-    attemptId: string;
-    requestMarkdown: string;
-    outputSchema: Record<string, unknown>;
-    inputFiles?: Array<{ path: string; content: Uint8Array }>;
-  }): Promise<{
+  async writeRunContext(
+    input: {
+      projectId: string;
+      runId: string;
+      stepRunId: string;
+      attemptId: string;
+      requestMarkdown: string;
+      outputSchema: Record<string, unknown>;
+      inputFiles?: Array<{ path: string; content: Uint8Array }>;
+    },
+    worktree?: string,
+  ): Promise<{
     requestPath: string;
     schemaPath: string;
     inputPaths: string[];
   }> {
-    const workspace = this.workspacePath(input.projectId);
+    const workspace = this.workspacePath(input.projectId, worktree);
     const runDir = join(
       workspace,
       '.orchestrator',
@@ -183,13 +190,28 @@ export class FileWorkspaceManager implements WorkspaceManager {
       cwd,
       reject: false,
     });
+    // `git rev-parse --show-toplevel` reports a fully resolved path, so this
+    // has to compare against the *realpath* of the workspace, not `resolve()`,
+    // which only normalizes `..` and leaves symlinks alone. Under a symlinked
+    // data dir (macOS puts `/var/...` behind `/private/var/...`) the two never
+    // matched, so every single call re-ran `git init` — harmless-looking, but
+    // `git init` rewrites `.git/config`, which is the write that collides
+    // under a parallel pool (#520).
+    const workspaceRealPath = await realpath(cwd).catch(() => resolve(cwd));
     const ownsRepository =
-      topLevel.exitCode === 0 && resolve(topLevel.stdout.trim()) === resolve(cwd);
+      topLevel.exitCode === 0 && resolve(topLevel.stdout.trim()) === workspaceRealPath;
     if (!ownsRepository) {
       await execa('git', ['init'], { cwd });
+      // Written once, at init, and never re-applied: `git config` takes
+      // `.git/config.lock` and does not retry, so a second concurrent writer
+      // exits non-zero and `execa` throws. Every worktree-scoped `checkpoint`
+      // routes through this method against the *primary* repo (#520), so
+      // re-writing the identity on each call turned a parallel pool into an
+      // intermittent "could not lock config file" run failure. After the
+      // first call this method is a single `rev-parse` read.
+      await execa('git', ['config', 'user.name', this.options.gitAuthorName], { cwd });
+      await execa('git', ['config', 'user.email', this.options.gitAuthorEmail], { cwd });
     }
-    await execa('git', ['config', 'user.name', this.options.gitAuthorName], { cwd });
-    await execa('git', ['config', 'user.email', this.options.gitAuthorEmail], { cwd });
 
     const head = await execa('git', ['rev-parse', '--verify', 'HEAD'], { cwd, reject: false });
     if (head.exitCode !== 0) {
@@ -204,16 +226,16 @@ export class FileWorkspaceManager implements WorkspaceManager {
     }
   }
 
-  async isClean(projectId: string): Promise<boolean> {
+  async isClean(projectId: string, worktree?: string): Promise<boolean> {
     const status = await execa('git', ['status', '--porcelain'], {
-      cwd: this.workspacePath(projectId),
+      cwd: this.workspacePath(projectId, worktree),
     });
     return status.stdout === '';
   }
 
-  async checkpoint(projectId: string, label: string): Promise<string> {
+  async checkpoint(projectId: string, label: string, worktree?: string): Promise<string> {
     await this.ensureGit(projectId);
-    const cwd = this.workspacePath(projectId);
+    const cwd = this.workspacePath(projectId, worktree);
     await execa('git', ['add', '-A'], { cwd });
     const staged = await execa('git', ['diff', '--cached', '--quiet'], { cwd, reject: false });
     if (staged.exitCode !== 0) {
@@ -223,8 +245,8 @@ export class FileWorkspaceManager implements WorkspaceManager {
     return head.stdout.trim();
   }
 
-  async rollback(projectId: string, ref: string): Promise<void> {
-    const cwd = this.workspacePath(projectId);
+  async rollback(projectId: string, ref: string, worktree?: string): Promise<void> {
+    const cwd = this.workspacePath(projectId, worktree);
     await execa('git', ['reset', '--hard', ref], { cwd });
     await execa('git', ['clean', '-fd', '-e', '.orchestrator/'], { cwd });
   }
@@ -288,8 +310,8 @@ export class FileWorkspaceManager implements WorkspaceManager {
     }
   }
 
-  async commit(projectId: string, message: string): Promise<string | null> {
-    const cwd = this.workspacePath(projectId);
+  async commit(projectId: string, message: string, worktree?: string): Promise<string | null> {
+    const cwd = this.workspacePath(projectId, worktree);
     await execa('git', ['add', '-A'], { cwd });
     const staged = await execa('git', ['diff', '--cached', '--quiet'], { cwd, reject: false });
     if (staged.exitCode === 0) return null;
@@ -298,10 +320,110 @@ export class FileWorkspaceManager implements WorkspaceManager {
     return head.stdout.trim();
   }
 
-  async head(projectId: string): Promise<string | null> {
-    const cwd = this.workspacePath(projectId);
+  async head(projectId: string, worktree?: string): Promise<string | null> {
+    const cwd = this.workspacePath(projectId, worktree);
     const head = await execa('git', ['rev-parse', '--verify', 'HEAD'], { cwd, reject: false });
     return head.exitCode === 0 ? head.stdout.trim() : null;
+  }
+
+  async createWorktree(projectId: string, label: string): Promise<void> {
+    await this.ensureGit(projectId);
+    // Reclaims a same-label worktree directory and/or branch left behind by a
+    // crashed or killed prior run -- removeWorktree is idempotent and already
+    // swallows "not a working tree" / "branch not found", so this is a no-op
+    // the first time a label is ever used.
+    await this.removeWorktree(projectId, label);
+    const primary = this.workspacePath(projectId);
+    const target = this.workspacePath(projectId, label);
+    const branch = `af/task/${safeSegment(label)}`;
+    await execa('git', ['worktree', 'add', '-b', branch, target, 'HEAD'], { cwd: primary });
+    const nodeModules = join(primary, 'node_modules');
+    if (await exists(nodeModules)) {
+      // ponytail: symlinks the primary's node_modules into the worktree so
+      // the per-task verify step (running the generated app's own scripts)
+      // doesn't fail on a missing dependency; every parallel worktree shares
+      // one install. Ceiling: two tasks that need divergent dependency trees
+      // will collide. Upgrade: per-worktree `npm install` if that ever
+      // happens (#520 later tasks).
+      await this.#excludeNodeModules(primary);
+      await symlink(nodeModules, join(target, 'node_modules'), 'dir');
+    }
+  }
+
+  /**
+   * Keeps the shared-install symlink above out of git.
+   *
+   * `.gitignore`'s `node_modules/` is a *directory-only* pattern and git never
+   * treats a symlink as a directory, so without this the symlink is untracked
+   * rather than ignored: `checkpoint`'s `git add -A` stages it, commits it onto
+   * `af/task/<label>` on the very first checkpoint after a fork, and
+   * `integrateWorktree` merges it into the primary — replacing the primary's
+   * real install with a symlink pointing at itself, breaking every later task's
+   * verify, and writing an absolute host path into the generated project's
+   * history.
+   *
+   * `info/exclude` rather than `.gitignore`: git resolves it against
+   * `$GIT_COMMON_DIR`, so one write covers the primary and every worktree,
+   * including projects scaffolded before this fix and scaffolds that ship
+   * their own `.gitignore` (a per-worktree `.git/worktrees/<name>/info/exclude`
+   * is *not* read — verified against real git). The primary's own
+   * `node_modules` is a real directory that `node_modules/` already ignores,
+   * so this changes nothing there.
+   */
+  async #excludeNodeModules(primary: string): Promise<void> {
+    const commonDir = (
+      await execa('git', ['rev-parse', '--git-common-dir'], { cwd: primary })
+    ).stdout.trim();
+    const excludePath = join(
+      isAbsolute(commonDir) ? commonDir : join(primary, commonDir),
+      'info',
+      'exclude',
+    );
+    const current = await readFile(excludePath, 'utf8').catch((error) =>
+      isNotFound(error) ? '' : Promise.reject(error),
+    );
+    if (current.split('\n').includes('node_modules')) return;
+    // ponytail: read-then-write with no lock. The bytes written are a pure
+    // function of the bytes read and `atomicWriteText` renames into place, so
+    // two racing writers produce the same file and the loser is a no-op.
+    // Ceiling: a concurrent *third-party* edit of info/exclude would be lost.
+    // Upgrade: route this through the scheduler's primary-checkout lock.
+    const separator = current === '' || current.endsWith('\n') ? '' : '\n';
+    await atomicWriteText(excludePath, `${current}${separator}node_modules\n`);
+  }
+
+  async integrateWorktree(projectId: string, label: string): Promise<void> {
+    const primary = this.workspacePath(projectId);
+    const branch = `af/task/${safeSegment(label)}`;
+    const result = await execa('git', ['merge', '--no-ff', '--no-edit', branch], {
+      cwd: primary,
+      reject: false,
+    });
+    if (result.exitCode !== 0) {
+      // ponytail: `merge --abort`'s own exit code is unchecked -- it's a
+      // best-effort cleanup for the common case (an actual merge conflict, or
+      // nothing in progress). Upgrade: verify the working tree/MERGE_HEAD
+      // afterward and escalate if abort didn't clear it, if that gap bites.
+      await execa('git', ['merge', '--abort'], { cwd: primary, reject: false });
+      throw new ExecutionError(
+        `Failed to integrate worktree "${label}": ${result.stdout}\n${result.stderr}`,
+        {
+          ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+          ...(result.stdout !== undefined ? { stdout: result.stdout } : {}),
+          ...(result.stderr !== undefined ? { stderr: result.stderr } : {}),
+        },
+      );
+    }
+  }
+
+  async removeWorktree(projectId: string, label: string): Promise<void> {
+    const primary = this.workspacePath(projectId);
+    const target = this.workspacePath(projectId, label);
+    await execa('git', ['worktree', 'remove', '--force', target], { cwd: primary, reject: false });
+    await execa('git', ['branch', '-D', `af/task/${safeSegment(label)}`], {
+      cwd: primary,
+      reject: false,
+    });
   }
 
   async diff(projectId: string, fromRef: string, toRef: string): Promise<string> {

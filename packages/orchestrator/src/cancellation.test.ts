@@ -443,6 +443,15 @@ class FakeWorkspaces implements WorkspaceManager {
   readWorkspaceFile(): Promise<string> {
     return Promise.reject(new Error('not used by these cancellation tests'));
   }
+  createWorktree(): Promise<void> {
+    return Promise.resolve();
+  }
+  integrateWorktree(): Promise<void> {
+    return Promise.resolve();
+  }
+  removeWorktree(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 type ExecutorBehavior = 'instant' | 'reject-on-abort' | 'resolve-on-abort';

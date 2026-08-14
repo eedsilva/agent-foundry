@@ -11,8 +11,25 @@ export function nextReadyTask(
   tasks: readonly PlanTask[],
   completed: ReadonlySet<string>,
 ): PlanTask | undefined {
-  return tasks.find(
-    (task) => !completed.has(task.id) && task.dependsOn.every((blocker) => completed.has(blocker)),
+  return readyTasks(tasks, completed)[0];
+}
+
+/**
+ * Every task whose blockers have all completed, in declaration order — the
+ * frontier a parallel scheduler dispatches from. `running` excludes tasks
+ * already dispatched from both the result and from counting as a completed
+ * blocker, so a task depending on in-flight work stays held back.
+ */
+export function readyTasks(
+  tasks: readonly PlanTask[],
+  completed: ReadonlySet<string>,
+  running?: ReadonlySet<string>,
+): PlanTask[] {
+  return tasks.filter(
+    (task) =>
+      !completed.has(task.id) &&
+      !running?.has(task.id) &&
+      task.dependsOn.every((blocker) => completed.has(blocker)),
   );
 }
 

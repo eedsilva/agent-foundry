@@ -849,6 +849,14 @@ O primeiro gargalo provavelmente será tempo de execução e quota das CLIs, nã
 
 Antes de paralelizar nodes, modele dependências explícitas. Paralelismo sem DAG correto produz conflitos de arquivos e artefatos incoerentes.
 
+`MAX_PARALLEL_TASKS` controla quantas tarefas independentes de um `for-each-task` o orquestrador executa ao mesmo tempo, cada uma em seu próprio git worktree sob `<projectRoot>/worktrees/`:
+
+```env
+MAX_PARALLEL_TASKS=1
+```
+
+Inteiro entre `1` e `8`; o default `1` reproduz exatamente o walk sequencial de antes de #520 — nenhum worktree é criado, nenhum comando `git` extra roda. Suba o valor com cautela: uma conta ChatGPT compartilha um único pool de rate limit (janela rolante de 5h mais limite semanal) entre todos os processos `codex exec` concorrentes, então paralelismo comprime tempo de parede sem aumentar a cota disponível. A integração de cada worktree de volta ao checkout primário é serializada — só um merge roda por vez — e um conflito de merge não conta como falha de qualidade: a tarefa re-forka o worktree a partir do HEAD já mesclado e roda de novo, sem gastar uma tentativa da escada nem avançar de executor, com uma cota própria de uma re-tentativa de conflito por tarefa. O evento `task.failed` correspondente carrega o campo `mergeConflict`, que é como se distingue uma colisão de agendamento de uma reprovação de qualidade; um segundo conflito na mesma tarefa vira falha de qualidade normal e aí sim entra na escada. Por isso o número de `attempt` na timeline pode passar de `maxAttempts` — a re-tentativa de conflito incrementa o contador sem consumir orçamento. Tarefas `browser-visible` nunca rodam dentro do pool: o scheduler drena o trabalho em andamento, executa a tarefa sozinha no checkout primário (a sessão de preview só existe ali) e só então retoma o preenchimento. ADR 0064 registra a decisão completa.
+
 ## Cancelamento
 
 `POST /runs/:runId/cancel` é idempotente: marca o run como `cancel_requested`, emite `run.cancel_requested` e retorna o run atualizado. Repetir a chamada não duplica eventos; cancelar um run `completed` ou `failed` retorna 409.

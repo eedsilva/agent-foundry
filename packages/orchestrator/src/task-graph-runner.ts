@@ -38,6 +38,7 @@ import {
   browserRepairId,
   errorMessage,
   nextReadyTask,
+  readyTasks,
   taskStepId,
   withSpan,
 } from '@agent-foundry/domain';
@@ -60,7 +61,47 @@ export interface TaskGraphStepExecution {
   iteration?: number;
   pinnedArtifacts?: readonly ArtifactReference[];
   routingStartIndex?: number;
+  /**
+   * Worktree label (#520) the step's execution and git operations run
+   * against instead of the primary checkout. Unset today — the parallel
+   * scheduler that assigns one per concurrent task lands separately.
+   */
+  worktree?: string;
 }
+
+/**
+ * One task's worktree, as the attempt ladder sees it (#520) — a label, never a
+ * host path; only the workspace manager resolves one to a directory. Absent
+ * when the cap is 1, and for a browser-visible task, which runs on the primary
+ * checkout because its preview session is bound there.
+ */
+interface TaskIsolation {
+  label: string;
+  /**
+   * (Re-)forks the worktree from the primary's current HEAD. Called again
+   * before a retry, so an attempt that lost a merge race re-plans against the
+   * tree its sibling has already landed in.
+   */
+  fork(): Promise<void>;
+  /** Merges the worktree back into the primary. Throws on conflict. */
+  integrate(): Promise<void>;
+  /** Removes the worktree and its branch. Safe to call twice. */
+  remove(): Promise<void>;
+}
+
+/** How one task's slot in the pool ran, for the event data and the git plumbing. */
+interface TaskPoolContext {
+  /** Effective cap, echoed into `task.started`. Absent when the pool is off. */
+  parallelism?: number;
+  isolation?: TaskIsolation;
+}
+
+/**
+ * Never rejects: the scheduler races the in-flight set, and a rejection there
+ * would abandon the siblings instead of letting them settle (ADR 0043).
+ */
+type TaskOutcome =
+  { taskId: string; artifact: StoredArtifact } | { taskId: string; error: unknown };
 
 export interface TaskGraphRuntime {
   executeStep(input: TaskGraphStepExecution): Promise<StoredArtifact>;
@@ -83,8 +124,14 @@ export interface TaskGraphRuntime {
     stepId: string;
     iteration: number;
     signal: AbortSignal;
+    /**
+     * Which task's repair ladder this round belongs to (#520). Passed only
+     * when the pool is engaged; absent, the counter stays the single run-level
+     * streak it has always been.
+     */
+    scope?: string;
   }): Promise<void>;
-  resetConsecutiveRepairs(runId: string): Promise<void>;
+  resetConsecutiveRepairs(runId: string, scope?: string): Promise<void>;
 }
 
 export interface TaskGraphRunnerDependencies {
@@ -92,10 +139,18 @@ export interface TaskGraphRunnerDependencies {
   events: Pick<EventStore, 'append' | 'list'>;
   stepRuns: Pick<StepRunRepository, 'list'>;
   stepAttempts: Pick<StepAttemptRepository, 'get' | 'list'>;
-  workspaces: Pick<WorkspaceManager, 'checkpoint' | 'rollback'>;
+  workspaces: Pick<
+    WorkspaceManager,
+    'checkpoint' | 'rollback' | 'createWorktree' | 'integrateWorktree' | 'removeWorktree'
+  >;
   clock: Clock;
   ids: IdGenerator;
   runtime: TaskGraphRuntime;
+  /**
+   * How many tasks the node may run at once, each in its own worktree (#520).
+   * Omitted, or 1, keeps the sequential walk and touches no worktree at all.
+   */
+  maxParallelTasks?: number;
 }
 
 export class TaskGraphRunner {
@@ -136,6 +191,9 @@ export class TaskGraphRunner {
         artifactReference(graphArtifact),
       ])
     ).map(artifactReference);
+    const parallelism = effectiveParallelism(this.dependencies.maxParallelTasks);
+    if (parallelism > 1) return this.runPooled(input, tasks, pinnedInputs, parallelism);
+
     const completed = new Set<string>();
     let latest: StoredArtifact | null = null;
     while (completed.size < tasks.length) {
@@ -152,12 +210,154 @@ export class TaskGraphRunner {
     return latest;
   }
 
+  /**
+   * Bounded parallel frontier (#520). Fills up to `parallelism` slots from the
+   * dependency-ready frontier, each task in its own worktree, races the
+   * in-flight set, and refills as each settles.
+   *
+   * The primary checkout's *branch and worktree bookkeeping* — forking off
+   * HEAD, merging back, removing — runs through a single promise chain. Two
+   * concurrent merges into one checkout is the corruption case this whole
+   * change exists to avoid, and `worktree add`/`worktree remove` race each
+   * other on `.git/worktrees/` besides.
+   *
+   * It is *not* true that nothing else touches the primary: a worktree-scoped
+   * `checkpoint` still calls `ensureGit` against the primary repo. That path
+   * is safe because `ensureGit` is a single read after first use — see the
+   * comment on its config writes in `FileWorkspaceManager` — and deliberately
+   * not because it holds this lock, which would serialize every task's
+   * checkpoints against every merge.
+   *
+   * A failing task fails the node, but only after the siblings already in
+   * flight have settled: `runPooledTask` never rejects, so the race here never
+   * abandons a running `codex exec` (ADR 0043).
+   */
+  private async runPooled(
+    input: TaskGraphRunInput,
+    tasks: readonly PlanTask[],
+    pinnedInputs: readonly ArtifactReference[],
+    parallelism: number,
+  ): Promise<StoredArtifact> {
+    const { node } = input;
+    const completed = new Set<string>();
+    const running = new Set<string>();
+    const inFlight = new Map<string, { solo: boolean; outcome: Promise<TaskOutcome> }>();
+    const withPrimary = primaryCheckoutLock();
+    let latest: StoredArtifact | null = null;
+    let failure: unknown;
+
+    while (completed.size < tasks.length) {
+      // A failed task stops the frontier from growing; what is already in
+      // flight still runs to completion below.
+      if (failure === undefined && ![...inFlight.values()].some((entry) => entry.solo)) {
+        for (const task of readyTasks(tasks, completed, running)) {
+          if (inFlight.size >= parallelism) break;
+          // A browser-visible task drives a preview session bound to the
+          // primary workspace, so it runs alone, on the primary checkout,
+          // with no worktree: drain what is in flight first, then take the
+          // slot by itself. A deliberate limitation, recorded in the ADR.
+          const solo = taskUsesBrowserAcceptance(task, node);
+          // `continue`, not `break`: the solo task waits for the drain, but
+          // non-solo tasks behind it in declaration order can still fill the
+          // remaining slots meanwhile.
+          if (solo && inFlight.size > 0) continue;
+          const isolation = solo ? undefined : this.taskIsolation(input, task, withPrimary);
+          running.add(task.id);
+          inFlight.set(task.id, {
+            solo,
+            outcome: this.runPooledTask(input, task, pinnedInputs, {
+              parallelism,
+              ...(isolation ? { isolation } : {}),
+            }),
+          });
+          if (solo) break;
+        }
+      }
+      if (inFlight.size === 0) break;
+      const settled = await Promise.race([...inFlight.values()].map((entry) => entry.outcome));
+      inFlight.delete(settled.taskId);
+      running.delete(settled.taskId);
+      if ('error' in settled) {
+        failure ??= settled.error;
+      } else {
+        completed.add(settled.taskId);
+        latest = settled.artifact;
+      }
+    }
+
+    if (failure !== undefined) throw failure;
+    if (completed.size < tasks.length) {
+      throw new ExecutionError(
+        `Node ${node.id} has no runnable task left in ${node.taskGraphArtifact} with ${completed.size}/${tasks.length} complete`,
+      );
+    }
+    if (!latest) throw new ExecutionError(`Node ${node.id} walked an empty task graph`);
+    return latest;
+  }
+
+  /** Runs one pooled task to a settled outcome, and always tears its worktree down. */
+  private async runPooledTask(
+    input: TaskGraphRunInput,
+    task: PlanTask,
+    pinnedInputs: readonly ArtifactReference[],
+    pool: TaskPoolContext,
+  ): Promise<TaskOutcome> {
+    try {
+      return { taskId: task.id, artifact: await this.executeTask(input, task, pinnedInputs, pool) };
+    } catch (error) {
+      return { taskId: task.id, error };
+    } finally {
+      // ponytail: a throwing cleanup is swallowed rather than reported. It
+      // would otherwise reject this outcome and abandon the in-flight
+      // siblings — the exact orphaned-process failure the wrapper exists to
+      // prevent — and `removeWorktree` is already reject-free git plumbing.
+      // Upgrade: emit a timeline event here if stray worktrees ever show up.
+      await pool.isolation?.remove().catch(() => undefined);
+    }
+  }
+
+  /**
+   * The worktree label is `<runId>-<nodeId>-<taskId>`, all three of which are
+   * path-segment-safe by schema. Collisions are impossible where they would
+   * hurt: `createWorktree` reclaims a stale label by destroying it, so two
+   * concurrent forks on one label would silently delete each other's work —
+   * and two tasks in flight at the same time always differ in `taskId`, since
+   * the frontier never dispatches an id already in `running`. The label is
+   * also stable across retries of the same task within a run, which the
+   * retry-directive rollback in `WorkflowOrchestrator` depends on.
+   */
+  private taskIsolation(
+    input: TaskGraphRunInput,
+    task: PlanTask,
+    withPrimary: <T>(operation: () => Promise<T>) => Promise<T>,
+  ): TaskIsolation {
+    const { project, node, runId } = input;
+    const { workspaces } = this.dependencies;
+    const label = `${runId}-${node.id}-${task.id}`;
+    return {
+      label,
+      fork: () =>
+        withPrimary(async () => {
+          // `git worktree add` forks from HEAD, not from the working tree, so
+          // uncommitted primary work would be invisible to the task. The
+          // scheduler owns this guard; `createWorktree` deliberately does not,
+          // matching its sibling methods.
+          await workspaces.checkpoint(project.id, `${node.id}-${task.id}-${runId}-fork`);
+          await workspaces.createWorktree(project.id, label);
+        }),
+      integrate: () => withPrimary(() => workspaces.integrateWorktree(project.id, label)),
+      remove: () => withPrimary(() => workspaces.removeWorktree(project.id, label)),
+    };
+  }
+
   private async executeTask(
     input: TaskGraphRunInput,
     task: PlanTask,
     pinnedInputs: readonly ArtifactReference[],
+    pool: TaskPoolContext = {},
   ): Promise<StoredArtifact> {
     const { project, workflow, node, runId, signal } = input;
+    const worktree = pool.isolation?.label;
     const step = taskImplementStep(node.implement, task);
     const maxAttempts = node.implement.maxAttempts;
     await this.emit(project.id, 'task.started', `${task.id}: ${task.title}`, {
@@ -170,13 +370,20 @@ export class TaskGraphRunner {
         stepId: step.id,
         dependsOn: task.dependsOn,
         maxAttempts,
+        // Only when the pool actually engaged: at the default cap of 1 the
+        // event data must stay byte-identical to today's.
+        ...(pool.parallelism !== undefined ? { parallelism: pool.parallelism } : {}),
       },
     });
     const routing = resolveRoutingEntry(workflow.routing, workflow.id, step.taskKind);
     const browserAcceptance = taskUsesBrowserAcceptance(task, node);
     const qualityAttemptStride =
       (browserAcceptance ? 2 : 1) * ((node.repair?.maxAttempts ?? 0) + 1);
-    const resumedFailure = await this.resumedTaskFailure(
+    // Per-task repair streak key, so N concurrent ladders don't share one
+    // run-level counter. `pool.parallelism` is set only when the cap is > 1
+    // (Ruling 2), which keeps the default path's counter byte-identical.
+    const repairScope = pool.parallelism !== undefined ? `${node.id}:${task.id}` : undefined;
+    const resumed = await this.resumedTaskState(
       project.id,
       runId,
       node.id,
@@ -184,19 +391,53 @@ export class TaskGraphRunner {
       step.id,
       routing,
     );
+    const resumedFailure = resumed.failure;
+    // A resumed checkpoint is a sha in the primary checkout, left by an
+    // earlier process. A freshly forked worktree already starts at the
+    // primary's current HEAD, so there is nothing there to roll back to.
+    const resumedCheckpoint = worktree === undefined ? resumedFailure?.checkpoint : undefined;
+    await pool.isolation?.fork();
     const taskCheckpoint =
-      resumedFailure?.checkpoint ??
-      (await this.dependencies.workspaces.checkpoint(project.id, `${node.id}-${task.id}-${runId}`));
+      resumedCheckpoint ??
+      (await this.dependencies.workspaces.checkpoint(
+        project.id,
+        `${node.id}-${task.id}-${runId}`,
+        worktree,
+      ));
+    // Only ever read on the primary path — a worktree is torn down whole, never
+    // rolled back — so the extra `checkpoint` round-trips that maintain it are
+    // skipped when the task is isolated. Nothing is lost by that: every
+    // workspace-mutating step commits inside its own worktree
+    // (`commitAgentWorkspace`), and an approved verify checkpoints it again,
+    // so `af/task/<label>` already carries the work `integrate()` merges.
     let attemptCheckpoint = taskCheckpoint;
     const startAttempt =
       resumedFailure?.attempt ?? (await this.firstTaskAttempt(runId, node.id, step.id));
     let routingStartIndex = resumedFailure?.routingStartIndex ?? 0;
-    if (resumedFailure?.checkpoint) {
-      await this.dependencies.workspaces.rollback(project.id, resumedFailure.checkpoint);
+    if (resumedCheckpoint) {
+      await this.dependencies.workspaces.rollback(project.id, resumedCheckpoint);
     }
     let lastError: unknown;
+    // A merge conflict is a scheduling collision, not a fault in the work, so
+    // it must not be charged to the quality budget: each allowance granted
+    // *extends* the ladder rather than shortening it, and neither the executor
+    // rung nor the failure counter moves. Bounded, not a loop — a second
+    // conflict on the same task converts to a `QualityGateError` and does
+    // spend an attempt, so a pathologically conflicting task still terminates.
+    let conflictRetries = 0;
+    // Allowances an *earlier process* already spent on this task, replayed from
+    // the timeline. Ruling 13 keeps the allowance itself fresh per call; this
+    // only restores the ladder those conflicts extended, without which a resume
+    // that lands on an attempt beyond `maxAttempts` skips the loop body
+    // entirely and fails the task with a bare `undefined`. Always 0 on the
+    // default path, which never forks a worktree and so never conflicts.
+    const priorConflictRetries = resumed.conflictRetries;
     try {
-      for (let attempt = startAttempt; attempt <= maxAttempts; attempt += 1) {
+      for (
+        let attempt = startAttempt;
+        attempt <= maxAttempts + priorConflictRetries + conflictRetries;
+        attempt += 1
+      ) {
         await this.dependencies.runtime.assertExecutionMayContinue(runId, signal);
         const qualityAttemptBase = (attempt - 1) * qualityAttemptStride;
         let implementation: StoredArtifact | undefined;
@@ -211,6 +452,7 @@ export class TaskGraphRunner {
             iteration: attempt,
             pinnedArtifacts: pinnedInputs,
             routingStartIndex,
+            ...(worktree !== undefined ? { worktree } : {}),
           });
           assertAgentNotBlocked(implementation, {
             taskId: task.id,
@@ -223,13 +465,17 @@ export class TaskGraphRunner {
             implementation,
             pinnedInputs,
             qualityAttemptBase,
+            worktree,
+            repairScope,
           );
-          attemptCheckpoint = await this.dependencies.workspaces.checkpoint(
-            project.id,
-            `${node.id}-${task.id}-${runId}-verified`,
-          );
+          if (worktree === undefined) {
+            attemptCheckpoint = await this.dependencies.workspaces.checkpoint(
+              project.id,
+              `${node.id}-${task.id}-${runId}-verified`,
+            );
+          }
           const asserted = browserAcceptance
-            ? await this.assertTask(input, task, pinnedInputs, qualityAttemptBase)
+            ? await this.assertTask(input, task, pinnedInputs, qualityAttemptBase, repairScope)
             : null;
           const reverified = asserted
             ? await this.verifyTask(
@@ -238,12 +484,54 @@ export class TaskGraphRunner {
                 asserted,
                 pinnedInputs,
                 qualityAttemptBase + (node.repair?.maxAttempts ?? 0) + 1,
+                worktree,
+                repairScope,
               )
             : null;
           const commit = await this.commitForArtifact(
             runId,
             reverified ?? asserted ?? repaired ?? implementation,
           );
+          const conflict = pool.isolation ? await mergeConflict(pool.isolation) : undefined;
+          if (conflict !== undefined && pool.isolation) {
+            if (conflictRetries >= CONFLICT_RETRY_ALLOWANCE) {
+              // Out of allowance: from here a conflict is an ordinary attempt
+              // failure and goes down the ladder below like a red gate.
+              throw new QualityGateError(
+                `Task ${task.id} could not be merged into the workspace: ${errorMessage(conflict)}`,
+                node.id,
+              );
+            }
+            conflictRetries += 1;
+            await this.emit(
+              project.id,
+              'task.failed',
+              `${task.id} attempt ${attempt} lost a merge race; retrying against the merged workspace`,
+              {
+                nodeId: node.id,
+                runId,
+                // `:conflict` is the discriminator, not a collision guard: the
+                // retry increments `attempt` (Ruling 14 — the number feeds
+                // `iteration`, `qualityAttemptBase` and several dedupe keys),
+                // so this key is what tells a replay that *this* attempt ended
+                // in a merge race rather than a red gate.
+                dedupeKey: `${runId}:task:${node.id}:${task.id}:${attempt}:conflict`,
+                data: {
+                  taskId: task.id,
+                  stepId: step.id,
+                  attempt,
+                  maxAttempts,
+                  // Machine-readable discriminator, mirroring #528's
+                  // `infrastructureFailure` and #537's `blockedReason`: this
+                  // is how an operator tells a conflict retry from a quality
+                  // retry without matching the message.
+                  mergeConflict: errorMessage(conflict),
+                },
+              },
+            );
+            await pool.isolation.fork();
+            continue;
+          }
           const outcome = attempt > 1 ? ` (attempt ${attempt}/${maxAttempts})` : '';
           await this.emit(project.id, 'task.completed', `${task.id}: ${task.title}${outcome}`, {
             nodeId: node.id,
@@ -291,7 +579,7 @@ export class TaskGraphRunner {
             },
           );
           if (!(error instanceof QualityGateError)) throw error;
-          if (attempt >= maxAttempts) throw error;
+          if (attempt >= maxAttempts + priorConflictRetries + conflictRetries) throw error;
           const nextRoutingStartIndex = nextTaskExecutorIndex(
             routing,
             implementation ? executorOutcome(implementation).executor : undefined,
@@ -304,41 +592,66 @@ export class TaskGraphRunner {
             );
           }
           routingStartIndex = nextRoutingStartIndex;
-          await this.dependencies.workspaces.rollback(project.id, attemptCheckpoint);
+          if (pool.isolation) {
+            // Re-fork instead of rolling back. `createWorktree` destroys and
+            // recreates the worktree from the primary's current HEAD, which
+            // both discards the failed attempt and picks up any sibling that
+            // landed meanwhile — a rollback first would only be undone by it.
+            await pool.isolation.fork();
+          } else {
+            await this.dependencies.workspaces.rollback(project.id, attemptCheckpoint);
+          }
         }
       }
       throw new ExecutionError(
         `Task ${task.id} failed after ${maxAttempts} attempt(s): ${errorMessage(lastError)}`,
       );
     } catch (error) {
-      if (this.isTaskAttemptFailure(error, signal)) {
+      // Only the primary checkout is rolled back here. A worktree is torn down
+      // whole by the scheduler's `finally`, so there is nothing to restore —
+      // and rolling one back would throw if the failure *was* a re-fork that
+      // left no worktree behind, replacing the real error with a git one.
+      if (worktree === undefined && this.isTaskAttemptFailure(error, signal)) {
         await this.dependencies.workspaces.rollback(project.id, attemptCheckpoint);
       }
       throw error;
     }
   }
 
-  private async resumedTaskFailure(
+  /**
+   * What an earlier process already spent on this task, replayed from the
+   * timeline: the quality failure to resume from (if any), and how many
+   * conflict allowances it burned.
+   */
+  private async resumedTaskState(
     projectId: string,
     runId: string,
     nodeId: string,
     taskId: string,
     stepId: string,
     routing: ReturnType<typeof resolveRoutingEntry>,
-  ): Promise<{ attempt: number; routingStartIndex: number; checkpoint?: string } | undefined> {
-    const terminal = (await this.dependencies.events.list(projectId))
-      .filter(
-        (event) =>
-          event.runId === runId &&
-          event.nodeId === nodeId &&
-          (event.type === 'task.failed' || event.type === 'task.completed') &&
-          event.data.taskId === taskId &&
-          event.data.stepId === stepId,
-      )
-      .at(-1);
-    if (!terminal || terminal.type !== 'task.failed') return undefined;
+  ): Promise<{
+    conflictRetries: number;
+    failure?: { attempt: number; routingStartIndex: number; checkpoint?: string };
+  }> {
+    const terminals = (await this.dependencies.events.list(projectId)).filter(
+      (event) =>
+        event.runId === runId &&
+        event.nodeId === nodeId &&
+        (event.type === 'task.failed' || event.type === 'task.completed') &&
+        event.data.taskId === taskId &&
+        event.data.stepId === stepId,
+    );
+    const conflictRetries = terminals.filter(
+      (event) => event.data.mergeConflict !== undefined,
+    ).length;
+    // A `task.failed` carrying `mergeConflict` is a scheduling collision, not a
+    // quality failure: Ruling 12 says it must not advance the executor ladder,
+    // which is exactly what resuming *from* it would do.
+    const terminal = terminals.filter((event) => event.data.mergeConflict === undefined).at(-1);
+    if (!terminal || terminal.type !== 'task.failed') return { conflictRetries };
     const failedAttempt = terminal.data.attempt;
-    if (typeof failedAttempt !== 'number') return undefined;
+    if (typeof failedAttempt !== 'number') return { conflictRetries };
 
     const stepRun = (await this.dependencies.stepRuns.list(runId))
       .filter(
@@ -349,10 +662,10 @@ export class TaskGraphRunner {
           !candidate.invalidatedAt,
       )
       .at(-1);
-    if (!stepRun || stepRun.status !== 'completed') return undefined;
+    if (!stepRun || stepRun.status !== 'completed') return { conflictRetries };
 
     const attempt = (await this.dependencies.stepAttempts.list(runId, stepRun.id)).at(-1);
-    if (!attempt || attempt.status !== 'succeeded') return undefined;
+    if (!attempt || attempt.status !== 'succeeded') return { conflictRetries };
 
     const route = attempt.routeDecision?.routingTable;
     const consumedIndex = route
@@ -368,9 +681,12 @@ export class TaskGraphRunner {
         nextTaskExecutorIndex(routing, attempt.provider, 0) ?? routing.executors.length;
     }
     return {
-      attempt: failedAttempt + 1,
-      routingStartIndex: nextRoutingStartIndex,
-      ...(attempt.checkpoint ? { checkpoint: attempt.checkpoint } : {}),
+      conflictRetries,
+      failure: {
+        attempt: failedAttempt + 1,
+        routingStartIndex: nextRoutingStartIndex,
+        ...(attempt.checkpoint ? { checkpoint: attempt.checkpoint } : {}),
+      },
     };
   }
 
@@ -423,6 +739,8 @@ export class TaskGraphRunner {
     task: PlanTask,
     pinnedInputs: readonly ArtifactReference[],
     iterationBase = 0,
+    /** Per-task repair-streak key (#520); absent at the default cap of 1. */
+    scope?: string,
   ): Promise<StoredArtifact | null> {
     const { project, workflow, node, runId, signal } = input;
     if (task.acceptanceMode === 'deterministic-only') return null;
@@ -493,7 +811,7 @@ export class TaskGraphRunner {
       const parsed = BrowserVerificationReportSchema.safeParse(report.content);
       const approved = parsed.success && parsed.data.approved;
       if (approved) {
-        await this.dependencies.runtime.resetConsecutiveRepairs(runId);
+        await this.dependencies.runtime.resetConsecutiveRepairs(runId, scope);
         await this.emit(project.id, 'quality.approved', `${task.id}: ${parsed.data.summary}`, {
           nodeId: node.id,
           runId,
@@ -554,6 +872,7 @@ export class TaskGraphRunner {
         stepId: repairStep.id,
         iteration,
         signal,
+        ...(scope !== undefined ? { scope } : {}),
       });
     }
   }
@@ -568,6 +887,9 @@ export class TaskGraphRunner {
     implementation: StoredArtifact,
     pinnedInputs: readonly ArtifactReference[],
     iterationBase = 0,
+    worktree?: string,
+    /** Per-task repair-streak key (#520); absent at the default cap of 1. */
+    scope?: string,
   ): Promise<StoredArtifact | null> {
     const { project, workflow, node, runId, signal } = input;
     if (!node.verify || !node.repair) return null;
@@ -586,6 +908,7 @@ export class TaskGraphRunner {
         nodeId: node.id,
         signal,
         iteration,
+        ...(worktree !== undefined ? { worktree } : {}),
       });
       const parsed = VerificationReportSchema.safeParse(report.content);
       const approved = parsed.success && parsed.data.approved;
@@ -601,7 +924,7 @@ export class TaskGraphRunner {
         durationMs: this.dependencies.clock.now().getTime() - startedAt,
       });
       if (approved) {
-        await this.dependencies.runtime.resetConsecutiveRepairs(runId);
+        await this.dependencies.runtime.resetConsecutiveRepairs(runId, scope);
         await this.emit(project.id, 'quality.approved', `${task.id}: ${parsed.data.summary}`, {
           nodeId: node.id,
           runId,
@@ -639,6 +962,7 @@ export class TaskGraphRunner {
         signal,
         iteration,
         pinnedArtifacts: [...pinnedInputs, artifactReference(report)],
+        ...(worktree !== undefined ? { worktree } : {}),
       });
       assertAgentNotBlocked(repaired, { taskId: task.id, stepId: repairStep.id, nodeId: node.id });
       await this.dependencies.runtime.recordCompletedRepair({
@@ -647,6 +971,7 @@ export class TaskGraphRunner {
         stepId: repairStep.id,
         iteration,
         signal,
+        ...(scope !== undefined ? { scope } : {}),
       });
     }
   }
@@ -701,6 +1026,53 @@ export class TaskGraphRunner {
       data: options.data ?? {},
     });
   }
+}
+
+/**
+ * The ceiling `MAX_PARALLEL_TASKS` already validates, re-applied here because
+ * AC1 names the runner as the component that enforces the cap: a caller that
+ * bypassed the config schema still cannot start an unbounded pool.
+ */
+const MAX_PARALLEL_TASKS = 8;
+
+/**
+ * Merge conflicts a task may retry without spending a quality attempt. One is
+ * enough: the retry re-forks from the merged tree, so the collision it lost is
+ * gone. A task that conflicts twice is conflicting on its own content, and the
+ * second one falls through to the ordinary attempt ladder.
+ */
+const CONFLICT_RETRY_ALLOWANCE = 1;
+
+/** The merge failure, or `undefined` when the worktree landed cleanly. */
+async function mergeConflict(isolation: TaskIsolation): Promise<unknown> {
+  try {
+    await isolation.integrate();
+    return undefined;
+  } catch (error) {
+    return error ?? new ExecutionError('Worktree integration failed without an error');
+  }
+}
+
+function effectiveParallelism(requested: number | undefined): number {
+  if (requested === undefined || !Number.isFinite(requested)) return 1;
+  return Math.min(MAX_PARALLEL_TASKS, Math.max(1, Math.trunc(requested)));
+}
+
+/**
+ * Serializes every operation that touches the primary checkout. One chain, not
+ * a lock object: a rejected operation is caught into the chain's tail so one
+ * task's merge conflict cannot poison the next task's turn.
+ */
+function primaryCheckoutLock(): <T>(operation: () => Promise<T>) => Promise<T> {
+  let tail: Promise<void> = Promise.resolve();
+  return <T>(operation: () => Promise<T>): Promise<T> => {
+    const next = tail.then(operation);
+    tail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  };
 }
 
 function artifactReference(artifact: StoredArtifact): ArtifactReference {

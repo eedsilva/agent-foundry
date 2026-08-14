@@ -16,9 +16,11 @@ import {
   type ApprovalDecision,
   type ApprovalRequest,
   type ArtifactMetadata,
+  type ArtifactReference,
   type Attachment,
   type ChangeRequest,
   type Conversation,
+  type ExecutableStep,
   type ExecutionRequest,
   type ExecutionResult,
   type ExecutionUsage,
@@ -720,6 +722,14 @@ export class FakeWorkspaces implements WorkspaceManager {
   readonly checkpoints: string[] = [];
   readonly commits: string[] = [];
   readonly rollbacks: string[] = [];
+  /** Parallel to `rollbacks`: which worktree each one targeted, if any (#520). */
+  readonly rollbackWorktrees: Array<string | undefined> = [];
+  /**
+   * Parallel to `checkpoints`: `${label}@${worktree ?? 'primary'}` (#520), so a
+   * test can tell a worktree-scoped checkpoint from a primary one. The shas in
+   * `checkpoints` cannot — one `current` stands in for every checkout.
+   */
+  readonly checkpointTargets: string[] = [];
   readonly cleanups: string[] = [];
   readonly drafts: string[] = [];
   readonly draftCommits = new Map<string, string>();
@@ -735,8 +745,10 @@ export class FakeWorkspaces implements WorkspaceManager {
   projectRoot(projectId: string): string {
     return `/fake/${projectId}`;
   }
-  workspacePath(projectId: string): string {
-    return `/fake/${projectId}/workspace`;
+  workspacePath(projectId: string, worktree?: string): string {
+    return worktree !== undefined
+      ? `/fake/${projectId}/worktrees/${worktree}`
+      : `/fake/${projectId}/workspace`;
   }
   ensure(): Promise<void> {
     return Promise.resolve();
@@ -760,14 +772,17 @@ export class FakeWorkspaces implements WorkspaceManager {
     return Promise.resolve();
   }
   lastRequestMarkdown: string | undefined;
-  writeRunContext(input: {
-    projectId: string;
-    runId: string;
-    stepRunId: string;
-    attemptId: string;
-    requestMarkdown: string;
-    inputFiles?: Array<{ path: string; content: Uint8Array }>;
-  }): Promise<{
+  writeRunContext(
+    input: {
+      projectId: string;
+      runId: string;
+      stepRunId: string;
+      attemptId: string;
+      requestMarkdown: string;
+      inputFiles?: Array<{ path: string; content: Uint8Array }>;
+    },
+    worktree?: string,
+  ): Promise<{
     requestPath: string;
     schemaPath: string;
     inputPaths: string[];
@@ -777,7 +792,7 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.lastRunInputFiles = input.inputFiles ?? [];
     this.lastInputPaths = (input.inputFiles ?? []).map(
       ({ path }) =>
-        `${this.workspacePath(input.projectId)}/.orchestrator/runs/${input.runId}/steps/${input.stepRunId}/attempts/${input.attemptId}/inputs/${path}`,
+        `${this.workspacePath(input.projectId, worktree)}/.orchestrator/runs/${input.runId}/steps/${input.stepRunId}/attempts/${input.attemptId}/inputs/${path}`,
     );
     return Promise.resolve({
       requestPath: 'request.md',
@@ -793,7 +808,7 @@ export class FakeWorkspaces implements WorkspaceManager {
   isClean(): Promise<boolean> {
     return Promise.resolve(!this.dirty);
   }
-  checkpoint(): Promise<string> {
+  checkpoint(_projectId?: string, label?: string, worktree?: string): Promise<string> {
     checkPower(this.power);
     this.onBeforeCheckpoint?.();
     if (this.dirty) {
@@ -801,12 +816,14 @@ export class FakeWorkspaces implements WorkspaceManager {
       this.dirty = false;
     }
     this.checkpoints.push(this.current);
+    this.checkpointTargets.push(`${label ?? ''}@${worktree ?? 'primary'}`);
     this.onAfterCheckpoint?.();
     return Promise.resolve(this.current);
   }
-  rollback(_projectId: string, ref: string): Promise<void> {
+  rollback(_projectId: string, ref: string, worktree?: string): Promise<void> {
     checkPower(this.power);
     this.rollbacks.push(ref);
+    this.rollbackWorktrees.push(worktree);
     this.current = ref;
     this.dirty = false;
     return Promise.resolve();
@@ -837,7 +854,7 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.drafts.splice(this.drafts.indexOf(draftBranch), 1);
     return Promise.resolve();
   }
-  commit(): Promise<string | null> {
+  commit(_projectId?: string, _message?: string, _worktree?: string): Promise<string | null> {
     checkPower(this.power);
     if (!this.dirty) return Promise.resolve(null);
     this.onBeforeCommit?.();
@@ -851,7 +868,7 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.onAfterCommit?.();
     return Promise.resolve(this.current);
   }
-  head(): Promise<string | null> {
+  head(_projectId?: string, _worktree?: string): Promise<string | null> {
     return Promise.resolve(this.current);
   }
   diff(_projectId: string, fromRef: string, toRef: string): Promise<string> {
@@ -879,6 +896,29 @@ export class FakeWorkspaces implements WorkspaceManager {
   }
   readWorkspaceFile(_projectId: string, relativePath: string): Promise<string> {
     return Promise.reject(new NotFoundError(`fake workspace has no file: ${relativePath}`));
+  }
+  /** Worktree lifecycle in call order, `${operation}:${label}` (#520). */
+  readonly worktreeOps: string[] = [];
+  /** Labels created but not yet removed — empty once a run has settled. */
+  readonly liveWorktrees = new Set<string>();
+  onIntegrateWorktree?: ((label: string) => void | Promise<void>) | undefined;
+  onCreateWorktree?: ((label: string) => void) | undefined;
+  createWorktree(_projectId: string, label: string): Promise<void> {
+    checkPower(this.power);
+    this.onCreateWorktree?.(label);
+    this.worktreeOps.push(`create:${label}`);
+    this.liveWorktrees.add(label);
+    return Promise.resolve();
+  }
+  async integrateWorktree(_projectId: string, label: string): Promise<void> {
+    checkPower(this.power);
+    this.worktreeOps.push(`integrate:${label}`);
+    await this.onIntegrateWorktree?.(label);
+  }
+  removeWorktree(_projectId: string, label: string): Promise<void> {
+    this.worktreeOps.push(`remove:${label}`);
+    this.liveWorktrees.delete(label);
+    return Promise.resolve();
   }
 }
 
@@ -1489,6 +1529,27 @@ export function makeHarness(
 }
 
 export type Harness = ReturnType<typeof makeHarness>;
+
+/**
+ * `WorkflowOrchestrator.executeStep` is private; casting through this lets a
+ * test drive one step directly with an explicit worktree label, bypassing both
+ * the (still worktree-blind) `runProject` graph walk and the for-each-task
+ * scheduler that assigns labels (#520 task 5, not yet landed).
+ */
+export interface HasExecuteStep {
+  executeStep(
+    project: Project,
+    workflow: WorkflowDefinition,
+    step: ExecutableStep,
+    runId: string,
+    nodeId: string,
+    signal: AbortSignal,
+    iteration?: number,
+    pinnedArtifacts?: ArtifactReference[],
+    routingStartIndex?: number,
+    worktree?: string,
+  ): Promise<StoredArtifact>;
+}
 
 export async function seedRun(harness: Harness): Promise<void> {
   const now = harness.clock.now().toISOString();

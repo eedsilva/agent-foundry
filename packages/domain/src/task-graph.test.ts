@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PlanTask } from '@agent-foundry/contracts';
-import { isTaskStepId, nextReadyTask, taskStepId } from './task-graph.js';
+import { isTaskStepId, nextReadyTask, readyTasks, taskStepId } from './task-graph.js';
 
 function task(id: string, dependsOn: string[] = []): PlanTask {
   return {
@@ -34,6 +34,33 @@ describe('nextReadyTask', () => {
     const tasks = [task('T1'), task('T2', ['T1'])];
 
     expect(nextReadyTask(tasks, new Set(['T1', 'T2']))).toBeUndefined();
+  });
+});
+
+describe('readyTasks', () => {
+  it('reproduces nextReadyTask when running is empty', () => {
+    const tasks = [task('T1', ['T2']), task('T2')];
+
+    expect(readyTasks(tasks, new Set())).toEqual([task('T2')]);
+    expect(readyTasks(tasks, new Set(), new Set())[0]).toEqual(nextReadyTask(tasks, new Set()));
+  });
+
+  it('does not re-offer a task that is already running', () => {
+    const tasks = [task('T1'), task('T2')];
+
+    expect(readyTasks(tasks, new Set(), new Set(['T1']))).toEqual([task('T2')]);
+  });
+
+  it('returns two independent tasks both', () => {
+    const tasks = [task('T1'), task('T2')];
+
+    expect(readyTasks(tasks, new Set()).map((t) => t.id)).toEqual(['T1', 'T2']);
+  });
+
+  it('holds back a task blocked by a running (not completed) dependency', () => {
+    const tasks = [task('T1'), task('T2', ['T1'])];
+
+    expect(readyTasks(tasks, new Set(), new Set(['T1']))).toEqual([]);
   });
 });
 

@@ -10,6 +10,7 @@ import {
   type AgentExecutionResult,
   type AgentArtifact,
   type ArtifactReference,
+  type ExecutableStep,
   type ExecutorHealth,
   type Project,
   type StoredArtifact,
@@ -49,6 +50,7 @@ import {
   makeHarness,
   makeStores,
   seedRun as seedHarnessRun,
+  type HasExecuteStep,
 } from './testing/harness.js';
 import type { ProjectVersionService } from './project-version-service.js';
 import { WorkflowOrchestrator } from './workflow-orchestrator.js';
@@ -78,6 +80,28 @@ const WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
       title: 'Implement',
       instructions: 'Implement the plan.',
       inputArtifacts: ['plan'],
+      outputArtifact: 'implementation',
+      mutatesWorkspace: true,
+      maxAttempts: 1,
+    },
+  ],
+});
+
+/** One mutating step with no input artifacts, so `executeStep` can be called directly (#520). */
+const WORKTREE_PLUMBING_WORKFLOW: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+  schemaVersion: '1',
+  id: 'worktree-plumbing-v1',
+  name: 'Worktree plumbing fixture',
+  description: 'A single mutating step, called directly to prove worktree threading (#520).',
+  stack: 'node',
+  nodes: [
+    {
+      id: 'implement',
+      type: 'agent',
+      role: 'developer',
+      taskKind: 'implementation',
+      title: 'Implement',
+      instructions: 'Implement the plan.',
       outputArtifact: 'implementation',
       mutatesWorkspace: true,
       maxAttempts: 1,
@@ -2170,5 +2194,169 @@ describe('advisory UI-quality judge (#475)', () => {
 
     expect(result.report?.approved).toBe(false);
     expect(result.outcome.approved).toBe(false);
+  });
+});
+
+describe('worktree-label threading (#520 task 4)', () => {
+  it('a step given a worktree label checkpoints and commits inside the worktree, not the primary checkout', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: WORKTREE_PLUMBING_WORKFLOW,
+    });
+    await seedRun(stores, WORKTREE_PLUMBING_WORKFLOW.id);
+    const project = await stores.projects.get('project-1');
+    const step = WORKTREE_PLUMBING_WORKFLOW.nodes[0] as ExecutableStep;
+
+    const checkpointSpy = vi.spyOn(stores.workspaces, 'checkpoint');
+    const commitSpy = vi.spyOn(stores.workspaces, 'commit');
+    const writeRunContextSpy = vi.spyOn(stores.workspaces, 'writeRunContext');
+
+    const artifact = await (stores.orchestrator as unknown as HasExecuteStep).executeStep(
+      project!,
+      WORKTREE_PLUMBING_WORKFLOW,
+      step,
+      'run-1',
+      'implement',
+      new AbortController().signal,
+      undefined,
+      [],
+      undefined,
+      'task-a',
+    );
+
+    expect(artifact.metadata.name).toBe('implementation');
+    // The step's own checkpoint/rollback bracketing and its commit after the
+    // agent runs must all carry the worktree label through to
+    // WorkspaceManager, never silently falling back to the primary checkout.
+    expect(checkpointSpy.mock.calls.length).toBeGreaterThan(0);
+    for (const call of checkpointSpy.mock.calls) expect(call[2]).toBe('task-a');
+    expect(commitSpy.mock.calls.length).toBeGreaterThan(0);
+    for (const call of commitSpy.mock.calls) expect(call[2]).toBe('task-a');
+    // The prompt-rendered workspace path and the run-context write (which
+    // the agent's cwd resolves relative to) must target the same worktree.
+    // Asserted on the rendered prompt rather than on a workspacePath() spy:
+    // writeRunContext calls workspacePath internally, so a "was called with"
+    // assertion would pass even if the prompt's own call lost the label.
+    expect(stores.workspaces.lastRequestMarkdown).toContain(
+      '- Workspace: /fake/project-1/worktrees/task-a',
+    );
+    expect(writeRunContextSpy.mock.calls[0]?.[1]).toBe('task-a');
+    // The wire snapshot is the single field that actually puts the executor's
+    // cwd in the worktree; everything above is bookkeeping around it.
+    expect(stores.executor.submittedExecutionRequests.at(-1)?.workspace.worktree).toBe('task-a');
+  });
+
+  it('omits the worktree label entirely when the caller passes none, reproducing today’s behaviour', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, {
+      workflow: WORKTREE_PLUMBING_WORKFLOW,
+    });
+    await seedRun(stores, WORKTREE_PLUMBING_WORKFLOW.id);
+    const project = await stores.projects.get('project-1');
+    const step = WORKTREE_PLUMBING_WORKFLOW.nodes[0] as ExecutableStep;
+
+    const checkpointSpy = vi.spyOn(stores.workspaces, 'checkpoint');
+    const commitSpy = vi.spyOn(stores.workspaces, 'commit');
+
+    await (stores.orchestrator as unknown as HasExecuteStep).executeStep(
+      project!,
+      WORKTREE_PLUMBING_WORKFLOW,
+      step,
+      'run-1',
+      'implement',
+      new AbortController().signal,
+    );
+
+    expect(checkpointSpy.mock.calls.length).toBeGreaterThan(0);
+    for (const call of checkpointSpy.mock.calls) expect(call[2]).toBeUndefined();
+    expect(commitSpy.mock.calls.length).toBeGreaterThan(0);
+    for (const call of commitSpy.mock.calls) expect(call[2]).toBeUndefined();
+  });
+
+  it('refuses a blocking verify gate inside a worktree instead of checking the wrong database', async () => {
+    // `syncGeneratedDatabase` applies the *workspace's* pending migrations to
+    // the one shared generated database and checks it against the approved
+    // schema plan — both run-level, both reading the primary checkout with no
+    // worktree. Running it for a worktree-scoped gate verifies a database that
+    // never saw the task's own migration; threading the worktree in would push
+    // one task's unmerged migration onto every sibling. Neither is acceptable
+    // silently (#520 final review, Minor 5).
+    const workflow = WorkflowDefinitionSchema.parse({
+      schemaVersion: '1',
+      id: 'blocking-verify-v1',
+      name: 'Blocking verify fixture',
+      description: 'One blocking deterministic gate, called directly with a worktree label.',
+      stack: 'node',
+      nodes: [
+        {
+          id: 'full-suite',
+          type: 'verify',
+          title: 'Full suite',
+          outputArtifact: 'verification.report',
+          blocksOnFailure: true,
+        },
+      ],
+    });
+    const stores = makeOrchestrator(undefined, undefined, undefined, { workflow });
+    await seedRun(stores, workflow.id);
+    const project = await stores.projects.get('project-1');
+    const step = workflow.nodes[0] as ExecutableStep;
+
+    await expect(
+      (stores.orchestrator as unknown as HasExecuteStep).executeStep(
+        project!,
+        workflow,
+        step,
+        'run-1',
+        'full-suite',
+        new AbortController().signal,
+        undefined,
+        [],
+        undefined,
+        'task-a',
+      ),
+    ).rejects.toThrow('blocksOnFailure');
+
+    // The same gate on the primary checkout gets past the guard and on to the
+    // verifier — this fixture has none, which is exactly how far it must get.
+    await expect(
+      (stores.orchestrator as unknown as HasExecuteStep).executeStep(
+        project!,
+        workflow,
+        step,
+        'run-1',
+        'full-suite',
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow('verify is not used by this fixture');
+  });
+
+  it('rolls the worktree back, not the primary checkout, when every candidate fails', async () => {
+    const harness = makeHarness(
+      { implement: { kind: 'fail-always', error: () => new Error('agent exploded') } },
+      undefined,
+      { workflow: WORKTREE_PLUMBING_WORKFLOW },
+    );
+    await seedHarnessRun(harness);
+    const project = await harness.projects.get('project-1');
+    const step = harness.workflow.nodes[0] as ExecutableStep;
+
+    await expect(
+      (harness.orchestrator as unknown as HasExecuteStep).executeStep(
+        project!,
+        harness.workflow,
+        step,
+        'run-1',
+        'implement',
+        new AbortController().signal,
+        undefined,
+        [],
+        undefined,
+        'task-a',
+      ),
+    ).rejects.toThrow('agent exploded');
+
+    // The step's failure rollback undoes work that only exists in the
+    // worktree; aimed at the primary checkout it would reset unrelated state.
+    expect(harness.workspaces.rollbacks.length).toBeGreaterThan(0);
+    for (const worktree of harness.workspaces.rollbackWorktrees) expect(worktree).toBe('task-a');
   });
 });

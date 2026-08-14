@@ -2,10 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
   WorkflowDefinitionSchema,
   type AgentArtifact,
+  type ExecutableStep,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import { EmergencyCeilingError, type Clock, transitionWorkflowRun } from '@agent-foundry/domain';
-import { makeHarness, makeStores, seedRun, type Stores } from './testing/harness.js';
+import {
+  makeHarness,
+  makeStores,
+  seedRun,
+  type Harness,
+  type HasExecuteStep,
+  type Stores,
+} from './testing/harness.js';
 
 const START = Date.parse('2026-07-16T12:00:00.000Z');
 
@@ -396,6 +404,97 @@ describe('emergency ceiling accounting', () => {
     });
   });
 
+  /**
+   * `WorkflowOrchestrator`'s repair accounting is private; casting through
+   * this drives it directly with an explicit per-task scope, the way the
+   * for-each-task runner does under a parallel pool (#520). Going through a
+   * whole pooled run instead would need eight concurrent agent ladders to
+   * assert one arithmetic property.
+   */
+  interface HasRepairCounters {
+    recordCompletedRepair(
+      runId: string,
+      nodeId: string,
+      stepId: string,
+      iteration: number,
+      signal: AbortSignal,
+      scope?: string,
+    ): Promise<void>;
+    resetConsecutiveRepairs(runId: string, scope?: string): Promise<void>;
+  }
+
+  async function repairRound(
+    harness: Harness,
+    counters: HasRepairCounters,
+    taskId: string,
+    round: number,
+  ): Promise<void> {
+    const now = harness.clock.now().toISOString();
+    const stepId = `repair-${taskId}`;
+    await harness.stepRuns.create({
+      id: `${stepId}-${round}`,
+      runId: 'run-1',
+      nodeId: 'task-execution',
+      stepId,
+      stepType: 'agent',
+      iteration: round,
+      status: 'completed',
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      completedAt: now,
+    });
+    await counters.recordCompletedRepair(
+      'run-1',
+      'task-execution',
+      stepId,
+      round,
+      new AbortController().signal,
+      `task-execution:${taskId}`,
+    );
+  }
+
+  it('does not ceiling on eight pooled tasks repairing twice each (#520)', async () => {
+    // Sixteen repairs with no approval between them, and not one task past two
+    // — a completely healthy parallel run. Sharing one run-level counter
+    // reaches the ten-repair emergency ceiling on the tenth of them and fails
+    // the run.
+    const harness = makeHarness({}, undefined, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    const counters = harness.orchestrator as unknown as HasRepairCounters;
+
+    for (const taskId of ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8']) {
+      for (const round of [1, 2]) await repairRound(harness, counters, taskId, round);
+    }
+
+    const run = await harness.runs.get('run-1');
+    expect(run?.execution?.ceiling).toBeUndefined();
+    // The flat field stays meaningful: the worst single task's streak.
+    expect(run?.execution?.consecutiveRepairs).toBe(2);
+    expect(run?.execution?.consecutiveRepairsByTask?.['task-execution:T8']).toBe(2);
+  });
+
+  it("still ceilings on a runaway task that a sibling's approval keeps resetting (#520)", async () => {
+    // The mirror failure: one task grinding through ten repairs while its
+    // siblings approve normally. A run-level reset zeroes the runaway on every
+    // sibling approval, so the fail-safe never fires at all.
+    const harness = makeHarness({}, undefined, { workflow: ONE_AGENT });
+    await seedRun(harness);
+    const counters = harness.orchestrator as unknown as HasRepairCounters;
+
+    for (let round = 1; round <= 9; round += 1) {
+      await repairRound(harness, counters, 'T1', round);
+      await counters.resetConsecutiveRepairs('run-1', 'task-execution:T2');
+    }
+    expect((await harness.runs.get('run-1'))?.execution?.consecutiveRepairs).toBe(9);
+
+    await expect(repairRound(harness, counters, 'T1', 10)).rejects.toMatchObject({
+      name: 'EmergencyCeilingError',
+      reason: 'consecutive-repairs',
+    });
+  });
+
   it('resets consecutive repairs after successful quality approval', async () => {
     const { harness, approveNextCheck } = makeQualityHarness({});
     await seedRun(harness);
@@ -740,6 +839,65 @@ describe('emergency ceiling accounting', () => {
     expect((await stores.runs.get('run-1'))?.execution?.lastVerifiedCheckpoint).toBe(
       'initial-head',
     );
+  });
+
+  it('advances the verified checkpoint only for a primary-checkout verification (#520)', async () => {
+    // lastVerifiedCheckpoint is run-level: preserveDraft, discardDraft and
+    // ProjectService.getDraft all read it and act on the primary checkout,
+    // with no worktree of their own. A sha from a task worktree would send a
+    // ceiling rollback (reset --hard + clean -fd) into the primary checkout at
+    // an unmerged af/task/<label> commit, so a worktree-scoped verify must
+    // leave the anchor alone.
+    const verifiedCheckpointAfterVerify = async (
+      worktree?: string,
+    ): Promise<string | undefined> => {
+      const stores = makeStores();
+      const harness = makeHarness({}, stores, {
+        workflow: VERIFY_ONLY,
+        verification: () => {
+          stores.workspaces.current = 'verified-head';
+          return {
+            schemaVersion: '1',
+            approved: true,
+            packageManager: 'npm',
+            summary: 'approved',
+            commands: [],
+            createdAt: new Date().toISOString(),
+          };
+        },
+      });
+      await seedRun(harness);
+      const seeded = (await stores.runs.get('run-1'))!;
+      await stores.runs.update(
+        {
+          ...seeded,
+          execution: {
+            activeElapsedMs: 0,
+            consecutiveRepairs: 0,
+            lastVerifiedCheckpoint: 'primary-head',
+          },
+        },
+        seeded.version,
+      );
+      // runProject has no way to originate a label yet (#520 task 5 owns the
+      // scheduler), so the step is driven directly.
+      await (harness.orchestrator as unknown as HasExecuteStep).executeStep(
+        (await stores.projects.get('project-1'))!,
+        harness.workflow,
+        harness.workflow.nodes[0] as ExecutableStep,
+        'run-1',
+        'verify',
+        new AbortController().signal,
+        undefined,
+        [],
+        undefined,
+        worktree,
+      );
+      return (await stores.runs.get('run-1'))?.execution?.lastVerifiedCheckpoint;
+    };
+
+    expect(await verifiedCheckpointAfterVerify('task-a')).toBe('primary-head');
+    expect(await verifiedCheckpointAfterVerify()).toBe('verified-head');
   });
 
   it('counts fail-safe wall time while a persisted run remains running across restart', async () => {

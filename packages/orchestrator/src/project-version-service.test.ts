@@ -142,6 +142,15 @@ class FakeWorkspaces implements WorkspaceManager {
   readWorkspaceFile(): Promise<string> {
     return Promise.reject(new NotFoundError('not used by ProjectVersionService'));
   }
+  createWorktree(): Promise<void> {
+    return Promise.resolve();
+  }
+  integrateWorktree(): Promise<void> {
+    return Promise.resolve();
+  }
+  removeWorktree(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 class FakeArtifacts implements ArtifactStore {

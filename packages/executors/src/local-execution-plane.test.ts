@@ -120,6 +120,35 @@ describe('LocalExecutionPlane', () => {
     expect(JSON.stringify(result)).not.toContain('/data/projects');
   });
 
+  it('resolves cwd from the workspace snapshot worktree label when present', async () => {
+    let seenCwd: string | undefined;
+    let seenArgs: [string, string | undefined] | undefined;
+    const baseExecutor = makeExecutor('succeed');
+    const executor: AgentExecutor = {
+      provider: 'codex',
+      health: async () => ({ provider: 'codex', available: true, message: 'ok' }),
+      execute: async (agentRequest, signal?) => {
+        seenCwd = agentRequest.cwd;
+        return baseExecutor.execute(agentRequest, signal);
+      },
+    };
+    const plane = new LocalExecutionPlane(registryFor(executor), {
+      workspacePath: (projectId, worktree) => {
+        seenArgs = [projectId, worktree];
+        return worktree
+          ? `/data/projects/${projectId}/worktrees/${worktree}`
+          : `/data/projects/${projectId}/workspace`;
+      },
+    });
+    const result = await plane.submit({
+      ...request(),
+      workspace: { projectId: 'project-1', ref: 'deadbeef', worktree: 'task-a' },
+    });
+    expect(seenArgs).toEqual(['project-1', 'task-a']);
+    expect(seenCwd).toBe('/data/projects/project-1/worktrees/task-a');
+    expect(result.state).toBe('completed');
+  });
+
   it('maps an ExecutionError to a failed result carrying exitCode/stdout/stderr', async () => {
     const plane = new LocalExecutionPlane(registryFor(makeExecutor('fail')), {
       workspacePath: () => '/data/projects/project-1/workspace',

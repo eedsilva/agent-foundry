@@ -61,7 +61,10 @@ export class LocalExecutionPlane implements ExecutionPlane {
       return executionResult;
     }
     const executor = this.executors.get(parsedRequest.agent.provider);
-    const cwd = this.workspaces.workspacePath(parsedRequest.workspace.projectId);
+    const cwd = this.workspaces.workspacePath(
+      parsedRequest.workspace.projectId,
+      parsedRequest.workspace.worktree,
+    );
     const abort = new AbortController();
     const unlinkAbort = this.forwardAbort(signal, abort, parsedRequest.agent.runId);
     this.executions.set(parsedRequest.executionId, {

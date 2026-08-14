@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
@@ -60,6 +60,53 @@ describe('FileWorkspaceManager.isClean', () => {
     await writeFile(join(workspace, 'untracked.txt'), 'keep me\n');
     expect(await manager.isClean(projectId)).toBe(false);
     expect(await readFile(join(workspace, 'untracked.txt'), 'utf8')).toBe('keep me\n');
+  });
+});
+
+describe('FileWorkspaceManager.ensureGit', () => {
+  it('writes the git identity only when it initializes the repository', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    await manager.ensureGit('project-1');
+    const workspace = manager.workspacePath('project-1');
+    const configPath = join(workspace, '.git', 'config');
+    const beforeMtime = (await stat(configPath)).mtimeMs;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Rewriting the same value still takes `.git/config.lock` and still
+    // rewrites the file, so an unchanged mtime is the evidence that no second
+    // write happened at all — which is what makes concurrent worktree
+    // checkpoints safe (#520).
+    await manager.ensureGit('project-1');
+
+    expect((await stat(configPath)).mtimeMs).toBe(beforeMtime);
+    const name = await execa('git', ['config', 'user.name'], { cwd: workspace });
+    expect(name.stdout.trim()).toBe('Test Agent');
+  });
+
+  it('survives concurrent checkpoints from parallel task worktrees (#520)', async () => {
+    // `checkpoint(projectId, label, worktree)` calls `ensureGit` against the
+    // primary repo whatever worktree it targets. While `ensureGit` rewrote the
+    // git identity on every call, two of these racing lost `.git/config.lock`
+    // and failed the run.
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const labels = ['a', 'b', 'c', 'd'];
+    await manager.ensureGit('project-1');
+    for (const label of labels) await manager.createWorktree('project-1', label);
+
+    const checkpoints = await Promise.all(
+      labels.map((label) => manager.checkpoint('project-1', label, label)),
+    );
+
+    expect(checkpoints).toHaveLength(4);
+    expect(checkpoints.every((sha) => /^[0-9a-f]{40}$/.test(sha))).toBe(true);
   });
 });
 
@@ -554,5 +601,315 @@ describe('FileWorkspaceManager.readWorkspaceFile', () => {
     await writeFile(join(workspace, 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x00, 0x0d]));
 
     await expect(manager.readWorkspaceFile(projectId, 'image.png')).rejects.toThrow(/binary/);
+  });
+});
+
+describe('FileWorkspaceManager.workspacePath worktree parameter', () => {
+  it('resolves a worktree path under projectRoot/worktrees/<label>, primary path unaffected', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+
+    expect(manager.workspacePath('project-1', 'task-a')).toBe(
+      join(manager.projectRoot('project-1'), 'worktrees', 'task-a'),
+    );
+    expect(manager.workspacePath('project-1')).toBe(
+      join(manager.projectRoot('project-1'), 'workspace'),
+    );
+  });
+});
+
+describe('FileWorkspaceManager worktree lifecycle (#520)', () => {
+  it('createWorktree creates a real git worktree at HEAD', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'base.txt'), 'base\n');
+    await manager.checkpoint(projectId, 'base');
+
+    await manager.createWorktree(projectId, 'task-a');
+
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+    const topLevel = await execa('git', ['rev-parse', '--show-toplevel'], { cwd: worktreePath });
+    // `git rev-parse` resolves symlinks (macOS aliases /tmp -> /private/tmp);
+    // resolve both sides the same way before comparing.
+    expect(await realpath(topLevel.stdout.trim())).toBe(await realpath(worktreePath));
+    await expect(readFile(join(worktreePath, 'base.txt'), 'utf8')).resolves.toBe('base\n');
+  });
+
+  it('keeps a commit made inside a worktree out of the primary checkout until integrateWorktree', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'base.txt'), 'base\n');
+    await manager.checkpoint(projectId, 'base');
+    await manager.createWorktree(projectId, 'task-a');
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+    await writeFile(join(worktreePath, 'feature-a.txt'), 'feature a\n');
+    await manager.commit(projectId, 'add feature a', 'task-a');
+
+    await expect(readFile(join(workspace, 'feature-a.txt'), 'utf8')).rejects.toThrow();
+
+    await manager.integrateWorktree(projectId, 'task-a');
+
+    await expect(readFile(join(workspace, 'feature-a.txt'), 'utf8')).resolves.toBe('feature a\n');
+  });
+
+  it('integrateWorktree merges two worktrees that touched different files', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'base.txt'), 'base\n');
+    await manager.checkpoint(projectId, 'base');
+    await manager.createWorktree(projectId, 'task-a');
+    await manager.createWorktree(projectId, 'task-b');
+    const a = manager.workspacePath(projectId, 'task-a');
+    const b = manager.workspacePath(projectId, 'task-b');
+    await writeFile(join(a, 'a.txt'), 'a\n');
+    await manager.commit(projectId, 'add a', 'task-a');
+    await writeFile(join(b, 'b.txt'), 'b\n');
+    await manager.commit(projectId, 'add b', 'task-b');
+
+    await manager.integrateWorktree(projectId, 'task-a');
+    await manager.integrateWorktree(projectId, 'task-b');
+
+    await expect(readFile(join(workspace, 'a.txt'), 'utf8')).resolves.toBe('a\n');
+    await expect(readFile(join(workspace, 'b.txt'), 'utf8')).resolves.toBe('b\n');
+  });
+
+  it('integrateWorktree throws on a genuine conflict and leaves the primary checkout clean', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'shared.txt'), 'base\n');
+    await manager.checkpoint(projectId, 'base');
+    await manager.createWorktree(projectId, 'task-a');
+    await manager.createWorktree(projectId, 'task-b');
+    const a = manager.workspacePath(projectId, 'task-a');
+    const b = manager.workspacePath(projectId, 'task-b');
+    await writeFile(join(a, 'shared.txt'), 'from a\n');
+    await manager.commit(projectId, 'edit from a', 'task-a');
+    await writeFile(join(b, 'shared.txt'), 'from b\n');
+    await manager.commit(projectId, 'edit from b', 'task-b');
+    await manager.integrateWorktree(projectId, 'task-a');
+
+    await expect(manager.integrateWorktree(projectId, 'task-b')).rejects.toThrow('task-b');
+
+    expect(await manager.isClean(projectId)).toBe(true);
+    const mergeHead = await execa('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], {
+      cwd: workspace,
+      reject: false,
+    });
+    expect(mergeHead.exitCode).not.toBe(0);
+  });
+
+  it('removeWorktree is idempotent', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    await manager.createWorktree(projectId, 'task-a');
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+
+    await manager.removeWorktree(projectId, 'task-a');
+
+    await expect(stat(worktreePath)).rejects.toThrow();
+    await expect(manager.removeWorktree(projectId, 'task-a')).resolves.toBeUndefined();
+  });
+
+  it('createWorktree reclaims a stale branch when a prior worktree directory was removed without deleting it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await manager.createWorktree(projectId, 'task-a');
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+    // Simulates a crashed/killed run: the worktree directory is gone (e.g. via
+    // `git worktree remove`) but its branch `af/task/task-a` was never deleted.
+    await execa('git', ['worktree', 'remove', '--force', worktreePath], { cwd: workspace });
+    await expect(
+      execa('git', ['rev-parse', '--verify', 'refs/heads/af/task/task-a'], { cwd: workspace }),
+    ).resolves.toBeDefined();
+
+    await expect(manager.createWorktree(projectId, 'task-a')).resolves.toBeUndefined();
+
+    const topLevel = await execa('git', ['rev-parse', '--show-toplevel'], { cwd: worktreePath });
+    expect(await realpath(topLevel.stdout.trim())).toBe(await realpath(worktreePath));
+  });
+
+  it('makes the primary node_modules reachable from a new worktree', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(join(workspace, 'node_modules', 'left-pad'), { recursive: true });
+    await writeFile(
+      join(workspace, 'node_modules', 'left-pad', 'index.js'),
+      'module.exports = 1;\n',
+    );
+
+    await manager.createWorktree(projectId, 'task-a');
+
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+    await expect(
+      readFile(join(worktreePath, 'node_modules', 'left-pad', 'index.js'), 'utf8'),
+    ).resolves.toBe('module.exports = 1;\n');
+  });
+
+  it('never commits or merges the worktree node_modules symlink back into the primary install', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(join(workspace, 'node_modules', 'left-pad'), { recursive: true });
+    await writeFile(
+      join(workspace, 'node_modules', 'left-pad', 'index.js'),
+      'module.exports = 1;\n',
+    );
+
+    await manager.createWorktree(projectId, 'task-a');
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+    // The scheduler's very first act after forking: a checkpoint whose only
+    // candidate change is the symlink `createWorktree` just made.
+    await manager.checkpoint(projectId, 'fork', 'task-a');
+    await writeFile(join(worktreePath, 'feature.txt'), 'feature\n');
+    await manager.checkpoint(projectId, 'work', 'task-a');
+    await manager.integrateWorktree(projectId, 'task-a');
+
+    const tree = await execa('git', ['ls-tree', '-r', '--name-only', 'HEAD'], { cwd: workspace });
+    expect(tree.stdout.split('\n')).not.toContain('node_modules');
+    expect(await manager.isClean(projectId)).toBe(true);
+    // The primary's install survived the merge as a real directory.
+    const primaryNodeModules = await lstat(join(workspace, 'node_modules'));
+    expect(primaryNodeModules.isSymbolicLink()).toBe(false);
+    expect(primaryNodeModules.isDirectory()).toBe(true);
+    await expect(
+      readFile(join(workspace, 'node_modules', 'left-pad', 'index.js'), 'utf8'),
+    ).resolves.toBe('module.exports = 1;\n');
+    // And the task's actual work still landed.
+    await expect(readFile(join(workspace, 'feature.txt'), 'utf8')).resolves.toBe('feature\n');
+  });
+
+  it('cleanup removes worktrees along with the workspace since they live under projectRoot', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    await manager.createWorktree(projectId, 'task-a');
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+    await writeFile(join(worktreePath, 'in-worktree.txt'), 'still here?\n');
+    await expect(readFile(join(worktreePath, 'in-worktree.txt'), 'utf8')).resolves.toBe(
+      'still here?\n',
+    );
+
+    await manager.cleanup(projectId);
+
+    await expect(stat(worktreePath)).rejects.toThrow();
+  });
+});
+
+describe('FileWorkspaceManager per-task git methods (#520 checkpoint/rollback/head/isClean)', () => {
+  it('checkpoint, rollback, head, and isClean operate on the worktree, not the primary, when given a worktree label', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    const workspace = manager.workspacePath(projectId);
+    await writeFile(join(workspace, 'base.txt'), 'base\n');
+    const primaryHead = await manager.checkpoint(projectId, 'base');
+    await manager.createWorktree(projectId, 'task-a');
+    const worktreePath = manager.workspacePath(projectId, 'task-a');
+
+    expect(await manager.isClean(projectId, 'task-a')).toBe(true);
+    expect(await manager.head(projectId, 'task-a')).toBe(primaryHead);
+
+    await writeFile(join(worktreePath, 'work.txt'), 'dirty\n');
+    expect(await manager.isClean(projectId, 'task-a')).toBe(false);
+
+    const worktreeCheckpoint = await manager.checkpoint(projectId, 'wip', 'task-a');
+    expect(worktreeCheckpoint).not.toBe(primaryHead);
+    expect(await manager.head(projectId, 'task-a')).toBe(worktreeCheckpoint);
+    // The primary checkout is untouched by any worktree-scoped call above.
+    expect(await manager.head(projectId)).toBe(primaryHead);
+    expect(await manager.isClean(projectId)).toBe(true);
+
+    await writeFile(join(worktreePath, 'work.txt'), 'more changes\n');
+    expect(await manager.isClean(projectId, 'task-a')).toBe(false);
+
+    await manager.rollback(projectId, worktreeCheckpoint, 'task-a');
+
+    expect(await manager.isClean(projectId, 'task-a')).toBe(true);
+    await expect(readFile(join(worktreePath, 'work.txt'), 'utf8')).resolves.toBe('dirty\n');
+  });
+});
+
+describe('FileWorkspaceManager.writeRunContext worktree parameter', () => {
+  it('writes REQUEST.md under the worktree path when a worktree label is given', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    await manager.ensureGit(projectId);
+    await manager.createWorktree(projectId, 'task-a');
+
+    const { requestPath } = await manager.writeRunContext(
+      {
+        projectId,
+        runId: 'run-1',
+        stepRunId: 'step-1',
+        attemptId: 'attempt-1',
+        requestMarkdown: 'Do the task.',
+        outputSchema: {},
+      },
+      'task-a',
+    );
+
+    expect(requestPath.startsWith(manager.workspacePath(projectId, 'task-a'))).toBe(true);
+    await expect(readFile(requestPath, 'utf8')).resolves.toBe('Do the task.');
   });
 });
