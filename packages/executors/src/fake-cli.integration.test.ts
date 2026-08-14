@@ -158,7 +158,12 @@ describe('fake provider CLIs', () => {
       'run-1',
       'step-judge',
       'attempt-judge',
-      { stepId: 'verify-browser', taskKind: 'verification', role: 'tester', mutationAllowed: false },
+      {
+        stepId: 'verify-browser',
+        taskKind: 'verification',
+        role: 'tester',
+        mutationAllowed: false,
+      },
       UI_QUALITY_JUDGE_JSON_SCHEMA,
     );
     const executor = new ClaudeCliExecutor(1_000_000);
@@ -176,9 +181,7 @@ describe('fake provider CLIs', () => {
     );
 
     expect(result.exitCode).toBe(0);
-    const parsed = UiQualityJudgeOutputSchema.safeParse(
-      (result.output as { data: unknown }).data,
-    );
+    const parsed = UiQualityJudgeOutputSchema.safeParse((result.output as { data: unknown }).data);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.overallScore).toBeGreaterThanOrEqual(0);
