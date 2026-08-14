@@ -13,6 +13,9 @@ export function buildArtifact(
   },
   options?: { label?: string; t2AcceptanceMode?: string },
 ): unknown;
-export function respond(prompt: string): Promise<unknown>;
+export function respond(
+  prompt: string,
+  options?: { outputSchemaJson?: string | undefined },
+): Promise<unknown>;
 export function readStdin(): Promise<string>;
 export function argValue(argv: string[], flag: string): string | undefined;

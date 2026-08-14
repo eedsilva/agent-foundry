@@ -173,7 +173,10 @@ class RealFakeCliJudgeExecutor implements AgentExecutor {
       summary: 'Scripted post-repair judge score.',
       data: {
         overallScore,
-        criteria: [{ criterionId: 'layout-coherence', score: overallScore }],
+        criteria: UI_QUALITY_RUBRIC_V1.criteria.map((criterion) => ({
+          criterionId: criterion.id,
+          score: overallScore,
+        })),
       },
       decisions: [],
       assumptions: [],
@@ -477,6 +480,9 @@ describe('#548: the real fake-CLI-backed judge gates a run in both directions', 
     );
     expect(report.approved).toBe(true);
     expect(report.uiQuality?.overallScore).toBe(0.8);
+    expect(report.uiQuality?.criteria.map((criterion) => criterion.criterionId).sort()).toEqual(
+      [...EXPECTED_CRITERION_IDS].sort(),
+    );
   }, 60_000);
 
   it('a score below the threshold flips approved false and routes to repair', async () => {

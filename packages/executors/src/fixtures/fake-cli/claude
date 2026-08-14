@@ -12,7 +12,7 @@ if (argv.includes('--version')) {
 
 try {
   const prompt = argv.at(-1) ?? '';
-  const artifact = await respond(prompt);
+  const artifact = await respond(prompt, { outputSchemaJson: argValue(argv, '--json-schema') });
   const model = argValue(argv, '--model') ?? 'fake-claude-model';
   const usage = { input_tokens: 120, cache_read_input_tokens: 70, output_tokens: 45 };
   console.log(

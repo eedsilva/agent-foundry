@@ -17,14 +17,21 @@ const SCHEMA_PLAN_SCHEMA_ID = 'https://agent-foundry.dev/schemas/schema-plan-art
  * workspace packages (see the file-header comment). */
 const UI_QUALITY_JUDGE_SCHEMA_ID =
   'https://agent-foundry.dev/schemas/ui-quality-judge-artifact-v1.json';
+const UI_QUALITY_JUDGE_CRITERION_IDS = [
+  'layout-coherence',
+  'navigation',
+  'empty-loading-error-states',
+  'contrast-readability',
+  'responsive-sanity',
+];
 
 /** Parses the persisted REQUEST.md the prompt points at. Throws on a missing
  * required field so a prompt-compiler format change fails loudly at this
  * boundary instead of silently downstream (format owner:
  * packages/orchestrator/src/prompt-compiler.ts compileRequestMarkdown). */
-export async function resolveRequest(prompt) {
+export async function resolveRequest(prompt, options = {}) {
   const match = prompt.match(/\.orchestrator\/runs\/\S+\/REQUEST\.md/);
-  if (!match) return resolveAdHocRequest(prompt);
+  if (!match) return resolveAdHocRequest(prompt, options);
   const requestPath = join(process.cwd(), match[0]);
   const markdown = await readFile(requestPath, 'utf8');
   const field = (label) => {
@@ -60,12 +67,15 @@ export async function resolveRequest(prompt) {
  * still carrying the output schema is the prompt itself: codex's invocation
  * (packages/executors/src/output-schema-prompt.ts) always appends "Output
  * JSON Schema:" plus the schema JSON to the prompt when one is set. Claude
- * passes its schema as a separate `--json-schema` CLI arg instead, which
- * never reaches this function — an ad hoc claude request still throws below.
+ * passes its schema as a separate `--json-schema` CLI arg instead, so its
+ * fake shim forwards that JSON here explicitly.
  */
-function resolveAdHocRequest(prompt) {
+function resolveAdHocRequest(prompt, options = {}) {
   const schemaMatch = prompt.match(/Output JSON Schema:\n(\{[\s\S]*\})$/);
-  const outputSchemaId = schemaMatch ? safeParseSchemaId(schemaMatch[1]) : undefined;
+  const outputSchemaId =
+    (typeof options.outputSchemaJson === 'string'
+      ? safeParseSchemaId(options.outputSchemaJson)
+      : undefined) ?? (schemaMatch ? safeParseSchemaId(schemaMatch[1]) : undefined);
   if (!outputSchemaId) {
     throw new Error('fake CLI: prompt does not reference a REQUEST.md');
   }
@@ -276,7 +286,10 @@ export function buildArtifact(identity, options = {}) {
                 // purpose so tests control the gate outcome via the policy's
                 // minOverallScore instead of this score.
                 overallScore: 0.8,
-                criteria: [{ criterionId: 'layout-coherence', score: 0.8 }],
+                criteria: UI_QUALITY_JUDGE_CRITERION_IDS.map((criterionId) => ({
+                  criterionId,
+                  score: 0.8,
+                })),
               }
             : {
                 stepId: identity.stepId,
@@ -305,8 +318,8 @@ export function buildArtifact(identity, options = {}) {
   };
 }
 
-export async function respond(prompt) {
-  const identity = await resolveRequest(prompt);
+export async function respond(prompt, options = {}) {
+  const identity = await resolveRequest(prompt, options);
   if (identity.mutationAllowed && ['implementation', 'repair'].includes(identity.taskKind)) {
     await mutateWorkspace(process.cwd(), identity.stepId, 'fake');
   }
