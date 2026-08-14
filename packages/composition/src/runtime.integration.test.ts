@@ -11,7 +11,11 @@ import type {
   QueueJob,
   VerificationReport,
 } from '@agent-foundry/contracts';
-import { TaskGraphArtifactSchema } from '@agent-foundry/contracts';
+import {
+  BrowserVerificationReportSchema,
+  TaskGraphArtifactSchema,
+  UI_QUALITY_RUBRIC_V1,
+} from '@agent-foundry/contracts';
 import { SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor, PlaywrightBrowserVerifier } from '@agent-foundry/executors';
 import { BrowserVerificationCoordinator, ConversationService } from '@agent-foundry/orchestrator';
@@ -498,6 +502,23 @@ describe('runtime composition', () => {
     expect(stepRuns.filter((step) => step.nodeId === 'full-suite-verification')).toHaveLength(1);
     expect(stepRuns.filter((step) => step.nodeId === 'release-assessment')).toHaveLength(1);
     expect(stepRuns.filter((step) => step.nodeId === 'diff-approval')).toHaveLength(1);
+    // #549: this run patches no policy and no judge executor, so the score
+    // below can only come from the shipped policies/default.yaml. The
+    // judgeModel pins that file's provider/model reaching the executor
+    // (MockExecutorRegistry echoes both back regardless of provider), and
+    // `approved` staying true pins the omitted minOverallScore: advisory.
+    const browserReport = BrowserVerificationReportSchema.parse(
+      (await runtime.artifacts.getLatest(project.id, 'browser-verification.report'))?.content,
+    );
+    expect(browserReport.approved).toBe(true);
+    expect(browserReport.uiQuality?.judgeModel).toBe('mock:claude/haiku');
+    expect(browserReport.uiQuality?.overallScore).toBe(0.8);
+    // The fixture is node-only and cannot import the rubric, so it copies the
+    // criterion ids. This is what stops that copy going stale when a criterion
+    // is added or renamed.
+    expect(browserReport.uiQuality?.criteria.map((criterion) => criterion.criterionId)).toEqual(
+      UI_QUALITY_RUBRIC_V1.criteria.map((criterion) => criterion.id),
+    );
     const workflow = await runtime.workflows.get('web-app-v1');
     expect(workflow.nodes.slice(-4).map((node) => node.id)).toEqual([
       'task-execution',
