@@ -1,4 +1,11 @@
 schemaVersion: '1'
 id: default
-version: 1
+version: 2
 forbiddenDependencies: []
+# Advisory only (#549, ADR 0058): every real browser verification scores its
+# screenshots and attaches `uiQuality` to the report, but `minOverallScore` is
+# deliberately omitted, so nothing is ever blocked. The threshold gets chosen
+# from the corpus these advisory scores build up, not from a handful of runs.
+uiQualityJudge:
+  provider: claude
+  model: haiku

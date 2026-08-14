@@ -35,15 +35,13 @@ const EXPECTED_CRITERION_IDS = [
 ];
 
 /**
- * MockAgentExecutor's shared deterministic core (fake-cli-core.mjs) has no
- * branch for the judge's output schema (it only special-cases the browser
- * test plan and task graph schemas), so a bare mock run never produces
- * judge-shaped output and `evaluateUiQuality` degrades to `undefined`. This
- * wrapper adds exactly that branch and otherwise delegates to the real
+ * MockAgentExecutor's shared deterministic core (fake-cli-core.mjs) answers
+ * the judge schema with one fixed passing score, which is all a run needs when
+ * nobody is asserting on the number. These tests are: #477's gate has to see a
+ * score cross a threshold in both directions, so this wrapper serves a
+ * scripted sequence instead and otherwise delegates to the real
  * MockAgentExecutor unchanged, mirroring the BrowserPlanExecutor /
- * ReleaseAssessmentExecutor pattern in runtime.integration.test.ts rather
- * than teaching the shared fixture (also used by the real-mode fake CLI
- * binaries) about a judge-only concern.
+ * ReleaseAssessmentExecutor pattern in runtime.integration.test.ts.
  */
 class UiQualityJudgeExecutor implements AgentExecutor {
   readonly provider = 'mock';
@@ -131,9 +129,9 @@ async function startJudgedRun(options: JudgedRunOptions = {}): Promise<{
   const policiesDir = await mkdtemp(join(tmpdir(), 'agent-foundry-ui-quality-judge-policies-'));
   temporaryDirectories.push(policiesDir);
   // A dedicated policy (rather than the repo's shared policies/default.yaml)
-  // so this test never depends on, or mutates, real repo state: #475's judge
-  // is opt-in via ProjectPolicy.uiQualityJudge, absent from the checked-in
-  // default policy.
+  // so this test never depends on, or mutates, real repo state — and so the
+  // gate cases can set `minOverallScore`, which the shipped default
+  // deliberately omits (#549).
   await writeFile(
     join(policiesDir, 'ui-quality-judge-test.yaml'),
     [

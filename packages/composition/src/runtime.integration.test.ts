@@ -11,7 +11,12 @@ import type {
   QueueJob,
   VerificationReport,
 } from '@agent-foundry/contracts';
-import { TaskGraphArtifactSchema } from '@agent-foundry/contracts';
+import {
+  BrowserVerificationReportSchema,
+  TaskGraphArtifactSchema,
+  UI_QUALITY_JUDGE_JSON_SCHEMA,
+  UI_QUALITY_RUBRIC_V1,
+} from '@agent-foundry/contracts';
 import { SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor, PlaywrightBrowserVerifier } from '@agent-foundry/executors';
 import { BrowserVerificationCoordinator, ConversationService } from '@agent-foundry/orchestrator';
@@ -100,6 +105,69 @@ class ReleaseAssessmentExecutor implements AgentExecutor {
       nextActions: ['Review the protected route in the browser.'],
     };
     return { ...result, output, stdout: JSON.stringify(output) };
+  }
+
+  health(): Promise<ExecutorHealth> {
+    return this.delegate.health();
+  }
+}
+
+class ScriptedUiQualityJudgeExecutor implements AgentExecutor {
+  readonly provider = 'mock';
+  readonly judgeRequests: AgentExecutionRequest[] = [];
+  private readonly delegate: ReleaseAssessmentExecutor;
+
+  constructor(
+    private readonly behavior:
+      { type: 'score'; overallScore: number } | { type: 'throw'; message: string },
+    delegate: ReleaseAssessmentExecutor = new ReleaseAssessmentExecutor(),
+  ) {
+    this.delegate = delegate;
+  }
+
+  async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
+    if (request.outputSchema?.['$id'] !== UI_QUALITY_JUDGE_JSON_SCHEMA.$id) {
+      return this.delegate.execute(request);
+    }
+
+    this.judgeRequests.push(request);
+    if (this.behavior.type === 'throw') {
+      throw new Error(this.behavior.message);
+    }
+
+    const overallScore = this.behavior.overallScore;
+    const mockModel = `mock:${request.provider}/${request.model || 'default'}`;
+    const output = {
+      schemaVersion: '1' as const,
+      status: 'completed' as const,
+      summary: 'Scripted UI-quality judge score.',
+      data: {
+        overallScore,
+        criteria: UI_QUALITY_RUBRIC_V1.criteria.map((criterion, index) => ({
+          criterionId: criterion.id,
+          score: Math.min(1, overallScore + index * 0.02),
+          finding: `Scripted finding for ${criterion.id}.`,
+        })),
+      },
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      nextActions: [],
+    };
+    return {
+      runId: request.runId,
+      stepRunId: request.stepRunId,
+      attemptId: request.attemptId,
+      provider: 'mock',
+      model: mockModel,
+      executedModel: mockModel,
+      exitCode: 0,
+      durationMs: 1,
+      stdout: JSON.stringify(output),
+      stderr: '',
+      output,
+      usage: { inputTokens: 100, outputTokens: 100, estimatedCostUsd: 0 },
+    };
   }
 
   health(): Promise<ExecutorHealth> {
@@ -215,6 +283,58 @@ function configureMockBrowserRuntime(runtime: Runtime): void {
         steps: [],
       } satisfies BrowserVerificationReport),
   });
+}
+
+async function completeDefaultMockWorkflow(
+  executor: AgentExecutor = new ReleaseAssessmentExecutor(),
+): Promise<{
+  runtime: Runtime;
+  project: Awaited<ReturnType<Runtime['projectService']['create']>>;
+  runId: string;
+  detail: Awaited<ReturnType<Runtime['projectService']['get']>>;
+  workflowRun: NonNullable<Awaited<ReturnType<Runtime['runs']['get']>>>;
+  stepRuns: Awaited<ReturnType<Runtime['stepRuns']['list']>>;
+  browserReport: BrowserVerificationReport;
+}> {
+  const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-'));
+  temporaryDirectories.push(dataDir);
+  const rootDir = resolve(import.meta.dirname, '../../..');
+  const runtime = await createRuntime({
+    ...process.env,
+    REPO_ROOT: rootDir,
+    DATA_DIR: dataDir,
+    EXECUTOR_MODE: 'mock',
+    AUTO_INSTALL_DEPENDENCIES: 'false',
+    WORKER_ID: 'integration-worker',
+  });
+  const project = await runtime.projectService.create({
+    name: 'Integration sample',
+    workflowId: 'web-app-v1',
+    prd: [
+      '# PRD',
+      'Build a tiny issue tracker with create and complete flows.',
+      'Persist issues, validate inputs, expose clear failure states, and add deterministic tests.',
+    ].join('\n\n'),
+  });
+
+  if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
+  const runId = project.currentRunId;
+  Object.defineProperty(runtime.executors, 'executor', {
+    configurable: true,
+    value: executor,
+  });
+
+  expect(await runtime.worker.runOnce()).toBe(true);
+  await approveAllGates(runtime, runId);
+
+  const detail = await runtime.projectService.get(project.id);
+  const workflowRun = await runtime.runs.get(project.currentRunId);
+  if (!workflowRun) throw new Error('Expected workflow run to exist');
+  const stepRuns = await runtime.stepRuns.list(project.currentRunId);
+  const browserReport = BrowserVerificationReportSchema.parse(
+    (await runtime.artifacts.getLatest(project.id, 'browser-verification.report'))?.content,
+  );
+  return { runtime, project, runId, detail, workflowRun, stepRuns, browserReport };
 }
 
 describe('runtime composition', () => {
@@ -455,49 +575,31 @@ describe('runtime composition', () => {
   }, 30_000);
 
   it('runs the complete workflow in default mock mode without runtime patches', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-'));
-    temporaryDirectories.push(dataDir);
-    const rootDir = resolve(import.meta.dirname, '../../..');
-    const runtime = await createRuntime({
-      ...process.env,
-      REPO_ROOT: rootDir,
-      DATA_DIR: dataDir,
-      EXECUTOR_MODE: 'mock',
-      AUTO_INSTALL_DEPENDENCIES: 'false',
-      WORKER_ID: 'integration-worker',
-    });
-    const project = await runtime.projectService.create({
-      name: 'Integration sample',
-      workflowId: 'web-app-v1',
-      prd: [
-        '# PRD',
-        'Build a tiny issue tracker with create and complete flows.',
-        'Persist issues, validate inputs, expose clear failure states, and add deterministic tests.',
-      ].join('\n\n'),
-    });
-
-    if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
-    const runId = project.currentRunId;
     const releaseExecutor = new ReleaseAssessmentExecutor();
-    Object.defineProperty(runtime.executors, 'executor', {
-      configurable: true,
-      value: releaseExecutor,
-    });
-
-    expect(await runtime.worker.runOnce()).toBe(true);
-    await approveAllGates(runtime, runId);
-
-    const detail = await runtime.projectService.get(project.id);
+    const { runtime, project, detail, workflowRun, stepRuns, browserReport } =
+      await completeDefaultMockWorkflow(releaseExecutor);
     expect(detail.project.status).toBe('completed');
     expect(detail.project.currentRunId).toBe(project.currentRunId);
-    const workflowRun = await runtime.runs.get(project.currentRunId);
     expect(workflowRun).toMatchObject({ status: 'completed', projectId: project.id });
-    const stepRuns = await runtime.stepRuns.list(project.currentRunId);
     expect(stepRuns.some((step) => step.nodeId === 'deterministic-verification')).toBe(false);
     expect(stepRuns.some((step) => step.nodeId === 'browser-verification')).toBe(false);
     expect(stepRuns.filter((step) => step.nodeId === 'full-suite-verification')).toHaveLength(1);
     expect(stepRuns.filter((step) => step.nodeId === 'release-assessment')).toHaveLength(1);
     expect(stepRuns.filter((step) => step.nodeId === 'diff-approval')).toHaveLength(1);
+    // #549: this run patches no policy and no judge executor, so the score
+    // below can only come from the shipped policies/default.yaml. The
+    // judgeModel pins that file's provider/model reaching the executor
+    // (MockExecutorRegistry echoes both back regardless of provider), and
+    // `approved` staying true pins the omitted minOverallScore: advisory.
+    expect(browserReport.approved).toBe(true);
+    expect(browserReport.uiQuality?.judgeModel).toBe('mock:claude/haiku');
+    expect(browserReport.uiQuality?.overallScore).toBe(0.8);
+    // The fixture is node-only and cannot import the rubric, so it copies the
+    // criterion ids. This is what stops that copy going stale when a criterion
+    // is added or renamed.
+    expect(browserReport.uiQuality?.criteria.map((criterion) => criterion.criterionId)).toEqual(
+      UI_QUALITY_RUBRIC_V1.criteria.map((criterion) => criterion.id),
+    );
     const workflow = await runtime.workflows.get('web-app-v1');
     expect(workflow.nodes.slice(-4).map((node) => node.id)).toEqual([
       'task-execution',
@@ -552,13 +654,15 @@ describe('runtime composition', () => {
       ),
     ).toBe(true);
     const firstAgentAttempt = agentAttempts[0]!;
+    const currentRunId = project.currentRunId;
+    if (!currentRunId) throw new Error('Expected project to keep its workflow run id');
     await expect(
       readFile(
         join(
           runtime.workspaces.workspacePath(project.id),
           '.orchestrator',
           'runs',
-          project.currentRunId,
+          currentRunId,
           'steps',
           firstAgentAttempt.stepRunId,
           'attempts',
@@ -642,6 +746,46 @@ describe('runtime composition', () => {
     // The schema step and its gate (#481) added an agent step and a gate to the
     // complete-workflow path; 30s clears it in isolation but not under
     // whole-suite CPU contention.
+  }, 60_000);
+
+  it('keeps the functional approved value unchanged when the bundled default policy gets a low judge score', async () => {
+    const judgeExecutor = new ScriptedUiQualityJudgeExecutor({
+      type: 'score',
+      overallScore: 0.05,
+    });
+    const { detail, browserReport } = await completeDefaultMockWorkflow(judgeExecutor);
+
+    expect(detail.project.status).toBe('completed');
+    expect(judgeExecutor.judgeRequests.length).toBeGreaterThan(0);
+    expect(
+      judgeExecutor.judgeRequests.every(
+        (request) => request.provider === 'claude' && request.model === 'haiku',
+      ),
+    ).toBe(true);
+    expect(browserReport.approved).toBe(true);
+    expect(browserReport.summary).toBe('Mock browser verification passed.');
+    expect(browserReport.summary).not.toContain('UI-quality gate failed');
+    expect(browserReport.uiQuality?.judgeModel).toBe('mock:claude/haiku');
+    expect(browserReport.uiQuality?.overallScore).toBe(0.05);
+  }, 60_000);
+
+  it('keeps approved unchanged and omits uiQuality when the bundled default policy judge fails', async () => {
+    const judgeExecutor = new ScriptedUiQualityJudgeExecutor({
+      type: 'throw',
+      message: 'synthetic ui-quality outage',
+    });
+    const { detail, browserReport } = await completeDefaultMockWorkflow(judgeExecutor);
+
+    expect(detail.project.status).toBe('completed');
+    expect(judgeExecutor.judgeRequests.length).toBeGreaterThan(0);
+    expect(
+      judgeExecutor.judgeRequests.every(
+        (request) => request.provider === 'claude' && request.model === 'haiku',
+      ),
+    ).toBe(true);
+    expect(browserReport.approved).toBe(true);
+    expect(browserReport.summary).toBe('Mock browser verification passed.');
+    expect(browserReport.uiQuality).toBeUndefined();
   }, 60_000);
 
   it('blocks before diff approval when the full suite is red', async () => {
