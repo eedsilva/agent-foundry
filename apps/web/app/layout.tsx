@@ -12,8 +12,17 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
   return (
     <html lang="pt-BR">
       <body>
+        {/* Visually hidden until focused (`.skip-link` in theme.css) — the one
+            basic a11y affordance a survey found genuinely absent anywhere in
+            this app. Must stay first in the DOM to be the page's first Tab
+            stop. */}
+        <a href="#main-content" className="skip-link">
+          Pular para o conteúdo
+        </a>
         <TopBarClient />
-        <main>{children}</main>
+        <main id="main-content" tabIndex={-1}>
+          {children}
+        </main>
       </body>
     </html>
   );
