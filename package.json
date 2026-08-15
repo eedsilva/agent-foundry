@@ -48,6 +48,7 @@
     "github-config:check": "node scripts/validate-github-config.mjs",
     "roadmap:check": "npm run roadmap:validate && npm run roadmap:test && npm run github-config:check && node scripts/render-roadmap.mjs --check",
     "secrets:check": "npm run build --workspace @agent-foundry/domain && node scripts/scan-secrets.mjs",
+    "perf:check": "node scripts/check-perf-budgets.mjs",
     "github:roadmap:dry-run": "node scripts/bootstrap-github-roadmap.mjs",
     "github:roadmap:apply": "node scripts/bootstrap-github-roadmap.mjs --apply --reconcile",
     "github:governance:dry-run": "node scripts/bootstrap-github-governance.mjs",

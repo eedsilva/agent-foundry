@@ -321,15 +321,15 @@ UI copy stays pt-BR. No i18n layer.
 Parallel stylesheets, surface by surface. Tailwind and `globals.css` coexist; each surface's PR
 deletes the CSS blocks it made dead. The app is shippable at every commit.
 
-| #   | Task                                                            | Done when                                                     |
-| --- | --------------------------------------------------------------- | ------------------------------------------------------------- |
-| 1   | Tailwind v4 + shadcn install, `@theme` tokens, mesh background  | Build green, tokens resolve, both CSS systems coexist         |
-| 2   | Custom primitives + app shell, nav, runtime pill                | New chrome on all three routes                                |
-| 3   | Home redesign                                                   | `/` uses zero `globals.css` classes; its CSS deleted          |
-| 4   | Builder: split `page.tsx`, three-pane shell, `data-testid` pass | Behavior identical, e2e green on testids, no file > 300 lines |
-| 5   | Builder: inspector tabs, alert strip, restyle                   | `/project/[id]` uses zero `globals.css` classes               |
-| 6   | Router dashboard                                                | `/router` uses zero `globals.css` classes                     |
-| 7   | Delete `globals.css`, a11y and responsive pass                  | File gone, contrast AA verified, ≤1000px collapse tested      |
+| #   | Task                                                            | Done when                                                                                                         |
+| --- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 1   | Tailwind v4 + shadcn install, `@theme` tokens, mesh background  | Build green, tokens resolve, both CSS systems coexist                                                             |
+| 2   | Custom primitives + app shell, nav, runtime pill                | New chrome on all three routes                                                                                    |
+| 3   | Home redesign                                                   | `/` uses zero `globals.css` classes; its CSS deleted                                                              |
+| 4   | Builder: split `page.tsx`, three-pane shell, `data-testid` pass | Behavior identical, e2e green on testids, no file > 300 lines                                                     |
+| 5   | Builder: inspector tabs, alert strip, restyle                   | `/project/[id]` uses zero `globals.css` classes                                                                   |
+| 6   | Router dashboard                                                | `/router` uses zero `globals.css` classes                                                                         |
+| 7   | Delete `globals.css`, a11y and responsive pass                  | File gone; WCAG 2.2 AA via axe on five surfaces, 390px overflow probe, First Load JS + CLS budgets enforced in CI |
 
 Dependencies: 3, 4, 6 depend on 2. 5 depends on 4. 7 depends on all. 6 can run parallel to 3–5.
 
