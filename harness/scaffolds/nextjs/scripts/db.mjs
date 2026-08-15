@@ -16,11 +16,13 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join, relative } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const envPath = join(root, '.env');
 const TYPES_PATH = join(root, 'apps', 'api', 'src', 'database.types.ts');
+const SEED_SQL_PATH = join(root, 'supabase', 'seed.sql');
 
 // api, db, shadow db, studio — the four host ports supabase/config.toml binds.
 const PORT_VARS = [
@@ -105,6 +107,60 @@ function supabaseStatusOk() {
   return runSupabase(['status', '--output', 'json'], 'ignore').status === 0;
 }
 
+const SEED_USER = { email: 'owner@example.com', password: 'password123' };
+// A few tens of seconds, one attempt per second: long enough for GoTrue to
+// finish warming up after the containers report healthy. Overridable so a
+// test whose listener is already up does not have to wait out the real bound
+// to see a failure.
+const SEED_CHECK_DEADLINE_MS = Number(process.env.DB_SEED_CHECK_DEADLINE_MS ?? 30_000);
+
+// Issue #560: a stack can come up with every container healthy and still have
+// nothing behind the login form, because supabase/seed.sql never applied —
+// and db:start had already reported success. Verified the same way the
+// browser and scripts/smoke.mjs do: a real password grant against GoTrue.
+//
+// ponytail: this reduces "the seed applied" to "the documented seed user can
+// sign in" — a workspace has no dependency-free way to query auth.users
+// directly, so a successful password grant is the closest proof available.
+async function verifySeed(status) {
+  const seedSql = readFileSync(SEED_SQL_PATH, 'utf8');
+  if (!seedSql.includes(SEED_USER.email)) {
+    console.log(
+      `db: seed check skipped — supabase/seed.sql no longer declares ${SEED_USER.email}.`,
+    );
+    return;
+  }
+
+  const url = `${status.API_URL}/auth/v1/token?grant_type=password`;
+  const deadline = Date.now() + SEED_CHECK_DEADLINE_MS;
+  let lastError = 'no attempt made';
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { apikey: status.ANON_KEY, 'content-type': 'application/json' },
+        body: JSON.stringify(SEED_USER),
+      });
+      if (response.ok) {
+        console.log(`db: seed ok — ${SEED_USER.email} can sign in.`);
+        return;
+      }
+      // GoTrue answered, so it is up — a wrong password will not fix itself
+      // by retrying, so this is the final word, not a warm-up hiccup.
+      const body = await response.text();
+      console.error(`db: ${SEED_USER.email} could not sign in — HTTP ${response.status}: ${body}`);
+      console.error('db: supabase/seed.sql may not have applied. Run `pnpm db:reset`.');
+      process.exit(1);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      await sleep(1000);
+    }
+  }
+  console.error(`db: ${SEED_USER.email} never reached GoTrue — ${lastError}.`);
+  console.error('db: supabase/seed.sql may not have applied. Run `pnpm db:reset`.');
+  process.exit(1);
+}
+
 // The CLI reads .env itself when it resolves the env(...) references in
 // config.toml; this process reads it too so allocation can tell whether the
 // block already exists.
@@ -155,4 +211,18 @@ if (args[0] === 'start') {
     SUPABASE_SERVICE_ROLE_KEY: status.SERVICE_ROLE_KEY,
   });
   console.log(`db: ${status.API_URL} — credentials written to .env`);
+  await verifySeed(status);
 }
+
+// `reset` reapplies migrations and seed.sql but writes no new credentials —
+// the stack's URL and keys do not change — so this only re-runs the seed
+// check; `pnpm db:types` stays the explicit step for regenerating types.
+if (args[0] === 'reset') {
+  const status = JSON.parse(supabase(['status', '--output', 'json'], { capture: true }));
+  await verifySeed(status);
+}
+
+// fetch()'s keep-alive socket otherwise holds the process open until the
+// connection idles out, so a caller (and the tests' spawnSync) waits out that
+// linger on every successful seed check for nothing.
+process.exit(0);
