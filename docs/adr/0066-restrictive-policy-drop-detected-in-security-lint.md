@@ -87,6 +87,14 @@ the same laundering surface — into the code path that also gates the runtime.
   registers as if it were top-level. It fails *toward* flagging, and
   `generateSchemaPlanSql` emits no dollar quoting. Upgrade path is a real
   parser, shared with the `ponytail:` note already at `CREATE_TABLE_RE`.
+- Known ceiling: `ALTER POLICY … RENAME TO` is untracked, so a create-rename-drop
+  sequence raises nothing, and the stale entry under the old name could later
+  fire on a genuinely permissive policy that reuses it. Renaming a policy is not
+  a shape the generator emits.
+- Known ceiling: `SQL_IDENTIFIER` reads a quoted identifier as `"[^"]*"`, so a
+  doubled inner quote (`"a""b"`, Postgres's escape for a literal `"`) is not
+  parsed. Both the create and the drop miss it identically, so it is a matching
+  gap, never a false positive.
 - Known ceiling: a restrictive policy created outside the linted migration set
   (applied by hand against the database) is invisible, so a drop of it raises
   nothing. The lint reasons only about the SQL in the repo.

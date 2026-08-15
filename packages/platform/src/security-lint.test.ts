@@ -90,6 +90,16 @@ create policy tenant_isolation
   using (tenant_id = (select auth.uid()));
 `;
 
+// Lints RESTRICTIVE_POLICY_MIGRATION followed by one later migration, and
+// returns only that migration's restrictive-drop findings.
+function restrictiveDropsAfter(sql: string) {
+  const report = lintMigrationsSql([
+    { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
+    { file: '011_later.sql', sql },
+  ]);
+  return report.findings.filter((f) => f.rule === 'restrictive-policy-drop');
+}
+
 describe('lintMigrationsSql', () => {
   it('flags a table created without a matching ENABLE ROW LEVEL SECURITY statement', () => {
     const report = lintMigrationsSql([{ file: '001_widgets.sql', sql: MISSING_RLS_MIGRATION }]);
@@ -315,35 +325,25 @@ grant all on table public.statements to authenticated;
   });
 
   it('does not flag a restrictive drop that a later statement re-creates AS RESTRICTIVE', () => {
-    const report = lintMigrationsSql([
-      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
-      {
-        file: '011_replace_isolation.sql',
-        sql: `drop policy if exists tenant_isolation on public.records;
+    expect(
+      restrictiveDropsAfter(`drop policy if exists tenant_isolation on public.records;
 
 create policy tenant_isolation
   on public.records as restrictive for all to authenticated
   using (tenant_id = (select auth.uid()));
-`,
-      },
-    ]);
-    expect(report.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toEqual([]);
+`),
+    ).toEqual([]);
   });
 
   it('flags a restrictive drop re-created as PERMISSIVE — the narrowing conjunct is still gone', () => {
-    const report = lintMigrationsSql([
-      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
-      {
-        file: '011_downgrade_isolation.sql',
-        sql: `drop policy tenant_isolation on public.records;
+    expect(
+      restrictiveDropsAfter(`drop policy tenant_isolation on public.records;
 
 create policy tenant_isolation
   on public.records for all to authenticated
   using (tenant_id = (select auth.uid()));
-`,
-      },
-    ]);
-    expect(report.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toHaveLength(1);
+`),
+    ).toHaveLength(1);
   });
 
   it('does not flag dropping a permissive policy (ADR-0064: deny-all is the RLS default)', () => {
@@ -354,30 +354,19 @@ create policy tenant_isolation
     expect(report.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toEqual([]);
   });
 
-  it('matches an unqualified drop against a public-qualified restrictive create', () => {
-    const report = lintMigrationsSql([
-      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
-      { file: '011_drop.sql', sql: 'drop policy TENANT_ISOLATION on records;\n' },
-    ]);
-    expect(report.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toHaveLength(1);
-  });
-
-  it('folds identifiers the way Postgres does: quoted is verbatim, unquoted is lower-cased', () => {
-    const quotedMatches = lintMigrationsSql([
-      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
-      { file: '011_drop.sql', sql: 'drop policy "tenant_isolation" on "public"."records";\n' },
-    ]);
-    expect(quotedMatches.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toHaveLength(
-      1,
-    );
-
-    const differentPolicy = lintMigrationsSql([
-      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
-      { file: '011_drop.sql', sql: 'drop policy "TENANT_ISOLATION" on public.records;\n' },
-    ]);
-    expect(differentPolicy.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toEqual(
-      [],
-    );
+  // Postgres lower-cases an unquoted identifier and takes a quoted one
+  // verbatim, and an unqualified target defaults to `public` — so every drop
+  // here but the last names the same policy the fixture created.
+  it.each([
+    ['unqualified and upper-cased', 'drop policy TENANT_ISOLATION on records;\n', 1],
+    ['fully quoted', 'drop policy "tenant_isolation" on "public"."records";\n', 1],
+    [
+      'quoted in a different case (a distinct policy)',
+      'drop policy "TENANT_ISOLATION" on public.records;\n',
+      0,
+    ],
+  ])('folds identifiers the way Postgres does: %s', (_name, dropSql, expected) => {
+    expect(restrictiveDropsAfter(dropSql)).toHaveLength(expected);
   });
 
   it('does not exhibit polynomial backtracking on adversarial near-miss input (CodeQL js/polynomial-redos)', () => {

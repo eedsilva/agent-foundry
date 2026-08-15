@@ -72,14 +72,13 @@ const DROP_POLICY_RE = new RegExp(
 export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): SecurityReport {
   const tables = new Map<string, TableRecord>();
   const anonWriteGrants = new Map<string, Set<string>>(); // table -> write ops currently granted to anon
-  // policy key -> where it was created AS RESTRICTIVE, for policies still in
-  // force at this point in the file set.
-  const restrictivePolicies = new Map<string, { file: string; table: string }>();
-  // A restrictive drop is only a widening once the whole set is known: a later
-  // restrictive re-create makes it a replace. Hold the candidates until then.
-  const unreplacedRestrictiveDrops = new Map<
+  // policy key -> where it was created AS RESTRICTIVE, plus the drop that
+  // removed it, if any. A restrictive drop is only a widening once the whole
+  // set is known — a later restrictive re-create makes it a replace — and that
+  // re-create overwrites the entry, clearing the recorded drop with it.
+  const restrictivePolicies = new Map<
     string,
-    { file: string; table: string; statement: string; createdIn: string }
+    { createdIn: string; dropped?: { file: string; table: string; statement: string } }
   >();
   const findings: SecurityFinding[] = [];
 
@@ -128,27 +127,20 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
 
       const createPolicyTarget = CREATE_POLICY_TARGET_RE.exec(statement);
       if (createPolicyTarget?.groups?.mode?.toLowerCase() === 'restrictive') {
-        const key = policyKey(createPolicyTarget);
-        restrictivePolicies.set(key, {
-          file,
-          table: foldIdentifier(createPolicyTarget.groups.table ?? ''),
-        });
-        unreplacedRestrictiveDrops.delete(key);
+        restrictivePolicies.set(policyKey(createPolicyTarget), { createdIn: file });
         // No `continue`: the rules below still apply to a restrictive policy.
       }
 
       const dropPolicy = DROP_POLICY_RE.exec(statement);
       if (dropPolicy) {
-        const key = policyKey(dropPolicy);
-        const created = restrictivePolicies.get(key);
-        if (created) {
-          restrictivePolicies.delete(key);
-          unreplacedRestrictiveDrops.set(key, {
+        const created = restrictivePolicies.get(policyKey(dropPolicy));
+        // Only the first drop matters — a second one removes nothing more.
+        if (created && !created.dropped) {
+          created.dropped = {
             file,
-            table: created.table,
+            table: foldIdentifier(dropPolicy.groups?.table ?? ''),
             statement,
-            createdIn: created.file,
-          });
+          };
         }
         continue;
       }
@@ -253,15 +245,16 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
     }
   }
 
-  for (const drop of unreplacedRestrictiveDrops.values()) {
+  for (const { createdIn, dropped } of restrictivePolicies.values()) {
+    if (!dropped) continue;
     findings.push(
       makeFinding({
         rule: 'restrictive-policy-drop',
         severity: 'high',
-        table: drop.table,
-        location: drop.file,
-        evidence: `${drop.statement}\n-- target was created AS RESTRICTIVE in ${drop.createdIn} and is not re-created as restrictive anywhere in this migration set.`,
-        remediation: `Re-create the policy with AS RESTRICTIVE in the same migration set, or confirm the widened access is intended — restrictive policies are AND-composed, so dropping one removes a narrowing condition on public.${drop.table}.`,
+        table: dropped.table,
+        location: dropped.file,
+        evidence: `${dropped.statement}\n-- target was created AS RESTRICTIVE in ${createdIn} and is not re-created as restrictive anywhere in this migration set.`,
+        remediation: `Re-create the policy with AS RESTRICTIVE in the same migration set, or confirm the widened access is intended — restrictive policies are AND-composed, so dropping one removes a narrowing condition on public.${dropped.table}.`,
       }),
     );
   }
