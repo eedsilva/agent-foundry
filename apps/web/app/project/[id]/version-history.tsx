@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import type { ProjectVersion } from '@agent-foundry/contracts';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import {
   branchFromVersion,
   compareVersions,
@@ -180,7 +180,7 @@ export function VersionHistoryView({
         {loading ? (
           <p className={HINT}>Carregando versões…</p>
         ) : versions.length === 0 ? (
-          <EmptyState title="Nenhuma versão registrada ainda." />
+          <PaneState kind="empty" title="Nenhuma versão registrada ainda." />
         ) : (
           <div data-testid="version-list" className="flex flex-col gap-2">
             {versions.map((version) => (

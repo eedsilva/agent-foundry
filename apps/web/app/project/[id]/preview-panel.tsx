@@ -32,7 +32,7 @@ import {
   stopPreview,
 } from '../../../lib/api';
 import { latestBrowserVerificationReport } from '../../../lib/browser-verification';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import { StatusPill } from '@/components/status-pill';
 import { cn } from '@/lib/utils';
 import { BTN, BTN_ACTIVE, ERROR_BOX, FIELD, HINT, LABEL, MONO_PANE, PANEL_TITLE } from '@/lib/ui';
@@ -673,15 +673,22 @@ export function PreviewPanel({
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
         {panelError ? (
-          <p role="alert" className={ERROR_BOX}>
-            {panelError}
-          </p>
+          <PaneState
+            kind="error"
+            title={panelError}
+            action={
+              <button type="button" className={BTN} onClick={() => void start()}>
+                Tentar novamente
+              </button>
+            }
+          />
         ) : null}
 
         {!sessionLoaded ? (
-          <p className={HINT}>Carregando…</p>
+          <PaneState kind="loading" title="Carregando…" />
         ) : !session || TERMINAL_SESSION_STATUSES.has(session.status) ? (
-          <EmptyState
+          <PaneState
+            kind="empty"
             title="Nenhum preview em execução."
             hint="Inicie um preview para ver o aplicativo gerado."
             action={
@@ -714,11 +721,7 @@ export function PreviewPanel({
             ) : (
               <p className={HINT}>{statusMessage}</p>
             )}
-            {selectionError ? (
-              <p role="alert" className={ERROR_BOX}>
-                {selectionError}
-              </p>
-            ) : null}
+            {selectionError ? <PaneState kind="error" title={selectionError} /> : null}
             {selectionResult?.status === 'resolved' ? (
               <div className="border-hairline rounded-card flex flex-col gap-3 border p-3">
                 <p className="text-ink text-[13px]">
@@ -899,16 +902,17 @@ export function PreviewPanel({
       <div className="max-h-[38%] shrink-0 overflow-y-auto px-4 pt-1 pb-3">
         {tab === 'logs' ? (
           logs.length === 0 ? (
-            <p className="text-ink-subtle text-[13px]">Nenhum log de runtime ainda.</p>
+            <PaneState kind="empty" title="Nenhum log de runtime ainda." />
           ) : (
             <pre className={MONO_PANE}>
               {logs.map((entry) => `[${entry.stream}] ${entry.message}`).join('\n')}
             </pre>
           )
         ) : !report ? (
-          <p className="text-ink-subtle text-[13px]">
-            Nenhuma verificação de navegador ainda para esta execução.
-          </p>
+          <PaneState
+            kind="empty"
+            title="Nenhuma verificação de navegador ainda para esta execução."
+          />
         ) : (
           <VerificationReportView report={report} projectId={projectId} />
         )}

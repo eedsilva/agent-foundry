@@ -11,7 +11,7 @@ import {
   type RouterDecisionLogEntry,
   type TaskKind,
 } from '@agent-foundry/contracts';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import { GlassBar } from '@/components/glass-bar';
 import { StatTile } from '@/components/stat-tile';
 import { StatusPill } from '@/components/status-pill';
@@ -273,7 +273,8 @@ function DecisionsPanel({ decisions }: { decisions: RouterDecisionLogEntry[] }) 
         <h2 className={SECTION_TITLE}>Decisões ({decisions.length})</h2>
       </div>
       {decisions.length === 0 ? (
-        <EmptyState
+        <PaneState
+          kind="empty"
           title="Nenhuma decisão registrada"
           hint="Rode um workflow ou limpe os filtros acima."
         />
@@ -406,7 +407,7 @@ function ExperimentsPanel({
       </div>
 
       {experiments.length === 0 ? (
-        <EmptyState title="Nenhum experimento registrado" />
+        <PaneState kind="empty" title="Nenhum experimento registrado" />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">

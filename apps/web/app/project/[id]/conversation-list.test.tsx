@@ -104,3 +104,18 @@ describe('ConversationList module list', () => {
     expect(markup).not.toContain('auth');
   });
 });
+
+describe('ConversationList loading vs empty', () => {
+  it('renders a loading state while conversation is null', () => {
+    const markup = renderList({ conversation: null });
+    expect(markup).toContain('data-kind="loading"');
+    expect(markup).not.toContain('data-kind="empty"');
+  });
+
+  it('renders an empty state once loaded with zero messages', () => {
+    const markup = renderList({ conversation: makeConversation([], []) });
+    expect(markup).toContain('data-kind="empty"');
+    expect(markup).not.toContain('data-kind="loading"');
+    expect(markup).toContain('Nenhuma mensagem ainda.');
+  });
+});

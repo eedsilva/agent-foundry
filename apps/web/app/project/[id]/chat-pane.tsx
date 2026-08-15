@@ -24,17 +24,8 @@ import {
 } from '../../../lib/api';
 import { KnowledgeFiles } from './knowledge-files';
 import { ConversationList, type ProposalEditorState } from './conversation-list';
-import {
-  BTN,
-  ERROR_BOX,
-  HINT,
-  META,
-  PANEL_TITLE,
-  PRIMARY_BTN,
-  RADIO,
-  TEXTAREA,
-  WARN_BOX,
-} from '@/lib/ui';
+import { PaneState } from '@/components/pane-state';
+import { BTN, HINT, META, PANEL_TITLE, PRIMARY_BTN, RADIO, TEXTAREA, WARN_BOX } from '@/lib/ui';
 
 export function ChatPane({
   id,
@@ -272,24 +263,27 @@ export function ChatPane({
           bare mesh under the builder's panes (1538px at a 1200px viewport). */}
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {conversationError ? (
-          <p role="alert" className={`${ERROR_BOX} mb-3`}>
-            {conversationError}
-          </p>
+          <div className="mb-3">
+            <PaneState kind="error" title={conversationError} />
+          </div>
         ) : null}
         {previewFailure ? (
-          <div className="border-hairline rounded-card bg-surface-sunken mb-3 flex flex-col gap-2 border p-3">
-            <strong className="text-ink text-[13px]">{previewFailure.title}</strong>
-            <pre className={`${META} max-h-48 overflow-auto whitespace-pre-wrap`}>
-              {previewFailure.detail}
-            </pre>
-            <button
-              type="button"
-              className={`${PRIMARY_BTN} self-start`}
-              onClick={() => void repairPreview()}
-              disabled={repairingPreview}
-            >
-              {repairingPreview ? 'Corrigindo…' : 'Try to fix'}
-            </button>
+          <div className="mb-3">
+            <PaneState
+              kind="error"
+              title={previewFailure.title}
+              hint={previewFailure.detail}
+              action={
+                <button
+                  type="button"
+                  className={PRIMARY_BTN}
+                  onClick={() => void repairPreview()}
+                  disabled={repairingPreview}
+                >
+                  {repairingPreview ? 'Corrigindo…' : 'Tentar corrigir'}
+                </button>
+              }
+            />
           </div>
         ) : null}
         <ConversationList

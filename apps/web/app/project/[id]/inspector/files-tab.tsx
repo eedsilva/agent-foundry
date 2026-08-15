@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import { listWorkspaceFiles, readWorkspaceFile } from '../../../../lib/api';
-import { CARD_BUTTON, HINT, MONO_PANE, PANEL, PANEL_HEADER, PANEL_TITLE } from '@/lib/ui';
+import { BTN, CARD_BUTTON, HINT, MONO_PANE, PANEL, PANEL_HEADER, PANEL_TITLE } from '@/lib/ui';
 
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -42,6 +42,15 @@ export function FilesTab({ projectId }: { projectId: string }) {
     };
   }, [projectId]);
 
+  function retryList() {
+    setLoading(true);
+    setError('');
+    listWorkspaceFiles(projectId)
+      .then(setFiles)
+      .catch((cause: unknown) => setError(message(cause)))
+      .finally(() => setLoading(false));
+  }
+
   function openFile(path: string) {
     setSelected(path);
     setContent(null);
@@ -63,6 +72,10 @@ export function FilesTab({ projectId }: { projectId: string }) {
       contentLoading={contentLoading}
       contentError={contentError}
       onOpenFile={openFile}
+      onRetryList={retryList}
+      onRetryContent={() => {
+        if (selected) openFile(selected);
+      }}
     />
   );
 }
@@ -79,6 +92,8 @@ export function FilesTabView({
   contentLoading,
   contentError,
   onOpenFile,
+  onRetryList,
+  onRetryContent,
 }: {
   files: string[];
   loading: boolean;
@@ -88,6 +103,8 @@ export function FilesTabView({
   contentLoading: boolean;
   contentError: string;
   onOpenFile: (path: string) => void;
+  onRetryList: () => void;
+  onRetryContent: () => void;
 }) {
   return (
     <div className={PANEL}>
@@ -96,11 +113,19 @@ export function FilesTabView({
         {files.length > 0 ? <span className={HINT}>{files.length} arquivo(s)</span> : null}
       </div>
       {loading ? (
-        <EmptyState title="Carregando arquivos…" />
+        <PaneState kind="loading" title="Carregando arquivos…" />
       ) : error ? (
-        <EmptyState title={error} />
+        <PaneState
+          kind="error"
+          title={error}
+          action={
+            <button type="button" className={BTN} onClick={onRetryList}>
+              Tentar novamente
+            </button>
+          }
+        />
       ) : files.length === 0 ? (
-        <EmptyState title="Nenhum arquivo ainda." />
+        <PaneState kind="empty" title="Nenhum arquivo ainda." />
       ) : (
         <div className="flex flex-col gap-2">
           {files.map((path) => (
@@ -121,9 +146,17 @@ export function FilesTabView({
         <section className="border-hairline mt-4 border-t pt-4">
           <p className={`${HINT} mb-2`}>{selected}</p>
           {contentLoading ? (
-            <EmptyState title="Carregando conteúdo…" />
+            <PaneState kind="loading" title="Carregando conteúdo…" />
           ) : contentError ? (
-            <EmptyState title={contentError} />
+            <PaneState
+              kind="error"
+              title={contentError}
+              action={
+                <button type="button" className={BTN} onClick={onRetryContent}>
+                  Tentar novamente
+                </button>
+              }
+            />
           ) : (
             <pre
               data-testid="workspace-file-content"

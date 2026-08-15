@@ -32,6 +32,7 @@ describe('ChatPane preview repair', () => {
 
     expect(markup).toContain('Preview runtime error');
     expect(markup).toContain('ReferenceError: broken');
-    expect(markup).toContain('Try to fix');
+    expect(markup).toContain('Tentar corrigir');
+    expect(markup).toContain('data-kind="error"');
   });
 });
