@@ -6,7 +6,12 @@ import type { AgentArtifact } from '@agent-foundry/contracts';
 export function AgentArtifactView({ artifact }: { artifact: AgentArtifact }) {
   return (
     <section
-      className="border-hairline mt-3 flex flex-col gap-2 rounded-card border p-3"
+      // Agent-authored free text (a stack trace, a URL, a hash) is the
+      // expected case here, not an exotic one — `[overflow-wrap:anywhere]`
+      // is inherited, so setting it once on the root wraps `summary`,
+      // `risks`, `decisions` and `nextActions` alike instead of an unbroken
+      // token silently clipping (measured: 390px probe, task-3-report.md).
+      className="border-hairline mt-3 flex flex-col gap-2 rounded-card border p-3 [overflow-wrap:anywhere]"
       data-testid="agent-artifact-view"
     >
       <div>
