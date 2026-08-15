@@ -51,11 +51,12 @@ Acceptance criteria (verbatim intent):
   until the browser answers `Invalid login credentials` — the exact reported
   symptom. AC 2 and AC 5.
 - **R3 — the web tier never reads the workspace `.env`.** `pnpm db:start` writes
-  `.env` at the generated app's root; `next dev` runs with cwd `apps/web` and
-  loads `apps/web/.env`, which the scaffold does not ship. `apps/api/src/env.ts`
-  loads the root file explicitly for its own tier; nothing does so for the web
-  tier. `pnpm smoke` masks this because it loads the root `.env` into its own
-  process before spawning `pnpm dev`. AC 3.
+  `.env` at the generated app's root; `pnpm dev` runs `next dev` with cwd
+  `apps/web`, and `@next/env`'s `loadEnvConfig(dir)` reads `.env*` only from
+  `join(dir, …)` — the Next project directory, which the scaffold ships without
+  a `.env`. `apps/api/src/env.ts` loads the root file explicitly for its own
+  tier; nothing does so for the web tier. `pnpm smoke` masks this because it
+  loads the root `.env` into its own process before spawning `pnpm dev`. AC 3.
 - **R4 — the platform's credential write is skipped in silence.**
   `credentialsFromStatus` (`packages/platform/src/supabase-secrets.ts`) returns
   `undefined` for any partial `supabase status` payload, and
@@ -146,9 +147,16 @@ actually landed before the script exits 0:
 - On failure, exit non-zero with a message that names `supabase/seed.sql`,
   quotes the HTTP status and body, and says to run `pnpm db:reset`. This is the
   line that must appear instead of the browser's `Invalid login credentials`.
-- Add a `ponytail:` comment recording the ceiling: the probe hard-codes the
-  scaffold's documented seed credential, so an app that rewrites `seed.sql`
-  must update it in the same commit.
+- The probe must not fire for an app that legitimately rewrote its seed. Run it
+  only when `supabase/seed.sql` still declares the documented user — a
+  `readFileSync` plus a substring test on the email is enough. When it does not,
+  log one line saying the seed check was skipped because `seed.sql` no longer
+  declares that user, and exit 0. Without this guard the check turns every
+  app that customises its seed into a permanently failing `db:start`, which is
+  worse than the bug being fixed.
+- Add a `ponytail:` comment recording the ceiling: proving the seed applied is
+  reduced to "the documented seed user can sign in", because a workspace has no
+  dependency-free way to query `auth.users` directly.
 - `db reset` runs the same verification. Nothing else about `db reset` changes;
   in particular it does **not** regenerate types — `pnpm db:types` stays the
   explicit step the stack conventions already mandate.
@@ -160,6 +168,8 @@ Tests (extend the same file, using the stub CLI):
 - `start` against a stub whose stack answers 400 exits non-zero, and stderr
   names `seed.sql` and `pnpm db:reset`.
 - `db reset` runs the same verification.
+- A workspace whose `seed.sql` no longer declares the documented user skips the
+  probe and exits 0, logging why.
 
 The probe talks HTTP, so the test needs a real listener rather than a stub
 binary: start a `node:http` server in the test, and have the stub `supabase
@@ -171,17 +181,32 @@ that the failure case does not stall the suite.
 
 Two independent scaffold files, one task.
 
-`harness/scaffolds/nextjs/apps/web/next.config.ts`:
+`harness/scaffolds/nextjs/scripts/dev.mjs` (new) and the root `package.json`'s
+`dev` script:
 
-- Load the workspace-root `.env` if it exists, the same way
-  `apps/api/src/env.ts` does for the API tier, so `next dev` and `next build`
-  see the values `pnpm db:start` wrote.
+- `pnpm dev` currently runs `pnpm --recursive --parallel dev`, which starts
+  `next dev` with cwd `apps/web`. `@next/env`'s `loadEnvConfig(dir)` reads
+  `.env*` from `join(dir, …)` where `dir` is the Next project directory, so the
+  workspace-root `.env` that `pnpm db:start` writes is never read by the web
+  tier. Verified against the installed `@next/env`.
+- Fix it in the process that spawns both tiers, not inside Next: a new
+  dependency-free `scripts/dev.mjs` that loads the workspace-root `.env` and
+  then spawns `pnpm --recursive --parallel dev` with stdio inherited. This is
+  the same sequence `scripts/smoke.mjs` already uses (load the root `.env`, then
+  spawn `pnpm dev`), which is exactly why smoke passes today while a bare
+  `pnpm dev` does not. Root `package.json` becomes `"dev": "node scripts/dev.mjs"`.
+- Do **not** put this in `apps/web/next.config.ts`. `@next/env` snapshots
+  `process.env` on its first call and calls `replaceProcessEnv(snapshot)` on
+  every reload; values injected from `next.config.ts` are outside that snapshot
+  and would be dropped on the first env reload.
 - **Values already present in the environment must win.** The platform's
-  credential bridge (ADR 0034) injects the real credentials into the dev
-  server's environment, and a stale root `.env` must never overwrite them.
+  credential bridge (ADR 0034) injects the real credentials into the preview's
+  dev-server environment, and a stale root `.env` must never overwrite them.
   `process.loadEnvFile` overwrites unconditionally, so snapshot `process.env`
   before the call and re-apply the snapshot after it — Node built-ins only, no
   dotenv parser.
+- Forward the child's exit code, so a failing dev server still fails `pnpm dev`.
+- Log one line naming the file it loaded, or that there was none (AC 5).
 - Comment why, naming the cwd mismatch and the injected-wins rule.
 
 `harness/scaffolds/nextjs/supabase/config.toml`:
@@ -191,13 +216,24 @@ Two independent scaffold files, one task.
   email could never be delivered — matching what `configureGeneratedAuth`
   forces on the platform path rather than depending on a CLI default.
 
-Tests: add cases to `packages/harness/src/scaffold-auth.test.ts` (read it first
-and follow its shape). Assert the shipped `config.toml` disables email
-confirmation, and assert `next.config.ts`'s env behaviour by executing it —
-if executing the TypeScript file is not practical in that suite, assert instead
-on a small `node --input-type=module` subprocess that reproduces the
-snapshot/restore sequence against a temp `.env`, and say in a comment why.
-Prefer the direct test if it works.
+Tests: a new file `packages/harness/src/scaffold-env.test.ts`, following the
+`mkdtemp` + stub-binary-on-`PATH` + `spawnSync` pattern of
+`packages/harness/src/scaffold-db-script.test.ts`. It lands in the fast bucket
+by default (it matches no `--exclude` glob), so `package.json` needs no change —
+confirm that with `npx vitest list --filesOnly` before committing, and if it
+does need a change, update the fast `--exclude` globs and the slow positional
+list together so they stay an exact partition.
+
+Cover:
+
+- The shipped `supabase/config.toml` disables email confirmation.
+- `scripts/dev.mjs` run in a temp workspace with a root `.env` spawns the child
+  with that file's values in its environment. Use a stub `pnpm` on `PATH` that
+  prints the variables it received.
+- A value already set in the environment survives: the stub reports the
+  injected value, not the one in the `.env` file. This is the case that
+  protects the platform's credential bridge, so it is not optional.
+- The child's non-zero exit code is forwarded.
 
 Also update `harness/scaffolds/nextjs/README.md` where it describes `pnpm dev`
 and `.env`, and `harness/stacks/supabase.md`'s "Environment and secrets"
