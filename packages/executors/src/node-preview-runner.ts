@@ -11,6 +11,7 @@ import {
   isPreviewSessionTerminal,
   recordPreviewCommandPlan,
   stopPreviewSession,
+  tailBytes,
   transitionPreviewSession,
   SystemClock,
   type Clock,
@@ -123,15 +124,15 @@ export class NodePreviewRunner implements PreviewRunner {
       error: {
         name: 'PreviewInstallError',
         code: 'PREVIEW_INSTALL_FAILED',
-        message: outcome.stderr.slice(-this.maxOutputBytes) || 'Install failed.',
+        message: tailBytes(outcome.stderr, this.maxOutputBytes) || 'Install failed.',
       },
       failureEvidence: {
         command: plan.install.ok
           ? { command: plan.install.command, args: plan.install.args }
           : undefined,
         exitCode: outcome.exitCode,
-        stdout: outcome.stdout.slice(-this.maxOutputBytes),
-        stderr: outcome.stderr.slice(-this.maxOutputBytes),
+        stdout: tailBytes(outcome.stdout, this.maxOutputBytes),
+        stderr: tailBytes(outcome.stderr, this.maxOutputBytes),
       },
     });
   }
@@ -300,7 +301,10 @@ export class NodePreviewRunner implements PreviewRunner {
       (stream: PreviewLogEntry['stream']) =>
       (data: Buffer): void => {
         const text = data.toString('utf8');
-        entry.output[stream] = `${entry.output[stream]}${text}`.slice(-this.maxOutputBytes);
+        // ponytail: re-encodes the whole retained buffer on every chunk
+        // (O(n) per chunk, same order as the previous slice). Upgrade path
+        // is a chunk ring buffer if capture ever becomes hot.
+        entry.output[stream] = tailBytes(`${entry.output[stream]}${text}`, this.maxOutputBytes);
         const port = detectPortFromOutput(text);
         // The api tier announces its own listen URL; only the browsable
         // tier's port may steer the health probe.

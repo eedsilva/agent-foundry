@@ -828,6 +828,28 @@ describe('NodePreviewRunner', () => {
     expect(result.status).toBe('failed');
     await runner.stop(result).catch(() => undefined);
   }, 15_000);
+
+  it('bounds crash failure evidence to whole UTF-8 code points within maxOutputBytes (#346)', async () => {
+    // 15 is not a multiple of 4, so tailing a run of 4-byte emoji to 15 bytes
+    // forces a mid-character trim; a byte-blind .slice would either overshoot
+    // maxOutputBytes or cut a code point in half and surface a � below.
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 3_000, maxOutputBytes: 15 });
+    let session = await newSession('sess-multibyte');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: ['-e', "process.stderr.write('🙂'.repeat(20))"] },
+      },
+    };
+    const result = await startTracked(runner, session);
+    expect(result.status).toBe('failed');
+    const stderr = result.failureEvidence?.stderr ?? '';
+    expect(Buffer.byteLength(stderr, 'utf8')).toBeLessThanOrEqual(15);
+    expect(stderr).not.toContain('�');
+    await runner.stop(result).catch(() => undefined);
+  }, 15_000);
 });
 
 function isAlive(pid: number): boolean {
