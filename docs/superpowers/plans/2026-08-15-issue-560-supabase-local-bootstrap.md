@@ -30,8 +30,14 @@ Acceptance criteria (verbatim intent):
   `other@example.com` (password `password123`) plus their `auth.identities`
   rows and `public.items` rows.
 - `harness/scaffolds/nextjs/scripts/smoke.mjs` already signs in as the seeded
-  user over HTTP and asserts RLS cross-tenant denial. AC 4 is covered there and
-  by `browser-tests/cross-tenant-denial.json` — this plan does not re-prove it.
+  user over HTTP and asserts RLS cross-tenant denial, and
+  `browser-tests/cross-tenant-denial.json` does the same through the UI. Both
+  prove **sign-in and read**; neither writes a row. AC 4's persisted-operation
+  half is proved by `scripts/database-row-match.mjs`, which the validation
+  campaign drives with `AGENT_FOUNDRY_VALIDATION_ROW_TITLE_SHA256` and
+  `AGENT_FOUNDRY_VALIDATION_RUN_STARTED_AT` to confirm a row the browser created
+  really landed in Postgres. This plan re-proves none of the three: the reported
+  failure was upstream of all of them.
 - The platform path (`packages/platform/src/supabase-runtime.ts`) has its own
   allocator and writes the same three credentials to
   `dataDir/projects/<id>/.env`, which `NodePreviewRunner` spreads into the dev
