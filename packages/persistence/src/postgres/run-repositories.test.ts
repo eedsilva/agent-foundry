@@ -118,6 +118,7 @@ describePostgres('Postgres run/step/attempt repositories', (ctx) => {
     expect(await attempts.get('run-1', 'step-run-1', 'attempt-1')).toEqual(updatedAttempt);
 
     expect((await runs.list('project-1')).map((run) => run.id)).toEqual(['run-1']);
+    expect((await runs.listNonTerminal('project-1')).map((run) => run.id)).toEqual(['run-1']);
     expect((await steps.list('run-1')).map((step) => step.id)).toEqual(['step-run-1']);
     expect((await attempts.list('run-1', 'step-run-1')).map((item) => item.id)).toEqual([
       'attempt-1',

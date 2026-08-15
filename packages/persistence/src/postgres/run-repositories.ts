@@ -55,6 +55,15 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     return rows.map((row) => WorkflowRunSchema.parse(row.data));
   }
 
+  async listNonTerminal(projectId: string): Promise<WorkflowRun[]> {
+    const rows = await this.sql<{ data: unknown }[]>`
+      select data from workflow_runs
+      where project_id = ${projectId}
+        and status not in ('cancelled', 'completed', 'failed', 'rejected')
+      order by created_at desc, id desc`;
+    return rows.map((row) => WorkflowRunSchema.parse(row.data));
+  }
+
   async update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
     if (run.version !== expectedVersion) {
       throw new VersionConflictError('workflow-run', run.id, expectedVersion, run.version);

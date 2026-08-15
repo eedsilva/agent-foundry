@@ -3,6 +3,7 @@ import { buffer } from 'node:stream/consumers';
 import { describe, expect, it, vi } from 'vitest';
 import {
   EXECUTION_PROTOCOL_VERSION,
+  isWorkflowRunStatusTerminal,
   ModelDefinitionSchema,
   RouteDecisionSchema,
   WorkflowDefinitionSchema,
@@ -160,6 +161,9 @@ class InMemoryRuns implements WorkflowRunRepository {
   }
   list(projectId: string): Promise<WorkflowRun[]> {
     return Promise.resolve([...this.store.values()].filter((run) => run.projectId === projectId));
+  }
+  async listNonTerminal(projectId: string): Promise<WorkflowRun[]> {
+    return (await this.list(projectId)).filter((run) => !isWorkflowRunStatusTerminal(run.status));
   }
   update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
     const existing = this.store.get(run.id);

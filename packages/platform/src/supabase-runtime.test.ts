@@ -140,14 +140,18 @@ function configPort(config: string, section: string, key: string): number {
 
 function fixture(
   command = vi.fn<SupabaseCommand>(statusCommand),
-  options: { initializeTimeoutMs?: number; sqlClientFactory?: SchemaSqlClientFactory } = {},
+  options: {
+    initializeTimeoutMs?: number;
+    sqlClientFactory?: SchemaSqlClientFactory;
+    now?: () => Date;
+  } = {},
 ) {
   return {
     command,
     runtime: new SupabaseGeneratedProjectRuntime({
       dataDir,
       command,
-      now: () => new Date(NOW),
+      now: options.now ?? (() => new Date(NOW)),
       // Default to an empty fake so no test can open a real Postgres
       // connection now that applyWorkspaceMigrations also reads the DB (#536).
       sqlClientFactory: fakeSqlClient({}, { urls: [], ended: false }),
@@ -1384,11 +1388,16 @@ describe('initialize restarts a reaper-stopped environment (#292)', () => {
   });
 
   it('returns a healthy existing environment without invoking any Supabase command', async () => {
-    const { command, runtime } = fixture();
+    let current = new Date(NOW);
+    const { command, runtime } = fixture(undefined, { now: () => current });
     const initialized = await runtime.initialize({ projectId: 'project-a' });
     command.mockClear();
+    current = new Date(NOW.getTime() + 60_000);
 
-    await expect(runtime.initialize({ projectId: 'project-a' })).resolves.toEqual(initialized);
+    await expect(runtime.initialize({ projectId: 'project-a' })).resolves.toMatchObject({
+      ...initialized,
+      updatedAt: current.toISOString(),
+    });
 
     expect(command).not.toHaveBeenCalled();
   });

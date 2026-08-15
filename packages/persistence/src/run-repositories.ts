@@ -2,6 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { ZodType } from 'zod';
 import {
+  isWorkflowRunStatusTerminal,
   StepAttemptSchema,
   StepRunSchema,
   WorkflowRunSchema,
@@ -28,13 +29,18 @@ export class FileWorkflowRunRepository implements WorkflowRunRepository {
 
   async create(run: WorkflowRun): Promise<void> {
     const parsed = WorkflowRunSchema.parse(run);
-    await createVersioned(
+    await withRecoverableDirectoryLock(
       this.dataDir,
-      ['runs', safeSegment(parsed.id), 'run.json.lock'],
-      this.pathFor(parsed.id),
-      parsed,
-      WorkflowRunSchema,
-      'workflow-run',
+      ['projects', safeSegment(parsed.projectId), '.lifecycle.lock'],
+      () =>
+        createVersioned(
+          this.dataDir,
+          ['runs', safeSegment(parsed.id), 'run.json.lock'],
+          this.pathFor(parsed.id),
+          parsed,
+          WorkflowRunSchema,
+          'workflow-run',
+        ),
     );
   }
 
@@ -43,6 +49,17 @@ export class FileWorkflowRunRepository implements WorkflowRunRepository {
   }
 
   async list(projectId: string, limit = 50): Promise<WorkflowRun[]> {
+    const runs = await this.listAll(projectId);
+    return runs.slice(0, limit);
+  }
+
+  async listNonTerminal(projectId: string): Promise<WorkflowRun[]> {
+    return (await this.listAll(projectId)).filter(
+      (run) => !isWorkflowRunStatusTerminal(run.status),
+    );
+  }
+
+  private async listAll(projectId: string): Promise<WorkflowRun[]> {
     const root = join(this.dataDir, 'runs');
     await ensureDir(root);
     const entries = await readdir(root, { withFileTypes: true });
@@ -51,8 +68,7 @@ export class FileWorkflowRunRepository implements WorkflowRunRepository {
     );
     return runs
       .filter((run): run is WorkflowRun => run?.projectId === projectId)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-      .slice(0, limit);
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
   async update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {

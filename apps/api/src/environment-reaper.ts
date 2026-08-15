@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import { isWorkflowRunStatusTerminal } from '@agent-foundry/contracts';
 import type {
   GeneratedProjectRuntime,
+  PreviewLifecycleLock,
   PreviewSessionRepository,
   WorkflowRunRepository,
 } from '@agent-foundry/domain';
@@ -9,8 +9,9 @@ import { startIntervalSweep, type IntervalSweepSchedule } from './interval-sweep
 
 export interface EnvironmentReaperDeps {
   environments: Pick<GeneratedProjectRuntime, 'listEnvironments' | 'stop'>;
+  lifecycleLock: Pick<PreviewLifecycleLock, 'withProjectLock'>;
   previewSessions: Pick<PreviewSessionRepository, 'listActive'>;
-  runs: Pick<WorkflowRunRepository, 'list'>;
+  runs: Pick<WorkflowRunRepository, 'listNonTerminal'>;
 }
 
 export interface EnvironmentReaperLogger {
@@ -47,20 +48,23 @@ export async function sweepIdleEnvironments(
     if (Number.isNaN(updatedAtMs)) continue;
     if (now.getTime() - updatedAtMs < idleMs) continue;
 
-    // ponytail: newest-500 scan, same as the repositories' default of 50 but
-    // wide enough that a long-lived paused/awaiting_approval run doesn't age
-    // out of the window. Upgrade path: a status-filtered repository query
-    // (e.g. list non-terminal runs for a project) if 500 ever isn't enough.
-    const runs = await deps.runs.list(environment.projectId, 500);
-    if (runs.some((run) => !isWorkflowRunStatusTerminal(run.status))) continue;
+    await deps.lifecycleLock.withProjectLock(environment.projectId, async () => {
+      const active = await deps.previewSessions.listActive();
+      if (
+        active.some((record) => record.session.workspaceRef.projectId === environment.projectId)
+      ) {
+        return;
+      }
+      if ((await deps.runs.listNonTerminal(environment.projectId)).length > 0) return;
 
-    try {
-      await deps.environments.stop(environment.projectId);
-      stopped += 1;
-      logger.info({ projectId: environment.projectId }, 'Stopped idle environment');
-    } catch (error) {
-      logger.error(error, 'Failed to stop idle environment');
-    }
+      try {
+        await deps.environments.stop(environment.projectId);
+        stopped += 1;
+        logger.info({ projectId: environment.projectId }, 'Stopped idle environment');
+      } catch (error) {
+        logger.error(error, `Failed to stop idle environment for ${environment.projectId}`);
+      }
+    });
   }
   return stopped;
 }

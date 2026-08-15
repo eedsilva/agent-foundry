@@ -90,6 +90,30 @@ describe('FilePreviewSessionRepository', () => {
     expect(order).toEqual(['left:start', 'left:end', 'right']);
   });
 
+  it('serializes project lifecycle work across lock instances', async () => {
+    const dataDir = await temporaryDataDir();
+    const first = new FilePreviewLifecycleLock(dataDir);
+    const second = new FilePreviewLifecycleLock(dataDir);
+    const order: string[] = [];
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const left = first.withProjectLock('project-1', async () => {
+      order.push('left:start');
+      await held;
+      order.push('left:end');
+    });
+    await vi.waitFor(() => expect(order).toEqual(['left:start']));
+    const right = second.withProjectLock('project-1', async () => order.push('right'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(order).toEqual(['left:start']);
+    release();
+    await Promise.all([left, right]);
+    expect(order).toEqual(['left:start', 'left:end', 'right']);
+  });
+
   it('reclaims a lifecycle lock whose recorded owner process is dead', async () => {
     const dataDir = await temporaryDataDir();
     const lockPath = join(dataDir, 'previews', 'preview-1', '.lifecycle.lock');

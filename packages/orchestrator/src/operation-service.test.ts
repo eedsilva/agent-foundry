@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentArtifact, WorkflowRun } from '@agent-foundry/contracts';
+import {
+  isWorkflowRunStatusTerminal,
+  type AgentArtifact,
+  type WorkflowRun,
+} from '@agent-foundry/contracts';
 import {
   NotFoundError,
   ValidationError,
@@ -38,6 +42,11 @@ class MemoryRuns implements WorkflowRunRepository {
   }
   list(): Promise<WorkflowRun[]> {
     return Promise.resolve([...this.store.values()]);
+  }
+  async listNonTerminal(projectId: string): Promise<WorkflowRun[]> {
+    return (await this.list()).filter(
+      (run) => run.projectId === projectId && !isWorkflowRunStatusTerminal(run.status),
+    );
   }
   update(run: WorkflowRun): Promise<WorkflowRun> {
     this.store.set(run.id, run);

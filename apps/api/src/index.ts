@@ -54,6 +54,7 @@ if (runtime.generatedProjectRuntime) {
   startEnvironmentReaper(
     {
       environments: runtime.generatedProjectRuntime,
+      lifecycleLock: runtime.previewLifecycleLock,
       previewSessions: runtime.previewSessions,
       runs: runtime.runs,
     },

@@ -52,10 +52,29 @@ export class FilePreviewLifecycleLock implements PreviewLifecycleLock {
     this.ownerWriteGraceMs = options.ownerWriteGraceMs ?? DEFAULT_OWNER_WRITE_GRACE_MS;
   }
 
-  async withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+  async withSessionLock<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+    projectId?: string,
+  ): Promise<T> {
+    const run = () =>
+      withRecoverableDirectoryLock(
+        this.dataDir,
+        ['previews', sessionId, '.lifecycle.lock'],
+        operation,
+        {
+          acquisitionTimeoutMs: this.acquisitionTimeoutMs,
+          pollIntervalMs: this.pollIntervalMs,
+          ownerWriteGraceMs: this.ownerWriteGraceMs,
+        },
+      );
+    return projectId ? this.withProjectLock(projectId, run) : run();
+  }
+
+  async withProjectLock<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
     return withRecoverableDirectoryLock(
       this.dataDir,
-      ['previews', sessionId, '.lifecycle.lock'],
+      ['projects', safeSegment(projectId), '.lifecycle.lock'],
       operation,
       {
         acquisitionTimeoutMs: this.acquisitionTimeoutMs,

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AppEnvironment, WorkflowRun } from '@agent-foundry/contracts';
+import {
+  isWorkflowRunStatusTerminal,
+  type AppEnvironment,
+  type WorkflowRun,
+} from '@agent-foundry/contracts';
 import type { PreviewSessionRecord } from '@agent-foundry/domain';
 import { sweepIdleEnvironments, type EnvironmentReaperDeps } from './environment-reaper.js';
 
@@ -46,22 +50,34 @@ function makeDeps(overrides: {
 }): EnvironmentReaperDeps & {
   listEnvironments: ReturnType<typeof vi.fn>;
   listActive: ReturnType<typeof vi.fn>;
-  listRuns: ReturnType<typeof vi.fn>;
+  listNonTerminalRuns: ReturnType<typeof vi.fn>;
+  withProjectLock: ReturnType<typeof vi.fn>;
   stopMock: ReturnType<typeof vi.fn>;
 } {
   const listEnvironments = vi.fn().mockResolvedValue(overrides.environments ?? [environment()]);
   const listActive = vi.fn().mockResolvedValue(overrides.activeSessions ?? []);
   const runsByProject = overrides.runsByProject ?? {};
-  const listRuns = vi.fn((projectId: string) => Promise.resolve(runsByProject[projectId] ?? []));
+  const listNonTerminalRuns = vi.fn((projectId: string) =>
+    Promise.resolve(
+      (runsByProject[projectId] ?? []).filter((run) => !isWorkflowRunStatusTerminal(run.status)),
+    ),
+  );
+  const withProjectLock = vi.fn(<T>(_projectId: string, operation: () => Promise<T>) =>
+    operation(),
+  );
   const stopMock = overrides.stop ?? vi.fn().mockResolvedValue(environment());
 
   return {
     environments: { listEnvironments, stop: stopMock },
+    lifecycleLock: {
+      withProjectLock: withProjectLock as EnvironmentReaperDeps['lifecycleLock']['withProjectLock'],
+    },
     previewSessions: { listActive },
-    runs: { list: listRuns },
+    runs: { listNonTerminal: listNonTerminalRuns },
     listEnvironments,
     listActive,
-    listRuns,
+    listNonTerminalRuns,
+    withProjectLock,
     stopMock,
   };
 }
@@ -79,7 +95,8 @@ describe('sweepIdleEnvironments', () => {
     expect(count).toBe(1);
     expect(deps.stopMock).toHaveBeenCalledWith('proj-1');
     expect(log.info).toHaveBeenCalledWith({ projectId: 'proj-1' }, expect.any(String));
-    expect(deps.listRuns).toHaveBeenCalledWith('proj-1', expect.any(Number));
+    expect(deps.listNonTerminalRuns).toHaveBeenCalledWith('proj-1');
+    expect(deps.withProjectLock).toHaveBeenCalledWith('proj-1', expect.any(Function));
   });
 
   it('stops an environment exactly idleMs old (boundary is inclusive)', async () => {
@@ -177,10 +194,10 @@ describe('sweepIdleEnvironments', () => {
 
     expect(count).toBe(1);
     expect(stopMock).toHaveBeenCalledTimes(2);
-    expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.any(String));
+    expect(log.error).toHaveBeenCalledWith(expect.any(Error), expect.stringContaining('proj-fail'));
   });
 
-  it('calls listActive() once per sweep regardless of environment count', async () => {
+  it('rechecks active sessions under the project lock for each idle environment', async () => {
     const envs = [
       environment({ projectId: 'proj-a', updatedAt: '2026-08-14T09:00:00.000Z' }),
       environment({ projectId: 'proj-b', updatedAt: '2026-08-14T09:00:00.000Z' }),
@@ -190,6 +207,6 @@ describe('sweepIdleEnvironments', () => {
 
     await sweepIdleEnvironments(deps, IDLE_MS, NOW, logger());
 
-    expect(deps.listActive).toHaveBeenCalledTimes(1);
+    expect(deps.listActive).toHaveBeenCalledTimes(4);
   });
 });

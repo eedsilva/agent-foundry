@@ -128,6 +128,7 @@ export interface WorkflowRunRepository {
   create(run: WorkflowRun, tx?: Tx): Promise<void>;
   get(runId: string): Promise<WorkflowRun | null>;
   list(projectId: string, limit?: number): Promise<WorkflowRun[]>;
+  listNonTerminal(projectId: string): Promise<WorkflowRun[]>;
   update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun>;
 }
 
@@ -496,7 +497,12 @@ export interface PreviewSessionRepository {
 }
 
 export interface PreviewLifecycleLock {
-  withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T>;
+  withSessionLock<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+    projectId?: string,
+  ): Promise<T>;
+  withProjectLock<T>(projectId: string, operation: () => Promise<T>): Promise<T>;
 }
 
 export interface PreviewLogRepository {

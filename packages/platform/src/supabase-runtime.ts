@@ -160,7 +160,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     // production caller. A stopped environment must be brought back up here,
     // or the project is permanently unusable after it goes idle. start()
     // itself is a no-op when already healthy, so this composes safely.
-    if (existing) return existing.health.state === 'stopped' ? this.start(projectId) : existing;
+    if (existing)
+      return existing.health.state === 'stopped' ? this.start(projectId) : this.#touch(existing);
 
     const { workdir, composeProjectName, network, volumes } = projectResources(
       this.#dataDir,

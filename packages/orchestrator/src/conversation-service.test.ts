@@ -13,6 +13,7 @@ import type {
   StoredArtifact,
   WorkflowRun,
 } from '@agent-foundry/contracts';
+import { isWorkflowRunStatusTerminal } from '@agent-foundry/contracts';
 import {
   IdempotencyConflictError,
   NotFoundError,
@@ -275,6 +276,10 @@ class MemoryRuns implements WorkflowRunRepository {
 
   list(projectId: string): Promise<WorkflowRun[]> {
     return Promise.resolve([...this.values.values()].filter((run) => run.projectId === projectId));
+  }
+
+  async listNonTerminal(projectId: string): Promise<WorkflowRun[]> {
+    return (await this.list(projectId)).filter((run) => !isWorkflowRunStatusTerminal(run.status));
   }
 
   update(run: WorkflowRun): Promise<WorkflowRun> {
