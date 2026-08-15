@@ -345,6 +345,65 @@ describe('NodePreviewRunner', () => {
     expect(stoppedAgain).toEqual(stopped);
   }, 15_000);
 
+  it('does not attach failureEvidence when stop() terminates a still-running healthy session (#346)', async () => {
+    const runner = new NodePreviewRunner({
+      startupTimeoutMs: 5_000,
+      logRepository: new InMemoryPreviewLogRepository(),
+    });
+    let session = await newSession('sess-healthy-intentional-stop');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] }, // no crash flag: stays alive
+      },
+    };
+    session = await startTracked(runner, session);
+    expect(await canConnect(session.process!.port!)).toBe(true); // confirms still healthy, not crashed
+
+    const stopped = await runner.stop(session);
+    expect(stopped.status).toBe('stopped');
+    expect(stopped.failureEvidence).toBeUndefined();
+  }, 15_000);
+
+  it('carries exit code and captured stderr into failureEvidence for a healthy session that crashes later (#346)', async () => {
+    const runner = new NodePreviewRunner({
+      startupTimeoutMs: 5_000,
+      logRepository: new InMemoryPreviewLogRepository(),
+    });
+    let session = await newSession('sess-healthy-then-crash');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT, '--exit-after-ready'] },
+      },
+    };
+    // startTracked only returns once attemptSpawn's httpProbe confirms the
+    // fixture answered 200 -- i.e. it booted healthy before crashing below.
+    session = await startTracked(runner, session);
+    expect(session.failureEvidence).toBeUndefined();
+
+    // --exit-after-ready crashes the fixture 100ms after its ready banner; wait
+    // for the runner to observe the exit (this exact detail string only comes
+    // from the entry.exited branch, so it doubles as a deterministic gate).
+    await vi.waitFor(async () => {
+      await expect(runner.health(session)).resolves.toMatchObject({
+        state: 'unhealthy',
+        detail: 'process not running',
+      });
+    });
+
+    const stopped = await runner.stop(session);
+    expect(stopped.failureEvidence).toMatchObject({
+      command: { command: 'node', args: [FIXTURE_SCRIPT, '--exit-after-ready'] },
+      exitCode: 1,
+    });
+    expect(stopped.failureEvidence?.stderr).toContain('fixture stderr');
+  }, 15_000);
+
   it('requires a successful HTTP response instead of treating an open TCP port as healthy', async () => {
     const runner = new NodePreviewRunner({
       startupTimeoutMs: 250,
@@ -827,6 +886,92 @@ describe('NodePreviewRunner', () => {
     const result = await startTracked(runner, session);
     expect(result.status).toBe('failed');
     await runner.stop(result).catch(() => undefined);
+  }, 15_000);
+
+  it('bounds crash failure evidence to whole UTF-8 code points within maxOutputBytes (#346)', async () => {
+    // 15 is not a multiple of 4, so tailing a run of 4-byte emoji to 15 bytes
+    // forces a mid-character trim; a byte-blind .slice would either overshoot
+    // maxOutputBytes or cut a code point in half and surface a � below.
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 3_000, maxOutputBytes: 15 });
+    let session = await newSession('sess-multibyte');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: {
+          ok: true,
+          command: 'node',
+          args: [
+            '-e',
+            'process.stderr.write(Buffer.from([0xf0])); setTimeout(() => { process.stderr.write(Buffer.from([0x9f, 0x99, 0x82])); setTimeout(() => process.exit(1), 10); }, 10)',
+          ],
+        },
+      },
+    };
+    const result = await startTracked(runner, session);
+    expect(result.status).toBe('failed');
+    const stderr = result.failureEvidence?.stderr ?? '';
+    expect(Buffer.byteLength(stderr, 'utf8')).toBeLessThanOrEqual(15);
+    expect(stderr).not.toContain('�');
+    await runner.stop(result).catch(() => undefined);
+  }, 15_000);
+
+  it('bounds runtime crash evidence from stop() to the evidence budget, not the (much larger) capture budget (#346)', async () => {
+    // maxOutputBytes here is the execa/in-memory *capture* budget (used to
+    // avoid unbounded process.stdout/stderr buffering) -- a completely
+    // different concern from the *evidence* budget applied to whatever ends
+    // up in a session's persisted failureEvidence. 2MB of stderr fits under
+    // this generous capture budget but must still come out of stop() capped
+    // at the fixed evidence budget.
+    const runner = new NodePreviewRunner({
+      startupTimeoutMs: 5_000,
+      maxOutputBytes: 3_000_000,
+      logRepository: new InMemoryPreviewLogRepository(),
+    });
+    let session = await newSession('sess-runtime-crash-bounded');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: {
+          ok: true,
+          command: 'node',
+          args: [
+            '-e',
+            `const http = require('http');
+             const port = Number(process.env.PORT);
+             const server = http.createServer((req, res) => { res.writeHead(200); res.end('ok'); });
+             server.listen(port, '127.0.0.1', () => {
+               setTimeout(() => {
+                 process.stderr.write('x'.repeat(2000000));
+                 process.exitCode = 1;
+                 server.close();
+               }, 150);
+             });`,
+          ],
+        },
+      },
+    };
+    // startTracked only returns once attemptSpawn's httpProbe confirms the
+    // process answered 200 -- i.e. it booted healthy before crashing below.
+    session = await startTracked(runner, session);
+
+    await vi.waitFor(
+      async () => {
+        await expect(runner.health(session)).resolves.toMatchObject({
+          state: 'unhealthy',
+          detail: 'process not running',
+        });
+      },
+      { timeout: 5_000 },
+    );
+
+    const stopped = await runner.stop(session);
+    const stderrBytes = Buffer.byteLength(stopped.failureEvidence?.stderr ?? '', 'utf8');
+    expect(stderrBytes).toBeGreaterThan(0);
+    expect(stderrBytes).toBeLessThanOrEqual(1_000_000);
   }, 15_000);
 });
 

@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import { get } from 'node:http';
+import { StringDecoder } from 'node:string_decoder';
 import type {
   PreviewHealth,
   PreviewLogEntry,
@@ -11,6 +12,7 @@ import {
   isPreviewSessionTerminal,
   recordPreviewCommandPlan,
   stopPreviewSession,
+  tailBytes,
   transitionPreviewSession,
   SystemClock,
   type Clock,
@@ -60,6 +62,7 @@ interface ProcessEntry {
   exited: boolean;
   exitCode?: number;
   output: { stdout: string; stderr: string };
+  flushOutput: () => void;
 }
 
 // Half of PreviewService's own health-poll timeout, so the combined worst case
@@ -69,6 +72,16 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
 const DEFAULT_INSTALL_TIMEOUT_MS = 120_000;
 const POLL_INTERVAL_MS = 100;
 const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
+// Separate from maxOutputBytes/DEFAULT_MAX_OUTPUT_BYTES on purpose: those bound
+// execa's maxBuffer and the in-memory stdout/stderr capture accumulator (needs
+// to stay large -- a real `pnpm install` easily exceeds 1MB of output). This
+// constant instead bounds every field that ends up in a session's persisted
+// failureEvidence (install-failure, spawn-failure, and stop()'s runtime-crash
+// paths), matching PreviewService's own DIAGNOSTIC_MAX_OUTPUT_BYTES so evidence
+// never balloons to the multi-MB capture budget. Do not collapse these two
+// constants back into one -- that's what let runtime crash evidence in stop()
+// go out at up to the full capture budget (#346).
+const EVIDENCE_MAX_OUTPUT_BYTES = 1_000_000;
 
 /**
  * Mechanism-only PreviewRunner: reserves/detects a port, spawns the dev
@@ -119,19 +132,20 @@ export class NodePreviewRunner implements PreviewRunner {
       this.clock.now(),
     );
     if (outcome.ok) return withEvidence;
+    const stderrTail = tailBytes(outcome.stderr, EVIDENCE_MAX_OUTPUT_BYTES);
     return transitionPreviewSession(withEvidence, 'failed', this.clock.now(), {
       error: {
         name: 'PreviewInstallError',
         code: 'PREVIEW_INSTALL_FAILED',
-        message: outcome.stderr.slice(-this.maxOutputBytes) || 'Install failed.',
+        message: stderrTail || 'Install failed.',
       },
       failureEvidence: {
         command: plan.install.ok
           ? { command: plan.install.command, args: plan.install.args }
           : undefined,
         exitCode: outcome.exitCode,
-        stdout: outcome.stdout.slice(-this.maxOutputBytes),
-        stderr: outcome.stderr.slice(-this.maxOutputBytes),
+        stdout: tailBytes(outcome.stdout, EVIDENCE_MAX_OUTPUT_BYTES),
+        stderr: stderrTail,
       },
     });
   }
@@ -181,9 +195,36 @@ export class NodePreviewRunner implements PreviewRunner {
   }
 
   async stop(session: PreviewSession): Promise<PreviewSession> {
+    // entry is a reference into this.processes, not a value snapshot: for a
+    // still-running process, killTracked (below) awaits terminateProcessTree,
+    // which waits on this same entry's child-exit promise -- so by the time
+    // the await resolves, entry.exited has already flipped true even though
+    // the kill was intentional, not a crash. Snapshot the boolean itself
+    // *before* the await; entry.exitCode/.output are still safe to read
+    // after it once hadExited was already true, since a process that has
+    // already exited emits no further output and its exit code is fixed.
+    const entry = this.processes.get(session.id);
+    const hadExited = entry?.exited ?? false;
     await this.killTracked(session.id, session.process?.pid);
     if (isPreviewSessionTerminal(session.status)) return session;
-    return stopPreviewSession(session, this.clock.now());
+    const withEvidence =
+      hadExited && entry && !session.failureEvidence
+        ? {
+            ...session,
+            failureEvidence: {
+              ...(session.process
+                ? { command: { command: session.process.command, args: session.process.args } }
+                : {}),
+              ...(entry.exitCode !== undefined ? { exitCode: entry.exitCode } : {}),
+              // entry.output is bounded by maxOutputBytes (the capture budget,
+              // can be much larger); trim to the evidence budget on the way
+              // into persisted failureEvidence.
+              stdout: tailBytes(entry.output.stdout, EVIDENCE_MAX_OUTPUT_BYTES),
+              stderr: tailBytes(entry.output.stderr, EVIDENCE_MAX_OUTPUT_BYTES),
+            },
+          }
+        : session;
+    return stopPreviewSession(withEvidence, this.clock.now());
   }
 
   private async killTracked(sessionId: string, persistedPid?: number): Promise<void> {
@@ -194,6 +235,7 @@ export class NodePreviewRunner implements PreviewRunner {
     }
     if (entry.exited) killProcessTree(entry.child, 'SIGKILL');
     else await terminateProcessTree(entry.child);
+    entry.flushOutput();
     await entry.logWrites;
     this.processes.delete(sessionId);
   }
@@ -230,8 +272,8 @@ export class NodePreviewRunner implements PreviewRunner {
         failureEvidence: {
           command: { command: dev.command, args: dev.args },
           ...(attempt.exitCode !== undefined ? { exitCode: attempt.exitCode } : {}),
-          stdout: attempt.stdout,
-          stderr: attempt.stderr,
+          stdout: tailBytes(attempt.stdout, EVIDENCE_MAX_OUTPUT_BYTES),
+          stderr: tailBytes(attempt.stderr, EVIDENCE_MAX_OUTPUT_BYTES),
         },
       });
     }
@@ -285,6 +327,7 @@ export class NodePreviewRunner implements PreviewRunner {
       logWrites: Promise.resolve(),
       exited: false,
       output: { stdout: '', stderr: '' },
+      flushOutput: () => {},
     };
     this.processes.set(session.id, entry);
     const markExited = (result: unknown): void => {
@@ -296,31 +339,43 @@ export class NodePreviewRunner implements PreviewRunner {
     };
     void child.then(markExited, markExited);
     let detectedPort: number | undefined;
+    const decoders = {
+      stdout: new StringDecoder('utf8'),
+      stderr: new StringDecoder('utf8'),
+    };
+    const appendOutput = (stream: PreviewLogEntry['stream'], text: string): void => {
+      if (!text) return;
+      // ponytail: re-encodes the whole retained buffer on every chunk; the
+      // existing capture budget is the deliberate ceiling. Upgrade path is a
+      // raw-buffer ring if this becomes hot for long-lived chatty servers.
+      entry.output[stream] = tailBytes(`${entry.output[stream]}${text}`, this.maxOutputBytes);
+      const port = detectPortFromOutput(text);
+      if (port !== undefined && port !== apiPort) {
+        detectedPort = port;
+        entry.port = port;
+      }
+      const repository = this.logRepository;
+      if (!repository) return;
+      const timestamp = this.clock.now().toISOString();
+      const lines = text.split('\n').filter(Boolean);
+      entry.logWrites = entry.logWrites.then(async () => {
+        for (const message of lines) {
+          try {
+            await repository.append(session.id, { stream, message, timestamp });
+          } catch {
+            // The repository is the redaction boundary; drop failed raw output instead of buffering it.
+          }
+        }
+      });
+    };
+    entry.flushOutput = () => {
+      appendOutput('stdout', decoders.stdout.end());
+      appendOutput('stderr', decoders.stderr.end());
+    };
     const capture =
       (stream: PreviewLogEntry['stream']) =>
       (data: Buffer): void => {
-        const text = data.toString('utf8');
-        entry.output[stream] = `${entry.output[stream]}${text}`.slice(-this.maxOutputBytes);
-        const port = detectPortFromOutput(text);
-        // The api tier announces its own listen URL; only the browsable
-        // tier's port may steer the health probe.
-        if (port !== undefined && port !== apiPort) {
-          detectedPort = port;
-          entry.port = port;
-        }
-        const repository = this.logRepository;
-        if (!repository) return;
-        const timestamp = this.clock.now().toISOString();
-        const lines = text.split('\n').filter(Boolean);
-        entry.logWrites = entry.logWrites.then(async () => {
-          for (const message of lines) {
-            try {
-              await repository.append(session.id, { stream, message, timestamp });
-            } catch {
-              // The repository is the redaction boundary; drop failed raw output instead of buffering it.
-            }
-          }
-        });
+        appendOutput(stream, decoders[stream].write(data));
       };
     child.stdout?.on('data', capture('stdout'));
     child.stderr?.on('data', capture('stderr'));
@@ -328,6 +383,7 @@ export class NodePreviewRunner implements PreviewRunner {
     const deadline = Date.now() + this.startupTimeoutMs;
     while (Date.now() < deadline) {
       if (entry.exited) {
+        entry.flushOutput();
         return {
           port: reservedPort,
           pid: undefined,
@@ -343,6 +399,7 @@ export class NodePreviewRunner implements PreviewRunner {
       }
       await new Promise((resolveTick) => setTimeout(resolveTick, POLL_INTERVAL_MS));
     }
+    if (entry.exited) entry.flushOutput();
     return {
       port: detectedPort ?? reservedPort,
       pid: child.pid,

@@ -20,6 +20,7 @@ import {
   redactString,
   redactUnknown,
   registerActiveSessionsCallback,
+  tailBytes,
   transitionPreviewSession,
   withSpan,
   type ArtifactStore,
@@ -54,6 +55,7 @@ const DEFAULT_HEALTH_INTERVAL_MS = 1_000;
 const DEFAULT_HEALTH_FAILURE_THRESHOLD = 3;
 const DEFAULT_MAX_RESTARTS = 2;
 const DIAGNOSTIC_LOG_LIMIT = 200;
+const DIAGNOSTIC_MAX_OUTPUT_BYTES = 1_000_000;
 
 /** Durable preview lifecycle policy. Scheduling remains owned by the API process. */
 export class PreviewService {
@@ -416,7 +418,14 @@ export class PreviewService {
     if (session.status !== 'failing') {
       session = await this.persist({ ...failing, version: session.version });
     }
-    await this.runner.stop(session);
+    const stopped = await this.runner.stop(session);
+    // A healthy-then-crashed session never gets failureEvidence on the
+    // failing-transition path (spawn failures do); stop()'s returned session
+    // is the only place the runner's captured exit code/output surfaces.
+    // Spawn-path evidence is more specific, so never overwrite it.
+    if (!session.failureEvidence && stopped.failureEvidence) {
+      session = { ...session, failureEvidence: stopped.failureEvidence };
+    }
     const failedAt = new Date(session.updatedAt);
     const diagnostic = await this.loadOrBuildFailureDiagnostic(
       session,
@@ -473,7 +482,7 @@ export class PreviewService {
       ...logs,
       entries: logs.entries.map((entry) => ({ ...entry, message: redactString(entry.message) })),
     };
-    const output = session.failureEvidence
+    const redactedOutput = session.failureEvidence
       ? {
           stdout: redactString(session.failureEvidence.stdout),
           stderr: redactString(session.failureEvidence.stderr),
@@ -488,6 +497,12 @@ export class PreviewService {
             .map((entry) => entry.message)
             .join('\n'),
         };
+    // Bound after redaction, not before: redaction can grow a string (e.g.
+    // "sk-..." -> "[REDACTED]"), so bounding first is not a real bound.
+    const output = {
+      stdout: tailBytes(redactedOutput.stdout, DIAGNOSTIC_MAX_OUTPUT_BYTES),
+      stderr: tailBytes(redactedOutput.stderr, DIAGNOSTIC_MAX_OUTPUT_BYTES),
+    };
     let command = session.failureEvidence?.command;
     if (!command && session.process) {
       command = { command: session.process.command, args: session.process.args };

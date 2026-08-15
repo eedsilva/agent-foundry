@@ -87,6 +87,23 @@ export function toExecutionResult(executionId: string, error: unknown): Executio
   };
 }
 
+/**
+ * Keeps the last `maxBytes` UTF-8 bytes of `text`, trimming forward to the next
+ * code-point boundary so a truncated tail is never invalid UTF-8. `String.slice`
+ * counts UTF-16 code units, which both overshoots a byte budget on multibyte
+ * output and can split a surrogate pair.
+ */
+export function tailBytes(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return '';
+  const buffer = Buffer.from(text, 'utf8');
+  if (buffer.byteLength <= maxBytes) return text;
+  let start = buffer.byteLength - maxBytes;
+  // 10xxxxxx is a UTF-8 continuation byte; advance past the partial code point
+  // rather than emitting a replacement character.
+  while (start < buffer.byteLength && (buffer[start]! & 0xc0) === 0x80) start += 1;
+  return buffer.subarray(start).toString('utf8');
+}
+
 export function stableJson(value: unknown): string {
   return JSON.stringify(sortRecursively(value), null, 2);
 }

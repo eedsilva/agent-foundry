@@ -48,6 +48,7 @@ import {
 } from '@agent-foundry/domain';
 import { buildTaskProfile } from './task-profiler.js';
 import { compileCliPrompt, compileRequestMarkdown } from './prompt-compiler.js';
+import { latestPreviewFailureEvent } from './preview-failure-lookup.js';
 import { CONVERSATION_WORKFLOW_ID, buildConversationStep } from './conversation-step-config.js';
 import { compileContext } from './context-compiler.js';
 import { artifactReference, persistStreamEvent, runError } from './workflow-orchestrator.js';
@@ -229,9 +230,7 @@ export class ConversationOperationRunner {
 
       const latestPreviewFailure =
         operation.kind === 'repair'
-          ? [...(await this.events.list(projectId))]
-              .reverse()
-              .find((event) => event.type === 'preview.failed')
+          ? await latestPreviewFailureEvent(this.events, this.artifacts, projectId)
           : undefined;
       const requestMarkdown = compileRequestMarkdown({
         projectId,

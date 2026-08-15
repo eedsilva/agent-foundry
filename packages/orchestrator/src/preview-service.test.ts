@@ -5,6 +5,7 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import {
   PreviewFailureDiagnosticSchema,
   ProjectEventSchema,
+  type PreviewFailureEvidence,
   type PreviewHealth,
   type PreviewLogPage,
   type PreviewFailureDiagnostic,
@@ -141,6 +142,7 @@ class FakePreviewRunner implements PreviewRunner {
   restartThrows = 0;
   logsThrows = 0;
   readonly stopFailures = new Set<string>();
+  stopFailureEvidence?: PreviewFailureEvidence;
   prepareFailureMessage?: string;
   restartFailureMessage?: string;
   startFailureCode?: string;
@@ -234,7 +236,9 @@ class FakePreviewRunner implements PreviewRunner {
     ) {
       return session;
     }
-    return transitionPreviewSession(session, 'stopped', new Date(session.updatedAt));
+    return transitionPreviewSession(session, 'stopped', new Date(session.updatedAt), {
+      ...(this.stopFailureEvidence ? { failureEvidence: this.stopFailureEvidence } : {}),
+    });
   }
 }
 
@@ -429,6 +433,69 @@ describe('PreviewService durable lifecycle', () => {
       command: { command: 'node', args: [] },
       output: { stdout: '', stderr: 'port never opened' },
     });
+  });
+
+  it('bounds the emitted diagnostic output to the byte budget without corrupting multibyte output (#346)', async () => {
+    // Mirrors preview-service.ts's private DIAGNOSTIC_MAX_OUTPUT_BYTES so the
+    // assertion doesn't hardcode a second copy of the budget.
+    const DIAGNOSTIC_MAX_OUTPUT_BYTES = 1_000_000;
+    const runner = new FakePreviewRunner();
+    runner.healthResponses = [
+      { state: 'unhealthy', detail: 'connection refused', consecutiveFailures: 1 },
+    ];
+    const oversizedStderr = '🙂'.repeat(300_000); // 1_200_000 bytes: over budget and multibyte
+    runner.logsPage = {
+      entries: [
+        {
+          cursor: 1,
+          stream: 'stderr',
+          message: oversizedStderr,
+          timestamp: '2026-07-16T12:00:00.000Z',
+        },
+      ],
+      nextCursor: 1,
+    };
+    const { service, events } = await buildService({ runner, config: { startupTimeoutMs: 0 } });
+
+    await start(service, 'run-1');
+
+    const diagnostic = failureDiagnostic(events);
+    expect(diagnostic.output).toBeDefined();
+    expect(Buffer.byteLength(diagnostic.output!.stderr, 'utf8')).toBeLessThanOrEqual(
+      DIAGNOSTIC_MAX_OUTPUT_BYTES,
+    );
+    expect(diagnostic.output!.stderr).not.toContain('�');
+  });
+
+  it('adopts runtime failure evidence from stop() when a healthy session crashes later (#346)', async () => {
+    const runner = new FakePreviewRunner();
+    // Healthy-then-crash shape: session reaches 'running', then a later health
+    // poll trips the failure threshold -- unlike the spawn-failure path, the
+    // failing session itself never carries failureEvidence; only stop()'s
+    // returned session does (what the runner captured across its lifetime).
+    runner.healthResponses = [
+      { state: 'healthy', consecutiveFailures: 0 },
+      { state: 'unhealthy', detail: 'process not running', consecutiveFailures: 1 },
+    ];
+    runner.stopFailureEvidence = {
+      command: { command: 'node', args: ['server.js'] },
+      exitCode: 1,
+      stdout: 'boot ok',
+      stderr: 'fatal crash',
+    };
+    const { service, events } = await buildService({
+      runner,
+      config: { healthFailureThreshold: 1, maxRestarts: 0 },
+    });
+    await start(service, 'run-1');
+
+    await service.reap();
+
+    const diagnostic = failureDiagnostic(events);
+    expect(diagnostic.phase).toBe('runtime');
+    expect(diagnostic.exitCode).toBe(1);
+    expect(diagnostic.command).toEqual({ command: 'node', args: ['server.js'] });
+    expect(diagnostic.output).toMatchObject({ stdout: 'boot ok', stderr: 'fatal crash' });
   });
 
   it('restarts at most twice across a crash loop, then fails with deduplicated events and artifact', async () => {

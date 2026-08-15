@@ -146,6 +146,7 @@ import {
   workflowHash,
 } from './idempotency.js';
 import { compileCliPrompt, compileRequestMarkdown, isReviewerRole } from './prompt-compiler.js';
+import { latestPreviewFailureEvent } from './preview-failure-lookup.js';
 import {
   validateBrowserVerificationReportBinding,
   type BrowserVerificationCoordinator,
@@ -3448,9 +3449,7 @@ export class WorkflowOrchestrator {
         ...(step.taskKind === 'repair'
           ? {
               previewFailureEvents: [
-                [...(await this.events.list(project.id))]
-                  .reverse()
-                  .find((event) => event.type === 'preview.failed'),
+                await latestPreviewFailureEvent(this.events, this.artifacts, project.id),
               ].filter((event): event is ProjectEvent => event !== undefined),
             }
           : {}),

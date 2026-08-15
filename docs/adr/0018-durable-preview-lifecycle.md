@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-16
 - Owners: API, Orchestrator, Executors, and Persistence
+- Superseded in part by: [ADR 0040](0040-preview-failure-events.md) — terminal diagnostic persistence clause only
 
 ## Context
 
@@ -10,7 +11,7 @@ ADR 0017 introduced the loopback preview proxy, but preview sessions existed onl
 
 ## Decision
 
-Preview state is stored under `DATA_DIR/previews/<sessionId>/`: `session.json` contains a versioned session and SHA-256 token digest, while `logs.json` contains byte-bounded structured stdout/stderr with monotonic cursors. Raw access tokens remain transient response/cookie material and are never written to session, log, event, or diagnostic files. Redaction occurs before log persistence; terminal diagnostics are redacted again before the existing artifact store writes `preview-failure-<sessionId>`.
+Preview state is stored under `DATA_DIR/previews/<sessionId>/`: `session.json` contains a versioned session and SHA-256 token digest, while `logs.json` contains byte-bounded structured stdout/stderr with monotonic cursors. Raw access tokens remain transient response/cookie material and are never written to session, log, event, or diagnostic files. Redaction occurs before log persistence; terminal diagnostics are redacted and emitted on the `preview.failed` event, per [ADR 0040](0040-preview-failure-events.md), which superseded this ADR's original artifact-store write. Legacy `preview-failure-<sessionId>` artifacts remain readable as a fallback. Redaction exempts the `sessionId` field itself as a recovery-critical identifier, so a diagnostic stays resolvable to its originating session even though its content is redacted.
 
 `FilePreviewSessionRepository` provides optimistic version updates and redacts designated untrusted text (`health.detail`, `error.message`, and failed command-plan reasons) before writing while preserving recovery-critical identifiers, paths, refs, and commands. `FilePreviewLogRepository` provides cursor pages and bounded retention, and owner-aware directory locks serialize repository and lifecycle operations across processes. Locks persist a positive safe PID, canonical timestamp, and unique UUID ownership token; they reclaim dead or malformed stale owners after the malformed-write grace window, never steal a lock solely because a live valid owner is old, and release only when the token still matches. `NodePreviewRunner` owns HTTP probing, log capture, process detection, and process-tree termination. `PreviewService` owns state transitions, TTL, consecutive-failure policy, at most two restarts by default, deduplicated lifecycle events, and one deterministic `reap()` sweep. It never enqueues repair.
 
@@ -41,7 +42,7 @@ Security remains local/trusted-operator only: loopback proxy controls from ADR 0
 
 Upgrade requires stopping the old API and preview processes; there is no backfill. New sessions create the durable format. Before rollback, stop the API and persisted preview PIDs, snapshot `DATA_DIR/previews`, and restore a pre-upgrade snapshot if necessary. An older binary ignores the new files but cannot reap their processes, so code-only rollback is insufficient.
 
-Recovery starts with the log endpoint, session file, project events, and failure artifact. Operators must verify command/workspace ownership before killing a persisted PID and must confirm the lock owner is dead in the same PID namespace before removing `.lifecycle.lock`. Restarting the API resumes deterministic reaping. Corrupt state is preserved for investigation and restored from snapshot rather than deleted opportunistically.
+Recovery starts with the log endpoint, session file, and project events — whose `preview.failed` payload carries the diagnostic per ADR 0040 — falling back to the legacy failure artifact only when the event has no embedded `data.diagnostic`, not merely because it predates ADR 0040 (an event's age is not itself the trigger). Operators must verify command/workspace ownership before killing a persisted PID and must confirm the lock owner is dead in the same PID namespace before removing `.lifecycle.lock`. Restarting the API resumes deterministic reaping. Corrupt state is preserved for investigation and restored from snapshot rather than deleted opportunistically.
 
 ## Validation
 
