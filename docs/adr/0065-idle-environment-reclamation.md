@@ -19,8 +19,9 @@ coordinate with preview startup.
   environments older than the configured idle threshold.
 - The reaper queries the repository's non-terminal workflow runs directly; it
   does not use a bounded recent-run window.
-- Preview startup, file-backed workflow-run creation, and the reaper share a
-  project-scoped filesystem lifecycle lock. The reaper repeats the
+- Preview startup, workflow-run creation, and the reaper share a project-scoped
+  lifecycle lock. File persistence uses a filesystem lock; Postgres persistence
+  uses a transaction-scoped advisory lock. The reaper repeats the
   active-preview check while holding that lock.
 - Reusing a healthy environment through `initialize()` refreshes `updatedAt`.
 - Reclamation stops the environment only. It does not delete project metadata,
@@ -31,10 +32,9 @@ coordinate with preview startup.
 
 Idle environments are reclaimed without losing durable project state, and a
 preview cannot become active between the reaper's final preview check and its
-stop operation, and file-backed run creation cannot race that stop. The run
-query is storage-level and therefore sees old paused or approval-waiting runs.
-Postgres deployments still require their database-backed run creation path to
-adopt the same project lock before claiming this guarantee across processes.
+stop operation, and workflow-run creation cannot race that stop in either
+persistence mode. The run query is storage-level and therefore sees old paused
+or approval-waiting runs.
 
 ## Validation and rollback
 

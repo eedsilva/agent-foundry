@@ -13,7 +13,8 @@ import type {
 } from '@agent-foundry/domain';
 import { VersionConflictError, type Tx } from '@agent-foundry/domain';
 import type { PostgresDb } from './client.js';
-import { insertVersioned, resolveDb, updateVersioned } from './versioned.js';
+import { projectLifecycleScope } from './preview-lifecycle-lock.js';
+import { acquireScopeLock, insertVersioned, resolveDb, updateVersioned } from './versioned.js';
 
 function runColumns(run: WorkflowRun): Record<string, unknown> {
   return {
@@ -29,14 +30,24 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
 
   async create(run: WorkflowRun, tx?: Tx): Promise<void> {
     const parsed = WorkflowRunSchema.parse(run);
-    await insertVersioned(resolveDb(this.sql, tx), {
-      table: 'workflow_runs',
-      entity: 'workflow-run',
-      id: parsed.id,
-      version: parsed.version,
-      columns: runColumns(parsed),
-      data: parsed,
-    });
+    const insert = async (db: PostgresDb): Promise<void> => {
+      await acquireScopeLock(db, projectLifecycleScope(parsed.projectId));
+      await insertVersioned(db, {
+        table: 'workflow_runs',
+        entity: 'workflow-run',
+        id: parsed.id,
+        version: parsed.version,
+        columns: runColumns(parsed),
+        data: parsed,
+      });
+    };
+    if (tx) {
+      await insert(resolveDb(this.sql, tx));
+      return;
+    }
+    // postgres.js exposes a transaction handle with a narrower type, but it
+    // supports the same tagged-template operations required by insertVersioned.
+    await this.sql.begin((pgTx) => insert(pgTx as unknown as PostgresDb));
   }
 
   async get(runId: string): Promise<WorkflowRun | null> {

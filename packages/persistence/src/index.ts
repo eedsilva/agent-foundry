@@ -27,6 +27,7 @@ export * from './postgres/transaction-runner.js';
 export * from './postgres/migrator.js';
 export * from './postgres/project-repository.js';
 export * from './postgres/run-repositories.js';
+export * from './postgres/preview-lifecycle-lock.js';
 export * from './postgres/approval-repositories.js';
 export * from './postgres/event-store.js';
 export * from './postgres/step-event-repository.js';
