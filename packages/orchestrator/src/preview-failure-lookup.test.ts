@@ -155,6 +155,25 @@ describe('latestPreviewFailureEvent', () => {
     expect(legacy.data.diagnostic).toBeUndefined();
   });
 
+  it('drops malformed embedded diagnostics when no valid legacy artifact exists', async () => {
+    const secret = 'Bearer invalid-embedded-secret';
+    const event = previewFailedEvent({
+      id: 'embedded-invalid',
+      data: {
+        sessionId: 'session-embedded-invalid',
+        diagnostic: { schemaVersion: '1', summary: secret },
+      },
+    });
+    const found = await latestPreviewFailureEvent(
+      new FakeEventStore([event]),
+      new FakeArtifactStore(),
+      'project-1',
+    );
+
+    expect(found?.data.diagnostic).toBeUndefined();
+    expect(JSON.stringify(found)).not.toContain(secret);
+  });
+
   it('validates and redacts a legacy diagnostic before returning it', async () => {
     const legacy = previewFailedEvent({
       id: 'legacy',

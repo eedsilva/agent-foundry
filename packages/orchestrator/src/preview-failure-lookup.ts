@@ -80,16 +80,25 @@ async function enrichFromLegacyArtifact(
 ): Promise<ProjectEvent> {
   const embedded = sanitizeDiagnostic(event.data.diagnostic);
   if (embedded) return { ...event, data: { ...event.data, diagnostic: embedded } };
+  const sanitizedEvent = withoutDiagnostic(event);
   const sessionId = legacySessionId(event);
-  if (sessionId === undefined) return event;
+  if (sessionId === undefined) return sanitizedEvent;
   try {
     const artifact = await artifacts.getLatest(projectId, `preview-failure-${sessionId}`);
-    if (!artifact) return event;
+    if (!artifact) return sanitizedEvent;
     const diagnostic = sanitizeDiagnostic(artifact.content);
-    return diagnostic ? { ...event, data: { ...event.data, diagnostic } } : event;
+    return diagnostic
+      ? { ...sanitizedEvent, data: { ...sanitizedEvent.data, diagnostic } }
+      : sanitizedEvent;
   } catch {
-    return event; // partial context beats none
+    return sanitizedEvent; // partial context beats none
   }
+}
+
+function withoutDiagnostic(event: ProjectEvent): ProjectEvent {
+  const data = { ...event.data };
+  delete data.diagnostic;
+  return { ...event, data };
 }
 
 function sanitizeDiagnostic(value: unknown): PreviewFailureDiagnostic | undefined {
