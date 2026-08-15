@@ -1,4 +1,4 @@
-# ADR 0067: Performance budgets for the builder, and its two UI-state primitives
+# ADR 0067: Performance budgets for the builder, and its pane-state primitive
 
 - Status: Proposed
 - Date: 2026-08-15
@@ -15,12 +15,12 @@ only as a subprocess of `supabase-data-plane-e2e` — a job that needs Docker an
 CLI and is red on `main`. That made it the sole CI path exercising the axe scan, so every
 accessibility assertion added on this branch would have landed unenforced.
 
-The same branch also converges on two UI-state decisions that recur across its tasks: how the
-builder's three panes (Chat, Preview, Inspector) represent "hidden vs. visible" as a single
-primitive rather than ad hoc booleans, and how those panes degrade below the `lg` breakpoint
-on a narrow viewport. Both are implementation details of other tasks on this branch (builder
-shell state, responsive layout); this ADR is where their rationale is recorded so it isn't
-scattered across task PRs.
+The same branch also converges on one UI decision that recurs across its tasks: how every pane
+in the builder renders the three states it can be in when it has no content to show — nothing
+yet, still loading, or failed. Before this branch there was one primitive, `EmptyState`, that
+covered only the first, and each pane improvised the other two. That is an implementation
+detail of another task on this branch (Task 1), so this ADR is where its rationale is recorded
+rather than scattered across task PRs.
 
 ## Decision
 
@@ -45,23 +45,44 @@ scattered across task PRs.
 - See `docs/PERFORMANCE_BUDGETS.md` for the measured baselines, the budgets, and how to raise
   one deliberately.
 
-### 2. A single `PaneState` primitive replaces boolean per-pane flags
+### 2. One presentational `PaneState` primitive replaces `EmptyState` and five ad hoc patterns
 
-The builder shell's three panes (Chat, Preview, Inspector) and the simple/Advanced split
-introduced by ADR 0061 are represented as one `PaneState` value per pane rather than
-independent `isOpen`/`isCollapsed`/`isAdvanced` booleans. A pane's visibility and its
-interaction with the Advanced toggle are one fact, not several flags that can drift out of
-sync (e.g. a pane marked both closed and expanded). `EmptyState`, the ad hoc placeholder
-component previously used piecemeal per pane, is retired in favor of this single primitive
-driving what each pane renders when it has nothing to show.
+`apps/web/components/pane-state.tsx` exports a single presentational component taking a
+`kind: 'empty' | 'loading' | 'error'`, a `title`, and optional `hint` (a string), `children`,
+`action` and `persistent`. It has no state of its own and knows nothing about which pane it is
+in; it is what a pane renders in place of content. It replaces `EmptyState` — which only
+covered "nothing to show" — and the five ad hoc sites that had grown around it: a bare
+`<p className={HINT}>` standing in for a loading state, a `<p role="alert" className={ERROR_BOX}>`
+for an error, `EmptyState title={error}` misused to render a failure as if it were emptiness,
+and two panes where loading was visually indistinguishable from empty.
 
-### 3. Below `lg`, panes stack instead of squeezing into columns
+The point of making `kind` the input rather than the caller picking a wrapper is that `kind`
+is what decides the live-region semantics, and getting those right by hand at each site is
+what had been failing:
 
-On viewports narrower than the `lg` breakpoint, the builder's panes stack vertically instead
-of staying side-by-side at a width too narrow to be usable. This is a deliberate degradation,
-not a missing feature: the builder's target is a solo developer's desktop tool
-(`docs/PRODUCT_CONTRACT.md`), so a working stacked layout below `lg` is the accepted floor —
-full responsive parity with the desktop three-pane layout at every viewport is out of scope.
+- `empty` — no role. Nothing happened; there is nothing to announce.
+- `loading` — `role="status"` plus `aria-busy`, so it is announced politely, once.
+- `error` — `role="alert"`, assertive, because a failure the user just caused should
+  interrupt.
+
+`persistent` exists for the one case that breaks that mapping: state already true on first
+render, such as the preview-failure card showing a previous run's broken preview. It suppresses
+the assertive role so a screen reader is not interrupted on page load. `children` exists so a
+stack trace can keep its monospace `<pre>` with a height cap, instead of being flattened into
+the `hint` prose slot.
+
+Colour follows the same reasoning: `error` uses `--ink` text on a `bg-err/10` wash rather than
+`text-err`, which measures 3.44:1 against DESIGN.md §7's 4.5:1 floor.
+
+### 3. Inherited context: below `lg`, panes stack
+
+Not a decision of this branch. The builder's panes already stacked vertically below the `lg`
+breakpoint, from DESIGN.md §10's Task 5 migration. What this branch added is verification: the
+390px overflow probe in `apps/api/e2e/golden-flow.spec.ts` asserts the stacked layout does not
+scroll horizontally and keeps each surface's primary action reachable. It is recorded here only
+so a reader of §2 does not mistake the stacking behaviour for something §2 introduced. Full
+responsive parity with the desktop three-pane layout at every viewport remains out of scope —
+the builder's target is a solo developer's desktop tool (`docs/PRODUCT_CONTRACT.md`).
 
 ## Considered Options
 
@@ -76,12 +97,17 @@ full responsive parity with the desktop three-pane layout at every viewport is o
 - **Fix `supabase-data-plane-e2e` instead of adding a second job that also runs
   `golden-flow.spec.ts`.** Rejected — out of scope for #97; the new `golden-flow-e2e` job gets
   the accessibility scan enforced without taking on that job's Docker/Supabase flakiness.
-- **Keep per-pane booleans, add a lint rule against invalid combinations.** Rejected — a lint
-  rule polices a representation that can still hold contradictory state; a single `PaneState`
-  value makes the contradiction unrepresentable instead.
-- **Overlay/drawer panes at narrow viewports instead of stacking.** Rejected for the same
-  reason ADR 0061 rejected an overlay for Inspector: a new component class (z-index, backdrop,
-  animation) for a viewport this product's target user is unlikely to use.
+- **Add a `tone` prop to `EmptyState` and keep the name.** Rejected — the component would then
+  render loading and error states under a name that says "empty", and the name is what call
+  sites read. Renaming it to `PaneState` is the same diff plus a rename, and it makes the
+  misuse (`EmptyState title={error}`) impossible to reproduce by copying a neighbour.
+- **Keep `EmptyState` as an alias for the `kind="empty"` case.** Rejected — it would have made
+  the migration a smaller diff, but new call sites would keep reaching for it, and the whole
+  point is that a pane author is confronted with the three states rather than the one.
+- **Widen `hint` to `ReactNode` instead of adding `children`.** Rejected — `hint` carries a
+  `max-w-[42ch]` prose measure, which is right for a sentence of explanation and wrong for a
+  stack trace that needs monospace and its own scroll cap. Two slots with different
+  constraints, not one slot that has to be right for both.
 
 ## Consequences
 

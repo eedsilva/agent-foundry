@@ -27,15 +27,20 @@ must-not-pass:
 - A route named in `perf-budgets.json` is absent from the manifest (e.g. the route was
   renamed or removed) — treated as a breach, not skipped.
 
-### Measured baseline (2026-08-15, this branch, production build)
+### Measured baseline (2026-08-15, production build of the whole `#97` branch)
 
-| Route            | Measured First Load JS | Budget  | Headroom |
-| ----------------- | ----------------------: | ------: | -------: |
-| `/`                | 548.9 KB                | 635 KB  | 86.1 KB  |
-| `/project/[id]`    | 988.9 KB                | 1140 KB | 151.1 KB |
-| `/router`          | 913.5 KB                | 1055 KB | 141.5 KB |
+Re-measured after every task on the branch had landed. The first numbers recorded here were
+taken in a worktree that predated Tasks 1-3, and drifted by 0.3-2.9 KB as those merged.
 
-Budgets are the measured baseline plus roughly 15% headroom, rounded up to the nearest 5 KB.
+| Route           | Measured First Load JS | Budget  | Headroom |
+| --------------- | ---------------------: | ------: | -------: |
+| `/`             |               549.2 KB |  635 KB |  85.8 KB |
+| `/project/[id]` |               991.8 KB | 1140 KB | 148.2 KB |
+| `/router`       |               913.9 KB | 1055 KB | 141.1 KB |
+
+The budgets themselves are unchanged: they are the original measured baseline plus roughly 15%
+headroom, rounded up to the nearest 5 KB, and they still hold with ample room. Re-deriving them
+from a baseline that moved a couple of KB is exactly the reflex the section below warns about.
 `/project/[id]/versions` and `/validation` are not budgeted — they were not named in the
 issue's criterion and can be added the same way if they start mattering.
 

@@ -361,7 +361,7 @@ the doc; do not quietly omit it.
   with acceptance "contrast AA verified, ≤1000px collapse tested". Update it to name what is
   actually verified after this branch: WCAG 2.2 AA via axe on five surfaces, a 390px
   overflow probe, and the two budgets. One edit, no rewriting of the surrounding table.
-- **ADR** `docs/adr/0066-performance-budgets-and-builder-state-primitive.md` recording the
+- **ADR** `docs/adr/0067-performance-budgets-and-builder-state-primitive.md` recording the
   durable decisions from this whole branch: the two budgets and their rationale, the single
   `PaneState` primitive from Task 1, and the below-`lg` stacking degradation from Task 3.
   Follow the format of `docs/adr/0061-*.md` (Status / Date / Owners / Tracked by / Context /
@@ -446,7 +446,7 @@ Sequential — Tasks 1-3 all touch `apps/web` component files and must not run c
 | 1 | `apps/web/components/pane-state.tsx` (+ deletes `empty-state.*`), `chat-pane.tsx`, `conversation-list.tsx`, `preview-panel.tsx`, `inspector/*.tsx` |
 | 2 | `run-alert-strip.tsx`, `run-progress.ts` (new), `page.tsx` |
 | 3 | `builder-header.tsx`, `diff-view.tsx`, `agent-artifact-view.tsx`, `version-history.tsx`, `changes-panel.tsx`, responsive classes anywhere |
-| 4 | `perf-budgets.json`, `scripts/{lib/,}perf-budgets*.mjs`, `package.json`, `.github/workflows/ci.yml`, `docs/PERFORMANCE_BUDGETS.md`, `docs/adr/0066-*.md` |
+| 4 | `perf-budgets.json`, `scripts/{lib/,}perf-budgets*.mjs`, `package.json`, `.github/workflows/ci.yml`, `docs/PERFORMANCE_BUDGETS.md`, `docs/adr/0067-*.md` |
 | 5 | `apps/api/e2e/golden-flow.spec.ts`, `apps/web/app/layout.tsx`, `apps/web/app/theme.css`, `apps/web/lib/ui.ts` |
 
 Task 5 must run last: its axe and overflow probes are the verification for Tasks 1-3.
