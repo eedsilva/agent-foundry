@@ -39,26 +39,50 @@ export function AlertStrip({
   title,
   detail,
   actions,
+  aside,
 }: {
   tone: keyof typeof DOT_CLASS;
   title: string;
   detail?: ReactNode;
   actions?: ReactNode;
+  /**
+   * Content that ticks on its own schedule (an elapsed-time counter) and must
+   * render beside the strip without living inside the announced region below.
+   * `role="status"`/`role="alert"` implies `aria-atomic="true"`, so *any* DOM
+   * mutation inside it re-announces the region's *entire* text — a per-second
+   * tick in there would re-read the whole banner to a screen reader every
+   * second. `aside` renders as a sibling of the live region (not a
+   * descendant), and is itself `aria-hidden` since its content already isn't
+   * meant to be announced.
+   */
+  aside?: ReactNode;
 }) {
   return (
-    <div
-      // `role="alert"` is an *assertive* live region: it interrupts the screen
-      // reader and re-announces on every re-render. Only a failure earns that.
-      // Steady-state strips ("execução pausada") use `role="status"`, which
-      // announces once, politely, when it appears.
-      role={tone === 'err' ? 'alert' : 'status'}
-      data-testid="run-alert"
-      className="glass motion-state-enter rounded-panel text-ink flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-[13px]"
-    >
-      <span aria-hidden className={cn('size-2 shrink-0 rounded-full', DOT_CLASS[tone])} />
-      <strong className="font-semibold">{title}</strong>
-      {detail ? <span className="text-ink-muted min-w-0">{detail}</span> : null}
-      {actions ? <span className="ml-auto flex gap-2">{actions}</span> : null}
+    <div className="glass motion-state-enter rounded-panel text-ink flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-[13px]">
+      {/* `display: contents` (Tailwind's `contents`) drops this span from the
+          box tree — its children lay out as if they were direct children of
+          the flex row above — while still giving `role` a DOM node whose
+          subtree is exactly "what should be announced": the dot, title,
+          detail and actions, and nothing that ticks on its own. */}
+      <span
+        // `role="alert"` is an *assertive* live region: it interrupts the screen
+        // reader and re-announces on every re-render. Only a failure earns that.
+        // Steady-state strips ("execução pausada") use `role="status"`, which
+        // announces once, politely, when it appears.
+        role={tone === 'err' ? 'alert' : 'status'}
+        data-testid="run-alert"
+        className="contents"
+      >
+        <span aria-hidden className={cn('size-2 shrink-0 rounded-full', DOT_CLASS[tone])} />
+        <strong className="font-semibold">{title}</strong>
+        {detail ? <span className="text-ink-muted min-w-0">{detail}</span> : null}
+        {actions ? <span className="ml-auto flex gap-2">{actions}</span> : null}
+      </span>
+      {aside ? (
+        <span aria-hidden className="text-ink-muted">
+          {aside}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -190,13 +214,14 @@ export function RunAlertStrip({
           detail={
             <>
               {progress.total !== null
-                ? `Step ${progress.done} de ${progress.total}`
-                : `Step ${progress.done}`}
-              {' · '}
-              {formatElapsed(elapsedMs)}
+                ? `Etapa ${progress.done} de ${progress.total}`
+                : `Etapa ${progress.done}`}
               {progress.currentStepTitle ? <> · {progress.currentStepTitle}</> : null}
             </>
           }
+          // Ticks every second (via `elapsedMs`) — kept out of `detail` and
+          // out of the live region entirely; see `AlertStrip`'s `aside` doc.
+          aside={<> · {formatElapsed(elapsedMs)}</>}
           actions={
             <>
               <button type="button" className={BTN} onClick={() => onPause()}>

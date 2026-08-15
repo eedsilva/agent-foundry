@@ -9,9 +9,39 @@ import type {
   WorkflowDefinition,
   WorkflowRun,
 } from '@agent-foundry/contracts';
-import { RunAlertStrip } from './run-alert-strip';
+import { AlertStrip, RunAlertStrip } from './run-alert-strip';
 
 afterEach(() => vi.useRealTimers());
+
+/**
+ * Extracts the markup of the `<span role="status"|"alert" …>` element only —
+ * a live region is `aria-atomic`, so a screen reader re-announces everything
+ * inside it on every mutation. Ticking content must sit outside this
+ * element's subtree; this helper lets a test prove that structurally rather
+ * than by eyeballing the whole flat string. Depth-counts nested `<span>`s
+ * (dot/detail/actions all use `span`) to find the matching close.
+ */
+function liveRegionMarkup(markup: string): string {
+  const roleIndex = markup.search(/role="(status|alert)"/);
+  if (roleIndex === -1) throw new Error('no role="status"/"alert" element found in markup');
+  const tagStart = markup.lastIndexOf('<span', roleIndex);
+  const tagOpenEnd = markup.indexOf('>', tagStart) + 1;
+  let depth = 1;
+  let cursor = tagOpenEnd;
+  while (depth > 0) {
+    const nextOpen = markup.indexOf('<span', cursor);
+    const nextClose = markup.indexOf('</span>', cursor);
+    if (nextClose === -1) throw new Error('unbalanced <span> in markup');
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth += 1;
+      cursor = nextOpen + '<span'.length;
+    } else {
+      depth -= 1;
+      cursor = nextClose + '</span>'.length;
+    }
+  }
+  return markup.slice(tagStart, cursor);
+}
 
 function makeRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   return {
@@ -218,7 +248,7 @@ describe('RunAlertStrip running banner', () => {
       workflowDef: makeWorkflowDef(),
       activeOperationRunId: 'run-1',
     });
-    expect(markup).toContain('Step 1 de 3');
+    expect(markup).toContain('Etapa 1 de 3');
     expect(markup).toContain('2m 14s');
     expect(markup).toContain('Implementar');
     expect(markup).toMatch(/<button[^>]*>Pausar<\/button>/);
@@ -239,8 +269,8 @@ describe('RunAlertStrip running banner', () => {
       workflowDef: null,
       activeOperationRunId: 'run-1',
     });
-    expect(markup).toContain('Step 0');
-    expect(markup).not.toContain('Step 0 de');
+    expect(markup).toContain('Etapa 0');
+    expect(markup).not.toContain('Etapa 0 de');
     expect(markup).toContain('45s');
   });
 
@@ -258,5 +288,64 @@ describe('RunAlertStrip running banner', () => {
     });
     expect(markup).toMatch(/<button[^>]*>Pausar<\/button>/);
     expect(markup).not.toMatch(/<button[^>]*>Cancelar<\/button>/);
+  });
+
+  it('keeps the ticking elapsed time out of the live region, while the step counter and step name stay in it', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-10T00:02:14.000Z'));
+    const markup = renderStrip({
+      run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
+      runDetail: {
+        run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
+        steps: [
+          { step: makeStepRun({ id: 's1', nodeId: 'plan', status: 'completed' }), attempts: [] },
+          { step: makeStepRun({ id: 's2', nodeId: 'implement', status: 'running' }), attempts: [] },
+        ],
+      } as RunDetailResponse,
+      workflowDef: makeWorkflowDef(),
+      activeOperationRunId: 'run-1',
+    });
+    const region = liveRegionMarkup(markup);
+    expect(region).toContain('Etapa 1 de 3');
+    expect(region).toContain('Implementar');
+    expect(region).not.toContain('2m 14s');
+    // Still rendered and ticking for sighted users — just outside the
+    // announced region.
+    expect(markup).toContain('2m 14s');
+  });
+});
+
+describe('AlertStrip non-running variants keep their existing role/content shape', () => {
+  it('keeps role, testid, title, detail and actions together for a warn strip (mirrors the paused/approval cases)', () => {
+    const markup = renderToStaticMarkup(
+      <AlertStrip
+        tone="warn"
+        title="Título de teste"
+        detail="Detalhe de teste"
+        actions={
+          <button type="button" className="">
+            Ação de teste
+          </button>
+        }
+      />,
+    );
+    expect(markup).toMatch(
+      /role="status"[^>]*data-testid="run-alert"[\s\S]*Título de teste[\s\S]*Detalhe de teste[\s\S]*Ação de teste/,
+    );
+  });
+
+  it('keeps role="alert" (not "status") for an err strip (mirrors the generic-error/provisioning cases)', () => {
+    const markup = renderToStaticMarkup(<AlertStrip tone="err" title="Erro de teste" />);
+    expect(markup).toMatch(/role="alert"[^>]*data-testid="run-alert"/);
+    expect(markup).toContain('Erro de teste');
+  });
+
+  it('renders no aside sibling when none is passed (resume-blocked/provisioning/generic-error shape)', () => {
+    const markup = renderToStaticMarkup(<AlertStrip tone="err" title="Retomada bloqueada" />);
+    // The aside wrapper's class is exactly "text-ink-muted" (no other
+    // attributes); the detail span, the only other user of that token, always
+    // carries "min-w-0" alongside it. Neither is passed here, so this exact
+    // class string should never appear.
+    expect(markup).not.toContain('class="text-ink-muted"');
   });
 });
