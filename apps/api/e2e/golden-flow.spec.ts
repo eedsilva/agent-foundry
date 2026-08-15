@@ -64,11 +64,20 @@ async function expectNoAxeViolations(page: Page, surface: string): Promise<void>
   const results = await new AxeBuilder({ page })
     .exclude('[data-testid="preview-frame"]')
     // axe-core ships `target-size` (WCAG 2.5.8, the only wcag22a/wcag22aa
-    // rule as of axe-core 4.12) disabled by default — `withTags` alone does
-    // not turn a disabled-by-default rule on, only filters among enabled
-    // ones. `options()` must be called *before* `withTags()`: it replaces
-    // `this.option` wholesale, so calling it after would drop the `runOnly`
-    // tag filter `withTags` sets.
+    // rule as of axe-core 4.12) with `enabled: false` in its metadata — but
+    // that default only governs an *unscoped* run (no `runOnly`). Once
+    // `withTags` sets `runOnly: {type:'tag', ...}`, axe's own rule-matching
+    // (`matchTags` in axe-core's core/public/run.js) runs any rule whose
+    // tags overlap the requested list regardless of its `enabled` default;
+    // `enabled: false` is bypassed, not honoured. Verified empirically: with
+    // and without the `.options()` call below, the `target-size` pass/fail
+    // counts on every surface in this suite are byte-identical (38/31/10 on
+    // builder/builder-mudancas/versions either way). The explicit enable is
+    // therefore *defensive*, not required — a guard against axe ever
+    // changing that `runOnly`-overrides-`enabled` behavior — and costs
+    // nothing to keep. `options()` must still come *before* `withTags()` if
+    // kept: it replaces `this.option` wholesale, so calling it after would
+    // drop the `runOnly` tag filter `withTags` sets.
     .options({ rules: { 'target-size': { enabled: true } } })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'])
     .analyze();
@@ -761,6 +770,11 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     .first();
   await screenshotArtifactButton.click();
   await expect(page.getByTestId('artifact-modal').getByTestId('artifact-image')).toBeVisible();
+  // Every prior axe scan runs between/before dialogs — `ICON_BTN` (the
+  // modal's "Fechar" close control, its only usage in the app, from
+  // components/overlay.tsx) was never actually on-screen during any of
+  // them. Scan here, with this artifact-viewer dialog open, to cover it.
+  await expectNoAxeViolations(page, 'builder/artifact-modal');
 
   // Keyboard pass, dialogs (DESIGN.md §7). Every dialog is a native <dialog>
   // opened with showModal(), so Escape dismisses it and focus returns to the
