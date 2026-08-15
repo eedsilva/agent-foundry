@@ -48,5 +48,6 @@ Every app ships with Supabase auth wired end to end: sign-in flow, protected rou
 - Local Supabase URL and keys live in `.env`, git-ignored, written by `pnpm db:start` or by the platform's credential bridge (ADR 0034); ship `.env.example` with variable names only, never values.
 - `.env` also carries `SUPABASE_PROJECT_ID` and the project's `SUPABASE_*_PORT` block, allocated on first start so two projects can run at once. Never hard-code 54321.
 - Every variable a tier reads is checked at that tier's boot (`apps/api/src/env.ts`), so a missing value fails on start, naming itself, rather than surfacing later inside a client call.
+- `next dev` runs with `apps/web` as its working directory, so `@next/env` never sees the workspace-root `.env` on its own; `pnpm dev` runs `scripts/dev.mjs`, which loads it into the process before spawning both tiers, and never overwrites a value already present in the environment (the platform's credential bridge injects those, ADR 0034).
 - The service-role key never leaves `apps/api/src/{admin,jobs,webhooks}/` (see "The authenticated request path" above); it must not be read anywhere in `apps/web` or on the API tier's request path, and the build check enforces that.
 - Reference `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` for anon-key clients; the service-role key uses a non-`NEXT_PUBLIC_` name.

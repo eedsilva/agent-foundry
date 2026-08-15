@@ -18,6 +18,8 @@ pnpm db:stop    # stops the stack; data survives
 
 `pnpm db:start` copies `.env.example` to `.env` on first run and fills in the Supabase URL and keys. It also assigns this project its own Compose project name and host port block, so several generated projects can run at once.
 
+`pnpm dev` runs `scripts/dev.mjs`, which loads that root `.env` into the process before starting both tiers. `next dev` alone would never see it — it runs with `apps/web` as its working directory, and `@next/env` only reads `.env*` from there.
+
 Requires Docker and the [Supabase CLI](https://supabase.com/docs/guides/cli).
 
 ## Database

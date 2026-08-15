@@ -31,6 +31,13 @@ port = "env(SUPABASE_STUDIO_PORT)"
 site_url = "http://127.0.0.1:3000"
 additional_redirect_urls = ["http://127.0.0.1:3000"]
 
+# Stated explicitly rather than left to the CLI's own default (#560): the
+# scaffold disables inbucket below and ships no SMTP, so a confirmation email
+# could never be delivered. Matches what configureGeneratedAuth forces on the
+# platform-provisioned path (packages/platform/src/supabase-auth.ts).
+[auth.email]
+enable_confirmations = false
+
 # Disabled to keep each project's container count down (#292): analytics is two
 # containers nothing here reads, inbucket a mail catcher with no SMTP to catch
 # (ADR 0007), realtime a subscription service nothing subscribes to, and edge
