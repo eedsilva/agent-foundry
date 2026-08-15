@@ -347,6 +347,28 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     return inspected;
   }
 
+  async listEnvironments(): Promise<AppEnvironment[]> {
+    let entries;
+    try {
+      entries = await readdir(join(this.#dataDir, 'projects'), { withFileTypes: true });
+    } catch (error) {
+      if (isNotFound(error)) return [];
+      throw error;
+    }
+    const environments: AppEnvironment[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      try {
+        const environment = await this.#read(entry.name);
+        if (environment) environments.push(environment);
+      } catch {
+        // Corrupt metadata or an invalid project-id path segment must not
+        // disable the sweep over the other, healthy environments (#292).
+      }
+    }
+    return environments;
+  }
+
   async previewMigration(input: {
     projectId: string;
     migrationPath: string;

@@ -1318,6 +1318,49 @@ SELECT '-- not a comment'; DROP TABLE quoted_line_marker;`,
   });
 });
 
+describe('listEnvironments (#292)', () => {
+  it('returns [] when the projects directory does not exist', async () => {
+    const { command, runtime } = fixture();
+
+    await expect(runtime.listEnvironments()).resolves.toEqual([]);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('returns the environments of every initialized project, read from metadata only', async () => {
+    const { command, runtime } = fixture();
+    const first = await runtime.initialize({ projectId: 'project-a' });
+    const second = await runtime.initialize({ projectId: 'project-b' });
+    command.mockClear();
+
+    const environments = await runtime.listEnvironments();
+
+    expect(environments).toEqual(expect.arrayContaining([first, second]));
+    expect(environments).toHaveLength(2);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('skips a project directory with no environment metadata', async () => {
+    const { runtime } = fixture();
+    await runtime.initialize({ projectId: 'project-a' });
+    await mkdir(join(dataDir, 'projects', 'project-b'), { recursive: true });
+
+    const environments = await runtime.listEnvironments();
+
+    expect(environments.map((environment) => environment.projectId)).toEqual(['project-a']);
+  });
+
+  it('skips a project whose environment.json is corrupt, keeping the good sibling', async () => {
+    const { runtime } = fixture();
+    const good = await runtime.initialize({ projectId: 'project-a' });
+    await runtime.initialize({ projectId: 'project-b' });
+    await writeFile(join(dataDir, 'projects', 'project-b', 'environment', 'environment.json'), '{');
+
+    const environments = await runtime.listEnvironments();
+
+    expect(environments).toEqual([good]);
+  });
+});
+
 describe('destructiveStatements classifies by effect (#538)', () => {
   // Verbatim migration from the failed #529 real-mode run
   // (20260813044329_schema_plan.sql), which fell over on

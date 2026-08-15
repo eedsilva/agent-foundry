@@ -665,6 +665,13 @@ export interface GeneratedProjectRuntime {
   start(projectId: string): Promise<AppEnvironment>;
   stop(projectId: string): Promise<AppEnvironment>;
   inspect(projectId: string): Promise<AppEnvironment | null>;
+  /**
+   * Every project environment that has persisted metadata on disk, read from
+   * metadata only — it never shells out to the container runtime and never
+   * bumps `updatedAt`, so callers can use `updatedAt` as an idleness signal.
+   * Unreadable or schema-invalid metadata is skipped, not thrown.
+   */
+  listEnvironments(): Promise<AppEnvironment[]>;
   previewMigration(input: { projectId: string; migrationPath: string }): Promise<MigrationPreview>;
   backupMigration(input: { projectId: string; backupPath: string }): Promise<MigrationBackup>;
   migrate(input: {
