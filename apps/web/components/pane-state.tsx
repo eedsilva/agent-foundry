@@ -27,17 +27,31 @@ export function PaneState({
   title,
   hint,
   action,
+  children,
+  persistent = false,
 }: {
   kind: PaneStateKind;
   title: string;
   hint?: string;
   action?: ReactNode;
+  /** A rich body between hint and action — e.g. a `<pre>` for a diagnostic
+   * dump that needs monospace + its own scroll cap. `hint`'s `max-w-[42ch]`
+   * prose constraint is wrong for that content, so this is a separate slot
+   * rather than widening `hint` to accept a ReactNode. */
+  children?: ReactNode;
+  /** This `error` is state the pane already carries on render (e.g. a
+   * previous run's preview failure, still broken on page load), not an
+   * event the user just caused. `role="alert"` interrupts a screen reader
+   * to announce it — correct for a fresh failure, wrong for something that
+   * was already true when the page loaded. Only affects `kind="error"`. */
+  persistent?: boolean;
 }) {
+  const role = kind === 'error' && persistent ? undefined : ROLE[kind];
   return (
     <div
       data-testid="pane-state"
       data-kind={kind}
-      role={ROLE[kind]}
+      role={role}
       aria-busy={kind === 'loading' ? true : undefined}
       className={`${TONE[kind]} rounded-card flex flex-col items-center gap-2 px-6 py-10 text-center`}
     >
@@ -48,6 +62,7 @@ export function PaneState({
        * so either would pass now; the hint keeps the stronger of the two.
        */}
       {hint ? <p className="text-ink-muted max-w-[42ch] text-[13px]">{hint}</p> : null}
+      {children}
       {action}
     </div>
   );

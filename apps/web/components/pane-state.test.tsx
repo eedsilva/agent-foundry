@@ -45,4 +45,31 @@ describe('PaneState', () => {
     // `--ink`, not `--err`, carries the text — see ERROR_BOX in lib/ui.ts.
     expect(markup).not.toContain('text-err');
   });
+
+  it('kind="error" with persistent drops role="alert" — pre-existing state, not a fresh event', () => {
+    const markup = renderToStaticMarkup(
+      <PaneState kind="error" title="Preview quebrado." persistent />,
+    );
+    expect(markup).toContain('data-kind="error"');
+    expect(markup).not.toContain('role="alert"');
+    expect(markup).toContain('bg-err/10');
+  });
+
+  it('other error sites stay assertive when persistent is not passed', () => {
+    const markup = renderToStaticMarkup(<PaneState kind="error" title="Falhou." />);
+    expect(markup).toContain('role="alert"');
+  });
+
+  it('renders children between hint and action as a rich body slot', () => {
+    const markup = renderToStaticMarkup(
+      <PaneState kind="error" title="Falha no preview" action={<button>Tentar corrigir</button>}>
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap">stack trace</pre>
+      </PaneState>,
+    );
+    expect(markup).toContain(
+      '<pre class="max-h-48 overflow-auto whitespace-pre-wrap">stack trace</pre>',
+    );
+    // children render before the action button.
+    expect(markup.indexOf('stack trace')).toBeLessThan(markup.indexOf('Tentar corrigir'));
+  });
 });

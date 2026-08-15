@@ -269,10 +269,15 @@ export function ChatPane({
         ) : null}
         {previewFailure ? (
           <div className="mb-3">
+            {/* `persistent`: this is a broken preview still on screen from
+                before this render, not a failure the user just caused — a
+                fresh `role="alert"` here would interrupt a screen reader on
+                every load. `conversationError` below is a real user-action
+                failure and stays assertive. */}
             <PaneState
               kind="error"
+              persistent
               title={previewFailure.title}
-              hint={previewFailure.detail}
               action={
                 <button
                   type="button"
@@ -283,7 +288,11 @@ export function ChatPane({
                   {repairingPreview ? 'Corrigindo…' : 'Tentar corrigir'}
                 </button>
               }
-            />
+            >
+              <pre className={`${META} max-h-48 overflow-auto whitespace-pre-wrap`}>
+                {previewFailure.detail}
+              </pre>
+            </PaneState>
           </div>
         ) : null}
         <ConversationList
