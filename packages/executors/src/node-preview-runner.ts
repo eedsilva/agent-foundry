@@ -130,11 +130,12 @@ export class NodePreviewRunner implements PreviewRunner {
       this.clock.now(),
     );
     if (outcome.ok) return withEvidence;
+    const stderrTail = tailBytes(outcome.stderr, EVIDENCE_MAX_OUTPUT_BYTES);
     return transitionPreviewSession(withEvidence, 'failed', this.clock.now(), {
       error: {
         name: 'PreviewInstallError',
         code: 'PREVIEW_INSTALL_FAILED',
-        message: tailBytes(outcome.stderr, EVIDENCE_MAX_OUTPUT_BYTES) || 'Install failed.',
+        message: stderrTail || 'Install failed.',
       },
       failureEvidence: {
         command: plan.install.ok
@@ -142,7 +143,7 @@ export class NodePreviewRunner implements PreviewRunner {
           : undefined,
         exitCode: outcome.exitCode,
         stdout: tailBytes(outcome.stdout, EVIDENCE_MAX_OUTPUT_BYTES),
-        stderr: tailBytes(outcome.stderr, EVIDENCE_MAX_OUTPUT_BYTES),
+        stderr: stderrTail,
       },
     });
   }
@@ -338,9 +339,16 @@ export class NodePreviewRunner implements PreviewRunner {
       (stream: PreviewLogEntry['stream']) =>
       (data: Buffer): void => {
         const text = data.toString('utf8');
-        // ponytail: re-encodes the whole retained buffer on every chunk
-        // (O(n) per chunk, same order as the previous slice). Upgrade path
-        // is a chunk ring buffer if capture ever becomes hot.
+        // ponytail: re-encodes the whole retained buffer on every chunk --
+        // same O(n)-per-chunk class as the previous slice, but a full UTF-8
+        // encode plus decode rather than one string slice, so ~2-3x its
+        // constant. The ceiling is not this file's 5MB default: composition
+        // wires maxOutputBytes to MAX_CLI_OUTPUT_BYTES (20MB), so a long-lived
+        // chatty dev server steady-states at ~40MB of encode/decode traffic
+        // per chunk across both streams, synchronously on the event loop.
+        // Upgrade path is a chunk ring buffer -- retain raw Buffers with a
+        // running byte total, drop whole chunks off the front past budget, and
+        // join/decode lazily at the handful of once-per-lifecycle read sites.
         entry.output[stream] = tailBytes(`${entry.output[stream]}${text}`, this.maxOutputBytes);
         const port = detectPortFromOutput(text);
         // The api tier announces its own listen URL; only the browsable

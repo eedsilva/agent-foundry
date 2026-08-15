@@ -53,15 +53,13 @@ async function findLatestPreviewFailed(
  * name from an unvalidated string.
  */
 function legacySessionId(event: ProjectEvent): string | undefined {
-  const sessionId = event.data.sessionId;
-  if (typeof sessionId === 'string' && PathSegmentSchema.safeParse(sessionId).success) {
-    return sessionId;
-  }
-  const leading = event.dedupeKey?.split(':')[0];
-  if (leading !== undefined && PathSegmentSchema.safeParse(leading).success) {
-    return leading;
-  }
-  return undefined;
+  return validSegment(event.data.sessionId) ?? validSegment(event.dedupeKey?.split(':')[0]);
+}
+
+function validSegment(value: unknown): string | undefined {
+  return typeof value === 'string' && PathSegmentSchema.safeParse(value).success
+    ? value
+    : undefined;
 }
 
 async function enrichFromLegacyArtifact(
