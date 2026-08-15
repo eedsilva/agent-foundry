@@ -237,8 +237,13 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
         timestamp,
         'initialize',
       );
+      // credentialsFromStatus throws (never returns undefined) on a missing
+      // or malformed field, so a bad payload lands in the catch below and
+      // reports through the same EnvironmentOperationError/diagnostic path
+      // as any other CLI failure (R4, #560) instead of silently skipping
+      // #writeAppSecrets and leaving the preview to fail far downstream.
       const credentials = credentialsFromStatus(result.stdout);
-      if (credentials) await wait('initialize', this.#writeAppSecrets(projectId, credentials));
+      await wait('initialize', this.#writeAppSecrets(projectId, credentials));
       await wait('initialize', persist(environment));
       return environment;
     } catch (error) {
