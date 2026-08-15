@@ -169,12 +169,8 @@ describe('FileEventStore redaction on append', () => {
     expect(persistedDiagnostic.logs.nextCursor).toBe(9);
     expect(persistedDiagnostic.output?.stdout).toBe('starting up');
 
-    // `sessionId` is a redaction-sensitive key name (redaction.ts's isSensitiveKey
-    // matches the bare word "session"), so both the diagnostic's and the event's
-    // top-level sessionId are wholesale-redacted rather than left equal to the
-    // appended value — "present", not "unchanged".
-    expect(persistedDiagnostic.sessionId).toBe('[REDACTED]');
-    expect(persisted?.data.sessionId).toBe('[REDACTED]');
+    expect(persistedDiagnostic.sessionId).toBe('preview-1');
+    expect(persisted?.data.sessionId).toBe('preview-1');
 
     // The planted secret is gone from both evidence surfaces, replaced with the
     // exact placeholder redactString produces, and the surrounding text survives.

@@ -39,8 +39,12 @@ const KEY_PREFIXES = new Set(['api', 'access', 'private']);
 
 function isSensitiveKey(key: string): boolean {
   const words = key.split(/[-_.\s]+|(?<=[a-z0-9])(?=[A-Z])/).filter(Boolean);
-  if (words.some((word) => SENSITIVE_WORD.test(word))) return true;
   const lower = words.map((word) => word.toLowerCase());
+  // A session *id* is a recovery-critical identifier, not a credential — only this
+  // exact two-word shape is exempted, so sessionToken/sessionSecret/sessionKey and a
+  // bare `session` key are untouched and still match SENSITIVE_WORD below.
+  const isSessionId = lower.length === 2 && lower[0] === 'session' && lower[1] === 'id';
+  if (!isSessionId && words.some((word) => SENSITIVE_WORD.test(word))) return true;
   return lower.some((word, index) => KEY_PREFIXES.has(word) && lower[index + 1] === 'key');
 }
 

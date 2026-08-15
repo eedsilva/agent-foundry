@@ -198,7 +198,6 @@ describe('redactEvent', () => {
           refreshToken: 'b',
           clientSecret: 'c',
           userPassword: 'd',
-          sessionId: 'e',
         },
       }),
     );
@@ -207,7 +206,55 @@ describe('redactEvent', () => {
       refreshToken: '[REDACTED]',
       clientSecret: '[REDACTED]',
       userPassword: '[REDACTED]',
-      sessionId: '[REDACTED]',
+    });
+  });
+
+  it('keeps sessionId as a recovery-critical identifier, in any casing the splitter produces', () => {
+    const redacted = redactEvent(
+      event({
+        data: {
+          sessionId: 'preview-1',
+          session_id: 'preview-1',
+          'session-id': 'preview-1',
+          sessionID: 'preview-1',
+        },
+      }),
+    );
+    expect(redacted.data).toEqual({
+      sessionId: 'preview-1',
+      session_id: 'preview-1',
+      'session-id': 'preview-1',
+      sessionID: 'preview-1',
+    });
+  });
+
+  it('still redacts a bare session key and session-credential compounds', () => {
+    const redacted = redactEvent(
+      event({
+        data: {
+          session: 'raw-session-value',
+          sessionToken: 'a',
+          sessionSecret: 'b',
+          sessionKey: 'c',
+        },
+      }),
+    );
+    expect(redacted.data).toEqual({
+      session: '[REDACTED]',
+      sessionToken: '[REDACTED]',
+      sessionSecret: '[REDACTED]',
+      sessionKey: '[REDACTED]',
+    });
+  });
+
+  it('keeps a nested diagnostic.sessionId unchanged through the round trip', () => {
+    const redacted = redactEvent(
+      event({
+        data: { diagnostic: { sessionId: 'preview-1', phase: 'runtime' } },
+      }),
+    );
+    expect(redacted.data).toEqual({
+      diagnostic: { sessionId: 'preview-1', phase: 'runtime' },
     });
   });
 
