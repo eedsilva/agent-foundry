@@ -2,7 +2,7 @@
 
 Two budgets, enforced in CI. Both are deterministic — byte-exact or a layout measurement —
 which is why they are the only two. See ADR
-[0066](adr/0066-performance-budgets-and-builder-state-primitive.md).
+[0067](adr/0067-performance-budgets-and-builder-state-primitive.md).
 
 ## 1. Client bundle size (First Load JS)
 

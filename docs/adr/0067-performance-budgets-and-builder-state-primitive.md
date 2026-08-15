@@ -1,4 +1,4 @@
-# ADR 0066: Performance budgets for the builder, and its two UI-state primitives
+# ADR 0067: Performance budgets for the builder, and its two UI-state primitives
 
 - Status: Proposed
 - Date: 2026-08-15

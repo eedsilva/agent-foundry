@@ -18,4 +18,4 @@ Proposed (builder's own UI):
 
 - [0061 builder defaults to a simple two-pane view; execution detail moves behind an "Avançado" toggle](0061-builder-simple-by-default-advanced-toggle.md) — issue #489
 - [0062 read-only workspace-file API for the builder's Files tab](0062-workspace-files-read-only-api.md) — issue #491, epic #488, ADR 0061
-- [0066 performance budgets for the builder, and its two UI-state primitives](0066-performance-budgets-and-builder-state-primitive.md) — issue #97
+- [0067 performance budgets for the builder, and its two UI-state primitives](0067-performance-budgets-and-builder-state-primitive.md) — issue #97
