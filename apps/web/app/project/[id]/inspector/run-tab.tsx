@@ -10,14 +10,20 @@ import { isFallback } from './shared';
 
 export function RunTab({
   runDetail,
+  hasRun,
   runIsTerminal,
   onOpenRetryPlan,
 }: {
   runDetail: RunDetailResponse | null;
+  /** Whether the project has a `currentRunId` at all. `use-project-run.ts`
+   * only fetches run detail when it does, so without this a project that has
+   * never run would sit forever on a busy "Carregando…" live region instead
+   * of saying there is nothing to show. */
+  hasRun: boolean;
   runIsTerminal: boolean;
   onOpenRetryPlan: (step: StepRun) => void;
 }) {
-  if (!runDetail) {
+  if (!runDetail && hasRun) {
     return (
       <section className={PANEL}>
         <h2 className={`${PANEL_TITLE} mb-3`}>Steps da execução</h2>
@@ -25,7 +31,7 @@ export function RunTab({
       </section>
     );
   }
-  if (runDetail.steps.length === 0) {
+  if (!runDetail || runDetail.steps.length === 0) {
     return (
       <section className={PANEL}>
         <h2 className={`${PANEL_TITLE} mb-3`}>Steps da execução</h2>

@@ -14,7 +14,10 @@ const TERMINAL_STEP_STATUSES = new Set<StepRunStatus>([
   'skipped',
 ]);
 
-/** "2m 14s", "45s", "1h 03m" — no seconds once an hour has passed. */
+/** "2m 14s", "45s", "1h 03m" — no seconds once an hour has passed. Not a
+ * duplicate of `format-usage.ts`'s `formatSeconds`: that one is the raw "134s"
+ * form for one attempt's duration in dense mono metadata, this one is a
+ * human-readable wall clock for a run that can last hours. Both stay. */
 export function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const hours = Math.floor(totalSeconds / 3600);

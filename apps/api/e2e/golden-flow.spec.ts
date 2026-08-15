@@ -97,11 +97,16 @@ async function expectNoAxeViolations(page: Page, surface: string): Promise<void>
  * or getting clipped. Always leaves the viewport at 1440x900 on return — the
  * width every desktop assertion and axe scan that follows a probe call in
  * this suite assumes, same contract as the pre-existing 900px check below.
+ *
+ * `atNarrowViewport` runs after the assertions and before the viewport is
+ * restored — for the callers that also want a 390px screenshot, so they don't
+ * resize twice around the probe.
  */
 async function expectNoHorizontalOverflow(
   page: Page,
   surface: string,
   primaryAction: Locator,
+  atNarrowViewport?: () => Promise<void>,
 ): Promise<void> {
   await page.setViewportSize({ width: 390, height: 844 });
   const overflow = await page.evaluate(() => ({
@@ -113,6 +118,7 @@ async function expectNoHorizontalOverflow(
     `${surface} overflows the 390px viewport: scrollWidth=${overflow.scrollWidth} clientWidth=${overflow.clientWidth}`,
   ).toBeLessThanOrEqual(overflow.clientWidth);
   await expect(primaryAction).toBeVisible();
+  await atNarrowViewport?.();
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 const BROWSER_TEST_PLAN = {
@@ -838,18 +844,17 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   // AgentArtifactView but never independently confirmed live. Probe it here
   // while it holds this decision's real diff content (an actual
   // `diff --git` header/hunk, not seeded fixture text).
-  await page.setViewportSize({ width: 390, height: 844 });
-  const decideDialogOverflow = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-  }));
-  expect(
-    decideDialogOverflow.scrollWidth,
-    `decide-dialog overflows the 390px viewport: scrollWidth=${decideDialogOverflow.scrollWidth} clientWidth=${decideDialogOverflow.clientWidth}`,
-  ).toBeLessThanOrEqual(decideDialogOverflow.clientWidth);
   await mkdir(resolve(DECIDE_DIALOG_MOBILE_SCREENSHOT, '..'), { recursive: true });
-  await page.getByTestId('artifact-modal').screenshot({ path: DECIDE_DIALOG_MOBILE_SCREENSHOT });
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await expectNoHorizontalOverflow(
+    page,
+    'decide-dialog',
+    page.getByRole('button', { name: /Confirmar approve/ }),
+    async () => {
+      await page
+        .getByTestId('artifact-modal')
+        .screenshot({ path: DECIDE_DIALOG_MOBILE_SCREENSHOT });
+    },
+  );
 
   await page.getByLabel('Decidido por').fill('e2e-reviewer');
   await page.getByRole('button', { name: /Confirmar approve/ }).click();
@@ -1212,16 +1217,15 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   // in editor" vscode:// href) and the visual-edit diff. Task 3 found a
   // clipping bug a rect-based scan missed entirely and only a screenshot
   // caught, so check both here.
-  const changesOverflow = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    clientWidth: document.documentElement.clientWidth,
-  }));
-  expect(
-    changesOverflow.scrollWidth,
-    `changes overflows the 390px viewport: scrollWidth=${changesOverflow.scrollWidth} clientWidth=${changesOverflow.clientWidth}`,
-  ).toBeLessThanOrEqual(changesOverflow.clientWidth);
   await mkdir(resolve(CHANGES_MOBILE_SCREENSHOT, '..'), { recursive: true });
-  await page.screenshot({ path: CHANGES_MOBILE_SCREENSHOT, fullPage: true });
+  await expectNoHorizontalOverflow(
+    page,
+    'changes',
+    changes.getByRole('link', { name: 'Open in editor' }),
+    async () => {
+      await page.screenshot({ path: CHANGES_MOBILE_SCREENSHOT, fullPage: true });
+    },
+  );
 
   knowledge = page.getByTestId('knowledge-file').filter({
     hasText: 'design-reference.png',

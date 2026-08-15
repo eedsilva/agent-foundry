@@ -170,9 +170,13 @@
  * top-left corner above everything else. `--surface` on `--accent-strong` is
  * 4.76:1 (same pairing `PRIMARY_BTN` in lib/ui.ts documents), well past the
  * 4.5:1 §7 requires.
+ *
+ * `fixed`, not `absolute`: `absolute` pins it to the top of the *document*, so
+ * Shift+Tab back to it after scrolling focuses a link rendered off-screen
+ * above the viewport. `z-index: 50` still clears the `z-30` sticky bar.
  */
 .skip-link {
-  position: absolute;
+  position: fixed;
   top: -40px;
   left: 8px;
   z-index: 50;
