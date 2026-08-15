@@ -20,7 +20,18 @@ afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );
-  for (const child of authServers.splice(0)) child.kill();
+  // Waits for the process to actually be gone, not just signalled — an
+  // un-awaited kill leaves a teardown race between this test's cleanup and
+  // the next test's port allocation.
+  await Promise.all(
+    authServers.splice(0).map((child) => {
+      if (child.exitCode !== null || child.signalCode !== null) return undefined;
+      return new Promise<void>((resolve) => {
+        child.once('exit', () => resolve());
+        child.kill();
+      });
+    }),
+  );
 });
 
 type AuthResponse = { status: number; body: string };
@@ -284,11 +295,14 @@ describe('the scaffold db script', () => {
     expect(result.stderr).toContain('pnpm db:reset');
   });
 
+  // `pnpm db:reset` forwards to the Supabase CLI verbatim as `db reset` —
+  // args is ['db', 'reset'], never a bare ['reset'] — so this drives the
+  // real two-word shape, not one the script never actually receives.
   it('runs the same seed verification on reset', async () => {
     const project = await startProject();
     await project.setAuthResponse(REJECTED_AUTH_RESPONSE);
 
-    const result = project.run(['reset'], { DB_SEED_CHECK_DEADLINE_MS: '1000' });
+    const result = project.run(['db', 'reset'], { DB_SEED_CHECK_DEADLINE_MS: '1000' });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('seed.sql');

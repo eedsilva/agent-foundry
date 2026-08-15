@@ -122,6 +122,12 @@ const SEED_CHECK_DEADLINE_MS = Number(process.env.DB_SEED_CHECK_DEADLINE_MS ?? 3
 // ponytail: this reduces "the seed applied" to "the documented seed user can
 // sign in" — a workspace has no dependency-free way to query auth.users
 // directly, so a successful password grant is the closest proof available.
+function fail(reason) {
+  console.error(`db: ${reason}`);
+  console.error('db: supabase/seed.sql may not have applied. Run `pnpm db:reset`.');
+  process.exit(1);
+}
+
 async function verifySeed(status) {
   // Missing or unreadable is not evidence of an unseeded stack either — an
   // app that opts out of seeding (no [db.seed], seed.sql deleted) is the most
@@ -156,17 +162,13 @@ async function verifySeed(status) {
       // GoTrue answered, so it is up — a wrong password will not fix itself
       // by retrying, so this is the final word, not a warm-up hiccup.
       const body = await response.text();
-      console.error(`db: ${SEED_USER.email} could not sign in — HTTP ${response.status}: ${body}`);
-      console.error('db: supabase/seed.sql may not have applied. Run `pnpm db:reset`.');
-      process.exit(1);
+      fail(`${SEED_USER.email} could not sign in — HTTP ${response.status}: ${body}`);
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
       await sleep(1000);
     }
   }
-  console.error(`db: ${SEED_USER.email} never reached GoTrue — ${lastError}.`);
-  console.error('db: supabase/seed.sql may not have applied. Run `pnpm db:reset`.');
-  process.exit(1);
+  fail(`${SEED_USER.email} never reached GoTrue — ${lastError}.`);
 }
 
 // The CLI reads .env itself when it resolves the env(...) references in
@@ -222,15 +224,20 @@ if (args[0] === 'start') {
   await verifySeed(status);
 }
 
-// `reset` reapplies migrations and seed.sql but writes no new credentials —
-// the stack's URL and keys do not change — so this only re-runs the seed
-// check; `pnpm db:types` stays the explicit step for regenerating types.
-if (args[0] === 'reset') {
+// The real npm script forwards `db reset` verbatim to the Supabase CLI
+// (`supabase db reset`), so args is ['db', 'reset'], never ['reset'] — hence
+// `includes`, not `args[0] ===`. `reset` reapplies migrations and seed.sql
+// but writes no new credentials — the stack's URL and keys do not change —
+// so this only re-runs the seed check; `pnpm db:types` stays the explicit
+// step for regenerating types.
+if (args.includes('reset')) {
   const status = JSON.parse(supabase(['status', '--output', 'json'], { capture: true }));
   await verifySeed(status);
 }
 
-// fetch()'s keep-alive socket otherwise holds the process open until the
-// connection idles out, so a caller (and the tests' spawnSync) waits out that
-// linger on every successful seed check for nothing.
+// Fires for every command that reaches here (start, reset, stop — not just
+// the ones with a seed check): supabase(args) above already asserted a zero
+// exit, but fetch()'s keep-alive socket would otherwise hold the process
+// open until it idles out, so every command would linger, not just the ones
+// that call verifySeed.
 process.exit(0);
