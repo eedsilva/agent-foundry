@@ -4,6 +4,7 @@ import { createRuntime, loadRuntimeConfig, startTelemetry } from '@agent-foundry
 import { buildApp } from './app.js';
 import { startPreviewReaper } from './preview-reaper.js';
 import { startArtifactReaper } from './artifact-reaper.js';
+import { startEnvironmentReaper } from './environment-reaper.js';
 import { sweepUnreferencedBlobs } from './blob-gc.js';
 
 loadDotEnv({ path: resolve(process.env.INIT_CWD ?? process.cwd(), '.env'), quiet: true });
@@ -49,6 +50,20 @@ startPreviewReaper(runtime.previewService, runtime.config.previewReapIntervalMs,
 startArtifactReaper(runtime.artifacts, runtime.config.artifactReapIntervalMs, app.log, app, (now) =>
   sweepUnreferencedBlobs(runtime, runtime.config.blobGcGraceMs, now),
 );
+if (runtime.generatedProjectRuntime) {
+  startEnvironmentReaper(
+    {
+      environments: runtime.generatedProjectRuntime,
+      lifecycleLock: runtime.previewLifecycleLock,
+      previewSessions: runtime.previewSessions,
+      runs: runtime.runs,
+    },
+    runtime.config.environmentReapIntervalMs,
+    runtime.config.environmentIdleMs,
+    app.log,
+    app,
+  );
+}
 
 const abortController = new AbortController();
 if (runtime.config.runWorkerInline) {

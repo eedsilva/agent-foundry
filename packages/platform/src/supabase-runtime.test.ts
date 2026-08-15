@@ -140,14 +140,18 @@ function configPort(config: string, section: string, key: string): number {
 
 function fixture(
   command = vi.fn<SupabaseCommand>(statusCommand),
-  options: { initializeTimeoutMs?: number; sqlClientFactory?: SchemaSqlClientFactory } = {},
+  options: {
+    initializeTimeoutMs?: number;
+    sqlClientFactory?: SchemaSqlClientFactory;
+    now?: () => Date;
+  } = {},
 ) {
   return {
     command,
     runtime: new SupabaseGeneratedProjectRuntime({
       dataDir,
       command,
-      now: () => new Date(NOW),
+      now: options.now ?? (() => new Date(NOW)),
       // Default to an empty fake so no test can open a real Postgres
       // connection now that applyWorkspaceMigrations also reads the DB (#536).
       sqlClientFactory: fakeSqlClient({}, { urls: [], ended: false }),
@@ -1315,6 +1319,87 @@ SELECT '-- not a comment'; DROP TABLE quoted_line_marker;`,
     if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
     expect(Buffer.byteLength(rejection.diagnostic)).toBeLessThanOrEqual(8 * 1024);
     expect(rejection.diagnostic).not.toContain('�');
+  });
+});
+
+describe('listEnvironments (#292)', () => {
+  it('returns [] when the projects directory does not exist', async () => {
+    const { command, runtime } = fixture();
+
+    await expect(runtime.listEnvironments()).resolves.toEqual([]);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('returns the environments of every initialized project, read from metadata only', async () => {
+    const { command, runtime } = fixture();
+    const first = await runtime.initialize({ projectId: 'project-a' });
+    const second = await runtime.initialize({ projectId: 'project-b' });
+    command.mockClear();
+
+    const environments = await runtime.listEnvironments();
+
+    expect(environments).toEqual(expect.arrayContaining([first, second]));
+    expect(environments).toHaveLength(2);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('skips a project directory with no environment metadata', async () => {
+    const { runtime } = fixture();
+    await runtime.initialize({ projectId: 'project-a' });
+    await mkdir(join(dataDir, 'projects', 'project-b'), { recursive: true });
+
+    const environments = await runtime.listEnvironments();
+
+    expect(environments.map((environment) => environment.projectId)).toEqual(['project-a']);
+  });
+
+  it('skips a project whose environment.json is corrupt, keeping the good sibling', async () => {
+    const { runtime } = fixture();
+    const good = await runtime.initialize({ projectId: 'project-a' });
+    await runtime.initialize({ projectId: 'project-b' });
+    await writeFile(join(dataDir, 'projects', 'project-b', 'environment', 'environment.json'), '{');
+
+    const environments = await runtime.listEnvironments();
+
+    expect(environments).toEqual([good]);
+  });
+});
+
+describe('initialize restarts a reaper-stopped environment (#292)', () => {
+  it('restarts a stopped environment instead of returning it stale', async () => {
+    const { command, runtime } = fixture();
+    const initialized = await runtime.initialize({ projectId: 'project-a' });
+    await runtime.stop('project-a');
+    command.mockClear();
+
+    const restarted = await runtime.initialize({ projectId: 'project-a' });
+
+    expect(restarted.health.state).toBe('healthy');
+    expect(command.mock.calls).toContainEqual([
+      'start',
+      '--workdir',
+      initialized.workdir,
+      '--output',
+      'json',
+      '--yes',
+      '--network-id',
+      initialized.network,
+    ]);
+  });
+
+  it('returns a healthy existing environment without invoking any Supabase command', async () => {
+    let current = new Date(NOW);
+    const { command, runtime } = fixture(undefined, { now: () => current });
+    const initialized = await runtime.initialize({ projectId: 'project-a' });
+    command.mockClear();
+    current = new Date(NOW.getTime() + 60_000);
+
+    await expect(runtime.initialize({ projectId: 'project-a' })).resolves.toMatchObject({
+      ...initialized,
+      updatedAt: current.toISOString(),
+    });
+
+    expect(command).not.toHaveBeenCalled();
   });
 });
 

@@ -1077,6 +1077,16 @@ Se ocorrer `EnvironmentOperationError`:
 
 Migrations, autenticação, storage e functions pertencem aos issues #70–#73; não improvise esses contratos durante recuperação operacional.
 
+### Reaper de ambientes ociosos
+
+Em `EXECUTOR_MODE=real`, o processo da API roda uma varredura periódica a cada `ENVIRONMENT_REAP_INTERVAL_MS` (padrão `60000` ms) que para ambientes ociosos. Fora do modo `real` não existe `GeneratedProjectRuntime` para gerenciar, então o reaper nem chega a ser iniciado.
+
+Um ambiente só é parado quando todas as condições a seguir são verdadeiras: seu `health.state` persistido não é `stopped`; o projeto não tem sessão de preview ativa; `updatedAt` tem pelo menos `ENVIRONMENT_IDLE_MS` (padrão `1800000` ms, 30 minutos); e nenhuma run não terminal existe para o projeto (terminal = `completed`, `failed`, `cancelled` ou `rejected`). O repositório aplica esse filtro no storage: o backend de arquivo varre todas as runs persistidas, e o backend Postgres faz a filtragem na consulta, sem janela limitada às runs mais recentes.
+
+O reaper chama somente `stop()`, nunca `cleanup()` ou `reset()`: os containers descem, mas volumes e dados sobrevivem, e o próximo passo de provisionamento do run (`initialize`) sobe a stack de novo automaticamente. Paradas são sequenciais, um projeto por vez; falha ao parar um projeto fica registrada em log e não interrompe a varredura dos demais projetos.
+
+Para desativar na prática, configure `ENVIRONMENT_IDLE_MS` com um valor muito alto.
+
 ### Deploy em VPS existente
 
 O deployer usa SSH para um host cadastrado pelo operador. Ubuntu LTS é a plataforma canônica; Debian é compatibilidade best effort. O preflight verifica Docker Engine, Compose, Caddy, espaço em disco, portas, permissões, clock e diretórios antes de alterar o host.

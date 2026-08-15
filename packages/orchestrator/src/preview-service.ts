@@ -81,7 +81,7 @@ export class PreviewService {
   async start(input: StartPreviewInput): Promise<{ session: PreviewSession; url: string }> {
     const sessionId = this.ids.next();
     const token = mintToken();
-    return this.lifecycleLock.withSessionLock(sessionId, async () => {
+    return this.withProjectSessionLock(input.workspaceRef.projectId, sessionId, async () => {
       const now = this.clock.now().toISOString();
       let session: PreviewSession = {
         id: sessionId,
@@ -169,6 +169,14 @@ export class PreviewService {
         throw error;
       }
     });
+  }
+
+  private withProjectSessionLock<T>(
+    projectId: string,
+    sessionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return this.lifecycleLock.withSessionLock(sessionId, operation, projectId);
   }
 
   /** The project's live preview session, if one exists. 'failing' does not

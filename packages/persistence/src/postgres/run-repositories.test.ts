@@ -1,7 +1,8 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { Project, StepAttempt, StepRun, WorkflowRun } from '@agent-foundry/contracts';
 import { NotFoundError, VersionConflictError } from '@agent-foundry/domain';
 import { PostgresProjectRepository } from './project-repository.js';
+import { PostgresPreviewLifecycleLock } from './preview-lifecycle-lock.js';
 import {
   PostgresStepAttemptRepository,
   PostgresStepRunRepository,
@@ -118,6 +119,7 @@ describePostgres('Postgres run/step/attempt repositories', (ctx) => {
     expect(await attempts.get('run-1', 'step-run-1', 'attempt-1')).toEqual(updatedAttempt);
 
     expect((await runs.list('project-1')).map((run) => run.id)).toEqual(['run-1']);
+    expect((await runs.listNonTerminal('project-1')).map((run) => run.id)).toEqual(['run-1']);
     expect((await steps.list('run-1')).map((step) => step.id)).toEqual(['step-run-1']);
     expect((await attempts.list('run-1', 'step-run-1')).map((item) => item.id)).toEqual([
       'attempt-1',
@@ -179,5 +181,37 @@ describePostgres('Postgres run/step/attempt repositories', (ctx) => {
     await expect(runs.create(workflowRun('run-x', 'missing-project'))).rejects.toThrow(
       /workflow_runs/,
     );
+  });
+
+  it('serializes run creation with the project lifecycle lock', async () => {
+    const sql = ctx.db();
+    const projects = new PostgresProjectRepository(sql);
+    const runs = new PostgresWorkflowRunRepository(sql);
+    const lifecycleLock = new PostgresPreviewLifecycleLock(sql);
+    await projects.create(makeProject('project-1'));
+
+    const order: string[] = [];
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const locked = lifecycleLock.withProjectLock('project-1', async () => {
+      order.push('lock:start');
+      await held;
+      order.push('lock:end');
+    });
+    await vi.waitFor(() => expect(order).toEqual(['lock:start']));
+
+    let created = false;
+    const creating = runs.create(workflowRun()).then(() => {
+      created = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(created).toBe(false);
+
+    release();
+    await Promise.all([locked, creating]);
+    expect(order).toEqual(['lock:start', 'lock:end']);
+    expect(await runs.get('run-1')).toEqual(workflowRun());
   });
 });

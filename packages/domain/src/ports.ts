@@ -128,6 +128,7 @@ export interface WorkflowRunRepository {
   create(run: WorkflowRun, tx?: Tx): Promise<void>;
   get(runId: string): Promise<WorkflowRun | null>;
   list(projectId: string, limit?: number): Promise<WorkflowRun[]>;
+  listNonTerminal(projectId: string): Promise<WorkflowRun[]>;
   update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun>;
 }
 
@@ -496,7 +497,12 @@ export interface PreviewSessionRepository {
 }
 
 export interface PreviewLifecycleLock {
-  withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T>;
+  withSessionLock<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+    projectId?: string,
+  ): Promise<T>;
+  withProjectLock<T>(projectId: string, operation: () => Promise<T>): Promise<T>;
 }
 
 export interface PreviewLogRepository {
@@ -665,6 +671,13 @@ export interface GeneratedProjectRuntime {
   start(projectId: string): Promise<AppEnvironment>;
   stop(projectId: string): Promise<AppEnvironment>;
   inspect(projectId: string): Promise<AppEnvironment | null>;
+  /**
+   * Every project environment that has persisted metadata on disk, read from
+   * metadata only — it never shells out to the container runtime and never
+   * bumps `updatedAt`, so callers can use `updatedAt` as an idleness signal.
+   * Unreadable or schema-invalid metadata is skipped, not thrown.
+   */
+  listEnvironments(): Promise<AppEnvironment[]>;
   previewMigration(input: { projectId: string; migrationPath: string }): Promise<MigrationPreview>;
   backupMigration(input: { projectId: string; backupPath: string }): Promise<MigrationBackup>;
   migrate(input: {

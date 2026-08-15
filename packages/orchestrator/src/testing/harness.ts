@@ -4,6 +4,7 @@ import { Readable } from 'node:stream';
 import { buffer } from 'node:stream/consumers';
 import {
   EXECUTION_PROTOCOL_VERSION,
+  isWorkflowRunStatusTerminal,
   ModelDefinitionSchema,
   ProjectPolicySchema,
   RouteDecisionSchema,
@@ -263,6 +264,9 @@ export class InMemoryRuns implements WorkflowRunRepository {
   }
   list(projectId: string): Promise<WorkflowRun[]> {
     return Promise.resolve([...this.store.values()].filter((run) => run.projectId === projectId));
+  }
+  async listNonTerminal(projectId: string): Promise<WorkflowRun[]> {
+    return (await this.list(projectId)).filter((run) => !isWorkflowRunStatusTerminal(run.status));
   }
   async update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
     checkPower(this.power);

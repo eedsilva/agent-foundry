@@ -72,6 +72,8 @@ const ConfigSchema = z
     ARTIFACT_MAX_VIDEO_BYTES: z.coerce.number().int().positive().default(50_000_000),
     ARTIFACT_RETENTION_SECONDS: z.coerce.number().int().positive().default(604_800),
     ARTIFACT_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+    ENVIRONMENT_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+    ENVIRONMENT_IDLE_MS: z.coerce.number().int().positive().default(1_800_000),
     OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
     OTEL_SERVICE_NAME: z.string().optional(),
     OTEL_TRACES_SAMPLER_RATIO: z.coerce.number().min(0).max(1).default(1),
@@ -159,6 +161,8 @@ export interface RuntimeConfig {
   artifactMaxVideoBytes: number;
   artifactRetentionSeconds: number;
   artifactReapIntervalMs: number;
+  environmentReapIntervalMs: number;
+  environmentIdleMs: number;
   otelExporterOtlpEndpoint?: string;
   otelServiceName?: string;
   otelTracesSamplerRatio: number;
@@ -258,6 +262,8 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     artifactMaxVideoBytes: parsed.ARTIFACT_MAX_VIDEO_BYTES,
     artifactRetentionSeconds: parsed.ARTIFACT_RETENTION_SECONDS,
     artifactReapIntervalMs: parsed.ARTIFACT_REAP_INTERVAL_MS,
+    environmentReapIntervalMs: parsed.ENVIRONMENT_REAP_INTERVAL_MS,
+    environmentIdleMs: parsed.ENVIRONMENT_IDLE_MS,
     ...(parsed.OTEL_EXPORTER_OTLP_ENDPOINT !== undefined
       ? { otelExporterOtlpEndpoint: parsed.OTEL_EXPORTER_OTLP_ENDPOINT }
       : {}),

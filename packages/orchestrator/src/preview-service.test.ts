@@ -103,6 +103,10 @@ class InMemoryPreviewSessions implements PreviewSessionRepository {
 
 class SharedLifecycleLock {
   private readonly tails = new Map<string, Promise<void>>();
+  withProjectLock<T>(_projectId: string, operation: () => Promise<T>): Promise<T> {
+    return operation();
+  }
+
   async withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.tails.get(sessionId) ?? Promise.resolve();
     let release!: () => void;

@@ -155,7 +155,13 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async #initialize(projectId: string): Promise<AppEnvironment> {
     const existing = await this.#read(projectId);
-    if (existing) return existing;
+    // The reaper (#292) calls stop() on idle environments, and initialize()
+    // is the only lifecycle call on the production run path — start() has no
+    // production caller. A stopped environment must be brought back up here,
+    // or the project is permanently unusable after it goes idle. start()
+    // itself is a no-op when already healthy, so this composes safely.
+    if (existing)
+      return existing.health.state === 'stopped' ? this.start(projectId) : this.#touch(existing);
 
     const { workdir, composeProjectName, network, volumes } = projectResources(
       this.#dataDir,
@@ -345,6 +351,28 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     );
     await persist(inspected);
     return inspected;
+  }
+
+  async listEnvironments(): Promise<AppEnvironment[]> {
+    let entries;
+    try {
+      entries = await readdir(join(this.#dataDir, 'projects'), { withFileTypes: true });
+    } catch (error) {
+      if (isNotFound(error)) return [];
+      throw error;
+    }
+    const environments: AppEnvironment[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      try {
+        const environment = await this.#read(entry.name);
+        if (environment) environments.push(environment);
+      } catch {
+        // Corrupt metadata or an invalid project-id path segment must not
+        // disable the sweep over the other, healthy environments (#292).
+      }
+    }
+    return environments;
   }
 
   async previewMigration(input: {

@@ -59,6 +59,7 @@ import {
   PostgresEventStore,
   PostgresJobQueue,
   PostgresProjectRepository,
+  PostgresPreviewLifecycleLock,
   PostgresStepAttemptRepository,
   PostgresStepEventRepository,
   PostgresStepRunRepository,
@@ -94,6 +95,7 @@ import type {
   EventStore,
   JobQueue,
   ProjectRepository,
+  PreviewLifecycleLock,
   StepAttemptRepository,
   StepEventRepository,
   StepRunRepository,
@@ -165,7 +167,7 @@ export interface Runtime {
   previewRunner: NodePreviewRunner;
   previewSessions: FilePreviewSessionRepository;
   previewLogs: FilePreviewLogRepository;
-  previewLifecycleLock: FilePreviewLifecycleLock;
+  previewLifecycleLock: PreviewLifecycleLock;
   previewService: PreviewService;
   previewSelectionService: PreviewSelectionService;
   projectVersions: FileProjectVersionRepository;
@@ -319,7 +321,9 @@ export async function createRuntime(
   });
   const previewSessions = new FilePreviewSessionRepository(config.dataDir);
   const previewLogs = new FilePreviewLogRepository(config.dataDir, config.previewLogMaxBytes);
-  const previewLifecycleLock = new FilePreviewLifecycleLock(config.dataDir);
+  const previewLifecycleLock: PreviewLifecycleLock = sql
+    ? new PostgresPreviewLifecycleLock(sql)
+    : new FilePreviewLifecycleLock(config.dataDir);
   const previewRunner = new NodePreviewRunner({
     startupTimeoutMs: config.previewStartupTimeoutMs,
     maxOutputBytes: config.maxCliOutputBytes,

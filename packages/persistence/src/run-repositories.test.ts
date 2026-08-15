@@ -117,6 +117,7 @@ describe('filesystem run repositories', () => {
     expect(updatedStep).toMatchObject({ status: 'running', version: 2 });
     expect(updatedAttempt).toMatchObject({ status: 'succeeded', version: 2 });
     expect((await runs.list('project-1')).map((run) => run.id)).toEqual(['run-1']);
+    expect((await runs.listNonTerminal('project-1')).map((run) => run.id)).toEqual(['run-1']);
     expect((await steps.list('run-1')).map((step) => step.id)).toEqual(['step-run-1']);
     expect((await attempts.list('run-1', 'step-run-1')).map((item) => item.id)).toEqual([
       'attempt-1',
@@ -162,6 +163,16 @@ describe('filesystem run repositories', () => {
     const rejected = results.find((result) => result.status === 'rejected');
     expect(rejected).toMatchObject({ reason: expect.any(VersionConflictError) });
     expect((await runs.get('run-1'))?.version).toBe(2);
+  });
+
+  it('serializes new runs with the project lifecycle lock', async () => {
+    const dataDir = await temporaryDataDir();
+    const runs = new persistence.FileWorkflowRunRepository(dataDir);
+    const first = workflowRun('run-1');
+    const second = workflowRun('run-2');
+
+    await expect(Promise.all([runs.create(first), runs.create(second)])).resolves.toBeDefined();
+    expect(await runs.listNonTerminal('project-1')).toHaveLength(2);
   });
 
   it('rejects duplicate IDs and malformed persisted state', async () => {
