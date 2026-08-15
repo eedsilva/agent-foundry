@@ -2,11 +2,12 @@
 // project the Supabase CLI manages from supabase/config.toml.
 //
 // Everything that has to be unique per project lives in .env: the Compose
-// project name and one block of host ports. They are allocated once, on the
-// first `db:start`, so that two generated projects running at the same time do
-// not fight over 54321. The block is picked from a hash of this workspace's
-// path and then probed, the same shape as the platform's allocator in
-// packages/platform/src/supabase-runtime.ts.
+// project name and one block of host ports. They are allocated on the first
+// `db:start`, and re-probed on every later `start` in case a sibling project
+// claimed one of the ports while this stack was stopped, so two generated
+// projects running at the same time do not fight over 54321. The block is
+// picked from a hash of this workspace's path and then probed, the same shape
+// as the platform's allocator in packages/platform/src/supabase-runtime.ts.
 //
 // Dependency-free on purpose: this runs before `pnpm install` has to have
 // worked, and in CI, from a directory copied out of the repo.
@@ -66,12 +67,14 @@ async function allocate() {
     const ports = PORT_VARS.map((_, offset) => base + offset);
     const free = await Promise.all(ports.map(isFree));
     if (!free.every(Boolean)) continue;
+    const projectId = `app_${digest.toString('hex').slice(0, 8)}`;
     setEnv({
       // Becomes the Compose project name, so it has to be unique too — and a
       // valid identifier: leading digits and dashes are not.
-      SUPABASE_PROJECT_ID: `app_${digest.toString('hex').slice(0, 8)}`,
+      SUPABASE_PROJECT_ID: projectId,
       ...Object.fromEntries(PORT_VARS.map((name, index) => [name, ports[index]])),
     });
+    console.log(`db: allocated ${projectId} on ports ${ports.join(', ')}`);
     return;
   }
   throw new Error(
@@ -79,18 +82,27 @@ async function allocate() {
   );
 }
 
-function supabase(args, { capture = false } = {}) {
-  const result = spawnSync('supabase', args, {
-    cwd: root,
-    stdio: capture ? ['inherit', 'pipe', 'inherit'] : 'inherit',
-    encoding: 'utf8',
-  });
+function runSupabase(args, stdio) {
+  const result = spawnSync('supabase', args, { cwd: root, stdio, encoding: 'utf8' });
   if (result.error?.code === 'ENOENT') {
     throw new Error('The Supabase CLI is not installed: https://supabase.com/docs/guides/cli');
   }
   if (result.error) throw result.error;
+  return result;
+}
+
+function supabase(args, { capture = false } = {}) {
+  const result = runSupabase(args, capture ? ['inherit', 'pipe', 'inherit'] : 'inherit');
   if (result.status !== 0) process.exit(result.status ?? 1);
   return result.stdout ?? '';
+}
+
+// Non-fatal, unlike supabase(): a failure here means a recorded block is
+// bound by a sibling project, not that db:start itself failed, so it must
+// return rather than exit — and stay silent, since that is an expected
+// outcome, not an error to surface on the terminal.
+function supabaseStatusOk() {
+  return runSupabase(['status', '--output', 'json'], 'ignore').status === 0;
 }
 
 // The CLI reads .env itself when it resolves the env(...) references in
@@ -110,6 +122,15 @@ if (!process.env.SUPABASE_PROJECT_ID) {
     process.exit(1);
   }
   await allocate();
+} else if (args[0] === 'start') {
+  // A recorded block can go stale while this stack is stopped: a sibling
+  // project can claim one of its ports, and there is then no way out but a
+  // fresh allocation. Only ask the CLI when a port is actually bound — a free
+  // block is proof enough that nothing has moved in under it, and `supabase
+  // status` costs a CLI round trip other `start`s don't need to pay.
+  const recordedPorts = PORT_VARS.map((name) => Number(process.env[name]));
+  const free = await Promise.all(recordedPorts.map(isFree));
+  if (!free.every(Boolean) && !supabaseStatusOk()) await allocate();
 }
 
 // `gen types` is captured rather than redirected by the npm script because its
