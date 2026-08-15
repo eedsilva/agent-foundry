@@ -155,7 +155,12 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async #initialize(projectId: string): Promise<AppEnvironment> {
     const existing = await this.#read(projectId);
-    if (existing) return existing;
+    // The reaper (#292) calls stop() on idle environments, and initialize()
+    // is the only lifecycle call on the production run path — start() has no
+    // production caller. A stopped environment must be brought back up here,
+    // or the project is permanently unusable after it goes idle. start()
+    // itself is a no-op when already healthy, so this composes safely.
+    if (existing) return existing.health.state === 'stopped' ? this.start(projectId) : existing;
 
     const { workdir, composeProjectName, network, volumes } = projectResources(
       this.#dataDir,

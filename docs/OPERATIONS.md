@@ -1083,7 +1083,7 @@ Em `EXECUTOR_MODE=real`, o processo da API roda uma varredura periódica a cada 
 
 Um ambiente só é parado quando todas as condições a seguir são verdadeiras: seu `health.state` persistido não é `stopped`; o projeto não tem sessão de preview ativa; `updatedAt` tem pelo menos `ENVIRONMENT_IDLE_MS` (padrão `1800000` ms, 30 minutos); e, entre as 500 runs mais recentes do projeto, nenhuma está em estado não terminal (terminal = `completed`, `failed`, `cancelled` ou `rejected`) — a checagem varre as N runs mais recentes, não o histórico inteiro do projeto.
 
-O reaper chama somente `stop()`, nunca `cleanup()` ou `reset()`: os containers descem, mas volumes e dados sobrevivem, e a próxima operação de lifecycle (`start` ou `initialize`) sobe a stack de novo. Paradas são sequenciais, um projeto por vez; falha ao parar um projeto fica registrada em log e não interrompe a varredura dos demais projetos.
+O reaper chama somente `stop()`, nunca `cleanup()` ou `reset()`: os containers descem, mas volumes e dados sobrevivem, e o próximo passo de provisionamento do run (`initialize`) sobe a stack de novo automaticamente. Paradas são sequenciais, um projeto por vez; falha ao parar um projeto fica registrada em log e não interrompe a varredura dos demais projetos.
 
 Para desativar na prática, configure `ENVIRONMENT_IDLE_MS` com um valor muito alto.
 

@@ -1361,6 +1361,39 @@ describe('listEnvironments (#292)', () => {
   });
 });
 
+describe('initialize restarts a reaper-stopped environment (#292)', () => {
+  it('restarts a stopped environment instead of returning it stale', async () => {
+    const { command, runtime } = fixture();
+    const initialized = await runtime.initialize({ projectId: 'project-a' });
+    await runtime.stop('project-a');
+    command.mockClear();
+
+    const restarted = await runtime.initialize({ projectId: 'project-a' });
+
+    expect(restarted.health.state).toBe('healthy');
+    expect(command.mock.calls).toContainEqual([
+      'start',
+      '--workdir',
+      initialized.workdir,
+      '--output',
+      'json',
+      '--yes',
+      '--network-id',
+      initialized.network,
+    ]);
+  });
+
+  it('returns a healthy existing environment without invoking any Supabase command', async () => {
+    const { command, runtime } = fixture();
+    const initialized = await runtime.initialize({ projectId: 'project-a' });
+    command.mockClear();
+
+    await expect(runtime.initialize({ projectId: 'project-a' })).resolves.toEqual(initialized);
+
+    expect(command).not.toHaveBeenCalled();
+  });
+});
+
 describe('destructiveStatements classifies by effect (#538)', () => {
   // Verbatim migration from the failed #529 real-mode run
   // (20260813044329_schema_plan.sql), which fell over on
