@@ -14,30 +14,38 @@ import { AlertStrip, RunAlertStrip } from './run-alert-strip';
 afterEach(() => vi.useRealTimers());
 
 /**
- * Extracts the markup of the `<span role="status"|"alert" …>` element only —
+ * Extracts the markup of the `<div role="status"|"alert" …>` element only —
  * a live region is `aria-atomic`, so a screen reader re-announces everything
  * inside it on every mutation. Ticking content must sit outside this
  * element's subtree; this helper lets a test prove that structurally rather
- * than by eyeballing the whole flat string. Depth-counts nested `<span>`s
- * (dot/detail/actions all use `span`) to find the matching close.
+ * than by eyeballing the whole flat string. Depth-counts nested `<div>`s to
+ * find the matching close.
+ *
+ * Coupled to the role element being a `<div>` on purpose — `AlertStrip`
+ * deliberately never puts `role` on a `display: contents` element (some
+ * browser/AT engines drop ARIA semantics from those), so a real box is the
+ * one guarantee this helper is allowed to assume. If that assumption is
+ * ever wrong — role missing, or not on a `<div>` — this throws rather than
+ * silently returning the wrong subtree.
  */
 function liveRegionMarkup(markup: string): string {
   const roleIndex = markup.search(/role="(status|alert)"/);
   if (roleIndex === -1) throw new Error('no role="status"/"alert" element found in markup');
-  const tagStart = markup.lastIndexOf('<span', roleIndex);
+  const tagStart = markup.lastIndexOf('<div', roleIndex);
+  if (tagStart === -1) throw new Error('role="status"/"alert" is not on a <div> element');
   const tagOpenEnd = markup.indexOf('>', tagStart) + 1;
   let depth = 1;
   let cursor = tagOpenEnd;
   while (depth > 0) {
-    const nextOpen = markup.indexOf('<span', cursor);
-    const nextClose = markup.indexOf('</span>', cursor);
-    if (nextClose === -1) throw new Error('unbalanced <span> in markup');
+    const nextOpen = markup.indexOf('<div', cursor);
+    const nextClose = markup.indexOf('</div>', cursor);
+    if (nextClose === -1) throw new Error('unbalanced <div> in markup');
     if (nextOpen !== -1 && nextOpen < nextClose) {
       depth += 1;
-      cursor = nextOpen + '<span'.length;
+      cursor = nextOpen + '<div'.length;
     } else {
       depth -= 1;
-      cursor = nextClose + '</span>'.length;
+      cursor = nextClose + '</div>'.length;
     }
   }
   return markup.slice(tagStart, cursor);
@@ -312,6 +320,14 @@ describe('RunAlertStrip running banner', () => {
     // Still rendered and ticking for sighted users — just outside the
     // announced region.
     expect(markup).toContain('2m 14s');
+    // Regression guard for the mistake this exact fix corrects: the
+    // role-bearing element must be a real box, not `display: contents`
+    // (Tailwind's `contents` utility) — some browser/AT engines have
+    // historically dropped ARIA semantics from `display: contents` elements
+    // entirely, which would make the live region silently not exist.
+    const [roleOpenTag] = region.match(/^<div[^>]*>/) ?? [];
+    expect(roleOpenTag).toBeDefined();
+    expect(roleOpenTag).not.toMatch(/\bcontents\b/);
   });
 });
 
@@ -342,10 +358,10 @@ describe('AlertStrip non-running variants keep their existing role/content shape
 
   it('renders no aside sibling when none is passed (resume-blocked/provisioning/generic-error shape)', () => {
     const markup = renderToStaticMarkup(<AlertStrip tone="err" title="Retomada bloqueada" />);
-    // The aside wrapper's class is exactly "text-ink-muted" (no other
-    // attributes); the detail span, the only other user of that token, always
-    // carries "min-w-0" alongside it. Neither is passed here, so this exact
-    // class string should never appear.
-    expect(markup).not.toContain('class="text-ink-muted"');
+    // The aside wrapper's class is exactly "text-ink-muted shrink-0"; the
+    // detail span, the only other user of the "text-ink-muted" token, always
+    // carries "min-w-0" instead. Neither is passed here, so this exact class
+    // string should never appear.
+    expect(markup).not.toContain('class="text-ink-muted shrink-0"');
   });
 });

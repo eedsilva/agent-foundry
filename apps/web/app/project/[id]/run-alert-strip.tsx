@@ -58,28 +58,35 @@ export function AlertStrip({
   aside?: ReactNode;
 }) {
   return (
+    // Plain layout wrapper carrying the visual "glass panel" — no role, no
+    // testid. It lays out two real children: the live region below, and
+    // `aside`, which must stay outside that region's subtree.
     <div className="glass motion-state-enter rounded-panel text-ink flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-[13px]">
-      {/* `display: contents` (Tailwind's `contents`) drops this span from the
-          box tree — its children lay out as if they were direct children of
-          the flex row above — while still giving `role` a DOM node whose
-          subtree is exactly "what should be announced": the dot, title,
-          detail and actions, and nothing that ticks on its own. */}
-      <span
+      <div
         // `role="alert"` is an *assertive* live region: it interrupts the screen
         // reader and re-announces on every re-render. Only a failure earns that.
         // Steady-state strips ("execução pausada") use `role="status"`, which
         // announces once, politely, when it appears.
+        //
+        // This has to be a real box, not a `display: contents` element —
+        // some browser/AT engines have historically dropped ARIA semantics
+        // from `display: contents` elements entirely, which would turn "the
+        // live region re-announces too often" into "the live region doesn't
+        // exist," and this repo's SSR-only test suite can't tell the
+        // difference either way. `flex-1 min-w-0` lets it take the row's
+        // available width (so `actions`' `ml-auto` still pushes to the
+        // banner's right edge) without a `contents` shortcut.
         role={tone === 'err' ? 'alert' : 'status'}
         data-testid="run-alert"
-        className="contents"
+        className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5"
       >
         <span aria-hidden className={cn('size-2 shrink-0 rounded-full', DOT_CLASS[tone])} />
         <strong className="font-semibold">{title}</strong>
         {detail ? <span className="text-ink-muted min-w-0">{detail}</span> : null}
         {actions ? <span className="ml-auto flex gap-2">{actions}</span> : null}
-      </span>
+      </div>
       {aside ? (
-        <span aria-hidden className="text-ink-muted">
+        <span aria-hidden className="text-ink-muted shrink-0">
           {aside}
         </span>
       ) : null}
