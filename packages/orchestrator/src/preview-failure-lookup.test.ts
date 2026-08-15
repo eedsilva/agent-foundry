@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ProjectEventSchema,
   type ArtifactMetadata,
+  type PreviewFailureDiagnostic,
   type ProjectEvent,
   type StoredArtifact,
 } from '@agent-foundry/contracts';
@@ -70,7 +71,22 @@ function previewFailedEvent(overrides: Partial<ProjectEvent> = {}): ProjectEvent
     type: 'preview.failed',
     createdAt: '2026-08-14T00:00:00.000Z',
     message: 'preview failed',
-    data: { sessionId: 'session-1', diagnostic: { schemaVersion: '1' } },
+    data: { sessionId: 'session-1' },
+    ...overrides,
+  };
+}
+
+function diagnostic(overrides: Partial<PreviewFailureDiagnostic> = {}): PreviewFailureDiagnostic {
+  return {
+    schemaVersion: '1',
+    sessionId: 'session-legacy',
+    projectId: 'project-1',
+    phase: 'runtime',
+    health: { state: 'unhealthy', consecutiveFailures: 0, checkedAt: '2026-08-14T00:00:00.000Z' },
+    restartCount: 0,
+    error: { name: 'PreviewStartError', message: 'preview failed' },
+    logs: { entries: [], nextCursor: 0 },
+    failedAt: '2026-08-14T00:00:00.000Z',
     ...overrides,
   };
 }
@@ -118,7 +134,7 @@ describe('latestPreviewFailureEvent', () => {
     expect(found).toBeUndefined();
   });
 
-  it('enriches an event with no data.diagnostic from the legacy artifact', async () => {
+  it('rejects malformed legacy diagnostic artifacts', async () => {
     const legacy = previewFailedEvent({
       id: 'legacy',
       data: { sessionId: 'session-legacy' },
@@ -135,8 +151,39 @@ describe('latestPreviewFailureEvent', () => {
 
     const found = await latestPreviewFailureEvent(events, artifacts, 'project-1');
 
-    expect(found?.data.diagnostic).toEqual({ schemaVersion: '1', summary: 'oops' });
+    expect(found?.data.diagnostic).toBeUndefined();
     expect(legacy.data.diagnostic).toBeUndefined();
+  });
+
+  it('validates and redacts a legacy diagnostic before returning it', async () => {
+    const legacy = previewFailedEvent({
+      id: 'legacy',
+      data: { sessionId: 'session-legacy' },
+    });
+    const events = new FakeEventStore([legacy]);
+    const artifacts = new FakeArtifactStore(
+      new Map([
+        [
+          'project-1/preview-failure-session-legacy',
+          {
+            metadata: {} as ArtifactMetadata,
+            content: diagnostic({
+              error: { name: 'PreviewStartError', message: 'Bearer abcdef1234567890ABCDEF' },
+              output: { stdout: 'api_key=sk-abc123def456ghi789jkl', stderr: 'failed' },
+            }),
+          },
+        ],
+      ]),
+    );
+
+    const found = await latestPreviewFailureEvent(events, artifacts, 'project-1');
+
+    expect(found?.data.diagnostic).toMatchObject({
+      error: { message: expect.stringContaining('[REDACTED]') },
+      output: { stdout: expect.stringContaining('[REDACTED]'), stderr: 'failed' },
+    });
+    expect(JSON.stringify(found?.data.diagnostic)).not.toContain('abcdef1234567890ABCDEF');
+    expect(JSON.stringify(found?.data.diagnostic)).not.toContain('sk-abc123def456ghi789jkl');
   });
 
   it('leaves the event untouched when the legacy artifact is absent', async () => {
@@ -155,14 +202,14 @@ describe('latestPreviewFailureEvent', () => {
   it('does not consult the artifact store when data.diagnostic is already present', async () => {
     const withDiagnostic = previewFailedEvent({
       id: 'has-diagnostic',
-      data: { sessionId: 'session-1', diagnostic: { schemaVersion: '1' } },
+      data: { sessionId: 'session-1', diagnostic: diagnostic({ sessionId: 'session-1' }) },
     });
     const events = new FakeEventStore([withDiagnostic]);
     const artifacts = new FakeArtifactStore();
 
     const found = await latestPreviewFailureEvent(events, artifacts, 'project-1');
 
-    expect(found?.data.diagnostic).toEqual({ schemaVersion: '1' });
+    expect(found?.data.diagnostic).toMatchObject(diagnostic({ sessionId: 'session-1' }));
     expect(artifacts.getLatestCalls).toEqual([]);
   });
 
@@ -206,14 +253,17 @@ describe('latestPreviewFailureEvent', () => {
       new Map([
         [
           `project-1/preview-failure-${realSessionId}`,
-          { metadata: {} as ArtifactMetadata, content: { schemaVersion: '1', summary: 'legacy' } },
+          {
+            metadata: {} as ArtifactMetadata,
+            content: diagnostic({ sessionId: realSessionId }),
+          },
         ],
       ]),
     );
 
     const found = await latestPreviewFailureEvent(events, artifacts, 'project-1');
 
-    expect(found?.data.diagnostic).toEqual({ schemaVersion: '1', summary: 'legacy' });
+    expect(found?.data.diagnostic).toMatchObject({ sessionId: realSessionId });
   });
 
   it('ignores an unparseable dedupeKey and leaves the event untouched', async () => {

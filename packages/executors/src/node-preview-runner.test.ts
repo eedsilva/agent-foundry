@@ -899,7 +899,14 @@ describe('NodePreviewRunner', () => {
       ...session,
       commandPlan: {
         ...session.commandPlan!,
-        dev: { ok: true, command: 'node', args: ['-e', "process.stderr.write('🙂'.repeat(20))"] },
+        dev: {
+          ok: true,
+          command: 'node',
+          args: [
+            '-e',
+            'process.stderr.write(Buffer.from([0xf0])); setTimeout(() => { process.stderr.write(Buffer.from([0x9f, 0x99, 0x82])); setTimeout(() => process.exit(1), 10); }, 10)',
+          ],
+        },
       },
     };
     const result = await startTracked(runner, session);

@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import { get } from 'node:http';
+import { StringDecoder } from 'node:string_decoder';
 import type {
   PreviewHealth,
   PreviewLogEntry,
@@ -61,6 +62,7 @@ interface ProcessEntry {
   exited: boolean;
   exitCode?: number;
   output: { stdout: string; stderr: string };
+  flushOutput: () => void;
 }
 
 // Half of PreviewService's own health-poll timeout, so the combined worst case
@@ -233,6 +235,7 @@ export class NodePreviewRunner implements PreviewRunner {
     }
     if (entry.exited) killProcessTree(entry.child, 'SIGKILL');
     else await terminateProcessTree(entry.child);
+    entry.flushOutput();
     await entry.logWrites;
     this.processes.delete(sessionId);
   }
@@ -324,6 +327,7 @@ export class NodePreviewRunner implements PreviewRunner {
       logWrites: Promise.resolve(),
       exited: false,
       output: { stdout: '', stderr: '' },
+      flushOutput: () => {},
     };
     this.processes.set(session.id, entry);
     const markExited = (result: unknown): void => {
@@ -335,41 +339,43 @@ export class NodePreviewRunner implements PreviewRunner {
     };
     void child.then(markExited, markExited);
     let detectedPort: number | undefined;
+    const decoders = {
+      stdout: new StringDecoder('utf8'),
+      stderr: new StringDecoder('utf8'),
+    };
+    const appendOutput = (stream: PreviewLogEntry['stream'], text: string): void => {
+      if (!text) return;
+      // ponytail: re-encodes the whole retained buffer on every chunk; the
+      // existing capture budget is the deliberate ceiling. Upgrade path is a
+      // raw-buffer ring if this becomes hot for long-lived chatty servers.
+      entry.output[stream] = tailBytes(`${entry.output[stream]}${text}`, this.maxOutputBytes);
+      const port = detectPortFromOutput(text);
+      if (port !== undefined && port !== apiPort) {
+        detectedPort = port;
+        entry.port = port;
+      }
+      const repository = this.logRepository;
+      if (!repository) return;
+      const timestamp = this.clock.now().toISOString();
+      const lines = text.split('\n').filter(Boolean);
+      entry.logWrites = entry.logWrites.then(async () => {
+        for (const message of lines) {
+          try {
+            await repository.append(session.id, { stream, message, timestamp });
+          } catch {
+            // The repository is the redaction boundary; drop failed raw output instead of buffering it.
+          }
+        }
+      });
+    };
+    entry.flushOutput = () => {
+      appendOutput('stdout', decoders.stdout.end());
+      appendOutput('stderr', decoders.stderr.end());
+    };
     const capture =
       (stream: PreviewLogEntry['stream']) =>
       (data: Buffer): void => {
-        const text = data.toString('utf8');
-        // ponytail: re-encodes the whole retained buffer on every chunk --
-        // same O(n)-per-chunk class as the previous slice, but a full UTF-8
-        // encode plus decode rather than one string slice, so ~2-3x its
-        // constant. The ceiling is not this file's 5MB default: composition
-        // wires maxOutputBytes to MAX_CLI_OUTPUT_BYTES (20MB), so a long-lived
-        // chatty dev server steady-states at ~40MB of encode/decode traffic
-        // per chunk across both streams, synchronously on the event loop.
-        // Upgrade path is a chunk ring buffer -- retain raw Buffers with a
-        // running byte total, drop whole chunks off the front past budget, and
-        // join/decode lazily at the handful of once-per-lifecycle read sites.
-        entry.output[stream] = tailBytes(`${entry.output[stream]}${text}`, this.maxOutputBytes);
-        const port = detectPortFromOutput(text);
-        // The api tier announces its own listen URL; only the browsable
-        // tier's port may steer the health probe.
-        if (port !== undefined && port !== apiPort) {
-          detectedPort = port;
-          entry.port = port;
-        }
-        const repository = this.logRepository;
-        if (!repository) return;
-        const timestamp = this.clock.now().toISOString();
-        const lines = text.split('\n').filter(Boolean);
-        entry.logWrites = entry.logWrites.then(async () => {
-          for (const message of lines) {
-            try {
-              await repository.append(session.id, { stream, message, timestamp });
-            } catch {
-              // The repository is the redaction boundary; drop failed raw output instead of buffering it.
-            }
-          }
-        });
+        appendOutput(stream, decoders[stream].write(data));
       };
     child.stdout?.on('data', capture('stdout'));
     child.stderr?.on('data', capture('stderr'));
@@ -377,6 +383,7 @@ export class NodePreviewRunner implements PreviewRunner {
     const deadline = Date.now() + this.startupTimeoutMs;
     while (Date.now() < deadline) {
       if (entry.exited) {
+        entry.flushOutput();
         return {
           port: reservedPort,
           pid: undefined,
@@ -392,6 +399,7 @@ export class NodePreviewRunner implements PreviewRunner {
       }
       await new Promise((resolveTick) => setTimeout(resolveTick, POLL_INTERVAL_MS));
     }
+    if (entry.exited) entry.flushOutput();
     return {
       port: detectedPort ?? reservedPort,
       pid: child.pid,

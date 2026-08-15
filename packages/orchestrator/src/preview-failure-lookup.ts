@@ -1,8 +1,19 @@
-import { PathSegmentSchema, type ProjectEvent } from '@agent-foundry/contracts';
-import type { ArtifactStore, EventStore } from '@agent-foundry/domain';
+import {
+  PathSegmentSchema,
+  PreviewFailureDiagnosticSchema,
+  type PreviewFailureDiagnostic,
+  type ProjectEvent,
+} from '@agent-foundry/contracts';
+import {
+  redactUnknown,
+  tailBytes,
+  type ArtifactStore,
+  type EventStore,
+} from '@agent-foundry/domain';
 
 const DEFAULT_PAGE_SIZE = 500;
 const WIDEN_FACTOR = 4;
+const LEGACY_DIAGNOSTIC_MAX_OUTPUT_BYTES = 1_000_000;
 
 /**
  * Finds the newest `preview.failed` project event, widening the scan past
@@ -67,14 +78,42 @@ async function enrichFromLegacyArtifact(
   artifacts: ArtifactStore,
   projectId: string,
 ): Promise<ProjectEvent> {
-  if (event.data.diagnostic !== undefined) return event;
+  const embedded = sanitizeDiagnostic(event.data.diagnostic);
+  if (embedded) return { ...event, data: { ...event.data, diagnostic: embedded } };
   const sessionId = legacySessionId(event);
   if (sessionId === undefined) return event;
   try {
     const artifact = await artifacts.getLatest(projectId, `preview-failure-${sessionId}`);
     if (!artifact) return event;
-    return { ...event, data: { ...event.data, diagnostic: artifact.content } };
+    const diagnostic = sanitizeDiagnostic(artifact.content);
+    return diagnostic ? { ...event, data: { ...event.data, diagnostic } } : event;
   } catch {
     return event; // partial context beats none
   }
+}
+
+function sanitizeDiagnostic(value: unknown): PreviewFailureDiagnostic | undefined {
+  const parsed = PreviewFailureDiagnosticSchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  const redacted = PreviewFailureDiagnosticSchema.safeParse(redactUnknown(parsed.data));
+  if (!redacted.success) return undefined;
+  const diagnostic = redacted.data;
+  return {
+    ...diagnostic,
+    logs: {
+      ...diagnostic.logs,
+      entries: diagnostic.logs.entries.map((entry) => ({
+        ...entry,
+        message: tailBytes(entry.message, LEGACY_DIAGNOSTIC_MAX_OUTPUT_BYTES),
+      })),
+    },
+    ...(diagnostic.output
+      ? {
+          output: {
+            stdout: tailBytes(diagnostic.output.stdout, LEGACY_DIAGNOSTIC_MAX_OUTPUT_BYTES),
+            stderr: tailBytes(diagnostic.output.stderr, LEGACY_DIAGNOSTIC_MAX_OUTPUT_BYTES),
+          },
+        }
+      : {}),
+  };
 }
