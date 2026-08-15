@@ -1,15 +1,25 @@
 import type { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import type { ArtifactMetadata, ProjectEvent, StoredArtifact } from '@agent-foundry/contracts';
-import type { ArtifactStore, EventStore } from '@agent-foundry/domain';
+import {
+  ProjectEventSchema,
+  type ArtifactMetadata,
+  type ProjectEvent,
+  type StoredArtifact,
+} from '@agent-foundry/contracts';
+import { redactEvent, type ArtifactStore, type EventStore } from '@agent-foundry/domain';
 import { latestPreviewFailureEvent } from './preview-failure-lookup.js';
 
 // Mirrors FileEventStore.list exactly: newest `limit` events, ascending order,
-// so the widening-scan regression test proves something real.
+// so the widening-scan regression test proves something real. append() also
+// mirrors FileEventStore.append's redactEvent-on-write step (using the real
+// domain function, not a re-description of it), so a legacy-shaped event
+// pushed through .append() comes out exactly as it would from the real store
+// -- without pulling @agent-foundry/persistence into this package's test
+// dependencies, which no orchestrator test does today.
 class FakeEventStore implements EventStore {
   constructor(private readonly events: ProjectEvent[] = []) {}
   async append(event: ProjectEvent): Promise<void> {
-    this.events.push(event);
+    this.events.push(ProjectEventSchema.parse(redactEvent(ProjectEventSchema.parse(event))));
   }
   async list(projectId: string, limit = 500, afterId?: string): Promise<ProjectEvent[]> {
     const projectEvents = this.events.filter((event) => event.projectId === projectId);
@@ -167,5 +177,57 @@ describe('latestPreviewFailureEvent', () => {
     const found = await latestPreviewFailureEvent(events, artifacts, 'project-1');
 
     expect(found?.data.diagnostic).toBeUndefined();
+  });
+
+  it('recovers the legacy artifact via dedupeKey when the persisted event predates the sessionId redaction fix (#346)', async () => {
+    // Every preview.failed event written before #343's redaction fix has
+    // data.sessionId baked into the events file as the literal string
+    // '[REDACTED]' -- `session` was in SENSITIVE_WORD back then. dedupeKey was
+    // never redacted (redactEvent only ever touches message/data), so it's the
+    // only place the real session id survives on those legacy events. Routing
+    // this append through the real redaction step (not skipping it) proves
+    // today's redactEvent is a no-op on an already-opaque string -- the bug
+    // lives entirely in what got written historically, not in today's write
+    // path, so a fixture that starts from data.sessionId already redacted is
+    // the faithful reproduction, not one where redactEvent does the mangling
+    // live (it no longer does, by design, since #343).
+    const realSessionId = 'session-legacy-real-id';
+    const events = new FakeEventStore();
+    await events.append({
+      id: 'legacy-redacted',
+      projectId: 'project-1',
+      type: 'preview.failed',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      message: 'preview failed',
+      dedupeKey: `${realSessionId}:preview.failed:terminal`,
+      data: { sessionId: '[REDACTED]' },
+    });
+    const artifacts = new FakeArtifactStore(
+      new Map([
+        [
+          `project-1/preview-failure-${realSessionId}`,
+          { metadata: {} as ArtifactMetadata, content: { schemaVersion: '1', summary: 'legacy' } },
+        ],
+      ]),
+    );
+
+    const found = await latestPreviewFailureEvent(events, artifacts, 'project-1');
+
+    expect(found?.data.diagnostic).toEqual({ schemaVersion: '1', summary: 'legacy' });
+  });
+
+  it('ignores an unparseable dedupeKey and leaves the event untouched', async () => {
+    const legacy = previewFailedEvent({
+      id: 'legacy',
+      dedupeKey: undefined,
+      data: { sessionId: '[REDACTED]' },
+    });
+    const events = new FakeEventStore([legacy]);
+    const artifacts = new FakeArtifactStore();
+
+    const found = await latestPreviewFailureEvent(events, artifacts, 'project-1');
+
+    expect(found?.data.diagnostic).toBeUndefined();
+    expect(artifacts.getLatestCalls).toEqual([]);
   });
 });

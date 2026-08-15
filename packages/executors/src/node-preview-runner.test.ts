@@ -909,6 +909,63 @@ describe('NodePreviewRunner', () => {
     expect(stderr).not.toContain('�');
     await runner.stop(result).catch(() => undefined);
   }, 15_000);
+
+  it('bounds runtime crash evidence from stop() to the evidence budget, not the (much larger) capture budget (#346)', async () => {
+    // maxOutputBytes here is the execa/in-memory *capture* budget (used to
+    // avoid unbounded process.stdout/stderr buffering) -- a completely
+    // different concern from the *evidence* budget applied to whatever ends
+    // up in a session's persisted failureEvidence. 2MB of stderr fits under
+    // this generous capture budget but must still come out of stop() capped
+    // at the fixed evidence budget.
+    const runner = new NodePreviewRunner({
+      startupTimeoutMs: 5_000,
+      maxOutputBytes: 3_000_000,
+      logRepository: new InMemoryPreviewLogRepository(),
+    });
+    let session = await newSession('sess-runtime-crash-bounded');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: {
+          ok: true,
+          command: 'node',
+          args: [
+            '-e',
+            `const http = require('http');
+             const port = Number(process.env.PORT);
+             const server = http.createServer((req, res) => { res.writeHead(200); res.end('ok'); });
+             server.listen(port, '127.0.0.1', () => {
+               setTimeout(() => {
+                 process.stderr.write('x'.repeat(2000000));
+                 process.exitCode = 1;
+                 server.close();
+               }, 150);
+             });`,
+          ],
+        },
+      },
+    };
+    // startTracked only returns once attemptSpawn's httpProbe confirms the
+    // process answered 200 -- i.e. it booted healthy before crashing below.
+    session = await startTracked(runner, session);
+
+    await vi.waitFor(
+      async () => {
+        await expect(runner.health(session)).resolves.toMatchObject({
+          state: 'unhealthy',
+          detail: 'process not running',
+        });
+      },
+      { timeout: 5_000 },
+    );
+
+    const stopped = await runner.stop(session);
+    const stderrBytes = Buffer.byteLength(stopped.failureEvidence?.stderr ?? '', 'utf8');
+    expect(stderrBytes).toBeGreaterThan(0);
+    expect(stderrBytes).toBeLessThanOrEqual(1_000_000);
+  }, 15_000);
 });
 
 function isAlive(pid: number): boolean {

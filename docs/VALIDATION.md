@@ -876,7 +876,12 @@ reviving artifact writes. Evidence is split by boundary:
   `preview.failed` event or a shorter-than-requested page proves the whole history was scanned, and
   that it fills in a missing embedded diagnostic from the legacy `preview-failure-<sessionId>` artifact
   on read only — never writing, mutating, or deleting an artifact, and returning the event unchanged
-  when the artifact is missing or the lookup throws.
+  when the artifact is missing or the lookup throws. When the persisted `data.sessionId` is itself
+  unusable — absent, or the literal `'[REDACTED]'` an older build wrote before `sessionId` was exempted
+  from redaction — the lookup recovers the session id from the leading segment of the event's
+  `dedupeKey` (`${session.id}:${type}:${occurrence}`, never redacted), so `preview.failed` events
+  persisted before that fix still resolve their legacy artifact; both candidates are validated against
+  `PathSegmentSchema` before being used to build an artifact name.
 - `packages/persistence/src/event-store.test.ts` and `packages/persistence/src/postgres/event-store.
   test.ts` each append a realistic `preview.failed` event with a nested `PreviewFailureDiagnostic` and
   list it back, asserting the nested structure (phase, exit code, command/args, log cursors, output)

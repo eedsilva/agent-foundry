@@ -42,7 +42,7 @@ Security remains local/trusted-operator only: loopback proxy controls from ADR 0
 
 Upgrade requires stopping the old API and preview processes; there is no backfill. New sessions create the durable format. Before rollback, stop the API and persisted preview PIDs, snapshot `DATA_DIR/previews`, and restore a pre-upgrade snapshot if necessary. An older binary ignores the new files but cannot reap their processes, so code-only rollback is insufficient.
 
-Recovery starts with the log endpoint, session file, and project events — whose `preview.failed` payload carries the diagnostic per ADR 0040 — falling back to the legacy failure artifact only for events that predate it. Operators must verify command/workspace ownership before killing a persisted PID and must confirm the lock owner is dead in the same PID namespace before removing `.lifecycle.lock`. Restarting the API resumes deterministic reaping. Corrupt state is preserved for investigation and restored from snapshot rather than deleted opportunistically.
+Recovery starts with the log endpoint, session file, and project events — whose `preview.failed` payload carries the diagnostic per ADR 0040 — falling back to the legacy failure artifact only when the event has no embedded `data.diagnostic`, not merely because it predates ADR 0040 (an event's age is not itself the trigger). Operators must verify command/workspace ownership before killing a persisted PID and must confirm the lock owner is dead in the same PID namespace before removing `.lifecycle.lock`. Restarting the API resumes deterministic reaping. Corrupt state is preserved for investigation and restored from snapshot rather than deleted opportunistically.
 
 ## Validation
 

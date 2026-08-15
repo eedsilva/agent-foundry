@@ -70,6 +70,16 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
 const DEFAULT_INSTALL_TIMEOUT_MS = 120_000;
 const POLL_INTERVAL_MS = 100;
 const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
+// Separate from maxOutputBytes/DEFAULT_MAX_OUTPUT_BYTES on purpose: those bound
+// execa's maxBuffer and the in-memory stdout/stderr capture accumulator (needs
+// to stay large -- a real `pnpm install` easily exceeds 1MB of output). This
+// constant instead bounds every field that ends up in a session's persisted
+// failureEvidence (install-failure, spawn-failure, and stop()'s runtime-crash
+// paths), matching PreviewService's own DIAGNOSTIC_MAX_OUTPUT_BYTES so evidence
+// never balloons to the multi-MB capture budget. Do not collapse these two
+// constants back into one -- that's what let runtime crash evidence in stop()
+// go out at up to the full capture budget (#346).
+const EVIDENCE_MAX_OUTPUT_BYTES = 1_000_000;
 
 /**
  * Mechanism-only PreviewRunner: reserves/detects a port, spawns the dev
@@ -124,15 +134,15 @@ export class NodePreviewRunner implements PreviewRunner {
       error: {
         name: 'PreviewInstallError',
         code: 'PREVIEW_INSTALL_FAILED',
-        message: tailBytes(outcome.stderr, this.maxOutputBytes) || 'Install failed.',
+        message: tailBytes(outcome.stderr, EVIDENCE_MAX_OUTPUT_BYTES) || 'Install failed.',
       },
       failureEvidence: {
         command: plan.install.ok
           ? { command: plan.install.command, args: plan.install.args }
           : undefined,
         exitCode: outcome.exitCode,
-        stdout: tailBytes(outcome.stdout, this.maxOutputBytes),
-        stderr: tailBytes(outcome.stderr, this.maxOutputBytes),
+        stdout: tailBytes(outcome.stdout, EVIDENCE_MAX_OUTPUT_BYTES),
+        stderr: tailBytes(outcome.stderr, EVIDENCE_MAX_OUTPUT_BYTES),
       },
     });
   }
@@ -203,8 +213,11 @@ export class NodePreviewRunner implements PreviewRunner {
                 ? { command: { command: session.process.command, args: session.process.args } }
                 : {}),
               ...(entry.exitCode !== undefined ? { exitCode: entry.exitCode } : {}),
-              stdout: entry.output.stdout,
-              stderr: entry.output.stderr,
+              // entry.output is bounded by maxOutputBytes (the capture budget,
+              // can be much larger); trim to the evidence budget on the way
+              // into persisted failureEvidence.
+              stdout: tailBytes(entry.output.stdout, EVIDENCE_MAX_OUTPUT_BYTES),
+              stderr: tailBytes(entry.output.stderr, EVIDENCE_MAX_OUTPUT_BYTES),
             },
           }
         : session;
@@ -255,8 +268,8 @@ export class NodePreviewRunner implements PreviewRunner {
         failureEvidence: {
           command: { command: dev.command, args: dev.args },
           ...(attempt.exitCode !== undefined ? { exitCode: attempt.exitCode } : {}),
-          stdout: attempt.stdout,
-          stderr: attempt.stderr,
+          stdout: tailBytes(attempt.stdout, EVIDENCE_MAX_OUTPUT_BYTES),
+          stderr: tailBytes(attempt.stderr, EVIDENCE_MAX_OUTPUT_BYTES),
         },
       });
     }
