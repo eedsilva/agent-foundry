@@ -44,7 +44,11 @@ export function credentialsFromStatus(stdout: string): SupabaseAppCredentials {
       `supabase status --output json is missing or has an invalid value for required field(s) ${invalid.join(', ')}.`,
     );
   }
-  return { apiUrl: apiUrl as string, anonKey: anonKey as string, serviceRoleKey: serviceRoleKey as string };
+  return {
+    apiUrl: apiUrl as string,
+    anonKey: anonKey as string,
+    serviceRoleKey: serviceRoleKey as string,
+  };
 }
 
 const UNQUOTED_SAFE = /^[\w.\-:/@?=&%+]*$/;
