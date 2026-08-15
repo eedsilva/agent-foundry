@@ -155,7 +155,7 @@ describe('latestPreviewFailureEvent', () => {
     expect(legacy.data.diagnostic).toBeUndefined();
   });
 
-  it('drops malformed embedded diagnostics when no valid legacy artifact exists', async () => {
+  it('redacts malformed embedded diagnostics when no valid legacy artifact exists', async () => {
     const secret = 'Bearer invalid-embedded-secret';
     const event = previewFailedEvent({
       id: 'embedded-invalid',
@@ -170,7 +170,10 @@ describe('latestPreviewFailureEvent', () => {
       'project-1',
     );
 
-    expect(found?.data.diagnostic).toBeUndefined();
+    expect(found?.data.diagnostic).toMatchObject({
+      schemaVersion: '1',
+      summary: '[REDACTED]',
+    });
     expect(JSON.stringify(found)).not.toContain(secret);
   });
 

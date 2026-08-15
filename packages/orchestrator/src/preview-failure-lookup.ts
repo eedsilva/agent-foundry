@@ -5,6 +5,7 @@ import {
   type ProjectEvent,
 } from '@agent-foundry/contracts';
 import {
+  redactString,
   redactUnknown,
   tailBytes,
   type ArtifactStore,
@@ -14,12 +15,22 @@ import {
 const DEFAULT_PAGE_SIZE = 500;
 const WIDEN_FACTOR = 4;
 const LEGACY_DIAGNOSTIC_MAX_OUTPUT_BYTES = 1_000_000;
+const PARTIAL_DIAGNOSTIC_FIELDS = [
+  'schemaVersion',
+  'sessionId',
+  'projectId',
+  'runId',
+  'phase',
+  'summary',
+  'error',
+] as const;
 
 /**
  * Finds the newest `preview.failed` project event, widening the scan past
  * EventStore.list's default 500-event page when needed, and fills in
  * `data.diagnostic` from the legacy `preview-failure-<sessionId>` artifact
- * when the event predates #343 and has none embedded.
+ * when the event predates #343 and has no valid diagnostic embedded. Invalid
+ * embedded data is reduced to a bounded, redacted set of safe context fields.
  */
 export async function latestPreviewFailureEvent(
   events: EventStore,
@@ -63,8 +74,13 @@ async function findLatestPreviewFailed(
  * an unrecoverable id returns undefined rather than building an artifact
  * name from an unvalidated string.
  */
-function legacySessionId(event: ProjectEvent): string | undefined {
-  return validSegment(event.data.sessionId) ?? validSegment(event.dedupeKey?.split(':')[0]);
+function legacySessionId(event: ProjectEvent, diagnostic?: unknown): string | undefined {
+  const diagnosticSessionId = isRecord(diagnostic) ? diagnostic.sessionId : undefined;
+  return (
+    validSegment(event.data.sessionId) ??
+    validSegment(diagnosticSessionId) ??
+    validSegment(event.dedupeKey?.split(':')[0])
+  );
 }
 
 function validSegment(value: unknown): string | undefined {
@@ -81,17 +97,21 @@ async function enrichFromLegacyArtifact(
   const embedded = sanitizeDiagnostic(event.data.diagnostic);
   if (embedded) return { ...event, data: { ...event.data, diagnostic: embedded } };
   const sanitizedEvent = withoutDiagnostic(event);
-  const sessionId = legacySessionId(event);
-  if (sessionId === undefined) return sanitizedEvent;
+  const partial = sanitizePartialDiagnostic(event.data.diagnostic);
+  const contextEvent = partial
+    ? { ...sanitizedEvent, data: { ...sanitizedEvent.data, diagnostic: partial } }
+    : sanitizedEvent;
+  const sessionId = legacySessionId(event, partial);
+  if (sessionId === undefined) return contextEvent;
   try {
     const artifact = await artifacts.getLatest(projectId, `preview-failure-${sessionId}`);
-    if (!artifact) return sanitizedEvent;
+    if (!artifact) return contextEvent;
     const diagnostic = sanitizeDiagnostic(artifact.content);
     return diagnostic
       ? { ...sanitizedEvent, data: { ...sanitizedEvent.data, diagnostic } }
-      : sanitizedEvent;
+      : contextEvent;
   } catch {
-    return sanitizedEvent; // partial context beats none
+    return contextEvent; // partial context beats none
   }
 }
 
@@ -99,6 +119,24 @@ function withoutDiagnostic(event: ProjectEvent): ProjectEvent {
   const data = { ...event.data };
   delete data.diagnostic;
   return { ...event, data };
+}
+
+function sanitizePartialDiagnostic(value: unknown): Record<string, string | number> | undefined {
+  if (!isRecord(value)) return undefined;
+  const result: Record<string, string | number> = {};
+  for (const key of PARTIAL_DIAGNOSTIC_FIELDS) {
+    const entry = value[key];
+    if (typeof entry === 'string') {
+      result[key] = tailBytes(redactString(entry), LEGACY_DIAGNOSTIC_MAX_OUTPUT_BYTES);
+    } else if (typeof entry === 'number' && Number.isFinite(entry)) {
+      result[key] = entry;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function sanitizeDiagnostic(value: unknown): PreviewFailureDiagnostic | undefined {
