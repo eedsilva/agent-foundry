@@ -486,12 +486,17 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             projectError={detail.project.error}
             error={error}
             run={run}
+            runDetail={runDetail}
+            workflowDef={workflowDef}
             resumeBlocked={resumeBlocked}
             pendingApproval={pendingApproval}
+            activeOperationRunId={activeOperation?.runId}
             onDecide={(request, node, action) => void openDecide(request, node, action)}
             onOpenApprovalDetail={openApprovalDetail}
             onRetry={() => void retry()}
             onShowTimeline={() => selectTab('atividade')}
+            onPause={() => void pause()}
+            onCancelRun={(runId) => void cancel(runId)}
           />
           <RetryPlanDialog
             retryPlan={retryPlan}

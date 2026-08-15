@@ -1,15 +1,18 @@
 'use client';
 
-import React, { type ReactNode } from 'react';
+import React, { useEffect, useState, type ReactNode } from 'react';
 import type {
   ApprovalAction,
   ApprovalGateStep,
   ApprovalRequest,
   ResumeBlockedResponse,
+  RunDetailResponse,
+  WorkflowDefinition,
   WorkflowRun,
 } from '@agent-foundry/contracts';
 import { BTN } from '@/lib/ui';
 import { cn } from '@/lib/utils';
+import { formatElapsed, runProgress } from './run-progress';
 
 // The title is `--ink` (17.75:1 on the glass composite), not the tone colour:
 // `--warn`/`--err`/`--info` as text on near-white glass measure 2.09/3.78/3.75:1,
@@ -91,27 +94,59 @@ export function ProjectProvisioningError({
   );
 }
 
+/**
+ * Wall-clock elapsed since `startedAt`, ticking once per second. Pass
+ * `undefined` (a run that isn't running) to skip the interval entirely —
+ * `renderToStaticMarkup` never runs effects, so the interval never fires
+ * during a unit test; only the `Date.now()` read in the initializer matters,
+ * which tests pin with `vi.setSystemTime`.
+ */
+function useElapsedMs(startedAt: string | undefined): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!startedAt) return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
+  return startedAt ? now - new Date(startedAt).getTime() : 0;
+}
+
 export function RunAlertStrip({
   projectError,
   error,
   run,
+  runDetail,
+  workflowDef,
   resumeBlocked,
   pendingApproval,
+  activeOperationRunId,
   onDecide,
   onOpenApprovalDetail,
   onRetry,
   onShowTimeline,
+  onPause,
+  onCancelRun,
 }: {
   projectError: string | null | undefined;
   error: string;
   run: WorkflowRun | undefined;
+  runDetail: RunDetailResponse | null;
+  workflowDef: WorkflowDefinition | null;
   resumeBlocked: ResumeBlockedResponse | null;
   pendingApproval: PendingApproval | null;
+  /** The run behind the latest conversation operation, when it's still in
+   * flight — the same run `conversation-list.tsx`'s "Cancelar" button
+   * targets. `undefined` when there's no active operation to cancel. */
+  activeOperationRunId: string | undefined;
   onDecide: (request: ApprovalRequest, node: ApprovalGateStep, action: ApprovalAction) => void;
   onOpenApprovalDetail: () => void;
   onRetry: () => void;
   onShowTimeline: () => void;
+  onPause: () => void;
+  onCancelRun: (runId: string) => void;
 }) {
+  const elapsedMs = useElapsedMs(run?.status === 'running' ? run.startedAt : undefined);
+  const progress = runProgress(runDetail, workflowDef);
   return (
     <>
       {projectError ? (
@@ -143,6 +178,39 @@ export function RunAlertStrip({
               >
                 Ver plano completo
               </button>
+            </>
+          }
+        />
+      ) : null}
+
+      {run?.status === 'running' ? (
+        <AlertStrip
+          tone="info"
+          title="Em execução"
+          detail={
+            <>
+              {progress.total !== null
+                ? `Step ${progress.done} de ${progress.total}`
+                : `Step ${progress.done}`}
+              {' · '}
+              {formatElapsed(elapsedMs)}
+              {progress.currentStepTitle ? <> · {progress.currentStepTitle}</> : null}
+            </>
+          }
+          actions={
+            <>
+              <button type="button" className={BTN} onClick={() => onPause()}>
+                Pausar
+              </button>
+              {activeOperationRunId ? (
+                <button
+                  type="button"
+                  className={BTN}
+                  onClick={() => onCancelRun(activeOperationRunId)}
+                >
+                  Cancelar
+                </button>
+              ) : null}
             </>
           }
         />

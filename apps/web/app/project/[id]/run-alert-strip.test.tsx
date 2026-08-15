@@ -1,8 +1,17 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
-import type { ApprovalGateStep, ApprovalRequest, WorkflowRun } from '@agent-foundry/contracts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type {
+  ApprovalGateStep,
+  ApprovalRequest,
+  RunDetailResponse,
+  StepRun,
+  WorkflowDefinition,
+  WorkflowRun,
+} from '@agent-foundry/contracts';
 import { RunAlertStrip } from './run-alert-strip';
+
+afterEach(() => vi.useRealTimers());
 
 function makeRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   return {
@@ -41,15 +50,63 @@ function renderStrip(overrides: Partial<Parameters<typeof RunAlertStrip>[0]> = {
       projectError={null}
       error=""
       run={undefined}
+      runDetail={null}
+      workflowDef={null}
       resumeBlocked={null}
       pendingApproval={null}
+      activeOperationRunId={undefined}
       onDecide={() => undefined}
       onOpenApprovalDetail={() => undefined}
       onRetry={() => undefined}
       onShowTimeline={() => undefined}
+      onPause={() => undefined}
+      onCancelRun={() => undefined}
       {...overrides}
     />,
   );
+}
+
+function makeStepRun(overrides: Partial<StepRun> = {}): StepRun {
+  return {
+    id: 'step-1',
+    runId: 'run-1',
+    nodeId: 'implement',
+    stepId: 'implement',
+    stepType: 'agent',
+    status: 'running',
+    version: 1,
+    createdAt: '2026-08-10T00:00:00.000Z',
+    updatedAt: '2026-08-10T00:00:00.000Z',
+    ...overrides,
+  } as StepRun;
+}
+
+function makeWorkflowDef(): WorkflowDefinition {
+  return {
+    schemaVersion: '1',
+    id: 'wf-1',
+    name: 'Workflow',
+    description: 'desc',
+    stack: 'stack',
+    nodes: [
+      { id: 'plan', title: 'Planejar' },
+      { id: 'implement', title: 'Implementar' },
+      { id: 'verify', title: 'Verificar' },
+    ].map((node) => ({
+      ...node,
+      type: 'agent',
+      role: 'builder',
+      taskKind: 'implementation',
+      instructions: 'faça isso',
+      inputArtifacts: [],
+      outputArtifact: `${node.id}.out`,
+      secretRefs: [],
+      mutatesWorkspace: false,
+      harnessTags: [],
+      profile: {},
+      maxAttempts: 2,
+    })),
+  } as unknown as WorkflowDefinition;
 }
 
 describe('RunAlertStrip awaiting_approval banner', () => {
@@ -142,5 +199,64 @@ describe('RunAlertStrip existing cases are unaffected', () => {
       pendingApproval: { request: makeRequest(), node: makeNode(), summary: 'x' },
     });
     expect(markup).not.toContain('Aprovação pendente');
+  });
+});
+
+describe('RunAlertStrip running banner', () => {
+  it('shows the step counter, elapsed time, current step name and safe actions', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-10T00:02:14.000Z'));
+    const markup = renderStrip({
+      run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
+      runDetail: {
+        run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
+        steps: [
+          { step: makeStepRun({ id: 's1', nodeId: 'plan', status: 'completed' }), attempts: [] },
+          { step: makeStepRun({ id: 's2', nodeId: 'implement', status: 'running' }), attempts: [] },
+        ],
+      } as RunDetailResponse,
+      workflowDef: makeWorkflowDef(),
+      activeOperationRunId: 'run-1',
+    });
+    expect(markup).toContain('Step 1 de 3');
+    expect(markup).toContain('2m 14s');
+    expect(markup).toContain('Implementar');
+    expect(markup).toMatch(/<button[^>]*>Pausar<\/button>/);
+    expect(markup).toMatch(/<button[^>]*>Cancelar<\/button>/);
+  });
+
+  it('degrades the step counter to no denominator when workflowDef is unavailable', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-10T00:00:45.000Z'));
+    const markup = renderStrip({
+      run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
+      runDetail: {
+        run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
+        steps: [
+          { step: makeStepRun({ id: 's1', nodeId: 'implement', status: 'running' }), attempts: [] },
+        ],
+      } as RunDetailResponse,
+      workflowDef: null,
+      activeOperationRunId: 'run-1',
+    });
+    expect(markup).toContain('Step 0');
+    expect(markup).not.toContain('Step 0 de');
+    expect(markup).toContain('45s');
+  });
+
+  it('does not render Cancelar when there is no active operation run', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-10T00:00:10.000Z'));
+    const markup = renderStrip({
+      run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
+      runDetail: {
+        run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
+        steps: [],
+      } as RunDetailResponse,
+      workflowDef: makeWorkflowDef(),
+      activeOperationRunId: undefined,
+    });
+    expect(markup).toMatch(/<button[^>]*>Pausar<\/button>/);
+    expect(markup).not.toMatch(/<button[^>]*>Cancelar<\/button>/);
   });
 });
