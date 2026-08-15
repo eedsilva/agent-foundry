@@ -10,6 +10,7 @@ export const SecurityRuleSchema = z.enum([
   'anon-write-policy',
   'anon-grant',
   'destructive-migration',
+  'restrictive-policy-drop',
 ]);
 export type SecurityRule = z.infer<typeof SecurityRuleSchema>;
 

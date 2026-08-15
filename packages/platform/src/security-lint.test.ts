@@ -71,6 +71,25 @@ grant insert, update, delete on table public.messages to anon;
 const DESTRUCTIVE_MIGRATION = `DROP TABLE public.legacy_table;
 `;
 
+// A RESTRICTIVE policy is AND-composed with the permissive set, so it narrows
+// access rather than granting it — the tenant-isolation shape #546 is about.
+const RESTRICTIVE_POLICY_MIGRATION = `create table public.records (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null,
+  body text not null
+);
+
+alter table public.records enable row level security;
+
+create policy records_select
+  on public.records for select to authenticated
+  using (tenant_id is not null);
+
+create policy tenant_isolation
+  on public.records as restrictive for all to authenticated
+  using (tenant_id = (select auth.uid()));
+`;
+
 describe('lintMigrationsSql', () => {
   it('flags a table created without a matching ENABLE ROW LEVEL SECURITY statement', () => {
     const report = lintMigrationsSql([{ file: '001_widgets.sql', sql: MISSING_RLS_MIGRATION }]);
@@ -276,6 +295,91 @@ grant all on table public.statements to authenticated;
     expect(() => SecurityReportSchema.parse(report)).not.toThrow();
   });
 
+  it('flags a DROP POLICY whose target was created AS RESTRICTIVE in an earlier migration', () => {
+    const report = lintMigrationsSql([
+      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
+      { file: '011_drop_isolation.sql', sql: 'drop policy tenant_isolation on public.records;\n' },
+    ]);
+    const findings = report.findings.filter((f) => f.rule === 'restrictive-policy-drop');
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      rule: 'restrictive-policy-drop',
+      severity: 'high',
+      table: 'records',
+      location: '011_drop_isolation.sql',
+    });
+    expect(findings[0]!.evidence).toContain('drop policy tenant_isolation on public.records');
+    expect(findings[0]!.evidence).toContain('010_tenant_isolation.sql');
+    expect(report.blocked).toBe(true);
+    expect(() => SecurityReportSchema.parse(report)).not.toThrow();
+  });
+
+  it('does not flag a restrictive drop that a later statement re-creates AS RESTRICTIVE', () => {
+    const report = lintMigrationsSql([
+      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
+      {
+        file: '011_replace_isolation.sql',
+        sql: `drop policy if exists tenant_isolation on public.records;
+
+create policy tenant_isolation
+  on public.records as restrictive for all to authenticated
+  using (tenant_id = (select auth.uid()));
+`,
+      },
+    ]);
+    expect(report.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toEqual([]);
+  });
+
+  it('flags a restrictive drop re-created as PERMISSIVE — the narrowing conjunct is still gone', () => {
+    const report = lintMigrationsSql([
+      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
+      {
+        file: '011_downgrade_isolation.sql',
+        sql: `drop policy tenant_isolation on public.records;
+
+create policy tenant_isolation
+  on public.records for all to authenticated
+  using (tenant_id = (select auth.uid()));
+`,
+      },
+    ]);
+    expect(report.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toHaveLength(1);
+  });
+
+  it('does not flag dropping a permissive policy (ADR-0064: deny-all is the RLS default)', () => {
+    const report = lintMigrationsSql([
+      { file: '000_items.sql', sql: CLEAN_RLS_MIGRATION },
+      { file: '001_drop.sql', sql: 'drop policy items_select_owner on public.items;\n' },
+    ]);
+    expect(report.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toEqual([]);
+  });
+
+  it('matches an unqualified drop against a public-qualified restrictive create', () => {
+    const report = lintMigrationsSql([
+      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
+      { file: '011_drop.sql', sql: 'drop policy TENANT_ISOLATION on records;\n' },
+    ]);
+    expect(report.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toHaveLength(1);
+  });
+
+  it('folds identifiers the way Postgres does: quoted is verbatim, unquoted is lower-cased', () => {
+    const quotedMatches = lintMigrationsSql([
+      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
+      { file: '011_drop.sql', sql: 'drop policy "tenant_isolation" on "public"."records";\n' },
+    ]);
+    expect(quotedMatches.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toHaveLength(
+      1,
+    );
+
+    const differentPolicy = lintMigrationsSql([
+      { file: '010_tenant_isolation.sql', sql: RESTRICTIVE_POLICY_MIGRATION },
+      { file: '011_drop.sql', sql: 'drop policy "TENANT_ISOLATION" on public.records;\n' },
+    ]);
+    expect(differentPolicy.findings.filter((f) => f.rule === 'restrictive-policy-drop')).toEqual(
+      [],
+    );
+  });
+
   it('does not exhibit polynomial backtracking on adversarial near-miss input (CodeQL js/polynomial-redos)', () => {
     // Each fixture is a prefix that starts matching POLICY_RE/GRANT_TABLE_RE/
     // REVOKE_TABLE_RE, then never supplies the keyword the regex needs next —
@@ -287,6 +391,8 @@ grant all on table public.statements to authenticated;
     const adversarial = [
       `create policy a${' '.repeat(repeat)}`,
       `create policy a on 0 for all to ${'  '.repeat(repeat)}`,
+      `create policy a on t as${' '.repeat(repeat)}`,
+      `drop policy${' '.repeat(repeat)}`,
       `grant ${'\t\t'.repeat(repeat)}`,
       `revoke ${'\t\t'.repeat(repeat)}`,
     ];

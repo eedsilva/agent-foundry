@@ -1372,10 +1372,10 @@ function sha256(value: string | Buffer): string {
 // Matched by effect, not by opening keyword: `DROP POLICY` is out, `DISABLE
 // ROW LEVEL SECURITY` is in. Rationale and accepted risks: ADR-0064 (#538).
 //
-// ponytail: exempts a RESTRICTIVE policy drop too, which widens access rather
-// than narrowing it. Undetectable here — the kind is declared at `create`, so
-// the `drop` statement never carries it. `generateSchemaPlanSql` emits none.
-// Upgrade path is a catalog-aware check across the whole migration set.
+// Exempts a RESTRICTIVE policy drop too, which widens access rather than
+// narrowing it. Undetectable here — the kind is declared at `create`, so the
+// `drop` statement never carries it. `security-lint`'s `restrictive-policy-drop`
+// rule sees the whole migration set and catches it there (ADR-0066, #546).
 //
 // `\b` after DROP rather than `\s+(?!POLICY\b)`: with `\s+` outside the
 // lookahead, a two-space `drop  policy` re-matches by giving one space back.
