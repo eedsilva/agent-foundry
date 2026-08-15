@@ -86,7 +86,13 @@ export function AlertStrip({
         {actions ? <span className="ml-auto flex gap-2">{actions}</span> : null}
       </div>
       {aside ? (
-        <span aria-hidden className="text-ink-muted shrink-0">
+        // `basis-full` below `lg` forces this onto its own line every time,
+        // rather than landing wherever the role block's own internal wrap
+        // happens to end (mid-detail-text on a long line, glued to Pausar on
+        // a short one) — see the probe findings in task-3-report.md. At
+        // `lg`+ the role block never wraps internally, so `lg:basis-auto`
+        // restores the original single-row layout untouched.
+        <span aria-hidden className="text-ink-muted shrink-0 basis-full lg:basis-auto">
           {aside}
         </span>
       ) : null}

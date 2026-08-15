@@ -68,4 +68,24 @@ describe('BuilderHeader advanced toggle', () => {
     expect(onDot).toBeDefined();
     expect(offDot).not.toBe(onDot);
   });
+
+  // #97 task 3: the deliverable is "wraps instead of overflowing at 390px,
+  // desktop byte-identical at >=640px", which is a layout claim static
+  // markup cannot verify — that half is the narrow-viewport Playwright probe
+  // recorded in task-3-report.md (390px and 320px, header + control group,
+  // no document overflow). This only locks in the two classes that layout
+  // depends on, both of which already carried `flex-wrap` from a prior
+  // commit (51886ad9) predating this task — the probe confirmed the
+  // existing markup already meets the criterion, so this test is a
+  // regression guard, not a fix.
+  it('carries flex-wrap on both the header row and the control group, so the row degrades instead of overflowing', () => {
+    const markup = renderHeader({ runStatus: 'running' });
+    const [headerOpenTag] = markup.match(/<header[^>]*>/) ?? [];
+    expect(headerOpenTag).toBeDefined();
+    expect(headerOpenTag).toContain('flex-wrap');
+
+    const controlGroupOpenTag = markup.match(/<div class="ml-auto[^"]*"/)?.[0];
+    expect(controlGroupOpenTag).toBeDefined();
+    expect(controlGroupOpenTag).toContain('flex-wrap');
+  });
 });

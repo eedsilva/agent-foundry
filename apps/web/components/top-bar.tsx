@@ -13,7 +13,7 @@ export function TopBar({ activePath }: { activePath: string }) {
   return (
     <GlassBar
       as="header"
-      className="sticky top-0 z-30 flex h-14 items-center gap-6 rounded-none border-x-0 border-t-0 px-6"
+      className="sticky top-0 z-30 flex min-h-14 flex-wrap items-center gap-x-6 gap-y-2 rounded-none border-x-0 border-t-0 px-6 py-2"
     >
       <a href="/" className="flex items-center gap-2.5">
         {/* `--surface` on `--accent` is 3.09:1; on `--accent-strong` 4.76:1. */}

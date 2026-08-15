@@ -329,6 +329,36 @@ describe('RunAlertStrip running banner', () => {
     expect(roleOpenTag).toBeDefined();
     expect(roleOpenTag).not.toMatch(/\bcontents\b/);
   });
+
+  // #97 task 3: a narrow-viewport Playwright probe (390px/320px, see
+  // task-3-report.md) found that when the role block's own dot/title/detail/
+  // actions wrap onto more than one line, `aside` — a flex sibling of the
+  // role block, not a descendant — lands wherever that internal wrap
+  // happened to end (once mid-detail-text, once glued to the Pausar button)
+  // instead of at a predictable position. `basis-full` forces it onto its
+  // own line below `lg`, where the role block can wrap; `lg:basis-auto`
+  // restores the original single-row layout at the width where the role
+  // block never wraps. Static markup can only assert the classes are
+  // present — the wrap-order fix itself is only checkable in a browser, and
+  // that check happened in the probe run recorded in task-3-report.md, not
+  // here.
+  it('gives `aside` `basis-full lg:basis-auto` so it does not land mid-wrap inside the role block below `lg`', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-10T00:00:10.000Z'));
+    const markup = renderStrip({
+      run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
+      runDetail: {
+        run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
+        steps: [],
+      } as RunDetailResponse,
+      workflowDef: makeWorkflowDef(),
+      activeOperationRunId: undefined,
+    });
+    const asideOpenTag = markup.match(/<span aria-hidden[^>]*>(?=\s*·)/)?.[0];
+    expect(asideOpenTag).toBeDefined();
+    expect(asideOpenTag).toContain('basis-full');
+    expect(asideOpenTag).toContain('lg:basis-auto');
+  });
 });
 
 describe('AlertStrip non-running variants keep their existing role/content shape', () => {
