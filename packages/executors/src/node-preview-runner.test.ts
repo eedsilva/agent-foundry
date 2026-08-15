@@ -345,6 +345,28 @@ describe('NodePreviewRunner', () => {
     expect(stoppedAgain).toEqual(stopped);
   }, 15_000);
 
+  it('does not attach failureEvidence when stop() terminates a still-running healthy session (#346)', async () => {
+    const runner = new NodePreviewRunner({
+      startupTimeoutMs: 5_000,
+      logRepository: new InMemoryPreviewLogRepository(),
+    });
+    let session = await newSession('sess-healthy-intentional-stop');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] }, // no crash flag: stays alive
+      },
+    };
+    session = await startTracked(runner, session);
+    expect(await canConnect(session.process!.port!)).toBe(true); // confirms still healthy, not crashed
+
+    const stopped = await runner.stop(session);
+    expect(stopped.status).toBe('stopped');
+    expect(stopped.failureEvidence).toBeUndefined();
+  }, 15_000);
+
   it('carries exit code and captured stderr into failureEvidence for a healthy session that crashes later (#346)', async () => {
     const runner = new NodePreviewRunner({
       startupTimeoutMs: 5_000,

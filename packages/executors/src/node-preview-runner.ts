@@ -182,15 +182,20 @@ export class NodePreviewRunner implements PreviewRunner {
   }
 
   async stop(session: PreviewSession): Promise<PreviewSession> {
-    // Snapshot before killTracked: it deletes the map entry, and a healthy
-    // process being stopped on purpose (entry.exited still false here) must
-    // not gain failureEvidence -- only a process that had already exited on
-    // its own carries genuine crash evidence.
+    // entry is a reference into this.processes, not a value snapshot: for a
+    // still-running process, killTracked (below) awaits terminateProcessTree,
+    // which waits on this same entry's child-exit promise -- so by the time
+    // the await resolves, entry.exited has already flipped true even though
+    // the kill was intentional, not a crash. Snapshot the boolean itself
+    // *before* the await; entry.exitCode/.output are still safe to read
+    // after it once hadExited was already true, since a process that has
+    // already exited emits no further output and its exit code is fixed.
     const entry = this.processes.get(session.id);
+    const hadExited = entry?.exited ?? false;
     await this.killTracked(session.id, session.process?.pid);
     if (isPreviewSessionTerminal(session.status)) return session;
     const withEvidence =
-      entry?.exited && !session.failureEvidence
+      hadExited && entry && !session.failureEvidence
         ? {
             ...session,
             failureEvidence: {
