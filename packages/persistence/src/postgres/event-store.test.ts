@@ -1,5 +1,10 @@
 import { expect, it } from 'vitest';
-import type { Project, ProjectEvent } from '@agent-foundry/contracts';
+import {
+  PreviewFailureDiagnosticSchema,
+  type PreviewFailureDiagnostic,
+  type Project,
+  type ProjectEvent,
+} from '@agent-foundry/contracts';
 import { PostgresEventStore } from './event-store.js';
 import { PostgresProjectRepository } from './project-repository.js';
 import { describePostgres } from './testing.js';
@@ -83,5 +88,71 @@ describePostgres('Postgres event store', (ctx) => {
     await expect(store.append(event('event-1', 'missing-project'))).rejects.toThrow(
       /project_events/,
     );
+  });
+
+  it('round-trips a preview.failed diagnostic, redacting secrets without mangling recovery-critical structure', async () => {
+    const sql = ctx.db();
+    await new PostgresProjectRepository(sql).create(makeProject());
+    const store = new PostgresEventStore(sql);
+
+    const secret = 'sk-abc123def456ghi789jkl';
+    const diagnostic: PreviewFailureDiagnostic = PreviewFailureDiagnosticSchema.parse({
+      schemaVersion: '1',
+      sessionId: 'preview-1',
+      projectId: 'project-1',
+      runId: 'run-1',
+      phase: 'runtime',
+      health: {
+        state: 'unhealthy',
+        checkedAt: createdAt,
+        detail: 'process exited',
+        consecutiveFailures: 3,
+      },
+      restartCount: 2,
+      error: { name: 'PreviewCrashLoop', message: 'restart limit reached', exitCode: 1 },
+      logs: {
+        entries: [
+          { cursor: 9, stream: 'stderr', message: `build failed: ${secret}`, timestamp: createdAt },
+        ],
+        nextCursor: 9,
+        truncatedBeforeCursor: 9,
+      },
+      command: { command: 'npm', args: ['run', 'dev'] },
+      exitCode: 1,
+      output: { stdout: 'starting up', stderr: `fatal: ${secret} leaked` },
+      failedAt: createdAt,
+    });
+
+    await store.append({
+      ...event('event-1'),
+      type: 'preview.failed',
+      message: 'preview failed',
+      data: { sessionId: 'preview-1', status: 'failed', restartCount: 2, diagnostic },
+    });
+
+    const [persisted] = await store.list('project-1');
+    const persistedDiagnostic = persisted?.data.diagnostic as PreviewFailureDiagnostic;
+
+    // Recovery-critical structure survives the round trip unchanged.
+    expect(persistedDiagnostic.phase).toBe('runtime');
+    expect(persistedDiagnostic.exitCode).toBe(1);
+    expect(persistedDiagnostic.command).toEqual({ command: 'npm', args: ['run', 'dev'] });
+    expect(persistedDiagnostic.logs.entries[0]?.cursor).toBe(9);
+    expect(persistedDiagnostic.logs.nextCursor).toBe(9);
+    expect(persistedDiagnostic.output?.stdout).toBe('starting up');
+
+    // `sessionId` is a redaction-sensitive key name (redaction.ts's isSensitiveKey
+    // matches the bare word "session"), so both the diagnostic's and the event's
+    // top-level sessionId are wholesale-redacted rather than left equal to the
+    // appended value — "present", not "unchanged".
+    expect(persistedDiagnostic.sessionId).toBe('[REDACTED]');
+    expect(persisted?.data.sessionId).toBe('[REDACTED]');
+
+    // The planted secret is gone from both evidence surfaces, replaced with the
+    // exact placeholder redactString produces, and the surrounding text survives.
+    expect(persistedDiagnostic.output?.stderr).toBe('fatal: [REDACTED] leaked');
+    expect(persistedDiagnostic.output?.stderr).not.toContain(secret);
+    expect(persistedDiagnostic.logs.entries[0]?.message).toBe(`build failed: [REDACTED]`);
+    expect(persistedDiagnostic.logs.entries[0]?.message).not.toContain(secret);
   });
 });
