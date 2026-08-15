@@ -6,7 +6,7 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest accepted: [0064 destructive migrations classified by effect, not by the DROP keyword](0064-destructive-migrations-classified-by-effect.md).
+Latest accepted: [0066 a RESTRICTIVE policy drop is detected in security-lint, not in the migration gate](0066-restrictive-policy-drop-detected-in-security-lint.md) — closes the accepted negative of [0064](0064-destructive-migrations-classified-by-effect.md).
 
 Proposed (Harness Alignment, milestone `Harness Alignment`):
 

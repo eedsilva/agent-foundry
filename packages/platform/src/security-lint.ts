@@ -45,9 +45,41 @@ const REVOKE_TABLE_RE =
   /^REVOKE\s+((?:\w+\s*,\s*)*\w+)\s+ON\s+TABLE\s+(?:public\.)?"?([A-Za-z_][A-Za-z0-9_]*)"?\s+FROM\s+([^\n;]+)/i;
 const SENSITIVE_RE = /\b(?:user_id|owner_id)\b|\breferences\s+(?:public\.)?auth\.users\b/i;
 
+// Postgres composes effective access as (OR of permissive) AND (AND of
+// restrictive), so dropping a restrictive policy removes a narrowing conjunct
+// and *widens* access — the outcome ADR-0064's permissive argument explicitly
+// does not cover. `AS RESTRICTIVE` is declared on the create and never appears
+// on the drop, and the create may live in an earlier migration, so this is the
+// first layer that sees both halves (ADR-0066).
+//
+// The alternation branches below start with disjoint characters (`"` vs a word
+// character) and no repetition abuts a `\s+`, so there is exactly one way to
+// parse a match — no backtracking (CodeQL js/polynomial-redos).
+const SQL_IDENTIFIER = String.raw`(?:"[^"]*"|[A-Za-z_][A-Za-z0-9_$]*)`;
+const POLICY_TARGET = String.raw`(?<policy>${SQL_IDENTIFIER})\s+ON\s+(?:(?<schema>${SQL_IDENTIFIER})\s*\.\s*)?(?<table>${SQL_IDENTIFIER})`;
+// `AS { PERMISSIVE | RESTRICTIVE }` may only follow the table name, so reading
+// the mode positionally (rather than searching the whole statement for the
+// words) cannot be fooled by a policy predicate that happens to contain them.
+const CREATE_POLICY_TARGET_RE = new RegExp(
+  String.raw`^CREATE\s+POLICY\s+${POLICY_TARGET}(?:\s+AS\s+(?<mode>PERMISSIVE|RESTRICTIVE))?\b`,
+  'i',
+);
+const DROP_POLICY_RE = new RegExp(
+  String.raw`^DROP\s+POLICY\s+(?:IF\s+EXISTS\s+)?${POLICY_TARGET}`,
+  'i',
+);
+
 export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): SecurityReport {
   const tables = new Map<string, TableRecord>();
   const anonWriteGrants = new Map<string, Set<string>>(); // table -> write ops currently granted to anon
+  // policy key -> where it was created AS RESTRICTIVE, plus the drop that
+  // removed it, if any. A restrictive drop is only a widening once the whole
+  // set is known — a later restrictive re-create makes it a replace — and that
+  // re-create overwrites the entry, clearing the recorded drop with it.
+  const restrictivePolicies = new Map<
+    string,
+    { createdIn: string; dropped?: { file: string; table: string; statement: string } }
+  >();
   const findings: SecurityFinding[] = [];
 
   let findingCounter = 0;
@@ -90,6 +122,26 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
       if (enableRls) {
         const table = tables.get(enableRls[1]!);
         if (table) table.rlsEnabled = true;
+        continue;
+      }
+
+      const createPolicyTarget = CREATE_POLICY_TARGET_RE.exec(statement);
+      if (createPolicyTarget?.groups?.mode?.toLowerCase() === 'restrictive') {
+        restrictivePolicies.set(policyKey(createPolicyTarget), { createdIn: file });
+        // No `continue`: the rules below still apply to a restrictive policy.
+      }
+
+      const dropPolicy = DROP_POLICY_RE.exec(statement);
+      if (dropPolicy) {
+        const created = restrictivePolicies.get(policyKey(dropPolicy));
+        // Only the first drop matters — a second one removes nothing more.
+        if (created && !created.dropped) {
+          created.dropped = {
+            file,
+            table: foldIdentifier(dropPolicy.groups?.table ?? ''),
+            statement,
+          };
+        }
         continue;
       }
 
@@ -193,6 +245,20 @@ export function lintMigrationsSql(sqlByFile: { file: string; sql: string }[]): S
     }
   }
 
+  for (const { createdIn, dropped } of restrictivePolicies.values()) {
+    if (!dropped) continue;
+    findings.push(
+      makeFinding({
+        rule: 'restrictive-policy-drop',
+        severity: 'high',
+        table: dropped.table,
+        location: dropped.file,
+        evidence: `${dropped.statement}\n-- target was created AS RESTRICTIVE in ${createdIn} and is not re-created as restrictive anywhere in this migration set.`,
+        remediation: `Re-create the policy with AS RESTRICTIVE in the same migration set, or confirm the widened access is intended — restrictive policies are AND-composed, so dropping one removes a narrowing condition on public.${dropped.table}.`,
+      }),
+    );
+  }
+
   for (const [table, ops] of anonWriteGrants) {
     if (ops.size === 0) continue;
     const record = tables.get(table);
@@ -242,6 +308,18 @@ export function blocksRelease(report: SecurityReport): boolean {
   return report.findings.some(
     (finding) => finding.severity === 'high' || finding.severity === 'critical',
   );
+}
+
+// Postgres folds an *unquoted* identifier to lower case and takes a *quoted*
+// one verbatim, so `"P"` and `p` are two different policies while `"p"`, `p`
+// and `P` are one.
+function foldIdentifier(value: string): string {
+  return value.startsWith('"') ? value.slice(1, -1) : value.toLowerCase();
+}
+
+function policyKey(match: RegExpExecArray): string {
+  const { policy = '', schema = 'public', table = '' } = match.groups ?? {};
+  return `${foldIdentifier(schema)}.${foldIdentifier(table)}:${foldIdentifier(policy)}`;
 }
 
 function stripPublicSchema(name: string): string {
