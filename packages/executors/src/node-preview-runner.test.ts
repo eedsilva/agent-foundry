@@ -345,6 +345,43 @@ describe('NodePreviewRunner', () => {
     expect(stoppedAgain).toEqual(stopped);
   }, 15_000);
 
+  it('carries exit code and captured stderr into failureEvidence for a healthy session that crashes later (#346)', async () => {
+    const runner = new NodePreviewRunner({
+      startupTimeoutMs: 5_000,
+      logRepository: new InMemoryPreviewLogRepository(),
+    });
+    let session = await newSession('sess-healthy-then-crash');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT, '--exit-after-ready'] },
+      },
+    };
+    // startTracked only returns once attemptSpawn's httpProbe confirms the
+    // fixture answered 200 -- i.e. it booted healthy before crashing below.
+    session = await startTracked(runner, session);
+    expect(session.failureEvidence).toBeUndefined();
+
+    // --exit-after-ready crashes the fixture 100ms after its ready banner; wait
+    // for the runner to observe the exit (this exact detail string only comes
+    // from the entry.exited branch, so it doubles as a deterministic gate).
+    await vi.waitFor(async () => {
+      await expect(runner.health(session)).resolves.toMatchObject({
+        state: 'unhealthy',
+        detail: 'process not running',
+      });
+    });
+
+    const stopped = await runner.stop(session);
+    expect(stopped.failureEvidence).toMatchObject({
+      command: { command: 'node', args: [FIXTURE_SCRIPT, '--exit-after-ready'] },
+      exitCode: 1,
+    });
+    expect(stopped.failureEvidence?.stderr).toContain('fixture stderr');
+  }, 15_000);
+
   it('requires a successful HTTP response instead of treating an open TCP port as healthy', async () => {
     const runner = new NodePreviewRunner({
       startupTimeoutMs: 250,

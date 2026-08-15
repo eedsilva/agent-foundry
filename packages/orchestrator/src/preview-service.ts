@@ -410,7 +410,14 @@ export class PreviewService {
     if (session.status !== 'failing') {
       session = await this.persist({ ...failing, version: session.version });
     }
-    await this.runner.stop(session);
+    const stopped = await this.runner.stop(session);
+    // A healthy-then-crashed session never gets failureEvidence on the
+    // failing-transition path (spawn failures do); stop()'s returned session
+    // is the only place the runner's captured exit code/output surfaces.
+    // Spawn-path evidence is more specific, so never overwrite it.
+    if (!session.failureEvidence && stopped.failureEvidence) {
+      session = { ...session, failureEvidence: stopped.failureEvidence };
+    }
     const failedAt = new Date(session.updatedAt);
     const diagnostic = await this.loadOrBuildFailureDiagnostic(
       session,

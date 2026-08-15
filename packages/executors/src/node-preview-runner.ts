@@ -182,9 +182,28 @@ export class NodePreviewRunner implements PreviewRunner {
   }
 
   async stop(session: PreviewSession): Promise<PreviewSession> {
+    // Snapshot before killTracked: it deletes the map entry, and a healthy
+    // process being stopped on purpose (entry.exited still false here) must
+    // not gain failureEvidence -- only a process that had already exited on
+    // its own carries genuine crash evidence.
+    const entry = this.processes.get(session.id);
     await this.killTracked(session.id, session.process?.pid);
     if (isPreviewSessionTerminal(session.status)) return session;
-    return stopPreviewSession(session, this.clock.now());
+    const withEvidence =
+      entry?.exited && !session.failureEvidence
+        ? {
+            ...session,
+            failureEvidence: {
+              ...(session.process
+                ? { command: { command: session.process.command, args: session.process.args } }
+                : {}),
+              ...(entry.exitCode !== undefined ? { exitCode: entry.exitCode } : {}),
+              stdout: entry.output.stdout,
+              stderr: entry.output.stderr,
+            },
+          }
+        : session;
+    return stopPreviewSession(withEvidence, this.clock.now());
   }
 
   private async killTracked(sessionId: string, persistedPid?: number): Promise<void> {
