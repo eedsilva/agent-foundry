@@ -123,7 +123,15 @@ const SEED_CHECK_DEADLINE_MS = Number(process.env.DB_SEED_CHECK_DEADLINE_MS ?? 3
 // sign in" — a workspace has no dependency-free way to query auth.users
 // directly, so a successful password grant is the closest proof available.
 async function verifySeed(status) {
-  const seedSql = readFileSync(SEED_SQL_PATH, 'utf8');
+  // Missing or unreadable is not evidence of an unseeded stack either — an
+  // app that opts out of seeding (no [db.seed], seed.sql deleted) is the most
+  // literal form of "customised its seed", and must skip like any other.
+  let seedSql;
+  try {
+    seedSql = readFileSync(SEED_SQL_PATH, 'utf8');
+  } catch {
+    seedSql = '';
+  }
   if (!seedSql.includes(SEED_USER.email)) {
     console.log(
       `db: seed check skipped — supabase/seed.sql no longer declares ${SEED_USER.email}.`,

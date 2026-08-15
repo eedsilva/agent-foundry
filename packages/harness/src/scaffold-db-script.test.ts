@@ -307,4 +307,18 @@ describe('the scaffold db script', () => {
     expect(result.stdout).toContain('seed check skipped');
     expect(result.stdout).toContain('seed.sql');
   });
+
+  // Deleting seed.sql (with `[db.seed]` disabled) is the most literal form of
+  // "customised its seed" — it must skip like the content-mismatch case, not
+  // crash with a raw ENOENT stack trace.
+  it('skips the seed check when seed.sql does not exist', async () => {
+    const project = await scaffoldWorkspace(REJECTED_AUTH_RESPONSE);
+    await rm(join(project.workspace, 'supabase/seed.sql'));
+
+    const result = project.run(['start']);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('seed check skipped');
+    expect(result.stdout).toContain('seed.sql');
+  });
 });
