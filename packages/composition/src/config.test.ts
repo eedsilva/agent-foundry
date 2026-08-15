@@ -119,6 +119,30 @@ describe('Supabase provisioning configuration', () => {
   });
 });
 
+describe('environment reaper configuration', () => {
+  it('defaults the reap interval and idle threshold', () => {
+    expect(loadRuntimeConfig(base)).toMatchObject({
+      environmentReapIntervalMs: 60_000,
+      environmentIdleMs: 1_800_000,
+    });
+  });
+
+  it('honors overrides for both values', () => {
+    const config = loadRuntimeConfig({
+      ...base,
+      ENVIRONMENT_REAP_INTERVAL_MS: '5000',
+      ENVIRONMENT_IDLE_MS: '120000',
+    });
+    expect(config.environmentReapIntervalMs).toBe(5000);
+    expect(config.environmentIdleMs).toBe(120_000);
+  });
+
+  it('rejects a non-positive value for either key', () => {
+    expect(() => loadRuntimeConfig({ ...base, ENVIRONMENT_REAP_INTERVAL_MS: '0' })).toThrow();
+    expect(() => loadRuntimeConfig({ ...base, ENVIRONMENT_IDLE_MS: '-1' })).toThrow();
+  });
+});
+
 describe('parallel task pool configuration', () => {
   it('runs one task at a time unless an operator opts in', () => {
     expect(loadRuntimeConfig(base).maxParallelTasks).toBe(1);
