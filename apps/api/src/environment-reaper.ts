@@ -40,10 +40,19 @@ export async function sweepIdleEnvironments(
     if (environment.health.state === 'stopped') continue;
     if (projectsWithActivePreview.has(environment.projectId)) continue;
 
-    const runs = await deps.runs.list(environment.projectId);
-    if (runs.some((run) => !isWorkflowRunStatusTerminal(run.status))) continue;
+    const updatedAtMs = Date.parse(environment.updatedAt);
+    // An unparseable updatedAt must fail closed (skip, not stop) — this path
+    // is unreachable via SupabaseGeneratedProjectRuntime, which schema-
+    // validates, but sweepIdleEnvironments is exported over injected deps.
+    if (Number.isNaN(updatedAtMs)) continue;
+    if (now.getTime() - updatedAtMs < idleMs) continue;
 
-    if (now.getTime() - Date.parse(environment.updatedAt) < idleMs) continue;
+    // ponytail: newest-500 scan, same as the repositories' default of 50 but
+    // wide enough that a long-lived paused/awaiting_approval run doesn't age
+    // out of the window. Upgrade path: a status-filtered repository query
+    // (e.g. list non-terminal runs for a project) if 500 ever isn't enough.
+    const runs = await deps.runs.list(environment.projectId, 500);
+    if (runs.some((run) => !isWorkflowRunStatusTerminal(run.status))) continue;
 
     try {
       await deps.environments.stop(environment.projectId);

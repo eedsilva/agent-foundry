@@ -79,6 +79,27 @@ describe('sweepIdleEnvironments', () => {
     expect(count).toBe(1);
     expect(deps.stopMock).toHaveBeenCalledWith('proj-1');
     expect(log.info).toHaveBeenCalledWith({ projectId: 'proj-1' }, expect.any(String));
+    expect(deps.listRuns).toHaveBeenCalledWith('proj-1', expect.any(Number));
+  });
+
+  it('stops an environment exactly idleMs old (boundary is inclusive)', async () => {
+    const env = environment({ updatedAt: new Date(NOW.getTime() - IDLE_MS).toISOString() });
+    const deps = makeDeps({ environments: [env] });
+
+    const count = await sweepIdleEnvironments(deps, IDLE_MS, NOW, logger());
+
+    expect(count).toBe(1);
+    expect(deps.stopMock).toHaveBeenCalledWith('proj-1');
+  });
+
+  it('does not stop an environment with an unparseable updatedAt (fails closed)', async () => {
+    const env = environment({ updatedAt: 'not-a-date' });
+    const deps = makeDeps({ environments: [env] });
+
+    const count = await sweepIdleEnvironments(deps, IDLE_MS, NOW, logger());
+
+    expect(count).toBe(0);
+    expect(deps.stopMock).not.toHaveBeenCalled();
   });
 
   it('does not stop an environment younger than idleMs', async () => {
