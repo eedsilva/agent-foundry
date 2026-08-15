@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-27
 - Owners: Core
+- Amends: ADR 0018's terminal-diagnostic persistence clause; the rest of ADR 0018 stands
 
 ## Context
 
@@ -22,9 +23,24 @@ the timeline and repair workflow did not consume that diagnostic consistently.
   deleted by this change.
 - Subprocess evidence is bounded at capture time and redacted before the event is
   persisted or rendered.
+- Runtime evidence is preserved not only when a server fails to start but also when a
+  healthy server exits after startup: `stop()` returns the last tracked exit code and
+  captured output when the process had already exited, and the service attaches it to
+  the failure only when the session carries none of its own — not when stop terminates
+  a still-running healthy session.
+- Captured and emitted stdout/stderr are bounded by UTF-8 bytes, not string length;
+  truncation trims forward to the next code-point boundary so it never emits invalid
+  UTF-8.
+- The repair lookup scans the whole project event history for the latest
+  `preview.failed` event, widening past the event store's default page instead of
+  only ever seeing the newest events.
+- A `preview.failed` event with no embedded diagnostic falls back, on read only, to
+  the legacy `preview-failure-<sessionId>` artifact; the fallback never writes,
+  mutates, or deletes an artifact.
 
 ## Consequences
 
 Operators can diagnose boot failures from the project event timeline, and repair
 agents receive the same evidence without artifact-name discovery. Legacy data is
-preserved, but old sessions may only have the evidence available in their artifact.
+preserved, and old sessions whose event has no embedded diagnostic resolve it from
+their artifact on read via the repair lookup, without reviving artifact writes.

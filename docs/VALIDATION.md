@@ -852,3 +852,38 @@ couple of unrelated, pre-existing timeouts elsewhere in the same spec did occur 
 — no `PreviewAccessDeniedError` in either, a different, already-known flake class, out of scope here). The
 `supabase-data-plane-e2e` CI job itself is the authoritative verification per this repo's convention
 (Postgres+S3-backed, real Playwright browser); not re-run here.
+
+## Preview failure evidence hardening (#346) — 2026-08-14
+
+Issue #346 hardens the event-based preview-failure diagnostics ADR 0040 introduced in place of
+versioned `preview-failure-<sessionId>` artifacts: legacy artifacts remain readable, but this branch
+adds a read-time fallback that fills in a missing embedded diagnostic from one when present, without
+reviving artifact writes. Evidence is split by boundary:
+
+- `packages/domain/src/utils.test.ts` validates `tailBytes` keeps the last N UTF-8 bytes of a string
+  and trims forward to the next code-point boundary, so truncation never emits invalid UTF-8.
+- `packages/executors/src/node-preview-runner.test.ts` validates `tailBytes` bounds all four former
+  string-slice truncation sites (install-failure message/stdout/stderr and the streaming capture
+  accumulator), and that `stop()` returns `failureEvidence` (command, exit code, bounded stdout/stderr)
+  built from the tracked process entry when it had already exited before `stop()` was called — but not
+  when `stop()` terminates a still-running healthy session, so an intentional stop stays clean.
+- `packages/orchestrator/src/preview-service.test.ts` validates `finalizeFailure` adopts that runtime
+  evidence onto the failing session and `preview.failed` when the failing session carries none of its
+  own, and that the emitted diagnostic's `output.stdout`/`.stderr` are bounded to
+  `DIAGNOSTIC_MAX_OUTPUT_BYTES` after redaction, since redaction can grow a string.
+- `packages/orchestrator/src/preview-failure-lookup.test.ts` validates `latestPreviewFailureEvent`
+  widens past the event store's default page (geometrically, ×4 per pass) until it finds the newest
+  `preview.failed` event or a shorter-than-requested page proves the whole history was scanned, and
+  that it fills in a missing embedded diagnostic from the legacy `preview-failure-<sessionId>` artifact
+  on read only — never writing, mutating, or deleting an artifact, and returning the event unchanged
+  when the artifact is missing or the lookup throws.
+- `packages/persistence/src/event-store.test.ts` and `packages/persistence/src/postgres/event-store.
+  test.ts` each append a realistic `preview.failed` event with a nested `PreviewFailureDiagnostic` and
+  list it back, asserting the nested structure (phase, exit code, command/args, log cursors, output)
+  survives and a planted secret is redacted in both `output.stderr` and a `logs.entries[].message`.
+- `packages/domain/src/redaction.test.ts` validates `isSensitiveKey` exempts exactly the two-word key
+  "session id" in any casing/separator spelling, while a bare `session` key, `sessionToken`,
+  `sessionSecret`, and `sessionKey` all remain redacted — restoring ADR 0018's "preserving
+  recovery-critical identifiers" promise for `sessionId`, which an over-broad rule had been stripping
+  from every persisted event, including the diagnostic's own `sessionId` that the legacy-artifact
+  fallback above depends on.
