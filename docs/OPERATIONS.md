@@ -56,6 +56,14 @@ continuam no catálogo, tabela e emergency ceiling normais. Deixe `VALIDATION_CA
 o fluxo normal. Para rollback, pare API e worker, remova a variável (ou reverta o arquivo `.env`)
 e reinicie os processos; runs já iniciados mantêm o snapshot auditável que foi persistido.
 
+Os runners de jornada dourada (`npm run tracer:run` e `npm run dogfood:run`) em modo real falham
+fechado sem a seleção: sem `VALIDATION_CAMPAIGN=real-todo-v1` o processo encerra com erro antes de
+iniciar qualquer processo de provider — inclusive o doctor, que executa `codex` e `claude` (#562).
+Isso vale só para esses runners; a API, o worker e `npm run benchmark:run` continuam no fluxo
+normal sem campanha. Cada attempt persiste o modelo solicitado, o provider e a rota ao ser criado,
+o modelo executado e o usage assim que o provider responde, e a duração ao terminar — então uma
+identidade fora da allowlist fica provada no trace mesmo quando o attempt falha.
+
 ### Aceitação por tarefa
 
 Cada tarefa do `plan.current` deve declarar `acceptanceMode` como `deterministic-only` ou
@@ -149,8 +157,9 @@ npm run tracer:run -- --scenario crud-heavy --executor-mode mock
 npm run tracer:run -- --all --executor-mode mock
 ```
 
-Modo real exige `RUN_REAL_TRACER=true` mais um provider pronto (mesmo gate de
-`assertRealModeReady` usado por `scripts/dogfood.ts`/`scripts/benchmark.ts`).
+Modo real exige `RUN_REAL_TRACER=true`, `VALIDATION_CAMPAIGN=real-todo-v1` e um provider pronto
+(mesmo gate de `assertRealModeReady` usado por `scripts/dogfood.ts`; `scripts/benchmark.ts` usa o
+mesmo gate sem a exigência de campanha, porque varre o catálogo inteiro por design).
 
 Adicionar um novo app shape ao tracer é criar um novo arquivo `examples/tracer/scenarios/*.json` —
 nenhuma mudança em `scripts/tracer.ts` ou `packages/composition/src/tracer.ts` é necessária. A

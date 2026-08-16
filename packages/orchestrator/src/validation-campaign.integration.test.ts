@@ -216,6 +216,13 @@ describe('validation campaign run enforcement', () => {
     );
     expect(harness.executor.requests).toHaveLength(1);
     expect(harness.stepAttempts.all()[0]?.status).toBe('failed');
+    // The trace has to prove which model actually ran, not just which one was
+    // asked for — a violation nobody can attribute is not evidence (#562).
+    expect(harness.stepAttempts.all()[0]).toMatchObject({
+      provider: 'codex',
+      model: 'campaign-model-1',
+      executedModel: 'unapproved-premium-model',
+    });
   });
 
   it('retains provider usage across a cancellation after the provider response', async () => {
