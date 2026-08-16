@@ -814,6 +814,14 @@ export class TaskGraphRunner {
     const repairStep = taskBrowserRepairStep(node.repair, node.browser, task);
 
     await this.dependencies.runtime.assertExecutionMayContinue(runId, signal);
+    // Reachable, even though the deterministic gate runs before this point:
+    // `commitForArtifact` and the `task.completed` emit both run *after*
+    // `assertTask` returns and still inside the attempt's `try`, so a
+    // `QualityGateError` out of either sends the ladder round again. A deferral
+    // left behind by that failed attempt would march a task the retry asserted
+    // clean into the end-of-graph re-assertion, and a refusal there would fail
+    // the run on a task that passed (#571).
+    deferrals?.delete(task.id);
     const plan = await this.dependencies.runtime.executeStep({
       project,
       workflow,

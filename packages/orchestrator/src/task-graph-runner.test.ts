@@ -8,7 +8,7 @@ import type {
   WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import { WorkflowDefinitionSchema } from '@agent-foundry/contracts';
-import { ExecutionError, SystemClock } from '@agent-foundry/domain';
+import { ExecutionError, QualityGateError, SystemClock } from '@agent-foundry/domain';
 import {
   FakeWorkspaces,
   InMemoryArtifacts,
@@ -897,6 +897,39 @@ describe('TaskGraphRunner', () => {
     expect(planIterations).toHaveLength(2);
     expect(firstPassCeiling).toBeGreaterThan(1);
     expect(planIterations[1]).toBeGreaterThan(firstPassCeiling);
+  });
+
+  it('drops a deferral when a later attempt asserts the same task clean', async () => {
+    let planCalls = 0;
+    let completions = 0;
+    const fixture = await setupRunner(
+      browserRetryWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      deferringRuntime({
+        content: (input) => {
+          if (input.step.id === 'plan-task-browser-test.T1') planCalls += 1;
+          return undefined;
+        },
+      }),
+    );
+    // Fails attempt 1 in the only window that can still retry the ladder *after*
+    // the assertion deferred: `commitForArtifact` and this emit both run after
+    // `assertTask` returns, inside the attempt's `try`. It has to be a
+    // `QualityGateError` — the catch rethrows anything else instead of retrying.
+    fixture.events.onBeforeAppend = (event) => {
+      if (event.type === 'task.completed' && event.data.taskId === 'T1') {
+        completions += 1;
+        if (completions === 1) {
+          throw new QualityGateError('T1 lost its completion event', 'task-execution');
+        }
+      }
+    };
+
+    await fixture.run();
+
+    // Attempt 2 asserted T1 clean, so attempt 1's deferral must be gone: the
+    // plan step runs twice, never a third time at the end of the graph.
+    expect(planCalls).toBe(2);
   });
 
   it('reverifies a deferred re-assertion that needed a browser repair', async () => {
