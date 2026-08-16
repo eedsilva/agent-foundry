@@ -118,6 +118,20 @@ describe('runTracerScenarioToCompletion (mock mode)', () => {
 
     expect(result.runStatus).toBe('completed');
   }, 30_000);
+
+  it('reports no evidence for a mock run, because a bundle needs a campaign and a campaign needs real mode', async () => {
+    // #564: the gate reads its verdict out of the published bundle, so the
+    // driver has to answer "there is none" without raising — otherwise every
+    // mock-mode sweep dies on the read instead of reporting `no-evidence`.
+    const dataDir = await tempDir('tracer-evidence-');
+
+    const result = await runTracerScenarioToCompletion(toyScenario(), {
+      executorMode: 'mock',
+      dataDir,
+    });
+
+    expect(result.evidence).toBeNull();
+  }, 30_000);
 });
 
 // #526: previewBaseUrl is built from API_HOST:API_PORT (runtime.ts) and

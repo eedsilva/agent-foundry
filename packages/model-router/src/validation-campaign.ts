@@ -15,10 +15,12 @@ const CLAUDE_HAIKU_MODEL_ID = 'claude-haiku';
 const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001';
 const CODEX_LUNA_MODEL_ID = 'codex-default';
 const CODEX_LUNA_MODEL = 'gpt-5.6-luna';
+const DEFAULT_ACTIVE_TIME_MINUTES = 60;
 
 export function buildValidationCampaignPreview(
   models: readonly ModelDefinition[],
   sourceRevision: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): ValidationCampaignPreview {
   const haiku = requireModel(models, CLAUDE_HAIKU_MODEL_ID, 'claude', CLAUDE_HAIKU_MODEL);
   const luna = requireModel(models, CODEX_LUNA_MODEL_ID, 'codex', CODEX_LUNA_MODEL);
@@ -50,9 +52,26 @@ export function buildValidationCampaignPreview(
       // subscription-billed (#439).
       attemptsPerAgentStep: 2,
       targetedRepairs: 3,
-      activeTimeMinutes: 60,
+      activeTimeMinutes: resolveActiveTimeMinutes(env),
     },
   });
+}
+
+// The 60-minute cap above was sized for the single-shape TODO campaign; the
+// four-shape golden journey (#564) does not fit inside it. The override lands
+// in the preview rather than in a runner flag so every evidence bundle's
+// campaign snapshot records the budget its run was actually given.
+function resolveActiveTimeMinutes(env: NodeJS.ProcessEnv): number {
+  const raw = env.VALIDATION_ACTIVE_TIME_MINUTES?.trim();
+  if (raw === undefined || raw.length === 0) {
+    return DEFAULT_ACTIVE_TIME_MINUTES;
+  }
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new Error(
+      `Validation campaign ${REAL_TODO_VALIDATION_CAMPAIGN_ID}: VALIDATION_ACTIVE_TIME_MINUTES must be a positive integer; found ${env.VALIDATION_ACTIVE_TIME_MINUTES}`,
+    );
+  }
+  return Number(raw);
 }
 
 function requireModel(

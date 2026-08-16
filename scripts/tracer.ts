@@ -1,5 +1,11 @@
 import { resolve } from 'node:path';
 import {
+  evaluateGoldenJourneyGate,
+  goldenJourneyVerdictWithoutEvidence,
+  writeGoldenJourneyEvidence,
+  type GoldenJourneyEvidenceEntry,
+} from '../packages/composition/src/golden-journey-gate.js';
+import {
   loadTracerScenarios,
   runTracerScenario,
   runTracerScenarioToCompletion,
@@ -28,13 +34,20 @@ const policyId = argValue('--policy-id');
 // Pins DATA_DIR instead of the default throwaway mkdtemp, so evidence
 // (artifacts, screenshots) can be pulled from a known path after the run.
 const dataDir = argValue('--data-dir');
+// #564: --evidence-dir writes each run's published bundle plus one 4/4 summary,
+// so the release gate stops being four artifact trees read by hand. --gate is
+// opt-in rather than implied by --all because --all is also the mock-mode smoke
+// test of the scenario loop, which publishes no bundle and would always fail.
+const evidenceDir = argValue('--evidence-dir');
+const gate = args.includes('--gate');
 
 try {
   const scenarioId = argValue('--scenario');
   if (!scenarioId && !args.includes('--all')) {
     console.error(
       'Usage: tsx scripts/tracer.ts --scenario <id> | --all ' +
-        '[--executor-mode mock] [--approve-gates] [--policies-dir <dir>] [--policy-id <id>] [--data-dir <dir>]',
+        '[--executor-mode mock] [--approve-gates] [--policies-dir <dir>] [--policy-id <id>] ' +
+        '[--data-dir <dir>] [--evidence-dir <dir>] [--gate]',
     );
     process.exit(1);
   }
@@ -56,17 +69,52 @@ try {
   }
 
   const runScenario = approveGates ? runTracerScenarioToCompletion : runTracerScenario;
+  const entries: GoldenJourneyEvidenceEntry[] = [];
   for (const scenario of selected) {
-    const result = await runScenario(scenario, {
-      executorMode,
-      ...(policiesDir ? { policiesDir } : {}),
-      ...(policyId ? { policyId } : {}),
-      ...(dataDir ? { dataDir } : {}),
-    });
-    console.log(
-      `${scenario.id}: project ${result.projectId}, run ${result.runId} → ${result.runStatus}`,
-    );
+    // A scenario that throws is one red shape, not the end of the sweep: four
+    // shapes cost hours of wall clock, and three defects found in one sitting
+    // beat one. The throw becomes this scenario's verdict and the loop moves on.
+    try {
+      const result = await runScenario(scenario, {
+        executorMode,
+        ...(policiesDir ? { policiesDir } : {}),
+        ...(policyId ? { policyId } : {}),
+        ...(dataDir ? { dataDir } : {}),
+      });
+      const verdict = evaluateGoldenJourneyGate({
+        scenarioId: scenario.id,
+        projectId: result.projectId,
+        runId: result.runId,
+        runStatus: result.runStatus,
+        evidence: result.evidence,
+      });
+      entries.push({ verdict, bundle: result.evidence?.bundle ?? null });
+      console.log(
+        `${scenario.id}: project ${result.projectId}, run ${result.runId} → ${result.runStatus} [${verdict.status}]`,
+      );
+      for (const reason of verdict.reasons) console.log(`  - ${reason}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'scenario runner threw';
+      entries.push({
+        verdict: goldenJourneyVerdictWithoutEvidence(
+          { scenarioId: scenario.id, projectId: '-', runId: '-', runStatus: 'unknown' },
+          'failed',
+          message,
+        ),
+        bundle: null,
+      });
+      console.error(`${scenario.id}: threw before a verdict → ${message}`);
+    }
   }
+
+  if (evidenceDir) {
+    await writeGoldenJourneyEvidence(resolve(evidenceDir), entries);
+    console.log(`evidence written to ${resolve(evidenceDir)}`);
+  }
+
+  const passed = entries.filter((entry) => entry.verdict.status === 'passed').length;
+  console.log(`golden journey: ${passed}/${entries.length} passed`);
+  if (gate && passed !== entries.length) process.exitCode = 1;
 } catch (error) {
   console.error(error instanceof Error ? error.message : 'Tracer runner failed.');
   process.exitCode = 1;

@@ -892,3 +892,38 @@ reviving artifact writes. Evidence is split by boundary:
   recovery-critical identifiers" promise for `sessionId`, which an over-broad rule had been stripping
   from every persisted event, including the diagnostic's own `sessionId` that the legacy-artifact
   fallback above depends on.
+
+## Golden-journey gate — 2026-08-16
+
+Issue #564 turns `scripts/tracer.ts` from a runner into a gate. A scenario counts as `passed`
+only when all three of `terminalState.status === 'completed'`, `outcome === 'accepted'` and all
+eight mandatory gates `passed` hold at once; `exhausted` (`VALIDATION_CAMPAIGN_LIMIT`) and
+`no-evidence` (no bundle, which is every mock run) are reported apart from `failed`. Recorded as
+[ADR 0069](docs/adr/0069-golden-journey-gate-is-a-verdict-over-evidence-bundles.md); the runbook
+is in `docs/OPERATIONS.md`, "Gate golden journey 4/4 (#564)".
+
+Focused acceptance evidence:
+
+```bash
+npx vitest run packages/composition/src/golden-journey-gate.test.ts \
+  packages/composition/src/tracer.test.ts \
+  packages/model-router/src/validation-campaign.test.ts \
+  packages/orchestrator/src/validation-campaign.integration.test.ts
+```
+
+The four-scenario loop, the summary file it writes, and both exit codes were exercised end to end
+in mock mode:
+
+```bash
+npm run tracer:run -- --all --executor-mode mock --approve-gates --evidence-dir <dir>
+```
+
+All four shapes reached `completed`, each verdict came back `no-evidence` (mock publishes no
+bundle), the summary table and per-scenario sections were written, and `--gate` exited `1` where
+the same run without it exited `0`.
+
+**What this does not validate.** No real-provider run was executed. The gate's `passed`,
+`exhausted` and `environment-blocked` branches are covered by unit tests over synthetic bundles,
+not by a bundle a real run produced — `outcome: 'accepted'` has never been observed from a real
+tracer run, and reaching it four times is the QA campaign this change exists to make repeatable.
+Issue #571 (a refused browser plan fails the whole run) is a known live blocker for that campaign.
