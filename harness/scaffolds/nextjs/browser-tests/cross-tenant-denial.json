@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
   "id": "cross-tenant-denial",
-  "title": "A signed-in user sees their own rows and never another account's",
+  "title": "A signed-in user persists an item and never sees another account's row",
   "viewport": { "width": 1280, "height": 720 },
   "steps": [
     {
@@ -42,6 +42,28 @@
       "assertions": [
         { "kind": "visible", "locator": { "by": "text", "text": "First item" } },
         { "kind": "visible", "locator": { "by": "text", "text": "Second item" } },
+        { "kind": "hidden", "locator": { "by": "text", "text": "Another account's item" } }
+      ]
+    },
+    {
+      "id": "fill-new-item",
+      "title": "Enter a new item title",
+      "action": {
+        "kind": "fill",
+        "locator": { "by": "label", "label": "New item" },
+        "value": "Browser-created item"
+      },
+      "assertions": []
+    },
+    {
+      "id": "persist-new-item",
+      "title": "Persist the item through the authenticated web path",
+      "action": {
+        "kind": "click",
+        "locator": { "by": "role", "role": "button", "name": "Add item" }
+      },
+      "assertions": [
+        { "kind": "visible", "locator": { "by": "text", "text": "Browser-created item" } },
         { "kind": "hidden", "locator": { "by": "text", "text": "Another account's item" } }
       ]
     }

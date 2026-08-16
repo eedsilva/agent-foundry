@@ -25,19 +25,19 @@ Acceptance criteria (verbatim intent):
   project id and a four-port block, starts the stack, and writes
   `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` /
   `SUPABASE_SERVICE_ROLE_KEY` into the workspace `.env` from
-  `supabase status --output json`.
+  `supabase status --output json`, then regenerates the committed database
+  types from the ready local schema.
 - `harness/scaffolds/nextjs/supabase/seed.sql` seeds `owner@example.com` and
   `other@example.com` (password `password123`) plus their `auth.identities`
   rows and `public.items` rows.
 - `harness/scaffolds/nextjs/scripts/smoke.mjs` already signs in as the seeded
   user over HTTP and asserts RLS cross-tenant denial, and
-  `browser-tests/cross-tenant-denial.json` does the same through the UI. Both
-  prove **sign-in and read**; neither writes a row. AC 4's persisted-operation
-  half is proved by `scripts/database-row-match.mjs`, which the validation
-  campaign drives with `AGENT_FOUNDRY_VALIDATION_ROW_TITLE_SHA256` and
-  `AGENT_FOUNDRY_VALIDATION_RUN_STARTED_AT` to confirm a row the browser created
-  really landed in Postgres. This plan re-proves none of the three: the reported
-  failure was upstream of all of them.
+  `browser-tests/cross-tenant-denial.json` now signs in through the UI, creates
+  `Browser-created item` through the authenticated web/API path, and asserts the
+  other account's row never renders. The validation campaign's
+  `scripts/database-row-match.mjs` uses the plan's final fill value plus
+  `AGENT_FOUNDRY_VALIDATION_RUN_STARTED_AT` to confirm that exact browser-created
+  row landed in Postgres. The reported failure was upstream of all three checks.
 - The platform path (`packages/platform/src/supabase-runtime.ts`) has its own
   allocator and writes the same three credentials to
   `dataDir/projects/<id>/.env`, which `NodePreviewRunner` spreads into the dev
@@ -163,9 +163,9 @@ actually landed before the script exits 0:
 - Add a `ponytail:` comment recording the ceiling: proving the seed applied is
   reduced to "the documented seed user can sign in", because a workspace has no
   dependency-free way to query `auth.users` directly.
-- `db reset` runs the same verification. Nothing else about `db reset` changes;
-  in particular it does **not** regenerate types — `pnpm db:types` stays the
-  explicit step the stack conventions already mandate.
+- `db reset` runs the same verification and regenerates types from the ready
+  schema. `pnpm db:types` remains the explicit step for a migration made while
+  the stack is already running.
 
 Tests (extend the same file, using the stub CLI):
 

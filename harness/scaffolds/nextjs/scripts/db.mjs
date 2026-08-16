@@ -202,9 +202,16 @@ if (!process.env.SUPABASE_PROJECT_ID) {
 // `gen types` is captured rather than redirected by the npm script because its
 // output ends in a blank line, and `git diff --check` — one of the checks every
 // task has to pass — rejects a blank line at end of file.
-if (args[0] === 'gen') {
-  writeFileSync(TYPES_PATH, `${supabase(args, { capture: true }).trimEnd()}\n`);
+function writeTypes() {
+  writeFileSync(
+    TYPES_PATH,
+    `${supabase(['gen', 'types', 'typescript', '--local'], { capture: true }).trimEnd()}\n`,
+  );
   console.log(`db: types written to ${relative(root, TYPES_PATH)}`);
+}
+
+if (args[0] === 'gen') {
+  writeTypes();
   process.exit(0);
 }
 
@@ -216,8 +223,9 @@ supabase(args);
 // stack, so .env can only be completed once it is up, which is the
 // local-development stand-in for the platform's credential bridge (ADR 0034)
 // — while `reset` reapplies migrations and seed.sql without moving the
-// stack's URL or keys. Neither regenerates types; `pnpm db:types` stays the
-// explicit step for that.
+// stack's URL or keys. Both regenerate the committed types after the database
+// is ready; `pnpm db:types` remains available when a migration changes while
+// the stack is already running.
 //
 // The real npm script forwards `db reset` verbatim to the Supabase CLI
 // (`supabase db reset`), so args is ['db', 'reset'], never ['reset'] — hence
@@ -233,6 +241,7 @@ if (args[0] === 'start' || args.includes('reset')) {
     console.log(`db: ${status.API_URL} — credentials written to .env`);
   }
   await verifySeed(status);
+  writeTypes();
 }
 
 // Fires for every command that reaches here (start, reset, stop — not just

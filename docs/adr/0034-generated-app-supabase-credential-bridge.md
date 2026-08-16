@@ -90,7 +90,7 @@ fields) and `upsertEnvVars` (append, overwrite-in-place, preserve-unrelated-keys
 `packages/platform/src/supabase-auth.test.ts` covers `configureGeneratedAuth`'s three config.toml shapes.
 `packages/platform/src/supabase-runtime.test.ts` adds integration cases: `initialize()` writes the three
 keys while preserving an existing operator secret, never leaks them into `AppEnvironment` or
-`environment.json`, and correctly no-ops when `supabase status` doesn't return them. Real-stack proof
+`environment.json`, and fails loudly when `supabase status` does not return them. Real-stack proof
 against a live local Supabase project is `packages/platform/src/supabase-auth.e2e.test.ts` (env-gated,
 `auth-e2e` CI job) and the local-only Playwright spec `apps/api/e2e/generated-app-auth.spec.ts`, which
 boots the actual scaffold files under a real Next.js dev server and drives signup/login/logout through a

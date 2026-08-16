@@ -193,6 +193,12 @@ describe('the scaffold db script', () => {
     expect(project.values.SUPABASE_SERVICE_ROLE_KEY).toBe('service-role-key');
   });
 
+  it('generates committed database types after the stack starts', async () => {
+    const project = await startProject();
+
+    expect(await project.types()).toBe('export type Database = Record<string, never>\n');
+  });
+
   // Reallocating on the second start would move the stack's ports out from
   // under the containers already bound to them.
   it('keeps the block it already allocated when the stack is started again', async () => {

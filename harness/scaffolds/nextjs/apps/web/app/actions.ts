@@ -39,3 +39,28 @@ export async function signOut() {
   await supabase.auth.signOut();
   redirect('/sign-in');
 }
+
+export async function createItem(formData: FormData) {
+  const title = String(formData.get('title') ?? '').trim();
+  if (!title) throw new Error('Item title is required.');
+
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session) redirect('/sign-in');
+
+  const response = await fetch(`http://127.0.0.1:${process.env.API_PORT || '3001'}/items`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${session.access_token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ title }),
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    throw new Error(`The API tier answered HTTP ${response.status} while creating an item.`);
+  }
+  redirect('/');
+}

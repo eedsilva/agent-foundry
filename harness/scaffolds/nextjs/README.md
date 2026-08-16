@@ -40,7 +40,7 @@ Sign-in and sign-up are server actions in `apps/web/app/actions.ts`; the session
 
 The service-role key bypasses RLS and is allowed only under `apps/api/src/admin/`, `apps/api/src/jobs/`, and `apps/api/src/webhooks/`. `pnpm build` fails if `SUPABASE_SERVICE_ROLE_KEY` is referenced anywhere else in `apps/` (`scripts/check-service-role.mjs`).
 
-`browser-tests/cross-tenant-denial.json` is the declarative browser assertion (ADR 0020) that proves the boundary end to end: sign in as `owner@example.com`, see that account's two items, and assert the other account's row never renders. `pnpm smoke` proves the same over HTTP.
+`browser-tests/cross-tenant-denial.json` is the declarative browser assertion (ADR 0020) that proves the boundary and persistence end to end: sign in as `owner@example.com`, see that account's two items, create `Browser-created item` through the web tier, and assert the other account's row never renders. `pnpm smoke` proves the same boundary over HTTP.
 
 Seeded accounts, both with the password `password123`:
 
