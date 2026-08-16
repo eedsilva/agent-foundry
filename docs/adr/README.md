@@ -6,7 +6,7 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest accepted: [0069 the golden-journey gate is a verdict over evidence bundles, not a second source of truth](0069-golden-journey-gate-is-a-verdict-over-evidence-bundles.md) — builds on [0055](0055-redacted-validation-evidence-bundles.md).
+Latest accepted: [0070 a refused browser acceptance defers to end-of-graph, it does not kill the run](0070-deferred-browser-acceptance.md) — builds on [0045](0045-per-task-deterministic-verification.md).
 
 Proposed (Harness Alignment, milestone `Harness Alignment`):
 
