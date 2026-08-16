@@ -10,6 +10,7 @@ import {
   uploadKnowledgeFile,
 } from '../../../lib/api';
 import { BTN, FIELD, HINT, LABEL, PANEL_HEADER, SECTION_TITLE } from '@/lib/ui';
+import { PaneState } from '@/components/pane-state';
 
 export const MAX_KNOWLEDGE_FILE_BYTES = 4 * 1024 * 1024;
 

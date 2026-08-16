@@ -132,6 +132,7 @@ export function VersionHistory({
       onToggleSelected={toggleSelected}
       onCompare={() => void compare()}
       onUpdate={(version, action) => void update(version, action)}
+      onRefresh={() => void refresh()}
     />
   );
 }
@@ -148,6 +149,7 @@ export function VersionHistoryView({
   onToggleSelected,
   onCompare,
   onUpdate,
+  onRefresh,
 }: {
   versions: ProjectVersion[];
   loading: boolean;
@@ -160,6 +162,7 @@ export function VersionHistoryView({
   onToggleSelected: (id: string) => void;
   onCompare: () => void;
   onUpdate: (version: ProjectVersion, action: VersionAction) => void;
+  onRefresh: () => void;
 }) {
   const Title = embedded ? 'h3' : 'h2';
   return (
@@ -181,7 +184,7 @@ export function VersionHistoryView({
             kind="error"
             title={error}
             action={
-              <button type="button" className={BTN} onClick={() => void refresh()}>
+              <button type="button" className={BTN} onClick={onRefresh}>
                 Tentar novamente
               </button>
             }
