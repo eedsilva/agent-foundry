@@ -24,17 +24,8 @@ import {
 } from '../../../lib/api';
 import { KnowledgeFiles } from './knowledge-files';
 import { ConversationList, type ProposalEditorState } from './conversation-list';
-import {
-  BTN,
-  ERROR_BOX,
-  HINT,
-  META,
-  PANEL_TITLE,
-  PRIMARY_BTN,
-  RADIO,
-  TEXTAREA,
-  WARN_BOX,
-} from '@/lib/ui';
+import { PaneState } from '@/components/pane-state';
+import { BTN, HINT, META, PANEL_TITLE, PRIMARY_BTN, RADIO, TEXTAREA, WARN_BOX } from '@/lib/ui';
 
 export function ChatPane({
   id,
@@ -135,6 +126,15 @@ export function ChatPane({
       if (changeRequest.suggestedKind === 'plan' || changeRequest.suggestedKind === 'build') {
         setMode(changeRequest.suggestedKind);
       }
+      setConversation(await getConversation(id));
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function retryConversation() {
+    setConversationError('');
+    try {
       setConversation(await getConversation(id));
     } catch (cause) {
       setConversationError(cause instanceof Error ? cause.message : String(cause));
@@ -272,24 +272,44 @@ export function ChatPane({
           bare mesh under the builder's panes (1538px at a 1200px viewport). */}
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {conversationError ? (
-          <p role="alert" className={`${ERROR_BOX} mb-3`}>
-            {conversationError}
-          </p>
+          <div className="mb-3">
+            <PaneState
+              kind="error"
+              title={conversationError}
+              action={
+                <button type="button" className={BTN} onClick={() => void retryConversation()}>
+                  Tentar novamente
+                </button>
+              }
+            />
+          </div>
         ) : null}
         {previewFailure ? (
-          <div className="border-hairline rounded-card bg-surface-sunken mb-3 flex flex-col gap-2 border p-3">
-            <strong className="text-ink text-[13px]">{previewFailure.title}</strong>
-            <pre className={`${META} max-h-48 overflow-auto whitespace-pre-wrap`}>
-              {previewFailure.detail}
-            </pre>
-            <button
-              type="button"
-              className={`${PRIMARY_BTN} self-start`}
-              onClick={() => void repairPreview()}
-              disabled={repairingPreview}
+          <div className="mb-3">
+            {/* `persistent`: this is a broken preview still on screen from
+                before this render, not a failure the user just caused — a
+                fresh `role="alert"` here would interrupt a screen reader on
+                every load. `conversationError` below is a real user-action
+                failure and stays assertive. */}
+            <PaneState
+              kind="error"
+              persistent
+              title={previewFailure.title}
+              action={
+                <button
+                  type="button"
+                  className={PRIMARY_BTN}
+                  onClick={() => void repairPreview()}
+                  disabled={repairingPreview}
+                >
+                  {repairingPreview ? 'Corrigindo…' : 'Tentar corrigir'}
+                </button>
+              }
             >
-              {repairingPreview ? 'Corrigindo…' : 'Try to fix'}
-            </button>
+              <pre className={`${META} max-h-48 overflow-auto whitespace-pre-wrap`}>
+                {previewFailure.detail}
+              </pre>
+            </PaneState>
           </div>
         ) : null}
         <ConversationList

@@ -16,7 +16,6 @@ export function BuilderHeader({
   runStatus,
   advanced,
   onToggleAdvanced,
-  onPause,
   onResume,
   onRetry,
 }: {
@@ -24,7 +23,6 @@ export function BuilderHeader({
   runStatus: WorkflowRun['status'] | undefined;
   advanced: boolean;
   onToggleAdvanced: () => void;
-  onPause: () => void;
   onResume: () => void;
   onRetry: () => void;
 }) {
@@ -72,11 +70,13 @@ export function BuilderHeader({
           />
           Avançado
         </button>
-        {runStatus === 'running' ? (
-          <button type="button" className={RUN_BUTTON} onClick={() => onPause()}>
-            Pausar
-          </button>
-        ) : null}
+        {/* No "Pausar" here: `run-alert-strip.tsx` renders one under the exact
+            same `run.status === 'running'` condition, wired to the same
+            handler, and `page.tsx` always renders that strip — so both were on
+            screen at once. The strip's wins: it sits beside the progress text
+            describing the run being paused, and it is reachable from the
+            simple two-pane view. "Retomar"/"Tentar novamente" below stay here
+            — no running strip is shown in those states. */}
         {runStatus === 'pause_requested' ? (
           <span className="text-ink-subtle font-mono text-[11px]">pausando no próximo step…</span>
         ) : null}

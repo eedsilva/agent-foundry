@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import type { AgentExecutor } from '@agent-foundry/domain';
@@ -38,6 +38,18 @@ const FIRST_BUILD_DIFF_SCREENSHOT = resolve(
 const ROUTER_SCREENSHOT = resolve(REPO_ROOT, 'test-results/router-dashboard-desktop.png');
 const HOME_SCREENSHOT = resolve(REPO_ROOT, 'test-results/home-desktop.png');
 const VERSIONS_SCREENSHOT = resolve(REPO_ROOT, 'test-results/project-versions-desktop.png');
+const BUILDER_MOBILE_SCREENSHOT = resolve(
+  REPO_ROOT,
+  'test-results/issue-97-builder-mobile-390.png',
+);
+const DECIDE_DIALOG_MOBILE_SCREENSHOT = resolve(
+  REPO_ROOT,
+  'test-results/issue-97-decide-dialog-mobile-390.png',
+);
+const CHANGES_MOBILE_SCREENSHOT = resolve(
+  REPO_ROOT,
+  'test-results/issue-97-changes-mobile-390.png',
+);
 
 /**
  * Whole-page axe scan. Until Task 7 this was scoped to
@@ -51,7 +63,23 @@ const VERSIONS_SCREENSHOT = resolve(REPO_ROOT, 'test-results/project-versions-de
 async function expectNoAxeViolations(page: Page, surface: string): Promise<void> {
   const results = await new AxeBuilder({ page })
     .exclude('[data-testid="preview-frame"]')
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    // axe-core ships `target-size` (WCAG 2.5.8, the only wcag22a/wcag22aa
+    // rule as of axe-core 4.12) with `enabled: false` in its metadata — but
+    // that default only governs an *unscoped* run (no `runOnly`). Once
+    // `withTags` sets `runOnly: {type:'tag', ...}`, axe's own rule-matching
+    // (`matchTags` in axe-core's core/public/run.js) runs any rule whose
+    // tags overlap the requested list regardless of its `enabled` default;
+    // `enabled: false` is bypassed, not honoured. Verified empirically: with
+    // and without the `.options()` call below, the `target-size` pass/fail
+    // counts on every surface in this suite are byte-identical (38/31/10 on
+    // builder/builder-mudancas/versions either way). The explicit enable is
+    // therefore *defensive*, not required — a guard against axe ever
+    // changing that `runOnly`-overrides-`enabled` behavior — and costs
+    // nothing to keep. `options()` must still come *before* `withTags()` if
+    // kept: it replaces `this.option` wholesale, so calling it after would
+    // drop the `runOnly` tag filter `withTags` sets.
+    .options({ rules: { 'target-size': { enabled: true } } })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'])
     .analyze();
   expect(
     results.violations.map((violation) => ({
@@ -61,6 +89,95 @@ async function expectNoAxeViolations(page: Page, surface: string): Promise<void>
       nodes: violation.nodes.map((node) => node.target.join(' ')),
     })),
   ).toEqual([]);
+}
+
+/**
+ * At a 390px CSS width the document must not scroll horizontally, and the
+ * surface's own primary action must stay reachable rather than sliding off
+ * or getting clipped. Always leaves the viewport at 1440x900 on return — the
+ * width every desktop assertion and axe scan that follows a probe call in
+ * this suite assumes, same contract as the pre-existing 900px check below.
+ *
+ * `atNarrowViewport` runs after the assertions and before the viewport is
+ * restored — for the callers that also want a 390px screenshot, so they don't
+ * resize twice around the probe.
+ */
+async function expectNoHorizontalOverflow(
+  page: Page,
+  surface: string,
+  primaryAction: Locator,
+  atNarrowViewport?: () => Promise<void>,
+): Promise<void> {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overflow = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  expect(
+    overflow.scrollWidth,
+    `${surface} overflows the 390px viewport: scrollWidth=${overflow.scrollWidth} clientWidth=${overflow.clientWidth}`,
+  ).toBeLessThanOrEqual(overflow.clientWidth);
+  await expect(primaryAction).toBeVisible();
+  await atNarrowViewport?.();
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/**
+ * Press Tab until `target` holds focus. Asserting on the *number* of presses
+ * would encode the current control order, which is not the contract — the
+ * contract is that the control is reachable at all, so `maxPresses` is a loop
+ * bound, not an expected value.
+ */
+async function tabUntilFocused(
+  page: Page,
+  target: Locator,
+  maxPresses: number,
+  label: string,
+): Promise<void> {
+  let reached = false;
+  for (let attempt = 0; attempt < maxPresses && !reached; attempt += 1) {
+    await page.keyboard.press('Tab');
+    reached = await target.evaluate((element) => element === document.activeElement);
+  }
+  expect(reached, `Tab never reached ${label}`).toBe(true);
+}
+
+/**
+ * WCAG 2.4.7: a keyboard user must be able to see where focus is. Either an
+ * outline or a box-shadow satisfies it — `FIELD` in lib/ui.ts uses the shadow
+ * form and everything else leans on the UA outline, so accept either rather
+ * than pinning the mechanism.
+ */
+async function expectVisibleFocus(target: Locator, label: string): Promise<void> {
+  const style = await target.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return { outline: computed.outlineStyle, boxShadow: computed.boxShadow };
+  });
+  expect(
+    style.outline !== 'none' || style.boxShadow !== 'none',
+    `${label} has no visible focus indicator: ${JSON.stringify(style)}`,
+  ).toBe(true);
+}
+
+async function readWebVitals(page: Page): Promise<{
+  ttfb: number;
+  lcp: number | null;
+  inp: number | null;
+}> {
+  return page.evaluate(() => {
+    const navigation = performance.getEntriesByType('navigation')[0] as
+      PerformanceNavigationTiming | undefined;
+    const vitals = (
+      window as unknown as {
+        __webVitals?: { lcp: number | null; inp: number | null };
+      }
+    ).__webVitals;
+    return {
+      ttfb: navigation ? navigation.responseStart - navigation.requestStart : 0,
+      lcp: vitals?.lcp ?? null,
+      inp: vitals?.inp ?? null,
+    };
+  });
 }
 const BROWSER_TEST_PLAN = {
   schemaVersion: '1' as const,
@@ -574,12 +691,98 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     { runId: run.id, commit: firstBuildCommit },
   ]);
 
+  // CLS budget (Task 4's perf-budgets.json): installed before navigation so
+  // it catches every shift from first paint, not just ones after the test
+  // starts polling. `hadRecentInput` shifts (e.g. the click-driven ones this
+  // test does further down) don't count towards CLS by spec.
+  await page.addInitScript(() => {
+    const tracker = window as unknown as { __clsScore: number };
+    tracker.__clsScore = 0;
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const shift = entry as PerformanceEntry & { value: number; hadRecentInput: boolean };
+        if (!shift.hadRecentInput) tracker.__clsScore += shift.value;
+      }
+    }).observe({ type: 'layout-shift', buffered: true });
+
+    const vitals = window as unknown as {
+      __webVitals: { lcp: number | null; inp: number | null };
+    };
+    vitals.__webVitals = { lcp: null, inp: null };
+    if (PerformanceObserver.supportedEntryTypes.includes('largest-contentful-paint')) {
+      new PerformanceObserver((list) => {
+        const entry = list.getEntries().at(-1);
+        if (entry) vitals.__webVitals.lcp = entry.startTime;
+      }).observe({ type: 'largest-contentful-paint', buffered: true });
+    }
+    if (PerformanceObserver.supportedEntryTypes.includes('event')) {
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          vitals.__webVitals.inp = Math.max(vitals.__webVitals.inp ?? 0, entry.duration);
+        }
+      }).observe({ type: 'event', buffered: true, durationThreshold: 16 });
+    }
+  });
+
   await page.goto(`${webBaseUrl}/project/${projectId}`);
   // First visit to this route triggers Next dev's on-demand compile of the
   // project page (on top of the client-side data fetch); default 5s
   // assertion timeout is too tight for a cold compile.
   await expect(page.getByRole('button', { name: 'Avançado' })).toBeVisible({ timeout: 30_000 });
+
+  // Keyboard-only pass, skip link + chat composer (DESIGN.md §7) — the one
+  // flow the existing dialog/tablist keyboard assertions below never touch.
+  // Must run before any `.click()` on this page: the "first Tab from page
+  // load" assertion only means something on a page nothing has focused yet.
+  const skipLink = page.getByRole('link', { name: 'Pular para o conteúdo' });
+  await page.keyboard.press('Tab');
+  await expect(skipLink).toBeFocused();
+  await expectVisibleFocus(skipLink, 'skip link');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('main')).toBeFocused();
+
+  // Tab from <main> until the composer's textarea gets focus.
+  const chatInput = page.getByLabel('Mensagem');
+  await tabUntilFocused(page, chatInput, 30, 'the chat composer textarea');
+
+  // Keep tabbing until the send control — proves it's keyboard-reachable too.
+  const sendButton = page.getByRole('button', { name: 'Enviar' });
+  await tabUntilFocused(page, sendButton, 10, 'the send control');
+  await expectVisibleFocus(sendButton, 'send control');
+
+  // "Avançado" toggle responds to Space/Enter with `aria-pressed` flipping —
+  // reset to 'false' before `enableAdvancedMode` below.
+  const advancedToggle = page.getByRole('button', { name: 'Avançado' });
+  await advancedToggle.focus();
+  await expect(advancedToggle).toHaveAttribute('aria-pressed', 'false');
+  await page.keyboard.press('Space');
+  await expect(advancedToggle).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Enter');
+  await expect(advancedToggle).toHaveAttribute('aria-pressed', 'false');
+
+  // Simple view: chat pane + preview panel only, inspector still hidden.
+  await expectNoHorizontalOverflow(
+    page,
+    'builder-simple',
+    page.getByRole('button', { name: 'Enviar' }),
+  );
   await enableAdvancedMode(page);
+  // Advanced view adds the inspector rail (tabs, Mudanças/Router/Artefatos
+  // panels) beside the chat pane and preview panel — the widest the builder
+  // shell gets. Also covers chat-pane.tsx and conversation-list.tsx, named
+  // in Task 3's audit list but never actually opened or measured there:
+  // both are always-visible panes in this default view. Screenshot kept for
+  // a visual check, not just the scrollWidth number — Task 3's clipping bug
+  // was a rect-based-scan miss that only a screenshot caught.
+  await mkdir(resolve(BUILDER_MOBILE_SCREENSHOT, '..'), { recursive: true });
+  await expectNoHorizontalOverflow(
+    page,
+    'builder-advanced',
+    page.getByRole('button', { name: 'Enviar' }),
+    async () => {
+      await page.screenshot({ path: BUILDER_MOBILE_SCREENSHOT, fullPage: true });
+    },
+  );
   await expect(page.getByRole('tab', { name: 'Mudanças' })).toBeVisible();
   await openInspectorTab(page, 'Mudanças');
   await expect(page.getByRole('heading', { name: 'Aprovações' })).toBeVisible();
@@ -625,6 +828,11 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     .first();
   await screenshotArtifactButton.click();
   await expect(page.getByTestId('artifact-modal').getByTestId('artifact-image')).toBeVisible();
+  // Every prior axe scan runs between/before dialogs — `ICON_BTN` (the
+  // modal's "Fechar" close control, its only usage in the app, from
+  // components/overlay.tsx) was never actually on-screen during any of
+  // them. Scan here, with this artifact-viewer dialog open, to cover it.
+  await expectNoAxeViolations(page, 'builder/artifact-modal');
 
   // Keyboard pass, dialogs (DESIGN.md §7). Every dialog is a native <dialog>
   // opened with showModal(), so Escape dismisses it and focus returns to the
@@ -681,6 +889,25 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   );
   await expect(page.getByText('Nenhuma versão anterior para comparar.')).not.toBeVisible();
   await page.getByTestId('artifact-modal').screenshot({ path: FIRST_BUILD_DIFF_SCREENSHOT });
+
+  // Task 3 deferred: DecideDialog's MODAL sizing (`w-[min(1000px,100%)]`
+  // inside a `grid place-items-center` backdrop resolves against an
+  // indefinite track) was claimed byte-identical to the inline
+  // AgentArtifactView but never independently confirmed live. Probe it here
+  // while it holds this decision's real diff content (an actual
+  // `diff --git` header/hunk, not seeded fixture text).
+  await mkdir(resolve(DECIDE_DIALOG_MOBILE_SCREENSHOT, '..'), { recursive: true });
+  await expectNoHorizontalOverflow(
+    page,
+    'decide-dialog',
+    page.getByRole('button', { name: /Confirmar approve/ }),
+    async () => {
+      await page
+        .getByTestId('artifact-modal')
+        .screenshot({ path: DECIDE_DIALOG_MOBILE_SCREENSHOT });
+    },
+  );
+
   await page.getByLabel('Decidido por').fill('e2e-reviewer');
   await page.getByRole('button', { name: /Confirmar approve/ }).click();
   await expect(decideModalHeading).not.toBeVisible();
@@ -688,6 +915,35 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   expect(await runtime.worker.runOnce()).toBe(true);
   const finalRun = await getRun(projectId);
   expect(finalRun.status).toBe('completed');
+
+  // CLS budget: read the score accumulated over everything above — the tab
+  // switches (Mudanças/Router), preview start + Tablet/Mobile iframe resize,
+  // the console/network/test tabs, the artifact modal open/close, tablist
+  // keyboard nav and the diff-approval dialog. Read from perf-budgets.json
+  // rather than hardcoding the number so Task 4's budget stays the one
+  // source of truth; logged unconditionally so a passing CI run still shows
+  // the trend, not just a pass/fail.
+  const perfBudgets = JSON.parse(
+    await readFile(resolve(REPO_ROOT, 'perf-budgets.json'), 'utf8'),
+  ) as {
+    cls: { builder: number };
+    webVitals: { builder: { ttfb: number; lcp: number; inp: number } };
+  };
+  const clsScore = await page.evaluate(
+    () => (window as unknown as { __clsScore: number }).__clsScore,
+  );
+  console.log(`CLS builder: ${clsScore} (budget ${perfBudgets.cls.builder})`);
+  expect(clsScore).toBeLessThanOrEqual(perfBudgets.cls.builder);
+
+  const webVitals = await readWebVitals(page);
+  console.log(
+    `Web Vitals builder: TTFB ${webVitals.ttfb}ms, LCP ${webVitals.lcp ?? 'n/a'}ms, INP ${webVitals.inp ?? 'n/a'}ms`,
+  );
+  expect(webVitals.ttfb).toBeLessThanOrEqual(perfBudgets.webVitals.builder.ttfb);
+  expect(webVitals.lcp).not.toBeNull();
+  expect(webVitals.lcp!).toBeLessThanOrEqual(perfBudgets.webVitals.builder.lcp);
+  expect(webVitals.inp).not.toBeNull();
+  expect(webVitals.inp!).toBeLessThanOrEqual(perfBudgets.webVitals.builder.inp);
 
   // Replaces builder-shell-css.test.ts, which grepped globals.css for the grid
   // rules Task 5 deleted: below the lg breakpoint the three panes stack, and
@@ -719,6 +975,11 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   await expect(page.getByTestId('version-item').first()).toBeVisible();
   await mkdir(resolve(VERSIONS_SCREENSHOT, '..'), { recursive: true });
   await page.screenshot({ path: VERSIONS_SCREENSHOT, fullPage: true });
+  await expectNoHorizontalOverflow(
+    page,
+    'versions',
+    page.getByRole('button', { name: 'Comparar selecionadas' }),
+  );
   await expectNoAxeViolations(page, 'versions');
 });
 
@@ -1015,6 +1276,22 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   expect(boxes[0]!.y).toBeLessThan(boxes[1]!.y);
   expect(boxes[1]!.y).toBeLessThan(boxes[2]!.y);
 
+  // Real long content, not a freshly-seeded project: the Changes region
+  // (still open from the Mudanças tab above) is showing this run's actual
+  // commit hashes, the fixture's real absolute workspace path (in the "Open
+  // in editor" vscode:// href) and the visual-edit diff. Task 3 found a
+  // clipping bug a rect-based scan missed entirely and only a screenshot
+  // caught, so check both here.
+  await mkdir(resolve(CHANGES_MOBILE_SCREENSHOT, '..'), { recursive: true });
+  await expectNoHorizontalOverflow(
+    page,
+    'changes',
+    changes.getByRole('link', { name: 'Open in editor' }),
+    async () => {
+      await page.screenshot({ path: CHANGES_MOBILE_SCREENSHOT, fullPage: true });
+    },
+  );
+
   knowledge = page.getByTestId('knowledge-file').filter({
     hasText: 'design-reference.png',
   });
@@ -1052,6 +1329,11 @@ test('router dashboard shows decisions and filters, an experiment can be registe
   // response.
   await expect(page.getByText('2 reparo(s)')).toBeVisible();
   await page.screenshot({ path: ROUTER_SCREENSHOT, fullPage: true });
+  await expectNoHorizontalOverflow(
+    page,
+    'router',
+    page.getByRole('button', { name: 'Novo experimento' }),
+  );
   await expectNoAxeViolations(page, 'router');
 
   const hypothesis = `E2E hypothesis ${Date.now()}`;
@@ -1102,6 +1384,11 @@ test('router dashboard shows decisions and filters, an experiment can be registe
   await expect(page.getByTestId('project-card').first()).toBeVisible();
   await mkdir(resolve(HOME_SCREENSHOT, '..'), { recursive: true });
   await page.screenshot({ path: HOME_SCREENSHOT, fullPage: true });
+  await expectNoHorizontalOverflow(
+    page,
+    'home',
+    page.getByRole('button', { name: 'Fundir projeto' }),
+  );
   await expectNoAxeViolations(page, 'home');
 });
 

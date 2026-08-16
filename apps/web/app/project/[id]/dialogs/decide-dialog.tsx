@@ -15,7 +15,8 @@ import { DiffView, unifiedDiffToSpans } from '../diff-view';
 import { VerificationReportView } from '../preview-panel';
 import { AgentArtifactView } from '../agent-artifact-view';
 import { Overlay } from '@/components/overlay';
-import { BTN, ERROR_BOX, FIELD, HINT, LABEL, TEXTAREA } from '@/lib/ui';
+import { PaneState } from '@/components/pane-state';
+import { BTN, FIELD, HINT, LABEL, TEXTAREA } from '@/lib/ui';
 
 export const NO_PREDECESSOR_VERSION_MESSAGE = 'Nenhuma versão anterior para comparar.';
 
@@ -181,9 +182,9 @@ export function DecideDialog({
         </label>
 
         {decideError ? (
-          <p role="alert" className={`${ERROR_BOX} mt-3`}>
-            {decideError}
-          </p>
+          <div className="mt-3">
+            <PaneState kind="error" title={decideError} />
+          </div>
         ) : null}
 
         <div className="mt-4 flex gap-3">

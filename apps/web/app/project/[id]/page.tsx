@@ -29,7 +29,7 @@ import {
 import { agentStepTargets, executionEvidence } from '../../../lib/model-overrides';
 import { findDiffApprovalVersions } from '../../../lib/diff-approval';
 import { latestBrowserVerificationReport } from '../../../lib/browser-verification';
-import { BuilderShell } from './builder-shell';
+import { BuilderGate, BuilderShell } from './builder-shell';
 import { BuilderHeader } from './builder-header';
 import { RunAlertStrip } from './run-alert-strip';
 import { useAdvancedMode } from './advanced-mode';
@@ -367,11 +367,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   );
 
   if (!detail) {
-    return (
-      <div className="text-ink-muted px-4 py-10 text-center text-[14px]">
-        {error || 'Carregando execução…'}
-      </div>
-    );
+    return <BuilderGate error={error} onRetry={refresh} />;
   }
 
   const projectId = detail.project.id;
@@ -398,6 +394,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       content: (
         <RunTab
           runDetail={runDetail}
+          hasRun={Boolean(detail.project.currentRunId)}
           runIsTerminal={runIsTerminal}
           onOpenRetryPlan={(step) => void openRetryPlan(step)}
         />
@@ -475,7 +472,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           runStatus={run?.status}
           advanced={advanced}
           onToggleAdvanced={() => setAdvanced(!advanced)}
-          onPause={() => void pause()}
           onResume={() => void resume()}
           onRetry={() => void retry()}
         />
@@ -486,12 +482,20 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             projectError={detail.project.error}
             error={error}
             run={run}
+            runDetail={runDetail}
+            workflowDef={workflowDef}
             resumeBlocked={resumeBlocked}
             pendingApproval={pendingApproval}
+            activeOperationRunId={activeOperation?.runId}
             onDecide={(request, node, action) => void openDecide(request, node, action)}
             onOpenApprovalDetail={openApprovalDetail}
             onRetry={() => void retry()}
-            onShowTimeline={() => selectTab('atividade')}
+            onShowTimeline={() => {
+              setAdvanced(true);
+              selectTab('atividade');
+            }}
+            onPause={() => void pause()}
+            onCancelRun={(runId) => void cancel(runId)}
           />
           <RetryPlanDialog
             retryPlan={retryPlan}

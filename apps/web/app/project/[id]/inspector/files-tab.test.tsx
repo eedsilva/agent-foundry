@@ -14,6 +14,8 @@ function renderView(overrides: Partial<Parameters<typeof FilesTabView>[0]> = {})
       contentLoading={false}
       contentError=""
       onOpenFile={() => undefined}
+      onRetryList={() => undefined}
+      onRetryContent={() => undefined}
       {...overrides}
     />,
   );
@@ -23,17 +25,21 @@ describe('FilesTabView', () => {
   it('shows a loading state', () => {
     const markup = renderView({ loading: true });
     expect(markup).toContain('Carregando arquivos');
+    expect(markup).toContain('data-kind="loading"');
   });
 
   it('shows an empty state once loaded with no files', () => {
     const markup = renderView({ loading: false, files: [] });
     expect(markup).toContain('Nenhum arquivo ainda.');
+    expect(markup).toContain('data-kind="empty"');
   });
 
-  it('shows a fetch error instead of the file list', () => {
+  it('shows a fetch error instead of the file list, with a retry action', () => {
     const markup = renderView({ loading: false, error: 'Falha ao listar arquivos.' });
     expect(markup).toContain('Falha ao listar arquivos.');
     expect(markup).not.toContain('data-testid="workspace-file-item"');
+    expect(markup).toContain('data-kind="error"');
+    expect(markup).toContain('Tentar novamente');
   });
 
   it('lists every file, in order, and never renders a save/edit affordance', () => {
@@ -64,9 +70,10 @@ describe('FilesTabView', () => {
       contentLoading: true,
     });
     expect(markup).toContain('Carregando conteúdo');
+    expect(markup).toContain('data-kind="loading"');
   });
 
-  it('shows a content fetch error instead of the file body', () => {
+  it('shows a content fetch error instead of the file body, with a retry action', () => {
     const markup = renderView({
       files: ['.env'],
       selected: '.env',
@@ -74,5 +81,7 @@ describe('FilesTabView', () => {
     });
     expect(markup).toContain('File is not listable: .env');
     expect(markup).not.toContain('data-testid="workspace-file-content"');
+    expect(markup).toContain('data-kind="error"');
+    expect(markup).toContain('Tentar novamente');
   });
 });

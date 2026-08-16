@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import type { ProjectVersion } from '@agent-foundry/contracts';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import {
   branchFromVersion,
   compareVersions,
@@ -15,7 +15,6 @@ import {
   CHIP,
   DIFF_ADDED,
   DIFF_REMOVED,
-  ERROR_BOX,
   HINT,
   MONO_PANE,
   PANEL,
@@ -50,7 +49,12 @@ export function VersionHistory({
   const [error, setError] = useState('');
 
   async function refresh() {
-    setVersions(await listVersions(projectId));
+    setError('');
+    try {
+      setVersions(await listVersions(projectId));
+    } catch (cause) {
+      setError(message(cause));
+    }
   }
 
   useEffect(() => {
@@ -128,6 +132,7 @@ export function VersionHistory({
       onToggleSelected={toggleSelected}
       onCompare={() => void compare()}
       onUpdate={(version, action) => void update(version, action)}
+      onRefresh={() => void refresh()}
     />
   );
 }
@@ -144,6 +149,7 @@ export function VersionHistoryView({
   onToggleSelected,
   onCompare,
   onUpdate,
+  onRefresh,
 }: {
   versions: ProjectVersion[];
   loading: boolean;
@@ -156,6 +162,7 @@ export function VersionHistoryView({
   onToggleSelected: (id: string) => void;
   onCompare: () => void;
   onUpdate: (version: ProjectVersion, action: VersionAction) => void;
+  onRefresh: () => void;
 }) {
   const Title = embedded ? 'h3' : 'h2';
   return (
@@ -173,14 +180,20 @@ export function VersionHistoryView({
           </button>
         </div>
         {error ? (
-          <p role="alert" className={ERROR_BOX}>
-            {error}
-          </p>
+          <PaneState
+            kind="error"
+            title={error}
+            action={
+              <button type="button" className={BTN} onClick={onRefresh}>
+                Tentar novamente
+              </button>
+            }
+          />
         ) : null}
         {loading ? (
           <p className={HINT}>Carregando versões…</p>
         ) : versions.length === 0 ? (
-          <EmptyState title="Nenhuma versão registrada ainda." />
+          <PaneState kind="empty" title="Nenhuma versão registrada ainda." />
         ) : (
           <div data-testid="version-list" className="flex flex-col gap-2">
             {versions.map((version) => (

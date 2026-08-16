@@ -2,7 +2,7 @@
 
 import React from 'react';
 import type { StoredArtifact } from '@agent-foundry/contracts';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import { CARD_BUTTON, HINT, PANEL, PANEL_HEADER, PANEL_TITLE } from '@/lib/ui';
 
 export function ArtifactsTab({
@@ -19,7 +19,7 @@ export function ArtifactsTab({
         <span className={HINT}>última revisão</span>
       </div>
       {artifacts.length === 0 ? (
-        <EmptyState title="Nenhum artefato ainda." />
+        <PaneState kind="empty" title="Nenhum artefato ainda." />
       ) : (
         <div className="flex flex-col gap-2">
           {artifacts.map((artifact) => (

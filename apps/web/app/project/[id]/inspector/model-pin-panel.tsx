@@ -16,9 +16,9 @@ import {
 } from '../../../../lib/model-overrides';
 import { DiffView, unifiedDiffToSpans } from '../diff-view';
 import { ModelPinFields, pinFields } from '../model-pin-fields';
+import { PaneState } from '@/components/pane-state';
 import {
   BTN,
-  ERROR_BOX,
   FIELD,
   HINT,
   LABEL,
@@ -159,9 +159,9 @@ export function ModelPinPanel({
             <span className={HINT}>{evidence.draftBranch}</span>
           </div>
           {draftError ? (
-            <p role="alert" className={ERROR_BOX}>
-              {draftError}
-            </p>
+            <div className="mb-3">
+              <PaneState kind="error" title={draftError} />
+            </div>
           ) : null}
           <div className="flex flex-wrap gap-2">
             <button type="button" className={BTN} onClick={() => void loadDraftDiff()}>

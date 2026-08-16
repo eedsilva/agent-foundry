@@ -6,7 +6,7 @@ import {
   type ModelDefinition,
   type RouteDecision,
 } from '@agent-foundry/contracts';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import { HINT, PANEL, PANEL_HEADER, PANEL_TITLE, SECTION_TITLE } from '@/lib/ui';
 import { isFallback } from './shared';
 
@@ -134,7 +134,7 @@ export function RouterTab({ routes }: { routes: RouteEntry[] }) {
           </section>
         ))}
         {routes.length === 0 ? (
-          <EmptyState title="As rotas aparecem quando os agentes começarem." />
+          <PaneState kind="empty" title="As rotas aparecem quando os agentes começarem." />
         ) : null}
       </div>
     </section>

@@ -10,7 +10,7 @@ import type {
   StoredArtifact,
 } from '@agent-foundry/contracts';
 import { AgentArtifactSchema } from '@agent-foundry/contracts';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import { ChangesPanel } from '../changes-panel';
 import { VerificationReportView } from '../preview-panel';
 import { AgentArtifactView } from '../agent-artifact-view';
@@ -42,7 +42,7 @@ export function ChangesTab({
         changesReport ? (
           <VerificationReportView report={changesReport} projectId={projectId} />
         ) : (
-          <EmptyState title="Nenhum check de navegador disponível." />
+          <PaneState kind="empty" title="Nenhum check de navegador disponível." />
         )
       }
       approvals={
@@ -113,7 +113,7 @@ export function ChangesTab({
             </div>
           </>
         ) : (
-          <EmptyState title="Nenhuma aprovação registrada." />
+          <PaneState kind="empty" title="Nenhuma aprovação registrada." />
         )
       }
     />

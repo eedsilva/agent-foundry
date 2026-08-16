@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { ProvisioningFailureDiagnosticSchema, type ProjectEvent } from '@agent-foundry/contracts';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import { StatusPill } from '@/components/status-pill';
 import { formatSeconds } from '../format-usage.js';
 import { HINT, PANEL, PANEL_HEADER, PANEL_TITLE } from '@/lib/ui';
@@ -53,7 +53,7 @@ export function ActivityTab({ events, live }: { events: ProjectEvent[]; live: bo
         </div>
       </div>
       {events.length === 0 ? (
-        <EmptyState title="Nenhum evento ainda." />
+        <PaneState kind="empty" title="Nenhum evento ainda." />
       ) : (
         <div aria-live="polite" className="border-hairline flex flex-col gap-4 border-l pl-4">
           {[...events].reverse().map((event) => {
