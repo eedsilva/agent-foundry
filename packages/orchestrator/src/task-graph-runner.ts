@@ -153,6 +153,34 @@ export interface TaskGraphRunnerDependencies {
   maxParallelTasks?: number;
 }
 
+/**
+ * A browser acceptance whose plan step refused because the surface is not yet
+ * reachable (#571). Held until every task in the graph has run, then asserted
+ * once more; a second refusal fails the run (ADR 0070).
+ */
+interface DeferredAssertion {
+  task: PlanTask;
+  pinnedInputs: readonly ArtifactReference[];
+  /** Per-task repair-streak key, carried so the re-assertion keeps the task's own counter. */
+  scope?: string;
+  /** The refusal's own words, replayed into the terminal diagnosis. */
+  summary: string;
+  nextActions: readonly string[];
+}
+
+function qualityAttemptStride(node: ForEachTaskStep, browserAcceptance: boolean): number {
+  return (browserAcceptance ? 2 : 1) * ((node.repair?.maxAttempts ?? 0) + 1);
+}
+
+/**
+ * The iteration band the end-of-graph re-assertion runs in (#571): past every
+ * attempt's band, so its step runs never collide with — and are never reused
+ * from — the refused first pass.
+ */
+function deferredIterationBase(node: ForEachTaskStep): number {
+  return node.implement.maxAttempts * qualityAttemptStride(node, true);
+}
+
 export class TaskGraphRunner {
   constructor(private readonly dependencies: TaskGraphRunnerDependencies) {}
 
@@ -195,6 +223,7 @@ export class TaskGraphRunner {
     if (parallelism > 1) return this.runPooled(input, tasks, pinnedInputs, parallelism);
 
     const completed = new Set<string>();
+    const deferrals = new Map<string, DeferredAssertion>();
     let latest: StoredArtifact | null = null;
     while (completed.size < tasks.length) {
       const task = nextReadyTask(tasks, completed);
@@ -203,10 +232,11 @@ export class TaskGraphRunner {
           `Node ${node.id} has no runnable task left in ${node.taskGraphArtifact} with ${completed.size}/${tasks.length} complete`,
         );
       }
-      latest = await this.executeTask(input, task, pinnedInputs);
+      latest = await this.executeTask(input, task, pinnedInputs, {}, deferrals);
       completed.add(task.id);
     }
     if (!latest) throw new ExecutionError(`Node ${node.id} walked an empty task graph`);
+    await this.assertDeferred(input, deferrals);
     return latest;
   }
 
@@ -243,6 +273,7 @@ export class TaskGraphRunner {
     const running = new Set<string>();
     const inFlight = new Map<string, { solo: boolean; outcome: Promise<TaskOutcome> }>();
     const withPrimary = primaryCheckoutLock();
+    const deferrals = new Map<string, DeferredAssertion>();
     let latest: StoredArtifact | null = null;
     let failure: unknown;
 
@@ -265,10 +296,16 @@ export class TaskGraphRunner {
           running.add(task.id);
           inFlight.set(task.id, {
             solo,
-            outcome: this.runPooledTask(input, task, pinnedInputs, {
-              parallelism,
-              ...(isolation ? { isolation } : {}),
-            }),
+            outcome: this.runPooledTask(
+              input,
+              task,
+              pinnedInputs,
+              {
+                parallelism,
+                ...(isolation ? { isolation } : {}),
+              },
+              deferrals,
+            ),
           });
           if (solo) break;
         }
@@ -292,6 +329,7 @@ export class TaskGraphRunner {
       );
     }
     if (!latest) throw new ExecutionError(`Node ${node.id} walked an empty task graph`);
+    await this.assertDeferred(input, deferrals);
     return latest;
   }
 
@@ -301,9 +339,13 @@ export class TaskGraphRunner {
     task: PlanTask,
     pinnedInputs: readonly ArtifactReference[],
     pool: TaskPoolContext,
+    deferrals: Map<string, DeferredAssertion>,
   ): Promise<TaskOutcome> {
     try {
-      return { taskId: task.id, artifact: await this.executeTask(input, task, pinnedInputs, pool) };
+      return {
+        taskId: task.id,
+        artifact: await this.executeTask(input, task, pinnedInputs, pool, deferrals),
+      };
     } catch (error) {
       return { taskId: task.id, error };
     } finally {
@@ -355,6 +397,7 @@ export class TaskGraphRunner {
     task: PlanTask,
     pinnedInputs: readonly ArtifactReference[],
     pool: TaskPoolContext = {},
+    deferrals?: Map<string, DeferredAssertion>,
   ): Promise<StoredArtifact> {
     const { project, workflow, node, runId, signal } = input;
     const worktree = pool.isolation?.label;
@@ -377,8 +420,7 @@ export class TaskGraphRunner {
     });
     const routing = resolveRoutingEntry(workflow.routing, workflow.id, step.taskKind);
     const browserAcceptance = taskUsesBrowserAcceptance(task, node);
-    const qualityAttemptStride =
-      (browserAcceptance ? 2 : 1) * ((node.repair?.maxAttempts ?? 0) + 1);
+    const attemptStride = qualityAttemptStride(node, browserAcceptance);
     // Per-task repair streak key, so N concurrent ladders don't share one
     // run-level counter. `pool.parallelism` is set only when the cap is > 1
     // (Ruling 2), which keeps the default path's counter byte-identical.
@@ -439,7 +481,7 @@ export class TaskGraphRunner {
         attempt += 1
       ) {
         await this.dependencies.runtime.assertExecutionMayContinue(runId, signal);
-        const qualityAttemptBase = (attempt - 1) * qualityAttemptStride;
+        const qualityAttemptBase = (attempt - 1) * attemptStride;
         let implementation: StoredArtifact | undefined;
         try {
           implementation = await this.dependencies.runtime.executeStep({
@@ -475,7 +517,14 @@ export class TaskGraphRunner {
             );
           }
           const asserted = browserAcceptance
-            ? await this.assertTask(input, task, pinnedInputs, qualityAttemptBase, repairScope)
+            ? await this.assertTask(
+                input,
+                task,
+                pinnedInputs,
+                qualityAttemptBase,
+                repairScope,
+                deferrals,
+              )
             : null;
           const reverified = asserted
             ? await this.verifyTask(
@@ -741,6 +790,12 @@ export class TaskGraphRunner {
     iterationBase = 0,
     /** Per-task repair-streak key (#520); absent at the default cap of 1. */
     scope?: string,
+    /**
+     * Sink for a refused plan (#571). Absent on the end-of-graph re-assertion,
+     * where a refusal is terminal.
+     */
+    deferrals?: Map<string, DeferredAssertion>,
+    planIteration = 1,
   ): Promise<StoredArtifact | null> {
     const { project, workflow, node, runId, signal } = input;
     if (task.acceptanceMode === 'deterministic-only') return null;
@@ -757,6 +812,9 @@ export class TaskGraphRunner {
     const repairStep = taskBrowserRepairStep(node.repair, node.browser, task);
 
     await this.dependencies.runtime.assertExecutionMayContinue(runId, signal);
+    // Each fresh assertion attempt resets this task's deferral state, so a
+    // retry that succeeds does not leave a stale deferral behind (#571).
+    deferrals?.delete(task.id);
     const plan = await this.dependencies.runtime.executeStep({
       project,
       workflow,
@@ -764,15 +822,45 @@ export class TaskGraphRunner {
       runId,
       nodeId: node.id,
       signal,
-      iteration: 1,
+      iteration: planIteration,
       pinnedArtifacts: pinnedInputs,
     });
     const declared = AgentArtifactSchema.safeParse(plan.content);
     if (declared.success && declared.data.status === 'blocked') {
       if (task.acceptanceMode === 'browser-visible') {
-        throw new ExecutionError(
-          `Task ${task.id} declares browser-visible acceptance, but its browser plan refused the assertion`,
+        if (!deferrals) {
+          const nextActions = declared.data.nextActions;
+          throw new ExecutionError(
+            `Task ${task.id} declares browser-visible acceptance, but its browser plan still refused after every task in the graph ran: ${declared.data.summary}` +
+              (nextActions.length > 0 ? ` (the refusal asked for: ${nextActions.join('; ')})` : ''),
+          );
+        }
+        deferrals.set(task.id, {
+          task,
+          pinnedInputs,
+          ...(scope !== undefined ? { scope } : {}),
+          summary: declared.data.summary,
+          nextActions: declared.data.nextActions,
+        });
+        await this.emit(
+          project.id,
+          'quality.deferred',
+          `${task.id}: browser acceptance deferred — ${declared.data.summary}`,
+          {
+            nodeId: node.id,
+            runId,
+            dedupeKey: `${runId}:task:${node.id}:${task.id}:browser:deferred`,
+            data: {
+              taskId: task.id,
+              stepId: planStep.id,
+              asserted: false,
+              deferred: true,
+              blockedReason: declared.data.summary,
+              nextActions: declared.data.nextActions,
+            },
+          },
         );
+        return null;
       }
       await this.emit(
         project.id,
@@ -879,6 +967,39 @@ export class TaskGraphRunner {
 
   private isTaskAttemptFailure(error: unknown, signal: AbortSignal): boolean {
     return !this.dependencies.runtime.isControlFlowError(error, signal);
+  }
+
+  /**
+   * Re-asserts every browser acceptance a task deferred (#571), now that the
+   * whole graph has run. No sink is passed, so a plan that refuses again throws.
+   */
+  private async assertDeferred(
+    input: TaskGraphRunInput,
+    deferrals: Map<string, DeferredAssertion>,
+  ): Promise<void> {
+    const base = deferredIterationBase(input.node);
+    for (const deferred of deferrals.values()) {
+      const asserted = await this.assertTask(
+        input,
+        deferred.task,
+        deferred.pinnedInputs,
+        base,
+        deferred.scope,
+        undefined,
+        base + 1,
+      );
+      if (asserted) {
+        await this.verifyTask(
+          input,
+          deferred.task,
+          asserted,
+          deferred.pinnedInputs,
+          base + (input.node.repair?.maxAttempts ?? 0) + 1,
+          undefined,
+          deferred.scope,
+        );
+      }
+    }
   }
 
   private async verifyTask(

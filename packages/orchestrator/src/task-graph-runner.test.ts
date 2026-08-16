@@ -748,7 +748,7 @@ describe('TaskGraphRunner', () => {
     expect(browserPlans).toEqual(['plan-task-browser-test.T2']);
   });
 
-  it('fails a browser-visible task when its plan refuses the assertion', async () => {
+  it('fails the run — but still completes the task — when a browser plan refuses every re-assertion', async () => {
     const fixture = await setupRunner(
       browserWorkflow,
       [{ ...task('T1'), acceptanceMode: 'browser-visible' }],
@@ -766,9 +766,11 @@ describe('TaskGraphRunner', () => {
         }),
     );
 
-    await expect(fixture.run()).rejects.toThrow('browser plan refused the assertion');
+    await expect(fixture.run()).rejects.toThrow('still refused after every task in the graph ran');
+    // The task itself completed — deferred, not failed — it is the *run*
+    // that goes red once the end-of-graph re-assertion refuses too (#571).
     expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
-      0,
+      1,
     );
   });
 
@@ -802,6 +804,168 @@ describe('TaskGraphRunner', () => {
       1,
     );
     expect(fixture.events.events.some((event) => event.type === 'task.failed')).toBe(false);
+  });
+
+  it('defers a refused browser plan and asserts it once the graph has run', async () => {
+    let planCalls = 0;
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      (input, artifacts) => {
+        let content: object = completedArtifact(input.step);
+        if (input.step.type === 'verify') content = verificationReport(true);
+        if (input.step.id === 'plan-task-browser-test.T1') {
+          planCalls += 1;
+          content =
+            planCalls === 1
+              ? {
+                  ...blockedArtifact('T5Panel is not on a reachable route yet.'),
+                  nextActions: ['Run T2, which mounts the panel on /dashboard.'],
+                }
+              : browserPlan();
+        }
+        if (input.step.id === 'assert-task.T1') content = browserReport(true);
+        return artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content,
+          createdBy: 'test-runtime',
+        });
+      },
+    );
+
+    await fixture.run();
+
+    const deferred = fixture.events.events.filter((event) => event.type === 'quality.deferred');
+    expect(deferred).toHaveLength(1);
+    expect(deferred[0]?.data.nextActions).toEqual([
+      'Run T2, which mounts the panel on /dashboard.',
+    ]);
+    expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+      2,
+    );
+    expect(
+      fixture.events.events.some(
+        (event) => event.type === 'quality.approved' && event.data.asserted === true,
+      ),
+    ).toBe(true);
+  });
+
+  it('leaves the run red when a deferred browser plan refuses the re-assertion too', async () => {
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      (input, artifacts) => {
+        let content: object = completedArtifact(input.step);
+        if (input.step.type === 'verify') content = verificationReport(true);
+        if (input.step.id === 'plan-task-browser-test.T1') {
+          content = {
+            ...blockedArtifact('T5Panel is not on a reachable route yet.'),
+            nextActions: ['Run T2, which mounts the panel on /dashboard.'],
+          };
+        }
+        if (input.step.id === 'assert-task.T1') content = browserReport(true);
+        return artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content,
+          createdBy: 'test-runtime',
+        });
+      },
+    );
+
+    await expect(fixture.run()).rejects.toThrow(
+      /T5Panel is not on a reachable route yet\.[\s\S]*Run T2, which mounts the panel on \/dashboard\./,
+    );
+    expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+      2,
+    );
+    expect(
+      fixture.events.events.some(
+        (event) => event.type === 'quality.approved' && event.data.asserted === true,
+      ),
+    ).toBe(false);
+  });
+
+  it('re-asserts a deferred browser plan in a fresh iteration band', async () => {
+    const planIterations: Array<number | undefined> = [];
+    let planCalls = 0;
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      (input, artifacts) => {
+        let content: object = completedArtifact(input.step);
+        if (input.step.type === 'verify') content = verificationReport(true);
+        if (input.step.id === 'plan-task-browser-test.T1') {
+          planCalls += 1;
+          planIterations.push(input.iteration);
+          content =
+            planCalls === 1
+              ? {
+                  ...blockedArtifact('T5Panel is not on a reachable route yet.'),
+                  nextActions: ['Run T2, which mounts the panel on /dashboard.'],
+                }
+              : browserPlan();
+        }
+        if (input.step.id === 'assert-task.T1') content = browserReport(true);
+        return artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content,
+          createdBy: 'test-runtime',
+        });
+      },
+    );
+
+    await fixture.run();
+
+    // Two distinct bands, the second past every attempt's — the guard against
+    // `reuseCompletedStep` serving the refused artifact back to the re-assertion.
+    expect(planIterations).toHaveLength(2);
+    expect(planIterations[0]).not.toBe(planIterations[1]);
+    const node = browserWorkflow.nodes[0] as ForEachTaskStep;
+    expect(planIterations[1]).toBeGreaterThan(node.implement.maxAttempts);
+  });
+
+  it('defers a refused browser plan in the pooled path too', async () => {
+    let planCalls = 0;
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      (input, artifacts) => {
+        let content: object = completedArtifact(input.step);
+        if (input.step.type === 'verify') content = verificationReport(true);
+        if (input.step.id === 'plan-task-browser-test.T1') {
+          planCalls += 1;
+          content =
+            planCalls === 1
+              ? {
+                  ...blockedArtifact('T5Panel is not on a reachable route yet.'),
+                  nextActions: ['Run T2, which mounts the panel on /dashboard.'],
+                }
+              : browserPlan();
+        }
+        if (input.step.id === 'assert-task.T1') content = browserReport(true);
+        return artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content,
+          createdBy: 'test-runtime',
+        });
+      },
+      3,
+    );
+
+    await fixture.run();
+
+    expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+      2,
+    );
+    expect(
+      fixture.events.events.some(
+        (event) => event.type === 'quality.approved' && event.data.asserted === true,
+      ),
+    ).toBe(true);
   });
 
   it('rejects a malformed browser plan without spending the repair budget', async () => {
