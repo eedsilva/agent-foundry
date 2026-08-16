@@ -82,16 +82,10 @@ describe('BuilderHeader advanced toggle', () => {
 
   it('still owns "Retomar" and "Tentar novamente" — states where no running strip is shown', () => {
     expect(renderHeader({ runStatus: 'paused' })).toContain('Retomar');
-    const failed = renderToStaticMarkup(
-      <BuilderHeader
-        project={{ ...makeProject(), status: 'failed' } as ProjectDetail['project']}
-        runStatus={'failed'}
-        advanced={false}
-        onToggleAdvanced={() => undefined}
-        onResume={() => undefined}
-        onRetry={() => undefined}
-      />,
-    );
+    const failed = renderHeader({
+      project: { ...makeProject(), status: 'failed' } as ProjectDetail['project'],
+      runStatus: 'failed',
+    });
     expect(failed).toContain('Tentar novamente');
   });
 

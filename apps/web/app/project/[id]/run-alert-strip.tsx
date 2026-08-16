@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, type ReactNode } from 'react';
+import React, { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type {
   ApprovalAction,
   ApprovalGateStep,
@@ -183,7 +183,10 @@ export function RunAlertStrip({
   onCancelRun: (runId: string) => void;
 }) {
   const elapsedMs = useElapsedMs(run?.status === 'running' ? run.startedAt : undefined);
-  const progress = runProgress(runDetail, workflowDef);
+  // `useElapsedMs` re-renders this component once a second for the whole run;
+  // the step counts only change on the parent's poll, so don't re-derive them
+  // on every tick.
+  const progress = useMemo(() => runProgress(runDetail, workflowDef), [runDetail, workflowDef]);
   return (
     <>
       {projectError ? (

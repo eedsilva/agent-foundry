@@ -121,6 +121,43 @@ async function expectNoHorizontalOverflow(
   await atNarrowViewport?.();
   await page.setViewportSize({ width: 1440, height: 900 });
 }
+
+/**
+ * Press Tab until `target` holds focus. Asserting on the *number* of presses
+ * would encode the current control order, which is not the contract — the
+ * contract is that the control is reachable at all, so `maxPresses` is a loop
+ * bound, not an expected value.
+ */
+async function tabUntilFocused(
+  page: Page,
+  target: Locator,
+  maxPresses: number,
+  label: string,
+): Promise<void> {
+  let reached = false;
+  for (let attempt = 0; attempt < maxPresses && !reached; attempt += 1) {
+    await page.keyboard.press('Tab');
+    reached = await target.evaluate((element) => element === document.activeElement);
+  }
+  expect(reached, `Tab never reached ${label}`).toBe(true);
+}
+
+/**
+ * WCAG 2.4.7: a keyboard user must be able to see where focus is. Either an
+ * outline or a box-shadow satisfies it — `FIELD` in lib/ui.ts uses the shadow
+ * form and everything else leans on the UA outline, so accept either rather
+ * than pinning the mechanism.
+ */
+async function expectVisibleFocus(target: Locator, label: string): Promise<void> {
+  const style = await target.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return { outline: computed.outlineStyle, boxShadow: computed.boxShadow };
+  });
+  expect(
+    style.outline !== 'none' || style.boxShadow !== 'none',
+    `${label} has no visible focus indicator: ${JSON.stringify(style)}`,
+  ).toBe(true);
+}
 const BROWSER_TEST_PLAN = {
   schemaVersion: '1' as const,
   status: 'completed' as const,
@@ -661,42 +698,18 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   const skipLink = page.getByRole('link', { name: 'Pular para o conteúdo' });
   await page.keyboard.press('Tab');
   await expect(skipLink).toBeFocused();
-  const skipLinkFocusStyle = await skipLink.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { outline: style.outlineStyle, boxShadow: style.boxShadow };
-  });
-  expect(
-    skipLinkFocusStyle.outline !== 'none' || skipLinkFocusStyle.boxShadow !== 'none',
-    `skip link has no visible focus indicator: ${JSON.stringify(skipLinkFocusStyle)}`,
-  ).toBe(true);
+  await expectVisibleFocus(skipLink, 'skip link');
   await page.keyboard.press('Enter');
   await expect(page.locator('main')).toBeFocused();
 
   // Tab from <main> until the composer's textarea gets focus.
   const chatInput = page.getByLabel('Mensagem');
-  let reachedComposer = false;
-  for (let attempt = 0; attempt < 30 && !reachedComposer; attempt += 1) {
-    await page.keyboard.press('Tab');
-    reachedComposer = await chatInput.evaluate((element) => element === document.activeElement);
-  }
-  expect(reachedComposer, 'Tab never reached the chat composer textarea').toBe(true);
+  await tabUntilFocused(page, chatInput, 30, 'the chat composer textarea');
 
   // Keep tabbing until the send control — proves it's keyboard-reachable too.
   const sendButton = page.getByRole('button', { name: 'Enviar' });
-  let reachedSend = false;
-  for (let attempt = 0; attempt < 10 && !reachedSend; attempt += 1) {
-    await page.keyboard.press('Tab');
-    reachedSend = await sendButton.evaluate((element) => element === document.activeElement);
-  }
-  expect(reachedSend, 'Tab never reached the send control').toBe(true);
-  const sendFocusStyle = await sendButton.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { outline: style.outlineStyle, boxShadow: style.boxShadow };
-  });
-  expect(
-    sendFocusStyle.outline !== 'none' || sendFocusStyle.boxShadow !== 'none',
-    `send control has no visible focus indicator: ${JSON.stringify(sendFocusStyle)}`,
-  ).toBe(true);
+  await tabUntilFocused(page, sendButton, 10, 'the send control');
+  await expectVisibleFocus(sendButton, 'send control');
 
   // "Avançado" toggle responds to Space/Enter with `aria-pressed` flipping —
   // reset to 'false' before `enableAdvancedMode` below.
@@ -722,15 +735,15 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   // both are always-visible panes in this default view. Screenshot kept for
   // a visual check, not just the scrollWidth number — Task 3's clipping bug
   // was a rect-based-scan miss that only a screenshot caught.
+  await mkdir(resolve(BUILDER_MOBILE_SCREENSHOT, '..'), { recursive: true });
   await expectNoHorizontalOverflow(
     page,
     'builder-advanced',
     page.getByRole('button', { name: 'Enviar' }),
+    async () => {
+      await page.screenshot({ path: BUILDER_MOBILE_SCREENSHOT, fullPage: true });
+    },
   );
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mkdir(resolve(BUILDER_MOBILE_SCREENSHOT, '..'), { recursive: true });
-  await page.screenshot({ path: BUILDER_MOBILE_SCREENSHOT, fullPage: true });
-  await page.setViewportSize({ width: 1440, height: 900 });
   await expect(page.getByRole('tab', { name: 'Mudanças' })).toBeVisible();
   await openInspectorTab(page, 'Mudanças');
   await expect(page.getByRole('heading', { name: 'Aprovações' })).toBeVisible();
