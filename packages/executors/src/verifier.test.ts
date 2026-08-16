@@ -334,6 +334,164 @@ describe('WorkspaceVerifier', () => {
     ).toBeUndefined();
   });
 
+  it('classifies a command killed by the timeout and names the limit in stderr', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager: 'npm@10',
+        scripts: { build: 'node -e "setTimeout(() => {}, 60_000)"' },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 1_000,
+      maxOutputBytes: 1_000_000,
+    }).verify({ workspacePath: cwd, scripts: ['build'], includeGitDiffCheck: false });
+
+    expect(report.approved).toBe(false);
+    const build = report.commands.find((command) => command.name === 'build');
+    expect(build?.failureKind).toBe('timeout');
+    expect(build?.exitCode).not.toBe(0);
+    expect(build?.stderr).toContain('1000ms');
+    expect(build?.stderr).toContain('never ran to completion');
+  });
+
+  it('classifies a plain non-zero exit as a real defect and leaves its stderr alone', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager: 'npm@10',
+        scripts: { build: 'node -e "console.error(\'type error\'); process.exit(1)"' },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 30_000,
+      maxOutputBytes: 1_000_000,
+    }).verify({ workspacePath: cwd, scripts: ['build'], includeGitDiffCheck: false });
+
+    const build = report.commands.find((command) => command.name === 'build');
+    expect(build?.failureKind).toBe('check');
+    expect(build?.stderr).toContain('type error');
+    expect(build?.stderr).not.toContain('never ran to completion');
+  });
+
+  it('leaves failureKind unset when the command succeeds', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager: 'npm@10',
+        scripts: { build: 'node -e ""' },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 30_000,
+      maxOutputBytes: 1_000_000,
+    }).verify({ workspacePath: cwd, scripts: ['build'], includeGitDiffCheck: false });
+
+    expect(report.approved).toBe(true);
+    expect(
+      report.commands.find((command) => command.name === 'build')?.failureKind,
+    ).toBeUndefined();
+  });
+
+  it('classifies output that overran the buffer instead of reporting it green', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager: 'npm@10',
+        scripts: { build: 'node -e "console.log(\'x\'.repeat(50_000))"' },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 30_000,
+      maxOutputBytes: 16,
+    }).verify({ workspacePath: cwd, scripts: ['build'], includeGitDiffCheck: false });
+
+    const build = report.commands.find((command) => command.name === 'build');
+    expect(build?.failureKind).toBe('max-output');
+    expect(build?.exitCode).not.toBe(0);
+    expect(build?.stderr).toContain('16');
+    expect(report.approved).toBe(false);
+  });
+
+  it('classifies a heap exhaustion as out-of-memory rather than a defect', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager: 'npm@10',
+        scripts: {
+          build:
+            'node -e "console.error(\'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\'); process.exit(134)"',
+        },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 30_000,
+      maxOutputBytes: 1_000_000,
+    }).verify({ workspacePath: cwd, scripts: ['build'], includeGitDiffCheck: false });
+
+    const build = report.commands.find((command) => command.name === 'build');
+    expect(build?.failureKind).toBe('out-of-memory');
+    expect(build?.stderr).toContain('never ran to completion');
+    expect(report.approved).toBe(false);
+  });
+
+  it('records the commit the report was produced over', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({ private: true, packageManager: 'npm@10', scripts: {} }),
+    );
+    await execa('git', ['add', '-A'], { cwd });
+    await execa('git', ['commit', '-m', 'initial'], { cwd });
+    const { stdout: head } = await execa('git', ['rev-parse', 'HEAD'], { cwd });
+
+    const report = await verifier().verify({
+      workspacePath: cwd,
+      scripts: [],
+      includeGitDiffCheck: false,
+    });
+
+    expect(report.commit).toBe(head.trim());
+  });
+
+  it('omits the commit when the workspace is not a git repository', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'agent-foundry-verifier-nogit-'));
+    temporaryDirectories.push(cwd);
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({ private: true, packageManager: 'npm@10', scripts: {} }),
+    );
+
+    const report = await verifier().verify({
+      workspacePath: cwd,
+      scripts: [],
+      includeGitDiffCheck: false,
+    });
+
+    expect(report.commit).toBeUndefined();
+    expect(report.approved).toBe(true);
+  });
+
   it('throws RunCancelledError instead of producing a report when cancelled', async () => {
     const cwd = await workspace();
     await writeFile(join(cwd, 'package.json'), JSON.stringify({ private: true, scripts: {} }));

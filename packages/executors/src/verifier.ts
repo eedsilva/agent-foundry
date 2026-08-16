@@ -45,6 +45,7 @@ export class WorkspaceVerifier implements VerificationService {
     const packageManager = await detectPackageManager(input.workspacePath);
     const commands: VerificationCommandResult[] = [];
     const packageJson = await readPackageJsonAt(input.workspacePath);
+    const commit = await headCommit(input.workspacePath);
 
     if (!packageJson) {
       return VerificationReportSchema.parse({
@@ -54,6 +55,7 @@ export class WorkspaceVerifier implements VerificationService {
         summary: 'No package.json exists in the generated workspace.',
         commands: [],
         createdAt: new Date().toISOString(),
+        ...(commit ? { commit } : {}),
       });
     }
 
@@ -128,6 +130,7 @@ export class WorkspaceVerifier implements VerificationService {
           : `${failed.length} configured check(s) failed: ${failed.map((item) => item.name).join(', ')}`,
       commands,
       createdAt: new Date().toISOString(),
+      ...(commit ? { commit } : {}),
     });
   }
 
@@ -231,16 +234,25 @@ export class WorkspaceVerifier implements VerificationService {
         ...(environment ? { env: { ...process.env, ...environment } } : {}),
         ...(signal ? { cancelSignal: signal } : {}),
       });
+      const stdout = result.stdout ?? '';
+      const stderr = result.stderr ?? '';
+      const failureKind = this.classify(result, stdout, stderr);
       return {
         name,
         command,
         args,
-        exitCode: result.exitCode ?? 1,
+        // `isMaxBuffer` reports exit code 0 for a truncated run: without the
+        // failure kind an overrun would land in the report as a pass.
+        exitCode: failureKind ? result.exitCode || 1 : (result.exitCode ?? 0),
         durationMs: Date.now() - startedAt,
-        stdout: result.stdout ?? '',
-        stderr: result.stderr ?? '',
+        stdout,
+        stderr:
+          failureKind && failureKind !== 'check'
+            ? this.diagnose(stderr, failureKind, result.signal)
+            : stderr,
         skipped: false,
         advisory: false,
+        ...(failureKind ? { failureKind } : {}),
       };
     } catch (error) {
       return {
@@ -253,9 +265,58 @@ export class WorkspaceVerifier implements VerificationService {
         stderr: error instanceof Error ? error.message : String(error),
         skipped: false,
         advisory: false,
+        failureKind: 'spawn',
       };
     }
   }
+
+  private classify(
+    result: {
+      failed: boolean;
+      timedOut: boolean;
+      isMaxBuffer: boolean;
+      exitCode?: number | undefined;
+      signal?: string | undefined;
+    },
+    stdout: string,
+    stderr: string,
+  ): VerificationCommandResult['failureKind'] {
+    if (!result.failed) return undefined;
+    if (result.timedOut) return 'timeout';
+    if (result.isMaxBuffer) return 'max-output';
+    // ponytail: V8 prints this, it is not a machine-readable status; if the
+    // string ever drifts, run the build under a wrapper that reports rusage.
+    if (
+      result.exitCode === 137 ||
+      /JavaScript heap out of memory|Allocation failed/.test(stderr + stdout)
+    )
+      return 'out-of-memory';
+    if (result.exitCode === undefined) return result.signal ? 'signal' : 'spawn';
+    return 'check';
+  }
+
+  /** One line the persisted log and the repair prompt both carry. */
+  private diagnose(
+    stderr: string,
+    kind: NonNullable<VerificationCommandResult['failureKind']>,
+    signal?: string,
+  ): string {
+    const reason = {
+      timeout: `killed after the ${this.options.timeoutMs}ms verification timeout`,
+      'max-output': `killed after its output passed the ${this.options.maxOutputBytes} byte limit`,
+      'out-of-memory': 'killed after running out of memory',
+      signal: `terminated by ${signal ?? 'a signal'}`,
+      spawn: 'could not be started',
+      check: '',
+    }[kind];
+    return `${stderr}${stderr.endsWith('\n') || stderr === '' ? '' : '\n'}${kind}: command ${reason} — it never ran to completion, so this result says nothing about the code.\n`;
+  }
+}
+
+/** The tree the report judged. Undefined outside a git repo or before the first commit. */
+async function headCommit(cwd: string): Promise<string | undefined> {
+  const result = await execa('git', ['rev-parse', 'HEAD'], { cwd, reject: false });
+  return result.exitCode === 0 ? result.stdout.trim() || undefined : undefined;
 }
 
 /** A check decided without running anything — policy blocks and missing scripts. */

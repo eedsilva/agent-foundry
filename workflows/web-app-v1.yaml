@@ -136,8 +136,10 @@ nodes:
       # Tasks are dependency-ordered and may intentionally leave the workspace
       # temporarily uncompilable while a later task updates a caller. The
       # blocking compiler gate belongs to full-suite-verification, after the
-      # complete graph has landed.
-      scripts: [server-actions:check]
+      # complete graph has landed. Both checks here read only the files the task
+      # just wrote — they answer honestly on a half-built graph, which is why
+      # they gate every task while `build` cannot.
+      scripts: [server-actions:check, route-handlers:check]
       # Lint and unit tests can gate each task as they are introduced. The
       # database smoke is intentionally deferred to the full-suite node: an
       # early migration task can legitimately leave the scaffold smoke script

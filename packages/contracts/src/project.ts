@@ -215,6 +215,15 @@ export const VerificationCommandResultSchema = z.object({
    * for an agent to fix (#324).
    */
   advisory: z.boolean().default(false),
+  /**
+   * Why the command failed, set only when it did. `check` is the only value
+   * that says anything about the code: the command ran to completion and
+   * reported a real defect. Every other value is the run itself failing, so
+   * the tree is still unjudged and there is nothing for repair to fix (#561).
+   */
+  failureKind: z
+    .enum(['check', 'timeout', 'out-of-memory', 'signal', 'max-output', 'spawn'])
+    .optional(),
 });
 export type VerificationCommandResult = z.infer<typeof VerificationCommandResultSchema>;
 
@@ -225,6 +234,8 @@ export const VerificationReportSchema = z.object({
   summary: z.string(),
   commands: z.array(VerificationCommandResultSchema),
   createdAt: z.string().datetime(),
+  /** The generated app's `git rev-parse HEAD`; absent outside a git repo or before the first commit. */
+  commit: z.string().optional(),
 });
 export type VerificationReport = z.infer<typeof VerificationReportSchema>;
 

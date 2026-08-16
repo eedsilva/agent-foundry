@@ -372,6 +372,11 @@ realmente falhar no workspace do projeto. Nenhum modelo julga o trabalho de outr
   nele, e `smoke` prova que os dois tiers sobem e respondem.
 - Relatório vermelho — e só ele — dispara `repair`, com a revisão exata de `verification.report`
   pinada nas entradas: comando, exit status e stdout/stderr capturados.
+- Cada comando que falha carrega `failureKind` e o relatório carrega o `commit` da árvore julgada
+  (ADR 0067). `check` é o único valor que diz algo sobre o código — o comando rodou até o fim e
+  reportou um defeito real. `timeout`, `out-of-memory`, `signal`, `max-output` e `spawn` são a
+  execução falhando: a árvore segue sem julgamento e não há o que `repair` conserte. Uma falha
+  não-`check` também acrescenta uma linha de diagnóstico ao `stderr`, nomeando o limite estourado.
 - `repair.maxAttempts` limita o laço. Esgotar falha a tarefa com
   `Task <id> failed verification after N repair attempt(s)`, sem re-executar a implementação.
 - A tarefa faz checkpoint antes da primeira tentativa e volta a ele ao falhar: uma tarefa que nunca
