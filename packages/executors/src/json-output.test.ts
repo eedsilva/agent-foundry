@@ -34,6 +34,16 @@ const artifact = {
   nextActions: [],
 } as const;
 
+const { schemaVersion: _schemaVersion, ...unversionedArtifact } = artifact;
+
+/** A codex stream whose last `item.completed` agent_message carries `text`. */
+function codexAgentMessage(text: string): string {
+  return [
+    JSON.stringify({ type: 'turn.started' }),
+    JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text } }),
+  ].join('\n');
+}
+
 describe('provider output fixtures', () => {
   it.each([
     'codex.success.stdout.jsonl',
@@ -62,7 +72,8 @@ describe('parseAgentArtifact', () => {
         usage: { input_tokens: 25 },
       }),
     );
-    expect(parsed.summary).toBe('Done.');
+    expect(parsed.artifact.summary).toBe('Done.');
+    expect(parsed.repairs).toEqual([]);
   });
 
   it.each([
@@ -70,7 +81,7 @@ describe('parseAgentArtifact', () => {
     ['claude.success.stdout.json', 'claude', 'Claude fixture completed.'],
     ['claude.stream.success.stdout.jsonl', 'claude', 'Claude stream fixture completed.'],
   ] as const)('parses the scrubbed provider fixture %s', (name, provider, summary) => {
-    expect(parseAgentArtifact(provider, fixture(name)).summary).toBe(summary);
+    expect(parseAgentArtifact(provider, fixture(name)).artifact.summary).toBe(summary);
   });
 
   it.each([['codex.malformed.stdout.txt', 'codex']] as const)(
@@ -91,6 +102,74 @@ describe('parseAgentArtifact', () => {
     expect(() => parseAgentArtifact('claude', raw)).toThrow(
       'Agent did not return a valid artifact JSON object',
     );
+  });
+
+  describe('bounded schemaVersion repair (#563)', () => {
+    it('defaults an absent schemaVersion on a claude structured_output', () => {
+      const parsed = parseAgentArtifact(
+        'claude',
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          structured_output: unversionedArtifact,
+        }),
+      );
+
+      expect(parsed.repairs).toEqual(['schema-version-defaulted']);
+      expect(parsed.artifact).toEqual(artifact);
+    });
+
+    it('defaults an absent schemaVersion on a codex agent_message', () => {
+      const parsed = parseAgentArtifact(
+        'codex',
+        codexAgentMessage(JSON.stringify(unversionedArtifact)),
+      );
+
+      expect(parsed.repairs).toEqual(['schema-version-defaulted']);
+      expect(parsed.artifact).toEqual(artifact);
+    });
+
+    // Codex's normal path is the bare whole-document one: `--output-last-message`
+    // writes the artifact with no envelope, and responseText() prefers that file
+    // over stdout. That document takes the `acceptableArtifact(whole)` fast path
+    // in authoritativeArtifactCandidates, not the JSONL agent_message path above.
+    it('defaults an absent schemaVersion on a bare codex output-file document', () => {
+      const parsed = parseAgentArtifact('codex', JSON.stringify(unversionedArtifact));
+
+      expect(parsed.repairs).toEqual(['schema-version-defaulted']);
+      expect(parsed.artifact).toEqual(artifact);
+    });
+
+    it('still rejects a bare codex document invalid for another reason', () => {
+      const { summary: _summary, ...withoutSummary } = unversionedArtifact;
+
+      expect(() => parseAgentArtifact('codex', JSON.stringify(withoutSummary))).toThrow(
+        /Agent did not return a valid artifact JSON object:.*summary/,
+      );
+    });
+
+    it('does not overwrite a present-but-wrong schemaVersion', () => {
+      expect(() =>
+        parseAgentArtifact(
+          'codex',
+          codexAgentMessage(JSON.stringify({ ...artifact, schemaVersion: '2' })),
+        ),
+      ).toThrow(/Agent did not return a valid artifact JSON object:.*schemaVersion/);
+    });
+
+    it('names the unrepairable missing field in the terminal failure', () => {
+      const { summary: _summary, ...withoutSummary } = artifact;
+
+      expect(() =>
+        parseAgentArtifact('codex', codexAgentMessage(JSON.stringify(withoutSummary))),
+      ).toThrow(/Agent did not return a valid artifact JSON object:.*summary/);
+    });
+
+    it('reports no repairs for a response that already validates', () => {
+      expect(
+        parseAgentArtifact('codex', codexAgentMessage(JSON.stringify(artifact))).repairs,
+      ).toEqual([]);
+    });
   });
 });
 

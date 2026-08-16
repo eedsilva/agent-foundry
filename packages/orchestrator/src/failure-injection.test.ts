@@ -229,6 +229,32 @@ describe('Group A: executor failure modes with fallback recovery', () => {
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
     assertCountsUnchanged(harness, before);
   });
+
+  // Sibling of the test above, pinned to the structured-output contract (#563):
+  // a response that never validates must burn the candidate budget and stop,
+  // not retry forever. The call-count assertion is the bound — it fails the
+  // moment the finite candidate loop is replaced by an open-ended retry.
+  it('stops a never-valid structured output after exactly the candidate budget (#563)', async () => {
+    const harness = makeHarness(
+      { implement: { kind: 'fail-always', error: invalidOutputError } },
+      undefined,
+      { fallback: true },
+    );
+    await seedRun(harness);
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /valid artifact JSON/,
+    );
+
+    // Router offers exactly two candidates under `fallback: true`.
+    expect(harness.executor.started('implement')).toBe(2);
+    const implement = liveStepRun(harness, 'implement');
+    const attempts = await harness.stepAttempts.list('run-1', implement.id);
+    expect(attempts).toHaveLength(2);
+    const run = await harness.runs.get('run-1');
+    expect(run?.status).toBe('failed');
+    expect(run?.error?.message).toMatch(/valid artifact JSON/);
+  });
 });
 
 describe('Group B: process kill — a late result is never promoted', () => {

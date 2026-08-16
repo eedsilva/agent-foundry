@@ -11,6 +11,7 @@ import {
   WorkflowDefinitionSchema,
   type AgentExecutionRequest,
   type AgentExecutionResult,
+  type AgentOutputRepair,
   type AgentStreamEvent,
   type AgentStreamEventInput,
   type ApprovalAction,
@@ -984,6 +985,8 @@ export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
   readonly startCounts = new Map<string, number>();
   readonly requests: AgentExecutionRequest[] = [];
   readonly submittedExecutionRequests: ExecutionRequest[] = [];
+  /** Set by a test to make every successful result report deterministic output repairs (#563). */
+  outputRepairs?: AgentOutputRepair[];
   private readonly gates = new Map<string, () => void>();
   private readonly states = new Map<string, ExecutionStatus['state']>();
   private readonly cancellers = new Map<string, () => void>();
@@ -1135,6 +1138,7 @@ export class ControllableExecutor implements AgentExecutor, ExecutionPlane {
           ? { executedModel: request.model }
           : {}),
       ...(this.usage ? { usage: this.usage } : {}),
+      ...(this.outputRepairs ? { outputRepairs: this.outputRepairs } : {}),
       output: this.output?.(request) ?? {
         schemaVersion: '1',
         status: 'completed',

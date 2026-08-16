@@ -3502,6 +3502,26 @@ export class WorkflowOrchestrator {
           attempt.version,
         );
       }
+      if (result.outputRepairs?.length) {
+        // Emitted before the output-contract check below, so a repair stays
+        // visible in the trace even when the contract validation then fails.
+        await this.emit(
+          project.id,
+          'agent.output_repaired',
+          `Structured output was repaired before validation: ${result.outputRepairs.join(', ')}.`,
+          {
+            nodeId: step.id,
+            runId,
+            dedupeKey: `${runId}:attempt:${attempt.id}:output-repaired`,
+            data: {
+              repairs: result.outputRepairs,
+              modelId: candidate.model.id,
+              provider: candidate.model.provider,
+              attemptId: attempt.id,
+            },
+          },
+        );
+      }
       if (
         campaign &&
         (result.provider !== candidate.model.provider ||
@@ -4186,6 +4206,11 @@ export class WorkflowOrchestrator {
           })),
         },
         requestMarkdown,
+        // Proof the stored output was validated, and against which contract (#563).
+        outputValidation: {
+          contract: step.outputContract ?? 'agent-artifact',
+          repairs: result.outputRepairs ?? [],
+        },
         stdout: result.stdout.slice(0, 50_000),
         stderr: result.stderr.slice(0, 50_000),
       },

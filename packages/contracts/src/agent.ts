@@ -29,8 +29,15 @@ export const AGENT_ARTIFACT_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    schemaVersion: { const: '1' },
-    status: { enum: ['completed', 'needs-revision', 'blocked'] },
+    // `type` alongside `const`/`enum` is not redundant here: provider
+    // schema→tool-input conversion drops an untyped property, so the model
+    // never learns the field exists and omits it — the CLI then rejects the
+    // turn with "root: must have required property 'schemaVersion'" (#563).
+    // Every other artifact schema in this package is z.toJSONSchema-generated
+    // and already emits `{ type: 'string', const: '1' }`; this hand-written
+    // one must match. `agent.test.ts` pins the equivalence.
+    schemaVersion: { type: 'string', const: '1' },
+    status: { type: 'string', enum: ['completed', 'needs-revision', 'blocked'] },
     summary: { type: 'string', minLength: 1 },
     approved: { type: 'boolean' },
     data: {},
@@ -64,6 +71,15 @@ export const AGENT_ARTIFACT_JSON_SCHEMA = {
     'nextActions',
   ],
 } as const;
+
+/**
+ * Deterministic in-process repairs applied to an agent response before it is
+ * accepted (#563). Each kind is applied at most once per response, so the
+ * repair budget is the size of this enum — there is no re-prompt and no loop.
+ * A response still invalid after them is a terminal failure, never a retry.
+ */
+export const AgentOutputRepairSchema = z.enum(['schema-version-defaulted']);
+export type AgentOutputRepair = z.infer<typeof AgentOutputRepairSchema>;
 
 export const AgentExecutionRequestSchema = z.object({
   runId: z.string().min(1),
@@ -103,6 +119,8 @@ export const AgentExecutionResultSchema = z.object({
   stdout: z.string(),
   stderr: z.string(),
   output: AgentArtifactSchema,
+  /** Deterministic repairs `output` needed to become contract-valid (#563). */
+  outputRepairs: z.array(AgentOutputRepairSchema).optional(),
   usage: ExecutionUsageSchema.optional(),
 });
 export type AgentExecutionResult = z.infer<typeof AgentExecutionResultSchema>;
