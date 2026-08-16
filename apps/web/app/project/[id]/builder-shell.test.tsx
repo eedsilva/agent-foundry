@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { BuilderShell } from './builder-shell';
+import { BuilderGate, BuilderShell } from './builder-shell';
 
 describe('BuilderShell', () => {
   it('keeps Chat, Preview and Changes landmarks in document order', () => {
@@ -57,5 +57,27 @@ describe('BuilderShell', () => {
       />,
     );
     expect(markup).toContain('data-testid="pane-inspector"');
+  });
+});
+
+describe('BuilderGate', () => {
+  it('announces the pre-detail wait as a busy live region, not bare muted text', () => {
+    const markup = renderToStaticMarkup(<BuilderGate error="" onRetry={() => undefined} />);
+    expect(markup).toContain('data-kind="loading"');
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).toContain('Carregando execução…');
+  });
+
+  it('renders a failed project load as an alert with a retry action, not as loading', () => {
+    const markup = renderToStaticMarkup(
+      <BuilderGate error="projeto indisponível" onRetry={() => undefined} />,
+    );
+    expect(markup).toContain('data-kind="error"');
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain('projeto indisponível');
+    expect(markup).toContain('Tentar novamente');
+    expect(markup).not.toContain('data-kind="loading"');
+    expect(markup).not.toContain('Carregando execução…');
   });
 });

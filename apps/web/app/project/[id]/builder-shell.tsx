@@ -1,8 +1,33 @@
 import React, { type ReactNode } from 'react';
+import { PaneState } from '@/components/pane-state';
+import { BTN } from '@/lib/ui';
 import { cn } from '@/lib/utils';
 
 const PANE =
   'bg-surface border-hairline rounded-panel shadow-card flex min-h-0 flex-col overflow-hidden border';
+
+/** What the builder route renders before `detail` exists — either the project
+ * is still loading or the fetch failed. Split out of `page.tsx` so it is
+ * reachable from `renderToStaticMarkup` (the page itself is all hooks). */
+export function BuilderGate({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <div className="px-4 py-10">
+      {error ? (
+        <PaneState
+          kind="error"
+          title={error}
+          action={
+            <button type="button" className={BTN} onClick={onRetry}>
+              Tentar novamente
+            </button>
+          }
+        />
+      ) : (
+        <PaneState kind="loading" title="Carregando execução…" />
+      )}
+    </div>
+  );
+}
 
 export function BuilderShell({
   header,

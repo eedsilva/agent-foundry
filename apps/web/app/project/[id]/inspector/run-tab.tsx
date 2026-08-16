@@ -2,7 +2,7 @@
 
 import React from 'react';
 import type { RunDetailResponse, StepRun } from '@agent-foundry/contracts';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import { StatusPill } from '@/components/status-pill';
 import { formatObservedUsage, formatSeconds } from '../format-usage.js';
 import { BTN, HINT, PANEL, PANEL_HEADER, PANEL_TITLE, ROW } from '@/lib/ui';
@@ -10,18 +10,32 @@ import { isFallback } from './shared';
 
 export function RunTab({
   runDetail,
+  hasRun,
   runIsTerminal,
   onOpenRetryPlan,
 }: {
   runDetail: RunDetailResponse | null;
+  /** Whether the project has a `currentRunId` at all. `use-project-run.ts`
+   * only fetches run detail when it does, so without this a project that has
+   * never run would sit forever on a busy "Carregando…" live region instead
+   * of saying there is nothing to show. */
+  hasRun: boolean;
   runIsTerminal: boolean;
   onOpenRetryPlan: (step: StepRun) => void;
 }) {
+  if (!runDetail && hasRun) {
+    return (
+      <section className={PANEL}>
+        <h2 className={`${PANEL_TITLE} mb-3`}>Steps da execução</h2>
+        <PaneState kind="loading" title="Carregando…" />
+      </section>
+    );
+  }
   if (!runDetail || runDetail.steps.length === 0) {
     return (
       <section className={PANEL}>
         <h2 className={`${PANEL_TITLE} mb-3`}>Steps da execução</h2>
-        <EmptyState title="Nenhum step executado ainda." />
+        <PaneState kind="empty" title="Nenhum step executado ainda." />
       </section>
     );
   }

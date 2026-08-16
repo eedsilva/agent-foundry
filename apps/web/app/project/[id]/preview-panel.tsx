@@ -32,10 +32,10 @@ import {
   stopPreview,
 } from '../../../lib/api';
 import { latestBrowserVerificationReport } from '../../../lib/browser-verification';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import { StatusPill } from '@/components/status-pill';
 import { cn } from '@/lib/utils';
-import { BTN, BTN_ACTIVE, ERROR_BOX, FIELD, HINT, LABEL, MONO_PANE, PANEL_TITLE } from '@/lib/ui';
+import { BTN, BTN_ACTIVE, FIELD, HINT, LABEL, MONO_PANE, PANEL_TITLE } from '@/lib/ui';
 
 const VIEWPORTS = {
   desktop: { label: 'Desktop', width: 1280, height: 800 },
@@ -339,11 +339,7 @@ export function VerificationReportView({
             <StatusPill status={step.status} />
             {step.title} · {Math.round(step.durationMs)}ms
           </summary>
-          {step.error ? (
-            <p role="alert" className={`${ERROR_BOX} mt-2`}>
-              {step.error}
-            </p>
-          ) : null}
+          {step.error ? <PaneState kind="error" title={step.error} /> : null}
           {step.observations.length > 0 ? (
             <ul className="text-ink-muted mt-2 flex list-none flex-col gap-1 p-0 text-[12px]">
               {step.observations.map((observation, index) => (
@@ -429,6 +425,7 @@ export function PreviewPanel({
   const [tab, setTab] = useState<'logs' | 'verification'>('logs');
   const [logs, setLogs] = useState<PreviewLogEntry[]>([]);
   const [panelError, setPanelError] = useState('');
+  const [panelRetry, setPanelRetry] = useState<'start' | 'stop' | 'replace'>('start');
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [selecting, setSelecting] = useState(false);
   const [selectionResult, setSelectionResult] = useState<PreviewSelectionResult | null>(null);
@@ -465,6 +462,7 @@ export function PreviewPanel({
         setSessionLoaded(true);
       },
       onError: (cause) => {
+        setPanelRetry('start');
         setPanelError(cause instanceof Error ? cause.message : String(cause));
         setSessionLoaded(true);
       },
@@ -477,7 +475,10 @@ export function PreviewPanel({
     return startPreviewLogPolling({
       getPage: (cursor) => getPreviewLogs(projectId, session.id, cursor),
       onEntries: (entries) => setLogs((current) => [...current, ...entries]),
-      onError: (cause) => setPanelError(cause instanceof Error ? cause.message : String(cause)),
+      onError: (cause) => {
+        setPanelRetry('start');
+        setPanelError(cause instanceof Error ? cause.message : String(cause));
+      },
       schedule: (callback) => setTimeout(callback, POLL_INTERVAL_MS),
     });
   }, [projectId, session]);
@@ -573,6 +574,7 @@ export function PreviewPanel({
   const start = useCallback(
     async (replaceCurrent = false) => {
       try {
+        setPanelRetry(replaceCurrent ? 'replace' : 'start');
         setPanelError('');
         if (replaceCurrent && session && !TERMINAL_SESSION_STATUSES.has(session.status)) {
           await stopPreview(projectId, session.id);
@@ -626,6 +628,7 @@ export function PreviewPanel({
   async function stop() {
     if (!session) return;
     try {
+      setPanelRetry('stop');
       setPanelError('');
       const { session: stopped } = await stopPreview(projectId, session.id);
       adoptSession(stopped);
@@ -673,15 +676,28 @@ export function PreviewPanel({
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
         {panelError ? (
-          <p role="alert" className={ERROR_BOX}>
-            {panelError}
-          </p>
+          <PaneState
+            kind="error"
+            title={panelError}
+            action={
+              <button
+                type="button"
+                className={BTN}
+                onClick={() =>
+                  void (panelRetry === 'stop' ? stop() : start(panelRetry === 'replace'))
+                }
+              >
+                Tentar novamente
+              </button>
+            }
+          />
         ) : null}
 
         {!sessionLoaded ? (
-          <p className={HINT}>Carregando…</p>
+          <PaneState kind="loading" title="Carregando…" />
         ) : !session || TERMINAL_SESSION_STATUSES.has(session.status) ? (
-          <EmptyState
+          <PaneState
+            kind="empty"
             title="Nenhum preview em execução."
             hint="Inicie um preview para ver o aplicativo gerado."
             action={
@@ -715,9 +731,15 @@ export function PreviewPanel({
               <p className={HINT}>{statusMessage}</p>
             )}
             {selectionError ? (
-              <p role="alert" className={ERROR_BOX}>
-                {selectionError}
-              </p>
+              <PaneState
+                kind="error"
+                title={selectionError}
+                action={
+                  <button type="button" className={BTN} onClick={toggleSelecting}>
+                    Tentar novamente
+                  </button>
+                }
+              />
             ) : null}
             {selectionResult?.status === 'resolved' ? (
               <div className="border-hairline rounded-card flex flex-col gap-3 border p-3">
@@ -899,16 +921,17 @@ export function PreviewPanel({
       <div className="max-h-[38%] shrink-0 overflow-y-auto px-4 pt-1 pb-3">
         {tab === 'logs' ? (
           logs.length === 0 ? (
-            <p className="text-ink-subtle text-[13px]">Nenhum log de runtime ainda.</p>
+            <PaneState kind="empty" title="Nenhum log de runtime ainda." />
           ) : (
             <pre className={MONO_PANE}>
               {logs.map((entry) => `[${entry.stream}] ${entry.message}`).join('\n')}
             </pre>
           )
         ) : !report ? (
-          <p className="text-ink-subtle text-[13px]">
-            Nenhuma verificação de navegador ainda para esta execução.
-          </p>
+          <PaneState
+            kind="empty"
+            title="Nenhuma verificação de navegador ainda para esta execução."
+          />
         ) : (
           <VerificationReportView report={report} projectId={projectId} />
         )}

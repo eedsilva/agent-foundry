@@ -128,6 +128,28 @@ jobs:
         run: npm run build:packages
       - run: npm run e2e --workspace @agent-foundry/api -- issue-radar-golden-journey.spec.ts issue-radar-cross-user-access.spec.ts
 
+  # golden-flow.spec.ts otherwise only runs as a subprocess of
+  # supabase-data-plane-e2e, which needs Docker + the Supabase CLI and is red
+  # on main — that made it the sole CI path executing the axe scan, so every
+  # accessibility assertion in #97 would land unenforced. The suite itself
+  # needs neither Docker nor Supabase (measured: 4 passed in 35s standalone).
+  golden-flow-e2e:
+    name: golden-flow-e2e
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Build the packages the e2e fixture imports at runtime (composition and its dependency chain)
+        run: npm run build:packages
+      - run: npm run e2e --workspace @agent-foundry/api -- golden-flow.spec.ts
+
   # No seam below the real thing can assert that `pnpm install && pnpm dev`
   # boots both tiers of the generated-app scaffold against its own Supabase
   # stack, so this job copies it out of the repo into a clean directory and
@@ -261,6 +283,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: npm run perf:check
 
   # ponytail: mock-executor-mode fresh run only, ~20-25 min — this repo has
   # no CI-available real provider credentials, so it can only ever compare

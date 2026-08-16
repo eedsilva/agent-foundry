@@ -35,6 +35,7 @@ describe('VersionHistoryView', () => {
         onToggleSelected={() => undefined}
         onCompare={() => undefined}
         onUpdate={() => undefined}
+        onRefresh={() => undefined}
       />,
     );
 

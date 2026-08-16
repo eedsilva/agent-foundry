@@ -32,6 +32,16 @@ describe('ChatPane preview repair', () => {
 
     expect(markup).toContain('Preview runtime error');
     expect(markup).toContain('ReferenceError: broken');
-    expect(markup).toContain('Try to fix');
+    expect(markup).toContain('Tentar corrigir');
+    expect(markup).toContain('data-kind="error"');
+    // Persistent state on load, not a fresh event: no assertive live region
+    // (conversationError, the sibling error site, keeps role="alert" by not
+    // passing `persistent` — see pane-state.test.tsx).
+    expect(markup).not.toContain('role="alert"');
+    // Restores the pre-migration monospace + height-capped scroll for the
+    // diagnostic dump, via PaneState's children slot.
+    expect(markup).toMatch(
+      /<pre class="[^"]*max-h-48 overflow-auto whitespace-pre-wrap[^"]*">ReferenceError: broken<\/pre>/,
+    );
   });
 });

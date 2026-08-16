@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { Project } from '@agent-foundry/contracts';
 import { createProject, listProjects } from '../lib/api';
 import { ProjectCard } from '@/components/project-card';
-import { EmptyState } from '@/components/empty-state';
+import { PaneState } from '@/components/pane-state';
 import { ERROR_BOX, FIELD, LABEL, PAGE, PANEL, PANEL_TITLE, PRIMARY_BTN, TEXTAREA } from '@/lib/ui';
 import { cn } from '@/lib/utils';
 
@@ -141,7 +141,8 @@ export default function HomePage() {
       <section>
         <h2 className="text-ink mb-4 text-[20px] font-semibold tracking-[-0.01em]">Projetos</h2>
         {projects.length === 0 ? (
-          <EmptyState
+          <PaneState
+            kind="empty"
             title="Nenhuma execução ainda."
             hint="Descreva o problema acima e funda o primeiro projeto."
           />

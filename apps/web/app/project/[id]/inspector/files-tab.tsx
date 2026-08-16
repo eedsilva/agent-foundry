@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { EmptyState } from '@/components/empty-state';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { PaneState } from '@/components/pane-state';
 import { listWorkspaceFiles, readWorkspaceFile } from '../../../../lib/api';
-import { CARD_BUTTON, HINT, MONO_PANE, PANEL, PANEL_HEADER, PANEL_TITLE } from '@/lib/ui';
+import { BTN, CARD_BUTTON, HINT, MONO_PANE, PANEL, PANEL_HEADER, PANEL_TITLE } from '@/lib/ui';
 
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -25,22 +25,42 @@ export function FilesTab({ projectId }: { projectId: string }) {
   const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState('');
 
-  useEffect(() => {
-    let active = true;
+  // One loader for both the mount fetch and the retry button — they were two
+  // copies of the same body, and only the effect's had a stale-response guard.
+  // The token makes the newest request the only one allowed to write state, so
+  // a response that resolves after a `projectId` change (the effect cleanup
+  // bumps it) or after the user hit "Tentar novamente" again is dropped.
+  const requestRef = useRef(0);
+  const load = useCallback(() => {
+    const token = ++requestRef.current;
+    const isCurrent = () => requestRef.current === token;
     listWorkspaceFiles(projectId)
       .then((next) => {
-        if (active) setFiles(next);
+        if (isCurrent()) setFiles(next);
       })
       .catch((cause: unknown) => {
-        if (active) setError(message(cause));
+        if (isCurrent()) setError(message(cause));
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (isCurrent()) setLoading(false);
       });
-    return () => {
-      active = false;
-    };
   }, [projectId]);
+
+  useEffect(() => {
+    load();
+    return () => {
+      requestRef.current += 1;
+    };
+  }, [load]);
+
+  function retryList() {
+    // Only the retry resets these — on mount they already hold these values,
+    // and setting them synchronously inside the effect is a cascading render
+    // (react-hooks/set-state-in-effect).
+    setLoading(true);
+    setError('');
+    load();
+  }
 
   function openFile(path: string) {
     setSelected(path);
@@ -63,6 +83,10 @@ export function FilesTab({ projectId }: { projectId: string }) {
       contentLoading={contentLoading}
       contentError={contentError}
       onOpenFile={openFile}
+      onRetryList={retryList}
+      onRetryContent={() => {
+        if (selected) openFile(selected);
+      }}
     />
   );
 }
@@ -79,6 +103,8 @@ export function FilesTabView({
   contentLoading,
   contentError,
   onOpenFile,
+  onRetryList,
+  onRetryContent,
 }: {
   files: string[];
   loading: boolean;
@@ -88,6 +114,8 @@ export function FilesTabView({
   contentLoading: boolean;
   contentError: string;
   onOpenFile: (path: string) => void;
+  onRetryList: () => void;
+  onRetryContent: () => void;
 }) {
   return (
     <div className={PANEL}>
@@ -96,11 +124,19 @@ export function FilesTabView({
         {files.length > 0 ? <span className={HINT}>{files.length} arquivo(s)</span> : null}
       </div>
       {loading ? (
-        <EmptyState title="Carregando arquivos…" />
+        <PaneState kind="loading" title="Carregando arquivos…" />
       ) : error ? (
-        <EmptyState title={error} />
+        <PaneState
+          kind="error"
+          title={error}
+          action={
+            <button type="button" className={BTN} onClick={onRetryList}>
+              Tentar novamente
+            </button>
+          }
+        />
       ) : files.length === 0 ? (
-        <EmptyState title="Nenhum arquivo ainda." />
+        <PaneState kind="empty" title="Nenhum arquivo ainda." />
       ) : (
         <div className="flex flex-col gap-2">
           {files.map((path) => (
@@ -121,9 +157,17 @@ export function FilesTabView({
         <section className="border-hairline mt-4 border-t pt-4">
           <p className={`${HINT} mb-2`}>{selected}</p>
           {contentLoading ? (
-            <EmptyState title="Carregando conteúdo…" />
+            <PaneState kind="loading" title="Carregando conteúdo…" />
           ) : contentError ? (
-            <EmptyState title={contentError} />
+            <PaneState
+              kind="error"
+              title={contentError}
+              action={
+                <button type="button" className={BTN} onClick={onRetryContent}>
+                  Tentar novamente
+                </button>
+              }
+            />
           ) : (
             <pre
               data-testid="workspace-file-content"
