@@ -273,7 +273,7 @@ export async function createRuntime(
     : undefined;
   const validationCampaign =
     sourceRevision !== undefined
-      ? buildValidationCampaignPreview(catalog, sourceRevision)
+      ? buildValidationCampaignPreview(catalog, sourceRevision, env)
       : undefined;
   const readCurrentValidationPreflight =
     validationCampaign && sourceRevision

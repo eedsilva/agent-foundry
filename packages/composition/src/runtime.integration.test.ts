@@ -381,6 +381,36 @@ describe('runtime composition', () => {
     expect(runtime.generatedProjectRuntime).toBeUndefined();
   });
 
+  it('builds the validation campaign from the injected env, not process.env', async () => {
+    // #564: the campaign preview carries the active-time ceiling, and the
+    // evidence bundle's campaign snapshot is where a run records the budget it
+    // was given. Reading process.env here would make an injected
+    // VALIDATION_ACTIVE_TIME_MINUTES silently do nothing and publish a budget
+    // the run never had. 137 is deliberately not the 60-minute default, so a
+    // regression reads as 60 rather than as a coincidence.
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-campaign-env-'));
+    temporaryDirectories.push(dataDir);
+
+    const runtime = await createRuntime(
+      {
+        ...process.env,
+        REPO_ROOT: resolve(import.meta.dirname, '../../..'),
+        DATA_DIR: dataDir,
+        EXECUTOR_MODE: 'real',
+        AUTO_INSTALL_DEPENDENCIES: 'false',
+        VALIDATION_CAMPAIGN: 'real-todo-v1',
+        CODEX_DEFAULT_MODEL: 'gpt-5.6-luna',
+        CLAUDE_FAST_MODEL: 'claude-haiku-4-5-20251001',
+        VALIDATION_ACTIVE_TIME_MINUTES: '137',
+      },
+      undefined,
+      undefined,
+      { generatedProjectRuntime: null },
+    );
+
+    expect(runtime.validationCampaign?.limits.activeTimeMinutes).toBe(137);
+  });
+
   it('binds mock browser screenshot evidence to the same direct-edit run', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-visual-edit-browser-'));
     temporaryDirectories.push(dataDir);
