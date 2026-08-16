@@ -5,7 +5,8 @@ Unless the approved plan says otherwise:
 - Use current Next.js App Router conventions and React server/client boundaries deliberately.
 - Use TypeScript with strict mode.
 - Keep domain logic outside React components and route handlers.
-- A `route.ts` may export only HTTP methods (`GET HEAD POST PUT DELETE PATCH OPTIONS`), the route segment config (`dynamic dynamicParams revalidate fetchCache runtime preferredRegion maxDuration`), `generateStaticParams`, and types. No default export, no `export *`, no `export const config` — `pnpm build` and every task's gate fail on those (`scripts/check-route-handlers.mjs`).
+- A `route.ts` exports only HTTP methods (`GET HEAD POST PUT DELETE PATCH OPTIONS`), route segment config (`dynamic dynamicParams revalidate fetchCache runtime preferredRegion maxDuration`), `generateStaticParams`, and types.
+- No default export, no `export *` and no `export const config` in a `route.ts`; every other value belongs in a sibling module. The build and each task's gate fail on them.
 - Validate untrusted input at process boundaries.
 - Prefer server-side data access and explicit API contracts.
 - Include loading, error, and empty states for user-facing workflows.

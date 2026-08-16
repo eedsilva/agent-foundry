@@ -1,4 +1,4 @@
-# ADR 0067: A generated app's build is a classified contract, not an exit code
+# ADR 0068: A generated app's build is a classified contract, not an exit code
 
 - Status: Accepted
 - Date: 2026-08-16
@@ -47,6 +47,13 @@ One package at a time is what makes the recursive build agree with building a
 package alone; it is a throughput cost paid once per run, against a
 reproducibility that everything downstream depends on.
 
+The root `build` is the **only** supported success contract. `pnpm --filter web
+build` stays a bare `next build` — a debugging convenience, not a green light:
+it runs no gate, asserts no artifact, and nothing in the loop reads its result.
+`typecheck` and `lint` stay concurrent; the contention this ADR answers is
+Turbopack's, and serialising a `tsc` pair to match would cost time for a problem
+neither has shown.
+
 **The build owes an artifact, not an exit code.** `scripts/check-build-output.mjs`
 asserts that every `apps/*` package declaring a `build` script produced its
 output — a non-empty `.next/BUILD_ID` for a package depending on `next`, an
@@ -54,8 +61,9 @@ non-empty `outDir` otherwise — and prints each one, so the verification log
 carries evidence the build ran rather than only its status.
 
 **Export shape is checked where it can be checked honestly.**
-`scripts/check-route-handlers.mjs` reads only the files a task just wrote, so it
-answers correctly on a half-built graph and joins `server-actions:check` in the
+`scripts/check-route-handlers.mjs` judges each route module on its own, never
+against a caller elsewhere, so it answers correctly on a half-built graph — the
+property `build` lacks and the reason it joins `server-actions:check` in the
 per-task `scripts` gate. It allows the seven HTTP methods, the route segment
 config, `generateStaticParams` and types, and rejects `export default`,
 `export *`, a route module with no HTTP method, and any other named export.
@@ -68,10 +76,19 @@ framework-loaded module is dead code that reads as working configuration.
 set only on failure. `check` is the only value that says anything about the
 code: the command ran to completion and reported a real defect — a Turbopack
 compile error is a `check`, because it *is* the defect. Every other value means
-the run itself failed and the tree is still unjudged. A non-`check` failure also
-appends one diagnosis line to `stderr` naming the limit involved, so the
-persisted log and the repair prompt both carry it, and a non-zero exit code is
-forced so a `max-output` overrun can never sit on an approved report.
+the run itself failed and the tree is still unjudged. A non-`check` failure
+appends one diagnosis line to `stderr` naming the limit involved and rides in
+the report `summary` as `build (out-of-memory)`, so the timeline and the repair
+prompt both lead with it; and a non-zero exit code is forced so a `max-output`
+overrun can never sit on an approved report.
+
+The classification **reports**; it does not yet route. A `timeout` or
+`out-of-memory` is still a red required check that still invokes `repair`, and
+that is deliberate for now: refusing to repair would turn a transient
+infrastructure failure into a dead run, and which of the two is right depends on
+evidence this decision does not have. What changes today is that the fixer is
+told, in the summary and the first line it reads, that the tree was never
+judged.
 
 **A report names the tree it judged.** `VerificationReport` gains an optional
 `commit`, the workspace's `git rev-parse HEAD` when the report was produced.
@@ -97,6 +114,14 @@ excess export satisfies it. The failures Next does report
 (`Detected default export in …`, `No HTTP methods exported in …`) come from the
 route module at build time — which is the late gate this ADR is routing around.
 
+**Write it as an eslint rule instead.** Equally file-local, and so equally
+gateable per task. Rejected on plumbing, not principle: the scaffold's eslint
+config is `eslint.configs.recommended` plus `typescript-eslint` with no plugin
+of its own, so a custom rule means a plugin package, a resolution story inside a
+generated workspace, and a second thing a repair attempt can uninstall. A
+standalone `.mjs` in `scripts/` has none of that and matches the sibling that
+already ships.
+
 **Classify a bundler panic as its own kind.** `check` already carries a
 Turbopack compile error correctly, and it is the defect the fixer should fix.
 An internal bundler crash distinguishable from a compile error has not been
@@ -106,10 +131,13 @@ observed; adding a kind for it now would be a guess encoded in a contract.
 
 - The generated app's build is slower by roughly the smaller package's build
   time, and reproducible. Accepted deliberately.
-- A red report a `fixer` receives now distinguishes "your code is wrong" from
-  "the machine gave up", so a repair attempt is no longer spent on a build that
-  never completed. Attempts are bounded (`repair.maxAttempts`), so this
-  previously cost a task its whole budget.
+- A red report a `fixer` receives now says which of "your code is wrong" and
+  "the machine gave up" it is. The attempt is still spent — routing is a later
+  decision — but it is spent on a prompt that names the real failure instead of
+  a truncated stderr.
+- A Turbopack panic is a `check`, indistinguishable from a Turbopack compile
+  error. The evidence to separate them does not exist yet; when it does, it is
+  one more branch in `classify()`.
 - Two previously-green outcomes now fail: a truncated command, and a build that
   skipped a package. Both were false and both are now loud.
 - The per-task gate can fail a task that writes a `route.ts` before writing its

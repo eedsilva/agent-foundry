@@ -11,7 +11,7 @@
 // ponytail: line-wise regex, not a parser — misses a multi-line `export {`
 // list and an export written inside a template literal. Swap in the TypeScript
 // compiler's scanner if a generated app ever writes exports that way.
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,14 +31,16 @@ const ALLOWED = new Set([
   'generateStaticParams',
 ]);
 const TYPE_EXPORT = /^\s*export\s+(?:type|interface)\b/;
-const DEFAULT_EXPORT = /^\s*export\s+default\b/;
-const STAR_EXPORT = /^\s*export\s+\*/;
+/** Named for the framework's benefit by neither: `default`, and a re-export that can hide one. */
+const OPAQUE_EXPORT = /^\s*export\s+(default\b|\*)/;
 const DECLARATION_EXPORT =
   /^\s*export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|var|function|class)\s*\*?\s*([A-Za-z_$][\w$]*)/;
 const LIST_EXPORT = /^\s*export\s+\{([^}]*)\}/;
 const offenders = [];
 
-walk(join(root, 'apps'));
+// A workspace with no apps yet has no route handlers to reject; crashing on
+// the missing directory would fail the task gate for the wrong reason.
+if (existsSync(join(root, 'apps'))) walk(join(root, 'apps'));
 
 function walk(directory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -61,12 +63,9 @@ function check(posixPath, source) {
   source.split(/\r?\n/).forEach((line, index) => {
     const at = `${posixPath}:${index + 1}`;
     if (TYPE_EXPORT.test(line)) return;
-    if (DEFAULT_EXPORT.test(line)) {
-      offenders.push(`${at} — default export`);
-      return;
-    }
-    if (STAR_EXPORT.test(line)) {
-      offenders.push(`${at} — export *`);
+    const opaque = OPAQUE_EXPORT.exec(line);
+    if (opaque) {
+      offenders.push(`${at} — export ${opaque[1]}`);
       return;
     }
     const declaration = DECLARATION_EXPORT.exec(line);
@@ -91,12 +90,13 @@ function exportedNames(list) {
 if (offenders.length > 0) {
   console.error('Next route handlers may only export HTTP methods and route segment config:');
   for (const offender of offenders) console.error(`  - ${offender}`);
+  const config = [...ALLOWED].filter((name) => !METHODS.has(name));
   console.error(
     `\nA route module is loaded by the framework, not imported: export a named async\n` +
-      `function per HTTP method (${[...METHODS].join(', ')}), optionally the route\n` +
-      `segment config (dynamic, dynamicParams, revalidate, fetchCache, runtime,\n` +
-      `preferredRegion, maxDuration) and generateStaticParams. Types are erased and\n` +
-      `stay allowed; move every other value to a sibling module and import it.`,
+      `function per HTTP method (${[...METHODS].join(', ')}) and,\n` +
+      `optionally, the route segment config (${config.join(', ')}).\n` +
+      `Types are erased and stay allowed; move every other value to a sibling\n` +
+      `module and import it.`,
   );
   process.exit(1);
 }

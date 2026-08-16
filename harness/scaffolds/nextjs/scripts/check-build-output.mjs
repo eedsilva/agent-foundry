@@ -4,38 +4,56 @@
 // script owes, and print it, so the verification log carries evidence the
 // build actually ran rather than just its exit code.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const apps = join(root, 'apps');
+const SKIPPED_DIRECTORIES = new Set(['node_modules', '.next', 'dist', '.git']);
 const failures = [];
 const artifacts = [];
 
-for (const entry of readdirSync(apps, { withFileTypes: true })) {
-  if (!entry.isDirectory()) continue;
-  const app = join(apps, entry.name);
-  const manifest = readJson(join(app, 'package.json'));
-  if (!manifest?.scripts?.build) continue;
+// Every package but the root, found rather than assumed: `pnpm-workspace.yaml`
+// starts at `apps/*` and a generated app is free to add `packages/*`, which a
+// hard-coded `apps/` would stop covering — silently, which is the one failure
+// mode this script exists to remove.
+for (const pkg of packageDirectories(root)) {
+  const name = relative(root, pkg).split(sep).join('/');
+  // Unreadable is not the same as "declares no build": skipping it here would
+  // be the silent skip this script exists to catch.
+  const manifest = readJson(join(pkg, 'package.json'));
+  if (!manifest) {
+    failures.push(`${name}/package.json could not be read`);
+    continue;
+  }
+  if (!manifest.scripts?.build) continue;
 
   if (dependsOnNext(manifest)) {
-    const buildIdPath = join(app, '.next/BUILD_ID');
+    const buildIdPath = join(pkg, '.next/BUILD_ID');
     const buildId = existsSync(buildIdPath) ? readFileSync(buildIdPath, 'utf8').trim() : '';
     if (buildId === '') {
-      failures.push(`apps/${entry.name}/.next/BUILD_ID is empty or missing`);
+      failures.push(`${name}/.next/BUILD_ID is empty or missing`);
       continue;
     }
-    artifacts.push(`apps/${entry.name}/.next/BUILD_ID = ${buildId}`);
+    artifacts.push(`${name}/.next/BUILD_ID = ${buildId}`);
     continue;
   }
 
-  const outDir = readJson(join(app, 'tsconfig.json'))?.compilerOptions?.outDir ?? 'dist';
-  const contents = existsSync(join(app, outDir)) ? readdirSync(join(app, outDir)) : [];
+  const outDir = readJson(join(pkg, 'tsconfig.json'))?.compilerOptions?.outDir ?? 'dist';
+  const contents = existsSync(join(pkg, outDir)) ? readdirSync(join(pkg, outDir)) : [];
   if (contents.length === 0) {
-    failures.push(`apps/${entry.name}/${outDir} is empty or missing`);
+    failures.push(`${name}/${outDir} is empty or missing`);
     continue;
   }
-  artifacts.push(`apps/${entry.name}/${outDir} = ${contents.length} entries`);
+  artifacts.push(`${name}/${outDir} = ${contents.length} entries`);
+}
+
+function* packageDirectories(directory) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || SKIPPED_DIRECTORIES.has(entry.name)) continue;
+    const child = join(directory, entry.name);
+    if (existsSync(join(child, 'package.json'))) yield child;
+    else yield* packageDirectories(child);
+  }
 }
 
 // ponytail: JSON.parse, so a tsconfig with comments falls back to the default

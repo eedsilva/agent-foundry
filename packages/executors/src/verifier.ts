@@ -19,6 +19,15 @@ import {
 
 const EMPTY_GIT_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
+/** V8's fatal out-of-memory prose, in both the forms it prints. */
+const OUT_OF_MEMORY = /JavaScript heap out of memory|FATAL ERROR:.*Allocation failed/;
+
+/** The run failing rather than the code. */
+type InfrastructureFailure = Exclude<
+  NonNullable<VerificationCommandResult['failureKind']>,
+  'check'
+>;
+
 export interface WorkspaceVerifierOptions {
   autoInstallDependencies: boolean;
   timeoutMs: number;
@@ -120,6 +129,14 @@ export class WorkspaceVerifier implements VerificationService {
     const failed = commands.filter(
       (command) => !command.skipped && !command.advisory && command.exitCode !== 0,
     );
+    // The kind rides along, so the timeline and the repair prompt lead with
+    // "this build never finished" instead of burying it at the end of a
+    // truncated stderr.
+    const names = failed.map((item) =>
+      item.failureKind && item.failureKind !== 'check'
+        ? `${item.name} (${item.failureKind})`
+        : item.name,
+    );
     return VerificationReportSchema.parse({
       schemaVersion: '1',
       approved: failed.length === 0,
@@ -127,7 +144,7 @@ export class WorkspaceVerifier implements VerificationService {
       summary:
         failed.length === 0
           ? 'All configured deterministic checks passed.'
-          : `${failed.length} configured check(s) failed: ${failed.map((item) => item.name).join(', ')}`,
+          : `${failed.length} configured check(s) failed: ${names.join(', ')}`,
       commands,
       createdAt: new Date().toISOString(),
       ...(commit ? { commit } : {}),
@@ -236,14 +253,15 @@ export class WorkspaceVerifier implements VerificationService {
       });
       const stdout = result.stdout ?? '';
       const stderr = result.stderr ?? '';
-      const failureKind = this.classify(result, stdout, stderr);
+      const failureKind = classify(result, stderr);
       return {
         name,
         command,
         args,
-        // `isMaxBuffer` reports exit code 0 for a truncated run: without the
-        // failure kind an overrun would land in the report as a pass.
-        exitCode: failureKind ? result.exitCode || 1 : (result.exitCode ?? 0),
+        // A failure always reports non-zero: execa reports a `maxBuffer`
+        // overrun as failed with exit code 0, and a killed process with no
+        // exit code at all. Either would otherwise land in the report as a pass.
+        exitCode: failureKind ? result.exitCode || 1 : 0,
         durationMs: Date.now() - startedAt,
         stdout,
         stderr:
@@ -270,47 +288,40 @@ export class WorkspaceVerifier implements VerificationService {
     }
   }
 
-  private classify(
-    result: {
-      failed: boolean;
-      timedOut: boolean;
-      isMaxBuffer: boolean;
-      exitCode?: number | undefined;
-      signal?: string | undefined;
-    },
-    stdout: string,
-    stderr: string,
-  ): VerificationCommandResult['failureKind'] {
-    if (!result.failed) return undefined;
-    if (result.timedOut) return 'timeout';
-    if (result.isMaxBuffer) return 'max-output';
-    // ponytail: V8 prints this, it is not a machine-readable status; if the
-    // string ever drifts, run the build under a wrapper that reports rusage.
-    if (
-      result.exitCode === 137 ||
-      /JavaScript heap out of memory|Allocation failed/.test(stderr + stdout)
-    )
-      return 'out-of-memory';
-    if (result.exitCode === undefined) return result.signal ? 'signal' : 'spawn';
-    return 'check';
-  }
-
   /** One line the persisted log and the repair prompt both carry. */
-  private diagnose(
-    stderr: string,
-    kind: NonNullable<VerificationCommandResult['failureKind']>,
-    signal?: string,
-  ): string {
+  private diagnose(stderr: string, kind: InfrastructureFailure, signal?: string): string {
     const reason = {
       timeout: `killed after the ${this.options.timeoutMs}ms verification timeout`,
       'max-output': `killed after its output passed the ${this.options.maxOutputBytes} byte limit`,
       'out-of-memory': 'killed after running out of memory',
       signal: `terminated by ${signal ?? 'a signal'}`,
       spawn: 'could not be started',
-      check: '',
     }[kind];
-    return `${stderr}${stderr.endsWith('\n') || stderr === '' ? '' : '\n'}${kind}: command ${reason} — it never ran to completion, so this result says nothing about the code.\n`;
+    const line = `${kind}: command ${reason} — it never ran to completion, so this result says nothing about the code.`;
+    return `${[stderr.trimEnd(), line].filter(Boolean).join('\n')}\n`;
   }
+}
+
+function classify(
+  result: {
+    failed: boolean;
+    timedOut: boolean;
+    isMaxBuffer: boolean;
+    exitCode?: number | undefined;
+    signal?: string | undefined;
+  },
+  stderr: string,
+): VerificationCommandResult['failureKind'] {
+  if (!result.failed) return undefined;
+  if (result.timedOut) return 'timeout';
+  if (result.isMaxBuffer) return 'max-output';
+  // ponytail: V8 prints this, it is not a machine-readable status, and 137 is
+  // any SIGKILL rather than the OOM killer specifically. Only stderr is
+  // scanned, so a check that merely prints the phrase stays a `check`; run the
+  // build under a wrapper reporting rusage if that stops being enough.
+  if (result.exitCode === 137 || OUT_OF_MEMORY.test(stderr)) return 'out-of-memory';
+  if (result.exitCode === undefined) return result.signal ? 'signal' : 'spawn';
+  return 'check';
 }
 
 /** The tree the report judged. Undefined outside a git repo or before the first commit. */

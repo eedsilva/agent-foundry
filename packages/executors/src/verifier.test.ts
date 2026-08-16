@@ -357,6 +357,9 @@ describe('WorkspaceVerifier', () => {
     expect(build?.exitCode).not.toBe(0);
     expect(build?.stderr).toContain('1000ms');
     expect(build?.stderr).toContain('never ran to completion');
+    // The kind leads the summary too, so the timeline and the repair prompt
+    // say the build never finished rather than only naming the failed check.
+    expect(report.summary).toContain('build (timeout)');
   });
 
   it('classifies a plain non-zero exit as a real defect and leaves its stderr alone', async () => {
@@ -380,6 +383,32 @@ describe('WorkspaceVerifier', () => {
     expect(build?.failureKind).toBe('check');
     expect(build?.stderr).toContain('type error');
     expect(build?.stderr).not.toContain('never ran to completion');
+    expect(report.summary).toContain('build');
+    expect(report.summary).not.toContain('(check)');
+  });
+
+  it('leaves a real defect a check when its own output mentions running out of memory', async () => {
+    const cwd = await workspace();
+    await writeFile(
+      join(cwd, 'package.json'),
+      JSON.stringify({
+        private: true,
+        packageManager: 'npm@10',
+        scripts: {
+          build: 'node -e "console.log(\'JavaScript heap out of memory\'); process.exit(1)"',
+        },
+      }),
+    );
+
+    const report = await new WorkspaceVerifier({
+      autoInstallDependencies: false,
+      timeoutMs: 30_000,
+      maxOutputBytes: 1_000_000,
+    }).verify({ workspacePath: cwd, scripts: ['build'], includeGitDiffCheck: false });
+
+    // Only stderr is scanned: a check that prints the phrase is still a defect
+    // to fix, and relabelling it infrastructure would hide it.
+    expect(report.commands.find((command) => command.name === 'build')?.failureKind).toBe('check');
   });
 
   it('leaves failureKind unset when the command succeeds', async () => {

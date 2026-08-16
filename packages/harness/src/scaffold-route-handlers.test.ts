@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -14,7 +15,7 @@ afterEach(async () => {
 });
 
 async function workspaceWith(files: Record<string, string>): Promise<string> {
-  const dir = await mkdtemp(join(resolve('/tmp'), 'scaffold-route-handlers-'));
+  const dir = await mkdtemp(join(tmpdir(), 'scaffold-route-handlers-'));
   temporaryDirectories.push(dir);
   await mkdir(join(dir, 'scripts'), { recursive: true });
   await cp(checkScript, join(dir, 'scripts/check-route-handlers.mjs'));
@@ -47,7 +48,7 @@ describe('check-route-handlers build gate', () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('apps/web/app/api/x/route.ts:1');
-    expect(result.stderr).toContain('default export');
+    expect(result.stderr).toContain('export default');
   });
 
   it('fails a route module that exports no HTTP method', async () => {
