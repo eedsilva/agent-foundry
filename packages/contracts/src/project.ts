@@ -135,6 +135,7 @@ export const ProjectEventSchema = z
       'agent.routed',
       'agent.started',
       'agent.completed',
+      'agent.output_repaired',
       'agent.failed',
       'artifact.created',
       'verification.completed',

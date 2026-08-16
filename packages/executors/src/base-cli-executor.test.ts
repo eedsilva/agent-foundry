@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { AgentExecutionResultSchema, AgentRoleSchema } from '@agent-foundry/contracts';
 import type { AgentExecutionRequest, Provider } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
 
@@ -185,6 +186,44 @@ describe('BaseCliExecutor metadata', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// Every agent role — planning, implementation, repair, verification — routes
+// its provider response through this one execute() path, so the versioned
+// contract gate and its bounded repair apply to all of them. The role list
+// comes from AgentRoleSchema so a new role cannot silently skip the gate.
+describe('BaseCliExecutor output repairs (#563)', () => {
+  const { schemaVersion: _schemaVersion, ...unversionedArtifact } = completedArtifact;
+
+  class UnversionedFixtureExecutor extends FixtureExecutor {
+    protected override async responseText(): Promise<string> {
+      return JSON.stringify(unversionedArtifact);
+    }
+  }
+
+  it.each(AgentRoleSchema.options)(
+    'repairs a schemaVersion-less artifact returned on the %s output path',
+    async (role) => {
+      execaMock.mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: '' });
+
+      const result = await new UnversionedFixtureExecutor(1_000_000).execute({ ...request, role });
+
+      expect(AgentExecutionResultSchema.parse(result).outputRepairs).toEqual([
+        'schema-version-defaulted',
+      ]);
+      expect(result.output.schemaVersion).toBe('1');
+      expect(result.output.summary).toBe('Done.');
+    },
+  );
+
+  it('omits outputRepairs entirely when the artifact already validates', async () => {
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: '' });
+
+    const result = await new FixtureExecutor(1_000_000).execute(request);
+
+    expect(result.outputRepairs).toBeUndefined();
+    expect('outputRepairs' in result).toBe(false);
   });
 });
 

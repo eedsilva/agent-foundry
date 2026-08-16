@@ -1,51 +1,92 @@
 import {
   AgentArtifactSchema,
+  formatZodIssues,
   type AgentArtifact,
+  type AgentOutputRepair,
   type Provider,
   type ProviderRateLimit,
 } from '@agent-foundry/contracts';
 import { ExecutionError } from '@agent-foundry/domain';
 
-export function parseAgentArtifact(provider: Provider, raw: string): AgentArtifact {
-  const candidates = authoritativeArtifactCandidates(provider, raw);
-  const artifacts = candidates.flatMap((candidate) => {
-    const parsed = typeof candidate === 'string' ? tryParse(candidate.trim()) : candidate;
-    const result = AgentArtifactSchema.safeParse(parsed);
-    return result.success ? [result.data] : [];
-  });
+export interface ParsedAgentArtifact {
+  artifact: AgentArtifact;
+  repairs: AgentOutputRepair[];
+}
 
-  if (artifacts.length === 1) return artifacts[0]!;
+/**
+ * The accepted artifact plus the deterministic repairs it needed (#563). The
+ * repair budget is one pass over the fixed rule set below: no loop, no
+ * re-prompt, no retry. A response still invalid afterwards fails terminally,
+ * with the offending Zod issues named in the message rather than a generic
+ * "did not return a valid artifact".
+ */
+export function parseAgentArtifact(provider: Provider, raw: string): ParsedAgentArtifact {
+  const accepted: ParsedAgentArtifact[] = [];
+  let issues: string | undefined;
 
-  throw new ExecutionError('Agent did not return a valid artifact JSON object', {
-    stdout: raw.slice(0, 20_000),
-  });
+  for (const candidate of authoritativeArtifactCandidates(provider, raw)) {
+    const value = typeof candidate === 'string' ? tryParse(candidate.trim()) : candidate;
+    const result = AgentArtifactSchema.safeParse(value);
+    if (result.success) {
+      accepted.push({ artifact: result.data, repairs: [] });
+      continue;
+    }
+    const repaired = repairArtifact(value);
+    if (repaired) accepted.push(repaired);
+    else issues ??= formatZodIssues(result.error, 'root');
+  }
+
+  // Exactly one accepted candidate, as before: a repaired candidate counts the
+  // same way, so the ambiguity rule is unchanged.
+  if (accepted.length === 1) return accepted[0]!;
+
+  throw new ExecutionError(
+    `Agent did not return a valid artifact JSON object${issues ? `: ${issues}` : ''}`,
+    { stdout: raw.slice(0, 20_000) },
+  );
+}
+
+/**
+ * The whole repair rule set: an absent `schemaVersion` has exactly one legal
+ * value (`z.literal('1')`), so defaulting it is deterministic rather than a
+ * guess. A present-but-wrong version is a real contract violation and stays a
+ * failure. Returns undefined when the candidate is unrepairable.
+ */
+function repairArtifact(value: unknown): ParsedAgentArtifact | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const record = value;
+  if ('schemaVersion' in record) return undefined;
+
+  const result = AgentArtifactSchema.safeParse({ ...record, schemaVersion: '1' });
+  return result.success
+    ? { artifact: result.data, repairs: ['schema-version-defaulted'] }
+    : undefined;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function authoritativeArtifactCandidates(provider: Provider, raw: string): unknown[] {
   const cleaned = stripAnsi(raw).trim();
   const whole = tryParse(cleaned);
-  if (provider === 'codex' && AgentArtifactSchema.safeParse(whole).success) {
-    return [whole];
-  }
-
   const documents = providerDocuments(cleaned);
   if (provider === 'codex') {
     const messages = documents.flatMap((document) => {
-      if (document === null || typeof document !== 'object' || Array.isArray(document)) return [];
-      const record = document as Record<string, unknown>;
-      const item = record.item;
-      if (
-        record.type !== 'item.completed' ||
-        item === null ||
-        typeof item !== 'object' ||
-        Array.isArray(item)
-      ) {
-        return [];
-      }
-      const itemRecord = item as Record<string, unknown>;
-      return itemRecord.type === 'agent_message' ? [itemRecord.text] : [];
+      if (!isPlainObject(document)) return [];
+      const item = document.item;
+      if (document.type !== 'item.completed' || !isPlainObject(item)) return [];
+      return item.type === 'agent_message' ? [item.text] : [];
     });
-    return messages.length > 0 ? [messages.at(-1)] : [];
+    if (messages.length > 0) return [messages.at(-1)];
+    // No agent_message envelope: `--output-last-message` writes the artifact
+    // bare, and responseText() prefers that file over stdout, so this is codex's
+    // usual shape. Returning the document even when it fails validation is what
+    // lets parseAgentArtifact repair it, and lets an unrepairable one name the
+    // offending field instead of reading as "the agent returned nothing" (#563).
+    // A valid artifact never carries an `item.completed` record, so it can never
+    // be shadowed by the branch above.
+    return isPlainObject(whole) ? [whole] : [];
   }
 
   const terminal = terminalResult(documents);

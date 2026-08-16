@@ -184,7 +184,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     }
 
     const response = await this.responseText(invocation, stdout);
-    const output = parseAgentArtifact(this.provider, response);
+    const { artifact: output, repairs } = parseAgentArtifact(this.provider, response);
     const usage = extractUsage(this.provider, stdout);
     const executedModel = extractExecutedModel(this.provider, { stdout, stderr });
 
@@ -201,6 +201,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
       output,
       ...(executedModel ? { executedModel } : {}),
       ...(usage ? { usage } : {}),
+      ...(repairs.length > 0 ? { outputRepairs: repairs } : {}),
     };
   }
 

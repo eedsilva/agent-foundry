@@ -1039,6 +1039,59 @@ describe('schema-plan output contract (#480)', () => {
   });
 });
 
+describe('structured-output repair observability (#563)', () => {
+  /** Single-step fixture, so "exactly one repair event" is unambiguous. */
+  const workflow = WORKTREE_PLUMBING_WORKFLOW;
+
+  it('emits one agent.output_repaired event naming the repair, alongside agent.completed', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, { workflow });
+    stores.executor.outputRepairs = ['schema-version-defaulted'];
+    await seedRun(stores, workflow.id);
+
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await stores.runs.get('run-1'))?.status).toBe('completed');
+    const repaired = stores.events.events.filter((event) => event.type === 'agent.output_repaired');
+    expect(repaired).toHaveLength(1);
+    expect(repaired[0]?.message).toContain('schema-version-defaulted');
+    expect(repaired[0]?.nodeId).toBe('implement');
+    expect(repaired[0]?.data).toMatchObject({ repairs: ['schema-version-defaulted'] });
+    expect(stores.events.events.some((event) => event.type === 'agent.completed')).toBe(true);
+  });
+
+  it('emits no agent.output_repaired event when the executor repaired nothing', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, { workflow });
+    await seedRun(stores, workflow.id);
+
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await stores.runs.get('run-1'))?.status).toBe('completed');
+    expect(stores.events.events.some((event) => event.type === 'agent.output_repaired')).toBe(
+      false,
+    );
+  });
+
+  it('records the output-validation evidence in the successful attempt run record', async () => {
+    const stores = makeOrchestrator(undefined, undefined, undefined, { workflow });
+    stores.executor.outputRepairs = ['schema-version-defaulted'];
+    await seedRun(stores, workflow.id);
+
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    const [stepRun] = await stores.stepRuns.list('run-1');
+    if (!stepRun) throw new Error('Expected a persisted step run');
+    const [attempt] = await stores.stepAttempts.list('run-1', stepRun.id);
+    if (!attempt) throw new Error('Expected a persisted attempt');
+    const [record] = stores.artifacts.named(`run-${attempt.id}`);
+    expect(record?.content).toMatchObject({
+      outputValidation: {
+        contract: 'agent-artifact',
+        repairs: ['schema-version-defaulted'],
+      },
+    });
+  });
+});
+
 /** now() advances every call, so two steps in one run always land on distinct
  * migration timestamps — a real clock ticking within one test run cannot. */
 class IncrementingClock implements Clock {
