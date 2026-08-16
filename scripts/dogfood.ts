@@ -61,7 +61,11 @@ try {
     console.log(`Annotated ${annotated.length} record(s) against ${mergedRef}.`);
   } else if (args.includes('--all') || argValue('--task')) {
     if (executorMode === 'real')
-      await assertRealModeReady({ envVarName: 'RUN_REAL_DOGFOOD', rootDir });
+      await assertRealModeReady({
+        envVarName: 'RUN_REAL_DOGFOOD',
+        rootDir,
+        requireValidationCampaign: true,
+      });
     const tasks = await loadDogfoodTasks(tasksDir);
     const taskId = argValue('--task');
     const selected = taskId ? tasks.filter((task) => task.id === taskId) : tasks;

@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ValidationCampaignIdSchema } from '@agent-foundry/contracts';
 import { loadDoctorProbes } from '../../packages/composition/src/provider-canary.js';
 
 // Shared by scripts/dogfood.ts and scripts/benchmark.ts: both are thin CLI
@@ -27,15 +28,38 @@ export async function loadJsonRecords<T>(
   );
 }
 
+const CAMPAIGN_ENV_HINT =
+  `Set VALIDATION_CAMPAIGN=${ValidationCampaignIdSchema.value} CODEX_DEFAULT_MODEL=gpt-5.6-luna ` +
+  'CLAUDE_FAST_MODEL=claude-haiku-4-5-20251001 (see docs/OPERATIONS.md).';
+
 export async function assertRealModeReady(options: {
   envVarName: string;
   rootDir: string;
   env?: NodeJS.ProcessEnv;
+  requireValidationCampaign?: boolean;
 }): Promise<void> {
   const env = options.env ?? process.env;
   if (env[options.envVarName] !== 'true') {
     console.error(`Real runs require ${options.envVarName}=true.`);
     process.exit(1);
+  }
+  // #562: with no campaign selected the golden-journey runners fell through to
+  // whatever the catalog offered and silently routed to a premium model. Gate
+  // before loadDoctorProbes — scripts/doctor.mjs spawns the codex/claude CLIs.
+  if (options.requireValidationCampaign) {
+    const campaign = env.VALIDATION_CAMPAIGN;
+    if (!campaign) {
+      console.error('VALIDATION_CAMPAIGN is not set; a real run must select a campaign.');
+      console.error(CAMPAIGN_ENV_HINT);
+      process.exit(1);
+    }
+    if (!ValidationCampaignIdSchema.safeParse(campaign).success) {
+      console.error(
+        `VALIDATION_CAMPAIGN="${campaign}" is not a known campaign; the only accepted value is ${ValidationCampaignIdSchema.value}.`,
+      );
+      console.error(CAMPAIGN_ENV_HINT);
+      process.exit(1);
+    }
   }
   let probes: Awaited<ReturnType<typeof loadDoctorProbes>>;
   try {

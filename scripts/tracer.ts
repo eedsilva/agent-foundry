@@ -39,7 +39,11 @@ try {
     process.exit(1);
   }
   if (executorMode === 'real') {
-    await assertRealModeReady({ envVarName: 'RUN_REAL_TRACER', rootDir });
+    await assertRealModeReady({
+      envVarName: 'RUN_REAL_TRACER',
+      rootDir,
+      requireValidationCampaign: true,
+    });
   }
 
   const scenarios = await loadTracerScenarios(scenariosDir);

@@ -3484,12 +3484,21 @@ export class WorkflowOrchestrator {
         systemPrompt,
         worktree,
       );
-      if (result.usage) {
-        // Persist provider usage while the attempt is still running. A crash
-        // after the provider responds but before artifact validation must not
-        // make a restart forget money or subscription units already spent.
+      if (result.usage || result.executedModel) {
+        // Persist provider usage and executed identity while the attempt is
+        // still running. A crash after the provider responds but before
+        // artifact validation must not make a restart forget money or
+        // subscription units already spent — and every way this attempt can
+        // still fail below (campaign identity mismatch, artifact contract,
+        // commit, budget cancellation) has to leave a trace that proves which
+        // model actually ran, not just which one was requested (#562).
         attempt = await this.stepAttempts.update(
-          { ...attempt, usage: result.usage, updatedAt: this.clock.now().toISOString() },
+          {
+            ...attempt,
+            ...(result.usage ? { usage: result.usage } : {}),
+            ...(result.executedModel ? { executedModel: result.executedModel } : {}),
+            updatedAt: this.clock.now().toISOString(),
+          },
           attempt.version,
         );
       }
