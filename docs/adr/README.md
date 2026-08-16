@@ -6,7 +6,7 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest accepted: [0068 a generated app's build is a classified contract, not an exit code](0068-generated-app-build-is-a-classified-contract.md) — builds on [0045](0045-per-task-deterministic-verification.md).
+Latest accepted: [0069 the golden-journey gate is a verdict over evidence bundles, not a second source of truth](0069-golden-journey-gate-is-a-verdict-over-evidence-bundles.md) — builds on [0055](0055-redacted-validation-evidence-bundles.md).
 
 Proposed (Harness Alignment, milestone `Harness Alignment`):
 

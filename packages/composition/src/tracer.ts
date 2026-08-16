@@ -2,7 +2,13 @@ import { mkdtemp } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { TracerScenarioSchema, type Project, type TracerScenario } from '@agent-foundry/contracts';
+import {
+  TracerScenarioSchema,
+  type Project,
+  type TracerScenario,
+  type ValidationEvidenceResponse,
+} from '@agent-foundry/contracts';
+import { NotFoundError, ValidationError } from '@agent-foundry/domain';
 import { loadJsonDirectory } from './dogfood.js';
 import { createRuntime, type Runtime } from './runtime.js';
 
@@ -59,6 +65,28 @@ export interface TracerScenarioRunResult {
   projectId: string;
   runId: string;
   runStatus: string;
+  /**
+   * The run's published evidence bundle, or `null` when there is none to read.
+   * A bundle only exists under a selected validation campaign, and a campaign is
+   * only accepted in real mode (#564), so mock runs always report `null`.
+   */
+  evidence: ValidationEvidenceResponse | null;
+}
+
+// The publisher raises on both "this run has no campaign" and "no bundle was
+// published", and the gate treats them identically — as evidence it cannot
+// judge. Anything else is a real fault in reading the artifact store and must
+// not be swallowed into a `no-evidence` verdict.
+async function readEvidence(
+  runtime: Runtime,
+  runId: string,
+): Promise<ValidationEvidenceResponse | null> {
+  try {
+    return await runtime.validationEvidence.get(runId);
+  } catch (error) {
+    if (error instanceof ValidationError || error instanceof NotFoundError) return null;
+    throw error;
+  }
 }
 
 async function startTracerRun(
@@ -115,7 +143,12 @@ export async function runTracerScenario(
   await runtime.worker.runOnce();
   const run = await runtime.runs.get(runId);
 
-  return { projectId: project.id, runId, runStatus: run?.status ?? 'unknown' };
+  return {
+    projectId: project.id,
+    runId,
+    runStatus: run?.status ?? 'unknown',
+    evidence: await readEvidence(runtime, runId),
+  };
 }
 
 // #509: a single runOnce() only proves the plan step runs — it parks at the
@@ -147,5 +180,10 @@ export async function runTracerScenarioToCompletion(
   }
   const run = await runtime.runs.get(runId);
 
-  return { projectId: project.id, runId, runStatus: run?.status ?? 'unknown' };
+  return {
+    projectId: project.id,
+    runId,
+    runStatus: run?.status ?? 'unknown',
+    evidence: await readEvidence(runtime, runId),
+  };
 }

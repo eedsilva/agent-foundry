@@ -113,6 +113,33 @@ describe('buildValidationCampaignPreview', () => {
     );
   });
 
+  it.each([
+    ['absent', {}],
+    ['empty', { VALIDATION_ACTIVE_TIME_MINUTES: '' }],
+    ['whitespace', { VALIDATION_ACTIVE_TIME_MINUTES: '  ' }],
+  ])('keeps the 60-minute default when VALIDATION_ACTIVE_TIME_MINUTES is %s', (_reason, env) => {
+    const preview = buildValidationCampaignPreview(catalog(), 'a'.repeat(40), env);
+    expect(preview.limits.activeTimeMinutes).toBe(60);
+  });
+
+  it('takes the budget from VALIDATION_ACTIVE_TIME_MINUTES', () => {
+    const preview = buildValidationCampaignPreview(catalog(), 'a'.repeat(40), {
+      VALIDATION_ACTIVE_TIME_MINUTES: ' 240 ',
+    });
+    expect(preview.limits.activeTimeMinutes).toBe(240);
+  });
+
+  it.each(['0', '-1', '1.5', 'abc', '60m', 'Infinity', 'NaN'])(
+    'fails closed for VALIDATION_ACTIVE_TIME_MINUTES=%s',
+    (value) => {
+      expect(() =>
+        buildValidationCampaignPreview(catalog(), 'a'.repeat(40), {
+          VALIDATION_ACTIVE_TIME_MINUTES: value,
+        }),
+      ).toThrow(new RegExp(`VALIDATION_ACTIVE_TIME_MINUTES.*${value}`));
+    },
+  );
+
   it('never exposes a premium model in the automatic route', () => {
     const preview = buildValidationCampaignPreview(catalog(), 'a'.repeat(40));
     const routeModels = preview.routes.flatMap((route) => [route.selected, ...route.fallbacks]);

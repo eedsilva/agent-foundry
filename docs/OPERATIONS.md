@@ -168,10 +168,85 @@ adicionado como arquivo puro e rodou com o runner já existente.
 
 `runTracerScenario` cria o projeto e roda um único `worker.runOnce()`, o suficiente para provar que
 o *mecanismo de entrada* (arquivo → projeto → run) aceita qualquer scenario sem mudança de código.
-Isso não prova que um app shape sobrevive ao pipeline inteiro — o run para no primeiro gate
-(`plan-approval`); levar um shape além disso ainda exige decidir a aprovação manualmente (real mode)
-ou via API, fora do escopo desta issue. Ele também não reproduz o pipeline completo de report/baseline de
-`runDogfoodTask`; isso é escopo de uma nova stage do harness, fora do que #474 pediu.
+Sozinho ele para no primeiro gate (`plan-approval`); `--approve-gates` (#509) troca o driver por
+`runTracerScenarioToCompletion`, que aprova cada gate pendente até o run atingir estado terminal.
+Ele não reproduz o pipeline completo de report/baseline de `runDogfoodTask`; isso é escopo de uma
+nova stage do harness, fora do que #474 pediu.
+
+Flags disponíveis:
+
+| Flag | Efeito |
+| --- | --- |
+| `--scenario <id>` \| `--all` | Seleciona um scenario ou todos. |
+| `--executor-mode mock\|real` | Qualquer valor diferente de `mock` é `real`. |
+| `--approve-gates` | Aprova cada gate de operador até o estado terminal (#509). |
+| `--policies-dir <dir>` / `--policy-id <id>` | Opta o run por um `ProjectPolicy` não-default (por exemplo `uiQualityJudge`). |
+| `--data-dir <dir>` | Fixa `DATA_DIR` em vez do `mkdtemp` descartável, para que a evidência sobreviva ao run. |
+| `--evidence-dir <dir>` | Escreve o bundle de cada scenario e um `README.md` com a tabela 4/4 (#564). |
+| `--gate` | Sai com código diferente de zero se qualquer scenario não terminar `passed` (#564). |
+
+### Gate golden journey 4/4 (#564)
+
+O gate final roda os quatro shapes (`toy`, `crud-heavy`, `dashboard-heavy`, `auth-heavy`) em modo
+real, browser real e Supabase local, e transforma os quatro bundles em um único veredito.
+
+Um scenario só conta como `passed` quando as três afirmações valem ao mesmo tempo:
+
+1. `terminalState.status === 'completed'` (`WorkflowRunStatus` não tem `passed`; o conjunto terminal
+   é `cancelled | completed | failed | rejected`);
+2. `outcome === 'accepted'`;
+3. os oito gates obrigatórios do bundle com `status: 'passed'`.
+
+`exhausted` (`terminalState.error.code === 'VALIDATION_CAMPAIGN_LIMIT'`) e `no-evidence` (sem
+bundle, o que inclui todo run mock) são reportados à parte de `failed`. O porquê de cada decisão
+está na [ADR 0069](adr/0069-golden-journey-gate-is-a-verdict-over-evidence-bundles.md).
+
+**Dois terminais, o mesmo `DATA_DIR` absoluto.** O tracer não sobe a API; ele apenas faz um probe
+TCP na origem do preview. Se a API rodar com outro `DATA_DIR`, o probe passa e o proxy do preview
+devolve 404 em cada navegação, silenciosamente. Use um caminho absoluto fora de `/tmp` — o ciclo de
+vida de `/tmp` já apagou evidência de run entre sessões — e fora do repositório, que o gate de
+isolamento recusa.
+
+```bash
+# terminal 1 — API + proxy de preview (sem `tsx watch`: um restart no meio
+# de um run de horas derruba o proxy que o browser está usando)
+DATA_DIR=/Users/<you>/agent-foundry-gate-564 API_HOST=127.0.0.1 API_PORT=4000 \
+RUN_WORKER_INLINE=false EXECUTOR_MODE=real VALIDATION_CAMPAIGN=real-todo-v1 \
+CODEX_DEFAULT_MODEL=gpt-5.6-luna CLAUDE_FAST_MODEL=claude-haiku-4-5-20251001 \
+npx tsx apps/api/src/index.ts
+
+# terminal 2 — preflight e o gate
+curl -X POST http://127.0.0.1:4000/validation/campaign/preflight
+RUN_REAL_TRACER=true EXECUTOR_MODE=real VALIDATION_CAMPAIGN=real-todo-v1 \
+CODEX_DEFAULT_MODEL=gpt-5.6-luna CLAUDE_FAST_MODEL=claude-haiku-4-5-20251001 \
+VALIDATION_ACTIVE_TIME_MINUTES=180 \
+DATA_DIR=/Users/<you>/agent-foundry-gate-564 API_HOST=127.0.0.1 API_PORT=4000 \
+npm run tracer:run -- --all --executor-mode real --approve-gates --gate \
+  --data-dir /Users/<you>/agent-foundry-gate-564 \
+  --evidence-dir docs/evidence/issue-564
+```
+
+O runner não para no primeiro scenario vermelho: quatro shapes custam horas, e descobrir três
+defeitos numa sessão vale mais que descobrir um.
+
+`VALIDATION_ACTIVE_TIME_MINUTES` sobrepõe o teto de tempo ativo da campanha, que falha fechado —
+ausente vira 60, presente e não inteiro positivo levanta erro. Os 60 minutos originais foram
+dimensionados para a campanha TODO de um único shape; a evidência medida diz que não cabem os
+quatro (`auth-heavy` terminou 6 de 15 tasks exatamente no teto, e o run `toy` de #527 levou 72
+minutos de relógio). O valor entra no preview da campanha e, por consequência, no snapshot de cada
+bundle, então a evidência sempre registra o orçamento que aquele run recebeu.
+
+Cada superfície exigida pelo golden journey é provada em um lugar específico; o gate não duplica as
+que já têm dono:
+
+| Superfície | Onde é provada |
+| --- | --- |
+| Auth, CRUD, filtros, attachment | `crud-heavy` |
+| Métricas e faixas de data | `dashboard-heavy` |
+| RLS no banco, não só roteamento | `auth-heavy` |
+| Persistência real | gate `database-match` do bundle |
+| Repair | orçamento `targetedRepairs` da campanha, visível em `attempts` |
+| Visual edit e revert | `apps/api/e2e/golden-flow.spec.ts` (operação do builder, não do app gerado) |
 
 ### Canary real dos providers
 
