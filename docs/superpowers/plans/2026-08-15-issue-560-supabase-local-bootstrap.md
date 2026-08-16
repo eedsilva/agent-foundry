@@ -208,9 +208,13 @@ Two independent scaffold files, one task.
 - **Values already present in the environment must win.** The platform's
   credential bridge (ADR 0034) injects the real credentials into the preview's
   dev-server environment, and a stale root `.env` must never overwrite them.
-  `process.loadEnvFile` overwrites unconditionally, so snapshot `process.env`
-  before the call and re-apply the snapshot after it — Node built-ins only, no
-  dotenv parser.
+  `process.loadEnvFile` already guarantees this — it skips any key already
+  present in `process.env`, the same default `dotenv` has, which is why
+  `apps/api/src/env.ts` loads the same file with no guard. (An earlier draft of
+  this plan claimed the opposite and specified a snapshot/restore around the
+  call; that was wrong, verified on Node 22, and the extra code was removed in
+  the simplify pass. The test asserting injected-wins stays — it pins the
+  behaviour the credential bridge depends on rather than trusting a comment.)
 - Forward the child's exit code, so a failing dev server still fails `pnpm dev`.
 - Log one line naming the file it loaded, or that there was none (AC 5).
 - Comment why, naming the cwd mismatch and the injected-wins rule.

@@ -8,12 +8,14 @@
 // dropped. Loading .env here, before spawning both tiers, is the same
 // load-then-spawn sequence scripts/smoke.mjs already uses.
 //
-// A value already in the environment must win: the platform's credential
-// bridge (ADR 0034) injects the real Supabase credentials into this
-// process's env before `pnpm dev` runs, and process.loadEnvFile overwrites
-// unconditionally — so the pre-existing values are snapshotted and
-// re-applied after the load. Dependency-free on purpose: this has to run
-// before `pnpm install` in a directory copied out of the repo.
+// A value already in the environment has to win, because the platform's
+// credential bridge (ADR 0034) injects the real Supabase credentials into
+// this process's env before `pnpm dev` runs and a stale .env must not
+// clobber them. process.loadEnvFile gives that for free — it skips any key
+// already set, the same default dotenv has — which is why apps/api/src/env.ts
+// loads the same file with no guard. scaffold-env.test.ts pins the behaviour
+// rather than trusting the comment. Dependency-free on purpose: this has to
+// run before `pnpm install` in a directory copied out of the repo.
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -21,11 +23,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const envPath = join(root, '.env');
-const injected = { ...process.env };
 
 if (existsSync(envPath)) {
   process.loadEnvFile(envPath);
-  Object.assign(process.env, injected);
   console.log(`dev: loaded ${envPath}`);
 } else {
   console.log('dev: no .env — run `pnpm db:start` first for the Supabase URL and keys.');
