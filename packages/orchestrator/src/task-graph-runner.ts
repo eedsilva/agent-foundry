@@ -163,9 +163,6 @@ interface DeferredAssertion {
   pinnedInputs: readonly ArtifactReference[];
   /** Per-task repair-streak key, carried so the re-assertion keeps the task's own counter. */
   scope?: string;
-  /** The refusal's own words, replayed into the terminal diagnosis. */
-  summary: string;
-  nextActions: readonly string[];
 }
 
 function qualityAttemptStride(node: ForEachTaskStep, browserAcceptance: boolean): number {
@@ -396,8 +393,8 @@ export class TaskGraphRunner {
     input: TaskGraphRunInput,
     task: PlanTask,
     pinnedInputs: readonly ArtifactReference[],
-    pool: TaskPoolContext = {},
-    deferrals?: Map<string, DeferredAssertion>,
+    pool: TaskPoolContext,
+    deferrals: Map<string, DeferredAssertion>,
   ): Promise<StoredArtifact> {
     const { project, workflow, node, runId, signal } = input;
     const worktree = pool.isolation?.label;
@@ -526,6 +523,7 @@ export class TaskGraphRunner {
                 deferrals,
               )
             : null;
+          // Same verify offset as `assertDeferred`'s — keep the two in step.
           const reverified = asserted
             ? await this.verifyTask(
                 input,
@@ -795,8 +793,12 @@ export class TaskGraphRunner {
      * where a refusal is terminal.
      */
     deferrals?: Map<string, DeferredAssertion>,
-    planIteration = 1,
   ): Promise<StoredArtifact | null> {
+    // The sink's presence *is* the discriminator: it is passed on the first
+    // pass (which always plans at `iteration: 1`) and withheld on the
+    // end-of-graph re-assertion (which plans in its own band, past every
+    // attempt's, so `reuseCompletedStep` cannot serve the refusal back).
+    const planIteration = deferrals ? 1 : iterationBase + 1;
     const { project, workflow, node, runId, signal } = input;
     if (task.acceptanceMode === 'deterministic-only') return null;
     if (!node.browser || !node.repair) {
@@ -812,9 +814,6 @@ export class TaskGraphRunner {
     const repairStep = taskBrowserRepairStep(node.repair, node.browser, task);
 
     await this.dependencies.runtime.assertExecutionMayContinue(runId, signal);
-    // Each fresh assertion attempt resets this task's deferral state, so a
-    // retry that succeeds does not leave a stale deferral behind (#571).
-    deferrals?.delete(task.id);
     const plan = await this.dependencies.runtime.executeStep({
       project,
       workflow,
@@ -839,8 +838,6 @@ export class TaskGraphRunner {
           task,
           pinnedInputs,
           ...(scope !== undefined ? { scope } : {}),
-          summary: declared.data.summary,
-          nextActions: declared.data.nextActions,
         });
         await this.emit(
           project.id,
@@ -985,10 +982,9 @@ export class TaskGraphRunner {
         deferred.pinnedInputs,
         base,
         deferred.scope,
-        undefined,
-        base + 1,
       );
       if (asserted) {
+        // Same verify offset as `executeTask`'s reverify — keep the two in step.
         await this.verifyTask(
           input,
           deferred.task,
