@@ -32,6 +32,7 @@ describe('YamlWorkflowRepository', () => {
     expect(taskExecution?.type).toBe('for-each-task');
     expect(taskExecution?.type === 'for-each-task' && taskExecution.verify?.scripts).toEqual([
       'server-actions:check',
+      'route-handlers:check',
     ]);
     expect(
       taskExecution?.type === 'for-each-task' && taskExecution.verify?.optionalScripts,

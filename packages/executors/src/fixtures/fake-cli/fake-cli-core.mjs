@@ -143,6 +143,7 @@ export async function mutateWorkspace(cwd, stepId, label = 'fake') {
     test: 'node --test',
     build: 'node --check src/index.js',
     'server-actions:check': 'node --check src/index.js',
+    'route-handlers:check': 'node --check src/index.js',
     'db:start': 'node -e ""',
     'db:reset': 'node -e ""',
     smoke: 'node -e ""',

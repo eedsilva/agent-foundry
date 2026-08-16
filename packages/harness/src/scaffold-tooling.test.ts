@@ -23,12 +23,26 @@ describe('generated Next.js scaffold tooling', () => {
 
     expect(packageJson.scripts).toMatchObject({
       'server-actions:check': 'node scripts/check-server-actions.mjs',
+      'route-handlers:check': 'node scripts/check-route-handlers.mjs',
       lint: 'eslint . --max-warnings=0',
       'lint:fix': 'eslint . --fix',
       format: 'prettier --write .',
       'format:check': 'prettier --check .',
       test: 'node --test',
     });
+  });
+
+  it('builds the workspace serially and asserts every build artifact', async () => {
+    const packageJson = JSON.parse(
+      await readFile(resolve(scaffoldRoot, 'package.json'), 'utf8'),
+    ) as { scripts: Record<string, string> };
+
+    // One package at a time, so Turbopack never competes with another build for
+    // processes or memory — that is what makes the recursive build agree with
+    // building a package on its own.
+    expect(packageJson.scripts.build).toContain('pnpm --recursive --workspace-concurrency=1 build');
+    expect(packageJson.scripts.build).toContain('node scripts/check-route-handlers.mjs');
+    expect(packageJson.scripts.build).toContain('node scripts/check-build-output.mjs');
   });
 
   it('ships the lint configuration and formatter dependencies', async () => {

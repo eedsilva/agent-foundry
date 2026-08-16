@@ -6,7 +6,7 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest accepted: [0066 a RESTRICTIVE policy drop is detected in security-lint, not in the migration gate](0066-restrictive-policy-drop-detected-in-security-lint.md) — closes the accepted negative of [0064](0064-destructive-migrations-classified-by-effect.md).
+Latest accepted: [0068 a generated app's build is a classified contract, not an exit code](0068-generated-app-build-is-a-classified-contract.md) — builds on [0045](0045-per-task-deterministic-verification.md).
 
 Proposed (Harness Alignment, milestone `Harness Alignment`):
 
