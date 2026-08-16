@@ -51,6 +51,20 @@ await app.register(async (protectedRoutes) => {
     }
     return { items: data };
   });
+
+  protectedRoutes.post('/items', async (request, reply) => {
+    const body = request.body as { title?: unknown } | undefined;
+    const title = typeof body?.title === 'string' ? body.title.trim() : '';
+    if (!title) return reply.code(400).send({ error: 'Item title is required.' });
+
+    const { data, error } = await request.supabase
+      .from('items')
+      .insert({ title })
+      .select('id, title')
+      .single();
+    if (error) throw new Error(`Creating item failed: ${error.message}`);
+    return reply.code(201).send({ item: data });
+  });
 });
 
 // `API_PORT`, not `PORT`: both tiers start from one `pnpm dev`, and the

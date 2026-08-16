@@ -16,24 +16,38 @@ describe('credentialsFromStatus', () => {
     });
   });
 
-  it('returns undefined when a required field is missing', () => {
+  // R4 (#560): a partial `supabase status` payload used to come back as a
+  // silent `undefined`, so #initialize skipped writing app secrets without
+  // ever saying why — the preview then failed downstream with "Invalid
+  // login credentials" and nothing pointing back here. These three cases
+  // now throw, naming exactly which fields were unusable (never a value),
+  // so the failure surfaces at the point it actually happened.
+
+  it('throws naming the missing field when one required field is absent', () => {
     const stdout = JSON.stringify({ API_URL: 'http://127.0.0.1:54321', ANON_KEY: 'anon-secret' });
 
-    expect(credentialsFromStatus(stdout)).toBeUndefined();
+    expect(() => credentialsFromStatus(stdout)).toThrow(/SERVICE_ROLE_KEY/);
+    expect(() => credentialsFromStatus(stdout)).not.toThrow(/anon-secret/);
   });
 
-  it('returns undefined when API_URL is not a valid URL', () => {
+  it('throws naming all three fields when the payload has none of them', () => {
+    expect(() => credentialsFromStatus(JSON.stringify({}))).toThrow(
+      /API_URL.*ANON_KEY.*SERVICE_ROLE_KEY/s,
+    );
+  });
+
+  it('throws naming API_URL when it is not a valid URL', () => {
     const stdout = JSON.stringify({
       API_URL: 'not-a-url',
       ANON_KEY: 'anon-secret',
       SERVICE_ROLE_KEY: 'service-role-secret',
     });
 
-    expect(credentialsFromStatus(stdout)).toBeUndefined();
+    expect(() => credentialsFromStatus(stdout)).toThrow(/API_URL/);
   });
 
-  it('returns undefined when stdout is not valid JSON', () => {
-    expect(credentialsFromStatus('not json')).toBeUndefined();
+  it('throws without field names when stdout is not valid JSON', () => {
+    expect(() => credentialsFromStatus('not json')).toThrow(/JSON/);
   });
 });
 

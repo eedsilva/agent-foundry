@@ -23,5 +23,21 @@ describe('scaffold cross-tenant denial browser plan', () => {
       kind: 'hidden',
       locator: { by: 'text', text: "Another account's item" },
     });
+
+    const lastFill = plan.steps
+      .map((step) => step.action)
+      .filter(
+        (action): action is Extract<typeof action, { kind: 'fill' }> => action.kind === 'fill',
+      )
+      .at(-1);
+    expect(lastFill).toEqual({
+      kind: 'fill',
+      locator: { by: 'label', label: 'New item' },
+      value: 'Browser-created item',
+    });
+    expect(plan.steps.at(-1)?.action).toEqual({
+      kind: 'click',
+      locator: { by: 'role', role: 'button', name: 'Add item' },
+    });
   });
 });

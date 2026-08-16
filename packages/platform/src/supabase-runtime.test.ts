@@ -117,6 +117,12 @@ Studio URL: http://127.0.0.1:${studio}`,
         DB_URL: `postgresql://postgres:db-secret@127.0.0.1:${db}/postgres`,
         JWT_SECRET: 'jwt-secret',
         ANON_KEY: 'anon-secret',
+        // A real `supabase status --output json` always reports this too
+        // (R4, #560) — credentialsFromStatus now throws if it's absent, so
+        // this default fixture has to carry it or every test that merely
+        // initializes a project (not just the ones about app secrets) would
+        // start failing on an unrealistic, incomplete stub.
+        SERVICE_ROLE_KEY: 'service-role-secret',
       }),
       stderr: '',
       exitCode: 0,
@@ -310,14 +316,7 @@ enabled = false`);
   });
 
   it('writes Supabase app credentials to the project .env, preserving other secrets', async () => {
-    const command = vi.fn<SupabaseCommand>(async (...args) => {
-      const result = await statusCommand(...args);
-      if (args[0] !== 'status') return result;
-      const status = JSON.parse(result.stdout) as Record<string, string>;
-      status.SERVICE_ROLE_KEY = 'service-role-secret';
-      return { ...result, stdout: JSON.stringify(status) };
-    });
-    const { runtime } = fixture(command);
+    const { runtime } = fixture();
     const envPath = join(dataDir, 'projects', 'project-a', '.env');
     await mkdir(join(dataDir, 'projects', 'project-a'), { recursive: true });
     await writeFile(envPath, 'STRIPE_SECRET_KEY=sk_test_operator\n');
@@ -344,13 +343,32 @@ enabled = false`);
     expect(config).toMatch(/^enable_confirmations = false$/m);
   });
 
-  it('does not write app credentials when the status response omits them', async () => {
-    const { runtime } = fixture();
+  // R4 (#560): a `supabase status` payload missing an app-credential field
+  // used to fail *silently* here — #writeAppSecrets was skipped, initialize
+  // still reported success, and the preview failed much later with an
+  // unrelated "Invalid login credentials". It must now fail initialize
+  // itself, name the missing field, and clean up the stack it just started
+  // — the same as any other CLI failure during initialize.
+  it('fails initialize loudly, naming the field, when the status response omits an app credential', async () => {
+    const workdir = join(dataDir, 'projects', 'project-a', 'environment');
+    const command = vi.fn<SupabaseCommand>(async (...args) => {
+      const result = await statusCommand(...args);
+      if (args[0] !== 'status') return result;
+      const status = JSON.parse(result.stdout) as Record<string, unknown>;
+      delete status.SERVICE_ROLE_KEY;
+      return { ...result, stdout: JSON.stringify(status) };
+    });
+    const { runtime } = fixture(command);
 
-    await runtime.initialize({ projectId: 'project-a' });
+    const rejection = await runtime.initialize({ projectId: 'project-a' }).catch((error) => error);
 
+    expect(rejection).toMatchObject({ operation: 'initialize' });
+    if (!(rejection instanceof EnvironmentOperationError)) throw rejection;
+    expect(rejection.diagnostic).toContain('SERVICE_ROLE_KEY');
+    expect(rejection.diagnostic).not.toMatch(/anon-secret|db-secret|jwt-secret/);
     const envPath = join(dataDir, 'projects', 'project-a', '.env');
     await expect(readFile(envPath, 'utf8')).rejects.toThrow();
+    await expect(stat(workdir)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('tears down the exact workdir after a partial start failure', async () => {
@@ -2099,9 +2117,16 @@ describe('verifySchema (#481)', () => {
   });
 
   it('fails clearly when supabase status reports no database connection URL', async () => {
+    let statusCalls = 0;
     const command = vi.fn<SupabaseCommand>(async (...args) => {
       if (args[0] === 'status') {
-        return { stdout: JSON.stringify({ API_URL: 'http://127.0.0.1:54321' }), exitCode: 0 };
+        statusCalls += 1;
+        // initialize()'s own status call must stay healthy — otherwise
+        // credentialsFromStatus (R4, #560) rejects it before verifySchema,
+        // the thing this test actually exercises, is ever reached.
+        if (statusCalls > 1) {
+          return { stdout: JSON.stringify({ API_URL: 'http://127.0.0.1:54321' }), exitCode: 0 };
+        }
       }
       return statusCommand(...args);
     });
@@ -2114,11 +2139,17 @@ describe('verifySchema (#481)', () => {
   });
 
   it('rejects a DB_URL that parses but is not a Postgres URL', async () => {
+    let statusCalls = 0;
     const command = vi.fn<SupabaseCommand>(async (...args) => {
       if (args[0] === 'status') {
-        // CLI output drift: any parseable URL used to be accepted and handed
-        // straight to the Postgres driver.
-        return { stdout: JSON.stringify({ DB_URL: 'http://127.0.0.1:54322' }), exitCode: 0 };
+        statusCalls += 1;
+        // See the previous test: initialize()'s own status call must stay
+        // healthy so it doesn't fail before verifySchema runs.
+        if (statusCalls > 1) {
+          // CLI output drift: any parseable URL used to be accepted and handed
+          // straight to the Postgres driver.
+          return { stdout: JSON.stringify({ DB_URL: 'http://127.0.0.1:54322' }), exitCode: 0 };
+        }
       }
       return statusCommand(...args);
     });

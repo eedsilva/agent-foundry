@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { EmptyState } from '../components/empty-state';
 import { Button } from '../components/ui/button';
-import { signOut } from './actions';
+import { createItem, signOut } from './actions';
 
 // The web tier never queries the database (ADR 0038): it asks the API tier
 // with the caller's access token, and the API reads as that user under RLS.
@@ -51,6 +51,20 @@ export default async function HomePage() {
           ))}
         </ul>
       )}
+      <form action={createItem} className="flex flex-col gap-2">
+        <label htmlFor="item-title" className="text-sm font-medium">
+          New item
+        </label>
+        <div className="flex gap-2">
+          <input
+            id="item-title"
+            name="title"
+            required
+            className="min-w-0 flex-1 rounded border px-3 py-2"
+          />
+          <Button type="submit">Add item</Button>
+        </div>
+      </form>
       <form action={signOut}>
         <Button type="submit">Sign out</Button>
       </form>

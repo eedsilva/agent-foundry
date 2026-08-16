@@ -86,6 +86,7 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
       'scripts/check-service-role.mjs',
       'scripts/database-row-match.mjs',
       'scripts/db.mjs',
+      'scripts/dev.mjs',
       'scripts/smoke.mjs',
       'supabase/config.toml',
       'supabase/migrations/20260726000000_rls_baseline.sql',

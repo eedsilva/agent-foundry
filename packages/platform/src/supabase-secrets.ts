@@ -9,30 +9,46 @@ export interface SupabaseAppCredentials {
   serviceRoleKey: string;
 }
 
-/** Extracts the local connection credentials from `supabase status --output json` stdout. */
-export function credentialsFromStatus(stdout: string): SupabaseAppCredentials | undefined {
+/**
+ * Extracts the local connection credentials from `supabase status --output
+ * json` stdout.
+ *
+ * Throws rather than returning `undefined` for an unparseable payload or a
+ * missing/invalid field (R4, #560): a silent `undefined` here used to make
+ * `#initialize` skip writing app secrets with no error, no log, and no
+ * event, so the preview came up without them and failed much later with an
+ * unrelated "Invalid login credentials". The thrown message names the
+ * offending field *names* only — never a field's value — matching the
+ * redaction rules the runtime's diagnostic path already enforces.
+ */
+export function credentialsFromStatus(stdout: string): SupabaseAppCredentials {
   let status: unknown;
   try {
     status = JSON.parse(stdout);
-  } catch {
-    return undefined;
+  } catch (cause) {
+    throw new Error('supabase status --output json did not return valid JSON.', { cause });
   }
-  if (!status || typeof status !== 'object' || Array.isArray(status)) return undefined;
+  if (!status || typeof status !== 'object' || Array.isArray(status)) {
+    throw new Error('supabase status --output json did not return a JSON object.');
+  }
   const source = status as Record<string, unknown>;
   const apiUrl = source.API_URL;
   const anonKey = source.ANON_KEY;
   const serviceRoleKey = source.SERVICE_ROLE_KEY;
-  if (
-    typeof apiUrl !== 'string' ||
-    !URL.canParse(apiUrl) ||
-    typeof anonKey !== 'string' ||
-    !anonKey ||
-    typeof serviceRoleKey !== 'string' ||
-    !serviceRoleKey
-  ) {
-    return undefined;
+  const invalid: string[] = [];
+  if (typeof apiUrl !== 'string' || !URL.canParse(apiUrl)) invalid.push('API_URL');
+  if (typeof anonKey !== 'string' || !anonKey) invalid.push('ANON_KEY');
+  if (typeof serviceRoleKey !== 'string' || !serviceRoleKey) invalid.push('SERVICE_ROLE_KEY');
+  if (invalid.length > 0) {
+    throw new Error(
+      `supabase status --output json is missing or has an invalid value for required field(s) ${invalid.join(', ')}.`,
+    );
   }
-  return { apiUrl, anonKey, serviceRoleKey };
+  return {
+    apiUrl: apiUrl as string,
+    anonKey: anonKey as string,
+    serviceRoleKey: serviceRoleKey as string,
+  };
 }
 
 const UNQUOTED_SAFE = /^[\w.\-:/@?=&%+]*$/;
