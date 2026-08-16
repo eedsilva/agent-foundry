@@ -27,9 +27,10 @@ discard it and fail the graph.
 `executeTask`'s `browserAcceptance` branch now passes a `deferrals: Map<string,
 DeferredAssertion>` sink into `assertTask`. When the plan step's parsed
 `AgentArtifactSchema` comes back `status: 'blocked'` and a sink is present,
-`assertTask` records a `DeferredAssertion` (the task, its pinned inputs, its
-repair-streak `scope`, and the refusal's own `summary`/`nextActions`), emits a
-`quality.deferred` event, and returns `null` instead of throwing. The task's
+`assertTask` records a `DeferredAssertion` (the task, its pinned inputs and its
+repair-streak `scope` — everything the re-assertion needs, and nothing else),
+emits a `quality.deferred` event carrying the refusal's own
+`summary`/`nextActions`, and returns `null` instead of throwing. The task's
 attempt loop in `executeTask` proceeds exactly as if there were no browser
 acceptance for this attempt: `reverified` is `null`, the loop commits
 `repaired ?? implementation`, and `task.completed` still fires.
@@ -57,13 +58,14 @@ graph, with the whole graph's context available, instead of at the moment the
 tester first noticed the gap.
 
 **The re-assertion runs in its own iteration band, not `iteration: 1`.**
-`assertTask` grew a `planIteration` parameter (default `1`, preserving every
-existing call site's behavior) that becomes the plan step's `executeStep`
-`iteration`. `assertDeferred` computes `deferredIterationBase(node)` —
+`assertTask` derives the plan step's `executeStep` `iteration` from the sink it
+was handed: present means the first pass, which plans at `1` as it always has;
+absent means the re-assertion, which plans at `iterationBase + 1`.
+`assertDeferred` passes `deferredIterationBase(node)` as that base —
 `node.implement.maxAttempts * qualityAttemptStride(node, true)`, i.e. past
-every band any real attempt could reach — and calls `assertTask` with
-`planIteration: base + 1`. This is not decoration: `reuseCompletedStep` in
-`packages/orchestrator/src/workflow-orchestrator.ts` keys reuse of a prior
+every band any real attempt could reach. This is not decoration:
+`reuseCompletedStep` in `packages/orchestrator/src/workflow-orchestrator.ts`
+keys reuse of a prior
 step run on `(nodeId, stepId, iteration, idempotencyKey)`. The refused plan
 step already has a completed step run at `iteration: 1` with a stable
 idempotency key. Re-planning at `iteration: 1` would let `reuseCompletedStep`
@@ -97,10 +99,26 @@ Because a browser-visible task always runs solo on the primary checkout (the
 pooled walk's `solo` gate breaks the dispatch loop for any task carrying
 browser acceptance), the deferred iteration band can never collide with a
 conflict-retry attempt band from a *concurrently running* task — there isn't
-one. That non-collision is a consequence of the solo rule already in place
-for browser-visible tasks, not of `deferredIterationBase`'s arithmetic; the
-arithmetic only has to clear every band a single task's own attempts and
-conflict retries could reach, which it does by construction.
+one. The solo rule is load-bearing, not incidental: it is what keeps
+`conflictRetries` at 0 for these tasks. The attempt loop's bound is
+`attempt <= maxAttempts + priorConflictRetries + conflictRetries`, so a single
+conflict retry would put `qualityAttemptBase` at exactly
+`maxAttempts * stride` — which is `deferredIterationBase` itself, a collision.
+Relaxing the solo rule for browser-visible tasks therefore requires widening
+the deferred band by the conflict allowance, not just deleting the `solo` gate.
+
+**Deferral is scoped to one `for-each-task` node.** `runTraced` and `runPooled`
+each own their own deferral map, drained at the end of their own walk. A
+refusal whose integrating work lives in a *later node* still fails the run
+exactly as it did before this change.
+
+**A resume re-reads the refused re-assertion from the store.** The band guard
+protects the re-assertion from the *first pass* within one process. Across a
+resume, the completed step run at `base + 1` is itself reusable by
+`reuseCompletedStep`, so a resumed run replays the same refusal rather than
+asking again. That is the same verdict on the same unchanged workspace, so it
+is not a wrong answer — but it does mean a resume cannot rescue a deferral, and
+invalidating that step run would be needed if that ever becomes desirable.
 
 `quality.deferred` joins `quality.approved` and `quality.repair_requested` in
 `ProjectEventSchema` as a third terminal-ish verdict for a browser plan step,
