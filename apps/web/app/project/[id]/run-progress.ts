@@ -35,8 +35,9 @@ export function runProgress(
   const total = workflowDef ? workflowDef.nodes.length : null;
   if (!runDetail) return { done: 0, total, currentStepTitle: null };
 
-  const done = runDetail.steps.filter(({ step }) => TERMINAL_STEP_STATUSES.has(step.status)).length;
-  const inFlight = runDetail.steps.filter(({ step }) => !TERMINAL_STEP_STATUSES.has(step.status));
+  const activeSteps = runDetail.steps.filter(({ step }) => !step.invalidatedAt);
+  const done = activeSteps.filter(({ step }) => TERMINAL_STEP_STATUSES.has(step.status)).length;
+  const inFlight = activeSteps.filter(({ step }) => !TERMINAL_STEP_STATUSES.has(step.status));
   const currentStepTitle =
     inFlight.length === 1
       ? (workflowDef?.nodes.find((node) => node.id === inFlight[0]!.step.nodeId)?.title ?? null)

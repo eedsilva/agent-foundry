@@ -21,6 +21,13 @@ test('rota acima do orçamento é breach', () => {
   assert.equal(results[0].measuredKb, 1200);
 });
 
+test('um único byte acima do orçamento é breach', () => {
+  const manifest = [{ route: '/router', firstLoadUncompressedJsBytes: 1050 * 1024 + 1 }];
+  const { ok, results } = evaluateFirstLoadJsBudgets(manifest, { '/router': 1050 });
+  assert.equal(ok, false);
+  assert.equal(results[0].breach, true);
+});
+
 test('rota orçada ausente do manifest é breach, não passa silenciosamente', () => {
   const manifest = [{ route: '/', firstLoadUncompressedJsBytes: 500 * 1024 }];
   const { ok, results } = evaluateFirstLoadJsBudgets(manifest, budgets);

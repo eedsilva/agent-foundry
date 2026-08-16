@@ -151,4 +151,24 @@ describe('runProgress', () => {
       currentStepTitle: null,
     });
   });
+
+  it('ignores invalidated steps left behind by a retry', () => {
+    const detail = makeRunDetail([
+      makeStep({
+        id: 'old-implement',
+        nodeId: 'implement',
+        status: 'completed',
+        invalidatedAt: '2026-08-10T00:01:00.000Z',
+      }),
+      makeStep({ id: 'plan', nodeId: 'plan', status: 'completed' }),
+      makeStep({ id: 'new-implement', nodeId: 'implement', status: 'running' }),
+    ]);
+    const workflowDef = makeWorkflowDef(['plan', 'implement']);
+
+    expect(runProgress(detail, workflowDef)).toEqual({
+      done: 1,
+      total: 2,
+      currentStepTitle: 'Título implement',
+    });
+  });
 });

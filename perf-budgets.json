@@ -6,5 +6,12 @@
   },
   "cls": {
     "builder": 0.1
+  },
+  "webVitals": {
+    "builder": {
+      "ttfb": 2000,
+      "lcp": 5000,
+      "inp": 500
+    }
   }
 }

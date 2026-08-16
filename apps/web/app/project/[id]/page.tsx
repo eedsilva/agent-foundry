@@ -490,7 +490,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             onDecide={(request, node, action) => void openDecide(request, node, action)}
             onOpenApprovalDetail={openApprovalDetail}
             onRetry={() => void retry()}
-            onShowTimeline={() => selectTab('atividade')}
+            onShowTimeline={() => {
+              setAdvanced(true);
+              selectTab('atividade');
+            }}
             onPause={() => void pause()}
             onCancelRun={(runId) => void cancel(runId)}
           />

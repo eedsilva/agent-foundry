@@ -33,11 +33,10 @@ rather than scattered across task PRs.
   this catches the real regression (someone importing a heavy library into the builder).
 - **Cumulative Layout Shift (CLS) on the golden flow**, budgeted at the standard "good"
   threshold of `0.1` in the same `perf-budgets.json`, asserted by
-  `apps/api/e2e/golden-flow.spec.ts`. CLS is a layout measurement, so it means the same thing
-  under `next dev` (what the golden-flow e2e runs) as it does in production — unlike LCP, INP
-  or TTFB, which are explicitly **not** budgeted because the e2e runs against on-demand
-  compilation of an unminified bundle on a shared CI runner; a budget on them would be pure
-  flake, not signal.
+  `apps/api/e2e/golden-flow.spec.ts`.
+- **Web Vitals on the same golden flow**, with native browser measurements for TTFB, LCP and
+  INP. The budgets are intentionally broad for the dev-server path (2000ms, 5000ms and 500ms)
+  and fail when a metric is unavailable or exceeds its limit.
 - `golden-flow.spec.ts` gets its own `golden-flow-e2e` CI job, modelled on the existing
   `issue-radar-e2e` job, so the axe scan (and the new CLS assertion) runs on every PR without
   requiring Docker or Supabase. `supabase-data-plane-e2e` is left as-is; this job makes it no
@@ -86,11 +85,9 @@ the builder's target is a solo developer's desktop tool (`docs/PRODUCT_CONTRACT.
 
 ## Considered Options
 
-- **Time-based performance budgets (LCP/INP/TTFB) instead of, or alongside, bundle size and
-  CLS.** Rejected — the only place these could be measured in CI is the golden-flow e2e
-  against `next dev`, where they reflect runner load and dev-mode compilation, not the
-  product. A production-build timing budget (e.g. Lighthouse CI) is a different measurement
-  path and out of scope here.
+- **A production-only timing gate.** Rejected for this issue — the golden flow's native
+  measurements are a bounded regression signal for the builder path, while a future Lighthouse
+  run can add production-only thresholds without replacing these checks.
 - **A new CI job for the perf-budget check.** Rejected — the existing `build` job already
   produces exactly the artifact (`apps/web/.next/diagnostics/route-bundle-stats.json`) the
   check needs; a separate job would just rebuild the same thing.
@@ -120,7 +117,7 @@ the builder's target is a solo developer's desktop tool (`docs/PRODUCT_CONTRACT.
   needs a new source — it already fails loudly rather than silently passing if that file goes
   missing, so the break will be visible in CI rather than silent.
 - `DESIGN.md`'s migration table (§10, row 7) is updated to name what this branch actually
-  verifies (WCAG 2.2 AA via axe on five surfaces, a 390px overflow probe, and these two
+  verifies (WCAG 2.2 AA via axe on five surfaces, a 390px overflow probe, and these three
   budgets) rather than the older "contrast AA verified, ≤1000px collapse tested" wording.
-- Explicitly out of scope: LCP/INP/TTFB budgets under any measurement path, full responsive
-  parity below `lg`, and fixing `supabase-data-plane-e2e`.
+- Explicitly out of scope: full responsive parity below `lg` and fixing
+  `supabase-data-plane-e2e`.

@@ -9,7 +9,7 @@ import {
   setKnowledgeFilePinned,
   uploadKnowledgeFile,
 } from '../../../lib/api';
-import { BTN, ERROR_BOX, FIELD, HINT, LABEL, PANEL_HEADER, SECTION_TITLE } from '@/lib/ui';
+import { BTN, FIELD, HINT, LABEL, PANEL_HEADER, SECTION_TITLE } from '@/lib/ui';
 
 export const MAX_KNOWLEDGE_FILE_BYTES = 4 * 1024 * 1024;
 
@@ -158,9 +158,9 @@ export function KnowledgeFiles({
         </label>
       </div>
       {error ? (
-        <p role="alert" className={`${ERROR_BOX} mt-3`}>
-          {error}
-        </p>
+        <div className="mt-3">
+          <PaneState kind="error" title={error} />
+        </div>
       ) : null}
       {knowledgeFiles.length === 0 ? (
         <p className="text-ink-subtle mt-3 text-[13px]">Nenhum knowledge file ativo.</p>

@@ -158,7 +158,7 @@ Custom, in `apps/web/components/`:
 | `Timeline`   | Event list with dot rail, grouping, and live/polling indicator.                |
 | `DiffPane`   | Unified diff renderer. Horizontal scroll bounded to its container.             |
 | `StatTile`   | KPI tile for the router dashboard.                                             |
-| `EmptyState` | Icon + one line + optional action.                                             |
+| `PaneState`  | Empty, loading and error state with the correct live-region semantics.         |
 
 No component gets built until a second caller exists, except the six above.
 

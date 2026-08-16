@@ -300,21 +300,20 @@ every file would be test theatre.
 
 ### The measurement decision (this is the durable part)
 
-Two budgets, chosen because both are *deterministic in CI*:
+Three budgets, chosen to cover bundle bytes, layout stability and the browser timings users
+feel in the golden flow:
 
 1. **Client bundle size, from the production build.** `next build` writes
    `apps/web/.next/app-build-manifest.json` and the per-route JS chunks. A route whose First
    Load JS crosses its budget fails the check. This catches the real regression — someone
    importing a heavy library into the builder — and it is byte-exact, not timing-dependent.
 2. **Cumulative Layout Shift on the golden flow.** CLS is the Web Vital that maps to this
-   issue's own title ("performance percebida"), and it is a *layout* measurement, so it
-   means the same thing under `next dev` (which is what the golden-flow e2e runs) as it
-   does in production.
-
-**LCP, INP and TTFB are explicitly NOT budgeted.** The golden-flow e2e runs `next dev`
-(`golden-flow.spec.ts:181`), where those numbers reflect on-demand compilation of an
-unminified bundle on a shared CI runner. A budget on them would be pure flake. Say this in
-the doc; do not quietly omit it.
+  issue's own title ("performance percebida"), and it is a *layout* measurement, so it
+  means the same thing under `next dev` (which is what the golden-flow e2e runs) as it
+  does in production.
+3. **TTFB, LCP and INP on the same golden flow.** Native browser Performance APIs record
+   the values after the full interaction sequence. The thresholds are intentionally broad
+   for the dev-server path, but missing or over-budget values fail the gate.
 
 ### Deliverable
 
@@ -323,7 +322,8 @@ the doc; do not quietly omit it.
   ```json
   {
     "firstLoadJsKb": { "/": <n>, "/project/[id]": <n>, "/router": <n> },
-    "cls": { "builder": 0.1 }
+    "cls": { "builder": 0.1 },
+    "webVitals": { "builder": { "ttfb": 2000, "lcp": 5000, "inp": 500 } }
   }
   ```
   Set each `firstLoadJsKb` from the *current measured* value plus roughly 15% headroom, and
@@ -355,14 +355,14 @@ the doc; do not quietly omit it.
   `npm run e2e --workspace @agent-foundry/api -- golden-flow.spec.ts`. Leave the
   `supabase-data-plane-e2e` job alone — fixing it is out of scope for #97, and the new job
   makes it no longer the only route.
-- **`docs/PERFORMANCE_BUDGETS.md`** — what is budgeted, the measured baselines, why LCP/INP
-  are not budgeted, and how to raise a budget deliberately (measure, justify in the PR).
+- **`docs/PERFORMANCE_BUDGETS.md`** — what is budgeted, the measured baselines, and how to
+  raise a budget deliberately (measure, justify in the PR).
 - **`DESIGN.md:332`** currently claims the "a11y and responsive pass" line item is complete
   with acceptance "contrast AA verified, ≤1000px collapse tested". Update it to name what is
   actually verified after this branch: WCAG 2.2 AA via axe on five surfaces, a 390px
-  overflow probe, and the two budgets. One edit, no rewriting of the surrounding table.
+  overflow probe, and the three budgets. One edit, no rewriting of the surrounding table.
 - **ADR** `docs/adr/0067-performance-budgets-and-builder-state-primitive.md` recording the
-  durable decisions from this whole branch: the two budgets and their rationale, the single
+  durable decisions from this whole branch: the three budgets and their rationale, the single
   `PaneState` primitive from Task 1, and the below-`lg` stacking degradation from Task 3.
   Follow the format of `docs/adr/0061-*.md` (Status / Date / Owners / Tracked by / Context /
   Decision / Considered Options / Consequences). Status: Proposed. Tracked by issue #97.
@@ -375,12 +375,12 @@ breach).
 
 ### Do not
 
-Do not touch `golden-flow.spec.ts` in this task — Task 5 owns every e2e change, including
-the CLS assertion that reads this task's `perf-budgets.json`.
+Task 5 owns the golden-flow e2e changes, including the CLS and Web Vitals assertions that
+read this task's `perf-budgets.json`.
 
 ---
 
-## Task 5 — Verify it: WCAG 2.2 AA, keyboard-only, narrow viewport, CLS
+## Task 5 — Verify it: WCAG 2.2 AA, keyboard-only, narrow viewport, CLS and Web Vitals
 
 **Criteria 2, 3 and 5's measurement half.** This task owns every change to
 `apps/api/e2e/golden-flow.spec.ts`, and fixes whatever the new assertions surface in
@@ -416,13 +416,13 @@ the CLS assertion that reads this task's `perf-budgets.json`.
    **"Pular para o conteúdo"**. Assert in the e2e that the first Tab from page load focuses
    it and that activating it moves focus into `<main>`. `<main>` needs an `id` and
    `tabIndex={-1}` for focus to actually land.
-5. **CLS measurement against Task 4's budget.** Install a `PerformanceObserver` for
-   `layout-shift` before navigating to the builder, exercise the page (the run through the
-   inspector tabs the suite already does), then read the accumulated score and assert it is
-   at or under `perf-budgets.json`'s `cls.builder`. Read the budget from the JSON file — do
-   not hardcode `0.1` in the spec. Log the measured value with `console.log` so a CI run
-   shows the number even when it passes; a budget nobody can see the trend of is a budget
-   nobody maintains.
+5. **CLS and Web Vitals measurement against Task 4's budgets.** Install a `PerformanceObserver` for
+  `layout-shift` before navigating to the builder, exercise the page (the run through the
+  inspector tabs the suite already does), then read the accumulated score and assert it is
+  at or under `perf-budgets.json`'s `cls.builder`. Read the budget from the JSON file — do
+  not hardcode `0.1` in the spec. Log the measured value with `console.log` so a CI run
+  shows the number even when it passes. Read native TTFB, LCP and INP after the same flow,
+  compare them to `webVitals.builder`, and log all three values.
 
 ### Fixes
 
@@ -432,8 +432,22 @@ be its own task, report it rather than half-doing it.
 ### Verification
 
 `npm run build:packages && npm run e2e --workspace @agent-foundry/api -- golden-flow.spec.ts`
-must pass, and your report must include the axe/CLS/overflow output. This suite is CI-only
+must pass, and your report must include the axe/CLS/Web Vitals/overflow output. This suite is CI-only
 per AGENTS.md, so a local green run is the evidence.
+
+## Security, migration, rollback and DoD evidence
+
+- Security: the changes add no credentials, persistence schema, or new browser origin. Web
+  Vitals stay in the browser's local Performance API; only numeric timings are logged.
+  Preview retry continues through the existing authenticated API and now retries the failed
+  stop operation instead of starting a second session.
+- Migration: none. `PaneState`, progress filtering and the performance checks are backward
+  compatible code/test changes; `perf-budgets.json` only adds measured thresholds.
+- Rollback: revert this branch's commits. The previous state primitive, progress display and
+  bundle-only budget path return without data migration or cleanup.
+- DoD evidence: `npm run test:unit:fast`, the slow bucket, `npm run check:static`, typecheck,
+  `npm run perf:check`, build and the dedicated golden-flow CI job are the required gates;
+  the issue/PR must attach their final outputs before claiming closure.
 
 ---
 

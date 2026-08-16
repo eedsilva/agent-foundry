@@ -132,6 +132,15 @@ export function ChatPane({
     }
   }
 
+  async function retryConversation() {
+    setConversationError('');
+    try {
+      setConversation(await getConversation(id));
+    } catch (cause) {
+      setConversationError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   // The preview pane's conversational fallback runs this exact flow, and the
   // flow writes state that now lives here. Assigning after every render keeps
   // the ref current well before any preview interaction can fire it.
@@ -264,7 +273,15 @@ export function ChatPane({
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {conversationError ? (
           <div className="mb-3">
-            <PaneState kind="error" title={conversationError} />
+            <PaneState
+              kind="error"
+              title={conversationError}
+              action={
+                <button type="button" className={BTN} onClick={() => void retryConversation()}>
+                  Tentar novamente
+                </button>
+              }
+            />
           </div>
         ) : null}
         {previewFailure ? (

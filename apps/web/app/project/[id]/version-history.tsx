@@ -15,7 +15,6 @@ import {
   CHIP,
   DIFF_ADDED,
   DIFF_REMOVED,
-  ERROR_BOX,
   HINT,
   MONO_PANE,
   PANEL,
@@ -50,7 +49,12 @@ export function VersionHistory({
   const [error, setError] = useState('');
 
   async function refresh() {
-    setVersions(await listVersions(projectId));
+    setError('');
+    try {
+      setVersions(await listVersions(projectId));
+    } catch (cause) {
+      setError(message(cause));
+    }
   }
 
   useEffect(() => {
@@ -173,9 +177,15 @@ export function VersionHistoryView({
           </button>
         </div>
         {error ? (
-          <p role="alert" className={ERROR_BOX}>
-            {error}
-          </p>
+          <PaneState
+            kind="error"
+            title={error}
+            action={
+              <button type="button" className={BTN} onClick={() => void refresh()}>
+                Tentar novamente
+              </button>
+            }
+          />
         ) : null}
         {loading ? (
           <p className={HINT}>Carregando versões…</p>

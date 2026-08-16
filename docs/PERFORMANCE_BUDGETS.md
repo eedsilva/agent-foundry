@@ -1,7 +1,7 @@
 # Performance budgets
 
-Two budgets, enforced in CI. Both are deterministic — byte-exact or a layout measurement —
-which is why they are the only two. See ADR
+Three budgets, enforced in CI. They cover bundle bytes, layout shift, and the browser's
+navigation/interaction timings. See ADR
 [0067](adr/0067-performance-budgets-and-builder-state-primitive.md).
 
 ## 1. Client bundle size (First Load JS)
@@ -61,17 +61,18 @@ CLS threshold). Asserted by `apps/api/e2e/golden-flow.spec.ts` (added in the tas
 this one, issue #97 Task 5), which reads the same `perf-budgets.json` this task ships.
 
 CLS is a layout measurement, not a timing one, so it means the same thing under `next dev`
-(what the golden-flow e2e runs against) as it does against a production build. That is why it
-is budgeted and LCP/INP/TTFB are not — see below.
+(what the golden-flow e2e runs against) as it does against a production build. The Web Vitals
+section below records the complementary timing budgets with intentionally broad dev-server
+thresholds.
 
-## What is explicitly NOT budgeted, and why
+## 3. Web Vitals on the golden flow
 
-**LCP, INP and TTFB are not budgeted.** The golden-flow e2e runs the app under `next dev`
-(`golden-flow.spec.ts:181`), where those numbers reflect on-demand compilation of an
-unminified bundle on a shared, variably-loaded CI runner. A budget on any of them would be
-measuring CI runner noise, not the product — pure flake, not signal. If a production timing
-budget is ever wanted, it needs its own measurement path against a production build (e.g. a
-Lighthouse CI run), not the golden-flow e2e.
+Source of truth: `perf-budgets.json` (`webVitals.builder`), asserted by
+`apps/api/e2e/golden-flow.spec.ts`. The golden flow records native browser timings after the
+same interaction sequence on every PR: TTFB from `PerformanceNavigationTiming`, LCP from the
+largest-contentful-paint entry, and INP from the observed event durations. The budgets are
+deliberately generous for the dev-server test path (2000ms / 5000ms / 500ms) but fail when a
+regression makes a metric unavailable or slower than its limit.
 
 ## CI wiring — golden-flow-e2e job
 

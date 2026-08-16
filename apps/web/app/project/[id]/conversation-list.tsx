@@ -9,7 +9,7 @@ import type {
   Operation,
 } from '@agent-foundry/contracts';
 import { PaneState } from '@/components/pane-state';
-import { BTN, CHIP, ERROR_BOX, MONO_PANE, TEXTAREA } from '@/lib/ui';
+import { BTN, CHIP, MONO_PANE, TEXTAREA } from '@/lib/ui';
 
 export type ProposalEditorState = {
   operationId: string;
@@ -199,9 +199,7 @@ export function ConversationList({
                     }
                     if (streamEvent.type === 'error') {
                       return (
-                        <p key={streamEvent.id} role="alert" className={ERROR_BOX}>
-                          {streamEvent.message}
-                        </p>
+                        <PaneState key={streamEvent.id} kind="error" title={streamEvent.message} />
                       );
                     }
                     // No 'approval' case: ConversationOperationRunner (the only

@@ -158,6 +158,27 @@ async function expectVisibleFocus(target: Locator, label: string): Promise<void>
     `${label} has no visible focus indicator: ${JSON.stringify(style)}`,
   ).toBe(true);
 }
+
+async function readWebVitals(page: Page): Promise<{
+  ttfb: number;
+  lcp: number | null;
+  inp: number | null;
+}> {
+  return page.evaluate(() => {
+    const navigation = performance.getEntriesByType('navigation')[0] as
+      PerformanceNavigationTiming | undefined;
+    const vitals = (
+      window as unknown as {
+        __webVitals?: { lcp: number | null; inp: number | null };
+      }
+    ).__webVitals;
+    return {
+      ttfb: navigation ? navigation.responseStart - navigation.requestStart : 0,
+      lcp: vitals?.lcp ?? null,
+      inp: vitals?.inp ?? null,
+    };
+  });
+}
 const BROWSER_TEST_PLAN = {
   schemaVersion: '1' as const,
   status: 'completed' as const,
@@ -683,6 +704,24 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
         if (!shift.hadRecentInput) tracker.__clsScore += shift.value;
       }
     }).observe({ type: 'layout-shift', buffered: true });
+
+    const vitals = window as unknown as {
+      __webVitals: { lcp: number | null; inp: number | null };
+    };
+    vitals.__webVitals = { lcp: null, inp: null };
+    if (PerformanceObserver.supportedEntryTypes.includes('largest-contentful-paint')) {
+      new PerformanceObserver((list) => {
+        const entry = list.getEntries().at(-1);
+        if (entry) vitals.__webVitals.lcp = entry.startTime;
+      }).observe({ type: 'largest-contentful-paint', buffered: true });
+    }
+    if (PerformanceObserver.supportedEntryTypes.includes('event')) {
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          vitals.__webVitals.inp = Math.max(vitals.__webVitals.inp ?? 0, entry.duration);
+        }
+      }).observe({ type: 'event', buffered: true, durationThreshold: 16 });
+    }
   });
 
   await page.goto(`${webBaseUrl}/project/${projectId}`);
@@ -886,12 +925,25 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   // the trend, not just a pass/fail.
   const perfBudgets = JSON.parse(
     await readFile(resolve(REPO_ROOT, 'perf-budgets.json'), 'utf8'),
-  ) as { cls: { builder: number } };
+  ) as {
+    cls: { builder: number };
+    webVitals: { builder: { ttfb: number; lcp: number; inp: number } };
+  };
   const clsScore = await page.evaluate(
     () => (window as unknown as { __clsScore: number }).__clsScore,
   );
   console.log(`CLS builder: ${clsScore} (budget ${perfBudgets.cls.builder})`);
   expect(clsScore).toBeLessThanOrEqual(perfBudgets.cls.builder);
+
+  const webVitals = await readWebVitals(page);
+  console.log(
+    `Web Vitals builder: TTFB ${webVitals.ttfb}ms, LCP ${webVitals.lcp ?? 'n/a'}ms, INP ${webVitals.inp ?? 'n/a'}ms`,
+  );
+  expect(webVitals.ttfb).toBeLessThanOrEqual(perfBudgets.webVitals.builder.ttfb);
+  expect(webVitals.lcp).not.toBeNull();
+  expect(webVitals.lcp!).toBeLessThanOrEqual(perfBudgets.webVitals.builder.lcp);
+  expect(webVitals.inp).not.toBeNull();
+  expect(webVitals.inp!).toBeLessThanOrEqual(perfBudgets.webVitals.builder.inp);
 
   // Replaces builder-shell-css.test.ts, which grepped globals.css for the grid
   // rules Task 5 deleted: below the lg breakpoint the three panes stack, and

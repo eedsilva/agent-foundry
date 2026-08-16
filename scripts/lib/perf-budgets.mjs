@@ -25,8 +25,8 @@ export function evaluateFirstLoadJsBudgets(manifestRoutes, budgets) {
         note: 'route missing from build output',
       };
     }
-    const measuredKb = Math.round((bytes / 1024) * 10) / 10;
-    const breach = measuredKb > budgetKb;
+    const measuredKb = bytes / 1024;
+    const breach = bytes > budgetKb * 1024;
     return { route, budgetKb, measuredKb, breach, note: null };
   });
 
