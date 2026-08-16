@@ -90,6 +90,19 @@ evidence this decision does not have. What changes today is that the fixer is
 told, in the summary and the first line it reads, that the tree was never
 judged.
 
+**The deadline terminates a process group, not a process.** A verification
+command runs in its own POSIX process group (`detached`), and the verifier owns
+the timeout rather than delegating it to execa. execa's `timeout` and
+`cancelSignal` signal the direct child only, and a generated app's check is
+`npm run build` → `next build` → Turbopack workers: signalling `npm` leaves the
+workers running, holding the pipes open so the command never settles, and
+contending for memory with whatever runs next — the same non-determinism this
+ADR exists to remove. The deadline now calls `terminateProcessTree` (SIGTERM,
+then SIGKILL after a grace), the same helper `BaseCliExecutor` already uses, and
+closes the pipes afterwards so a descendant that escaped the group cannot hang
+the run. Because the group dies by signal rather than by execa's own timer, the
+`timeout` kind comes from the verifier's timer, not from `result.timedOut`.
+
 **A report names the tree it judged.** `VerificationReport` gains an optional
 `commit`, the workspace's `git rev-parse HEAD` when the report was produced.
 Until now the commit lived only on the later `task.completed` event
@@ -140,6 +153,11 @@ observed; adding a kind for it now would be a guess encoded in a contract.
   one more branch in `classify()`.
 - Two previously-green outcomes now fail: a truncated command, and a build that
   skipped a package. Both were false and both are now loud.
+- A timed-out check no longer leaks its bundler workers into the workspace, and
+  no longer stalls the run until the command would have finished on its own.
+  Every verification command now runs detached; if the verifier process is
+  killed outright, a group it has not yet terminated outlives it — the same
+  trade `BaseCliExecutor` already makes, and the reaper path is unchanged.
 - The per-task gate can fail a task that writes a `route.ts` before writing its
   HTTP method. That is the same shape as the existing `server-actions:check`
   and the same repair loop answers it.

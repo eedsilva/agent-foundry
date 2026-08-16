@@ -360,7 +360,50 @@ describe('WorkspaceVerifier', () => {
     // The kind leads the summary too, so the timeline and the repair prompt
     // say the build never finished rather than only naming the failed check.
     expect(report.summary).toContain('build (timeout)');
-  });
+    // The deadline is the deadline: the report is not allowed to arrive only
+    // once the command would have finished on its own.
+    expect(build?.durationMs ?? Infinity).toBeLessThan(15_000);
+  }, 20_000);
+
+  it.skipIf(process.platform === 'win32')(
+    'kills the whole process tree on timeout, not just the command it spawned',
+    async () => {
+      const cwd = await workspace();
+      const pidFile = join(cwd, 'grandchild.pid');
+      // The real shape of a generated app's build: npm spawns the bundler,
+      // which spawns workers. Signalling only the direct child leaves those
+      // running — holding the pipes open so the command never settles, and
+      // contending with the next build for the memory this issue is about.
+      const grandchild = [
+        "const { spawn } = require('node:child_process');",
+        "const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'inherit' });",
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+        'setTimeout(() => {}, 60000);',
+      ].join('');
+      await writeFile(
+        join(cwd, 'package.json'),
+        JSON.stringify({
+          private: true,
+          packageManager: 'npm@10',
+          scripts: { build: `node -e ${JSON.stringify(grandchild)}` },
+        }),
+      );
+
+      const report = await new WorkspaceVerifier({
+        autoInstallDependencies: false,
+        timeoutMs: 2_000,
+        maxOutputBytes: 1_000_000,
+      }).verify({ workspacePath: cwd, scripts: ['build'], includeGitDiffCheck: false });
+
+      expect(report.commands.find((command) => command.name === 'build')?.failureKind).toBe(
+        'timeout',
+      );
+      const pid = Number(await readFile(pidFile, 'utf8'));
+      expect(Number.isInteger(pid)).toBe(true);
+      expect(() => process.kill(pid, 0)).toThrow();
+    },
+    20_000,
+  );
 
   it('classifies a plain non-zero exit as a real defect and leaves its stderr alone', async () => {
     const cwd = await workspace();

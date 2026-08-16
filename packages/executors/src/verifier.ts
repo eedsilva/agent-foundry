@@ -16,8 +16,12 @@ import {
   readPackageJsonAt,
   scriptCommand,
 } from './package-manager.js';
+import { terminateProcessTree } from './process-tree.js';
 
 const EMPTY_GIT_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/** How long a terminated group has to exit on SIGTERM before it is SIGKILLed. */
+const KILL_GRACE_MS = 2_000;
 
 /** V8's fatal out-of-memory prose, in both the forms it prints. */
 const OUT_OF_MEMORY = /JavaScript heap out of memory|FATAL ERROR:.*Allocation failed/;
@@ -242,18 +246,42 @@ export class WorkspaceVerifier implements VerificationService {
     environment?: Record<string, string>,
   ): Promise<VerificationCommandResult> {
     const startedAt = Date.now();
+    let timedOut = false;
+    let timer: NodeJS.Timeout | undefined;
+    let onAbort: (() => void) | undefined;
     try {
-      const result = await execa(command, args, {
+      const subprocess = execa(command, args, {
         cwd,
-        timeout: this.options.timeoutMs,
         maxBuffer: this.options.maxOutputBytes,
         reject: false,
+        // Own process group on POSIX. A generated app's check is
+        // `npm run build` -> `next build` -> Turbopack workers, and execa's own
+        // `timeout` and `cancelSignal` signal the direct child only: the
+        // descendants keep running with the pipes open, so the command never
+        // settles and the leaked workers contend with the next build.
+        detached: process.platform !== 'win32',
         ...(environment ? { env: { ...process.env, ...environment } } : {}),
-        ...(signal ? { cancelSignal: signal } : {}),
       });
+      const terminate = async (): Promise<void> => {
+        await terminateProcessTree(subprocess, KILL_GRACE_MS);
+        // A descendant that escaped the group could still hold the pipes open
+        // after the group is gone; closing them lets the command settle.
+        subprocess.stdout?.destroy();
+        subprocess.stderr?.destroy();
+      };
+      timer = setTimeout(() => {
+        timedOut = true;
+        void terminate();
+      }, this.options.timeoutMs);
+      if (signal) {
+        onAbort = () => void terminate();
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }
+      const result = await subprocess;
       const stdout = result.stdout ?? '';
       const stderr = result.stderr ?? '';
-      const failureKind = classify(result, stderr);
+      const failureKind = classify(result, stderr, timedOut);
       return {
         name,
         command,
@@ -285,6 +313,9 @@ export class WorkspaceVerifier implements VerificationService {
         advisory: false,
         failureKind: 'spawn',
       };
+    } finally {
+      clearTimeout(timer);
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
     }
   }
 
@@ -305,15 +336,17 @@ export class WorkspaceVerifier implements VerificationService {
 function classify(
   result: {
     failed: boolean;
-    timedOut: boolean;
     isMaxBuffer: boolean;
     exitCode?: number | undefined;
     signal?: string | undefined;
   },
   stderr: string,
+  timedOut: boolean,
 ): VerificationCommandResult['failureKind'] {
   if (!result.failed) return undefined;
-  if (result.timedOut) return 'timeout';
+  // Ours, not execa's: the deadline is enforced by terminating the process
+  // group, which reaches the command as a signal rather than as `timedOut`.
+  if (timedOut) return 'timeout';
   if (result.isMaxBuffer) return 'max-output';
   // ponytail: V8 prints this, it is not a machine-readable status, and 137 is
   // any SIGKILL rather than the OOM killer specifically. Only stderr is
