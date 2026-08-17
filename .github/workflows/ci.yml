@@ -138,7 +138,9 @@ jobs:
   # it the sole CI path executing the axe scan, so every accessibility
   # assertion in #97 rode on a job that intermittently fails under load.
   # The suite itself needs neither Docker nor Supabase (measured: 4 passed in
-  # 35s standalone).
+  # 35s standalone). Note this job is not immune to that flake: the spec's own
+  # `:986` test can exhaust its 180s budget here too, taking the spawned
+  # `next dev` and the rest of the file with it. Details in the same doc.
   golden-flow-e2e:
     name: golden-flow-e2e
     needs: preflight

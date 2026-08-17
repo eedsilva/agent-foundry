@@ -124,7 +124,8 @@ but "PR-correlated" is what the data says. **No failure is reproducible at its o
 every re-run above is green at the *identical* head SHA, matching the local result (33s, green)
 and the `workflow_dispatch` re-runs on #573.
 
-**The failure shape is identical in all six**, and it is one test, not two:
+**The failure shape is identical in all six**, and it is one test, not two — and, as the next
+subsection shows, it is not really a property of this job at all:
 
 ```
 ✘ golden-flow.spec.ts:986  golden flow: attach reference, plan, build, visual edit, revert, rebuild
@@ -148,7 +149,32 @@ Read a red check here before re-running it: per `docs/VALIDATION.md` ("CI-caught
 transient `unhealthy` blips…"), a same-named failure on an unrelated branch has already turned
 out to be a different, real bug.
 
-One superlative to avoid while rewriting this: it is not the heaviest job in CI. On green
-`main` runs it takes 242–269s, behind `test` (658–700s) and `issue-radar-e2e` (312–333s). What
-is distinctive about it is the dependency stack (Docker, a real Supabase, a spawned dev server)
-and its sensitivity to load — not wall clock.
+### The flake is in the test, not the job — 2026-08-17 (#575)
+
+The PR that made this edit caught the same failure in the act, and it lands somewhere the
+section above did not predict. On run `31987456610`, `golden-flow-e2e` — the job with **no
+Docker and no Supabase** — failed with a byte-identical shape (`:986` at `page.waitForResponse`
+after 3.0m, `:1302` then losing its dev server, `2 failed / 1 did not run / 1 passed`), while
+`supabase-data-plane-e2e` in that same run passed.
+
+That is a controlled comparison, because the change under test was comments only:
+
+| | Run | Event | `golden-flow-e2e` |
+| --- | --- | --- | --- |
+| `main` @ `267a6a27` | `31986170218` | `push` | green |
+| `267a6a27` + a comments-only diff | `31987456610` | `pull_request` | **red** |
+
+`golden-flow-e2e` had been green on all 20 runs since #97 introduced it. A documentation diff
+cannot change runtime, so the seventh occurrence is flake — but it moves the blame. **The flake
+belongs to `golden-flow.spec.ts:986`, which both jobs run**; it is not a property of the
+Docker/Supabase dependency stack, and splitting `golden-flow-e2e` out did not make the axe scan
+immune to it. What the two jobs share is the spec, a spawned `next dev`, and a `pull_request`
+event's concurrency.
+
+Practical consequence: a red `golden-flow-e2e` is now also worth reading rather than re-running
+blind, and any real fix targets that one test — not either job's timeout.
+
+One superlative to avoid while rewriting this: `supabase-data-plane-e2e` is not the heaviest job
+in CI. On green `main` runs it takes 242–269s, behind `test` (658–700s) and `issue-radar-e2e`
+(312–333s). What is distinctive about it is its dependency stack — not wall clock, and, per this
+subsection, not exclusive ownership of the flake either.
