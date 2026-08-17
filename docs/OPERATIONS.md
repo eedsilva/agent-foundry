@@ -170,6 +170,10 @@ adicionado como arquivo puro e rodou com o runner já existente.
 o *mecanismo de entrada* (arquivo → projeto → run) aceita qualquer scenario sem mudança de código.
 Sozinho ele para no primeiro gate (`plan-approval`); `--approve-gates` (#509) troca o driver por
 `runTracerScenarioToCompletion`, que aprova cada gate pendente até o run atingir estado terminal.
+Um `runOnce()` que não reclama nada é backoff transitório da fila, não fim do run (#578): o driver
+segue esperando e só aborta após 35s (`MAX_QUEUE_BACKOFF_MS + 5s`) sem nenhum claim, com um
+`TracerRunStuckError` que carrega project id, run id e o último status observado — é isso que
+aparece nas colunas do veredito golden journey.
 Ele não reproduz o pipeline completo de report/baseline de `runDogfoodTask`; isso é escopo de uma
 nova stage do harness, fora do que #474 pediu.
 
@@ -179,7 +183,7 @@ Flags disponíveis:
 | --- | --- |
 | `--scenario <id>` \| `--all` | Seleciona um scenario ou todos. |
 | `--executor-mode mock\|real` | Qualquer valor diferente de `mock` é `real`. |
-| `--approve-gates` | Aprova cada gate de operador até o estado terminal (#509). |
+| `--approve-gates` | Aprova cada gate de operador até o estado terminal (#509); tolera claim vazio por backoff e aborta só após 35s ociosos (#578). |
 | `--policies-dir <dir>` / `--policy-id <id>` | Opta o run por um `ProjectPolicy` não-default (por exemplo `uiQualityJudge`). |
 | `--data-dir <dir>` | Fixa `DATA_DIR` em vez do `mkdtemp` descartável, para que a evidência sobreviva ao run. |
 | `--evidence-dir <dir>` | Escreve o bundle de cada scenario e um `README.md` com a tabela 4/4 (#564). |

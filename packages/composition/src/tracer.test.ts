@@ -10,6 +10,7 @@ import {
   loadTracerScenarios,
   runTracerScenario,
   runTracerScenarioToCompletion,
+  TracerRunStuckError,
 } from './tracer.js';
 
 const scenariosDir = resolve(import.meta.dirname, '../../../examples/tracer/scenarios');
@@ -142,6 +143,26 @@ describe('runTracerScenarioToCompletion (mock mode)', () => {
     expect(runOnceCalls).toBeGreaterThan(2);
     expect(await readdir(join(dataDir, 'queue', 'pending'))).toEqual([]);
   }, 45_000);
+
+  it('names the stuck run in the error when nothing is ever claimable', async () => {
+    // #578: the idle-claim abort is what a golden-journey operator has to act
+    // on, so it must carry the project/run ids — the verdict's Project and
+    // Run-id columns come from these fields, not from the message text.
+    const dataDir = await tempDir('tracer-complete-never-claims-');
+    vi.spyOn(WorkerLoop.prototype, 'runOnce').mockResolvedValue(false);
+
+    const error = await runTracerScenarioToCompletion(toyScenario(), {
+      executorMode: 'mock',
+      dataDir,
+    }).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(TracerRunStuckError);
+    const stuck = error as TracerRunStuckError;
+    expect(stuck.projectId).toMatch(/\S/);
+    expect(stuck.runId).toMatch(/\S/);
+    expect(stuck.runStatus).toBe('queued');
+    expect(stuck.message).toContain(stuck.runId);
+  }, 60_000);
 
   it('reports no evidence for a mock run, because a bundle needs a campaign and a campaign needs real mode', async () => {
     // #564: the gate reads its verdict out of the published bundle, so the
