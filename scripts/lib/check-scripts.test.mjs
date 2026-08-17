@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,12 +8,6 @@ import test from 'node:test';
 const root = resolve(import.meta.dirname, '../..');
 const { scripts } = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 
-test('clean preserves declarations for incremental typecheck', () => {
-  assert.doesNotMatch(scripts.clean, /dist-types/);
-  assert.match(scripts.clean, /tsbuildinfo/);
-  assert.equal(scripts.typecheck, 'tsc -b --pretty false');
-});
-
 // #574: `npm run check` is the pre-PR gate, so a red bucket has to reach its
 // exit code. Three things can break that: a bucket that stops short-circuiting
 // (`;` or `|| true` between commands), a runner that reports the failure on
@@ -21,9 +15,9 @@ test('clean preserves declarations for incremental typecheck', () => {
 
 // Every root script `check` reaches, walked rather than listed, so a bucket
 // added to the chain later is covered without anyone remembering to add it
-// here. `npm run <name> --workspace <pkg>` is a package's own script, not a
-// root one, so it is not part of the walk; `npm:<name>` is concurrently's
-// shorthand inside `check:static`.
+// here. `npm:<name>` is concurrently's shorthand inside `check:static`. A
+// `npm run <name> --workspace <pkg>` call reads as the root `<name>`, which
+// only ever widens the set the assertions below run over.
 function scriptsReachedBy(entry) {
   const reached = new Set();
   const queue = [entry];
@@ -32,12 +26,17 @@ function scriptsReachedBy(entry) {
     const command = scripts[name];
     if (command === undefined || reached.has(name)) continue;
     reached.add(name);
-    for (const [, next] of command.matchAll(/\bnpm(?:\s+run)?\s+([\w:.-]+)(?!\s+--workspace)/g))
+    for (const [, next] of command.matchAll(/\bnpm(?::|\s+(?:run\s+)?)([\w:.-]+)/g))
       queue.push(next);
-    for (const [, next] of command.matchAll(/\bnpm:([\w:.-]+)/g)) queue.push(next);
   }
   return [...reached];
 }
+
+test('clean preserves declarations for incremental typecheck', () => {
+  assert.doesNotMatch(scripts.clean, /dist-types/);
+  assert.match(scripts.clean, /tsbuildinfo/);
+  assert.equal(scripts.typecheck, 'tsc -b --pretty false');
+});
 
 test('the check chain reaches the node --test script bucket', () => {
   const chain = scriptsReachedBy('check');
@@ -52,9 +51,10 @@ test('no bucket in the check chain swallows a failure', () => {
   }
 });
 
-// Runs the real `test:scripts` command over a fixture holding exactly the
-// given script tests, so what is under test is the command this repo ships.
-async function runScriptBucket(t, files) {
+// Runs the real `test:scripts` command over a fixture holding the one script
+// test given, or none at all, so what is under test is the command this repo
+// ships rather than a paraphrase of it.
+async function runScriptBucket(t, scriptTest) {
   const fixture = await mkdtemp(join(tmpdir(), 'af-574-check-exit-'));
   t.after(() => rm(fixture, { recursive: true, force: true }));
   await mkdir(join(fixture, 'scripts/lib'), { recursive: true });
@@ -66,8 +66,8 @@ async function runScriptBucket(t, files) {
       scripts: { 'test:scripts': scripts['test:scripts'] },
     }),
   );
-  for (const [name, body] of Object.entries(files))
-    await writeFile(join(fixture, 'scripts/lib', name), body);
+  if (scriptTest !== undefined)
+    await writeFile(join(fixture, 'scripts/lib/fixture.test.mjs'), scriptTest);
 
   // `node --test` sets NODE_TEST_CONTEXT in every test child, and a nested
   // runner that inherits it reports to its parent instead of owning its own
@@ -75,26 +75,22 @@ async function runScriptBucket(t, files) {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
 
-  return new Promise((done) => {
-    execFile('npm', ['run', 'test:scripts'], { cwd: fixture, env }, (error) =>
-      done(error ? (error.code ?? 1) : 0),
-    );
-  });
+  return spawnSync('npm', ['run', 'test:scripts'], { cwd: fixture, env }).status;
 }
-
-const PASSING_TEST = "import test from 'node:test';\ntest('passes', () => {});\n";
-const FAILING_TEST =
-  "import test from 'node:test';\ntest('deliberately fails', () => {\n  throw new Error('#574 regression fixture');\n});\n";
 
 test('a deliberately failing script test makes the test:scripts bucket exit non-zero', async (t) => {
   // The passing run is the control: without it, a bucket that failed to start
   // at all would satisfy the failing case for the wrong reason.
-  assert.equal(await runScriptBucket(t, { 'passes.test.mjs': PASSING_TEST }), 0);
-  assert.equal(await runScriptBucket(t, { 'fails.test.mjs': FAILING_TEST }), 1);
+  const passing = "import test from 'node:test';\ntest('passes', () => {});\n";
+  const failing =
+    "import test from 'node:test';\ntest('fails', () => {\n  throw new Error('#574 regression fixture');\n});\n";
+
+  assert.equal(await runScriptBucket(t, passing), 0);
+  assert.equal(await runScriptBucket(t, failing), 1);
 });
 
 test('the test:scripts bucket fails instead of passing when its glob matches nothing', async (t) => {
   // Handed a pattern that matches no file, `node --test` exits 0 and the whole
   // bucket disappears from the gate — hence the guard in front of it.
-  assert.notEqual(await runScriptBucket(t, {}), 0);
+  assert.notEqual(await runScriptBucket(t), 0);
 });
