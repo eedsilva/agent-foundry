@@ -177,6 +177,9 @@ describe('preview cleanup on run failure (#579)', () => {
       'agent exploded',
     );
 
+    // Pins that cleanup was actually attempted (and its throw swallowed), not
+    // just that the run's own failure survived a cleanup call that never happened.
+    expect(previews.stop).toHaveBeenCalledWith('preview-1');
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
   });
 });
