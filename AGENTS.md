@@ -13,6 +13,7 @@ After changing code, run `npm run graphify:refresh` again. For docs, images, or 
 - **While editing (inner loop):** `npm run test:unit:fast` (~30s, 135 pure-unit files in parallel) plus the specific slow-bucket files you touched via `npx vitest run <path>`.
 - **Before opening/updating a PR:** `npm run check` — runs `check:static` (format/lint/architecture/roadmap/typecheck in parallel, ~2.5min), then `npm test`, `build`, `secrets:check`. E2E specs (Playwright, Supabase) and the regression gate run in CI only; don't run them locally unless debugging one.
 - **Static gates only:** `npm run check:static`. Prettier and ESLint are `--cache`d — warm reruns take ~4s each.
+- **Reading the verdict (#574):** the whole chain is `&&`-joined and every bucket exits non-zero on failure — `scripts/lib/check-scripts.test.mjs` pins that. So a green exit code is the verdict, and a report of "exited 0 with failures in the output" means the exit code was measured wrong. Two ways to do that: piping (`npm run check | tail` reports `tail`'s status) and spawning it from inside a `node --test` child (Node sets `NODE_TEST_CONTEXT` there, and a nested runner reports to its parent instead of owning its exit code). Redirect to a file and `echo $?`.
 
 Test-suite rules:
 
