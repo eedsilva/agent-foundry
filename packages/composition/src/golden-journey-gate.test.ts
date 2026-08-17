@@ -215,6 +215,18 @@ describe('evaluateGoldenJourneyGate', () => {
     expect(verdict.failedGates).toEqual([]);
     expect(verdict.reasons).toHaveLength(1);
     expect(verdict.reasons[0]).toMatch(/validation-evidence bundle/i);
+    expect(verdict.reasons[0]).toMatch(/mock mode/i);
+  });
+
+  // #578: a run cut short before it terminated has no bundle for a reason that
+  // has nothing to do with mock mode, and blaming mock mode hid the real
+  // defect (the driver returning while the run was still `queued`).
+  it('blames the unfinished run, not mock mode, when a non-terminal run has no bundle', () => {
+    const verdict = evaluate(null, 'queued');
+    expect(verdict.status).toBe('no-evidence');
+    expect(verdict.reasons).toHaveLength(1);
+    expect(verdict.reasons[0]).toContain('queued');
+    expect(verdict.reasons[0]).not.toMatch(/mock mode/i);
   });
 });
 

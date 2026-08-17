@@ -3,10 +3,12 @@ import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
+  isWorkflowRunStatusTerminal,
   TracerScenarioSchema,
   type Project,
   type TracerScenario,
   type ValidationEvidenceResponse,
+  type WorkflowRunStatus,
 } from '@agent-foundry/contracts';
 import { NotFoundError, ValidationError } from '@agent-foundry/domain';
 import { loadJsonDirectory } from './dogfood.js';
@@ -160,30 +162,100 @@ export async function runTracerScenario(
 // the composition package's public surface (see its own comment) because
 // it's test-only wiring; this is the production code path scripts/tracer.ts
 // runs in real mode.
+/**
+ * The slice of `Runtime` the drain loop drives. Structural on purpose: a test
+ * can script `runOnce()` without standing up a runtime, executor or data dir.
+ */
+export interface DrainRunTarget {
+  worker: { runOnce(): Promise<boolean> };
+  runs: { get(runId: string): Promise<{ status: WorkflowRunStatus } | undefined | null> };
+  projectService: {
+    listApprovals(
+      runId: string,
+    ): Promise<readonly { request: { id: string }; decision?: unknown }[]>;
+    decideApproval(
+      runId: string,
+      requestId: string,
+      input: { action: 'approve'; decidedBy: string },
+    ): Promise<unknown>;
+  };
+}
+
+export interface DrainRunOptions {
+  /** How long to keep polling while nothing is claimable. Default 120_000. */
+  idleTimeoutMs?: number;
+  /** Wait between polls once a claim missed. Default 1_000. */
+  pollIntervalMs?: number;
+}
+
+// Several times the queue's 30s max backoff, so an idle timeout means the run
+// is genuinely stuck rather than merely waiting out a nack().
+const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
+const DEFAULT_POLL_INTERVAL_MS = 1_000;
+
+/**
+ * Drives a run to a terminal status, auto-approving every operator gate on the
+ * way.
+ *
+ * #578: `WorkerLoop.runOnce()` returns `false` whenever `queue.claim()` finds
+ * nothing claimable *right now*, and `FileJobQueue.claim()` skips any pending
+ * job still inside the `nack()` backoff it just earned (2s, 4s, … capped at
+ * 30s). The old driver read that transient miss as terminal and returned with
+ * the run still `queued` and no evidence bundle. A miss now costs a poll, and
+ * only an idle run that outlasts `idleTimeoutMs` is an error.
+ */
+export async function drainRunToTerminalStatus(
+  target: DrainRunTarget,
+  runId: string,
+  options: DrainRunOptions = {},
+): Promise<string> {
+  const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  let idleDeadline = Date.now() + idleTimeoutMs;
+
+  for (;;) {
+    const run = await target.runs.get(runId);
+    if (run && isWorkflowRunStatusTerminal(run.status)) return run.status;
+
+    const undecided = (await target.projectService.listApprovals(runId)).filter(
+      (entry) => !entry.decision,
+    );
+    const pending = undecided[0];
+    if (pending) {
+      await target.projectService.decideApproval(runId, pending.request.id, {
+        action: 'approve',
+        decidedBy: 'tracer-driver',
+      });
+    }
+
+    if (await target.worker.runOnce()) {
+      idleDeadline = Date.now() + idleTimeoutMs;
+      continue;
+    }
+    if (Date.now() >= idleDeadline) {
+      throw new Error(
+        `Run ${runId} never reached a terminal status: last observed status ` +
+          `${run?.status ?? 'unknown'}, ${undecided.length} approval request(s) undecided at the ` +
+          `last poll, and no job became claimable within the ${idleTimeoutMs}ms idle timeout ` +
+          `(a pending job may still be in queue backoff).`,
+      );
+    }
+    await new Promise((sleep) => setTimeout(sleep, pollIntervalMs));
+  }
+}
+
 export async function runTracerScenarioToCompletion(
   scenario: TracerScenario,
   options: RunTracerScenarioOptions = {},
 ): Promise<TracerScenarioRunResult> {
   const { runtime, project, runId } = await startTracerRun(scenario, options);
 
-  await runtime.worker.runOnce();
-  for (;;) {
-    const pending = (await runtime.projectService.listApprovals(runId)).find(
-      (entry) => !entry.decision,
-    );
-    if (!pending) break;
-    await runtime.projectService.decideApproval(runId, pending.request.id, {
-      action: 'approve',
-      decidedBy: 'tracer-driver',
-    });
-    if (!(await runtime.worker.runOnce())) break;
-  }
-  const run = await runtime.runs.get(runId);
+  const runStatus = await drainRunToTerminalStatus(runtime, runId);
 
   return {
     projectId: project.id,
     runId,
-    runStatus: run?.status ?? 'unknown',
+    runStatus,
     evidence: await readEvidence(runtime, runId),
   };
 }

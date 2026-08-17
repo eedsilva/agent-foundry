@@ -3,9 +3,10 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { TracerScenarioSchema } from '@agent-foundry/contracts';
+import { TracerScenarioSchema, type WorkflowRunStatus } from '@agent-foundry/contracts';
 import {
   assertPreviewOriginReachable,
+  drainRunToTerminalStatus,
   loadTracerScenarios,
   runTracerScenario,
   runTracerScenarioToCompletion,
@@ -117,7 +118,9 @@ describe('runTracerScenarioToCompletion (mock mode)', () => {
     });
 
     expect(result.runStatus).toBe('completed');
-  }, 30_000);
+    // 60s, not 30s: a mock run already took >20s here, and #578's drain loop
+    // adds a 1s poll per claim miss on top of it.
+  }, 60_000);
 
   it('reports no evidence for a mock run, because a bundle needs a campaign and a campaign needs real mode', async () => {
     // #564: the gate reads its verdict out of the published bundle, so the
@@ -131,7 +134,107 @@ describe('runTracerScenarioToCompletion (mock mode)', () => {
     });
 
     expect(result.evidence).toBeNull();
-  }, 30_000);
+  }, 60_000);
+});
+
+// #578: a `false` from worker.runOnce() only means "nothing claimable right
+// now" — FileJobQueue.claim() skips a job whose nack() backoff hasn't elapsed —
+// so the driver must keep polling instead of treating it as terminal. Fakes,
+// not a runtime: these pin the loop itself, deterministically and instantly.
+interface ScriptedStep {
+  result: boolean;
+  status?: WorkflowRunStatus;
+  addApproval?: string;
+}
+
+function fakeDrainTarget(
+  initialStatus: WorkflowRunStatus,
+  steps: readonly ScriptedStep[],
+  initialApprovals: readonly string[] = [],
+) {
+  let status = initialStatus;
+  const approvals = initialApprovals.map((id) => ({
+    request: { id },
+    decision: null as unknown,
+  }));
+  const approved: string[] = [];
+  const remaining = [...steps];
+
+  return {
+    approved,
+    undecided: () => approvals.filter((entry) => !entry.decision).length,
+    worker: {
+      async runOnce(): Promise<boolean> {
+        const step = remaining.shift();
+        if (!step) throw new Error('fake worker ran out of scripted runOnce() steps');
+        if (step.status) status = step.status;
+        if (step.addApproval) approvals.push({ request: { id: step.addApproval }, decision: null });
+        return step.result;
+      },
+    },
+    runs: {
+      async get(): Promise<{ status: WorkflowRunStatus }> {
+        return { status };
+      },
+    },
+    projectService: {
+      async listApprovals(): Promise<readonly { request: { id: string }; decision?: unknown }[]> {
+        return approvals;
+      },
+      async decideApproval(_runId: string, requestId: string): Promise<unknown> {
+        const entry = approvals.find((candidate) => candidate.request.id === requestId);
+        if (!entry) throw new Error(`fake has no approval request ${requestId}`);
+        entry.decision = { id: `decision-${requestId}` };
+        approved.push(requestId);
+        return {};
+      },
+    },
+  };
+}
+
+describe('drainRunToTerminalStatus (#578)', () => {
+  it('keeps polling after a claim miss instead of returning the run still queued', async () => {
+    // The 2026-08-17 sweep: the run was approved and requeued, the very next
+    // runOnce() found the job still inside its nack() backoff and returned
+    // false, and the old driver returned right there with the run `queued`.
+    const target = fakeDrainTarget('queued', [
+      { result: true, status: 'awaiting_approval', addApproval: 'req-1' },
+      { result: false, status: 'queued' },
+      { result: true, status: 'completed' },
+    ]);
+
+    const status = await drainRunToTerminalStatus(target, 'run-1', { pollIntervalMs: 0 });
+
+    expect(status).toBe('completed');
+    expect(target.approved).toEqual(['req-1']);
+    expect(target.undecided()).toBe(0);
+  });
+
+  it('throws a diagnosable error when nothing becomes claimable before the idle timeout', async () => {
+    const target = fakeDrainTarget('queued', [{ result: false }]);
+
+    await expect(
+      drainRunToTerminalStatus(target, 'run-1', { idleTimeoutMs: 0, pollIntervalMs: 0 }),
+    ).rejects.toThrow(/run-1[\s\S]*queued/);
+  });
+
+  it('approves every gate exactly once across successive claim misses', async () => {
+    const target = fakeDrainTarget(
+      'awaiting_approval',
+      [
+        { result: false, status: 'queued' },
+        { result: true, status: 'awaiting_approval', addApproval: 'req-2' },
+        { result: false, status: 'queued' },
+        { result: true, status: 'completed' },
+      ],
+      ['req-1'],
+    );
+
+    const status = await drainRunToTerminalStatus(target, 'run-1', { pollIntervalMs: 0 });
+
+    expect(status).toBe('completed');
+    expect(target.approved).toEqual(['req-1', 'req-2']);
+  });
 });
 
 // #526: previewBaseUrl is built from API_HOST:API_PORT (runtime.ts) and

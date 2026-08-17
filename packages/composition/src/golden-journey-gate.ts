@@ -1,10 +1,12 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type {
-  ValidationEvidenceBundle,
-  ValidationEvidenceGate,
-  ValidationEvidenceOutcome,
-  ValidationEvidenceResponse,
+import {
+  isWorkflowRunStatusTerminal,
+  WorkflowRunStatusSchema,
+  type ValidationEvidenceBundle,
+  type ValidationEvidenceGate,
+  type ValidationEvidenceOutcome,
+  type ValidationEvidenceResponse,
 } from '@agent-foundry/contracts';
 
 export type GoldenJourneyStatus =
@@ -69,10 +71,18 @@ export function evaluateGoldenJourneyGate(input: GoldenJourneyGateInput): Golden
   };
 
   if (input.evidence === null) {
+    // #578: a run that never terminated has no bundle for a reason that has
+    // nothing to do with mock mode — blaming mock mode there hid a driver that
+    // was returning while the run was still `queued`.
+    const parsed = WorkflowRunStatusSchema.safeParse(input.runStatus);
+    const unfinished = parsed.success && !isWorkflowRunStatusTerminal(parsed.data);
     return goldenJourneyVerdictWithoutEvidence(
       identity,
       'no-evidence',
-      'no validation-evidence bundle was published for the run (mock mode publishes none)',
+      unfinished
+        ? `the run never reached a terminal status (last status ${input.runStatus}), so no ` +
+            'validation-evidence bundle was published'
+        : 'no validation-evidence bundle was published for the run (mock mode publishes none)',
     );
   }
 
