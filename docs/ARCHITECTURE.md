@@ -385,7 +385,8 @@ realmente falhar no workspace do projeto. Nenhum modelo julga o trabalho de outr
 - Uma tarefa reparada termina em **dois** commits — `agent(developer): <taskId>: <título>` e
   `agent(fixer): <taskId>: repair <título>`. `task.completed.commit` reporta o último, que é a árvore
   que passou nos checks.
-- `task.completed` só é emitido depois de um relatório verde; `quality.approved` e
+- `task.completed` só é emitido depois de um relatório verde — a exceção é a aceitação de navegador
+  adiada (`quality.deferred`, ADR 0070), refeita antes de o nó terminar; `quality.approved` e
   `quality.repair_requested` carregam `taskId`.
 
 ### Canais de aceitação por tarefa (ADR 0047, #393)
@@ -406,6 +407,10 @@ comportamento legado.
   de "a funcionalidade não funcionou".
 - Tarefa sem superfície visível responde `status: blocked` no passo de plano, emite
   `quality.approved` com `asserted: false` e conclui normalmente. É uma resposta, não uma falha.
+- Numa tarefa `browser-visible`, `status: blocked` significa "a superfície ainda não é alcançável" e
+  não mata a execução: emite `quality.deferred`, a tarefa conclui, e a asserção é refeita depois que
+  todo o grafo rodou, numa faixa de `iteration` própria para não reusar o plano recusado. Segunda
+  recusa aí sim falha a execução, com o `summary` e os `nextActions` do tester (ADR 0070).
 - Negação cross-tenant não precisa de máquina nova: a tarefa cujo acceptance check cita dados de
   outro usuário ganha um plano que entra com uma conta e afirma que as linhas da outra não aparecem,
   contra RLS real.

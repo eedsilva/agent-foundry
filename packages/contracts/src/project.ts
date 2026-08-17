@@ -129,6 +129,7 @@ export const ProjectEventSchema = z
       'node.failed',
       'quality.approved',
       'quality.repair_requested',
+      'quality.deferred',
       'task.started',
       'task.completed',
       'task.failed',

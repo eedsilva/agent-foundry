@@ -43,3 +43,10 @@ Source runs: [`crud-heavy/run-1.md`](crud-heavy/run-1.md) (prior session, failed
   from accumulating) is real regardless.
 - **No defects were fixed, no follow-up tickets were filed, no benchmarking was done, and
   no fourth shape was run**, per this ticket's explicit scope.
+
+## Post-validation fixes
+
+- **Defect #2 — fixed by #571.** A refused browser plan now defers to an
+  end-of-graph re-assertion instead of failing the run outright; only a
+  refusal that still stands once every task has run is terminal. See
+  [ADR 0070](../../adr/0070-deferred-browser-acceptance.md).

@@ -8,7 +8,7 @@ import type {
   WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import { WorkflowDefinitionSchema } from '@agent-foundry/contracts';
-import { ExecutionError, SystemClock } from '@agent-foundry/domain';
+import { ExecutionError, QualityGateError, SystemClock } from '@agent-foundry/domain';
 import {
   FakeWorkspaces,
   InMemoryArtifacts,
@@ -127,6 +127,16 @@ const browserWorkflow = WorkflowDefinitionSchema.parse({
           includeGitDiffCheck: false,
         },
       },
+    },
+  ],
+});
+
+const browserRetryWorkflow = WorkflowDefinitionSchema.parse({
+  ...browserWorkflow,
+  nodes: [
+    {
+      ...browserWorkflow.nodes[0],
+      implement: { ...(browserWorkflow.nodes[0] as ForEachTaskStep).implement, maxAttempts: 2 },
     },
   ],
 });
@@ -748,7 +758,7 @@ describe('TaskGraphRunner', () => {
     expect(browserPlans).toEqual(['plan-task-browser-test.T2']);
   });
 
-  it('fails a browser-visible task when its plan refuses the assertion', async () => {
+  it('fails the run — but still completes the task — when a browser plan refuses every re-assertion', async () => {
     const fixture = await setupRunner(
       browserWorkflow,
       [{ ...task('T1'), acceptanceMode: 'browser-visible' }],
@@ -766,9 +776,11 @@ describe('TaskGraphRunner', () => {
         }),
     );
 
-    await expect(fixture.run()).rejects.toThrow('browser plan refused the assertion');
+    await expect(fixture.run()).rejects.toThrow('still refused after every task in the graph ran');
+    // The task itself completed — deferred, not failed — it is the *run*
+    // that goes red once the end-of-graph re-assertion refuses too (#571).
     expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
-      0,
+      1,
     );
   });
 
@@ -802,6 +814,171 @@ describe('TaskGraphRunner', () => {
       1,
     );
     expect(fixture.events.events.some((event) => event.type === 'task.failed')).toBe(false);
+  });
+
+  it('defers a refused browser plan and asserts it once the graph has run', async () => {
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      deferringRuntime(),
+    );
+
+    await fixture.run();
+
+    const deferred = fixture.events.events.filter((event) => event.type === 'quality.deferred');
+    expect(deferred).toHaveLength(1);
+    expect(deferred[0]?.data.nextActions).toEqual([
+      'Run T2, which mounts the panel on /dashboard.',
+    ]);
+    expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+      2,
+    );
+    expect(
+      fixture.events.events.some(
+        (event) => event.type === 'quality.approved' && event.data.asserted === true,
+      ),
+    ).toBe(true);
+  });
+
+  it('leaves the run red when a deferred browser plan refuses the re-assertion too', async () => {
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      deferringRuntime({ refuseForever: true }),
+    );
+
+    await expect(fixture.run()).rejects.toThrow(
+      /T5Panel is not on a reachable route yet\.[\s\S]*Run T2, which mounts the panel on \/dashboard\./,
+    );
+    expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+      2,
+    );
+    expect(
+      fixture.events.events.some(
+        (event) => event.type === 'quality.approved' && event.data.asserted === true,
+      ),
+    ).toBe(false);
+  });
+
+  it('re-asserts a deferred browser plan past every iteration the first pass used', async () => {
+    const planIterations: number[] = [];
+    const iterations: number[] = [];
+    let firstPassCeiling = 0;
+    let verifications = 0;
+    const fixture = await setupRunner(
+      browserRetryWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      deferringRuntime({
+        content: (input) => {
+          const iteration = input.iteration ?? 0;
+          if (input.step.id === 'plan-task-browser-test.T1') {
+            planIterations.push(iteration);
+            // Snapshot before the re-assertion's own iteration lands, so the
+            // ceiling is exactly what the first pass reached.
+            if (planIterations.length === 2) firstPassCeiling = Math.max(...iterations);
+          }
+          iterations.push(iteration);
+          // Two red deterministic rounds burn attempt 1, so the first pass
+          // climbs into the second attempt's band before it ever defers.
+          if (input.step.id === 'verify-task.T1') {
+            verifications += 1;
+            return verificationReport(verifications > 2);
+          }
+          return undefined;
+        },
+      }),
+    );
+
+    await fixture.run();
+
+    // The re-assertion's band clears *every* iteration the first pass touched —
+    // attempt, repair and verify rounds alike — which is what keeps
+    // `reuseCompletedStep` from serving the refused plan artifact back.
+    expect(planIterations).toHaveLength(2);
+    expect(firstPassCeiling).toBeGreaterThan(1);
+    expect(planIterations[1]).toBeGreaterThan(firstPassCeiling);
+  });
+
+  it('drops a deferral when a later attempt asserts the same task clean', async () => {
+    let planCalls = 0;
+    let completions = 0;
+    const fixture = await setupRunner(
+      browserRetryWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      deferringRuntime({
+        content: (input) => {
+          if (input.step.id === 'plan-task-browser-test.T1') planCalls += 1;
+          return undefined;
+        },
+      }),
+    );
+    // Fails attempt 1 in the only window that can still retry the ladder *after*
+    // the assertion deferred: `commitForArtifact` and this emit both run after
+    // `assertTask` returns, inside the attempt's `try`. It has to be a
+    // `QualityGateError` — the catch rethrows anything else instead of retrying.
+    fixture.events.onBeforeAppend = (event) => {
+      if (event.type === 'task.completed' && event.data.taskId === 'T1') {
+        completions += 1;
+        if (completions === 1) {
+          throw new QualityGateError('T1 lost its completion event', 'task-execution');
+        }
+      }
+    };
+
+    await fixture.run();
+
+    // Attempt 2 asserted T1 clean, so attempt 1's deferral must be gone: the
+    // plan step runs twice, never a third time at the end of the graph.
+    expect(planCalls).toBe(2);
+  });
+
+  it('reverifies a deferred re-assertion that needed a browser repair', async () => {
+    const steps: string[] = [];
+    let browserChecks = 0;
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      deferringRuntime({
+        content: (input) => {
+          steps.push(`${input.step.id}:${input.iteration ?? 0}`);
+          if (input.step.id !== 'assert-task.T1') return undefined;
+          browserChecks += 1;
+          return browserReport(browserChecks > 1);
+        },
+      }),
+    );
+
+    await fixture.run();
+
+    // The deferred assertion repairs, passes, and then re-runs the
+    // deterministic gate on the repaired tree — offset past the repair rounds.
+    expect(steps.slice(-5)).toEqual([
+      'plan-task-browser-test.T1:5',
+      'assert-task.T1:5',
+      'repair-task-browser.T1:5',
+      'assert-task.T1:6',
+      'verify-task.T1:7',
+    ]);
+  });
+
+  it('defers a refused browser plan in the pooled path too', async () => {
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }, task('T2', ['T1'])],
+      deferringRuntime(),
+      3,
+    );
+
+    await fixture.run();
+
+    expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+      2,
+    );
+    expect(
+      fixture.events.events.some(
+        (event) => event.type === 'quality.approved' && event.data.asserted === true,
+      ),
+    ).toBe(true);
   });
 
   it('rejects a malformed browser plan without spending the repair budget', async () => {
@@ -1639,6 +1816,46 @@ function taskIdOf(value: string): string {
       .split('-')
       .at(-1) ?? value
   );
+}
+
+/**
+ * The deferral fixtures' shared runtime (#571): every step succeeds, the
+ * deterministic gate and the browser check are green, and T1's browser plan
+ * refuses on its first call — for ever, with `refuseForever`. `content` runs
+ * first on every step, so a test overrides one step's artifact by returning it
+ * and observes the rest by returning `undefined`.
+ */
+function deferringRuntime(
+  options: {
+    refuseForever?: boolean;
+    content?: (input: TaskGraphStepExecution) => object | undefined;
+  } = {},
+): (input: TaskGraphStepExecution, artifacts: InMemoryArtifacts) => Promise<StoredArtifact> {
+  let planCalls = 0;
+  return (input, artifacts) => {
+    let content = options.content?.(input);
+    if (!content) {
+      content = completedArtifact(input.step);
+      if (input.step.type === 'verify') content = verificationReport(true);
+      if (input.step.id === 'plan-task-browser-test.T1') {
+        planCalls += 1;
+        content =
+          options.refuseForever === true || planCalls === 1
+            ? {
+                ...blockedArtifact('T5Panel is not on a reachable route yet.'),
+                nextActions: ['Run T2, which mounts the panel on /dashboard.'],
+              }
+            : browserPlan();
+      }
+      if (input.step.id === 'assert-task.T1') content = browserReport(true);
+    }
+    return artifacts.put({
+      projectId: input.project.id,
+      name: input.step.outputArtifact,
+      content,
+      createdBy: 'test-runtime',
+    });
+  };
 }
 
 async function setupRunner(
