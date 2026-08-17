@@ -500,8 +500,25 @@ export class WorkflowOrchestrator {
     if (!run || !isWorkflowRunStatusTerminal(run.status) || run.status === 'completed') return;
     const active = await previews.activeForProject(projectId);
     // A session booted by a different run is that run's to stop.
-    if (!active || (active.runId !== undefined && active.runId !== runId)) return;
-    await stop.call(previews, active.id);
+    if (!active || active.runId !== runId) return;
+    try {
+      await stop.call(previews, active.id);
+    } catch (error) {
+      await this.emit(
+        projectId,
+        'preview.failed',
+        'Preview cleanup failed; the lifecycle reaper will retry.',
+        {
+          runId,
+          dedupeKey: `${runId}:preview.cleanup_failed`,
+          data: {
+            sessionId: active.id,
+            error: redactString(errorMessage(error)).slice(0, 500),
+          },
+        },
+      ).catch(() => undefined);
+      throw error;
+    }
   }
 
   async runProject(

@@ -94,6 +94,24 @@ describe('preview cleanup on run failure (#579)', () => {
     expect(previews.session()?.status).toBe('stopped');
   });
 
+  it('stops the booted preview when the run is rejected', async () => {
+    const previews = makePreviewDouble();
+    const harness = makeHarness({}, makeStores(), { previews, gate: {} });
+    await seedRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [approval] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', approval!.request.id, {
+      action: 'reject',
+      decidedBy: 'ed',
+    });
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('rejected');
+    expect(previews.stop).toHaveBeenCalledExactlyOnceWith('preview-1');
+    expect(previews.session()?.status).toBe('stopped');
+  });
+
   it('does not stop a preview a second time when a terminal run is restarted (redelivered by the queue)', async () => {
     const previews = makePreviewDouble();
     const harness = makeHarness(
@@ -147,6 +165,35 @@ describe('preview cleanup on run failure (#579)', () => {
     expect(previews.session()).toMatchObject({ id: 'preview-other', status: 'running' });
   });
 
+  it('leaves a pre-existing preview without run ownership alone', async () => {
+    const previews = makePreviewDouble();
+    previews.seed({
+      id: 'preview-manual',
+      workspaceRef: { projectId: 'project-1', workspacePath: '/tmp/ws' },
+      status: 'running',
+      version: 1,
+      health: { state: 'healthy', checkedAt: NOW, consecutiveFailures: 0 },
+      ttl: { seconds: 1_800 },
+      restartCount: 0,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const harness = makeHarness(
+      { implement: { kind: 'fail-always', error: () => new Error('agent exploded') } },
+      makeStores(),
+      { previews },
+    );
+    await seedRun(harness);
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      'agent exploded',
+    );
+
+    expect(previews.start).not.toHaveBeenCalled();
+    expect(previews.stop).not.toHaveBeenCalled();
+    expect(previews.session()).toMatchObject({ id: 'preview-manual', status: 'running' });
+  });
+
   it('keeps the preview running when the run completes', async () => {
     const previews = makePreviewDouble();
     const harness = makeHarness({}, makeStores(), { previews });
@@ -177,5 +224,16 @@ describe('preview cleanup on run failure (#579)', () => {
     // just that the run's own failure survived a cleanup call that never happened.
     expect(previews.stop).toHaveBeenCalledWith('preview-1');
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
+    expect(harness.events.events).toContainEqual(
+      expect.objectContaining({
+        type: 'preview.failed',
+        runId: 'run-1',
+        dedupeKey: 'run-1:preview.cleanup_failed',
+        data: {
+          sessionId: 'preview-1',
+          error: 'preview lifecycle lock unavailable',
+        },
+      }),
+    );
   });
 });

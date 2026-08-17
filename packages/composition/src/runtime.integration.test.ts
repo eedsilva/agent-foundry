@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   AgentExecutionRequest,
   AgentExecutionResult,
@@ -18,7 +19,11 @@ import {
   UI_QUALITY_RUBRIC_V1,
 } from '@agent-foundry/contracts';
 import { SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
-import { MockAgentExecutor, PlaywrightBrowserVerifier } from '@agent-foundry/executors';
+import {
+  MockAgentExecutor,
+  MockExecutorRegistry,
+  PlaywrightBrowserVerifier,
+} from '@agent-foundry/executors';
 import { BrowserVerificationCoordinator, ConversationService } from '@agent-foundry/orchestrator';
 import {
   FileConversationRepository,
@@ -217,12 +222,61 @@ class AlwaysFailExecutor implements AgentExecutor {
   }
 }
 
+class GatedFailExecutor implements AgentExecutor {
+  readonly provider = 'mock';
+  private start!: () => void;
+  private failExecution!: () => void;
+  readonly started = new Promise<void>((resolvePromise) => {
+    this.start = resolvePromise;
+  });
+  private readonly failure = new Promise<AgentExecutionResult>((_resolve, reject) => {
+    this.failExecution = () => reject(new Error('synthetic provider failure'));
+  });
+
+  execute(): Promise<AgentExecutionResult> {
+    this.start();
+    return this.failure;
+  }
+
+  fail(): void {
+    this.failExecution();
+  }
+
+  health(): Promise<ExecutorHealth> {
+    return new MockAgentExecutor().health();
+  }
+}
+
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
 });
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function canConnect(port: number): Promise<boolean> {
+  return new Promise((resolvePromise) => {
+    const socket = connect({ port, host: '127.0.0.1', timeout: 500 });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolvePromise(true);
+    });
+    socket.once('error', () => resolvePromise(false));
+    socket.once('timeout', () => {
+      socket.destroy();
+      resolvePromise(false);
+    });
+  });
+}
 
 function configureMockBrowserRuntime(runtime: Runtime): void {
   Object.defineProperty(runtime.executors, 'executor', {
@@ -380,6 +434,95 @@ describe('runtime composition', () => {
 
     expect(runtime.generatedProjectRuntime).toBeUndefined();
   });
+
+  it('kills the provisioned process tree and persists a terminal session when a run fails', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-preview-cleanup-'));
+    temporaryDirectories.push(dataDir);
+    const executor = new GatedFailExecutor();
+    const runtime = await createRuntime(
+      {
+        ...process.env,
+        REPO_ROOT: resolve(import.meta.dirname, '../../..'),
+        DATA_DIR: dataDir,
+        EXECUTOR_MODE: 'real',
+        AUTO_INSTALL_DEPENDENCIES: 'false',
+      },
+      undefined,
+      undefined,
+      {
+        generatedProjectRuntime: null,
+        executors: new MockExecutorRegistry(executor),
+        previewInstaller: {
+          install: async () => ({
+            ok: true,
+            exitCode: 0,
+            stdout: '',
+            stderr: '',
+            versions: { node: process.version, packageManager: 'test' },
+          }),
+        },
+      },
+    );
+    const project = await runtime.projectService.create({
+      name: 'Preview cleanup fixture',
+      workflowId: 'web-app-v1',
+      prd: 'Fail after provisioning so preview cleanup runs.',
+    });
+    if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
+    const workspacePath = runtime.workspaces.workspacePath(project.id);
+    const pidFile = join(dataDir, 'preview-pids');
+    const fixture = resolve(
+      import.meta.dirname,
+      '../../executors/src/fixtures/preview-dev-server.mjs',
+    );
+    await mkdir(workspacePath, { recursive: true });
+    await writeFile(
+      join(workspacePath, 'package.json'),
+      JSON.stringify({
+        name: 'preview-cleanup-fixture',
+        version: '1.0.0',
+        scripts: { dev: `node ${fixture} --spawn-grandchild=${pidFile} --ignore-sigterm` },
+      }),
+    );
+    await writeFile(
+      join(workspacePath, 'package-lock.json'),
+      JSON.stringify({
+        name: 'preview-cleanup-fixture',
+        version: '1.0.0',
+        lockfileVersion: 3,
+        packages: {},
+      }),
+    );
+
+    const strayPids: number[] = [];
+    try {
+      const running = runtime.orchestrator.runProject(project.id, undefined, project.currentRunId);
+      await executor.started;
+      const active = await runtime.previewService.activeForProject(project.id);
+      if (!active?.process?.port) throw new Error('Expected active preview process');
+      const processPids = (await readFile(pidFile, 'utf8')).trim().split(' ').map(Number);
+      const treePids = active.process.pid ? [active.process.pid, ...processPids] : processPids;
+      strayPids.push(...treePids);
+      expect(await canConnect(active.process.port)).toBe(true);
+      expect(treePids.every(isAlive)).toBe(true);
+
+      executor.fail();
+      await expect(running).rejects.toThrow('synthetic provider failure');
+
+      const record = await runtime.previewSessions.get(active.id);
+      if (!record?.session.process?.port) throw new Error('Expected persisted preview process');
+
+      expect(record.session.status).toBe('stopped');
+      await vi.waitFor(async () => {
+        await expect(canConnect(record.session.process!.port!)).resolves.toBe(false);
+        expect(treePids.every((pid) => !isAlive(pid))).toBe(true);
+      });
+    } finally {
+      for (const pid of strayPids) {
+        if (isAlive(pid)) process.kill(pid, 'SIGKILL');
+      }
+    }
+  }, 30_000);
 
   it('builds the validation campaign from the injected env, not process.env', async () => {
     // #564: the campaign preview carries the active-time ceiling, and the
