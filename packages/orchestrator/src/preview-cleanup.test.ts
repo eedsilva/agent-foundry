@@ -14,7 +14,6 @@ const NOW = '2026-08-17T00:00:00.000Z';
  */
 function makePreviewDouble() {
   let current: PreviewSession | undefined;
-  const stopCalls: string[] = [];
   return {
     start: vi.fn(async (input: { workspaceRef: PreviewWorkspaceRef; runId?: string }) => {
       current = {
@@ -40,21 +39,18 @@ function makePreviewDouble() {
         : undefined,
     ),
     stop: vi.fn(async (sessionId: string) => {
-      stopCalls.push(sessionId);
       if (!current || current.id !== sessionId) {
         throw new Error(`stop() called for unknown session ${sessionId}`);
       }
       current = { ...current, status: 'stopped', completedAt: NOW };
       return current;
     }),
-    stopCalls,
     session: () => current,
     /** Simulates a preview already owned by a different run/project before this run's boot check. */
     seed(session: PreviewSession) {
       current = session;
     },
   } satisfies WorkspacePreviewBooter & {
-    stopCalls: string[];
     session: () => PreviewSession | undefined;
     seed: (session: PreviewSession) => void;
   };
@@ -74,7 +70,7 @@ describe('preview cleanup on run failure (#579)', () => {
       'agent exploded',
     );
 
-    expect(previews.stopCalls).toEqual(['preview-1']);
+    expect(previews.stop).toHaveBeenCalledExactlyOnceWith('preview-1');
     expect(previews.session()?.status).toBe('stopped');
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
   });
@@ -94,7 +90,7 @@ describe('preview cleanup on run failure (#579)', () => {
     await running;
 
     expect((await harness.runs.get('run-1'))?.status).toBe('cancelled');
-    expect(previews.stopCalls).toEqual(['preview-1']);
+    expect(previews.stop).toHaveBeenCalledExactlyOnceWith('preview-1');
     expect(previews.session()?.status).toBe('stopped');
   });
 
@@ -109,14 +105,14 @@ describe('preview cleanup on run failure (#579)', () => {
     await expect(
       harness.orchestrator.runProject('project-1', undefined, 'run-1'),
     ).rejects.toThrow();
-    expect(previews.stopCalls).toEqual(['preview-1']);
+    expect(previews.stop).toHaveBeenCalledExactlyOnceWith('preview-1');
 
     // Redeliver the already-terminal run (e.g. a queue retry after the earlier throw).
     await expect(
       harness.orchestrator.runProject('project-1', undefined, 'run-1'),
     ).resolves.toBeUndefined();
 
-    expect(previews.stopCalls).toEqual(['preview-1']);
+    expect(previews.stop).toHaveBeenCalledExactlyOnceWith('preview-1');
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
   });
 
