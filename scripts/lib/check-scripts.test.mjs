@@ -51,10 +51,14 @@ test('no bucket in the check chain swallows a failure', () => {
   }
 });
 
-// Runs the real `test:scripts` command over a fixture holding the one script
-// test given, or none at all, so what is under test is the command this repo
-// ships rather than a paraphrase of it.
-async function runScriptBucket(t, scriptTest) {
+// Runs `npm run check` over a fixture holding the one script test given, or
+// none at all. `check`, `test` and `test:scripts` are this repo's own strings,
+// so the path a red script test travels up to the gate's exit code is the real
+// one; the buckets that need the whole monorepo to say anything (vitest, tsc,
+// next) are stubbed, and the walk above is what keeps them honest.
+const NO_OP = 'node -e ""';
+
+async function runCheck(t, scriptTest) {
   const fixture = await mkdtemp(join(tmpdir(), 'af-574-check-exit-'));
   t.after(() => rm(fixture, { recursive: true, force: true }));
   await mkdir(join(fixture, 'scripts/lib'), { recursive: true });
@@ -63,7 +67,15 @@ async function runScriptBucket(t, scriptTest) {
     JSON.stringify({
       name: 'af-574-check-exit-fixture',
       private: true,
-      scripts: { 'test:scripts': scripts['test:scripts'] },
+      scripts: {
+        check: scripts.check,
+        test: scripts.test,
+        'test:scripts': scripts['test:scripts'],
+        'check:static': NO_OP,
+        'test:unit': NO_OP,
+        build: NO_OP,
+        'secrets:check': NO_OP,
+      },
     }),
   );
   if (scriptTest !== undefined)
@@ -75,22 +87,22 @@ async function runScriptBucket(t, scriptTest) {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
 
-  return spawnSync('npm', ['run', 'test:scripts'], { cwd: fixture, env }).status;
+  return spawnSync('npm', ['run', 'check'], { cwd: fixture, env }).status;
 }
 
-test('a deliberately failing script test makes the test:scripts bucket exit non-zero', async (t) => {
-  // The passing run is the control: without it, a bucket that failed to start
-  // at all would satisfy the failing case for the wrong reason.
+test('a deliberately failing script test makes check exit non-zero', async (t) => {
+  // The passing run is the control: without it, a chain that fell over on its
+  // own would satisfy the failing case for the wrong reason.
   const passing = "import test from 'node:test';\ntest('passes', () => {});\n";
   const failing =
     "import test from 'node:test';\ntest('fails', () => {\n  throw new Error('#574 regression fixture');\n});\n";
 
-  assert.equal(await runScriptBucket(t, passing), 0);
-  assert.equal(await runScriptBucket(t, failing), 1);
+  assert.equal(await runCheck(t, passing), 0);
+  assert.notEqual(await runCheck(t, failing), 0);
 });
 
-test('the test:scripts bucket fails instead of passing when its glob matches nothing', async (t) => {
+test('check fails instead of passing when the script bucket glob matches nothing', async (t) => {
   // Handed a pattern that matches no file, `node --test` exits 0 and the whole
   // bucket disappears from the gate — hence the guard in front of it.
-  assert.notEqual(await runScriptBucket(t), 0);
+  assert.notEqual(await runCheck(t), 0);
 });
