@@ -2,6 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import {
   isWorkflowRunStatusTerminal,
   TracerScenarioSchema,
@@ -177,6 +178,28 @@ export interface DrainRunOptions {
   idleTimeoutMs?: number;
   /** Wait between polls once a claim missed. Default 1_000. */
   pollIntervalMs?: number;
+  /** Project the run belongs to, carried on `TracerScenarioError` (#578). */
+  projectId?: string;
+}
+
+/**
+ * #578: a scenario that dies before a verdict still has a project and a run an
+ * operator needs to open. The ids used to survive only as free text inside the
+ * message, so the golden-journey evidence README printed `-` for exactly the
+ * stuck runs it exists to point at; carrying them on the error lets a caller
+ * read them off instead of parsing them back out of prose.
+ */
+export class TracerScenarioError extends Error {
+  override readonly name = 'TracerScenarioError';
+
+  constructor(
+    message: string,
+    readonly projectId: string,
+    readonly runId: string,
+    readonly runStatus: string,
+  ) {
+    super(message);
+  }
 }
 
 // Several times the queue's 30s max backoff, so an idle timeout means the run
@@ -229,14 +252,17 @@ export async function drainRunToTerminalStatus(
       continue;
     }
     if (Date.now() >= idleDeadline) {
-      throw new Error(
+      throw new TracerScenarioError(
         `Run ${runId} never reached a terminal status: last observed status ` +
           `${run?.status ?? 'unknown'}, ${undecided.length} approval request(s) undecided at the ` +
           `last poll, and no job became claimable within the ${idleTimeoutMs}ms idle timeout ` +
           `(a pending job may still be in queue backoff).`,
+        options.projectId ?? '-',
+        runId,
+        run?.status ?? 'unknown',
       );
     }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    await sleep(pollIntervalMs);
   }
 }
 
@@ -249,7 +275,7 @@ export async function runTracerScenarioToCompletion(
 ): Promise<TracerScenarioRunResult> {
   const { runtime, project, runId } = await startTracerRun(scenario, options);
 
-  const runStatus = await drainRunToTerminalStatus(runtime, runId);
+  const runStatus = await drainRunToTerminalStatus(runtime, runId, { projectId: project.id });
 
   return {
     projectId: project.id,
