@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -15,40 +15,48 @@ test('clean preserves declarations for incremental typecheck', () => {
 });
 
 // #574: `npm run check` is the pre-PR gate, so a red bucket has to reach its
-// exit code. Two things can break that: a bucket that stops short-circuiting
-// (`;` or `|| true` between commands) and a bucket whose runner reports the
-// failure on stdout but exits 0 anyway.
+// exit code. Three things can break that: a bucket that stops short-circuiting
+// (`;` or `|| true` between commands), a runner that reports the failure on
+// stdout but exits 0 anyway, and a file list that quietly matches nothing.
 
-const CHECK_CHAIN = [
-  'check',
-  'check:static',
-  'architecture:check',
-  'roadmap:check',
-  'test',
-  'test:unit',
-  'test:scripts',
-  'build',
-  'build:packages',
-  'build:apps',
-  'secrets:check',
-];
-
-test('every bucket in the check chain short-circuits on failure', () => {
-  for (const name of CHECK_CHAIN) {
+// Every root script `check` reaches, walked rather than listed, so a bucket
+// added to the chain later is covered without anyone remembering to add it
+// here. `npm run <name> --workspace <pkg>` is a package's own script, not a
+// root one, so it is not part of the walk; `npm:<name>` is concurrently's
+// shorthand inside `check:static`.
+function scriptsReachedBy(entry) {
+  const reached = new Set();
+  const queue = [entry];
+  while (queue.length > 0) {
+    const name = queue.shift();
     const command = scripts[name];
-    assert.ok(command, `package.json has no "${name}" script`);
-    assert.doesNotMatch(command, /\|\|/, `"${name}" swallows a failure with ||`);
-    assert.doesNotMatch(command, /;/, `"${name}" chains with ; instead of &&`);
+    if (command === undefined || reached.has(name)) continue;
+    reached.add(name);
+    for (const [, next] of command.matchAll(/\bnpm(?:\s+run)?\s+([\w:.-]+)(?!\s+--workspace)/g))
+      queue.push(next);
+    for (const [, next] of command.matchAll(/\bnpm:([\w:.-]+)/g)) queue.push(next);
+  }
+  return [...reached];
+}
+
+test('the check chain reaches the node --test script bucket', () => {
+  const chain = scriptsReachedBy('check');
+  for (const bucket of ['check:static', 'test', 'test:unit', 'test:scripts', 'build'])
+    assert.ok(chain.includes(bucket), `check no longer reaches "${bucket}"`);
+});
+
+test('no bucket in the check chain swallows a failure', () => {
+  for (const name of scriptsReachedBy('check')) {
+    assert.doesNotMatch(scripts[name], /\|\|/, `"${name}" swallows a failure with ||`);
+    assert.doesNotMatch(scripts[name], /;/, `"${name}" chains with ; instead of &&`);
   }
 });
 
-test('the check chain still runs the node --test script bucket', () => {
-  assert.match(scripts.check, /\bnpm test\b/);
-  assert.match(scripts.test, /\bnpm run test:scripts\b/);
-});
-
-test('a deliberately failing script test makes the test:scripts bucket exit non-zero', async () => {
+// Runs the real `test:scripts` command over a fixture holding exactly the
+// given script tests, so what is under test is the command this repo ships.
+async function runScriptBucket(t, files) {
   const fixture = await mkdtemp(join(tmpdir(), 'af-574-check-exit-'));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
   await mkdir(join(fixture, 'scripts/lib'), { recursive: true });
   await writeFile(
     join(fixture, 'package.json'),
@@ -58,22 +66,35 @@ test('a deliberately failing script test makes the test:scripts bucket exit non-
       scripts: { 'test:scripts': scripts['test:scripts'] },
     }),
   );
-  await writeFile(
-    join(fixture, 'scripts/lib/deliberate-failure.test.mjs'),
-    "import test from 'node:test';\ntest('deliberately fails', () => {\n  throw new Error('#574 regression fixture');\n});\n",
-  );
+  for (const [name, body] of Object.entries(files))
+    await writeFile(join(fixture, 'scripts/lib', name), body);
 
   // `node --test` sets NODE_TEST_CONTEXT in every test child, and a nested
   // runner that inherits it reports to its parent instead of owning its own
-  // exit code — it would exit 0 on a failing test and make this test vacuous.
+  // exit code — it would exit 0 on a failing test and make this vacuous.
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
 
-  const code = await new Promise((resolvePromise) => {
+  return new Promise((done) => {
     execFile('npm', ['run', 'test:scripts'], { cwd: fixture, env }, (error) =>
-      resolvePromise(error ? (error.code ?? 1) : 0),
+      done(error ? (error.code ?? 1) : 0),
     );
   });
+}
 
-  assert.notEqual(code, 0, 'test:scripts reported success on a failing script test');
+const PASSING_TEST = "import test from 'node:test';\ntest('passes', () => {});\n";
+const FAILING_TEST =
+  "import test from 'node:test';\ntest('deliberately fails', () => {\n  throw new Error('#574 regression fixture');\n});\n";
+
+test('a deliberately failing script test makes the test:scripts bucket exit non-zero', async (t) => {
+  // The passing run is the control: without it, a bucket that failed to start
+  // at all would satisfy the failing case for the wrong reason.
+  assert.equal(await runScriptBucket(t, { 'passes.test.mjs': PASSING_TEST }), 0);
+  assert.equal(await runScriptBucket(t, { 'fails.test.mjs': FAILING_TEST }), 1);
+});
+
+test('the test:scripts bucket fails instead of passing when its glob matches nothing', async (t) => {
+  // Handed a pattern that matches no file, `node --test` exits 0 and the whole
+  // bucket disappears from the gate — hence the guard in front of it.
+  assert.notEqual(await runScriptBucket(t, {}), 0);
 });
