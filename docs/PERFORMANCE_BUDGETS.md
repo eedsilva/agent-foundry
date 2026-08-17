@@ -78,9 +78,9 @@ regression makes a metric unavailable or slower than its limit.
 
 Before this task, `golden-flow.spec.ts` (which includes the axe accessibility scan across the
 issue #97 branch's five surfaces) ran in CI only as a subprocess of the
-`supabase-data-plane-e2e` job — which needs Docker and the Supabase CLI, and is red on `main`.
-That made it the *only* CI path that ever executed the axe scan: every accessibility assertion
-landed in Tasks 1-5 was unenforced.
+`supabase-data-plane-e2e` job — which needs Docker and the Supabase CLI, and intermittently
+fails under load. That made it the *only* CI path that ever executed the axe scan: every
+accessibility assertion landed in Tasks 1-5 was unenforced.
 
 The suite itself needs neither Docker nor Supabase. Standalone, after `npm run build:packages`:
 
@@ -96,3 +96,59 @@ $ npm run build:packages && npm run e2e --workspace @agent-foundry/api -- golden
 `npm run e2e --workspace @agent-foundry/api -- golden-flow.spec.ts`. `supabase-data-plane-e2e`
 is left as-is — fixing it is out of scope for #97 — but it is no longer the only route that
 runs this suite.
+
+### Measured status of `supabase-data-plane-e2e` — 2026-08-17 (#575)
+
+The paragraph above used to say this job "is red on `main`". That was false, and it was
+load-bearing: it is the stated reason `golden-flow-e2e` exists, so the next person reading it
+was told the Docker/Supabase job is known-red — the exact belief that waves off a real failure.
+It cost real time on #571/#573, where it was the first evidence suggesting "known flake".
+
+**Pass rate.** Across the last 40 `ci` workflow runs (2026-08-14 → 2026-08-17 UTC): 37 green,
+1 red, 2 cancelled, counting only each run's latest attempt. That view hides re-runs, which is
+where most of the failures are — six of those runs have more than one attempt. Counting *every*
+attempt gives **45 verdicts: 39 green, 6 red**.
+
+| Run | Event | Branch | Result |
+| --- | --- | --- | --- |
+| `31901468228` | `push` | `main` | red, single attempt |
+| `31981326099` a1, a2 | `pull_request` | `fix/571-defer-blocked-browser-plan` | red, green on a3 |
+| `31961529103` a1 | `pull_request` | `fix/560-supabase-local-bootstrap` | red, green on a2 |
+| `31960483023` a1 | `pull_request` | `feat/97-builder-polish` | red, green on a2 |
+| `31902849819` a1 | `pull_request` | `fix/546-restrictive-drop-policy` | red, green on a2 |
+
+**The `pull_request` correlation holds** (AC 2 of #575): 5 of 6 failures are `pull_request`
+runs, where CodeQL and `dependency-review` run alongside `ci`. The lone `main` failure means
+the correlation is not an absolute — a `push` run can lose too — so "PR-only" is too strong,
+but "PR-correlated" is what the data says. **No failure is reproducible at its own commit:**
+every re-run above is green at the *identical* head SHA, matching the local result (33s, green)
+and the `workflow_dispatch` re-runs on #573.
+
+**The failure shape is identical in all six**, and it is one test, not two:
+
+```
+✘ golden-flow.spec.ts:986  golden flow: attach reference, plan, build, visual edit, revert, rebuild
+    Error: page.waitForResponse: Test timeout of 180000ms exceeded.
+✘ golden-flow.spec.ts:1302 router dashboard shows decisions and filters…
+    Error: Timed out waiting for http://localhost:<port>     ← the `next dev` it took down
+2 failed / 1 did not run / 1 passed
+```
+
+The heaviest test blows the 180s Playwright budget (`apps/api/e2e/playwright.config.ts:5`) at
+`page.waitForResponse`; the next test then fails waiting for the dev server the first one took
+with it, and the fourth never runs. Locally the whole spec needs ~33s, so 180s is not a
+marginal budget — it is ~5x headroom that a loaded runner still exhausts.
+
+**No timeout was raised.** With every failure green at its own SHA and 5x headroom already, a
+larger budget would as likely mask a real regression as fix a flake. The correlation points at
+the other lever #575 names — reducing what runs concurrently on `pull_request` events — which
+is a change to CodeQL/`dependency-review` scheduling, out of scope for a documentation fix.
+
+Read a red check here before re-running it: per `docs/VALIDATION.md` ("CI-caught regression:
+transient `unhealthy` blips…"), a same-named failure on an unrelated branch has already turned
+out to be a different, real bug.
+
+One superlative to avoid while rewriting this: it is not the heaviest job in CI. On green
+`main` runs it takes 242–269s, behind `test` (658–700s) and `issue-radar-e2e` (312–333s). What
+is distinctive about it is the dependency stack (Docker, a real Supabase, a spawned dev server)
+and its sensitivity to load — not wall clock.

@@ -86,6 +86,11 @@ jobs:
           version: 2.62.5
       - run: RUN_SUPABASE_RLS_E2E=true npx vitest run packages/platform/src/security-rls.e2e.test.ts --pool=threads --maxWorkers=1
 
+  # Real Docker + a local Supabase stack + a spawned `next dev`. It is *not* a
+  # known-red job: it fails intermittently, and every failure recorded so far
+  # went green on re-run at the identical commit. Read a red check here before
+  # re-running it — measured pass rate, the `pull_request` correlation and the
+  # recurring failure shape: docs/PERFORMANCE_BUDGETS.md.
   supabase-data-plane-e2e:
     name: supabase-data-plane-e2e
     needs: preflight
@@ -129,10 +134,11 @@ jobs:
       - run: npm run e2e --workspace @agent-foundry/api -- issue-radar-golden-journey.spec.ts issue-radar-cross-user-access.spec.ts
 
   # golden-flow.spec.ts otherwise only runs as a subprocess of
-  # supabase-data-plane-e2e, which needs Docker + the Supabase CLI and is red
-  # on main — that made it the sole CI path executing the axe scan, so every
-  # accessibility assertion in #97 would land unenforced. The suite itself
-  # needs neither Docker nor Supabase (measured: 4 passed in 35s standalone).
+  # supabase-data-plane-e2e, which needs Docker + the Supabase CLI — that made
+  # it the sole CI path executing the axe scan, so every accessibility
+  # assertion in #97 rode on a job that intermittently fails under load.
+  # The suite itself needs neither Docker nor Supabase (measured: 4 passed in
+  # 35s standalone).
   golden-flow-e2e:
     name: golden-flow-e2e
     needs: preflight

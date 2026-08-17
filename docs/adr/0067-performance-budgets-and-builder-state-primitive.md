@@ -15,6 +15,12 @@ only as a subprocess of `supabase-data-plane-e2e` — a job that needs Docker an
 CLI and is red on `main`. That made it the sole CI path exercising the axe scan, so every
 accessibility assertion added on this branch would have landed unenforced.
 
+> **Correction (2026-08-17, #575):** "is red on `main`" was wrong when written. The job is not
+> known-red; it fails intermittently and green-on-re-run at the same commit. The decision below
+> is unaffected — the axe scan really did depend on a single Docker/Supabase job — but do not
+> read the sentence above as licence to wave off a red check there. Measured status:
+> [`docs/PERFORMANCE_BUDGETS.md`](../PERFORMANCE_BUDGETS.md).
+
 The same branch also converges on one UI decision that recurs across its tasks: how every pane
 in the builder renders the three states it can be in when it has no content to show — nothing
 yet, still loading, or failed. Before this branch there was one primitive, `EmptyState`, that
