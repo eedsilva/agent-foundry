@@ -226,7 +226,7 @@ describe('preview cleanup on run failure (#579)', () => {
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
     expect(harness.events.events).toContainEqual(
       expect.objectContaining({
-        type: 'preview.failed',
+        type: 'preview.cleanup_failed',
         runId: 'run-1',
         dedupeKey: 'run-1:preview.cleanup_failed',
         data: {

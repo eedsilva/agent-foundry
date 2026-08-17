@@ -506,7 +506,7 @@ export class WorkflowOrchestrator {
     } catch (error) {
       await this.emit(
         projectId,
-        'preview.failed',
+        'preview.cleanup_failed',
         'Preview cleanup failed; the lifecycle reaper will retry.',
         {
           runId,

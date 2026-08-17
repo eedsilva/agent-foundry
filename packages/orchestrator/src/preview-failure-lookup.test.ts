@@ -114,6 +114,41 @@ describe('latestPreviewFailureEvent', () => {
     expect(found?.id).toBe('e2');
   });
 
+  it('does not let a later preview.cleanup_failed event mask an earlier genuine preview.failed diagnostic (#579)', async () => {
+    // stopPreviewForFailedRun emits its own cleanup-failure event at run
+    // teardown, i.e. after any genuine preview.failed event for that run. If
+    // it shared the 'preview.failed' type, the diagnostic-less cleanup event
+    // would always be newer and this lookup -- which returns the newest
+    // 'preview.failed' event, by design -- would shadow the real diagnostic.
+    // preview.cleanup_failed is its own type precisely so this filter never
+    // sees it.
+    const events = new FakeEventStore();
+    await events.append({
+      id: 'genuine',
+      projectId: 'project-1',
+      type: 'preview.failed',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      message: 'preview failed',
+      data: { sessionId: 'session-1', diagnostic: diagnostic({ sessionId: 'session-1' }) },
+    });
+    await events.append({
+      id: 'cleanup',
+      projectId: 'project-1',
+      type: 'preview.cleanup_failed',
+      createdAt: '2026-08-14T00:05:00.000Z',
+      runId: 'run-1',
+      message: 'Preview cleanup failed; the lifecycle reaper will retry.',
+      dedupeKey: 'run-1:preview.cleanup_failed',
+      data: { sessionId: 'session-1', error: 'preview lifecycle lock unavailable' },
+    });
+    const artifacts = new FakeArtifactStore();
+
+    const found = await latestPreviewFailureEvent(events, artifacts, 'project-1');
+
+    expect(found?.id).toBe('genuine');
+    expect(found?.data.diagnostic).toMatchObject({ sessionId: 'session-1' });
+  });
+
   it('finds a preview.failed event buried behind more than 500 later events', async () => {
     const buried = previewFailedEvent({ id: 'buried', data: { sessionId: 'session-buried' } });
     const filler = Array.from({ length: 600 }, (_, i) => otherEvent(`filler-${i}`));
