@@ -439,6 +439,11 @@ describe('runtime composition', () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-preview-cleanup-'));
     temporaryDirectories.push(dataDir);
     const executor = new GatedFailExecutor();
+    const pidFile = join(dataDir, 'preview-pids');
+    const fixture = resolve(
+      import.meta.dirname,
+      '../../executors/src/fixtures/preview-dev-server.mjs',
+    );
     const runtime = await createRuntime(
       {
         ...process.env,
@@ -463,6 +468,21 @@ describe('runtime composition', () => {
         },
       },
     );
+    const preparePreview = runtime.previewRunner.prepare.bind(runtime.previewRunner);
+    vi.spyOn(runtime.previewRunner, 'prepare').mockImplementation(async (session) => {
+      const prepared = await preparePreview(session);
+      return {
+        ...prepared,
+        commandPlan: {
+          ...prepared.commandPlan!,
+          dev: {
+            ok: true,
+            command: process.execPath,
+            args: [fixture, `--spawn-grandchild=${pidFile}`, '--ignore-sigterm'],
+          },
+        },
+      };
+    });
     const project = await runtime.projectService.create({
       name: 'Preview cleanup fixture',
       workflowId: 'web-app-v1',
@@ -470,11 +490,6 @@ describe('runtime composition', () => {
     });
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
     const workspacePath = runtime.workspaces.workspacePath(project.id);
-    const pidFile = join(dataDir, 'preview-pids');
-    const fixture = resolve(
-      import.meta.dirname,
-      '../../executors/src/fixtures/preview-dev-server.mjs',
-    );
     await mkdir(workspacePath, { recursive: true });
     await writeFile(
       join(workspacePath, 'package.json'),
