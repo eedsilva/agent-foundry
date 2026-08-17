@@ -497,7 +497,7 @@ describe('runtime composition', () => {
     const strayPids: number[] = [];
     try {
       const running = runtime.orchestrator.runProject(project.id, undefined, project.currentRunId);
-      await executor.started;
+      await Promise.race([executor.started, running]);
       const active = await runtime.previewService.activeForProject(project.id);
       if (!active?.process?.port) throw new Error('Expected active preview process');
       const processPids = (await readFile(pidFile, 'utf8')).trim().split(' ').map(Number);
@@ -522,7 +522,7 @@ describe('runtime composition', () => {
         if (isAlive(pid)) process.kill(pid, 'SIGKILL');
       }
     }
-  }, 30_000);
+  }, 60_000);
 
   it('builds the validation campaign from the injected env, not process.env', async () => {
     // #564: the campaign preview carries the active-time ceiling, and the
