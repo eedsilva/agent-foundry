@@ -1,0 +1,182 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { PreviewSession, PreviewWorkspaceRef } from '@agent-foundry/contracts';
+import { isPreviewSessionTerminal } from '@agent-foundry/domain';
+import type { WorkspacePreviewBooter } from './workflow-orchestrator.js';
+import { completeRun, makeHarness, makeStores, seedRun } from './testing/harness.js';
+
+const NOW = '2026-08-17T00:00:00.000Z';
+
+/**
+ * A stateful preview double, not just a spy: `stop` actually flips the held
+ * session to 'stopped' and `activeForProject` stops returning it once
+ * terminal, mirroring `PreviewSessionRepository.listActive()` (#579). This
+ * lets assertions check the session's own status instead of only call counts.
+ */
+function makePreviewDouble() {
+  let current: PreviewSession | undefined;
+  const stopCalls: string[] = [];
+  return {
+    start: vi.fn(async (input: { workspaceRef: PreviewWorkspaceRef; runId?: string }) => {
+      current = {
+        id: 'preview-1',
+        workspaceRef: input.workspaceRef,
+        ...(input.runId ? { runId: input.runId } : {}),
+        status: 'running',
+        url: 'http://127.0.0.1/preview/preview-1/?token=t',
+        version: 1,
+        health: { state: 'healthy', checkedAt: NOW, consecutiveFailures: 0 },
+        ttl: { seconds: 1_800 },
+        restartCount: 0,
+        createdAt: NOW,
+        updatedAt: NOW,
+      };
+      return { session: current, url: current.url! };
+    }),
+    activeForProject: vi.fn(async (projectId: string) =>
+      current &&
+      current.workspaceRef.projectId === projectId &&
+      !isPreviewSessionTerminal(current.status)
+        ? current
+        : undefined,
+    ),
+    stop: vi.fn(async (sessionId: string) => {
+      stopCalls.push(sessionId);
+      if (!current || current.id !== sessionId) {
+        throw new Error(`stop() called for unknown session ${sessionId}`);
+      }
+      current = { ...current, status: 'stopped', completedAt: NOW };
+      return current;
+    }),
+    stopCalls,
+    session: () => current,
+    /** Simulates a preview already owned by a different run/project before this run's boot check. */
+    seed(session: PreviewSession) {
+      current = session;
+    },
+  } satisfies WorkspacePreviewBooter & {
+    stopCalls: string[];
+    session: () => PreviewSession | undefined;
+    seed: (session: PreviewSession) => void;
+  };
+}
+
+describe('preview cleanup on run failure (#579)', () => {
+  it('stops the booted preview when the run fails', async () => {
+    const previews = makePreviewDouble();
+    const harness = makeHarness(
+      { implement: { kind: 'fail-always', error: () => new Error('agent exploded') } },
+      makeStores(),
+      { previews },
+    );
+    await seedRun(harness);
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      'agent exploded',
+    );
+
+    expect(previews.stopCalls).toEqual(['preview-1']);
+    expect(previews.session()?.status).toBe('stopped');
+    expect((await harness.runs.get('run-1'))?.status).toBe('failed');
+  });
+
+  it('stops the booted preview when the run is cancelled', async () => {
+    const previews = makePreviewDouble();
+    const harness = makeHarness({ implement: { kind: 'hang-until-abort' } }, makeStores(), {
+      previews,
+    });
+    await seedRun(harness);
+
+    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await vi.waitFor(() => {
+      expect(harness.executor.started('implement')).toBe(1);
+    });
+    await harness.service.cancelRun('run-1');
+    await running;
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('cancelled');
+    expect(previews.stopCalls).toEqual(['preview-1']);
+    expect(previews.session()?.status).toBe('stopped');
+  });
+
+  it('does not stop a preview a second time when a terminal run is redelivered', async () => {
+    const previews = makePreviewDouble();
+    const harness = makeHarness(
+      { implement: { kind: 'fail-always', error: () => new Error('agent exploded') } },
+      makeStores(),
+      { previews },
+    );
+    await seedRun(harness);
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toThrow();
+    expect(previews.stopCalls).toEqual(['preview-1']);
+
+    // Redeliver the already-terminal run (e.g. a queue retry after the earlier throw).
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).resolves.toBeUndefined();
+
+    expect(previews.stopCalls).toEqual(['preview-1']);
+    expect((await harness.runs.get('run-1'))?.status).toBe('failed');
+  });
+
+  it('leaves a preview booted by a different run alone', async () => {
+    const previews = makePreviewDouble();
+    previews.seed({
+      id: 'preview-other',
+      workspaceRef: { projectId: 'project-1', workspacePath: '/tmp/ws' },
+      runId: 'run-other',
+      status: 'running',
+      version: 1,
+      health: { state: 'healthy', checkedAt: NOW, consecutiveFailures: 0 },
+      ttl: { seconds: 1_800 },
+      restartCount: 0,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const harness = makeHarness(
+      { implement: { kind: 'fail-always', error: () => new Error('agent exploded') } },
+      makeStores(),
+      { previews },
+    );
+    await seedRun(harness);
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      'agent exploded',
+    );
+
+    // The project already had a live session, so this run never booted its own.
+    expect(previews.start).not.toHaveBeenCalled();
+    expect(previews.stop).not.toHaveBeenCalled();
+    expect(previews.session()).toMatchObject({ id: 'preview-other', status: 'running' });
+  });
+
+  it('keeps the preview running when the run completes', async () => {
+    const previews = makePreviewDouble();
+    const harness = makeHarness({}, makeStores(), { previews });
+
+    await completeRun(harness);
+
+    expect(previews.stop).not.toHaveBeenCalled();
+    expect(previews.session()?.status).toBe('running');
+  });
+
+  it('does not let a cleanup failure mask the run failure or its terminal status', async () => {
+    const previews = makePreviewDouble();
+    previews.stop.mockImplementation(async () => {
+      throw new Error('preview lifecycle lock unavailable');
+    });
+    const harness = makeHarness(
+      { implement: { kind: 'fail-always', error: () => new Error('agent exploded') } },
+      makeStores(),
+      { previews },
+    );
+    await seedRun(harness);
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      'agent exploded',
+    );
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('failed');
+  });
+});
