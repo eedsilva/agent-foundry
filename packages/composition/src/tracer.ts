@@ -4,15 +4,19 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   TracerScenarioSchema,
+  isWorkflowRunStatusTerminal,
   type Project,
   type TracerScenario,
   type ValidationEvidenceResponse,
 } from '@agent-foundry/contracts';
 import { NotFoundError, ValidationError } from '@agent-foundry/domain';
+import { MAX_QUEUE_BACKOFF_MS } from '@agent-foundry/persistence';
 import { loadJsonDirectory } from './dogfood.js';
 import { createRuntime, type Runtime } from './runtime.js';
 
 const PREVIEW_PROBE_TIMEOUT_MS = 2_000;
+const TRACER_IDLE_CLAIM_RETRY_MS = 100;
+const TRACER_IDLE_CLAIM_TIMEOUT_MS = MAX_QUEUE_BACKOFF_MS + 5_000;
 
 // #526: the runtime builds previewBaseUrl from apiHost:apiPort
 // (runtime.ts's `http://${config.apiHost}:${config.apiPort}/preview`), served
@@ -86,6 +90,47 @@ async function readEvidence(
   } catch (error) {
     if (error instanceof ValidationError || error instanceof NotFoundError) return null;
     throw error;
+  }
+}
+
+function waitForTracerClaim(): Promise<void> {
+  return new Promise((resolveWait) => setTimeout(resolveWait, TRACER_IDLE_CLAIM_RETRY_MS));
+}
+
+async function driveTracerRunToTerminal(runtime: Runtime, runId: string): Promise<void> {
+  let idleClaimStartedAt: number | undefined;
+
+  for (;;) {
+    const run = await runtime.runs.get(runId);
+    if (!run) throw new Error(`Tracer run ${runId} disappeared before reaching a terminal state.`);
+    if (isWorkflowRunStatusTerminal(run.status)) return;
+
+    const pending = (await runtime.projectService.listApprovals(runId)).find(
+      (entry) => !entry.decision,
+    );
+    if (pending) {
+      await runtime.projectService.decideApproval(runId, pending.request.id, {
+        action: 'approve',
+        decidedBy: 'tracer-driver',
+      });
+      idleClaimStartedAt = undefined;
+      continue;
+    }
+
+    if (await runtime.worker.runOnce()) {
+      idleClaimStartedAt = undefined;
+      continue;
+    }
+
+    const now = Date.now();
+    idleClaimStartedAt ??= now;
+    if (now - idleClaimStartedAt >= TRACER_IDLE_CLAIM_TIMEOUT_MS) {
+      throw new Error(
+        `Tracer run ${runId} remained ${run.status} without a claim for ` +
+          `${TRACER_IDLE_CLAIM_TIMEOUT_MS}ms.`,
+      );
+    }
+    await waitForTracerClaim();
   }
 }
 
@@ -166,18 +211,7 @@ export async function runTracerScenarioToCompletion(
 ): Promise<TracerScenarioRunResult> {
   const { runtime, project, runId } = await startTracerRun(scenario, options);
 
-  await runtime.worker.runOnce();
-  for (;;) {
-    const pending = (await runtime.projectService.listApprovals(runId)).find(
-      (entry) => !entry.decision,
-    );
-    if (!pending) break;
-    await runtime.projectService.decideApproval(runId, pending.request.id, {
-      action: 'approve',
-      decidedBy: 'tracer-driver',
-    });
-    if (!(await runtime.worker.runOnce())) break;
-  }
+  await driveTracerRunToTerminal(runtime, runId);
   const run = await runtime.runs.get(runId);
 
   return {

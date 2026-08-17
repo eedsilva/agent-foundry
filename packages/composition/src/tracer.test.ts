@@ -1,9 +1,10 @@
 import { createServer, type AddressInfo } from 'node:net';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TracerScenarioSchema } from '@agent-foundry/contracts';
+import { WorkerLoop } from '@agent-foundry/orchestrator';
 import {
   assertPreviewOriginReachable,
   loadTracerScenarios,
@@ -15,6 +16,7 @@ const scenariosDir = resolve(import.meta.dirname, '../../../examples/tracer/scen
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
@@ -118,6 +120,28 @@ describe('runTracerScenarioToCompletion (mock mode)', () => {
 
     expect(result.runStatus).toBe('completed');
   }, 30_000);
+
+  it('waits for a delayed claim after approving a gate and drains the queue', async () => {
+    const dataDir = await tempDir('tracer-complete-empty-claim-');
+    const originalRunOnce = WorkerLoop.prototype.runOnce;
+    let runOnceCalls = 0;
+    let unavailableUntil = 0;
+    vi.spyOn(WorkerLoop.prototype, 'runOnce').mockImplementation(async function (this: WorkerLoop) {
+      runOnceCalls += 1;
+      if (runOnceCalls === 2) unavailableUntil = Date.now() + 2_000;
+      if (Date.now() < unavailableUntil) return false;
+      return originalRunOnce.call(this);
+    });
+
+    const result = await runTracerScenarioToCompletion(toyScenario(), {
+      executorMode: 'mock',
+      dataDir,
+    });
+
+    expect(result.runStatus).toBe('completed');
+    expect(runOnceCalls).toBeGreaterThan(2);
+    expect(await readdir(join(dataDir, 'queue', 'pending'))).toEqual([]);
+  }, 45_000);
 
   it('reports no evidence for a mock run, because a bundle needs a campaign and a campaign needs real mode', async () => {
     // #564: the gate reads its verdict out of the published bundle, so the
