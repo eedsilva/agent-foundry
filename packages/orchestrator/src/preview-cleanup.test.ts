@@ -98,7 +98,7 @@ describe('preview cleanup on run failure (#579)', () => {
     expect(previews.session()?.status).toBe('stopped');
   });
 
-  it('does not stop a preview a second time when a terminal run is redelivered', async () => {
+  it('does not stop a preview a second time when a terminal run is restarted (redelivered by the queue)', async () => {
     const previews = makePreviewDouble();
     const harness = makeHarness(
       { implement: { kind: 'fail-always', error: () => new Error('agent exploded') } },

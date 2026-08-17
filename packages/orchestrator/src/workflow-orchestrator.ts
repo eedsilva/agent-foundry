@@ -486,12 +486,13 @@ export class WorkflowOrchestrator {
   }
 
   /**
-   * Terminates the preview this run booted once the run ends in failure, so a
-   * failed run leaves neither an orphan dev-server tree nor a session stuck in
-   * 'running' (#579). Completed runs keep their preview: the user is meant to
-   * browse the app the run just built.
+   * Terminates the preview this run booted once the run reaches a non-completed
+   * terminal status (failed, cancelled, or rejected — #579), so it leaves
+   * neither an orphan dev-server tree nor a session stuck at 'running'.
+   * Completed runs keep their preview: the user is meant to browse the app
+   * the run just built.
    */
-  private async stopPreviewForFailedRun(runId: string, projectId: string): Promise<void> {
+  private async stopPreviewForFailedRun(projectId: string, runId: string): Promise<void> {
     const previews = this.previews;
     const stop = previews?.stop;
     if (!previews || !stop) return;
@@ -720,7 +721,7 @@ export class WorkflowOrchestrator {
       } finally {
         // Must not mask the run's real outcome (#579); a stuck-non-terminal
         // session still has the lifecycle reaper as its retry path.
-        await this.stopPreviewForFailedRun(run.id, projectId).catch(() => undefined);
+        await this.stopPreviewForFailedRun(projectId, run.id).catch(() => undefined);
         stopPreviewLeaseHeartbeat();
         stopWatching();
       }
