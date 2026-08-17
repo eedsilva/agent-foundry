@@ -153,15 +153,6 @@ export async function runTracerScenario(
   };
 }
 
-// #509: a single runOnce() only proves the plan step runs — it parks at the
-// plan-approval gate. Producing UI-quality-judge evidence needs a run that
-// actually reaches browser verification, on the far side of that gate. This
-// auto-approves every operator-approval gate the run parks at until the
-// workflow reaches a terminal status. Mirrors testing-helpers.ts's
-// approveAllGates but kept separate: that helper is deliberately not part of
-// the composition package's public surface (see its own comment) because
-// it's test-only wiring; this is the production code path scripts/tracer.ts
-// runs in real mode.
 /**
  * The slice of `Runtime` the drain loop drives. Structural on purpose: a test
  * can script `runOnce()` without standing up a runtime, executor or data dir.
@@ -197,6 +188,11 @@ const DEFAULT_POLL_INTERVAL_MS = 1_000;
  * Drives a run to a terminal status, auto-approving every operator gate on the
  * way.
  *
+ * #509: mirrors testing-helpers.ts's approveAllGates but kept separate: that
+ * helper is deliberately not part of the composition package's public surface
+ * (see its own comment) because it's test-only wiring; this is the production
+ * code path scripts/tracer.ts runs in real mode.
+ *
  * #578: `WorkerLoop.runOnce()` returns `false` whenever `queue.claim()` finds
  * nothing claimable *right now*, and `FileJobQueue.claim()` skips any pending
  * job still inside the `nack()` backoff it just earned (2s, 4s, … capped at
@@ -208,7 +204,7 @@ export async function drainRunToTerminalStatus(
   target: DrainRunTarget,
   runId: string,
   options: DrainRunOptions = {},
-): Promise<string> {
+): Promise<WorkflowRunStatus> {
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   let idleDeadline = Date.now() + idleTimeoutMs;
@@ -240,10 +236,13 @@ export async function drainRunToTerminalStatus(
           `(a pending job may still be in queue backoff).`,
       );
     }
-    await new Promise((sleep) => setTimeout(sleep, pollIntervalMs));
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 }
 
+// #509: a single runOnce() only proves the plan step runs — it parks at the
+// plan-approval gate. Producing UI-quality-judge evidence needs a run that
+// actually reaches browser verification, on the far side of that gate.
 export async function runTracerScenarioToCompletion(
   scenario: TracerScenario,
   options: RunTracerScenarioOptions = {},
