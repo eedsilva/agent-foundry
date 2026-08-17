@@ -87,10 +87,11 @@ jobs:
       - run: RUN_SUPABASE_RLS_E2E=true npx vitest run packages/platform/src/security-rls.e2e.test.ts --pool=threads --maxWorkers=1
 
   # Real Docker + a local Supabase stack + a spawned `next dev`. It is *not* a
-  # known-red job: it fails intermittently, and every failure recorded so far
-  # went green on re-run at the identical commit. Read a red check here before
-  # re-running it — measured pass rate, the `pull_request` correlation and the
-  # recurring failure shape: docs/PERFORMANCE_BUDGETS.md.
+  # known-red job: it fails intermittently, and every failure that was re-run
+  # so far went green at the identical commit. One recorded failure was never
+  # re-run, so "green on re-run" is the pattern, not a rule. Read a red check
+  # here before re-running it — measured pass rate, the `pull_request`
+  # correlation and the recurring failure shape: docs/PERFORMANCE_BUDGETS.md.
   supabase-data-plane-e2e:
     name: supabase-data-plane-e2e
     needs: preflight
@@ -136,7 +137,7 @@ jobs:
   # golden-flow.spec.ts otherwise only runs as a subprocess of
   # supabase-data-plane-e2e, which needs Docker + the Supabase CLI — that made
   # it the sole CI path executing the axe scan, so every accessibility
-  # assertion in #97 rode on a job that intermittently fails under load.
+  # assertion in #97 rode on a job that fails intermittently.
   # The suite itself needs neither Docker nor Supabase (measured: 4 passed in
   # 35s standalone). Note this job is not immune to that flake: the spec's own
   # `:986` test can exhaust its 180s budget here too, taking the spawned

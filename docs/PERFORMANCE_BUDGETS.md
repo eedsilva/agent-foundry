@@ -78,8 +78,8 @@ regression makes a metric unavailable or slower than its limit.
 
 Before this task, `golden-flow.spec.ts` (which includes the axe accessibility scan across the
 issue #97 branch's five surfaces) ran in CI only as a subprocess of the
-`supabase-data-plane-e2e` job — which needs Docker and the Supabase CLI, and intermittently
-fails under load. That made it the *only* CI path that ever executed the axe scan: every
+`supabase-data-plane-e2e` job — which needs Docker and the Supabase CLI, and fails
+intermittently. That made it the *only* CI path that ever executed the axe scan: every
 accessibility assertion landed in Tasks 1-5 was unenforced.
 
 The suite itself needs neither Docker nor Supabase. Standalone, after `npm run build:packages`:
@@ -120,9 +120,11 @@ attempt gives **45 verdicts: 39 green, 6 red**.
 **The `pull_request` correlation holds** (AC 2 of #575): 5 of 6 failures are `pull_request`
 runs, where CodeQL and `dependency-review` run alongside `ci`. The lone `main` failure means
 the correlation is not an absolute — a `push` run can lose too — so "PR-only" is too strong,
-but "PR-correlated" is what the data says. **No failure is reproducible at its own commit:**
-every re-run above is green at the *identical* head SHA, matching the local result (33s, green)
-and the `workflow_dispatch` re-runs on #573.
+but "PR-correlated" is what the data says. **No failure that was re-run reproduced at its own
+commit:** all five re-run failures went green at the *identical* head SHA, matching the local
+result (33s, green) and the `workflow_dispatch` re-runs on #573. The `31901468228` red on
+`main` was never re-run, so it is untested rather than evidence either way — five of six, not
+six of six.
 
 **The failure shape is identical in all six**, and it is one test, not two — and, as the next
 subsection shows, it is not really a property of this job at all:
@@ -138,12 +140,20 @@ subsection shows, it is not really a property of this job at all:
 The heaviest test blows the 180s Playwright budget (`apps/api/e2e/playwright.config.ts:5`) at
 `page.waitForResponse`; the next test then fails waiting for the dev server the first one took
 with it, and the fourth never runs. Locally the whole spec needs ~33s, so 180s is not a
-marginal budget — it is ~5x headroom that a loaded runner still exhausts.
+marginal budget — it is ~5x headroom that CI still exhausts.
 
-**No timeout was raised.** With every failure green at its own SHA and 5x headroom already, a
-larger budget would as likely mask a real regression as fix a flake. The correlation points at
-the other lever #575 names — reducing what runs concurrently on `pull_request` events — which
-is a change to CodeQL/`dependency-review` scheduling, out of scope for a documentation fix.
+**What is measured, and what is only a hypothesis.** Measured: the failures are intermittent,
+`pull_request`-correlated (5 of 6), non-reproducible at their own commit where re-run, and
+identical in shape. *Not* measured: the mechanism. Runner contention on `pull_request` events —
+where CodeQL and `dependency-review` run alongside `ci` — remains the leading **hypothesis**,
+and #575 was explicit that it is "a plausible contention story, not a proven one". Nothing here
+instruments the runner, so no claim below should be read as establishing load as the cause.
+
+**No timeout was raised.** With every re-run failure green at its own SHA and 5x headroom
+already, a larger budget would as likely mask a real regression as fix a flake. The correlation
+points at the other lever #575 names — reducing what runs concurrently on `pull_request` events
+— which is a change to CodeQL/`dependency-review` scheduling, out of scope for a documentation
+fix, and worth doing only if the contention hypothesis is first tested rather than assumed.
 
 Read a red check here before re-running it: per `docs/VALIDATION.md` ("CI-caught regression:
 transient `unhealthy` blips…"), a same-named failure on an unrelated branch has already turned
@@ -170,6 +180,10 @@ belongs to `golden-flow.spec.ts:986`, which both jobs run**; it is not a propert
 Docker/Supabase dependency stack, and splitting `golden-flow-e2e` out did not make the axe scan
 immune to it. What the two jobs share is the spec, a spawned `next dev`, and a `pull_request`
 event's concurrency.
+
+The next run on the same branch (`31988126661`, one docs-only commit later) had
+`golden-flow-e2e` green again — consistent with the rest, though a docs-only delta is not quite
+the same-SHA re-run the table above records.
 
 Practical consequence: a red `golden-flow-e2e` is now also worth reading rather than re-running
 blind, and any real fix targets that one test — not either job's timeout.
