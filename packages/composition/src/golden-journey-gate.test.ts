@@ -206,15 +206,15 @@ describe('evaluateGoldenJourneyGate', () => {
   });
 
   it('reports a missing bundle as no-evidence', () => {
-    const verdict = evaluate(null, 'completed');
+    const verdict = evaluate(null, 'queued');
     expect(verdict.status).toBe('no-evidence');
+    expect(verdict.runStatus).toBe('queued');
     expect(verdict.outcome).toBeUndefined();
     expect(verdict.sourceRevision).toBeUndefined();
     expect(verdict.attempts).toBe(0);
     expect(verdict.quotaUnits).toBe(0);
     expect(verdict.failedGates).toEqual([]);
-    expect(verdict.reasons).toHaveLength(1);
-    expect(verdict.reasons[0]).toMatch(/validation-evidence bundle/i);
+    expect(verdict.reasons).toEqual(['no validation-evidence bundle was published for the run']);
   });
 });
 

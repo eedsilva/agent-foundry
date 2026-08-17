@@ -72,7 +72,7 @@ export function evaluateGoldenJourneyGate(input: GoldenJourneyGateInput): Golden
     return goldenJourneyVerdictWithoutEvidence(
       identity,
       'no-evidence',
-      'no validation-evidence bundle was published for the run (mock mode publishes none)',
+      'no validation-evidence bundle was published for the run',
     );
   }
 
