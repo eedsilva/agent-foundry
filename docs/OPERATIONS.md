@@ -170,6 +170,8 @@ adicionado como arquivo puro e rodou com o runner já existente.
 o *mecanismo de entrada* (arquivo → projeto → run) aceita qualquer scenario sem mudança de código.
 Sozinho ele para no primeiro gate (`plan-approval`); `--approve-gates` (#509) troca o driver por
 `runTracerScenarioToCompletion`, que aprova cada gate pendente até o run atingir estado terminal.
+Um `runOnce()` sem job claimable (backoff de fila) vira poll, não fim do run: o driver só aborta o
+scenario — nomeando project e run — após 120s sem nada claimable (#578).
 Ele não reproduz o pipeline completo de report/baseline de `runDogfoodTask`; isso é escopo de uma
 nova stage do harness, fora do que #474 pediu.
 
@@ -179,7 +181,7 @@ Flags disponíveis:
 | --- | --- |
 | `--scenario <id>` \| `--all` | Seleciona um scenario ou todos. |
 | `--executor-mode mock\|real` | Qualquer valor diferente de `mock` é `real`. |
-| `--approve-gates` | Aprova cada gate de operador até o estado terminal (#509). |
+| `--approve-gates` | Aprova cada gate de operador até o estado terminal (#509); faz poll sobre claim miss e aborta após 120s ocioso (#578). |
 | `--policies-dir <dir>` / `--policy-id <id>` | Opta o run por um `ProjectPolicy` não-default (por exemplo `uiQualityJudge`). |
 | `--data-dir <dir>` | Fixa `DATA_DIR` em vez do `mkdtemp` descartável, para que a evidência sobreviva ao run. |
 | `--evidence-dir <dir>` | Escreve o bundle de cada scenario e um `README.md` com a tabela 4/4 (#564). |

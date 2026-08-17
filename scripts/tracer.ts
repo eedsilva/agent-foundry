@@ -9,6 +9,7 @@ import {
   loadTracerScenarios,
   runTracerScenario,
   runTracerScenarioToCompletion,
+  TracerScenarioError,
 } from '../packages/composition/src/tracer.js';
 import { argValue as sharedArgValue, assertRealModeReady } from './lib/cli-shared.js';
 
@@ -95,9 +96,15 @@ try {
       for (const reason of verdict.reasons) console.log(`  - ${reason}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'scenario runner threw';
+      // #578: a stuck run is the one an operator most needs to open, so the
+      // verdict names it whenever the throw carried its identity.
+      const identity =
+        error instanceof TracerScenarioError
+          ? { projectId: error.projectId, runId: error.runId, runStatus: error.runStatus }
+          : { projectId: '-', runId: '-', runStatus: 'unknown' };
       entries.push({
         verdict: goldenJourneyVerdictWithoutEvidence(
-          { scenarioId: scenario.id, projectId: '-', runId: '-', runStatus: 'unknown' },
+          { scenarioId: scenario.id, ...identity },
           'failed',
           message,
         ),

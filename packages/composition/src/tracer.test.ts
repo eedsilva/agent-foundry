@@ -10,6 +10,7 @@ import {
   loadTracerScenarios,
   runTracerScenario,
   runTracerScenarioToCompletion,
+  TracerScenarioError,
 } from './tracer.js';
 
 const scenariosDir = resolve(import.meta.dirname, '../../../examples/tracer/scenarios');
@@ -216,6 +217,22 @@ describe('drainRunToTerminalStatus (#578)', () => {
     await expect(
       drainRunToTerminalStatus(target, 'run-1', { idleTimeoutMs: 0, pollIntervalMs: 0 }),
     ).rejects.toThrow(/run-1[\s\S]*queued/);
+  });
+
+  it('carries the project and run ids on that error, so a failed verdict can name them', async () => {
+    // Without them scripts/tracer.ts falls back to '-' / 'unknown', and the
+    // evidence README names neither the project nor the run an operator has to
+    // open — exactly the stuck runs the table exists to point at.
+    const target = fakeDrainTarget('queued', [{ result: false }]);
+
+    const error = await drainRunToTerminalStatus(target, 'run-1', {
+      idleTimeoutMs: 0,
+      pollIntervalMs: 0,
+      projectId: 'proj-1',
+    }).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(TracerScenarioError);
+    expect(error).toMatchObject({ projectId: 'proj-1', runId: 'run-1', runStatus: 'queued' });
   });
 
   it('approves every gate exactly once across successive claim misses', async () => {
