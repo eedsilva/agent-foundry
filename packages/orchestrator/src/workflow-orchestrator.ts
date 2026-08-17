@@ -235,7 +235,7 @@ class ProjectProvisioningError extends Error {
 
 /** The slice of PreviewService that provisioning needs to boot a workspace. */
 export type WorkspacePreviewBooter = Pick<PreviewService, 'start' | 'activeForProject'> &
-  Partial<Pick<PreviewService, 'renewForProject'>>;
+  Partial<Pick<PreviewService, 'renewForProject' | 'stop'>>;
 
 /** Timeline evidence for a provisioning boot: which session, and what installed it. */
 function provisionedPreviewData(session: PreviewSession): Record<string, unknown> {
@@ -485,6 +485,42 @@ export class WorkflowOrchestrator {
     return session;
   }
 
+  /**
+   * Terminates the preview this run booted once the run reaches a non-completed
+   * terminal status (failed, cancelled, or rejected — #579), so it leaves
+   * neither an orphan dev-server tree nor a session stuck at 'running'.
+   * Completed runs keep their preview: the user is meant to browse the app
+   * the run just built.
+   */
+  private async stopPreviewForFailedRun(projectId: string, runId: string): Promise<void> {
+    const previews = this.previews;
+    const stop = previews?.stop;
+    if (!previews || !stop) return;
+    const run = await this.runs.get(runId);
+    if (!run || !isWorkflowRunStatusTerminal(run.status) || run.status === 'completed') return;
+    const active = await previews.activeForProject(projectId);
+    // A session booted by a different run is that run's to stop.
+    if (!active || active.runId !== runId) return;
+    try {
+      await stop.call(previews, active.id);
+    } catch (error) {
+      await this.emit(
+        projectId,
+        'preview.cleanup_failed',
+        'Preview cleanup failed; the lifecycle reaper will retry.',
+        {
+          runId,
+          dedupeKey: `${runId}:preview.cleanup_failed`,
+          data: {
+            sessionId: active.id,
+            error: redactString(errorMessage(error)).slice(0, 500),
+          },
+        },
+      ).catch(() => undefined);
+      throw error;
+    }
+  }
+
   async runProject(
     projectId: string,
     workflowId?: string,
@@ -700,6 +736,9 @@ export class WorkflowOrchestrator {
       try {
         await this.publishTerminalEvidence(run.id);
       } finally {
+        // Must not mask the run's real outcome (#579); a stuck-non-terminal
+        // session still has the lifecycle reaper as its retry path.
+        await this.stopPreviewForFailedRun(projectId, run.id).catch(() => undefined);
         stopPreviewLeaseHeartbeat();
         stopWatching();
       }

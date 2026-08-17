@@ -296,6 +296,28 @@ describe('PreviewService durable lifecycle', () => {
     expect(await service.activeForProject('project-1')).toBeUndefined();
   });
 
+  it('persists a failed stop for the lifecycle reaper to retry', async () => {
+    const built = await buildService();
+    const started = await start(built.service, 'run-1');
+    built.runner.stopFailures.add(started.session.id);
+
+    await expect(built.service.stop(started.session.id)).rejects.toThrow(
+      `stop ${started.session.id} failed`,
+    );
+
+    expect((await built.sessions.get(started.session.id))?.session).toMatchObject({
+      status: 'failing',
+      failurePhase: 'runtime',
+      error: { code: 'PREVIEW_STOP_FAILED', message: `stop ${started.session.id} failed` },
+    });
+
+    await expect(built.service.reap()).resolves.toBe(1);
+    expect((await built.sessions.get(started.session.id))?.session.status).toBe('failed');
+    expect(built.events.events).toContainEqual(
+      expect.objectContaining({ type: 'preview.failed', runId: 'run-1' }),
+    );
+  });
+
   it('renews an active project lease for long-running workflow work', async () => {
     const built = await buildService();
     const { session } = await start(built.service, 'run-1');

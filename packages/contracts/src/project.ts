@@ -146,6 +146,7 @@ export const ProjectEventSchema = z
       'preview.crashed',
       'preview.restarted',
       'preview.failed',
+      'preview.cleanup_failed',
       'preview.reaped',
       'operation.completed',
       'operation.failed',

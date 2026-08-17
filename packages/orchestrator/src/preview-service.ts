@@ -223,7 +223,23 @@ export class PreviewService {
       if (record.session.status === 'failing') {
         return this.finalizeFailure(record.session);
       }
-      return this.persist(await this.runner.stop(record.session));
+      try {
+        return this.persist(await this.runner.stop(record.session));
+      } catch (error) {
+        await this.persist(
+          transitionPreviewSession(record.session, 'failing', this.clock.now(), {
+            failurePhase: 'runtime',
+            error: {
+              name: 'PreviewStopError',
+              code: 'PREVIEW_STOP_FAILED',
+              message: redactString(
+                error instanceof Error ? error.message : 'Preview cleanup failed.',
+              ),
+            },
+          }),
+        );
+        throw error;
+      }
     });
   }
 
