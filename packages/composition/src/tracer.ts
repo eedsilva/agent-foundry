@@ -97,12 +97,42 @@ function waitForTracerClaim(): Promise<void> {
   return new Promise((resolveWait) => setTimeout(resolveWait, TRACER_IDLE_CLAIM_RETRY_MS));
 }
 
-async function driveTracerRunToTerminal(runtime: Runtime, runId: string): Promise<void> {
+/**
+ * #578: a run that never reaches a terminal state is exactly the run an
+ * operator has to open, so the failure carries its ids instead of burying them
+ * in prose — `scripts/tracer.ts` would otherwise record `-`/`-`/`unknown` in
+ * the golden-journey verdict for it.
+ */
+export class TracerRunStuckError extends Error {
+  constructor(
+    message: string,
+    readonly projectId: string,
+    readonly runId: string,
+    readonly runStatus: string,
+  ) {
+    super(message);
+    this.name = 'TracerRunStuckError';
+  }
+}
+
+async function driveTracerRunToTerminal(
+  runtime: Runtime,
+  runId: string,
+  projectId: string,
+): Promise<void> {
   let idleClaimStartedAt: number | undefined;
+  let lastStatus = 'unknown';
 
   for (;;) {
     const run = await runtime.runs.get(runId);
-    if (!run) throw new Error(`Tracer run ${runId} disappeared before reaching a terminal state.`);
+    if (!run)
+      throw new TracerRunStuckError(
+        `Tracer run ${runId} disappeared before reaching a terminal state.`,
+        projectId,
+        runId,
+        lastStatus,
+      );
+    lastStatus = run.status;
     if (isWorkflowRunStatusTerminal(run.status)) return;
 
     const pending = (await runtime.projectService.listApprovals(runId)).find(
@@ -125,9 +155,12 @@ async function driveTracerRunToTerminal(runtime: Runtime, runId: string): Promis
     const now = Date.now();
     idleClaimStartedAt ??= now;
     if (now - idleClaimStartedAt >= TRACER_IDLE_CLAIM_TIMEOUT_MS) {
-      throw new Error(
+      throw new TracerRunStuckError(
         `Tracer run ${runId} remained ${run.status} without a claim for ` +
           `${TRACER_IDLE_CLAIM_TIMEOUT_MS}ms.`,
+        projectId,
+        runId,
+        run.status,
       );
     }
     await waitForTracerClaim();
@@ -211,7 +244,7 @@ export async function runTracerScenarioToCompletion(
 ): Promise<TracerScenarioRunResult> {
   const { runtime, project, runId } = await startTracerRun(scenario, options);
 
-  await driveTracerRunToTerminal(runtime, runId);
+  await driveTracerRunToTerminal(runtime, runId, project.id);
   const run = await runtime.runs.get(runId);
 
   return {
