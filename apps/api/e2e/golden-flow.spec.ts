@@ -1139,8 +1139,6 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     ),
     page.getByRole('button', { name: 'Aplicar alteração' }).click(),
   ]);
-  await runConversationJob(projectId, 'visual-edit');
-  await expect.poll(() => readFile(greetingPath, 'utf8')).toContain("'#ddd'");
   await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -1149,6 +1147,8 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
     ),
     page.getByRole('button', { name: 'Parar preview' }).click(),
   ]);
+  await runConversationJob(projectId, 'visual-edit');
+  await expect.poll(() => readFile(greetingPath, 'utf8')).toContain("'#ddd'");
 
   const [visualVersion, baselineVersion] = await runtime.projectVersionService.list(projectId, 50);
   if (!visualVersion || !baselineVersion) throw new Error('golden versions were not recorded');
