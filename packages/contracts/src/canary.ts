@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PathSegmentSchema, ProviderSchema } from './primitives.js';
+import { ProviderSchema } from './primitives.js';
 
 export const ProviderCanaryProviderSchema = ProviderSchema.exclude(['mock']);
 export type ProviderCanaryProvider = z.infer<typeof ProviderCanaryProviderSchema>;
@@ -64,11 +64,7 @@ export type CanaryVerificationResult = z.infer<typeof CanaryVerificationResultSc
 export const SanitizedErrorSchema = z
   .object({
     kind: z.enum(['probe', 'invocation', 'execution', 'artifact', 'verification', 'unknown']),
-    // Same shape as ValidationPreflightCheck.errorCode, which this code is
-    // reported as (#592). Free-form here, a code carrying a space would pass
-    // the canary and then throw when the preflight report is assembled —
-    // turning a reportable failed boundary into no report at all.
-    code: PathSegmentSchema.optional(),
+    code: z.string().min(1).optional(),
     message: z.string().min(1),
   })
   .strict();

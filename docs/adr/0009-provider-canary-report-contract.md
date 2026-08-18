@@ -24,6 +24,8 @@ Executed-model extraction is provider- and source-specific: Codex trusts only th
 
 Versioned reports persist only normalized fields and sanitized error summaries. Usage is accepted only from provider-specific terminal envelopes, never recursively from artifact data. Raw provider stdout/stderr, authentication responses, user identities, secrets, stack traces, and machine-specific temporary paths are outside the report contract. If later canary execution retains raw failure diagnostics, they must remain in ignored local storage and must not be frozen or committed.
 
+Campaign preflight canary results carry the same sanitized error classification across the runner boundary. Schema-version-1 `SanitizedError.code` remains a non-empty free-form string for compatibility; the preflight boundary accepts it as `errorCode` only when it matches that report's stricter field schema, otherwise it records `CANARY_FAILED` or `UNKNOWN_EXECUTED_MODEL`. Artifact and verification failures carry their bounded classification and failed check names. Thrown execution errors remain generic because they can contain arbitrary stderr, secrets, or host paths.
+
 ## Alternatives considered
 
 Using the requested model as the executed model was rejected because aliases and provider routing can resolve differently at runtime. Choosing the first model found was rejected because JSONL and usage records can disagree, turning ambiguous evidence into a false positive. Recursively scanning every output object was rejected because valid agent artifacts may contain domain fields named `model` or `modelUsage`. Persisting raw provider output was rejected because it can contain credentials, identities, prompts, and host paths.
@@ -36,6 +38,6 @@ Any future contract change that is not backward compatible requires a new report
 
 ## Validation and rollback
 
-Scrubbed Codex, Claude, and AGY fixtures cover artifacts, usage, executed models, malformed/failed output, ambiguity, artifact-payload isolation, and both legacy and current AGY model-list formats. Contract tests reject mock-provider canaries and raw diagnostic fields. Opt-in real canaries validate installed CLI shapes before a baseline is frozen.
+Scrubbed Codex, Claude, and AGY fixtures cover artifacts, usage, executed models, malformed/failed output, ambiguity, artifact-payload isolation, and both legacy and current AGY model-list formats. Contract tests reject mock-provider canaries and raw diagnostic fields while retaining schema-version-1 free-form error codes. Preflight tests prove unsafe codes fall back without aborting report publication, while provider tests prove thrown errors and temporary workspace paths do not enter the report. Opt-in real canaries validate installed CLI shapes before a baseline is frozen.
 
 If a provider changes its envelope, disable that provider or leave `executedModel` unknown while fixtures and recognized metadata locations are updated. If AGY changes its model-list format again, keep the doctor probe fail-closed until a fixture-backed format is deliberately added. Roll back report publication by stopping the freeze path; do not weaken ambiguity handling or substitute the selected model for missing execution evidence.

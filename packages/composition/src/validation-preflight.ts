@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { execa } from 'execa';
 import {
+  PathSegmentSchema,
   ValidationCanaryResultSchema,
   ValidationPreflightReportSchema,
   type ValidationCanaryResult,
@@ -463,6 +464,7 @@ async function recordCanaryCheck(
   try {
     const result = ValidationCanaryResultSchema.parse(await canary());
     const passed = result.status === 'passed' && result.executedModel !== undefined;
+    const errorCode = PathSegmentSchema.safeParse(result.error?.code);
     checks.push({
       boundary,
       status: passed ? 'passed' : 'failed',
@@ -475,7 +477,7 @@ async function recordCanaryCheck(
           }
         : {
             errorCode:
-              result.error?.code ??
+              (errorCode.success ? errorCode.data : undefined) ??
               (result.executedModel ? 'CANARY_FAILED' : 'UNKNOWN_EXECUTED_MODEL'),
             // The canary fails without throwing, so its own classification is
             // the only account of the cause that ever reaches this report.
