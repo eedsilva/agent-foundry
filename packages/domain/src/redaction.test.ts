@@ -308,6 +308,30 @@ describe('redactUnknown', () => {
     });
   });
 
+  it('stays strict for untyped data, including non-string secrets (#589)', () => {
+    expect(
+      redactUnknown({
+        clientSecret: 'keep-me-secret',
+        authorization: 'Basic abc123',
+        token: 'plain-token-value',
+        cookie: 'session=plain-cookie-value',
+        session: { id: 'session-1' },
+        pin: 1234,
+        password: 846215,
+        apiKey: 99887766,
+      }),
+    ).toEqual({
+      clientSecret: '[REDACTED]',
+      authorization: '[REDACTED]',
+      token: '[REDACTED]',
+      cookie: '[REDACTED]',
+      session: '[REDACTED]',
+      pin: 1234,
+      password: '[REDACTED]',
+      apiKey: '[REDACTED]',
+    });
+  });
+
   it('redacts the complete cookie header after semicolon-separated values', () => {
     expect(redactUnknown('Cookie: session=abc; csrf=still-secret')).toBe('Cookie: [REDACTED]');
   });

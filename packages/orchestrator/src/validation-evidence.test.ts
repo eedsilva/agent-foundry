@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createValidationCampaignExecution,
   ValidationCampaignPreviewSchema,
+  ValidationEvidenceBundleSchema,
   WorkflowDefinitionSchema,
   type ValidationEvidenceReference,
   type ValidationEvidencePublicationRequest,
@@ -157,6 +158,62 @@ const CYCLE17_REPORT_STEPS: Array<{
   { id: 'reload-todos', title: 'Reload TODOs', status: 'passed' as const },
 ];
 
+async function seedAgentAttempt(
+  harness: ReturnType<typeof makeHarness>,
+  now: string,
+  options: {
+    stepRunId: string;
+    attemptId: string;
+    stepId: string;
+    /** The gate's real attempts-by-step key is `<nodeId>/<stepId>/<iteration>` (#589). */
+    nodeId?: string;
+    checkpoint?: string;
+    usage?: { providerReportedCostUsd: number };
+  },
+): Promise<void> {
+  const nodeId = options.nodeId ?? 'implement';
+  await harness.stepRuns.create({
+    id: options.stepRunId,
+    runId: 'run-1',
+    nodeId,
+    stepId: options.stepId,
+    stepType: 'agent',
+    status: 'completed',
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+    startedAt: now,
+    completedAt: now,
+  });
+  await harness.stepAttempts.create({
+    id: options.attemptId,
+    runId: 'run-1',
+    stepRunId: options.stepRunId,
+    sequence: 1,
+    executorKind: 'agent',
+    provider: 'codex',
+    model: 'test-model',
+    modelId: 'model-1',
+    status: 'succeeded',
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+    startedAt: now,
+    completedAt: now,
+    durationMs: 12,
+    ...(options.usage ? { usage: options.usage } : {}),
+    ...(options.checkpoint ? { checkpoint: options.checkpoint } : {}),
+    context: {
+      projectId: 'project-1',
+      workflowId: harness.workflow.id,
+      nodeId,
+      stepId: options.stepId,
+    },
+    inputArtifacts: [],
+    outputArtifacts: [],
+  });
+}
+
 async function setup(
   options: {
     withPreflight?: boolean;
@@ -206,91 +263,23 @@ async function setup(
     },
     run.version,
   );
-  await harness.stepRuns.create({
-    id: 'step-1',
-    runId: 'run-1',
-    nodeId: 'implement',
-    stepId: 'implement.persistent-storage',
-    stepType: 'agent',
-    status: 'completed',
-    version: 1,
-    createdAt: now,
-    updatedAt: now,
-    startedAt: now,
-    completedAt: now,
-  });
-  await harness.stepAttempts.create({
-    id: 'attempt-1',
-    runId: 'run-1',
+  await seedAgentAttempt(harness, now, {
     stepRunId: 'step-1',
-    sequence: 1,
-    executorKind: 'agent',
-    provider: 'codex',
-    model: 'test-model',
-    modelId: 'model-1',
-    status: 'succeeded',
-    version: 1,
-    createdAt: now,
-    updatedAt: now,
-    startedAt: now,
-    completedAt: now,
-    durationMs: 12,
-    usage: { providerReportedCostUsd: 0.1 },
+    attemptId: 'attempt-1',
+    stepId: 'implement.persistent-storage',
     checkpoint: 'checkpoint-1',
-    context: {
-      projectId: 'project-1',
-      workflowId: harness.workflow.id,
-      nodeId: 'implement',
-      stepId: 'implement.persistent-storage',
-    },
-    inputArtifacts: [],
-    outputArtifacts: [],
+    usage: { providerReportedCostUsd: 0.1 },
   });
   for (const [taskIndex, taskId] of [
     ['2', 'create-list-api'],
     ['3', 'visible-todo-flow'],
     ...(options.fourthTask ? ([['4', 'public-middleware']] as const) : []),
   ] as const) {
-    const stepRunId = `step-${taskIndex}`;
-    const attemptId = `attempt-${taskIndex}`;
-    await harness.stepRuns.create({
-      id: stepRunId,
-      runId: 'run-1',
-      nodeId: 'implement',
+    await seedAgentAttempt(harness, now, {
+      stepRunId: `step-${taskIndex}`,
+      attemptId: `attempt-${taskIndex}`,
       stepId: `implement.${taskId}`,
-      stepType: 'agent',
-      status: 'completed',
-      version: 1,
-      createdAt: now,
-      updatedAt: now,
-      startedAt: now,
-      completedAt: now,
-    });
-    await harness.stepAttempts.create({
-      id: attemptId,
-      runId: 'run-1',
-      stepRunId,
-      sequence: 1,
-      executorKind: 'agent',
-      provider: 'codex',
-      model: 'test-model',
-      modelId: 'model-1',
-      status: 'succeeded',
-      version: 1,
-      createdAt: now,
-      updatedAt: now,
-      startedAt: now,
-      completedAt: now,
-      durationMs: 12,
       checkpoint: `checkpoint-${taskId}`,
-      context: {
-        projectId: 'project-1',
-        workflowId: harness.workflow.id,
-        nodeId: 'implement',
-        stepId: `implement.${taskId}`,
-      },
-      inputArtifacts: [],
-      outputArtifacts: [],
     });
   }
   const proofs: Partial<Record<string, ValidationEvidenceReference>> = {};
@@ -1049,6 +1038,40 @@ describe('validation evidence publication', () => {
     await expect(evidence.publish('run-1', request('accepted', proofs))).rejects.toThrow(
       /belongs to another run|does not match run/,
     );
+  });
+
+  it('keeps attempt counters for step ids containing sensitive words (#589)', async () => {
+    const { harness, evidence, proofs } = await setup();
+    const now = harness.clock.now().toISOString();
+    const sensitiveSteps = [
+      'T-auth-setup',
+      'T-token-refresh',
+      'T-session-store',
+      'T-secret-rotation',
+    ];
+    for (const [index, taskId] of sensitiveSteps.entries()) {
+      await seedAgentAttempt(harness, now, {
+        stepRunId: `step-sensitive-${index}`,
+        attemptId: `attempt-sensitive-${index}`,
+        stepId: `implement.${taskId}`,
+        nodeId: 'task-execution',
+      });
+    }
+
+    const first = await evidence.publish('run-1', request('accepted', proofs));
+    const second = await evidence.publish('run-1', request('accepted', proofs));
+
+    // The key the gate actually produced, verbatim from the #589 trace.
+    expect(first.bundle.usage.attemptsByStep['task-execution/implement.T-auth-setup/1']).toBe(1);
+    for (const taskId of sensitiveSteps) {
+      expect(first.bundle.usage.attemptsByStep[`task-execution/implement.${taskId}/1`]).toBe(1);
+    }
+    expect(second.artifact.metadata.revision).toBe(first.artifact.metadata.revision);
+    expect(harness.artifacts.named('validation-evidence-real-todo-v1')).toHaveLength(1);
+    const readback = ValidationEvidenceBundleSchema.parse(
+      harness.artifacts.named('validation-evidence-real-todo-v1')[0]?.content,
+    );
+    expect(readback.usage.attemptsByStep).toEqual(first.bundle.usage.attemptsByStep);
   });
 
   it('classifies an accepted run and is idempotent while redacting persisted evidence', async () => {
