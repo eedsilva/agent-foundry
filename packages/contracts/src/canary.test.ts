@@ -91,6 +91,15 @@ describe('provider canary contracts', () => {
         stack: 'machine-specific stack',
       }).success,
     ).toBe(false);
+    // The preflight reports this code as its errorCode, a PathSegment — a
+    // free-form code would parse here and throw when the report is assembled.
+    expect(
+      SanitizedErrorSchema.safeParse({
+        kind: 'execution',
+        code: 'provider execution failed',
+        message: 'Provider failed.',
+      }).success,
+    ).toBe(false);
     expect(
       ProviderCanaryReportSchema.safeParse({
         ...report,
