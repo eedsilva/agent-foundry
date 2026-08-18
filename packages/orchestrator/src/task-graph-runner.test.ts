@@ -777,6 +777,136 @@ describe('TaskGraphRunner', () => {
     expect(fixture.events.events.some((event) => event.type === 'task.failed')).toBe(true);
   });
 
+  it('carries the deferred-host-owned-check contract in the implement step (#373)', async () => {
+    // `mutatesWorkspace` promised this contract even to conversational
+    // build/repair, which has no verifier — the task-graph implement step is
+    // the actual seam where the promise holds.
+    let implementInstructions = '';
+    const fixture = await setupRunner(gatedWorkflow, [task('T1')], (input, artifacts) => {
+      if (input.step.id === 'implement.T1' && input.step.type === 'agent')
+        implementInstructions = input.step.instructions;
+      const content =
+        input.step.type === 'verify' ? verificationReport(true) : completedArtifact(input.step);
+      return artifacts.put({
+        projectId: input.project.id,
+        name: input.step.outputArtifact,
+        content,
+        createdBy: 'test-runtime',
+      });
+    });
+
+    await fixture.run();
+
+    expect(implementInstructions).toContain(
+      'record it in `nextActions` as a deferred host-owned check',
+    );
+    expect(implementInstructions).toContain(
+      'Answer `blocked` only when you could not produce the deliverable itself',
+    );
+  });
+
+  it('carries the deferred-host-owned-check contract in the repair-task step (#373)', async () => {
+    let repairInstructions = '';
+    let verifyCalls = 0;
+    const fixture = await setupRunner(gatedWorkflow, [task('T1')], (input, artifacts) => {
+      if (input.step.id === 'repair-task.T1' && input.step.type === 'agent')
+        repairInstructions = input.step.instructions;
+      const content =
+        input.step.type === 'verify'
+          ? verificationReport((verifyCalls += 1) > 1) // red once, to drive repair-task.T1
+          : completedArtifact(input.step);
+      return artifacts.put({
+        projectId: input.project.id,
+        name: input.step.outputArtifact,
+        content,
+        createdBy: 'test-runtime',
+      });
+    });
+
+    await fixture.run();
+
+    expect(repairInstructions).toContain(
+      'record it in `nextActions` as a deferred host-owned check',
+    );
+    expect(repairInstructions).toContain(
+      'Answer `blocked` only when you could not produce the deliverable itself',
+    );
+  });
+
+  it('carries the deferred-host-owned-check contract in the browser repair step (#373)', async () => {
+    // `assertAgentNotBlocked` guards `repair-task-browser.T1` too (dispatched
+    // from `assertTask`) — a sandbox-denied check here must not throw
+    // `AgentBlockedError` before the browser recheck (and, once that passes,
+    // `verifyTask`'s deterministic reverify) ever runs.
+    let browserRepairInstructions = '';
+    let browserChecks = 0;
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: 'browser-visible' }],
+      (input, artifacts) => {
+        if (input.step.id === 'repair-task-browser.T1' && input.step.type === 'agent')
+          browserRepairInstructions = input.step.instructions;
+        let content: object = completedArtifact(input.step);
+        if (input.step.id === 'verify-task.T1') {
+          content = verificationReport(true);
+        } else if (input.step.id === 'plan-task-browser-test.T1') {
+          content = browserPlan();
+        } else if (input.step.id === 'assert-task.T1') {
+          browserChecks += 1;
+          content = browserReport(browserChecks > 1);
+        }
+        return artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content,
+          createdBy: 'test-runtime',
+        });
+      },
+    );
+
+    await fixture.run();
+
+    expect(browserRepairInstructions).toContain(
+      'record it in `nextActions` as a deferred host-owned check',
+    );
+    expect(browserRepairInstructions).toContain(
+      'Answer `blocked` only when you could not produce the deliverable itself',
+    );
+  });
+
+  it('omits the deferred-host-owned-check contract from the browser plan step (#373)', async () => {
+    // The plan step is read-only and `blocked` is a legitimate "nothing to
+    // assert" answer there (see `assertAgentNotBlocked`'s comment) — the
+    // contract must not tell it to defer instead.
+    let planInstructions = '';
+    const fixture = await setupRunner(
+      browserWorkflow,
+      [{ ...task('T1'), acceptanceMode: undefined }],
+      (input, artifacts) => {
+        if (input.step.id === 'plan-task-browser-test.T1' && input.step.type === 'agent')
+          planInstructions = input.step.instructions;
+        const content =
+          input.step.type === 'verify'
+            ? verificationReport(true)
+            : input.step.id === 'plan-task-browser-test.T1'
+              ? blockedArtifact()
+              : completedArtifact(input.step);
+        return artifacts.put({
+          projectId: input.project.id,
+          name: input.step.outputArtifact,
+          content,
+          createdBy: 'test-runtime',
+        });
+      },
+    );
+
+    await fixture.run();
+
+    expect(planInstructions).not.toContain(
+      'record it in `nextActions` as a deferred host-owned check',
+    );
+  });
+
   it('runs the browser channel only for browser-visible tasks', async () => {
     const browserPlans: string[] = [];
     const fixture = await setupRunner(

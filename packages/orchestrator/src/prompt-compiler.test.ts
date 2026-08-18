@@ -52,37 +52,34 @@ describe('compileRequestMarkdown feedback provenance', () => {
   });
 
   it('states the explicit tool policy', () => {
-    expect(requestFor(readOnlyStep())).toContain('Tool policy: read-only');
-  });
-
-  it('tells a mutating agent to defer sandbox-denied checks to the host verifier, not answer blocked (#373)', () => {
-    const output = requestFor(mutatingStep());
-
-    expect(output).toContain('record it in `nextActions` as a deferred host-owned check');
-    expect(output).toContain(
-      'Answer `blocked` only when you could not produce the deliverable itself',
-    );
-  });
-
-  it('keeps blocked a valid answer for read-only steps by omitting the deferred-check rule (#373)', () => {
-    expect(requestFor(readOnlyStep())).not.toContain(
-      'record it in `nextActions` as a deferred host-owned check',
-    );
-  });
-
-  // The rule list is numbered by array index, so a conditionally inserted rule
-  // must not leave a gap or a repeat behind it (#373).
-  it('renders non-negotiable rules with contiguous numbering starting at 1 (#373)', () => {
-    for (const step of [mutatingStep(), readOnlyStep()]) {
-      const rulesSection = requestFor(step)
-        .split('## Non-negotiable execution rules')[1]
-        ?.split('## Versioned harness')[0];
-      const numbers = [...(rulesSection?.matchAll(/^(\d+)\. /gm) ?? [])].map((match) =>
-        Number(match[1]),
-      );
-      expect(numbers.length).toBeGreaterThan(0);
-      expect(numbers).toEqual(numbers.map((_, index) => index + 1));
-    }
+    const step: AgentStep = {
+      id: 'plan',
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: 'Plan',
+      instructions: 'Plan.',
+      inputArtifacts: [],
+      secretRefs: [],
+      outputArtifact: 'plan',
+      mutatesWorkspace: false,
+      maxAttempts: 1,
+      harnessTags: [],
+      profile: {},
+    };
+    const output = compileRequestMarkdown({
+      projectId: 'project-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      attemptId: 'attempt-1',
+      workflowId: 'workflow-1',
+      stack: 'node',
+      step,
+      harness: { version: '1', files: [], combined: '' },
+      artifacts: [],
+      workspacePath: '/tmp/workspace',
+    });
+    expect(output).toContain('Tool policy: read-only');
   });
 
   it('renders the exact feedback artifact name, revision, and SHA-256', () => {
@@ -227,49 +224,3 @@ describe('browser evidence files (#357)', () => {
     expect(markdown).toContain('only the step errors are available');
   });
 });
-
-function mutatingStep(): AgentStep {
-  return {
-    id: 'implement',
-    type: 'agent',
-    role: 'developer',
-    taskKind: 'implementation',
-    title: 'Implement',
-    instructions: 'Implement.',
-    inputArtifacts: [],
-    secretRefs: [],
-    outputArtifact: 'implementation.report',
-    mutatesWorkspace: true,
-    maxAttempts: 1,
-    harnessTags: [],
-    profile: {},
-  };
-}
-
-function readOnlyStep(): AgentStep {
-  return {
-    ...mutatingStep(),
-    id: 'plan',
-    role: 'planner',
-    taskKind: 'planning',
-    title: 'Plan',
-    instructions: 'Plan.',
-    outputArtifact: 'plan',
-    mutatesWorkspace: false,
-  };
-}
-
-function requestFor(step: AgentStep): string {
-  return compileRequestMarkdown({
-    projectId: 'project-1',
-    runId: 'run-1',
-    stepRunId: 'step-run-1',
-    attemptId: 'attempt-1',
-    workflowId: 'workflow-1',
-    stack: 'node',
-    step,
-    harness: { version: '1', files: [], combined: '' },
-    artifacts: [],
-    workspacePath: '/tmp/workspace',
-  });
-}
