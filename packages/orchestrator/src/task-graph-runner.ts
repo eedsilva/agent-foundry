@@ -398,7 +398,7 @@ export class TaskGraphRunner {
   ): Promise<StoredArtifact> {
     const { project, workflow, node, runId, signal } = input;
     const worktree = pool.isolation?.label;
-    const step = taskImplementStep(node.implement, task);
+    const step = taskImplementStep(node, task);
     const maxAttempts = node.implement.maxAttempts;
     await this.emit(project.id, 'task.started', `${task.id}: ${task.title}`, {
       nodeId: node.id,
@@ -1232,7 +1232,23 @@ function assertAgentNotBlocked(
   );
 }
 
-function taskImplementStep(implement: AgentStep, task: PlanTask): AgentStep {
+/**
+ * Lives here, not in `compileRequestMarkdown` (#373): that compiler is also
+ * used by the conversational build/repair path (`conversation-operation-runner.ts`),
+ * which commits with no `WorkspaceVerifier` unless the operation is a direct
+ * visual edit — a `mutatesWorkspace`-gated promise of a host verifier would be
+ * false there. A gated `implement`, `repair-task`, and `repair-task-browser`
+ * are re-verified next — by `verifyTask` directly for the first two, and for
+ * browser-repair by the check it loops back into and, once that passes,
+ * `verifyTask` again (`executeTask`'s `reverified`) — so
+ * `assertAgentNotBlocked` must never see `blocked` for a sandbox-denied check
+ * on those paths. An ungated task graph has no such promise.
+ */
+const DEFERRED_HOST_CHECK_CONTRACT =
+  "Your sandbox may deny operations the host allows: binding a loopback port, reaching a container runtime, starting a local database. Run every check the sandbox permits. When a check is denied by the sandbox rather than failing on its merits, record it in `nextActions` as a deferred host-owned check, state the denial in `risks`, and continue — this task's verification step reruns outside your sandbox and fails the task if the code is wrong. Answer `blocked` only when you could not produce the deliverable itself, never because you could not verify it.";
+
+function taskImplementStep(node: ForEachTaskStep, task: PlanTask): AgentStep {
+  const { implement } = node;
   return {
     ...implement,
     id: taskStepId(implement.id, task.id),
@@ -1248,6 +1264,7 @@ function taskImplementStep(implement: AgentStep, task: PlanTask): AgentStep {
         : ['Acceptance mode: legacy graph (preserve existing workflow behavior).']),
       ...(task.dependsOn.length > 0 ? [`Depends on: ${task.dependsOn.join(', ')}`] : []),
       'Implement only this task. Earlier tasks are already implemented and committed in the workspace.',
+      ...(node.verify && node.repair ? [DEFERRED_HOST_CHECK_CONTRACT] : []),
     ].join('\n'),
   };
 }
@@ -1267,6 +1284,7 @@ function taskRepairStep(repair: AgentStep, task: PlanTask): AgentStep {
       `Task ${task.id}: ${task.title}`,
       `Acceptance check: ${task.acceptanceCheck}`,
       'Fix the root cause of every failing command in the verification report. Do not weaken or remove a check to make it pass.',
+      DEFERRED_HOST_CHECK_CONTRACT,
     ].join('\n'),
   };
 }
@@ -1329,6 +1347,7 @@ function taskBrowserRepairStep(
       `Task ${task.id}: ${task.title}`,
       `Acceptance check: ${task.acceptanceCheck}`,
       'The deterministic checks already pass; what failed is the browser assertion. Reproduce the failing step from the report and its evidence, fix the behaviour, and leave the plan unchanged for the rerun.',
+      DEFERRED_HOST_CHECK_CONTRACT,
     ].join('\n'),
   };
 }

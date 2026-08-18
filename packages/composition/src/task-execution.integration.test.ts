@@ -4,13 +4,17 @@ import { join, resolve } from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
+  AgentArtifact,
   AgentExecutionRequest,
   AgentExecutionResult,
   ExecutorHealth,
   PlanTask,
   ProjectEvent,
 } from '@agent-foundry/contracts';
-import { TASK_GRAPH_ARTIFACT_JSON_SCHEMA } from '@agent-foundry/contracts';
+import {
+  TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
+  VerificationReportSchema,
+} from '@agent-foundry/contracts';
 import type { AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor } from '@agent-foundry/executors';
 import { createRuntime, type Runtime } from './runtime.js';
@@ -62,6 +66,31 @@ nodes:
       maxAttempts: 2
 `;
 
+/**
+ * TASK_LOOP_WORKFLOW plus the task's deterministic gate (#324): a real
+ * `verify`/`repair` pair, so a red report comes from an actual `WorkspaceVerifier`
+ * run against the temp workspace rather than a fabricated artifact (#373).
+ */
+const TASK_LOOP_WORKFLOW_WITH_VERIFY = `${TASK_LOOP_WORKFLOW}    verify:
+      id: verify-task
+      type: verify
+      title: Run the workspace's real checks
+      outputArtifact: verification.report
+      scripts: [sandbox-check]
+      includeGitDiffCheck: false
+    repair:
+      id: repair-task
+      type: agent
+      role: fixer
+      taskKind: repair
+      title: Repair the failing check
+      instructions: Repair the failing checks.
+      inputArtifacts: [verification.report]
+      outputArtifact: verification.fix
+      mutatesWorkspace: true
+      maxAttempts: 1
+`;
+
 function task(
   id: string,
   dependsOn: string[] = [],
@@ -81,6 +110,12 @@ function task(
 interface TaskGraphExecutorOptions {
   tasks: PlanTask[];
   onStep?: (request: AgentExecutionRequest) => Promise<void>;
+  /**
+   * Layered onto a step's default artifact, keyed by stepId — the shape a real
+   * agent uses to defer a check (`completed` + populated risks/nextActions)
+   * rather than answer `blocked` (#373).
+   */
+  outputOverrides?: Record<string, Partial<Pick<AgentArtifact, 'risks' | 'nextActions'>>>;
 }
 
 /** Mock executor with the knobs the loop's tests need. No model is called. */
@@ -98,6 +133,11 @@ class TaskGraphExecutor implements AgentExecutor {
     this.executedSteps.push(request.stepId);
     const result = await this.delegate.execute(request, signal);
     await this.options.onStep?.(request);
+    const override = this.options.outputOverrides?.[request.stepId];
+    if (override) {
+      const output = { ...result.output, ...override };
+      return { ...result, output, stdout: JSON.stringify(output) };
+    }
     if (request.stepId !== 'plan') return result;
     const output = {
       ...result.output,
@@ -269,4 +309,62 @@ describe('for-each-task execution', () => {
     ]);
     expect(taskEvents(detail.events, 'task.completed')).toEqual(['T1', 'T2', 'T3']);
   }, 60_000);
+
+  it('gates a task on the real WorkspaceVerifier when the agent defers a sandbox-denied check (#373)', async () => {
+    const executor = new TaskGraphExecutor({
+      tasks: [task('T1')],
+      // The new contract for a check the sandbox denied: `completed`, not
+      // `blocked`, with the gap named in risks/nextActions — deferring it
+      // is not the same as passing it.
+      outputOverrides: {
+        'implement.T1': {
+          risks: ['Sandbox denied binding a loopback port for `sandbox-check`.'],
+          nextActions: ['Host verifier must run `sandbox-check`.'],
+        },
+      },
+    });
+    const runtime = await createTaskLoopRuntime(
+      'task-verify',
+      executor,
+      TASK_LOOP_WORKFLOW_WITH_VERIFY,
+    );
+    const project = await startProject(runtime, 'Task verify');
+    // The mock implement step's mutateWorkspace only owns the script names it
+    // sets itself; a name it has never heard of survives that merge, so this
+    // is the one command the real WorkspaceVerifier can genuinely fail.
+    await writeFile(
+      join(runtime.workspaces.workspacePath(project.id), 'package.json'),
+      JSON.stringify({ private: true, scripts: { 'sandbox-check': 'node -e "process.exit(1)"' } }),
+      'utf8',
+    );
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, project.runId);
+
+    // Deferring the check bought no approval: repair actually ran and the
+    // real script stayed red across every attempt, so the task — then the
+    // run — failed. Not asserting the exact step-ID sequence: how many
+    // implement/repair rounds the runner spends before giving up is its
+    // call, not this seam's.
+    expect(executor.executedSteps).toContain('implement.T1');
+    expect(executor.executedSteps).toContain('repair-task.T1');
+
+    const detail = await runtime.projectService.get(project.id);
+    expect(detail.project.status).toBe('failed');
+    expect(taskEvents(detail.events, 'task.completed')).toEqual([]);
+    expect(taskEvents(detail.events, 'task.failed')).toContain('T1');
+
+    const stored = detail.artifacts.find(
+      (artifact) => artifact.metadata.name === 'verification.report',
+    );
+    const report = VerificationReportSchema.parse(stored?.content);
+    expect(report.approved).toBe(false);
+    expect(report.commands.find((command) => command.name === 'sandbox-check')).toMatchObject({
+      exitCode: 1,
+      skipped: false,
+    });
+  }, 60_000);
+  // A complementary green-path assertion (deferred check + passing script ->
+  // task completes) would need a second full run through this same rig for
+  // one extra edge; skipped to keep the slow bucket's cost down.
 });

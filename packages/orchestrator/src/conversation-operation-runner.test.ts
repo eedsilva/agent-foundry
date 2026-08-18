@@ -454,6 +454,30 @@ describe('ConversationOperationRunner', () => {
     expect(await projectVersions.list('project-1')).toHaveLength(1);
   });
 
+  it('does not promise a host verifier to mutating conversation build/repair steps (#373)', async () => {
+    // compileRequestMarkdown is shared with the task-graph steps, but this
+    // path commits (`workspaces.commit`) with no WorkspaceVerifier unless
+    // operation.visualEdit is set — the deferred-host-owned-check promise
+    // would be false here, so it must not appear in the compiled request.
+    const { runs, workspaces, conversations, runner } = setup();
+
+    const build = await seed(conversations, runs, 'build', 'build-373');
+    await runner.run('project-1', build.runId, build.operationId);
+    // Pin that a mutating request really was compiled, so the absence below
+    // cannot pass vacuously on an empty or read-only prompt.
+    expect(workspaces.lastRequestMarkdown).toContain('Tool policy: workspace-write');
+    expect(workspaces.lastRequestMarkdown).not.toContain(
+      'record it in `nextActions` as a deferred host-owned check',
+    );
+
+    const repair = await seed(conversations, runs, 'repair', 'repair-373');
+    await runner.run('project-1', repair.runId, repair.operationId);
+    expect(workspaces.lastRequestMarkdown).toContain('Tool policy: workspace-write');
+    expect(workspaces.lastRequestMarkdown).not.toContain(
+      'record it in `nextActions` as a deferred host-owned check',
+    );
+  });
+
   it('passes live provider health to conversation routing', async () => {
     const health: ExecutorHealth = {
       provider: 'codex',
