@@ -24,6 +24,7 @@ import {
   freezeProviderCanaryReport,
   modelsFromEnvironment,
   runProviderCanaries,
+  runValidationCampaignCanary,
   type ProviderCanaryDependencies,
 } from './provider-canary.js';
 
@@ -935,3 +936,78 @@ async function successfulOutcome() {
     }),
   });
 }
+
+describe('validation campaign canary', () => {
+  it('names the deterministic checks a failing scenario did not pass', async () => {
+    const result = await runValidationCampaignCanary({
+      model: { id: 'codex-default', provider: 'codex', model: 'gpt-5.6-luna' },
+      taskKind: 'implementation',
+      dependencies: {
+        // Returns a completed artifact without writing src/greeting.js, so the
+        // scenario's own checks are the only thing that can explain the failure.
+        execute: async (_provider, request) => successfulResult(request),
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.error?.code).toBe('VERIFICATION_FAILED');
+    expect(result.error?.message).toContain('node-test');
+  });
+
+  it('carries the artifact failure code when the provider reports no executed model', async () => {
+    const result = await runValidationCampaignCanary({
+      model: { id: 'codex-default', provider: 'codex', model: 'gpt-5.6-luna' },
+      taskKind: 'implementation',
+      dependencies: {
+        execute: async (_provider, request) => {
+          await applySuccessfulMutation(request);
+          const result = successfulResult(request);
+          delete result.executedModel;
+          return result;
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: { kind: 'artifact', code: 'UNKNOWN_EXECUTED_MODEL' },
+    });
+  });
+
+  it('carries the execution failure code when the provider invocation throws', async () => {
+    const result = await runValidationCampaignCanary({
+      model: { id: 'codex-default', provider: 'codex', model: 'gpt-5.6-luna' },
+      taskKind: 'implementation',
+      dependencies: {
+        execute: async () => {
+          throw new Error('codex CLI exited with code 1');
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: { kind: 'execution', code: 'EXECUTION_FAILED' },
+    });
+  });
+
+  it('reports no error for a passing canary', async () => {
+    const result = await runValidationCampaignCanary({
+      model: { id: 'codex-default', provider: 'codex', model: 'gpt-5.6-luna' },
+      taskKind: 'implementation',
+      dependencies: {
+        execute: async (_provider, request) => {
+          await applySuccessfulMutation(request);
+          return successfulResult(request);
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      provider: 'codex',
+      selectedModel: 'gpt-5.6-luna',
+      executedModel: 'codex-executed-model',
+      status: 'passed',
+    });
+  });
+});
