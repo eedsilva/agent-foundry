@@ -805,6 +805,27 @@ describe('TaskGraphRunner', () => {
     );
   });
 
+  it('omits the deferred-host-owned-check contract when the task graph has no verifier (#373)', async () => {
+    let implementInstructions = '';
+    const fixture = await setupRunner(workflow, [task('T1')], (input, artifacts) => {
+      if (input.step.id === 'implement.T1' && input.step.type === 'agent')
+        implementInstructions = input.step.instructions;
+      return artifacts.put({
+        projectId: input.project.id,
+        name: input.step.outputArtifact,
+        content: completedArtifact(input.step),
+        createdBy: 'test-runtime',
+      });
+    });
+
+    await fixture.run();
+
+    expect(implementInstructions).toContain('Implement only this task.');
+    expect(implementInstructions).not.toContain(
+      'record it in `nextActions` as a deferred host-owned check',
+    );
+  });
+
   it('carries the deferred-host-owned-check contract in the repair-task step (#373)', async () => {
     let repairInstructions = '';
     let verifyCalls = 0;
