@@ -295,17 +295,20 @@ export function extractExecutedModel(
 }
 
 function extractSingletonCodexModel(raw: string): string | undefined {
-  const codexConfiguredModels = new Set(
-    // Anchored on `provider=` alone, not on the struct's name: Codex 0.147.0
-    // nested it as `ConfiguredModelProvider { info: ModelProviderInfo { ... }`
-    // and the old anchor silently matched nothing, failing every real-mode
-    // canary closed with UNKNOWN_EXECUTED_MODEL (#593). The `;` still bounds
-    // the model, and this still reads stderr only, so artifact content the
-    // provider controls cannot spoof it.
-    [...raw.matchAll(/Configuring session:\s+model=([^;\r\n]+);\s+provider=/g)]
-      .map((match) => match[1]?.trim())
-      .filter((model): model is string => Boolean(model)),
-  );
+  // Anchored on `provider=` alone, not on the struct's name: Codex 0.147.0
+  // nested it as `ConfiguredModelProvider { info: ModelProviderInfo { ... }`
+  // and the old anchor silently matched nothing, failing every real-mode canary
+  // closed with UNKNOWN_EXECUTED_MODEL (#593). Matched per line, with only
+  // horizontal whitespace between the fields, so the scan stays linear in the
+  // length of provider-controlled stderr rather than backtracking across lines
+  // (js/polynomial-redos). Still stderr only, so artifact content the provider
+  // controls cannot spoof it.
+  const configuredModel = /Configuring session:[ \t]+model=([^;\r\n]+);[ \t]+provider=/;
+  const codexConfiguredModels = new Set<string>();
+  for (const line of raw.split(/\r?\n/)) {
+    const model = configuredModel.exec(line)?.[1]?.trim();
+    if (model) codexConfiguredModels.add(model);
+  }
   if (codexConfiguredModels.size === 1) return codexConfiguredModels.values().next().value;
   return undefined;
 }
