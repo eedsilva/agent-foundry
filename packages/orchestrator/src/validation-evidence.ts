@@ -933,51 +933,56 @@ export function buildValidationEvidenceBundle(options: {
         ],
       };
 
-  return ValidationEvidenceBundleSchema.parse(
-    redactUnknown({
-      schemaVersion: '1',
-      campaignId: options.campaignId,
-      sourceRevision: options.sourceRevision,
-      projectId: options.run.projectId,
-      runId: options.run.id,
-      environmentReadiness: {
-        ...environmentReadiness,
-        checks: environmentReadiness.checks.map((check) => ({
-          ...check,
-          ...(check.message ? { message: redactOpsText(check.message) } : {}),
-          // Model fields carry provider-shaped text, so they keep the stricter
-          // rule the attempt-level ones use.
-          ...(check.selectedModel
-            ? { selectedModel: redactModelText(check.selectedModel, 200) }
-            : {}),
-          ...(check.executedModel
-            ? { executedModel: redactModelText(check.executedModel, 200) }
-            : {}),
-        })),
-      },
-      gates,
-      attempts,
-      usage: {
-        attemptsByStep: usage.attemptsByStep,
-        subscriptionQuotaUnits: usage.subscriptionQuotaUnits,
-        subscriptionQuotaUnitsByProvider: usage.subscriptionQuotaUnitsByProvider,
-      },
-      checkpoints: attempts.flatMap((attempt) =>
-        attempt.checkpoint
-          ? [{ reference: attempt.reference, checkpoint: attempt.checkpoint }]
-          : [],
-      ),
-      deterministicResults: gates.filter((gate) =>
-        ['implementation-generated', 'deterministic-checks'].includes(gate.id),
-      ),
-      browserEvidence,
-      databaseEvidence,
-      terminalState,
-      skippedGates,
-      outcome,
-      publishedAt: options.publishedAt,
-    }),
-  );
+  // Usage is a schema-typed numeric map keyed by step id, so it is assembled
+  // after redaction rather than through it: a step id containing a word like
+  // "auth" made redactUnknown() blank its attempt counter to '[REDACTED]', the
+  // bundle then failed ValidationEvidenceUsageSchema and the run published no
+  // evidence at all (#589). Redaction itself stays strict for everything that
+  // can carry text.
+  const redacted = redactUnknown({
+    schemaVersion: '1',
+    campaignId: options.campaignId,
+    sourceRevision: options.sourceRevision,
+    projectId: options.run.projectId,
+    runId: options.run.id,
+    environmentReadiness: {
+      ...environmentReadiness,
+      checks: environmentReadiness.checks.map((check) => ({
+        ...check,
+        ...(check.message ? { message: redactOpsText(check.message) } : {}),
+        // Model fields carry provider-shaped text, so they keep the stricter
+        // rule the attempt-level ones use.
+        ...(check.selectedModel
+          ? { selectedModel: redactModelText(check.selectedModel, 200) }
+          : {}),
+        ...(check.executedModel
+          ? { executedModel: redactModelText(check.executedModel, 200) }
+          : {}),
+      })),
+    },
+    gates,
+    attempts,
+    checkpoints: attempts.flatMap((attempt) =>
+      attempt.checkpoint ? [{ reference: attempt.reference, checkpoint: attempt.checkpoint }] : [],
+    ),
+    deterministicResults: gates.filter((gate) =>
+      ['implementation-generated', 'deterministic-checks'].includes(gate.id),
+    ),
+    browserEvidence,
+    databaseEvidence,
+    terminalState,
+    skippedGates,
+    outcome,
+    publishedAt: options.publishedAt,
+  }) as Record<string, unknown>;
+  return ValidationEvidenceBundleSchema.parse({
+    ...redacted,
+    usage: {
+      attemptsByStep: usage.attemptsByStep,
+      subscriptionQuotaUnits: usage.subscriptionQuotaUnits,
+      subscriptionQuotaUnitsByProvider: usage.subscriptionQuotaUnitsByProvider,
+    },
+  });
 }
 
 function toEvidenceAttempt(attempt: StepAttempt): ValidationEvidenceAttempt {
