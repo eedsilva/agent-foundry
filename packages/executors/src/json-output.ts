@@ -294,19 +294,38 @@ export function extractExecutedModel(
   return extractSingletonClaudeModel(documents);
 }
 
+const CODEX_SESSION_MARKER = 'Configuring session:';
+
+/**
+ * Parsed with string scans rather than a regex (#593). The old pattern anchored
+ * on `provider=ModelProviderInfo`; Codex 0.147.0 nests it as
+ * `ConfiguredModelProvider { info: ModelProviderInfo { ... }`, so it matched
+ * nothing and every real-mode canary failed closed with
+ * UNKNOWN_EXECUTED_MODEL. Dropping that long literal from a regex left the
+ * separators ambiguous enough for CodeQL to call it polynomial
+ * (js/polynomial-redos) on stderr the provider controls — indexOf/slice is
+ * linear by construction and cannot backtrack. Still stderr only, so artifact
+ * content the provider controls cannot spoof it.
+ */
 function extractSingletonCodexModel(raw: string): string | undefined {
-  // Anchored on `provider=` alone, not on the struct's name: Codex 0.147.0
-  // nested it as `ConfiguredModelProvider { info: ModelProviderInfo { ... }`
-  // and the old anchor silently matched nothing, failing every real-mode canary
-  // closed with UNKNOWN_EXECUTED_MODEL (#593). Matched per line, with only
-  // horizontal whitespace between the fields, so the scan stays linear in the
-  // length of provider-controlled stderr rather than backtracking across lines
-  // (js/polynomial-redos). Still stderr only, so artifact content the provider
-  // controls cannot spoof it.
-  const configuredModel = /Configuring session:[ \t]+model=([^;\r\n]+);[ \t]+provider=/;
   const codexConfiguredModels = new Set<string>();
-  for (const line of raw.split(/\r?\n/)) {
-    const model = configuredModel.exec(line)?.[1]?.trim();
+  for (const line of raw.split('\n')) {
+    const marker = line.indexOf(CODEX_SESSION_MARKER);
+    if (marker < 0) continue;
+    const fields = line.slice(marker + CODEX_SESSION_MARKER.length).trimStart();
+    if (!fields.startsWith('model=')) continue;
+    const terminator = fields.indexOf(';');
+    if (terminator < 0) continue;
+    // The provider field must still follow, so a line that merely mentions a
+    // model does not count as a configured session.
+    if (
+      !fields
+        .slice(terminator + 1)
+        .trimStart()
+        .startsWith('provider=')
+    )
+      continue;
+    const model = fields.slice('model='.length, terminator).trim();
     if (model) codexConfiguredModels.add(model);
   }
   if (codexConfiguredModels.size === 1) return codexConfiguredModels.values().next().value;
