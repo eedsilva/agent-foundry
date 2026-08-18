@@ -165,14 +165,17 @@ async function seedAgentAttempt(
     stepRunId: string;
     attemptId: string;
     stepId: string;
+    /** The gate's real attempts-by-step key is `<nodeId>/<stepId>/<iteration>` (#589). */
+    nodeId?: string;
     checkpoint?: string;
     usage?: { providerReportedCostUsd: number };
   },
 ): Promise<void> {
+  const nodeId = options.nodeId ?? 'implement';
   await harness.stepRuns.create({
     id: options.stepRunId,
     runId: 'run-1',
-    nodeId: 'implement',
+    nodeId,
     stepId: options.stepId,
     stepType: 'agent',
     status: 'completed',
@@ -203,7 +206,7 @@ async function seedAgentAttempt(
     context: {
       projectId: 'project-1',
       workflowId: harness.workflow.id,
-      nodeId: 'implement',
+      nodeId,
       stepId: options.stepId,
     },
     inputArtifacts: [],
@@ -1051,14 +1054,17 @@ describe('validation evidence publication', () => {
         stepRunId: `step-sensitive-${index}`,
         attemptId: `attempt-sensitive-${index}`,
         stepId: `implement.${taskId}`,
+        nodeId: 'task-execution',
       });
     }
 
     const first = await evidence.publish('run-1', request('accepted', proofs));
     const second = await evidence.publish('run-1', request('accepted', proofs));
 
+    // The key the gate actually produced, verbatim from the #589 trace.
+    expect(first.bundle.usage.attemptsByStep['task-execution/implement.T-auth-setup/1']).toBe(1);
     for (const taskId of sensitiveSteps) {
-      expect(first.bundle.usage.attemptsByStep[`implement/implement.${taskId}/1`]).toBe(1);
+      expect(first.bundle.usage.attemptsByStep[`task-execution/implement.${taskId}/1`]).toBe(1);
     }
     expect(second.artifact.metadata.revision).toBe(first.artifact.metadata.revision);
     expect(harness.artifacts.named('validation-evidence-real-todo-v1')).toHaveLength(1);
