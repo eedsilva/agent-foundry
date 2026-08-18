@@ -74,6 +74,47 @@ The four codes the operator can now tell apart on the preflight surface: `VERIFI
 
 Raw provider stdout/stderr stays out of the report. `packages/composition/src/provider-canary.test.ts` guards that the canary report never carries provider output or temporary workspace paths, and `redactString` / `redactPersonalPaths` do not scrub `/var/folders/...` workspace paths. Diagnosing #593 needed that stderr — the classification and the check names are what this change buys without weakening the leak guarantee. A `ponytail:` comment on `canaryFailureCause` records the ceiling and the upgrade path.
 
-## Not covered here
+## Full campaign preflight acceptance
 
-A full `POST /validation/campaign/preflight` run against the live API was not executed for this branch: it needs Docker, a Supabase stack and an API on `:4000`, and the only boundary #592 reported red is the one proven above in isolation. The 4-shape golden-journey rerun that #589 and #564 are waiting on remains their own acceptance step.
+After the review fixes, the real API from code commit `0ad17c7d15836da9a94e662e85aa5df39b0aad0f` ran with an external disposable `DATA_DIR`, Docker 29.4.0, Supabase CLI 2.62.5, Codex CLI 0.147.0 and Claude Code 2.1.234:
+
+```bash
+DATA_DIR=/absolute/path/outside-the-repository \
+API_HOST=127.0.0.1 API_PORT=4000 RUN_WORKER_INLINE=false \
+EXECUTOR_MODE=real VALIDATION_CAMPAIGN=real-todo-v1 \
+CODEX_DEFAULT_MODEL=gpt-5.6-luna \
+CLAUDE_FAST_MODEL=claude-haiku-4-5-20251001 \
+npx tsx apps/api/src/index.ts
+
+curl --fail-with-body --request POST \
+  http://127.0.0.1:4000/validation/campaign/preflight
+```
+
+Result from 2026-08-18T22:47:53.515Z through 2026-08-18T22:51:09.328Z:
+
+```json
+{
+  "schemaVersion": "1",
+  "campaignId": "real-todo-v1",
+  "sourceRevision": "0ad17c7d15836da9a94e662e85aa5df39b0aad0f",
+  "dataDirectory": "[REDACTED]",
+  "executorMode": "real",
+  "status": "passed",
+  "checks": [
+    "source-revision:passed",
+    "data-directory:passed",
+    "executor-mode:passed",
+    "disposable-environment:passed",
+    "docker:passed",
+    "supabase:passed",
+    "scaffold:passed",
+    "application-health:passed",
+    "preview-gateway:passed",
+    "haiku-canary:passed selected=claude-haiku-4-5-20251001 executed=claude-haiku-4-5-20251001",
+    "luna-canary:passed selected=gpt-5.6-luna executed=gpt-5.6-luna"
+  ],
+  "generatedProjectCreated": false
+}
+```
+
+The preflight objective in #592 is therefore demonstrated on the corrected code revision. The 4-shape golden-journey rerun that #589 and #564 are waiting on remains their own acceptance step.
