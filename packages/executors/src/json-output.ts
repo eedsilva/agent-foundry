@@ -296,7 +296,13 @@ export function extractExecutedModel(
 
 function extractSingletonCodexModel(raw: string): string | undefined {
   const codexConfiguredModels = new Set(
-    [...raw.matchAll(/Configuring session:\s+model=([^;\r\n]+);\s+provider=ModelProviderInfo/g)]
+    // Anchored on `provider=` alone, not on the struct's name: Codex 0.147.0
+    // nested it as `ConfiguredModelProvider { info: ModelProviderInfo { ... }`
+    // and the old anchor silently matched nothing, failing every real-mode
+    // canary closed with UNKNOWN_EXECUTED_MODEL (#593). The `;` still bounds
+    // the model, and this still reads stderr only, so artifact content the
+    // provider controls cannot spoof it.
+    [...raw.matchAll(/Configuring session:\s+model=([^;\r\n]+);\s+provider=/g)]
       .map((match) => match[1]?.trim())
       .filter((model): model is string => Boolean(model)),
   );

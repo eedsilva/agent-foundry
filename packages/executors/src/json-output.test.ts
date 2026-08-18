@@ -559,6 +559,35 @@ describe('extractExecutedModel', () => {
     ).toBeUndefined();
   });
 
+  // Codex CLI 0.147.0 nested the provider struct as
+  // `provider=ConfiguredModelProvider { info: ModelProviderInfo { ... }`.
+  // Anchoring on the old struct name matched nothing, so every real-mode
+  // luna canary failed closed with UNKNOWN_EXECUTED_MODEL (#593).
+  it('extracts the Codex model when the provider struct is the 0.147.0 nested shape (#593)', () => {
+    expect(
+      executedModel(
+        'codex',
+        'DEBUG session_init: codex_core::session::session: Configuring session: ' +
+          'model=gpt-5.6-luna; provider=ConfiguredModelProvider { info: ModelProviderInfo { ' +
+          'name: "OpenAI", base_url: None, wire_api: Responses } }',
+        'stderr',
+      ),
+    ).toBe('gpt-5.6-luna');
+  });
+
+  it('still returns no model when 0.147.0-shaped records disagree (#593)', () => {
+    expect(
+      executedModel(
+        'codex',
+        [
+          'Configuring session: model=gpt-5.6-luna; provider=ConfiguredModelProvider { info: ModelProviderInfo {',
+          'Configuring session: model=gpt-5.5-codex; provider=ConfiguredModelProvider { info: ModelProviderInfo {',
+        ].join('\n'),
+        'stderr',
+      ),
+    ).toBeUndefined();
+  });
+
   it('returns no model when Codex configured-session records disagree', () => {
     expect(
       executedModel(
