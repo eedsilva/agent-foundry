@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SanitizedErrorSchema } from './canary.js';
 import { PathSegmentSchema, ProviderSchema } from './primitives.js';
 import { ValidationCampaignIdSchema } from './validation-campaign.js';
 
@@ -62,6 +63,11 @@ export const ValidationCanaryResultSchema = z
     selectedModel: z.string().min(1),
     executedModel: z.string().min(1).optional(),
     status: z.enum(['passed', 'failed']),
+    // A canary fails without throwing, so the preflight report used to record
+    // only "executedModel=missing" and the operator had to re-run the boundary
+    // that costs quota to learn why (#592). The runner already classifies every
+    // failure — carry that classification instead of dropping it at this seam.
+    error: SanitizedErrorSchema.optional(),
   })
   .strict();
 export type ValidationCanaryResult = z.infer<typeof ValidationCanaryResultSchema>;

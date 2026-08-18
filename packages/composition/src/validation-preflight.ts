@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { execa } from 'execa';
 import {
+  PathSegmentSchema,
   ValidationCanaryResultSchema,
   ValidationPreflightReportSchema,
   type ValidationCanaryResult,
@@ -463,6 +464,7 @@ async function recordCanaryCheck(
   try {
     const result = ValidationCanaryResultSchema.parse(await canary());
     const passed = result.status === 'passed' && result.executedModel !== undefined;
+    const errorCode = PathSegmentSchema.safeParse(result.error?.code);
     checks.push({
       boundary,
       status: passed ? 'passed' : 'failed',
@@ -474,11 +476,14 @@ async function recordCanaryCheck(
             executedModel: result.executedModel,
           }
         : {
-            errorCode: result.executedModel ? 'CANARY_FAILED' : 'UNKNOWN_EXECUTED_MODEL',
-            // The canary can fail without throwing, and the result schema carries
-            // no error field — so report what it did return, or the operator is
-            // left re-running the boundary that costs quota.
-            message: `${boundary} did not prove its executed model and output contract. status=${result.status} executedModel=${result.executedModel ?? 'missing'}`,
+            errorCode:
+              (errorCode.success ? errorCode.data : undefined) ??
+              (result.executedModel ? 'CANARY_FAILED' : 'UNKNOWN_EXECUTED_MODEL'),
+            // The canary fails without throwing, so its own classification is
+            // the only account of the cause that ever reaches this report.
+            message:
+              `${boundary} did not prove its executed model and output contract. status=${result.status} executedModel=${result.executedModel ?? 'missing'}` +
+              (result.error ? ` ${result.error.kind}: ${describeCause(result.error.message)}` : ''),
           }),
     });
     return passed;

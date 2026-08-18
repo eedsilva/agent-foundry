@@ -261,6 +261,59 @@ describe('validation preflight', () => {
     expect(failed?.message).toContain('executedModel=missing');
   });
 
+  it('persists the cause a canary reported instead of only its missing model', async () => {
+    const validationChecks = checks({
+      haikuCanary: vi.fn(async () => ({
+        provider: 'claude' as const,
+        selectedModel: 'haiku',
+        status: 'failed' as const,
+        error: {
+          kind: 'verification' as const,
+          code: 'VERIFICATION_FAILED',
+          message: 'Scenario checks failed: node-test, git-diff-check.',
+        },
+      })),
+    });
+
+    const report = await runValidationPreflight(options(validationChecks));
+
+    const failed = report.checks.at(-1);
+    expect(failed).toMatchObject({
+      boundary: 'haiku-canary',
+      status: 'failed',
+      errorCode: 'VERIFICATION_FAILED',
+    });
+    expect(failed?.message).toContain('Scenario checks failed: node-test, git-diff-check.');
+  });
+
+  it('falls back safely when a canary returns a free-form error code', async () => {
+    const validationChecks = checks({
+      haikuCanary: vi.fn(async () => ({
+        provider: 'claude' as const,
+        selectedModel: 'haiku',
+        executedModel: 'claude-haiku-4-5-20251001',
+        status: 'failed' as const,
+        error: {
+          kind: 'execution' as const,
+          code: 'provider execution failed',
+          message: 'Provider process exited before returning an artifact.',
+        },
+      })),
+    });
+
+    const report = await runValidationPreflight(options(validationChecks));
+
+    expect(report.status).toBe('model-failed');
+    expect(report.checks.at(-1)).toMatchObject({
+      boundary: 'haiku-canary',
+      status: 'failed',
+      errorCode: 'CANARY_FAILED',
+    });
+    expect(report.checks.at(-1)?.message).toContain(
+      'Provider process exited before returning an artifact.',
+    );
+  });
+
   it('caps a flooded cause so a stdout dump cannot land in the bundle', async () => {
     const validationChecks = checks({
       docker: vi.fn(async () => {

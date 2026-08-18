@@ -108,6 +108,16 @@ describe('provider canary contracts', () => {
     ).toBe(false);
   });
 
+  it('keeps free-form sanitized error codes backwards compatible', () => {
+    expect(
+      SanitizedErrorSchema.safeParse({
+        kind: 'execution',
+        code: 'provider execution failed',
+        message: 'Provider failed.',
+      }).success,
+    ).toBe(true);
+  });
+
   it('keeps execution results without executed-model metadata backwards compatible', () => {
     expect(
       AgentExecutionResultSchema.safeParse({

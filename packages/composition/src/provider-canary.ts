@@ -16,6 +16,7 @@ import {
   type ProviderCanaryReport,
   type ProviderCanaryRun,
   type ProviderProbe,
+  type SanitizedError,
   type ValidationCanaryResult,
   type ValidationModelIdentity,
 } from '@agent-foundry/contracts';
@@ -330,7 +331,27 @@ export async function runValidationCampaignCanary(input: {
     selectedModel: input.model.model,
     ...(run.executedModel ? { executedModel: run.executedModel } : {}),
     status: run.status === 'passed' ? 'passed' : 'failed',
+    ...(run.error ? { error: canaryFailureCause(run.error, run.verification) } : {}),
   });
+}
+
+/**
+ * "One or more deterministic scenario checks failed" names nothing an operator
+ * can act on, and the checks themselves never reach the preflight report — so
+ * fold their names in here.
+ *
+ * ponytail: the provider's own stdout/stderr stays out. The canary report is
+ * leak-guarded by design and redaction is not proven for the temporary
+ * workspace paths that output carries; add it when a failure needs more than
+ * the classification and the check names.
+ */
+function canaryFailureCause(
+  error: SanitizedError,
+  verification: readonly CanaryVerificationResult[],
+): SanitizedError {
+  const failed = verification.filter((check) => !check.passed).map((check) => check.name);
+  if (failed.length === 0) return error;
+  return { ...error, message: `${error.message} Failed checks: ${failed.join(', ')}.` };
 }
 
 function isValidationCanaryProvider(
