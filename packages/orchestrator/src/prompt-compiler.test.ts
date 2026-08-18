@@ -82,6 +82,112 @@ describe('compileRequestMarkdown feedback provenance', () => {
     expect(output).toContain('Tool policy: read-only');
   });
 
+  it('tells a mutating agent to defer sandbox-denied checks to the host verifier, not answer blocked (#373)', () => {
+    const step: AgentStep = {
+      id: 'implement',
+      type: 'agent',
+      role: 'developer',
+      taskKind: 'implementation',
+      title: 'Implement',
+      instructions: 'Implement.',
+      inputArtifacts: [],
+      secretRefs: [],
+      outputArtifact: 'implementation.report',
+      mutatesWorkspace: true,
+      maxAttempts: 1,
+      harnessTags: [],
+      profile: {},
+    };
+    const output = compileRequestMarkdown({
+      projectId: 'project-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      attemptId: 'attempt-1',
+      workflowId: 'workflow-1',
+      stack: 'node',
+      step,
+      harness: { version: '1', files: [], combined: '' },
+      artifacts: [],
+      workspacePath: '/tmp/workspace',
+    });
+
+    expect(output).toContain('record it in `nextActions` as a deferred host-owned check');
+    expect(output).toContain(
+      'Answer `blocked` only when you could not produce the deliverable itself',
+    );
+  });
+
+  it('keeps blocked a valid answer for read-only steps by omitting the deferred-check rule (#373)', () => {
+    const step: AgentStep = {
+      id: 'plan',
+      type: 'agent',
+      role: 'planner',
+      taskKind: 'planning',
+      title: 'Plan',
+      instructions: 'Plan.',
+      inputArtifacts: [],
+      secretRefs: [],
+      outputArtifact: 'plan',
+      mutatesWorkspace: false,
+      maxAttempts: 1,
+      harnessTags: [],
+      profile: {},
+    };
+    const output = compileRequestMarkdown({
+      projectId: 'project-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      attemptId: 'attempt-1',
+      workflowId: 'workflow-1',
+      stack: 'node',
+      step,
+      harness: { version: '1', files: [], combined: '' },
+      artifacts: [],
+      workspacePath: '/tmp/workspace',
+    });
+
+    expect(output).not.toContain('record it in `nextActions` as a deferred host-owned check');
+  });
+
+  it('renders non-negotiable rules with contiguous numbering starting at 1 (#373)', () => {
+    const step: AgentStep = {
+      id: 'implement',
+      type: 'agent',
+      role: 'developer',
+      taskKind: 'implementation',
+      title: 'Implement',
+      instructions: 'Implement.',
+      inputArtifacts: [],
+      secretRefs: [],
+      outputArtifact: 'implementation.report',
+      mutatesWorkspace: true,
+      maxAttempts: 1,
+      harnessTags: [],
+      profile: {},
+    };
+    const output = compileRequestMarkdown({
+      projectId: 'project-1',
+      runId: 'run-1',
+      stepRunId: 'step-run-1',
+      attemptId: 'attempt-1',
+      workflowId: 'workflow-1',
+      stack: 'node',
+      step,
+      harness: { version: '1', files: [], combined: '' },
+      artifacts: [],
+      workspacePath: '/tmp/workspace',
+    });
+
+    const rulesSection = output
+      .split('## Non-negotiable execution rules')[1]
+      ?.split('## Versioned harness')[0];
+    const numbers = [...(rulesSection?.matchAll(/^(\d+)\. /gm) ?? [])].map((match) =>
+      Number(match[1]),
+    );
+    expect(numbers).toEqual(numbers.map((_, index) => index + 1));
+    expect(numbers.length).toBeGreaterThan(0);
+  });
+
   it('renders the exact feedback artifact name, revision, and SHA-256', () => {
     const sha256 = 'a'.repeat(64);
     const artifact: StoredArtifact = {

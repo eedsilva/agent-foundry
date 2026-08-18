@@ -731,6 +731,52 @@ describe('TaskGraphRunner', () => {
     expect(failed?.data.blockedReason).toBe('Cannot fix without secrets access.');
   });
 
+  it('reaches the host-owned gate when the agent defers sandbox-denied checks (#373)', async () => {
+    // A mutating agent that answers `completed` while recording a
+    // sandbox-denied check as deferred (not `blocked`) must still be routed
+    // through verify-task and, on a red report, repair-task exactly like any
+    // other implementation — deferring a check never buys approval; only the
+    // host-owned verifier, running outside the agent's sandbox, does.
+    const executedSteps: string[] = [];
+    const fixture = await setupRunner(gatedWorkflow, [task('T1')], (input, artifacts) => {
+      executedSteps.push(input.step.id);
+      const content =
+        input.step.type === 'verify'
+          ? verificationReport(false)
+          : input.step.id === 'implement.T1'
+            ? {
+                schemaVersion: '1',
+                status: 'completed',
+                summary: 'Implemented; could not verify inside the sandbox.',
+                decisions: [],
+                assumptions: [],
+                risks: ['Sandbox denied binding a loopback port for `pnpm build`.'],
+                nextActions: ['Host verifier must run `pnpm build` and `pnpm db:start`.'],
+                data: {},
+              }
+            : completedArtifact(input.step);
+      return artifacts.put({
+        projectId: input.project.id,
+        name: input.step.outputArtifact,
+        content,
+        createdBy: 'test-runtime',
+      });
+    });
+
+    await expect(fixture.run()).rejects.toThrow(/failed verification after 1 repair attempt/);
+
+    expect(executedSteps).toEqual([
+      'implement.T1',
+      'verify-task.T1',
+      'repair-task.T1',
+      'verify-task.T1',
+    ]);
+    expect(fixture.events.events.filter((event) => event.type === 'task.completed')).toHaveLength(
+      0,
+    );
+    expect(fixture.events.events.some((event) => event.type === 'task.failed')).toBe(true);
+  });
+
   it('runs the browser channel only for browser-visible tasks', async () => {
     const browserPlans: string[] = [];
     const fixture = await setupRunner(
