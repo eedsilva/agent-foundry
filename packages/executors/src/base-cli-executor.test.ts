@@ -559,4 +559,38 @@ describe('BaseCliExecutor outputDirectory cleanup guard (#565 review)', () => {
 
     await expect(stat(outputDirectory)).rejects.toThrow(/ENOENT/);
   });
+
+  it("refuses to remove a project's own worktree when the declared root is the narrow run-tmp dir, not the whole Data Directory (#565 review)", async () => {
+    // Models the exact bug caught in review: ClaudeCliExecutor first
+    // declared outputDirectoryRoot as workspaceRoot itself — the whole
+    // Foundry Data Directory, which also contains every project's own
+    // worktree at workspaceRoot/projects/<id>. Against that root, a
+    // miscomputed outputDirectory pointing at a project's worktree would
+    // pass the guard and get `rm -rf`'d. Reproduces that shape directly:
+    // the declared root here is the narrow `.agent-foundry-run-tmp`
+    // subdirectory the fix actually uses, and the "escaped" path is a
+    // realistic project worktree, not an arbitrary unrelated directory.
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'agent-foundry-guard-dataDir-'));
+    const runTmpRoot = join(workspaceRoot, '.agent-foundry-run-tmp');
+    await mkdir(runTmpRoot, { recursive: true });
+    const projectWorktree = join(workspaceRoot, 'projects', 'proj-real-user-data', 'workspace');
+    await mkdir(projectWorktree, { recursive: true });
+    await writeFile(join(projectWorktree, 'generated-app-file.ts'), 'export const real = true;');
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: '' });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await new OutputDirectoryFixtureExecutor(1_000_000, projectWorktree, runTmpRoot).execute(
+        request,
+      );
+      // The whole point: still there.
+      await expect(stat(join(projectWorktree, 'generated-app-file.ts'))).resolves.toBeDefined();
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining('outputDirectory escaped its declared root'),
+      );
+    } finally {
+      consoleError.mockRestore();
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });

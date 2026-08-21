@@ -250,6 +250,18 @@ describe('CLI executor contracts', () => {
       const runTempDir = invocation.outputDirectory as string;
       expect(runTempDir.startsWith(TEST_CWD)).toBe(false);
 
+      // outputDirectoryRoot must be the narrow .agent-foundry-run-tmp dir,
+      // not workspaceRoot itself: workspaceRoot is the whole Data
+      // Directory, containing every project's own worktree
+      // (workspacePath() = <dataDir>/projects/<id>), so declaring it as the
+      // "safe root" would make BaseCliExecutor's cleanup guard accept any
+      // project's directory as contained — the guard existing but not
+      // actually narrowing anything (#565 review).
+      expect(invocation.outputDirectoryRoot).toBe(
+        join(TEST_WORKSPACE_ROOT, '.agent-foundry-run-tmp'),
+      );
+      expect(runTempDir.startsWith(invocation.outputDirectoryRoot as string)).toBe(true);
+
       // Simulate the exact failure mode: a toolchain command reads $TMPDIR
       // from the environment this invocation built and round-trips a file
       // through it.

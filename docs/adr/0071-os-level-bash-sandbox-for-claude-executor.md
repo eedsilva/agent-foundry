@@ -446,12 +446,47 @@ path-confusion risk for a future bug. `CliInvocation` gained an optional
 `resolveWorkspaceRelativePath`, the same containment check the sandbox
 settings themselves use) immediately before the recursive delete, and
 refuses — logging instead of deleting — if `outputDirectory` resolves
-outside it. `ClaudeCliExecutor` sets it to `workspaceRoot`; Codex's own
-`outputDirectory` is left as before, since a value built from a single
-`mkdtemp(tmpdir(), 'agent-foundry-codex-output-')` call has no realistic
-path-confusion surface to guard against. (Codex will want both an output
-directory and this same per-run temp-dir treatment once #637 closes its
-own read-boundary gap — noted for that issue, not resolved here.)
+outside it. Codex's own `outputDirectory` is left as before, since a value
+built from a single `mkdtemp(tmpdir(), 'agent-foundry-codex-output-')` call
+has no realistic path-confusion surface to guard against. (Codex will want
+both an output directory and this same per-run temp-dir treatment once
+#637 closes its own read-boundary gap — noted for that issue, not resolved
+here.)
+
+**Review caught the guard declaring the wrong root.** The first version set
+`outputDirectoryRoot: workspaceRoot` for `ClaudeCliExecutor` — but
+`workspaceRoot` **is** the Foundry Data Directory (`runtime.ts` passes
+`config.dataDir`), and every project's own worktree lives under it too
+(`workspacePath()` = `<dataDir>/projects/<id>`). Against that root,
+`resolveWorkspaceRelativePath(workspaceRoot, "<workspaceRoot>/projects/<id>")`
+returns `"projects/<id>"`, not `null` — the guard would have approved a
+future bug that miscomputed `outputDirectory` as some project's worktree,
+and the recursive `rm` would have deleted the user's own generated app. A
+guard is only as narrow as the root it's told to trust; declaring the whole
+Data Directory as "safe" made it trust everything under it, including the
+one thing it exists to protect. Fixed to
+`outputDirectoryRoot: join(realWorkspaceRoot, '.agent-foundry-run-tmp')` —
+the same narrow directory `mkdtemp` actually creates the run's temp
+directory under, realpath-resolved on its own (not derived from
+`workspaceRoot`'s realpath, so a future symlink at
+`.agent-foundry-run-tmp` itself still fails closed). A regression test
+proves the fix does what it claims, not just that the mechanism exists:
+`cli-executors.test.ts` asserts the exact `outputDirectoryRoot` value
+`ClaudeCliExecutor` declares, and `base-cli-executor.test.ts` reproduces
+the caught scenario directly — declared root is the narrow run-tmp
+directory, attempted delete target is a realistic project worktree
+(`<root>/projects/<id>/workspace`, with a file in it standing in for
+generated app content) — and asserts the file survives. Reverting the fix
+and rerunning the `cli-executors.test.ts` assertion was confirmed to fail
+red before confirming it fixed, so the test measures the actual root the
+code declares, not a constant that happens to match itself.
+
+**Known gap, not fixed here, no security impact:** `.agent-foundry-run-tmp/`
+has no sweeper. A crash between `mkdtemp` and `execute()`'s `finally`
+leaves that run's directory behind, uncollected. `workspaceRoot`'s
+`denyRead` already keeps a stale directory from another run's Bash tool
+reading it, so this is a disk-usage cleanliness item, not a boundary gap —
+tracked as a follow-up on #565, not blocking this PR.
 
 ## Consequences
 

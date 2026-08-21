@@ -153,7 +153,15 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
     // `projects/`, so it's outside the worktree `git add -A` walks and
     // outside every other project's own tree.
     await mkdir(join(realWorkspaceRoot, RUN_TMP_DIRNAME), { recursive: true });
-    const runTempDir = await mkdtemp(join(realWorkspaceRoot, RUN_TMP_DIRNAME, 'run-'));
+    // realpath'd separately from workspaceRoot: this exact value becomes
+    // outputDirectoryRoot below, the boundary BaseCliExecutor's cleanup
+    // guard trusts before its recursive rm. workspaceRoot itself (the whole
+    // Data Directory, containing every project's worktree) would make that
+    // guard accept any project's directory as "contained" — verified: a
+    // narrower root here is what makes the guard mean anything (#565
+    // review).
+    const runTempRoot = await realpath(join(realWorkspaceRoot, RUN_TMP_DIRNAME));
+    const runTempDir = await mkdtemp(join(runTempRoot, 'run-'));
     const realRunTempDir = await realpath(runTempDir);
     const args = [
       '--safe-mode',
@@ -198,7 +206,7 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
         TMP: realRunTempDir,
       },
       outputDirectory: realRunTempDir,
-      outputDirectoryRoot: realWorkspaceRoot,
+      outputDirectoryRoot: runTempRoot,
     };
   }
 
