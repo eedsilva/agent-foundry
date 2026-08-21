@@ -385,9 +385,15 @@ against reproduction again, not accepted on argument:
 
 - **Positive:** a model-invoked Bash tool call — including through any of
   the eight allowlisted binaries, via path traversal, an absolute path, or a
-  symlink — can no longer read outside this run's own workspace on Linux,
-  WSL2, or macOS with the sandbox available. This closes ADR-0063's named
-  residual risk for the Claude executor specifically.
+  symlink — can no longer read outside this run's own workspace on macOS,
+  **measured** directly (every reproduction in this ADR ran on macOS/
+  Seatbelt). The same holds on Linux/WSL2 (bubblewrap) as a reasonable but
+  **unmeasured** inference — same `sandbox.filesystem`/`credentials.files`
+  JSON policy, same vendor-documented enforcement — not yet reproduced on
+  that backend (see the AC4 marker scope note above for exactly what's
+  missing and why it matters more once a real deployment turns this on).
+  This closes ADR-0063's named residual risk for the Claude executor
+  specifically, on the platform this ADR actually exercised.
 - **Negative — Codex is not fixed by this ADR.** Codex's own sandbox has no
   read-restriction primitive (confirmed against its policy schema, not
   guessed). The `node -e readFileSync(...)` reproduction in Context still
