@@ -18,6 +18,8 @@ class InspectableClaudeExecutor extends ClaudeCliExecutor {
   }
 }
 
+const TEST_WORKSPACE_ROOT = '/tmp/agent-foundry-data';
+
 function request(overrides: Partial<AgentExecutionRequest> = {}): AgentExecutionRequest {
   return {
     runId: '01KX9B14GCCJ4R93SD739PHBW4',
@@ -83,7 +85,7 @@ describe('CLI executor contracts', () => {
   });
 
   it('uses plan permission mode and structured JSON for read-only Claude runs', async () => {
-    const invocation = await new InspectableClaudeExecutor(1_000_000).inspect(
+    const invocation = await new InspectableClaudeExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
       request({ provider: 'claude', model: 'sonnet', mutatesWorkspace: false }),
     );
     expect(invocation.command).toBe('claude');
@@ -100,8 +102,58 @@ describe('CLI executor contracts', () => {
     expect(invocation.args.at(-1)).toBe('Open the request file.');
   });
 
+  it("confines the Bash sandbox to this run's cwd for both read-only and mutating Claude runs", async () => {
+    for (const mutatesWorkspace of [false, true]) {
+      const invocation = await new InspectableClaudeExecutor(
+        1_000_000,
+        TEST_WORKSPACE_ROOT,
+      ).inspect(request({ provider: 'claude', mutatesWorkspace, cwd: '/tmp/workspace' }));
+      const flagIndex = invocation.args.indexOf('--settings');
+      expect(flagIndex).toBeGreaterThanOrEqual(0);
+      const settings = JSON.parse(invocation.args[flagIndex + 1] ?? '{}') as {
+        sandbox: {
+          enabled: boolean;
+          failIfUnavailable: boolean;
+          allowUnsandboxedCommands: boolean;
+          filesystem: { denyRead: string[]; allowRead: string[] };
+          network: { allowedDomains: string[] };
+          excludedCommands: string[];
+        };
+      };
+      expect(settings.sandbox.enabled).toBe(true);
+      // Default-deny: a missing sandbox dependency must fail the run, not
+      // silently execute the model's tools unconfined.
+      expect(settings.sandbox.failIfUnavailable).toBe(true);
+      expect(settings.sandbox.allowUnsandboxedCommands).toBe(false);
+      // Deny the shared workspaces root, then re-open only this run's own
+      // cwd — sibling projects/worktrees under the same root, and every
+      // host path outside it, stay unreadable to the Bash tool's child
+      // processes (docs/adr/0071).
+      expect(settings.sandbox.filesystem.denyRead).toEqual([TEST_WORKSPACE_ROOT]);
+      expect(settings.sandbox.filesystem.allowRead).toEqual(['/tmp/workspace']);
+      // #565 is a filesystem-boundary fix, not a network policy change.
+      expect(settings.sandbox.network.allowedDomains).toEqual(['*']);
+      // docker can't run inside this sandbox at all (docs/adr/0071); it
+      // stays exactly as unconfined as it was before this change.
+      expect(settings.sandbox.excludedCommands).toEqual(['docker *']);
+    }
+  });
+
+  it('scopes the Bash sandbox to a different cwd per request, not a fixed path', async () => {
+    const invocation = await new InspectableClaudeExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
+      request({ provider: 'claude', cwd: '/tmp/agent-foundry-data/projects/other/workspace' }),
+    );
+    const flagIndex = invocation.args.indexOf('--settings');
+    const settings = JSON.parse(invocation.args[flagIndex + 1] ?? '{}') as {
+      sandbox: { filesystem: { allowRead: string[] } };
+    };
+    expect(settings.sandbox.filesystem.allowRead).toEqual([
+      '/tmp/agent-foundry-data/projects/other/workspace',
+    ]);
+  });
+
   it('pre-approves a scoped Bash allowlist for mutating Claude runs', async () => {
-    const invocation = await new InspectableClaudeExecutor(1_000_000).inspect(
+    const invocation = await new InspectableClaudeExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
       request({ provider: 'claude', model: 'sonnet', mutatesWorkspace: true }),
     );
     expect(invocation.args).toContain('acceptEdits');
@@ -117,7 +169,7 @@ describe('CLI executor contracts', () => {
   });
 
   it('removes unsupported Draft 2020-12 metadata from Claude schemas', async () => {
-    const invocation = await new InspectableClaudeExecutor(1_000_000).inspect(
+    const invocation = await new InspectableClaudeExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
       request({
         provider: 'claude',
         outputSchema: {
@@ -133,8 +185,10 @@ describe('CLI executor contracts', () => {
   });
 
   it('leaves Claude args untouched when systemPrompt is absent', async () => {
-    const withPrompt = await new InspectableClaudeExecutor(1_000_000).inspect(request());
-    const without = await new InspectableClaudeExecutor(1_000_000).inspect(
+    const withPrompt = await new InspectableClaudeExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
+      request(),
+    );
+    const without = await new InspectableClaudeExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
       request({ systemPrompt: undefined }),
     );
     expect(without.args).toEqual(withPrompt.args);
@@ -142,7 +196,7 @@ describe('CLI executor contracts', () => {
   });
 
   it('appends --append-system-prompt when systemPrompt is present', async () => {
-    const invocation = await new InspectableClaudeExecutor(1_000_000).inspect(
+    const invocation = await new InspectableClaudeExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
       request({ systemPrompt: '# System prompt: Developer\n\nBe terse.' }),
     );
     const flagIndex = invocation.args.indexOf('--append-system-prompt');
@@ -203,7 +257,7 @@ describe('CLI executor contracts', () => {
   });
 
   it('removes unsupported tuple keywords from nested Claude schemas', async () => {
-    const invocation = await new InspectableClaudeExecutor(1_000_000).inspect(
+    const invocation = await new InspectableClaudeExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
       request({
         provider: 'claude',
         outputSchema: {

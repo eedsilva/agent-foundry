@@ -299,7 +299,11 @@ export function modelsFromEnvironment(
 
 export function createValidationCampaignCanaryDependencies(): ValidationCanaryDependencies {
   const executors = {
-    claude: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
+    // createFixtureWorkspace mkdtemps a fresh scenario workspace directly
+    // under tmpdir() for every canary run, so tmpdir() is the shared root
+    // whose siblings (other runs' fixtures, unrelated host temp files) this
+    // run's Bash sandbox must not read.
+    claude: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, tmpdir()),
     codex: new CodexCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, true),
   };
   return {
@@ -366,7 +370,11 @@ function createProductionProviderCanaryDependencies(
 ): ProviderCanaryDependencies {
   const executors: Record<ProviderCanaryProvider, ClaudeCliExecutor | CodexCliExecutor> = {
     codex: new CodexCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, true),
-    claude: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES),
+    // createFixtureWorkspace mkdtemps a fresh scenario workspace directly
+    // under tmpdir() for every canary run, so tmpdir() is the shared root
+    // whose siblings (other runs' fixtures, unrelated host temp files) this
+    // run's Bash sandbox must not read.
+    claude: new ClaudeCliExecutor(DEFAULT_MAX_OUTPUT_BYTES, tmpdir()),
   };
 
   return {

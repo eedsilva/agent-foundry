@@ -466,6 +466,23 @@ export class FileWorkspaceManager implements WorkspaceManager {
     const [listable] = filterListablePaths([resolved], await this.#readGitignore(root));
     if (listable !== resolved) throw new NotFoundError(`File is not listable: ${relativePath}`);
     const absolute = join(root, resolved);
+    // resolveWorkspaceRelativePath only checks the literal string path — a
+    // symlink at `absolute` pointing outside the workspace passes it and
+    // would still be followed by open() below. Resolve both sides through
+    // realpath so a symlink escape (or one hop of it) is caught before any
+    // read; a legitimate symlink whose target stays inside the workspace
+    // (e.g. a generated app's own node_modules layout) still resolves fine.
+    const realRoot = await realpath(root).catch(() => root);
+    let realAbsolute: string;
+    try {
+      realAbsolute = await realpath(absolute);
+    } catch (error) {
+      if (isNotFound(error)) throw new NotFoundError(`File not found: ${relativePath}`);
+      throw error;
+    }
+    if (resolveWorkspaceRelativePath(realRoot, realAbsolute) === null) {
+      throw new NotFoundError(`Path escapes the workspace: ${relativePath}`);
+    }
     // Stat and read the same open file descriptor, not the path twice: a
     // path-based stat()-then-readFile() has a TOCTOU window where the file
     // on disk can change (grow past the cap, get swapped) between the two

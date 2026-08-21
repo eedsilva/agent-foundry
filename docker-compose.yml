@@ -45,6 +45,14 @@ services:
       context: .
       dockerfile: Dockerfile
     command: npm run start --workspace @agent-foundry/worker
+    # Claude Code's own Bash sandbox (#565, EXECUTOR_MODE=real) needs to
+    # create a nested unprivileged user namespace for bubblewrap; Docker's
+    # default seccomp profile blocks that from inside a container. Verified
+    # empirically against this exact Dockerfile — see docs/adr/0071. If you
+    # set RUN_WORKER_INLINE=true on the api service instead of running this
+    # separate worker, add the same security_opt there.
+    security_opt:
+      - seccomp:unconfined
     environment:
       NODE_ENV: production
       DATA_DIR: /app/data
