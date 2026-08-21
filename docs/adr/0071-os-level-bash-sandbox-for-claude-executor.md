@@ -70,12 +70,31 @@ JSON blob, scoped to the run's own workspace:
     "enabled": true,
     "failIfUnavailable": true,
     "allowUnsandboxedCommands": false,
-    "filesystem": { "denyRead": ["<workspaceRoot>"], "allowRead": ["<request.cwd>"] },
+    "filesystem": {
+      "denyRead": ["<realpath(workspaceRoot)>", "<realpath(tmpdir())>"],
+      "allowRead": ["<realpath(request.cwd)>"]
+    },
+    "credentials": {
+      "files": [
+        { "path": "~/.ssh", "mode": "deny" },
+        { "path": "~/.aws/credentials", "mode": "deny" },
+        { "path": "~/.claude/.credentials.json", "mode": "deny" },
+        { "path": "~/.netrc", "mode": "deny" },
+        { "path": "~/.docker/config.json", "mode": "deny" },
+        { "path": "~/.npmrc", "mode": "deny" }
+      ]
+    },
     "network": { "allowedDomains": ["*"] },
     "excludedCommands": ["docker *"]
   }
 }
 ```
+
+(This is the settled shape after a review round caught three real gaps in an
+earlier version — `denyRead: [workspaceRoot]` only, no `credentials.files`,
+and `path.resolve()` instead of `realpath()`. See "Review round" below for
+what each reproduction found and how it was closed; the shape above is
+already corrected.)
 
 - **`denyRead: [workspaceRoot]` + `allowRead: [cwd]`**, not `denyRead:
   ["/"]`. The sandbox's filesystem model reads broadly by design — the
@@ -95,6 +114,19 @@ JSON blob, scoped to the run's own workspace:
   inside the workspace to a sibling directory fails the same way (the
   sandbox resolves the real target, unlike a string-only path check), and
   `cat inside.txt` for a file actually inside the workspace still succeeds.
+- **`denyRead` also includes `tmpdir()`, and `credentials.files` denies
+  common host credential locations.** Neither was in the version first
+  reviewed — both are real, reproduced gaps, not theoretical. `denyRead:
+  [workspaceRoot]` alone says nothing about paths outside it: with only that
+  entry, `node -e readFileSync('$HOME/.claude/.credentials.json')` and
+  `node -e readFileSync('<os.tmpdir()>/bait.txt')` both returned their
+  contents, exit 0, no denial — the sandbox's own docs say this
+  outright ("this default still allows reading credential files such as
+  `~/.aws/credentials` and `~/.ssh/`"), but the first version of this ADR
+  didn't act on it. Re-reproduced after adding `tmpdir()` to `denyRead` and
+  the `credentials.files` deny list above: both reads now fail with `EPERM`,
+  while `cat inside.txt` and `npm --version` inside the workspace still
+  succeed.
 - **`network.allowedDomains: ["*"]`.** #565's acceptance criteria is a
   filesystem boundary, not a network policy. The sandbox's network layer is
   independently fail-closed by default (no domain pre-allowed; a headless
@@ -124,6 +156,26 @@ JSON blob, scoped to the run's own workspace:
   provider-canary executors (`provider-canary.ts`) pass `tmpdir()` instead,
   since `createFixtureWorkspace` `mkdtemp`s each canary run's fixture
   directly under the OS temp dir, not under `dataDir`.
+- **`workspaceRoot`, `cwd`, and `tmpdir()` are each passed through
+  `fs.realpath()` before being written into `--settings`, not just
+  `path.resolve()`.** Reproduced empirically as a real, silent bypass, not a
+  theoretical one: `config.dataDir = resolve(rootDir, DATA_DIR)`
+  (`config.ts`) never resolves symlinks, and neither did the first version
+  of `ClaudeCliExecutor`. When `denyRead`/`allowRead` are written as a
+  symlink path (`/tmp` itself is one on macOS — `/tmp` → `/private/tmp` —
+  and container volume mounts routinely are too), the sandbox does not
+  error and does not fall back to some safe default: it just fails to match
+  anything, silently. Reproduced with a `data-link -> data-real` symlink
+  standing in for `config.dataDir`: with `denyRead`/`allowRead` written in
+  the symlink form, `node -e readFileSync('<sibling file, symlink-form
+  path>')` returned the sibling's contents, exit 0 — the exact literal path
+  named in `denyRead` was itself readable. Rewriting the same settings with
+  `realpath()`-resolved paths (identical directories, identical request)
+  fixed it: the same read failed with `EPERM`. This is the same bug class
+  `FileWorkspaceManager.readWorkspaceFile` already had to be hardened
+  against below — a symlink defeating a string-only containment check —
+  just surfacing through a different code path (the sandbox's own path
+  matcher instead of `path.relative`).
 - **Symlink hardening for the human Files-tab API too.**
   `resolveWorkspaceRelativePath` (the shared containment check) only
   validates the literal path string; `FileWorkspaceManager.readWorkspaceFile`
@@ -163,6 +215,59 @@ JSON blob, scoped to the run's own workspace:
   production without the domain inventory to get it right confidently. A
   future issue can tighten this once the actual hosts each deployment needs
   are enumerated.
+
+## Review round
+
+A review of the first version of this change (PR #638) raised five points
+against the shipped code and this ADR. Each was checked against a live
+reproduction, not accepted or dismissed on argument alone:
+
+1. **Codex is wired into production (`runtime.ts:311-314`) and #565's
+   acceptance criteria says "ferramentas do modelo," not "the Claude
+   executor."** Correct, and already the framing in this ADR's Consequences
+   and #637 — restated here because it's a scope decision for the issue
+   owner, not something this ADR can resolve unilaterally: whether #565
+   stays open until #637 lands, or is rescoped to the Claude executor
+   specifically with #637 promoted to a sibling under the same parent (#100).
+2. **`denyRead: [workspaceRoot]` alone leaves CLI credentials and OS temp
+   directories readable — AC3 and AC5.** Confirmed exactly as reported, by
+   reproduction, not assumption: see the `denyRead`/`credentials.files`
+   bullets above. Both are fixed in this version.
+3. **`workspaceRoot`/`cwd` used `path.resolve()`, not `fs.realpath()` — same
+   bug class as the `readWorkspaceFile` fix in this same PR.** Confirmed
+   exactly as reported, by reproduction: see the `realpath()` bullet above.
+   Fixed in this version; a regression test (`cli-executors.test.ts`)
+   constructs a symlinked workspace root and cwd and asserts the resolved
+   real paths appear in `--settings`, not the symlink strings.
+4. **AC4 ("cada bloqueio gera evento de auditoria") has no code in the diff
+   and no mention in this ADR.** The claim behind the silence was checked,
+   not just asserted: `persistStreamEvent`
+   (`packages/orchestrator/src/workflow-orchestrator.ts`) already persists
+   every `ExecutorStreamEvent` — including a `tool_end` event for a
+   sandbox-denied Bash call — into `StepEventRepository`. Reproduced against
+   the real `--output-format stream-json` protocol: a sandbox `EPERM` on a
+   Bash command produces a `tool_result` block with `is_error: true` and
+   `content` limited to the (non-secret) error text, which
+   `createClaudeStreamMapper` maps to `{ type: 'tool_end', ok: false, detail:
+   <truncated stderr> }`. This *is* a real, already-persisted, per-tool-call
+   audit event with no protected content. What it is **not** is part of the
+   dedicated `GET /runs/:runId/audit` endpoint
+   (`ProjectService.exportRunAudit`), which is scoped to approval
+   requests/decisions/feedback only and doesn't read `StepEventRepository`
+   at all. Whether that endpoint needs extending to include boundary
+   denials is a product decision this ADR doesn't make — flagged to the
+   issue owner rather than decided here or silently left as before.
+5. **Does `excludedCommands: ["docker *"]` actually still work with
+   `allowUnsandboxedCommands: false`, or does the latter override the
+   former and break every allowlisted `docker` call?** Verified, not
+   assumed: with both settings active together (the exact production
+   config), `docker --version` ran successfully, unsandboxed, with an empty
+   `permission_denials` list. The two settings are independent —
+   `excludedCommands` are recognized up front and never enter the sandbox
+   attempt at all, while `allowUnsandboxedCommands: false` only disables the
+   *retry* escape hatch for a command that attempted the sandbox and failed.
+   No regression; this ADR's original claim holds, now with evidence instead
+   of inference.
 
 ## Consequences
 
@@ -220,14 +325,20 @@ JSON blob, scoped to the run's own workspace:
 
 Exact-argv unit tests in `packages/executors/src/cli-executors.test.ts`
 assert the `--settings` JSON's `sandbox.enabled`, `failIfUnavailable`,
-`allowUnsandboxedCommands`, `filesystem.denyRead`/`allowRead` (scoped
-per-request to `cwd`, not a fixed path), `network.allowedDomains`, and
-`excludedCommands`, for both mutating and read-only runs. Symlink/traversal
-containment for `readWorkspaceFile` is covered in
+`allowUnsandboxedCommands`, `filesystem.denyRead` (workspace root + tmpdir)/
+`allowRead` (scoped per-request to `cwd`, not a fixed path),
+`credentials.files`, `network.allowedDomains`, and `excludedCommands`, for
+both mutating and read-only runs — plus a dedicated regression test that
+constructs a symlinked workspace root and cwd and asserts `--settings`
+carries the `realpath()`-resolved forms, not the symlink strings. Symlink/
+traversal containment for `readWorkspaceFile` is covered in
 `packages/persistence/src/workspace-manager.test.ts`. The live-CLI
-reproductions in Context (Read-tool default denial, the Bash/node escape
-before and after this change, the network default-deny, the container
-bubblewrap failure and its `security_opt` fix) were run against the real
+reproductions in Context and in "Review round" (Read-tool default denial,
+the Bash/node escape before and after this change, the network default-deny,
+the container bubblewrap failure and its `security_opt` fix, the credential/
+tmpdir gap and its fix, the symlinked-`workspaceRoot` bypass and its fix,
+the `tool_end`/`is_error` audit-event evidence, the `excludedCommands` vs
+`allowUnsandboxedCommands` independence) were run against the real
 `claude`/`codex` CLIs and this repo's real `Dockerfile`, not asserted from
 documentation — this ADR is the record of that evidence; there is no
 automated CI job that re-runs them (real-CLI runs need network + provider

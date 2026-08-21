@@ -1,6 +1,7 @@
-import { readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import type { CliInvocation } from './base-cli-executor.js';
 import { ClaudeCliExecutor } from './claude-executor.js';
@@ -18,7 +19,29 @@ class InspectableClaudeExecutor extends ClaudeCliExecutor {
   }
 }
 
-const TEST_WORKSPACE_ROOT = '/tmp/agent-foundry-data';
+// The Claude sandbox settings builder realpath()s workspaceRoot/cwd/tmpdir
+// (#565: a symlinked path silently defeats the sandbox rather than
+// erroring — see docs/adr/0071), so these must be real, existing
+// directories, not synthetic strings, or invocation() throws ENOENT.
+let TEST_WORKSPACE_ROOT: string;
+let TEST_CWD: string;
+let OTHER_CWD: string;
+let REAL_TMPDIR: string;
+
+beforeAll(async () => {
+  TEST_WORKSPACE_ROOT = await realpath(
+    await mkdtemp(join(tmpdir(), 'agent-foundry-cli-executors-')),
+  );
+  TEST_CWD = join(TEST_WORKSPACE_ROOT, 'projects', 'proj-1', 'workspace');
+  await mkdir(TEST_CWD, { recursive: true });
+  OTHER_CWD = join(TEST_WORKSPACE_ROOT, 'projects', 'proj-2', 'workspace');
+  await mkdir(OTHER_CWD, { recursive: true });
+  REAL_TMPDIR = await realpath(tmpdir());
+});
+
+afterAll(async () => {
+  await rm(TEST_WORKSPACE_ROOT, { recursive: true, force: true });
+});
 
 function request(overrides: Partial<AgentExecutionRequest> = {}): AgentExecutionRequest {
   return {
@@ -32,7 +55,7 @@ function request(overrides: Partial<AgentExecutionRequest> = {}): AgentExecution
     provider: 'codex',
     model: '',
     prompt: 'Open the request file.',
-    cwd: '/tmp/workspace',
+    cwd: TEST_CWD,
     mutatesWorkspace: true,
     timeoutMs: 120_000,
     outputSchema: { type: 'object' },
@@ -53,7 +76,7 @@ describe('CLI executor contracts', () => {
       expect(invocation.args).not.toContain('--output-schema');
       expect(invocation.args).not.toContain('--model');
       expect(invocation.outputFile).toContain('codex.final.json');
-      expect(invocation.outputFile?.startsWith('/tmp/workspace/')).toBe(false);
+      expect(invocation.outputFile?.startsWith(TEST_CWD)).toBe(false);
     } finally {
       if (invocation.outputDirectory) {
         await rm(invocation.outputDirectory, { force: true, recursive: true });
@@ -107,7 +130,7 @@ describe('CLI executor contracts', () => {
       const invocation = await new InspectableClaudeExecutor(
         1_000_000,
         TEST_WORKSPACE_ROOT,
-      ).inspect(request({ provider: 'claude', mutatesWorkspace, cwd: '/tmp/workspace' }));
+      ).inspect(request({ provider: 'claude', mutatesWorkspace }));
       const flagIndex = invocation.args.indexOf('--settings');
       expect(flagIndex).toBeGreaterThanOrEqual(0);
       const settings = JSON.parse(invocation.args[flagIndex + 1] ?? '{}') as {
@@ -116,6 +139,7 @@ describe('CLI executor contracts', () => {
           failIfUnavailable: boolean;
           allowUnsandboxedCommands: boolean;
           filesystem: { denyRead: string[]; allowRead: string[] };
+          credentials: { files: Array<{ path: string; mode: string }> };
           network: { allowedDomains: string[] };
           excludedCommands: string[];
         };
@@ -125,12 +149,24 @@ describe('CLI executor contracts', () => {
       // silently execute the model's tools unconfined.
       expect(settings.sandbox.failIfUnavailable).toBe(true);
       expect(settings.sandbox.allowUnsandboxedCommands).toBe(false);
-      // Deny the shared workspaces root, then re-open only this run's own
-      // cwd — sibling projects/worktrees under the same root, and every
-      // host path outside it, stay unreadable to the Bash tool's child
-      // processes (docs/adr/0071).
-      expect(settings.sandbox.filesystem.denyRead).toEqual([TEST_WORKSPACE_ROOT]);
-      expect(settings.sandbox.filesystem.allowRead).toEqual(['/tmp/workspace']);
+      // Deny the shared workspaces root and the OS temp root, then re-open
+      // only this run's own cwd — sibling projects/worktrees under the same
+      // root, other processes' temp files, and every host path outside
+      // both, stay unreadable to the Bash tool's child processes
+      // (docs/adr/0071).
+      expect(settings.sandbox.filesystem.denyRead.sort()).toEqual(
+        [TEST_WORKSPACE_ROOT, REAL_TMPDIR].sort(),
+      );
+      expect(settings.sandbox.filesystem.allowRead).toEqual([TEST_CWD]);
+      // The sandbox's own default read policy still allows credential files
+      // like ~/.ssh and ~/.aws/credentials even with denyRead set elsewhere
+      // — this closes that gap explicitly (docs/adr/0071).
+      expect(settings.sandbox.credentials.files).toEqual(
+        expect.arrayContaining([
+          { path: '~/.ssh', mode: 'deny' },
+          { path: '~/.claude/.credentials.json', mode: 'deny' },
+        ]),
+      );
       // #565 is a filesystem-boundary fix, not a network policy change.
       expect(settings.sandbox.network.allowedDomains).toEqual(['*']);
       // docker can't run inside this sandbox at all (docs/adr/0071); it
@@ -141,15 +177,43 @@ describe('CLI executor contracts', () => {
 
   it('scopes the Bash sandbox to a different cwd per request, not a fixed path', async () => {
     const invocation = await new InspectableClaudeExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
-      request({ provider: 'claude', cwd: '/tmp/agent-foundry-data/projects/other/workspace' }),
+      request({ provider: 'claude', cwd: OTHER_CWD }),
     );
     const flagIndex = invocation.args.indexOf('--settings');
     const settings = JSON.parse(invocation.args[flagIndex + 1] ?? '{}') as {
       sandbox: { filesystem: { allowRead: string[] } };
     };
-    expect(settings.sandbox.filesystem.allowRead).toEqual([
-      '/tmp/agent-foundry-data/projects/other/workspace',
-    ]);
+    expect(settings.sandbox.filesystem.allowRead).toEqual([OTHER_CWD]);
+  });
+
+  it('resolves a symlinked workspaceRoot/cwd to their real paths, not the literal symlink string (#565)', async () => {
+    // Verified empirically against the real CLI: a denyRead/allowRead entry
+    // written in symlink form silently fails to match anything at all — the
+    // sandbox enforces against the real filesystem path the OS resolves,
+    // not the literal string in --settings. path.resolve() alone (the prior
+    // implementation) can't catch this; only realpath() can. See
+    // docs/adr/0071.
+    const realRoot = await mkdtemp(join(tmpdir(), 'agent-foundry-cli-executors-real-'));
+    const realCwd = join(realRoot, 'workspace');
+    await mkdir(realCwd, { recursive: true });
+    const linkedRoot = join(tmpdir(), `agent-foundry-cli-executors-link-${process.pid}`);
+    await symlink(realRoot, linkedRoot);
+    try {
+      const linkedCwd = join(linkedRoot, 'workspace');
+      const invocation = await new InspectableClaudeExecutor(1_000_000, linkedRoot).inspect(
+        request({ provider: 'claude', cwd: linkedCwd }),
+      );
+      const flagIndex = invocation.args.indexOf('--settings');
+      const settings = JSON.parse(invocation.args[flagIndex + 1] ?? '{}') as {
+        sandbox: { filesystem: { denyRead: string[]; allowRead: string[] } };
+      };
+      expect(settings.sandbox.filesystem.denyRead).not.toContain(linkedRoot);
+      expect(settings.sandbox.filesystem.denyRead).toContain(await realpath(realRoot));
+      expect(settings.sandbox.filesystem.allowRead).toEqual([await realpath(realCwd)]);
+    } finally {
+      await rm(linkedRoot, { force: true });
+      await rm(realRoot, { recursive: true, force: true });
+    }
   });
 
   it('pre-approves a scoped Bash allowlist for mutating Claude runs', async () => {

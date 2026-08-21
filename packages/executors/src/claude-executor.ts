@@ -1,3 +1,5 @@
+import { realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
@@ -29,30 +31,69 @@ function claudeJsonSchema(schema: AgentExecutionRequest['outputSchema']): string
 }
 
 /**
+ * Common host credential locations the sandbox's default read policy does
+ * NOT cover — its own docs say so explicitly: the default still allows
+ * reading `~/.aws/credentials` and `~/.ssh/`. Denying the workspaces root
+ * (below) says nothing about these, since none of them live under it.
+ * `~/.claude/.credentials.json` matters specifically because it's this same
+ * `claude` CLI's own credential store (Linux/WSL2 — Keychain on macOS isn't
+ * a file this sandbox layer can reach). Not exhaustive; extend when a new
+ * credential-shaped file needs covering.
+ */
+const DENIED_CREDENTIAL_FILES = [
+  '~/.ssh',
+  '~/.aws/credentials',
+  '~/.claude/.credentials.json',
+  '~/.netrc',
+  '~/.docker/config.json',
+  '~/.npmrc',
+];
+
+/**
  * OS-level (Seatbelt/bubblewrap) confinement for the Bash tool and its child
  * processes — the only layer that also covers a subprocess reading files
  * directly (`node -e "readFileSync(...)"`), which Read/Edit permission rules
- * never see (docs/adr/0071). `denyRead` on the shared workspaces root plus a
- * narrower `allowRead` on this run's own cwd re-opens just that subtree, so
- * sibling projects/worktrees under the same root and host paths outside it
- * stay unreadable while normal toolchain reads (system libs, this
- * project's own files) keep working. `network.allowedDomains: ['*']` keeps
- * egress exactly as unrestricted as before this change — #565 is a
- * filesystem-boundary issue, not a network policy change, and guessing a
- * registry/host allowlist wrong would silently break every mutating run's
- * `npm install`/`git push`/`psql`. `docker` can't run inside this sandbox at
- * all (verified empirically, see docs/adr/0071) so it's excluded and stays
- * exactly as unconfined as it always was.
+ * never see (docs/adr/0071). `denyRead` on the shared workspaces root and the
+ * OS temp root, plus a narrower `allowRead` on this run's own cwd, re-opens
+ * just that subtree — sibling projects/worktrees under the same root, other
+ * processes' temp files, and host paths outside both stay unreadable, while
+ * normal toolchain reads (system libs, this project's own files) keep
+ * working. `credentials.files` closes the gap the sandbox's own docs name
+ * explicitly: its default read policy still allows `~/.ssh`/
+ * `~/.aws/credentials` even with `denyRead` set elsewhere. `network.
+ * allowedDomains: ['*']` keeps egress exactly as unrestricted as before this
+ * change — #565 is a filesystem-boundary issue, not a network policy
+ * change, and guessing a registry/host allowlist wrong would silently break
+ * every mutating run's `npm install`/`git push`/`psql`. `docker` can't run
+ * inside this sandbox at all (verified empirically, see docs/adr/0071) so
+ * it's excluded and stays exactly as unconfined as it always was.
+ *
+ * `workspaceRoot` and `cwd` must already be realpath-resolved, not just
+ * `path.resolve`d: verified empirically that when either traverses a
+ * symlink (a routine case — `/tmp` itself is a symlink to `/private/tmp` on
+ * macOS), the sandbox silently fails to enforce the boundary at all rather
+ * than erroring, because deny/allow rules are matched against the real
+ * filesystem path the OS resolves, not the literal string handed to
+ * `--settings`. This is the same bug class fixed in
+ * `FileWorkspaceManager.readWorkspaceFile` — see docs/adr/0071.
  */
-function claudeSandboxSettings(workspaceRoot: string, cwd: string): string {
+function claudeSandboxSettings(
+  realWorkspaceRoot: string,
+  realTmpdir: string,
+  realCwd: string,
+): string {
+  const denyRead = [...new Set([realWorkspaceRoot, realTmpdir])];
   return JSON.stringify({
     sandbox: {
       enabled: true,
       failIfUnavailable: true,
       allowUnsandboxedCommands: false,
       filesystem: {
-        denyRead: [workspaceRoot],
-        allowRead: [cwd],
+        denyRead,
+        allowRead: [realCwd],
+      },
+      credentials: {
+        files: DENIED_CREDENTIAL_FILES.map((path) => ({ path, mode: 'deny' })),
       },
       network: { allowedDomains: ['*'] },
       excludedCommands: ['docker *'],
@@ -71,6 +112,11 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
   }
 
   protected async invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
+    const [realWorkspaceRoot, realTmpdir, realCwd] = await Promise.all([
+      realpath(this.workspaceRoot),
+      realpath(tmpdir()),
+      realpath(request.cwd),
+    ]);
     const args = [
       '--safe-mode',
       '-p',
@@ -85,7 +131,7 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
       '--json-schema',
       claudeJsonSchema(request.outputSchema),
       '--settings',
-      claudeSandboxSettings(this.workspaceRoot, request.cwd),
+      claudeSandboxSettings(realWorkspaceRoot, realTmpdir, realCwd),
     ];
     if (request.mutatesWorkspace) {
       // Single `--allowedTools=` token, not `--allowedTools`, value: the
