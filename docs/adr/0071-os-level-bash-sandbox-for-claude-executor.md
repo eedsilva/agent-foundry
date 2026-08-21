@@ -345,12 +345,41 @@ against reproduction again, not accepted on argument:
   typo'd command, a dropped network connection) does not: `"EPERM:
   operation not permitted"` for the OS-sandbox path, `"requested
   permissions to read from"` for the permission-ask path. Pinned as a
-  regression test in `claude-stream-events.test.ts` using this exact
-  captured payload, per the request: an assertion, zero production code —
-  `persistStreamEvent` already stores this `detail` text verbatim in
-  `StepEventRepository`, so a query filtering on either substring is a real,
-  working way to count boundary denials per run today, without extending
-  `RunAuditExport`.
+  regression test in `claude-stream-events.test.ts` — routed through the
+  real `createClaudeStreamMapper`, not asserted on a bare literal, so the
+  test actually fails if the mapper's output ever changed — using this
+  exact captured payload, per the request: an assertion, zero production
+  code. `persistStreamEvent` already stores this `detail` text verbatim in
+  `StepEventRepository`.
+
+  **Scope of this evidence, stated precisely rather than implied:** both
+  payloads above were captured on macOS, where the sandbox backend is
+  Seatbelt. The error text a denial produces is a property of the
+  enforcing mechanism, not of the `sandbox.filesystem` policy — a different
+  backend can reasonably deny access through a different code path with
+  different wording. This ADR has evidence that bubblewrap (the Linux/WSL2
+  backend, the actual deployment target) *starts* inside this repo's
+  container with `security_opt: seccomp:unconfined` (see Consequences), but
+  **no evidence of what text a bubblewrap-enforced denial produces** — that
+  reproduction needs a real `claude` session running under Linux/bubblewrap,
+  which needs its own provider credential and wasn't available in this
+  session. Until captured, treat "query `StepEventRepository` for `EPERM:
+  operation not permitted`" as verified on Seatbelt/macOS only. If
+  bubblewrap's denial text differs, that query silently returns zero
+  matches on Linux — no error, just an undercount — without this line
+  being wrong anywhere a reader would notice. Low stakes today only because
+  this ADR's own Consequences section already notes the sandbox settings
+  are inert in the checked-in reference deployment (`EXECUTOR_MODE=mock`,
+  no CLI binaries installed); it stops being low stakes the moment a real
+  deployment flips that on.
+
+  One more precision worth recording: `"EPERM: operation not permitted"` is
+  a standard OS errno string, not a sandbox-specific one — an unrelated
+  permission error (e.g. a genuinely unreadable file due to Unix
+  permissions, nothing to do with the sandbox) would produce the same text.
+  This substring answers "did some boundary deny something in this run?",
+  not "give me an exact count of sandbox denials" — good enough for AC4's
+  audit-event requirement, not precise enough for a dashboard metric.
 
 ## Consequences
 

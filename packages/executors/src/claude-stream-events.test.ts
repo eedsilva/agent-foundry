@@ -187,10 +187,44 @@ describe('createClaudeStreamMapper', () => {
     ]);
 
     // An ordinary command failure — the thing AC4's audit event must stay
-    // distinguishable from — carries neither marker.
-    const ordinaryFailureDetail = 'Exit code 127\nzsh: command not found: pnmp\n';
-    expect(ordinaryFailureDetail).not.toContain('EPERM: operation not permitted');
-    expect(ordinaryFailureDetail).not.toContain('requested permissions to read from');
+    // distinguishable from — carries neither marker. Routed through the
+    // same mapLine() as the two denials above, not asserted on a literal:
+    // a literal never touches the mapper, so it can't fail if the mapper
+    // itself changed to inject either marker into every tool_end.
+    mapLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', id: 'toolu_ordinary', name: 'Bash', input: {} }],
+        },
+      }),
+    );
+    const ordinaryFailure = mapLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_ordinary',
+              is_error: true,
+              content: 'Exit code 127\nzsh: command not found: pnmp\n',
+            },
+          ],
+        },
+      }),
+    );
+    expect(ordinaryFailure).toEqual([
+      {
+        type: 'tool_end',
+        toolName: 'Bash',
+        summary: 'Bash failed',
+        ok: false,
+        detail: expect.not.stringMatching(
+          /EPERM: operation not permitted|requested permissions to read from/,
+        ),
+      },
+    ]);
   });
 
   it('emits an error event for a terminal error result', () => {
