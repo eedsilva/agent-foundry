@@ -5,11 +5,12 @@ schemaVersion: '1'
 models:
   - id: codex-default
     provider: codex
-    model: '${CODEX_DEFAULT_MODEL:-}'
+    model: gpt-5.6-luna
     enabled: true
     requireExplicitModel: false
     maxContextTokens: 100000
     canWriteWorkspace: true
+    reasoningEffort: high
     tags: [coding, repository, balanced]
     capabilities:
       planning: 0.82
@@ -25,7 +26,7 @@ models:
   - id: codex-fast
     provider: codex
     model: '${CODEX_FAST_MODEL:-}'
-    enabled: ${ENABLE_CODEX_FAST:-false}
+    enabled: false
     requireExplicitModel: true
     maxContextTokens: 100000
     canWriteWorkspace: true
@@ -44,7 +45,7 @@ models:
   - id: claude-opus
     provider: claude
     model: '${CLAUDE_DEEP_MODEL:-opus}'
-    enabled: true
+    enabled: false
     requireExplicitModel: false
     maxContextTokens: 100000
     canWriteWorkspace: true
@@ -71,7 +72,7 @@ models:
   - id: claude-sonnet
     provider: claude
     model: '${CLAUDE_BALANCED_MODEL:-sonnet}'
-    enabled: true
+    enabled: false
     requireExplicitModel: false
     maxContextTokens: 100000
     canWriteWorkspace: true
@@ -97,7 +98,7 @@ models:
 
   - id: claude-haiku
     provider: claude
-    model: '${CLAUDE_FAST_MODEL:-haiku}'
+    model: claude-haiku-4-5-20251001
     enabled: true
     requireExplicitModel: false
     maxContextTokens: 100000

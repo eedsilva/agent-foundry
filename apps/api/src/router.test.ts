@@ -119,9 +119,17 @@ describe('router dashboard + experiments API', () => {
         ],
       },
     });
-    expect((await selectedRuntime.router.catalog()).map((model) => model.id)).toContain(
-      'claude-opus',
-    );
+    await expect(selectedRuntime.router.catalog()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'codex-default',
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'high',
+      }),
+      expect.objectContaining({
+        id: 'claude-haiku',
+        model: 'claude-haiku-4-5-20251001',
+      }),
+    ]);
     const normalPlanningRoute = await selectedRuntime.router.route(
       TaskProfileSchema.parse({
         role: 'planner',
@@ -136,7 +144,7 @@ describe('router dashboard + experiments API', () => {
       undefined,
       { routing: { source: 'web-app-v1', executors: ['claude', 'codex'] } },
     );
-    expect(normalPlanningRoute.selected.model.id).toBe('claude-opus');
+    expect(normalPlanningRoute.selected.model.id).toBe('claude-haiku');
     expect(normalPlanningRoute.routingTable).toMatchObject({
       source: 'web-app-v1',
       taskKind: 'planning',

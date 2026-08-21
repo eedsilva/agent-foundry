@@ -256,6 +256,9 @@ export class ConversationOperationRunner {
         taskKind: step.taskKind,
         provider: route.selected.model.provider,
         model: route.selected.model.model,
+        ...(route.selected.model.reasoningEffort !== undefined
+          ? { reasoningEffort: route.selected.model.reasoningEffort }
+          : {}),
         prompt: compileCliPrompt(runId, stepRun.id, attempt.id),
         cwd: this.workspaces.workspacePath(projectId),
         mutatesWorkspace: step.mutatesWorkspace,

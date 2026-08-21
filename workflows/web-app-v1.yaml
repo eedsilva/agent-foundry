@@ -3,21 +3,17 @@ id: web-app-v1
 name: Web application delivery pipeline
 description: Plans, waits for operator approval, then implements the task graph one task at a time — each gated on deterministic checks and repaired only on a real failure — before one blocking full-suite verification, an advisory release assessment, and final diff approval.
 stack: nextjs
-# Which executor runs which kind of task, head of the list first (ADR 0046).
-# A table an operator can read before the run starts, rather than a six-dimension
-# score they cannot predict. The product is exactly Claude + Codex (#438); each
-# is an independent quota pool and a genuinely different attempt. `repair` and
-# `verification` lead with a different vendor from `implementation` on purpose:
-# re-reading your own work is the weakest check.
+# The Economy Profile resolves each task kind to one exact catalog model. A
+# provider sequence cannot select a different tier because no fallback exists.
 routing:
   - taskKind: planning
-    executors: [claude, codex]
+    executors: [claude]
   - taskKind: implementation
-    executors: [claude, codex]
+    executors: [codex]
   - taskKind: repair
-    executors: [codex, claude]
+    executors: [codex]
   - taskKind: verification
-    executors: [codex, claude]
+    executors: [claude]
 nodes:
   # One model call, then the operator decides. No model grades another model's
   # plan as a blocking gate (ADR 0042).

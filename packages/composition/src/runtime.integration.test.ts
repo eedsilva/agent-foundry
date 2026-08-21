@@ -1024,7 +1024,7 @@ describe('runtime composition', () => {
     ).toBe(false);
   }, 30_000);
 
-  it('attributes review quality to the fallback that actually executed', async () => {
+  it('blocks a failed Luna implementation instead of escalating to a fallback', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-fallback-'));
     temporaryDirectories.push(dataDir);
     const rootDir = resolve(import.meta.dirname, '../../..');
@@ -1054,7 +1054,7 @@ describe('runtime composition', () => {
     await approveAllGates(runtime, runId);
 
     const detail = await runtime.projectService.get(project.id);
-    expect(detail.project.status).toBe('completed');
+    expect(detail.project.status).toBe('failed');
     const implementStep = (await runtime.stepRuns.list(project.currentRunId))
       .filter((step) => step.stepId.startsWith('implement.'))
       .at(-1);
@@ -1063,31 +1063,8 @@ describe('runtime composition', () => {
       project.currentRunId,
       implementStep.id,
     );
-    expect(implementAttempts.map((attempt) => attempt.status)).toEqual(['failed', 'succeeded']);
-
-    const report = detail.artifacts.find(
-      (artifact) => artifact.metadata.name === 'implementation.report',
-    );
-    const route = report?.metadata.routeDecision;
-    expect(route?.attemptedModelIds).toHaveLength(2);
-    expect(route?.executed?.model.id).not.toBe(route?.selected.model.id);
-
-    if (!route?.executed) throw new Error('Expected an executed fallback route');
-    const executedMetric = await runtime.metrics.get(
-      route.executed.model.id,
-      route.profile.taskKind,
-      route.profile.role,
-      route.profile.category,
-    );
-    const originallySelectedMetric = await runtime.metrics.get(
-      route.selected.model.id,
-      route.profile.taskKind,
-      route.profile.role,
-      route.profile.category,
-    );
-    expect(executedMetric?.qualityApprovals).toBeGreaterThanOrEqual(1);
-    expect(originallySelectedMetric?.qualityEvaluations ?? 0).toBe(0);
-    expect(originallySelectedMetric?.consecutiveFailures).toBeGreaterThanOrEqual(1);
+    expect(implementAttempts.map((attempt) => attempt.status)).toEqual(['failed']);
+    expect(detail.project.error).toBe('synthetic first-candidate failure');
   }, 30_000);
 
   it('closes the active attempt, step, and run when execution fails', async () => {

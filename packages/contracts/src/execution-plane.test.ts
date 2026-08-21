@@ -75,6 +75,29 @@ describe('ExecutionRequestSchema', () => {
     expect(parsed).not.toHaveProperty('cwd');
   });
 
+  it.each([undefined, 'low', 'medium'])(
+    'rejects Luna effort %s before dispatch',
+    (reasoningEffort) => {
+      expect(
+        ExecutionAgentRequestSchema.safeParse({
+          ...AGENT_REQUEST,
+          model: 'gpt-5.6-luna',
+          ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+        }).success,
+      ).toBe(false);
+    },
+  );
+
+  it('accepts Luna only with explicit high effort', () => {
+    expect(
+      ExecutionAgentRequestSchema.safeParse({
+        ...AGENT_REQUEST,
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'high',
+      }).success,
+    ).toBe(true);
+  });
+
   it('accepts declared refs but rejects a request carrying a value', () => {
     const agentNode = {
       id: 'agent-step',

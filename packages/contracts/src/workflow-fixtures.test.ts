@@ -17,6 +17,12 @@ describe('web-app-v1 planner prompt carries the app-shape module contract (#479)
     }
     expect(planNode.instructions).toMatch(/app-shape/i);
     expect(planNode.instructions).toMatch(/\bmodule\b/i);
+    expect(definition.routing).toEqual([
+      { taskKind: 'planning', executors: ['claude'] },
+      { taskKind: 'implementation', executors: ['codex'] },
+      { taskKind: 'repair', executors: ['codex'] },
+      { taskKind: 'verification', executors: ['claude'] },
+    ]);
   });
 
   it('documents the modules field and per-task module id in the planner role prompt', async () => {
