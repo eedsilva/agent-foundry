@@ -110,6 +110,20 @@ export abstract class BaseCliExecutor implements AgentExecutor {
    */
   protected auditStderr(_stderr: string, _request: AgentExecutionRequest): void {}
 
+  /**
+   * No-op by default: `this.command --version` below is the whole
+   * availability check for a provider CLI invoked directly. `CodexCliExecutor`
+   * overrides this to also probe `srt` (#637) — `this.command` stays
+   * `'codex'`, the CLI the model author supports, but production actually
+   * spawns `srt` as the real process, and `srt` missing from PATH (the
+   * exact scenario docs/adr/0081 documents as expected in this repo's own
+   * Dockerfile) must not report `available: true` and let the router keep
+   * dispatching to a command that then fails every run on ENOENT.
+   */
+  protected async wrapperUnavailableReason(): Promise<string | null> {
+    return null;
+  }
+
   async execute(
     request: AgentExecutionRequest,
     signal?: AbortSignal,
@@ -251,6 +265,15 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     // never invalidated here; the router already gates on resetAt, so a past-reset
     // value is inert. Add TTL/eviction only if another health() consumer needs it.
     const rateLimit = this.lastRateLimit ? { rateLimit: this.lastRateLimit } : {};
+    const wrapperUnavailable = await this.wrapperUnavailableReason();
+    if (wrapperUnavailable) {
+      return {
+        provider: this.provider,
+        available: false,
+        message: wrapperUnavailable,
+        ...rateLimit,
+      };
+    }
     try {
       const result = await execa(this.command, ['--version'], {
         reject: false,

@@ -17,6 +17,12 @@ const realMode = executorMode === 'real';
 const checks = [
   commandCheck('node', ['--version'], true, { minimumVersion: '22.0.0' }),
   commandCheck('git', ['--version'], true),
+  // `CodexCliExecutor` spawns `srt` (@anthropic-ai/sandbox-runtime), not
+  // `codex`, as the real process in real mode (#637, docs/adr/0081) — the
+  // `codex` probe below says nothing about whether the wrapper it actually
+  // runs through is installed. Only required in real mode, same as the
+  // provider probes: `srt` is never spawned in mock mode.
+  commandCheck('srt', ['--version'], realMode),
   fileCheck(
     'harness manifest',
     resolve(root, env.HARNESS_DIR ?? 'harness', 'manifest.json'),

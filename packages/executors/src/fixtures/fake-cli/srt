@@ -10,6 +10,15 @@
 import { spawn } from 'node:child_process';
 
 const argv = process.argv.slice(2);
+// `CodexCliExecutor.wrapperUnavailableReason()` (#637 review round) calls
+// `srt --version` directly, with no `--` separator — that's the health()
+// probe, not a wrapped invocation. Handle it before requiring `--`, or
+// every fake-CLI-backed health() check reports srt unavailable even when
+// this fixture is on PATH.
+if (argv[0] === '--version' || argv[0] === '-V') {
+  process.stdout.write('0.0.0-fake\n');
+  process.exit(0);
+}
 const separatorIndex = argv.indexOf('--');
 if (separatorIndex === -1) {
   console.error('fake-srt: expected a -- separator before the wrapped command');

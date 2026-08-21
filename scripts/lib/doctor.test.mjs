@@ -52,7 +52,7 @@ test('prints ready provider probes as contract-shaped JSON without raw authentic
   ]);
   assert.doesNotMatch(result.stdout, /private@example\.test|private-org|Logged in using ChatGPT/);
   assert.deepEqual(
-    output.checks.slice(2).map(({ message }) => message),
+    output.checks.slice(3).map(({ message }) => message),
     ['harness/manifest.json', 'workflows', 'models/catalog.yaml'],
   );
   assert.equal(result.stdout.includes(fixture.root), false);
@@ -77,6 +77,42 @@ test('classifies missing provider CLIs as unavailable', async (t) => {
       },
     })),
   );
+});
+
+test('fails real mode when srt (the sandbox wrapper #637 spawns instead of codex) is missing, even with Codex itself ready', async (t) => {
+  const fixture = await createFixture(t, readyFixtures);
+  await rm(join(fixture.bin, 'srt'));
+  const result = runDoctor(fixture, ['--json']);
+
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  const srtCheck = output.checks.find(({ name }) => name === 'srt');
+  assert.deepEqual(srtCheck, {
+    name: 'srt',
+    ok: false,
+    required: true,
+    message: 'missing or not executable',
+  });
+  // The Codex provider probe itself still reports ready — health() (not
+  // doctor's own probe) is what CodexCliExecutor uses to combine the two;
+  // doctor surfaces srt as its own independent required check instead.
+  const codexProbe = output.probes.find(({ provider }) => provider === 'codex');
+  assert.equal(codexProbe.status, 'ready');
+});
+
+test('does not require srt in mock mode', async (t) => {
+  const fixture = await createFixture(t, {});
+  await rm(join(fixture.bin, 'srt'));
+  const result = runDoctor(fixture, ['--json'], { EXECUTOR_MODE: 'mock' });
+
+  assert.equal(result.status, 0, result.stderr);
+  const srtCheck = JSON.parse(result.stdout).checks.find(({ name }) => name === 'srt');
+  assert.deepEqual(srtCheck, {
+    name: 'srt',
+    ok: false,
+    required: false,
+    message: 'not installed; acceptable in mock mode',
+  });
 });
 
 test('classifies providers with absent sessions as unauthenticated', async (t) => {
@@ -250,7 +286,7 @@ test('redacts existing and missing filesystem paths from JSON checks', async (t)
   assert.equal(result.status, 1);
   const output = JSON.parse(result.stdout);
   assert.deepEqual(
-    output.checks.slice(2).map(({ message }) => message),
+    output.checks.slice(3).map(({ message }) => message),
     ['harness/manifest.json', 'workflows', 'missing: models/catalog.yaml'],
   );
   assert.equal(result.stdout.includes(fixture.root), false);
@@ -331,6 +367,14 @@ async function createFixture(t, providers) {
   await mkdir(bin);
   await symlink(process.execPath, join(bin, 'node'));
   await symlink('/usr/bin/git', join(bin, 'git'));
+  // Present by default so every existing fixture exercises the ready path;
+  // tests for the missing-wrapper case (#637) remove it after createFixture,
+  // the same pattern the missing-catalog-file test below already uses.
+  await writeFile(
+    join(bin, 'srt'),
+    "#!/usr/bin/env node\nif (process.argv[2] === '--version') { process.stdout.write('1.0.0\\n'); process.exit(0); }\nprocess.exit(1);\n",
+  );
+  await chmod(join(bin, 'srt'), 0o755);
   for (const path of ['harness', 'workflows', 'models']) await mkdir(join(root, path));
   await writeFile(join(root, 'harness', 'manifest.json'), '{}\n');
   await writeFile(join(root, 'models', 'catalog.yaml'), 'models: []\n');

@@ -272,6 +272,110 @@ change and not resolved by it — flagged to the issue owner (Ed) as a
 decision the eventual ADR-0076-compliant implementation will have to make,
 not something #637 works around in code.
 
+## Review round
+
+A review of the first version of this change (PR #641) installed the real
+`@anthropic-ai/sandbox-runtime@0.0.73` and ran the exact settings shape
+`codexSandboxSettings()` generates against the real `srt` on macOS/Seatbelt,
+rather than reviewing the diff on argument alone. Two blockers found this
+way, neither visible from argv-shape unit tests or the fake `srt` fixture:
+
+1. **`npm install` inside the sandbox dies with `EPERM` writing
+   `~/.npm/_cacache`.** `allowWrite` is deny-by-default under `srt` and the
+   first version covered `cwd`, the run's own temp dir, and `~/.codex` — not
+   npm's cache. Reproduced directly: `registry.npmjs.org:443` is genuinely
+   reachable ("Allowed by config rule" in `srt`'s own debug log), but the
+   download can't be written anywhere. Any mutating run that adds a
+   dependency — an ordinary step in implementing a web app, and the exact
+   scenario `claude-executor.ts:86`'s own comment names ("every mutating
+   run's `npm install`") — breaks. **Not caught by this PR's own tests**:
+   the fake `srt` fixture strips flags and execs the wrapped command
+   directly, enforcing no policy at all, so `fake-cli.integration.test.ts`
+   and `ui-quality-judge.integration.test.ts` both passed while this was
+   broken. Two fixes were measured against the real `srt`, both confirmed to
+   let `npm install` succeed: pointing `npm_config_cache` and `TMPDIR` at the
+   run's own temp directory (already `allowWrite`'d, doesn't widen the
+   carve-out beyond what Gate 3 measured), or adding `~/.npm` to
+   `allowWrite` directly (also works, but widens `$HOME` write access beyond
+   what was measured as necessary). The narrower fix was chosen:
+   `CodexCliExecutor.invocation()` now always sets `TMPDIR`/`TEMP`/`TMP`/
+   `npm_config_cache` to the run's own temp directory in `environment`
+   (previously only set conditionally, and only `RUST_LOG`, for
+   evidence-mode runs). Verified end-to-end against real `srt` — `npm
+   install` inside the exact generated settings shape completed
+   (`added 1 package...`) with these four variables set, and failed with the
+   original `EPERM` when they weren't. `cli-executors.test.ts` pins the four
+   environment values against `invocation.outputDirectory` (the run's own
+   temp dir) in the main sandbox test, alongside the existing argv/settings
+   assertions.
+2. **`health()` probed the wrong process.** `CodexCliExecutor.command` stays
+   `'codex'` (unchanged — it's still the CLI this executor targets), but
+   `BaseCliExecutor.health()` ran `this.command --version`, i.e. `codex
+   --version` directly, never `srt`. With `srt` missing from PATH — the
+   exact situation this same ADR documents as expected in this repo's own
+   `Dockerfile` — `health()` reported `available: true` whenever `codex`
+   itself happened to be reachable, and `evaluateBreaker`
+   (`circuit-breaker.ts:60`) only opens the circuit on `available === false`,
+   so the router kept dispatching to a command that then failed every run on
+   `ENOENT` (`execa('srt', ...)` with `srt` absent) until the
+   consecutive-failure threshold tripped. Reproduced directly: a fake
+   `codex` on `PATH` with no `srt` anywhere on it made `health()` return
+   `{ available: true, message: 'codex is available' }` — a false positive,
+   confirmed before any fix. `BaseCliExecutor` gained a new protected hook,
+   `wrapperUnavailableReason()` (no-op by default, alongside `auditStderr`),
+   called at the start of `health()` before the existing `this.command
+   --version` probe; `CodexCliExecutor` overrides it to probe `srt
+   --version` and short-circuits `health()` to `available: false` with an
+   `srt`-specific message when it fails. Re-reproduced after the fix with
+   the same fake-`codex`-no-`srt` PATH: `health()` now correctly returns
+   `available: false` with a message naming `srt`, not `codex`. A second
+   reproduction proved the fix isn't a coincidence of the first: with `srt`
+   present (a fake one on PATH reporting a version) but the guard
+   temporarily removed, `health()` fell through to the old `codex
+   --version`-only behavior and lost the `srt`-specific message — restoring
+   the guard brought it back. `scripts/doctor.mjs` gained the equivalent
+   check: a new `srt --version` entry in its `checks` array, required only
+   when `EXECUTOR_MODE=real` (mirroring how the existing provider probes are
+   conditionally required), so a human running `npm run doctor` sees the
+   same gap `health()` now catches at runtime. `scripts/lib/doctor.test.mjs`
+   covers both directions: real mode fails when `srt` is absent even though
+   the Codex provider probe itself reports ready, and mock mode tolerates
+   `srt`'s absence.
+
+**Noted, not blocking:** the same real-`srt` reproduction found the OS temp
+root itself (`realTmpdir`, already in `denyRead`) fails closed on both read
+and write inside the sandbox — expected, since it's deliberately denied, but
+worth recording because it means any tool that writes through the process's
+*own* default temp directory (not `$TMPDIR`-aware) rather than `cwd` or the
+redirected `$TMPDIR` above will fail the same way `npm` did. The
+`TMPDIR`/`TEMP`/`TMP` redirect above covers every standard temp-directory
+resolution path; nothing in this repo's toolchain (`pnpm`, `npm`, `git`,
+`node`) was found bypassing them.
+
+**What the fake `srt` fixture does and does not measure, made explicit per
+this review:** `packages/executors/src/fixtures/fake-cli/srt` strips `srt`'s
+own flags and execs the wrapped command directly — it proves the production
+code builds the right argv and settings-file *shape*, and lets
+`fake-cli.integration.test.ts`/`ui-quality-judge.integration.test.ts`
+exercise the real end-to-end run flow without bubblewrap/Seatbelt/`srt`
+installed in CI. It enforces **zero** policy — no filesystem confinement, no
+network allowlist, nothing that would have caught either blocker above. Real
+`srt` behavior in this ADR is evidence gathered by hand against the real
+package during design and this review, not by CI. Anyone changing
+`codexSandboxSettings()`'s shape should re-run that same manual verification
+before trusting the fake-CLI integration tests as sufficient signal.
+
+**Confirmed correct, not touched:** the review also verified, against real
+`srt`, that the denial-log format `auditStderr` parses matches what `srt`
+actually emits (`logForDebugging` in `dist/sandbox/http-proxy.js` and
+`socks-proxy.js`, `[SandboxDebug]` prefix in `dist/utils/debug.js`, gated by
+`SRT_DEBUG` which the `-d` flag sets in `dist/cli.js`) — the regression test
+for `auditStderr` exercises real production behavior, not just a synthetic
+string; that `allowRead` correctly overrides `denyRead` for `cwd`/run-temp
+nested inside the workspace-root deny (the inverse precedence from
+`allowWrite`/`denyWrite`); and that the settings JSON's key names match
+`srt`'s actual schema. None of these needed a code change.
+
 ## Consequences
 
 - **Positive:** a Bash/shell command running under `CodexCliExecutor` —
@@ -324,7 +428,17 @@ rather than silently redirecting (reverted locally and confirmed to fail red
 before being restored, per ADR-0071's own precedent); and `auditStderr`
 extracting exactly host+role from a `[SandboxDebug] Connection blocked to`
 line, never leaking the raw stderr, plus a no-op case when no denial line is
-present. A fake `srt` binary
+present; the `TMPDIR`/`TEMP`/`TMP`/`npm_config_cache` environment values
+pinned against the run's own temp directory (the review-round `npm install`
+fix); and `health()` reporting `available: false` with an `srt`-specific
+message when `srt` is absent from `PATH` even with a fake `codex` present
+and reachable (the review-round false-positive fix), plus the inverse case —
+`available` no longer false *because* of the `srt` check once a fake `srt`
+is present. `scripts/lib/doctor.test.mjs` covers the same `srt`-missing gap
+at the `npm run doctor` level: required and failing in real mode, optional
+and non-failing in mock mode, with the Codex provider probe itself still
+reporting ready to prove `srt`'s check is independent of it. A fake `srt`
+binary
 (`packages/executors/src/fixtures/fake-cli/srt`) strips `srt`'s own flags
 and execs the wrapped command directly, so
 `packages/executors/src/fake-cli.integration.test.ts` and
@@ -345,7 +459,8 @@ behavior against the fake CLI fixtures instead.
 To roll back: drop the `srt` wrap in `CodexCliExecutor.invocation()`,
 restore `command: 'codex'` with the same `codex exec` args currently placed
 after the `--` separator, drop the `workspaceRoot` constructor parameter,
-and remove the `auditStderr` hook from `BaseCliExecutor` (unused once no
-executor overrides it). Codex runs return to the pre-#637 state: `--sandbox
-workspace-write` only, no read boundary, no network allowlist, exactly
-ADR-0071's documented residual gap.
+and remove the `auditStderr` and `wrapperUnavailableReason` hooks from
+`BaseCliExecutor` (unused once no executor overrides either) along with the
+`srt` check in `scripts/doctor.mjs`. Codex runs return to the pre-#637
+state: `--sandbox workspace-write` only, no read boundary, no network
+allowlist, exactly ADR-0071's documented residual gap.

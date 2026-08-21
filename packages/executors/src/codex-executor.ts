@@ -1,10 +1,13 @@
 import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { execa } from 'execa';
 import { ECONOMY_PROFILE_LUNA_MODEL, type AgentExecutionRequest } from '@agent-foundry/contracts';
+import { errorMessage } from '@agent-foundry/domain';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
 import { createCodexStreamMapper } from './codex-stream-events.js';
 import { promptWithOutputSchema } from './output-schema-prompt.js';
+import { safeSpawnEnv } from './safe-environment.js';
 
 /**
  * Sibling of `projects/`, not inside any of them — same convention as
@@ -248,9 +251,21 @@ export class CodexCliExecutor extends BaseCliExecutor {
       outputFile,
       outputDirectory: realRunTempDir,
       outputDirectoryRoot: runTempRoot,
-      ...(this.reportConfiguredModel
-        ? { environment: { RUST_LOG: 'codex_core::session::session=debug' } }
-        : {}),
+      environment: {
+        ...this.environment,
+        // `allowWrite` is deny-by-default under srt and does not cover
+        // `~/.npm/_cacache` — measured against real srt: an `npm install`
+        // in `cwd` dies with EPERM writing npm's cache, even though
+        // `registry.npmjs.org` is reachable, unless npm's cache and the
+        // process's own temp dir are redirected into the run's own
+        // allowWrite'd temp directory. Verified fixed against real srt
+        // (docs/adr/0081) rather than left as an argv-only assumption.
+        TMPDIR: realRunTempDir,
+        TEMP: realRunTempDir,
+        TMP: realRunTempDir,
+        npm_config_cache: realRunTempDir,
+        ...(this.reportConfiguredModel ? { RUST_LOG: 'codex_core::session::session=debug' } : {}),
+      },
     };
   }
 
@@ -268,6 +283,29 @@ export class CodexCliExecutor extends BaseCliExecutor {
       console.error(
         `codex sandbox denied network destination: ${match[1]} (role: ${request.role})`,
       );
+    }
+  }
+
+  /**
+   * `this.command` stays `'codex'` — the CLI health() otherwise probes below
+   * — but production actually spawns `srt` (#637); `srt` missing from PATH
+   * (the exact situation docs/adr/0081 documents as expected in this repo's
+   * own Dockerfile, which doesn't install it) must not report
+   * `available: true` and let the router keep dispatching to a command that
+   * then fails every run on ENOENT.
+   */
+  protected override async wrapperUnavailableReason(): Promise<string | null> {
+    try {
+      const result = await execa('srt', ['--version'], {
+        reject: false,
+        timeout: 10_000,
+        ...safeSpawnEnv(process.env, this.environment),
+      });
+      return result.exitCode === 0
+        ? null
+        : `srt (sandbox wrapper) returned exit code ${String(result.exitCode)}`;
+    } catch (error) {
+      return `srt (sandbox wrapper) is not available: ${errorMessage(error)}`;
     }
   }
 }

@@ -158,6 +158,15 @@ describe('CLI executor contracts', () => {
       // task completed with both blocked (docs/adr/0081).
       expect(settings.network.allowedDomains).not.toContain('github.com');
       expect(settings.network.allowedDomains).not.toContain('developers.openai.com');
+      // `allowWrite` doesn't cover `~/.npm/_cacache` — measured against real
+      // srt to die with EPERM on `npm install` otherwise (docs/adr/0081).
+      // Redirecting npm's cache and the process's own temp dir into the
+      // run's own allowWrite'd temp directory is what makes dependency
+      // installation work inside the sandbox at all.
+      expect(invocation.environment?.TMPDIR).toBe(invocation.outputDirectory);
+      expect(invocation.environment?.TEMP).toBe(invocation.outputDirectory);
+      expect(invocation.environment?.TMP).toBe(invocation.outputDirectory);
+      expect(invocation.environment?.npm_config_cache).toBe(invocation.outputDirectory);
     } finally {
       if (invocation.outputDirectory) {
         await rm(invocation.outputDirectory, { force: true, recursive: true });
@@ -213,7 +222,7 @@ describe('CLI executor contracts', () => {
       true,
     ).inspect(request());
     try {
-      expect(invocation.environment).toEqual({
+      expect(invocation.environment).toMatchObject({
         RUST_LOG: 'codex_core::session::session=debug',
       });
     } finally {
@@ -262,9 +271,7 @@ describe('CLI executor contracts', () => {
     await symlink(elsewhere, join(workspaceRoot, '.agent-foundry-run-tmp'));
     try {
       await expect(
-        new InspectableCodexExecutor(1_000_000, workspaceRoot).inspect(
-          request({ cwd: TEST_CWD }),
-        ),
+        new InspectableCodexExecutor(1_000_000, workspaceRoot).inspect(request({ cwd: TEST_CWD })),
       ).rejects.toThrow(/resolved to a different path/);
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
@@ -304,6 +311,50 @@ describe('CLI executor contracts', () => {
       expect(spy).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it("reports health() unavailable when srt (the process #637 actually spawns) is missing, even though 'codex' stays this.command", async () => {
+    // health() must not report available just because `codex` itself would
+    // resolve — production never invokes `codex` directly, only through
+    // `srt`. A PATH with no `srt` at all (an empty directory only) is the
+    // exact "srt not installed in this image" scenario docs/adr/0081
+    // documents as expected.
+    const emptyPathDir = await mkdtemp(join(tmpdir(), 'agent-foundry-cli-executors-no-srt-'));
+    const originalPath = process.env.PATH;
+    process.env.PATH = emptyPathDir;
+    try {
+      const health = await new CodexCliExecutor(1_000_000, TEST_WORKSPACE_ROOT).health();
+      expect(health.available).toBe(false);
+      expect(health.message).toContain('srt');
+    } finally {
+      process.env.PATH = originalPath;
+      await rm(emptyPathDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports health() available when srt is present and reports its own version, not codex exit status alone', async () => {
+    const binDir = await mkdtemp(join(tmpdir(), 'agent-foundry-cli-executors-fake-srt-'));
+    await writeFile(
+      join(binDir, 'srt'),
+      '#!/usr/bin/env node\nprocess.stdout.write("1.2.3\\n");\nprocess.exit(0);\n',
+    );
+    await execa('chmod', ['+x', join(binDir, 'srt')]);
+    const originalPath = process.env.PATH;
+    // `codex` also has to resolve for the base health() check that runs
+    // after wrapperUnavailableReason() passes — reuse the real `node`/repo
+    // toolchain PATH plus the fake srt directory prepended, rather than
+    // faking `codex` too, since this test is only exercising the srt gate.
+    process.env.PATH = `${binDir}:${originalPath}`;
+    try {
+      const health = await new CodexCliExecutor(1_000_000, TEST_WORKSPACE_ROOT).health();
+      // Whatever `codex --version` itself does on this machine (installed or
+      // not) is irrelevant here — the point is srt no longer short-circuits
+      // the check to `available: false` with an srt-specific message.
+      expect(health.message).not.toContain('srt');
+    } finally {
+      process.env.PATH = originalPath;
+      await rm(binDir, { recursive: true, force: true });
     }
   });
 
