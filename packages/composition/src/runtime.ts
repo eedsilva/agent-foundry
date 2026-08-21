@@ -311,7 +311,7 @@ export async function createRuntime(
           // dispatch; without reportConfiguredModel the Codex CLI never
           // reveals it and the check burns a real attempt to learn that (#424).
           new CodexCliExecutor(config.maxCliOutputBytes, Boolean(config.validationCampaignId)),
-          new ClaudeCliExecutor(config.maxCliOutputBytes),
+          new ClaudeCliExecutor(config.maxCliOutputBytes, config.dataDir),
         ]));
   const executionPlane = new LocalExecutionPlane(executors, workspaces);
   const verifier = new WorkspaceVerifier({

@@ -1,4 +1,14 @@
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
@@ -557,6 +567,40 @@ describe('FileWorkspaceManager.readWorkspaceFile', () => {
     await mkdir(manager.workspacePath(projectId), { recursive: true });
 
     await expect(manager.readWorkspaceFile(projectId, '../../etc/passwd')).rejects.toThrow();
+  });
+
+  it('rejects a symlink inside the workspace whose target resolves outside it (#565)', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(workspace, { recursive: true });
+    const outsideSecret = join(dataDir, 'outside-secret.txt');
+    await writeFile(outsideSecret, 'host secret\n');
+    await symlink(outsideSecret, join(workspace, 'escape.txt'));
+
+    // resolveWorkspaceRelativePath alone only checks the literal string
+    // path, which stays inside the workspace — this proves the realpath
+    // check catches what that check alone would miss.
+    await expect(manager.readWorkspaceFile(projectId, 'escape.txt')).rejects.toThrow();
+  });
+
+  it('still reads a symlink whose target stays inside the workspace', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));
+    const manager = new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+    const projectId = 'project-1';
+    const workspace = manager.workspacePath(projectId);
+    await mkdir(join(workspace, 'src'), { recursive: true });
+    await writeFile(join(workspace, 'src', 'App.tsx'), 'export {}\n');
+    await symlink(join(workspace, 'src', 'App.tsx'), join(workspace, 'App-link.tsx'));
+
+    await expect(manager.readWorkspaceFile(projectId, 'App-link.tsx')).resolves.toBe('export {}\n');
   });
 
   it('rejects a .env file even by direct path, mirroring listFiles', async () => {

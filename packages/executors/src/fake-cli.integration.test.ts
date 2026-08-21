@@ -128,7 +128,7 @@ describe('fake provider CLIs', () => {
 
   it('reports a healthy version for both fake CLIs', async () => {
     const codex = new CodexCliExecutor(1_000_000);
-    const claude = new ClaudeCliExecutor(1_000_000);
+    const claude = new ClaudeCliExecutor(1_000_000, tmpdir());
     await expect(codex.health()).resolves.toMatchObject({ available: true, provider: 'codex' });
     await expect(claude.health()).resolves.toMatchObject({ available: true, provider: 'claude' });
   });
@@ -188,7 +188,7 @@ describe('fake provider CLIs', () => {
       },
       { $id: 'agent-artifact' },
     );
-    const executor = new ClaudeCliExecutor(1_000_000);
+    const executor = new ClaudeCliExecutor(1_000_000, tmpdir());
 
     const result = await executor.execute(
       request({
@@ -248,7 +248,7 @@ describe('fake provider CLIs', () => {
   // fake provider shims must recognize this same bare judge prompt.
   it.each([
     ['codex', () => new CodexCliExecutor(1_000_000)],
-    ['claude', () => new ClaudeCliExecutor(1_000_000)],
+    ['claude', () => new ClaudeCliExecutor(1_000_000, tmpdir())],
   ] as const)(
     'answers the UI-quality judge prompt with all rubric criteria through fake %s',
     async (provider, createExecutor) => {
@@ -283,7 +283,7 @@ describe('fake provider CLIs', () => {
 
   it.each([
     ['codex', () => new CodexCliExecutor(1_000_000)],
-    ['claude', () => new ClaudeCliExecutor(1_000_000)],
+    ['claude', () => new ClaudeCliExecutor(1_000_000, tmpdir())],
   ] as const)(
     'keeps missing REQUEST.md strict for ordinary schemas through fake %s',
     async (provider, createExecutor) => {

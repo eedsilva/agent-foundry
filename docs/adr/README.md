@@ -6,7 +6,7 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest accepted: [0070 a refused browser acceptance defers to end-of-graph, it does not kill the run](0070-deferred-browser-acceptance.md) — builds on [0045](0045-per-task-deterministic-verification.md).
+Latest accepted: [0071 OS-level Bash sandbox closes the Claude executor's workspace-boundary gap](0071-os-level-bash-sandbox-for-claude-executor.md) — issue #565, builds on [0063](0063-scoped-bash-allowlist-for-mutating-agents.md).
 
 Proposed (Harness Alignment, milestone `Harness Alignment`):
 
