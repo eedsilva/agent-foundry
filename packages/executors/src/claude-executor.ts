@@ -152,7 +152,8 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
     // toolchain (#565 review). Rooted under workspaceRoot, a sibling of
     // `projects/`, so it's outside the worktree `git add -A` walks and
     // outside every other project's own tree.
-    await mkdir(join(realWorkspaceRoot, RUN_TMP_DIRNAME), { recursive: true });
+    const declaredRunTempRoot = join(realWorkspaceRoot, RUN_TMP_DIRNAME);
+    await mkdir(declaredRunTempRoot, { recursive: true });
     // realpath'd separately from workspaceRoot: this exact value becomes
     // outputDirectoryRoot below, the boundary BaseCliExecutor's cleanup
     // guard trusts before its recursive rm. workspaceRoot itself (the whole
@@ -160,7 +161,20 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
     // guard accept any project's directory as "contained" — verified: a
     // narrower root here is what makes the guard mean anything (#565
     // review).
-    const runTempRoot = await realpath(join(realWorkspaceRoot, RUN_TMP_DIRNAME));
+    //
+    // realpath() here does NOT itself make this fail closed against a
+    // symlinked .agent-foundry-run-tmp — it follows the symlink, so
+    // runTempRoot becomes the symlink's target and mkdtemp below creates
+    // the run's temp dir there, contained by construction; the guard would
+    // still approve. The explicit equality check is what actually fails
+    // closed: refuses to proceed rather than silently trusting wherever a
+    // replaced directory now points (#565 review).
+    const runTempRoot = await realpath(declaredRunTempRoot);
+    if (runTempRoot !== declaredRunTempRoot) {
+      throw new Error(
+        `${RUN_TMP_DIRNAME} resolved to a different path (${runTempRoot}) than declared (${declaredRunTempRoot}) — refusing to use a symlinked run-temp root.`,
+      );
+    }
     const runTempDir = await mkdtemp(join(runTempRoot, 'run-'));
     const realRunTempDir = await realpath(runTempDir);
     const args = [

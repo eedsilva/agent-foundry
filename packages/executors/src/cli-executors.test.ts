@@ -325,6 +325,29 @@ describe('CLI executor contracts', () => {
     }
   });
 
+  it('refuses to proceed when .agent-foundry-run-tmp itself is a symlink, rather than silently following it (#565 review)', async () => {
+    // realpath() alone does not fail closed here: it follows the symlink,
+    // so the "root" and the mkdtemp'd directory inside it would both
+    // resolve consistently through the same redirect, and the containment
+    // guard would approve by construction — verified this would happen
+    // before adding the explicit equality check below (see docs/adr/0071,
+    // "Third review round"). No claim that this is exploitable today; the
+    // point is the code should not silently trust a replaced directory.
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'agent-foundry-cli-executors-symlinked-'));
+    const elsewhere = await mkdtemp(join(tmpdir(), 'agent-foundry-cli-executors-elsewhere-'));
+    await symlink(elsewhere, join(workspaceRoot, '.agent-foundry-run-tmp'));
+    try {
+      await expect(
+        new InspectableClaudeExecutor(1_000_000, workspaceRoot).inspect(
+          request({ provider: 'claude', cwd: TEST_CWD }),
+        ),
+      ).rejects.toThrow(/resolved to a different path/);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(elsewhere, { recursive: true, force: true });
+    }
+  });
+
   it('pre-approves a scoped Bash allowlist for mutating Claude runs', async () => {
     const invocation = await new InspectableClaudeExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
       request({ provider: 'claude', model: 'sonnet', mutatesWorkspace: true }),

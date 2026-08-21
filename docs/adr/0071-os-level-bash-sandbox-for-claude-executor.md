@@ -467,19 +467,61 @@ Data Directory as "safe" made it trust everything under it, including the
 one thing it exists to protect. Fixed to
 `outputDirectoryRoot: join(realWorkspaceRoot, '.agent-foundry-run-tmp')` —
 the same narrow directory `mkdtemp` actually creates the run's temp
-directory under, realpath-resolved on its own (not derived from
-`workspaceRoot`'s realpath, so a future symlink at
-`.agent-foundry-run-tmp` itself still fails closed). A regression test
-proves the fix does what it claims, not just that the mechanism exists:
-`cli-executors.test.ts` asserts the exact `outputDirectoryRoot` value
-`ClaudeCliExecutor` declares, and `base-cli-executor.test.ts` reproduces
-the caught scenario directly — declared root is the narrow run-tmp
-directory, attempted delete target is a realistic project worktree
-(`<root>/projects/<id>/workspace`, with a file in it standing in for
-generated app content) — and asserts the file survives. Reverting the fix
-and rerunning the `cli-executors.test.ts` assertion was confirmed to fail
-red before confirming it fixed, so the test measures the actual root the
-code declares, not a constant that happens to match itself.
+directory under. A regression test proves the fix does what it claims, not
+just that the mechanism exists: `cli-executors.test.ts` asserts the exact
+`outputDirectoryRoot` value `ClaudeCliExecutor` declares, and
+`base-cli-executor.test.ts` reproduces the caught scenario directly —
+declared root is the narrow run-tmp directory, attempted delete target is
+a realistic project worktree (`<root>/projects/<id>/workspace`, with a
+file in it standing in for generated app content) — and asserts the file
+survives. Reverting the fix and rerunning the `cli-executors.test.ts`
+assertion was confirmed to fail red before confirming it fixed, so the
+test measures the actual root the code declares, not a constant that
+happens to match itself.
+
+**A second, smaller defect, caught in review of this same fix.** The first
+version of this correction claimed `realpath`-resolving
+`.agent-foundry-run-tmp` "separately from `workspaceRoot`'s realpath" made
+a future symlink at that path fail closed. That claim was false, and the
+direction of the regression matters: the *prior* version (root =
+`workspaceRoot`) actually had this property by accident — a symlinked
+`.agent-foundry-run-tmp` would resolve somewhere `resolveWorkspaceRelativePath`
+couldn't contain under the (still correct) `workspaceRoot`, and the guard
+would refuse. Narrowing the root to fix the bigger defect above dropped
+this smaller property without anyone deciding to. `realpath()` *follows* a
+symlink rather than rejecting it: if `.agent-foundry-run-tmp` were replaced
+with a symlink, `runTempRoot` would silently become the symlink's target,
+`mkdtemp` would create the run's temp directory inside that target, and
+the containment guard would approve — `outputDirectory` is contained in
+`outputDirectoryRoot` by construction whenever both are derived from the
+same redirect. Reproduced directly: with the equality check below removed,
+pre-creating `.agent-foundry-run-tmp` as a symlink to an unrelated
+directory made `invocation()` silently return `outputDirectory`/
+`outputDirectoryRoot`/`TMPDIR` all pointing inside that unrelated
+directory, no error. No claim this is exploitable today — nothing else in
+this codebase writes to `workspaceRoot` besides this code and
+`FileWorkspaceManager`, so nothing plausible replaces this specific path
+with a symlink — but the code should not silently trust a redirected
+directory instead of failing on it. Fixed with an explicit equality check
+between the declared path and its `realpath()`, refusing (not silently
+continuing) when they differ:
+
+```ts
+const declaredRunTempRoot = join(realWorkspaceRoot, RUN_TMP_DIRNAME);
+await mkdir(declaredRunTempRoot, { recursive: true });
+const runTempRoot = await realpath(declaredRunTempRoot);
+if (runTempRoot !== declaredRunTempRoot) {
+  throw new Error(/* ... */);
+}
+```
+
+No false positive: `realWorkspaceRoot` is already a realpath, so every
+ancestor component is already real; only the final `.agent-foundry-run-tmp`
+component can diverge, and only if it's itself a symlink. A regression test
+pre-creates that path as a symlink to an unrelated directory before calling
+`invocation()` and asserts it throws; reproduced the same way as the fix
+above — the check removed, the test confirmed red, the check restored, the
+test confirmed green.
 
 **Known gap, not fixed here, no security impact:** `.agent-foundry-run-tmp/`
 has no sweeper. A crash between `mkdtemp` and `execute()`'s `finally`
