@@ -2,7 +2,7 @@ import { readdir, readFile, rm, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execa } from 'execa';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import {
   BenchmarkCaseSchema,
   BenchmarkReportSchema,
@@ -33,21 +33,6 @@ afterAll(async () => {
   await Promise.all(
     suiteDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
-});
-
-// See the equivalent comment in dogfood.test.ts: createModelOverride validates
-// its (modelId, provider, model) tuple against the interpolated
-// models/catalog.yaml entry, so CODEX_DEFAULT_MODEL must be set to exactly
-// MODEL.model below for the whole file's runBenchmarkCase(..., MODEL, ...)
-// calls to pass override validation.
-let previousCodexModel: string | undefined;
-beforeAll(() => {
-  previousCodexModel = process.env.CODEX_DEFAULT_MODEL;
-  process.env.CODEX_DEFAULT_MODEL = 'benchmark-fixture-model';
-});
-afterAll(() => {
-  if (previousCodexModel === undefined) delete process.env.CODEX_DEFAULT_MODEL;
-  else process.env.CODEX_DEFAULT_MODEL = previousCodexModel;
 });
 
 async function tempDir(prefix: string): Promise<string> {
@@ -87,7 +72,7 @@ function miniCase(overrides: Record<string, unknown> = {}) {
   });
 }
 
-const MODEL = { id: 'codex-default', provider: 'codex' as const, model: 'benchmark-fixture-model' };
+const MODEL = { id: 'codex-default', provider: 'codex' as const, model: 'gpt-5.6-luna' };
 
 describe('the real benchmark corpus', () => {
   it('every fixture in benchmarks/cases parses as a BenchmarkCase and covers all six kinds', async () => {
@@ -136,7 +121,7 @@ describe('runBenchmarkCase (mock mode)', () => {
       expect(record.caseKind).toBe('greenfield');
       expect(record.modelId).toBe('codex-default');
       expect(record.route?.executed?.model?.provider).toBe('codex');
-      expect(record.route?.executed?.model?.model).toBe('benchmark-fixture-model');
+      expect(record.route?.executed?.model?.model).toBe('gpt-5.6-luna');
     }
     expect(first.attempt).toBe(1);
     expect(second.attempt).toBe(2);

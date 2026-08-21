@@ -43,6 +43,11 @@ export const ModelPricingSchema = z.object({
 });
 export type ModelPricing = z.infer<typeof ModelPricingSchema>;
 
+export const ReasoningEffortSchema = z.enum(['low', 'medium', 'high']);
+export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
+
+export const ECONOMY_PROFILE_LUNA_MODEL = 'gpt-5.6-luna';
+
 /** Identifies the failed workflow step as `nodeId/stepId` in audit records. */
 export const FailedStepSchema = z
   .string()
@@ -59,6 +64,7 @@ export const ModelDefinitionSchema = z.object({
   requireExplicitModel: z.boolean().default(false),
   maxContextTokens: z.number().int().positive(),
   canWriteWorkspace: z.boolean().default(true),
+  reasoningEffort: ReasoningEffortSchema.optional(),
   tags: z.array(z.string()).default([]),
   capabilities: CapabilityScoresSchema,
 });

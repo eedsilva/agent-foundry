@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AgentRoleSchema, JsonValueSchema, ProviderSchema, TaskKindSchema } from './primitives.js';
+import { ECONOMY_PROFILE_LUNA_MODEL, ReasoningEffortSchema } from './model.js';
 import { ExecutionUsageSchema } from './run.js';
 import { ArtifactReferenceSchema } from './run.js';
 
@@ -81,7 +82,7 @@ export const AGENT_ARTIFACT_JSON_SCHEMA = {
 export const AgentOutputRepairSchema = z.enum(['schema-version-defaulted']);
 export type AgentOutputRepair = z.infer<typeof AgentOutputRepairSchema>;
 
-export const AgentExecutionRequestSchema = z.object({
+export const AgentExecutionRequestBaseSchema = z.object({
   runId: z.string().min(1),
   stepRunId: z.string().min(1),
   attemptId: z.string().min(1),
@@ -91,6 +92,7 @@ export const AgentExecutionRequestSchema = z.object({
   taskKind: TaskKindSchema,
   provider: ProviderSchema,
   model: z.string(),
+  reasoningEffort: ReasoningEffortSchema.optional(),
   prompt: z.string().min(1),
   cwd: z.string().min(1),
   mutatesWorkspace: z.boolean(),
@@ -105,7 +107,24 @@ export const AgentExecutionRequestSchema = z.object({
    */
   systemPrompt: z.string().optional(),
 });
+
+export const AgentExecutionRequestSchema = AgentExecutionRequestBaseSchema.superRefine(
+  validateLunaReasoningEffort,
+);
 export type AgentExecutionRequest = z.infer<typeof AgentExecutionRequestSchema>;
+
+export function validateLunaReasoningEffort(
+  request: Pick<AgentExecutionRequest, 'model' | 'reasoningEffort'>,
+  ctx: z.RefinementCtx,
+): void {
+  if (request.model === ECONOMY_PROFILE_LUNA_MODEL && request.reasoningEffort !== 'high') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['reasoningEffort'],
+      message: 'GPT Luna requires explicit reasoning effort high',
+    });
+  }
+}
 
 export const AgentExecutionResultSchema = z.object({
   runId: z.string(),

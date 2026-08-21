@@ -5,10 +5,21 @@ import { loadModelCatalog } from './catalog.js';
 const repoRoot = resolve(import.meta.dirname, '../../..');
 
 describe('model catalog', () => {
-  it('registers only the two product providers (#438)', async () => {
+  it('pins the Economy Profile to exact Haiku and Luna High identities (#603)', async () => {
     const models = await loadModelCatalog(resolve(repoRoot, 'models/catalog.yaml'));
 
-    expect(models.length).toBeGreaterThan(0);
-    expect([...new Set(models.map((model) => model.provider))].sort()).toEqual(['claude', 'codex']);
+    expect(models).toEqual([
+      expect.objectContaining({
+        id: 'codex-default',
+        provider: 'codex',
+        model: 'gpt-5.6-luna',
+        reasoningEffort: 'high',
+      }),
+      expect.objectContaining({
+        id: 'claude-haiku',
+        provider: 'claude',
+        model: 'claude-haiku-4-5-20251001',
+      }),
+    ]);
   });
 });

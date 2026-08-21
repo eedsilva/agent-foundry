@@ -114,6 +114,15 @@ export const RegressionCaseDeltaSchema = z
   .strict();
 export type RegressionCaseDelta = z.infer<typeof RegressionCaseDeltaSchema>;
 
+export const RegressionPolicySkipSchema = z
+  .object({
+    caseId: z.string().min(1),
+    modelId: z.string().min(1),
+    reason: z.literal('model disabled by policy'),
+  })
+  .strict();
+export type RegressionPolicySkip = z.infer<typeof RegressionPolicySkipSchema>;
+
 export const RegressionGateResultSchema = z
   .object({
     schemaVersion: z.literal('1'),
@@ -123,6 +132,7 @@ export const RegressionGateResultSchema = z
     verdict: z.enum(['pass', 'fail']),
     reasons: z.array(z.string()),
     deltas: z.array(RegressionCaseDeltaSchema),
+    skipped: z.array(RegressionPolicySkipSchema).default([]),
   })
   .strict();
 export type RegressionGateResult = z.infer<typeof RegressionGateResultSchema>;

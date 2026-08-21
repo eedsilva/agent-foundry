@@ -143,7 +143,11 @@ npm run doctor
 npm run dev
 ```
 
-O catálogo não fixa nomes atuais para os modelos padrão de Codex ou AGY. Quando `CODEX_DEFAULT_MODEL` ou `AGY_DEFAULT_MODEL` ficam vazios, a respectiva CLI usa seu modelo configurado. Para cadastrar tiers adicionais do AGY, consulte os nomes disponíveis com:
+O fluxo `web-app-v1` usa o Economy Profile fixo: Claude Haiku
+`claude-haiku-4-5-20251001` para planejamento/verificação e GPT Luna
+`gpt-5.6-luna` com reasoning effort `high` para implementação/reparo. Variáveis
+de ambiente não alteram esses pins. Para cadastrar tiers adicionais do AGY, consulte
+os nomes disponíveis com:
 
 ```bash
 agy models

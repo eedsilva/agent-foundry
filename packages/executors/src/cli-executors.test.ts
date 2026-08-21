@@ -101,6 +101,37 @@ describe('CLI executor contracts', () => {
     }
   });
 
+  it('pins Luna reasoning effort to high before invoking Codex', async () => {
+    const luna = {
+      ...request({ model: 'gpt-5.6-luna' }),
+      reasoningEffort: 'high',
+    } as AgentExecutionRequest & { reasoningEffort: 'high' };
+    const invocation = await new InspectableCodexExecutor(1_000_000).inspect(luna);
+    try {
+      expect(invocation.args).toEqual(
+        expect.arrayContaining(['-c', 'model_reasoning_effort=high']),
+      );
+    } finally {
+      if (invocation.outputDirectory) {
+        await rm(invocation.outputDirectory, { force: true, recursive: true });
+      }
+    }
+  });
+
+  it.each([undefined, 'low', 'medium'])(
+    'rejects Luna reasoning effort %s before invoking Codex',
+    async (reasoningEffort) => {
+      const luna = {
+        ...request({ model: 'gpt-5.6-luna' }),
+        ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+      } as AgentExecutionRequest & { reasoningEffort?: string };
+
+      await expect(new InspectableCodexExecutor(1_000_000).inspect(luna)).rejects.toThrow(
+        /Luna.*high/i,
+      );
+    },
+  );
+
   it('refuses a Codex output schema that exceeds the bounded prompt contract', async () => {
     const before = await temporaryEntries('agent-foundry-codex-output-');
     await expect(

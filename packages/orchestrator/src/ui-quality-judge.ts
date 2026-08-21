@@ -1,5 +1,6 @@
 import {
   UI_QUALITY_JUDGE_JSON_SCHEMA,
+  ECONOMY_PROFILE_LUNA_MODEL,
   UiQualityJudgeOutputSchema,
   UiQualityJudgeResultSchema,
   type ArtifactReference,
@@ -61,6 +62,7 @@ export async function evaluateUiQuality(
         taskKind: 'verification',
         provider: input.provider,
         model: input.model,
+        ...(input.model === ECONOMY_PROFILE_LUNA_MODEL ? { reasoningEffort: 'high' } : {}),
         prompt: buildPrompt(input),
         cwd: input.cwd,
         mutatesWorkspace: false,

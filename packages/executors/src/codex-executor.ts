@@ -1,7 +1,7 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentExecutionRequest } from '@agent-foundry/contracts';
+import { ECONOMY_PROFILE_LUNA_MODEL, type AgentExecutionRequest } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
 import { createCodexStreamMapper } from './codex-stream-events.js';
 import { promptWithOutputSchema } from './output-schema-prompt.js';
@@ -33,8 +33,11 @@ export class CodexCliExecutor extends BaseCliExecutor {
   }
 
   protected async invocation(request: AgentExecutionRequest): Promise<CliInvocation> {
+    if (request.model === ECONOMY_PROFILE_LUNA_MODEL && request.reasoningEffort !== 'high') {
+      throw new Error('GPT Luna requires explicit reasoning effort high');
+    }
+    // Validate before mkdtemp so an invalid request never leaks a temp directory.
     const input = promptWithOutputSchema(request, 'Codex');
-    // Validate before mkdtemp so a bad systemPrompt never leaks a temp directory.
     const developerInstructions =
       request.systemPrompt !== undefined
         ? developerInstructionsArg(request.systemPrompt)
@@ -54,6 +57,9 @@ export class CodexCliExecutor extends BaseCliExecutor {
       outputFile,
     ];
     if (request.model.trim()) args.push('--model', request.model);
+    if (request.reasoningEffort !== undefined) {
+      args.push('-c', `model_reasoning_effort=${request.reasoningEffort}`);
+    }
     if (developerInstructions !== undefined) args.push('-c', developerInstructions);
     args.push('-');
 

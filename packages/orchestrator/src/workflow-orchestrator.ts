@@ -3994,6 +3994,9 @@ export class WorkflowOrchestrator {
           taskKind: step.taskKind,
           provider: candidate.model.provider,
           model: candidate.model.model,
+          ...(candidate.model.reasoningEffort !== undefined
+            ? { reasoningEffort: candidate.model.reasoningEffort }
+            : {}),
           prompt: compileCliPrompt(runId, stepRunId, attemptId),
           mutatesWorkspace: step.mutatesWorkspace,
           timeoutMs: this.options.agentTimeoutMs,

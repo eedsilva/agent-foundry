@@ -44,7 +44,7 @@ describe('YamlWorkflowRepository', () => {
       'smoke',
     ]);
     expect(workflow.routing?.find((entry) => entry.taskKind === 'verification')?.executors).toEqual(
-      ['codex', 'claude'],
+      ['claude'],
     );
 
     // Task 4 (#481): the schema step sits between plan-approval and

@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { AgentExecutionRequestSchema, AgentExecutionResultSchema } from './agent.js';
+import {
+  AgentExecutionRequestBaseSchema,
+  AgentExecutionResultSchema,
+  validateLunaReasoningEffort,
+} from './agent.js';
 import { ExecutionSecretRefSchema } from './execution-secret-ref.js';
 import { PathSegmentSchema } from './primitives.js';
 
@@ -30,7 +34,9 @@ export const ExecutionLimitsSchema = z
   .strict();
 export type ExecutionLimits = z.infer<typeof ExecutionLimitsSchema>;
 
-export const ExecutionAgentRequestSchema = AgentExecutionRequestSchema.omit({ cwd: true });
+export const ExecutionAgentRequestSchema = AgentExecutionRequestBaseSchema.omit({
+  cwd: true,
+}).superRefine(validateLunaReasoningEffort);
 export type ExecutionAgentRequest = z.infer<typeof ExecutionAgentRequestSchema>;
 
 export const ExecutionRequestSchema = z

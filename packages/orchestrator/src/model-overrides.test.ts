@@ -50,6 +50,27 @@ describe('audited model override resolution', () => {
     expect(override.model).toBe('');
   });
 
+  it('rejects a premium override outside the Economy Profile', async () => {
+    const harness = makeHarness({}, undefined, {
+      models: [
+        { ...MODELS[0]!, id: 'claude-haiku', model: 'claude-haiku-4-5-20251001' },
+        { ...MODELS[1]!, id: 'codex-default', model: 'gpt-5.6-luna' },
+      ],
+    });
+    await seedRun(harness);
+
+    await expect(
+      harness.service.createModelOverride('run-1', {
+        scope: { kind: 'run' },
+        modelId: 'claude-opus',
+        provider: 'claude',
+        model: 'claude-opus-4-5-20251101',
+        ...audit,
+      }),
+    ).rejects.toThrow(/not enabled/);
+    expect(await harness.modelOverrides.list('run-1')).toEqual([]);
+  });
+
   it('rejects a step scope that does not identify an agent step in the run workflow', async () => {
     const harness = makeHarness();
     await seedRun(harness);

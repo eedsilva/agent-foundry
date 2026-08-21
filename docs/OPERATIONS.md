@@ -21,14 +21,12 @@ O worker precisa encontrar `codex` e `claude` no `PATH`, além de sessões auten
 
 ### Campanha real de validação TODO (opt-in)
 
-A campanha `real-todo-v1` é uma prévia de diagnóstico explicitamente selecionada; ela não é a
-política do fluxo normal e não altera o catálogo ou a tabela de roteamento de projetos. Selecione-a
-explicitamente ao iniciar API e worker:
+A campanha `real-todo-v1` é uma prévia de diagnóstico explicitamente selecionada. Ela usa os
+mesmos pins do Economy Profile ativo no fluxo normal: Haiku para planejamento/verificação e Luna
+High para implementação/reparo. Selecione-a explicitamente ao iniciar API e worker:
 
 ```bash
 VALIDATION_CAMPAIGN=real-todo-v1 \
-CODEX_DEFAULT_MODEL=gpt-5.6-luna \
-CLAUDE_FAST_MODEL=claude-haiku-4-5-20251001 \
 EXECUTOR_MODE=real \
 npm run dev
 ```

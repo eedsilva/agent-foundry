@@ -94,6 +94,9 @@ try {
     }
     process.exitCode = failures === 0 ? 0 : 1;
   } else if (args.includes('--gate')) {
+    if (argValue('--models')) {
+      throw new Error('--gate cannot be combined with --models.');
+    }
     const records = await loadRecords();
     const fresh = BenchmarkReportSchema.parse({
       schemaVersion: '1',
@@ -106,7 +109,11 @@ try {
     const baseline = BenchmarkReportSchema.parse(
       JSON.parse(await readFile(baselineJsonPath, 'utf8')),
     );
-    const result = compareBenchmarkReports(fresh, baseline);
+    // The gate measures catalog policy; resolveModels also narrows to this invocation.
+    const enabledModelIds = new Set(
+      (await loadModelCatalog(catalogPath, process.env)).map((model) => model.id),
+    );
+    const result = compareBenchmarkReports(fresh, baseline, enabledModelIds);
     console.log(JSON.stringify(result, null, 2));
     process.exitCode = result.verdict === 'fail' ? 1 : 0;
   } else {

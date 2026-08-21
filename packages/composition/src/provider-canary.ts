@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { execa } from 'execa';
 import {
   AGENT_ARTIFACT_JSON_SCHEMA,
+  ECONOMY_PROFILE_LUNA_MODEL,
   ProviderCanaryReportSchema,
   ProviderCanaryRunSchema,
   ProviderProbeSchema,
@@ -588,6 +589,7 @@ async function createExecutionRequest(
     taskKind,
     provider,
     model,
+    ...(model === ECONOMY_PROFILE_LUNA_MODEL ? { reasoningEffort: 'high' } : {}),
     prompt: `${fixture.prompt}\n\nYour final response must be one JSON object matching the supplied output schema, with no Markdown fence or surrounding prose.`,
     cwd,
     mutatesWorkspace: fixture.mutatesWorkspace,
