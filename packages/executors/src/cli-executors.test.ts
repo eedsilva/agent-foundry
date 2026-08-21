@@ -11,11 +11,17 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import type { CliInvocation } from './base-cli-executor.js';
 import { ClaudeCliExecutor } from './claude-executor.js';
 import { CodexCliExecutor } from './codex-executor.js';
+
+class AuditableCodexExecutor extends CodexCliExecutor {
+  audit(stderr: string, req: AgentExecutionRequest): void {
+    this.auditStderr(stderr, req);
+  }
+}
 
 /** Matches `<root>/.agent-foundry-run-tmp/run-<mkdtemp suffix>`. */
 function runTempDirPattern(root: string): RegExp {
@@ -81,10 +87,21 @@ function request(overrides: Partial<AgentExecutionRequest> = {}): AgentExecution
 }
 
 describe('CLI executor contracts', () => {
-  it('uses stdin and workspace-write sandbox for mutating Codex runs', async () => {
-    const invocation = await new InspectableCodexExecutor(1_000_000).inspect(request());
+  it('wraps Codex in srt, using stdin and workspace-write sandbox for mutating runs (#637)', async () => {
+    const invocation = await new InspectableCodexExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
+      request(),
+    );
     try {
-      expect(invocation.command).toBe('codex');
+      // srt (@anthropic-ai/sandbox-runtime) is the command that actually
+      // spawns now — codex is an argument after the `--` separator, not
+      // the executable, since Codex has no equivalent to Claude Code's own
+      // built-in --settings sandbox and needs an external OS-level wrapper
+      // around the whole process (docs/adr/0081).
+      expect(invocation.command).toBe('srt');
+      expect(invocation.args[0]).toBe('-d');
+      expect(invocation.args[1]).toBe('-s');
+      expect(invocation.args[3]).toBe('--');
+      expect(invocation.args.slice(4, 6)).toEqual(['codex', 'exec']);
       expect(invocation.input).toBe(
         'Open the request file.\n\nOutput JSON Schema:\n{"type":"object"}',
       );
@@ -94,6 +111,53 @@ describe('CLI executor contracts', () => {
       expect(invocation.args).not.toContain('--model');
       expect(invocation.outputFile).toContain('codex.final.json');
       expect(invocation.outputFile?.startsWith(TEST_CWD)).toBe(false);
+
+      const settingsPath = invocation.args[2] as string;
+      const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as {
+        filesystem: {
+          denyRead: string[];
+          allowRead: string[];
+          allowWrite: string[];
+          denyWrite: string[];
+        };
+        network: { allowedDomains: string[]; deniedDomains: string[]; allowLocalBinding: boolean };
+      };
+      expect(settings.filesystem.denyRead).toEqual(
+        expect.arrayContaining([TEST_WORKSPACE_ROOT, REAL_TMPDIR]),
+      );
+      // Codex's own credential list, mirroring Claude's DENIED_CREDENTIAL_FILES
+      // — srt has no separate credentials.files block, so these land in the
+      // same denyRead array.
+      expect(settings.filesystem.denyRead.some((path) => path.endsWith('/.ssh'))).toBe(true);
+      expect(settings.filesystem.denyRead.some((path) => path.endsWith('/.git-credentials'))).toBe(
+        true,
+      );
+      expect(settings.filesystem.allowRead).toEqual(expect.arrayContaining([TEST_CWD]));
+      expect(settings.filesystem.allowWrite).toEqual(expect.arrayContaining([TEST_CWD]));
+      // ~/.codex must be write-allowed (srt is write-deny-by-default) —
+      // Codex owns its own auth state, unlike Claude's Bash-tool-scoped
+      // sandbox which never touches the claude CLI's own credential store
+      // (docs/adr/0081, "Review round").
+      expect(settings.filesystem.allowWrite.some((path) => path.endsWith('/.codex'))).toBe(true);
+      // Static allowlist copied from docs/adr/0076, not guessed — both auth
+      // families plus the npm registry, and loopback fully open (named
+      // residual risk, not port-scoped — see docs/adr/0081).
+      expect(settings.network.allowedDomains).toEqual(
+        expect.arrayContaining([
+          'chatgpt.com',
+          'ab.chatgpt.com',
+          'api.openai.com',
+          'registry.npmjs.org',
+          '127.0.0.1',
+          'localhost',
+        ]),
+      );
+      expect(settings.network.allowLocalBinding).toBe(true);
+      // github.com/developers.openai.com are deliberately absent — observed
+      // in real traffic but not authorized by 0076, and a full mutating
+      // task completed with both blocked (docs/adr/0081).
+      expect(settings.network.allowedDomains).not.toContain('github.com');
+      expect(settings.network.allowedDomains).not.toContain('developers.openai.com');
     } finally {
       if (invocation.outputDirectory) {
         await rm(invocation.outputDirectory, { force: true, recursive: true });
@@ -135,7 +199,7 @@ describe('CLI executor contracts', () => {
   it('refuses a Codex output schema that exceeds the bounded prompt contract', async () => {
     const before = await temporaryEntries('agent-foundry-codex-output-');
     await expect(
-      new InspectableCodexExecutor(1_000_000).inspect(
+      new InspectableCodexExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
         request({ outputSchema: { description: 'x'.repeat(32_768) } }),
       ),
     ).rejects.toThrow(/output schema exceeds/i);
@@ -143,7 +207,11 @@ describe('CLI executor contracts', () => {
   });
 
   it('requests configured-session metadata only for explicit Codex evidence runs', async () => {
-    const invocation = await new InspectableCodexExecutor(1_000_000, true).inspect(request());
+    const invocation = await new InspectableCodexExecutor(
+      1_000_000,
+      TEST_WORKSPACE_ROOT,
+      true,
+    ).inspect(request());
     try {
       expect(invocation.environment).toEqual({
         RUST_LOG: 'codex_core::session::session=debug',
@@ -152,6 +220,90 @@ describe('CLI executor contracts', () => {
       if (invocation.outputDirectory) {
         await rm(invocation.outputDirectory, { force: true, recursive: true });
       }
+    }
+  });
+
+  it('resolves a symlinked Codex workspaceRoot to its real path, not the literal symlink string (#637)', async () => {
+    // Same defect class as the Claude test below (#565): srt enforces
+    // against the real filesystem path, so a denyRead/allowRead entry
+    // written in symlink form would silently fail to match anything.
+    const realRoot = await mkdtemp(join(tmpdir(), 'agent-foundry-cli-executors-codex-real-'));
+    const realCwd = join(realRoot, 'workspace');
+    await mkdir(realCwd, { recursive: true });
+    const linkedRoot = join(tmpdir(), `agent-foundry-cli-executors-codex-link-${process.pid}`);
+    await symlink(realRoot, linkedRoot);
+    try {
+      const linkedCwd = join(linkedRoot, 'workspace');
+      const invocation = await new InspectableCodexExecutor(1_000_000, linkedRoot).inspect(
+        request({ cwd: linkedCwd }),
+      );
+      const settingsPath = invocation.args[2] as string;
+      const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as {
+        filesystem: { denyRead: string[]; allowRead: string[] };
+      };
+      expect(settings.filesystem.denyRead).not.toContain(linkedRoot);
+      expect(settings.filesystem.denyRead).toContain(await realpath(realRoot));
+      expect(settings.filesystem.allowRead).toContain(await realpath(realCwd));
+    } finally {
+      await rm(linkedRoot, { force: true });
+      await rm(realRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a Codex run when .agent-foundry-run-tmp itself is a symlink (#637)', async () => {
+    // Mirrors the Claude regression test below (#565 review): realpath()
+    // alone follows the symlink instead of rejecting it, so without the
+    // explicit equality check this would silently redirect the run's whole
+    // sandbox root instead of erroring.
+    const workspaceRoot = await mkdtemp(
+      join(tmpdir(), 'agent-foundry-cli-executors-codex-symlinked-'),
+    );
+    const elsewhere = await mkdtemp(join(tmpdir(), 'agent-foundry-cli-executors-codex-elsewhere-'));
+    await symlink(elsewhere, join(workspaceRoot, '.agent-foundry-run-tmp'));
+    try {
+      await expect(
+        new InspectableCodexExecutor(1_000_000, workspaceRoot).inspect(
+          request({ cwd: TEST_CWD }),
+        ),
+      ).rejects.toThrow(/resolved to a different path/);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it('logs a blocked network destination with its host and role, never the raw sandbox stderr (#637)', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const executor = new AuditableCodexExecutor(1_000_000, TEST_WORKSPACE_ROOT);
+      const stderr =
+        '[SandboxDebug] running command: codex exec --json --sandbox workspace-write\n' +
+        '[SandboxDebug] Connection blocked to evil.example:443 by network policy\n' +
+        'some unrelated line that must never reach console.error verbatim\n';
+      executor.audit(stderr, request({ role: 'developer' }));
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(
+        'codex sandbox denied network destination: evil.example:443 (role: developer)',
+      );
+      // The full stderr — including the unrelated line and the echoed
+      // command — must never be handed to console.error as-is.
+      for (const call of spy.mock.calls) {
+        expect(call.join(' ')).not.toContain('unrelated line');
+        expect(call.join(' ')).not.toContain('running command');
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('logs nothing when no [SandboxDebug] denial is present (#637)', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const executor = new AuditableCodexExecutor(1_000_000, TEST_WORKSPACE_ROOT);
+      executor.audit('[SandboxDebug] running command: codex exec\nno denial here\n', request());
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
     }
   });
 
@@ -474,12 +626,20 @@ describe('CLI executor contracts', () => {
   });
 
   it('leaves Codex args untouched when systemPrompt is absent', async () => {
-    // The output-file path embeds a random mkdtemp suffix per invocation, so
-    // normalize it out before comparing two separately built invocations.
+    // Both the output-file path and the srt settings-file path embed a
+    // random mkdtemp suffix per invocation (both live under the same
+    // per-run outputDirectory), so normalize any arg rooted there before
+    // comparing two separately built invocations.
     const normalize = (invocation: CliInvocation) =>
-      invocation.args.map((arg) => (arg === invocation.outputFile ? '<outputFile>' : arg));
-    const withoutA = await new InspectableCodexExecutor(1_000_000).inspect(request());
-    const withoutB = await new InspectableCodexExecutor(1_000_000).inspect(
+      invocation.args.map((arg) =>
+        invocation.outputDirectory && arg.startsWith(invocation.outputDirectory)
+          ? `<runTempDir>${arg.slice(invocation.outputDirectory.length)}`
+          : arg,
+      );
+    const withoutA = await new InspectableCodexExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
+      request(),
+    );
+    const withoutB = await new InspectableCodexExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
       request({ systemPrompt: undefined }),
     );
     try {
@@ -495,7 +655,7 @@ describe('CLI executor contracts', () => {
 
   it('appends a -c developer_instructions TOML literal string when systemPrompt is present', async () => {
     const content = 'Say "hi" then \\n do it — a real\nnewline, a quote " and a backslash \\.';
-    const invocation = await new InspectableCodexExecutor(1_000_000).inspect(
+    const invocation = await new InspectableCodexExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
       request({ systemPrompt: content }),
     );
     try {
@@ -516,7 +676,7 @@ describe('CLI executor contracts', () => {
   it('throws a clear error when systemPrompt contains a TOML literal-string delimiter', async () => {
     const before = await temporaryEntries('agent-foundry-codex-output-');
     await expect(
-      new InspectableCodexExecutor(1_000_000).inspect(
+      new InspectableCodexExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
         request({ systemPrompt: "before '''  after" }),
       ),
     ).rejects.toThrow(/'''/);

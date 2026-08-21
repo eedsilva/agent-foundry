@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// Fake `srt` (Anthropic Sandbox Runtime) (#637): CodexCliExecutor always
+// wraps its real invocation with `srt -d -s <settingsFile> -- <command>
+// <args...>`. Faking `srt` itself — not just `codex` — keeps the fake-CLI
+// integration test exercising the exact production argv shape without
+// needing bubblewrap/Seatbelt/srt genuinely installed in CI. This does no
+// sandboxing: it strips srt's own flags and execs the wrapped command
+// directly, inheriting stdio so the real fake `codex`'s stdin prompt and
+// stdout JSONL protocol pass through unchanged.
+import { spawn } from 'node:child_process';
+
+const argv = process.argv.slice(2);
+const separatorIndex = argv.indexOf('--');
+if (separatorIndex === -1) {
+  console.error('fake-srt: expected a -- separator before the wrapped command');
+  process.exit(1);
+}
+const [command, ...args] = argv.slice(separatorIndex + 1);
+const child = spawn(command, args, { stdio: 'inherit' });
+child.on('error', (error) => {
+  console.error(`fake-srt: failed to exec ${command}: ${error.message}`);
+  process.exit(1);
+});
+child.on('exit', (code, signal) => {
+  process.exit(signal ? 1 : (code ?? 1));
+});

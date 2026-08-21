@@ -310,7 +310,11 @@ export async function createRuntime(
           // A selected campaign enforces executed-model identity on every
           // dispatch; without reportConfiguredModel the Codex CLI never
           // reveals it and the check burns a real attempt to learn that (#424).
-          new CodexCliExecutor(config.maxCliOutputBytes, Boolean(config.validationCampaignId)),
+          new CodexCliExecutor(
+            config.maxCliOutputBytes,
+            config.dataDir,
+            Boolean(config.validationCampaignId),
+          ),
           new ClaudeCliExecutor(config.maxCliOutputBytes, config.dataDir),
         ]));
   const executionPlane = new LocalExecutionPlane(executors, workspaces);

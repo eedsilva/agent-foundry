@@ -100,6 +100,16 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     return stdout;
   }
 
+  /**
+   * No-op by default. `CodexCliExecutor` overrides this to pull a
+   * network-boundary denial's host out of its sandbox wrapper's debug
+   * output and log it locally with the run's role (#637) — never the full
+   * `stderr`, which can carry the wrapped command's own output. Claude's
+   * own sandbox already reports a denial's path/host inline in the tool's
+   * own stdout/stderr (docs/adr/0071), so it has no matching override.
+   */
+  protected auditStderr(_stderr: string, _request: AgentExecutionRequest): void {}
+
   async execute(
     request: AgentExecutionRequest,
     signal?: AbortSignal,
@@ -192,6 +202,7 @@ export abstract class BaseCliExecutor implements AgentExecutor {
     if (signal?.aborted) throw new RunCancelledError(request.runId);
     const stdout = outputText(result.stdout);
     const stderr = outputText(result.stderr);
+    this.auditStderr(stderr, request);
     const rateLimit = extractRateLimit(this.provider, stdout);
     if (rateLimit) this.lastRateLimit = rateLimit;
     if (result.exitCode !== 0) {
