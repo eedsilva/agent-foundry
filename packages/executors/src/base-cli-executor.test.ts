@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -487,5 +487,76 @@ describe('BaseCliExecutor failure cause (issue #286)', () => {
         message: 'claude CLI exited with code 1: The tool call failed.',
       }),
     );
+  });
+});
+
+describe('BaseCliExecutor outputDirectory cleanup guard (#565 review)', () => {
+  class OutputDirectoryFixtureExecutor extends FixtureExecutor {
+    constructor(
+      maxOutputBytes: number,
+      private readonly outputDirectory: string,
+      private readonly outputDirectoryRoot?: string,
+    ) {
+      super(maxOutputBytes);
+    }
+
+    protected override async invocation(): Promise<CliInvocation> {
+      return {
+        command: this.command,
+        args: [],
+        outputDirectory: this.outputDirectory,
+        ...(this.outputDirectoryRoot ? { outputDirectoryRoot: this.outputDirectoryRoot } : {}),
+      };
+    }
+  }
+
+  it('removes outputDirectory when it resolves inside the declared outputDirectoryRoot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'agent-foundry-guard-root-'));
+    const outputDirectory = join(root, 'run-scratch');
+    await mkdir(outputDirectory, { recursive: true });
+    await writeFile(join(outputDirectory, 'leftover.txt'), 'x');
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: '' });
+
+    try {
+      await new OutputDirectoryFixtureExecutor(1_000_000, outputDirectory, root).execute(request);
+      await expect(stat(outputDirectory)).rejects.toThrow(/ENOENT/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to remove outputDirectory when it resolves outside the declared outputDirectoryRoot (#565 review)', async () => {
+    // The guard Mansur asked for: `rm`'s `force: true` never warns on a
+    // wrong path, so a future bug that computes outputDirectory outside its
+    // intended root must not reach a recursive delete unverified.
+    const root = await mkdtemp(join(tmpdir(), 'agent-foundry-guard-root-'));
+    const outsideDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-guard-outside-'));
+    await writeFile(join(outsideDirectory, 'unrelated-user-data.txt'), 'do not delete me');
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: '' });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await new OutputDirectoryFixtureExecutor(1_000_000, outsideDirectory, root).execute(request);
+      // Left in place, not deleted — the point of the guard.
+      expect(readFileSync(join(outsideDirectory, 'unrelated-user-data.txt'), 'utf8')).toBe(
+        'do not delete me',
+      );
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining('outputDirectory escaped its declared root'),
+      );
+    } finally {
+      consoleError.mockRestore();
+      await rm(root, { recursive: true, force: true });
+      await rm(outsideDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('removes outputDirectory as before when no outputDirectoryRoot is declared (Codex, unchanged)', async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-guard-no-root-'));
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: '' });
+
+    await new OutputDirectoryFixtureExecutor(1_000_000, outputDirectory).execute(request);
+
+    await expect(stat(outputDirectory)).rejects.toThrow(/ENOENT/);
   });
 });

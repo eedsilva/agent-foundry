@@ -1,9 +1,16 @@
-import { realpath } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { BaseCliExecutor, type CliInvocation } from './base-cli-executor.js';
 import { createClaudeStreamMapper } from './claude-stream-events.js';
+
+/**
+ * Sibling of `projects/`, not inside any of them — `FileWorkspaceManager`
+ * never walks this directory, so nothing here interacts with a project's
+ * own git history.
+ */
+const RUN_TMP_DIRNAME = '.agent-foundry-run-tmp';
 
 /**
  * Bash allowlist for mutating runs — the toolchain this repo's generated
@@ -80,19 +87,29 @@ const DENIED_CREDENTIAL_FILES = [
  * inside this sandbox at all (verified empirically, see docs/adr/0071) so
  * it's excluded and stays exactly as unconfined as it always was.
  *
- * `workspaceRoot` and `cwd` must already be realpath-resolved, not just
- * `path.resolve`d: verified empirically that when either traverses a
- * symlink (a routine case — `/tmp` itself is a symlink to `/private/tmp` on
- * macOS), the sandbox silently fails to enforce the boundary at all rather
- * than erroring, because deny/allow rules are matched against the real
- * filesystem path the OS resolves, not the literal string handed to
- * `--settings`. This is the same bug class fixed in
+ * `workspaceRoot`, `cwd`, and `runTempDir` must already be realpath-resolved,
+ * not just `path.resolve`d: verified empirically that when any of them
+ * traverses a symlink (a routine case — `/tmp` itself is a symlink to
+ * `/private/tmp` on macOS), the sandbox silently fails to enforce the
+ * boundary at all rather than erroring, because deny/allow rules are
+ * matched against the real filesystem path the OS resolves, not the literal
+ * string handed to `--settings`. This is the same bug class fixed in
  * `FileWorkspaceManager.readWorkspaceFile` — see docs/adr/0071.
+ *
+ * `runTempDir` is a narrower `allowRead` re-opened inside the
+ * `workspaceRoot` deny, not folded into `cwd`: it must live outside the run's
+ * worktree (`cwd`), because `FileWorkspaceManager.checkpoint`/`commit`/
+ * `preserveDraft`/`ensureGit` all run `git add -A` there — a temp file
+ * inside the worktree gets staged, checkpointed, and on `integrateWorktree`
+ * merged into the primary, landing in the generated app's own history. The
+ * repo already paid for this exact mistake once, with a shared node_modules
+ * symlink (`workspace-manager.ts`, `#excludeNodeModules`'s doc comment).
  */
 function claudeSandboxSettings(
   realWorkspaceRoot: string,
   realTmpdir: string,
   realCwd: string,
+  realRunTempDir: string,
 ): string {
   const denyRead = [...new Set([realWorkspaceRoot, realTmpdir])];
   return JSON.stringify({
@@ -102,7 +119,7 @@ function claudeSandboxSettings(
       allowUnsandboxedCommands: false,
       filesystem: {
         denyRead,
-        allowRead: [realCwd],
+        allowRead: [realCwd, realRunTempDir],
       },
       credentials: {
         files: DENIED_CREDENTIAL_FILES.map((path) => ({ path, mode: 'deny' })),
@@ -129,6 +146,15 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
       realpath(tmpdir()),
       realpath(request.cwd),
     ]);
+    // Own directory, not the shared host tmpdir denied above: `pnpm`/`git`/
+    // `node` see $TMPDIR (below) and round-trip files through it — writing
+    // to a directory this run can't read back would silently break that
+    // toolchain (#565 review). Rooted under workspaceRoot, a sibling of
+    // `projects/`, so it's outside the worktree `git add -A` walks and
+    // outside every other project's own tree.
+    await mkdir(join(realWorkspaceRoot, RUN_TMP_DIRNAME), { recursive: true });
+    const runTempDir = await mkdtemp(join(realWorkspaceRoot, RUN_TMP_DIRNAME, 'run-'));
+    const realRunTempDir = await realpath(runTempDir);
     const args = [
       '--safe-mode',
       '-p',
@@ -143,7 +169,7 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
       '--json-schema',
       claudeJsonSchema(request.outputSchema),
       '--settings',
-      claudeSandboxSettings(realWorkspaceRoot, realTmpdir, realCwd),
+      claudeSandboxSettings(realWorkspaceRoot, realTmpdir, realCwd, realRunTempDir),
     ];
     if (request.mutatesWorkspace) {
       // Single `--allowedTools=` token, not `--allowedTools`, value: the
@@ -165,7 +191,14 @@ export class ClaudeCliExecutor extends BaseCliExecutor {
     return {
       command: this.command,
       args,
-      ...(Object.keys(this.environment).length > 0 ? { environment: this.environment } : {}),
+      environment: {
+        ...this.environment,
+        TMPDIR: realRunTempDir,
+        TEMP: realRunTempDir,
+        TMP: realRunTempDir,
+      },
+      outputDirectory: realRunTempDir,
+      outputDirectoryRoot: realWorkspaceRoot,
     };
   }
 

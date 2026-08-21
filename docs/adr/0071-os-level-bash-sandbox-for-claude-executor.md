@@ -381,6 +381,78 @@ against reproduction again, not accepted on argument:
   not "give me an exact count of sandbox denials" — good enough for AC4's
   audit-event requirement, not precise enough for a dashboard metric.
 
+## Third review round: the temp-directory fix broke the toolchain it was meant to protect
+
+After #638 merged, a review of `denyRead`'s temp-directory coverage (added
+in the first round to close AC5) found a defect in the fix itself, not a
+new gap.
+
+**The defect.** `safe-env-allowlist.json` passes `TMPDIR`/`TEMP`/`TMP`
+through from the host to the spawned `claude` process (`safeSpawnEnv`), so
+every toolchain command the Bash tool runs — `pnpm`, `git`, `node` — reads
+and writes through the *same* directory `denyRead` had just been pointed
+at. Writing there was still allowed (the sandbox's own default write
+range); reading it back was not. Any tool that round-trips through
+`$TMPDIR` — stage a file, read it back — breaks, silently, only in
+`EXECUTOR_MODE=real` (the one mode nothing in this repo's CI or reference
+deployment exercises, so nothing caught it before review). ADR-0076's own
+filesystem clause names the fix directly: *"the assigned worktree, an
+**ephemeral temporary directory**, and scoped provider-authentication
+capabilities"* — an exposed ephemeral temp dir, not a denied shared one.
+
+**First attempt at a fix, and why it was wrong.** The obvious fix — a
+per-run temp directory *inside* `cwd`, covered by the existing `allowRead`
+entry, no new sandbox setting needed — was rejected before being written.
+`FileWorkspaceManager.checkpoint`/`commit`/`preserveDraft`/`ensureGit` all
+run `git add -A` against the workspace (`workspace-manager.ts:218,239,268,315`).
+A temp file inside `cwd` gets staged on the very next checkpoint and, via
+`integrateWorktree`, merged into the primary — landing in the *generated
+app's own git history*. This is not hypothetical: the repo already paid
+for exactly this mistake once, with a shared `node_modules` symlink
+untracked instead of ignored (`workspace-manager.ts`,
+`#excludeNodeModules`'s doc comment: *"`checkpoint`'s `git add -A` stages
+it, commits it onto `af/task/<label>` on the very first checkpoint after a
+fork, and `integrateWorktree` merges it into the primary"*).
+
+**The actual fix.** `ClaudeCliExecutor.invocation()` now creates a per-run
+temp directory as a sibling of `projects/`, not inside any worktree:
+`mkdtemp(<workspaceRoot>/.agent-foundry-run-tmp/run-)`. It gets its own
+narrower `allowRead` entry (re-opened inside the wider `denyRead` on
+`workspaceRoot`, same mechanism as `cwd`'s own entry) rather than being
+folded into `cwd`'s. `TMPDIR`/`TEMP`/`TMP` in the invocation's
+`environment` are overridden to point at it, taking precedence over the
+host-inherited values (`safeSpawnEnv`: `{ ...pickSafeEnvironment(source),
+...overrides }`, overrides spread last). Verified against the real CLI,
+using the actual generated `--settings`/environment (not a hand-built
+approximation): a `node -e` round-trip through `$TMPDIR` now succeeds
+end-to-end, and a real `git init && git add -A` in `cwd` afterward shows
+nothing from the temp directory in `git status --porcelain` or `git diff
+--cached --name-only`. A sibling run's temp directory under the same
+`.agent-foundry-run-tmp/` parent is confirmed excluded from `allowRead` —
+per-run isolation holds; this isn't a blanket re-opening of the whole
+scratch area.
+
+**The `outputDirectoryRoot` guard.** `BaseCliExecutor`'s existing cleanup
+(`rm(invocation.outputDirectory, { force: true, recursive: true })` in
+`execute()`'s `finally`) is reused for this new temp directory — the
+field's only real contract, from its one prior user (Codex's
+`--output-last-message` directory), was already "ephemeral, owned by this
+invocation, remove after." Reusing it is free. But `force: true` never
+warns on a wrong path, and this temp directory is now nested under a
+longer-lived root (the Foundry Data Directory) rather than built from a
+single fixed `mkdtemp` call the way Codex's is — a real, if narrow,
+path-confusion risk for a future bug. `CliInvocation` gained an optional
+`outputDirectoryRoot`; when set, `execute()` verifies containment (reusing
+`resolveWorkspaceRelativePath`, the same containment check the sandbox
+settings themselves use) immediately before the recursive delete, and
+refuses — logging instead of deleting — if `outputDirectory` resolves
+outside it. `ClaudeCliExecutor` sets it to `workspaceRoot`; Codex's own
+`outputDirectory` is left as before, since a value built from a single
+`mkdtemp(tmpdir(), 'agent-foundry-codex-output-')` call has no realistic
+path-confusion surface to guard against. (Codex will want both an output
+directory and this same per-run temp-dir treatment once #637 closes its
+own read-boundary gap — noted for that issue, not resolved here.)
+
 ## Consequences
 
 - **Positive:** a model-invoked Bash tool call — including through any of
@@ -444,25 +516,36 @@ against reproduction again, not accepted on argument:
 Exact-argv unit tests in `packages/executors/src/cli-executors.test.ts`
 assert the `--settings` JSON's `sandbox.enabled`, `failIfUnavailable`,
 `allowUnsandboxedCommands`, `filesystem.denyRead` (workspace root + tmpdir)/
-`allowRead` (scoped per-request to `cwd`, not a fixed path),
-`credentials.files`, `network.allowedDomains`, and `excludedCommands`, for
-both mutating and read-only runs — plus a dedicated regression test that
-constructs a symlinked workspace root and cwd and asserts `--settings`
-carries the `realpath()`-resolved forms, not the symlink strings. Symlink/
-traversal containment for `readWorkspaceFile` is covered in
+`allowRead` (`cwd` plus this run's own temp directory, both scoped
+per-request, not a fixed path), `credentials.files`, `network.allowedDomains`,
+and `excludedCommands`, for both mutating and read-only runs — plus a
+dedicated regression test that constructs a symlinked workspace root and cwd
+and asserts `--settings` carries the `realpath()`-resolved forms, not the
+symlink strings. A separate test creates a real git repository at `cwd`,
+writes into the run's temp directory the way a toolchain command would,
+stages the workspace with `git add -A`, and asserts nothing from the temp
+directory appears in `git status --porcelain` or the staged diff — the
+regression test for the third review round. `BaseCliExecutor`'s
+`outputDirectoryRoot` guard has its own unit tests in
+`base-cli-executor.test.ts`: cleans up normally when `outputDirectory`
+resolves inside the declared root, refuses (and logs, verified via a
+`console.error` spy) when it resolves outside, and is a no-op — unchanged
+Codex behavior — when no root is declared at all. Symlink/traversal
+containment for `readWorkspaceFile` is covered in
 `packages/persistence/src/workspace-manager.test.ts`. The live-CLI
-reproductions in Context and in "Review round" (Read-tool default denial,
-the Bash/node escape before and after this change, the network default-deny,
-the container bubblewrap failure and its `security_opt` fix, the credential/
-tmpdir gap and its fix, the symlinked-`workspaceRoot` bypass and its fix,
-the `tool_end`/`is_error` audit-event evidence, the `excludedCommands` vs
-`allowUnsandboxedCommands` independence) were run against the real
-`claude`/`codex` CLIs and this repo's real `Dockerfile`, not asserted from
-documentation — this ADR is the record of that evidence; there is no
-automated CI job that re-runs them (real-CLI runs need network + provider
-auth CI does not have, matching ADR-0063's own precedent of verifying
-empirically and pinning the result in unit tests rather than a live CI
-call).
+reproductions in Context and in the three review-round sections (Read-tool
+default denial, the Bash/node escape before and after this change, the
+network default-deny, the container bubblewrap failure and its
+`security_opt` fix, the credential/tmpdir gap and its fix, the symlinked-
+`workspaceRoot` bypass and its fix, the `tool_end`/`is_error` audit-event
+evidence, the `excludedCommands` vs `allowUnsandboxedCommands` independence,
+and the `$TMPDIR` round-trip through the real generated `--settings`/
+environment) were run against the real `claude`/`codex` CLIs and this
+repo's real `Dockerfile`, not asserted from documentation — this ADR is the
+record of that evidence; there is no automated CI job that re-runs them
+(real-CLI runs need network + provider auth CI does not have, matching
+ADR-0063's own precedent of verifying empirically and pinning the result in
+unit tests rather than a live CI call).
 
 To roll back: drop the `--settings` push in `ClaudeCliExecutor.invocation()`
 and the `workspaceRoot` constructor parameter; Claude runs return to

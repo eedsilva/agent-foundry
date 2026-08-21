@@ -14,6 +14,7 @@ import {
   ProviderAuthenticationError,
   RunCancelledError,
   errorMessage,
+  resolveWorkspaceRelativePath,
   withSpan,
 } from '@agent-foundry/domain';
 import {
@@ -32,6 +33,18 @@ export interface CliInvocation {
   input?: string;
   outputFile?: string;
   outputDirectory?: string;
+  /**
+   * The known-safe parent `outputDirectory` must resolve inside, checked
+   * right before the recursive `rm` below. Optional — an executor that
+   * builds `outputDirectory` from a fixed, self-controlled `mkdtemp` call
+   * (Codex's `--output-last-message` dir) has no real path-confusion risk
+   * to guard against; one that nests it under a longer-lived root shared
+   * with other data (Claude's per-run temp dir, under the Foundry Data
+   * Directory) does. `rm`'s `force: true` never warns on a wrong path, so
+   * this is the only thing standing between a future bug in that
+   * computation and a silent `rm -rf` of the wrong directory.
+   */
+  outputDirectoryRoot?: string;
   environment?: NodeJS.ProcessEnv;
 }
 
@@ -104,7 +117,24 @@ export abstract class BaseCliExecutor implements AgentExecutor {
       );
     } finally {
       if (invocation.outputDirectory) {
-        await rm(invocation.outputDirectory, { force: true, recursive: true });
+        if (
+          invocation.outputDirectoryRoot &&
+          resolveWorkspaceRelativePath(
+            invocation.outputDirectoryRoot,
+            invocation.outputDirectory,
+          ) === null
+        ) {
+          // Refuse rather than guess: an outputDirectory that computed
+          // outside its declared root is exactly the bug this guard exists
+          // to catch, and `rm -rf`ing an unverified path is the wrong way
+          // to find out. Leaves the directory behind (harmless — it's a
+          // temp dir) instead of risking deleting the wrong one.
+          console.error(
+            `outputDirectory escaped its declared root, refusing to remove: ${invocation.outputDirectory}`,
+          );
+        } else {
+          await rm(invocation.outputDirectory, { force: true, recursive: true });
+        }
       }
       if (invocation.outputFile && !invocation.outputDirectory) {
         await rm(invocation.outputFile, { force: true });
