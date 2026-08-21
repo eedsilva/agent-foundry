@@ -11,15 +11,25 @@ import {
 export function compareBenchmarkReports(
   fresh: BenchmarkReport,
   baseline: BenchmarkReport,
+  enabledModelIds?: ReadonlySet<string>,
 ): RegressionGateResult {
   const freshByKey = new Map(fresh.runs.map((run) => [`${run.caseId}::${run.modelId}`, run]));
   const reasons: string[] = [];
   const deltas: RegressionGateResult['deltas'] = [];
+  const skipped: RegressionGateResult['skipped'] = [];
 
   for (const baselineRun of baseline.runs) {
     const key = `${baselineRun.caseId}::${baselineRun.modelId}`;
     const freshRun = freshByKey.get(key);
     if (!freshRun) {
+      if (enabledModelIds && !enabledModelIds.has(baselineRun.modelId)) {
+        skipped.push({
+          caseId: baselineRun.caseId,
+          modelId: baselineRun.modelId,
+          reason: 'model disabled by policy',
+        });
+        continue;
+      }
       reasons.push(`${key}: missing from fresh report`);
       continue;
     }
@@ -44,6 +54,7 @@ export function compareBenchmarkReports(
     verdict: reasons.length === 0 ? 'pass' : 'fail',
     reasons,
     deltas,
+    skipped,
   });
 }
 

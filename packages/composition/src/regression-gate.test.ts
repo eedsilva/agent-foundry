@@ -34,11 +34,13 @@ function run(overrides: Record<string, unknown> = {}) {
 }
 
 describe('compareBenchmarkReports', () => {
+  const enabledModelIds = new Set(['opus']);
+
   it('passes when every case keeps or improves status', () => {
     const baseline = report({ runs: [run({ status: 'passed' })] });
     const fresh = report({ runs: [run({ status: 'passed', durationMs: 9_000 })] });
 
-    const result = compareBenchmarkReports(fresh, baseline);
+    const result = compareBenchmarkReports(fresh, baseline, enabledModelIds);
     expect(result.verdict).toBe('pass');
     expect(result.reasons).toHaveLength(0);
     expect(result.deltas[0]?.durationDeltaMs).toBe(-1_000);
@@ -48,7 +50,7 @@ describe('compareBenchmarkReports', () => {
     const baseline = report({ runs: [run({ status: 'passed' })] });
     const fresh = report({ runs: [run({ status: 'failed' })] });
 
-    const result = compareBenchmarkReports(fresh, baseline);
+    const result = compareBenchmarkReports(fresh, baseline, enabledModelIds);
     expect(result.verdict).toBe('fail');
     expect(result.reasons[0]).toContain('regressed');
     expect(result.deltas[0]?.statusRegressed).toBe(true);
@@ -58,9 +60,25 @@ describe('compareBenchmarkReports', () => {
     const baseline = report({ runs: [run({ caseId: 'a' }), run({ caseId: 'b' })] });
     const fresh = report({ runs: [run({ caseId: 'a' })] });
 
-    const result = compareBenchmarkReports(fresh, baseline);
+    const result = compareBenchmarkReports(fresh, baseline, enabledModelIds);
     expect(result.verdict).toBe('fail');
     expect(result.reasons.some((reason) => reason.includes('missing'))).toBe(true);
+  });
+
+  it('skips a missing baseline run when its model is disabled by policy', () => {
+    const baseline = report({ runs: [run({ modelId: 'claude-opus' })] });
+
+    const result = compareBenchmarkReports(report(), baseline, new Set());
+
+    expect(result.verdict).toBe('pass');
+    expect(result.reasons).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        caseId: 'greenfield-clamp-util',
+        modelId: 'claude-opus',
+        reason: 'model disabled by policy',
+      },
+    ]);
   });
 
   it('does not fail on a duration or repairs regression alone', () => {
@@ -83,7 +101,7 @@ describe('compareBenchmarkReports', () => {
       ],
     });
 
-    const result = compareBenchmarkReports(fresh, baseline);
+    const result = compareBenchmarkReports(fresh, baseline, enabledModelIds);
     expect(result.verdict).toBe('pass');
     expect(result.deltas[0]?.durationDeltaMs).toBe(15_000);
     expect(result.deltas[0]?.repairsDelta).toBe(2);
